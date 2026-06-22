@@ -35,7 +35,10 @@ pub(crate) mod install_whisper;
 pub(crate) mod lm_studio;
 pub(crate) mod model_requirements;
 mod ollama;
-mod process_util;
+// `pub(crate)` so the shared `apply_no_window` helper can be reused from the
+// agent shell runtime (`agent::host_runtime`) — single source of truth for the
+// Windows `CREATE_NO_WINDOW` flag (#3727/#3728).
+pub(crate) mod process_util;
 pub mod profile;
 pub(crate) mod provider;
 pub(crate) use model_requirements::{evaluate_context, ContextEligibility, MIN_CONTEXT_TOKENS};

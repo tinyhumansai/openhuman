@@ -538,6 +538,53 @@ pub trait Provider: Send + Sync {
         crate::openhuman::inference::context_window_for_model(model)
     }
 
+    /// Whether this provider talks to a **local** runtime (LM Studio, Ollama,
+    /// llama.cpp, vLLM, …) rather than a cloud API. Local runtimes enforce the
+    /// model's *runtime-loaded* `n_ctx` and can be loaded with a window smaller
+    /// than the assistant's un-evictable system prefix — the
+    /// `n_keep >= n_ctx` overflow (#3550 / TAURI-RUST-6V0). The agent engine
+    /// uses this to gate its pre-dispatch un-evictable-prefix guard, which
+    /// surfaces an actionable "reload with a larger context length" error only
+    /// for local providers (cloud windows are large enough that the guard would
+    /// only ever fire on a genuine overflow the user can't remedy by reloading).
+    /// Defaults to `false`.
+    fn is_local_provider(&self) -> bool {
+        false
+    }
+
+    /// Like [`Provider::is_local_provider`] but resolved for the specific
+    /// `model` about to be dispatched. A router whose *default* provider is
+    /// cloud may still route a given model to a local provider; the engine's
+    /// pre-dispatch un-evictable-prefix guard keys off this so the actionable
+    /// "reload with a larger context length" error fires for that routed local
+    /// model instead of letting the opaque local `400 (n_keep >= n_ctx)` reach
+    /// the user (#3550 / TAURI-RUST-6V0; Codex/CodeRabbit review on PR #3771).
+    ///
+    /// Defaults to the model-blind [`Provider::is_local_provider`]; only a
+    /// routing wrapper needs to override it.
+    fn is_local_provider_for_model(&self, _model: &str) -> bool {
+        self.is_local_provider()
+    }
+
+    /// The model's **authoritative runtime-loaded** context window, when the
+    /// local runtime actually reports it (e.g. LM Studio's native
+    /// `/api/v0/models` `loaded_context_length`). Returns `None` whenever the
+    /// window is unknown or merely *guessed* — a cloud provider, a local
+    /// runtime that exposes no loaded window (llama.cpp / vLLM), or a
+    /// profile-default / conservative-floor fallback.
+    ///
+    /// Distinct from [`Provider::effective_context_window`], which always
+    /// yields a value for local providers (falling back to a guess) so
+    /// pre-dispatch *trimming* still engages. Trimming may safely run against a
+    /// guess (over-trim is harmless), but the hard pre-dispatch abort must only
+    /// fire on an authoritative window — aborting with "reload with a larger
+    /// context length" against a guessed 4096 floor would wrongly reject a
+    /// request that the real (e.g. 32k) loaded window would have accepted
+    /// (Codex P1 review on PR #3771). Defaults to `None`.
+    async fn loaded_context_window(&self, _model: &str) -> Option<u64> {
+        None
+    }
+
     /// Warm up the HTTP connection pool (TLS handshake, DNS, HTTP/2 setup).
     /// Default implementation is a no-op; providers with HTTP clients should override.
     async fn warmup(&self) -> anyhow::Result<()> {

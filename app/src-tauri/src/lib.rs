@@ -57,6 +57,7 @@ mod ptt_overlay;
 mod reset_reboot_schedule;
 mod screen_capture;
 mod slack_scanner;
+mod stderr_panic_hook;
 mod telegram_scanner;
 mod webview_accounts;
 mod webview_apis;
@@ -2061,6 +2062,18 @@ fn install_silent_x_error_handler() {
 fn install_silent_x_error_handler() {}
 
 pub fn run() {
+    // Neutralise a broken inherited stderr *pipe* BEFORE any `eprintln!` can
+    // fire. On Windows, when the GUI process inherits an stderr pipe whose
+    // parent end later closes, the next stdlib stderr write fails with a
+    // broken-pipe errno and `std::io::stdio::print_to` raises
+    // `panic!("failed printing to stderr: …")` on the main thread, aborting the
+    // app over an external condition (Sentry TAURI-RUST-F). Redirecting that
+    // pipe to NUL makes the write succeed (discarded) instead of panicking. A
+    // panic hook cannot fix this — it runs during unwinding and cannot stop the
+    // abort — so the cure is at the write path. No-op on non-Windows / when
+    // stderr is a console or file. See `stderr_panic_hook`.
+    stderr_panic_hook::neutralize_broken_parent_stderr();
+
     // Must run before any GTK/CEF code that could trigger X calls — otherwise
     // Xlib's default handler calls exit(1) on the first BadWindow and we never
     // reach this line. See helper doc above for the full reasoning.
@@ -2223,6 +2236,25 @@ pub fn run() {
                 );
                 return None;
             }
+            // Drop provider insufficient-credits 402s — the user's own BYO
+            // account (e.g. OpenRouter) is out of balance, a billing state
+            // OpenHuman has no lever over once the request already caps
+            // max_tokens. The core binary's main.rs before_send already
+            // filters these; since #1061 the core runs in-process inside this
+            // shell, so the cron `agent_job` retries-exhausted report (and any
+            // other compatible-provider path) lands in THIS Sentry client and
+            // must be filtered identically. Closes the #3617 drift that wired
+            // the filter only into the standalone-CLI chain (TAURI-RUST-514 /
+            // -C62).
+            if openhuman_core::core::observability::is_insufficient_credits_event(&event) {
+                // Metadata-only log shape — `event.message` carries the raw
+                // provider 402 body which CLAUDE.md forbids from local logs.
+                log::debug!(
+                    "[sentry-insufficient-credits-filter] dropping insufficient-credits 402 event_id={:?}",
+                    event.event_id
+                );
+                return None;
+            }
             // Strip server_name (hostname) to avoid leaking machine identity.
             event.server_name = None;
             // Attach the cached account uid so Sentry can count unique users
@@ -2264,6 +2296,15 @@ pub fn run() {
             scope.set_tag("os_version", ver);
         }
     });
+
+    // Install the panic hook *after* `sentry::init` so `take_hook()` captures
+    // Sentry's panic integration as its chain target. The hook ALWAYS chains to
+    // the previous hook for every panic — it never swallows, so no crash is ever
+    // hidden from Sentry. The actual broken-pipe-on-stderr abort is prevented at
+    // the write path by `neutralize_broken_parent_stderr()` (called at the top of
+    // `run()`); this hook only adds a diagnostic breadcrumb for that family. See
+    // `stderr_panic_hook` for the full rationale (Sentry TAURI-RUST-F).
+    stderr_panic_hook::install();
 
     // Optional smoke trigger for verifying the Sentry pipeline end-to-end.
     // Run with `OPENHUMAN_TAURI_SENTRY_TEST=panic` to fire a panic, or

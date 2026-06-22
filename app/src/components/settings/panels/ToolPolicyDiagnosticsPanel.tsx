@@ -59,7 +59,7 @@ const ToolPolicyDiagnosticsPanel = () => {
     (async () => {
       try {
         const diagnostics = await callCoreRpc<ToolPolicyDiagnostics>({
-          method: 'tool_registry.diagnostics',
+          method: 'openhuman.tool_registry_diagnostics',
           params: {},
           timeoutMs: 10_000,
         });

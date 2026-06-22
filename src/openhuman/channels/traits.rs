@@ -62,6 +62,20 @@ pub trait Channel: Send + Sync {
     /// Human-readable channel name
     fn name(&self) -> &str;
 
+    /// Resolve the delivery target for a *recipient-less* proactive send (cron /
+    /// heartbeat), where the caller has no inbound message to reply to.
+    ///
+    /// Returns the channel's configured default target (e.g. Discord's
+    /// `channel_id`) or `None` when the channel has no target it can deliver to
+    /// without an explicit recipient. Proactive routing skips channels that
+    /// return `None` instead of POSTing to an empty recipient (#3794 review —
+    /// Codex P2; Telegram has no configured default chat, so its `send` would
+    /// otherwise call the Bot API with an empty `chat_id`). Default `None` keeps
+    /// every existing provider opted out until it wires a real target.
+    fn proactive_target(&self) -> Option<String> {
+        None
+    }
+
     /// Send a message through this channel
     async fn send(&self, message: &SendMessage) -> anyhow::Result<()>;
 
@@ -188,6 +202,9 @@ mod tests {
             .send(&SendMessage::new("hello", "bob"))
             .await
             .is_ok());
+        // A provider that does not override `proactive_target` opts out of
+        // recipient-less proactive delivery (#3794).
+        assert_eq!(channel.proactive_target(), None);
     }
 
     #[tokio::test]

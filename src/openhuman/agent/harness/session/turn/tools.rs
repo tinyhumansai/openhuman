@@ -57,6 +57,7 @@ impl Agent {
             agent_definition_id: &self.agent_definition_id,
             prefer_markdown: self.context.prefer_markdown_tool_output(),
             budget_bytes: self.context.tool_result_budget_bytes(),
+            compaction_enabled: self.context.compaction_enabled(),
             artifact_store: Some(&artifact_store),
         };
         agent_tool_exec::run_agent_tool_call(&ctx, &progress, call, iteration).await
@@ -390,25 +391,47 @@ impl Agent {
             return false;
         }
         // Newly-present skills (on disk now, absent from the prior snapshot),
-        // announced at most once this session. Removals are detected by the
-        // id-set diff above but are NOT yet retracted from the frozen
-        // catalogue (symmetric to the integration/MCP announcements, which
-        // also only announce additions) — tracked in
-        // tinyhumansai/openhuman#3738.
+        // announced at most once this session.
         let newly: Vec<String> = latest_ids
             .difference(&current_ids)
             .filter(|id| self.announced_skills.insert((*id).clone()))
             .cloned()
             .collect();
+        // Skills removed from disk since the last snapshot: retract them so the
+        // model stops routing `run_skill` calls to skills that no longer exist.
+        // The frozen `## Installed Skills` system-prompt block cannot be updated
+        // mid-session (KV-cache stability), so the retraction note on the user
+        // turn is the only signal the model gets — mirrors the install path.
+        // Clear from `announced_skills` so a re-install later is announced fresh.
+        let removed: Vec<String> = current_ids.difference(&latest_ids).cloned().collect();
+        for id in &removed {
+            self.announced_skills.remove(id);
+        }
         log::info!(
-            "[agent_loop] installed-skills set changed ({trigger}): {} -> {} skills; updating tracked set + parking announcement (system-prompt catalogue is frozen mid-session; the user-turn note surfaces the change)",
+            "[agent_loop] installed-skills set changed ({trigger}): {} -> {} skills (new={} removed={}); updating tracked set + parking notes (system-prompt catalogue frozen for KV cache)",
             self.workflows.len(),
-            latest.len()
+            latest.len(),
+            newly.len(),
+            removed.len(),
         );
         self.workflows = latest;
         for id in newly {
+            // A re-install after a still-pending retraction cancels the
+            // retraction: the skill is present again, so drop the stale "gone"
+            // note and announce it instead.
+            self.pending_skill_retraction.retain(|p| p != &id);
             if !self.pending_skill_announcement.contains(&id) {
                 self.pending_skill_announcement.push(id);
+            }
+        }
+        for id in removed {
+            // If the skill was installed and uninstalled before its
+            // announcement ever surfaced, the model never saw it as available —
+            // drop the pending announcement so we don't emit a contradictory
+            // "installed" + "retracted" pair on the same user turn.
+            self.pending_skill_announcement.retain(|p| p != &id);
+            if !self.pending_skill_retraction.contains(&id) {
+                self.pending_skill_retraction.push(id);
             }
         }
         true
@@ -438,6 +461,13 @@ impl Agent {
         &self.pending_skill_announcement
     }
 
+    /// Test-only: skill ids parked for the next-turn `[skills retracted]`
+    /// retraction note by `refresh_workflows`.
+    #[cfg(test)]
+    pub(in super::super) fn test_pending_skill_retraction(&self) -> &[String] {
+        &self.pending_skill_retraction
+    }
+
     /// Test-only: inject a specific skill-events receiver (e.g. one whose
     /// sender has been dropped) so `drain_skill_events`' `Closed` arm is
     /// reachable without the global bus singleton.
@@ -453,6 +483,19 @@ impl Agent {
     #[cfg(test)]
     pub(in super::super) fn has_skill_events_rx(&self) -> bool {
         self.skill_events_rx.is_some()
+    }
+
+    /// Test-only: inject a specific composio-integrations receiver so the
+    /// drain path can be exercised against an isolated bus instead of the
+    /// global singleton (which other parallel tests publish into, racing the
+    /// "drained after one pass" assertion). Mirror of
+    /// [`Self::set_skill_events_rx_for_test`].
+    #[cfg(test)]
+    pub(in super::super) fn set_composio_integrations_rx_for_test(
+        &mut self,
+        rx: tokio::sync::broadcast::Receiver<crate::core::event_bus::DomainEvent>,
+    ) {
+        self.composio_integrations_rx = Some(rx);
     }
 
     /// Re-synthesise `delegate_*` tools for the orchestrator's `subagents`

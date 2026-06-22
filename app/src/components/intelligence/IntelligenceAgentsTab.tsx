@@ -16,6 +16,7 @@ import {
   setSelectedThread,
 } from '../../store/threadSlice';
 import type { ThreadMessage } from '../../types/thread';
+import { chatThreadPath } from '../../utils/chatRoutes';
 import AgentsLibraryPanel from './AgentsLibraryPanel';
 
 const log = debug('intelligence:agents-tab');
@@ -82,7 +83,7 @@ export default function IntelligenceAgentsTab() {
         dispatch(setActiveThread(thread.id));
         void dispatch(loadThreads());
         void dispatch(loadThreadMessages(thread.id));
-        navigate('/chat');
+        navigate(chatThreadPath(thread.id));
 
         await chatSend({
           threadId: thread.id,

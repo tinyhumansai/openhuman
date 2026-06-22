@@ -15,6 +15,18 @@ impl Channel for TelegramChannel {
         "telegram"
     }
 
+    /// Recipient-less proactive sends (cron/heartbeat) deliver to the bot's
+    /// configured default `chat_id`. `None` when unconfigured, so proactive
+    /// routing skips Telegram rather than letting `send` POST to an empty
+    /// `chat_id` (mirrors Discord — #3712 Telegram parity).
+    fn proactive_target(&self) -> Option<String> {
+        self.chat_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    }
+
     fn supports_reactions(&self) -> bool {
         true
     }

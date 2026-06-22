@@ -305,8 +305,22 @@ pub(crate) async fn run_one_tool(
             }
         }
         Ok(Err(e)) => {
-            crate::core::observability::report_error(
-                &e,
+            // Route through `report_error_or_expected` (not the unconditional
+            // `report_error`) so an error a downstream layer already classified
+            // as expected user-state isn't re-reported as a hard Sentry event
+            // here. The integrations client (`integrations/client.rs`) already
+            // demotes its backend 4xx/auth-state failures via
+            // `report_error_or_expected`, but it ALSO bubbles the error up; it
+            // lands in this `Ok(Err(_))` arm and was being re-reported as a
+            // hard `tool`/`execute` event — the double-report behind Sentry
+            // TAURI-RUST-84E (`Backend returned 401 Unauthorized for POST
+            // .../agent-integrations/parallel/search: Invalid token`, a
+            // user-end invalid/expired session token with no openhuman-side
+            // lever). Genuine tool failures don't match any classifier arm and
+            // still surface as hard errors — only already-classified
+            // user-state errors are demoted to a warn/info breadcrumb.
+            crate::core::observability::report_error_or_expected(
+                format!("{e:#}").as_str(),
                 "tool",
                 "execute",
                 &[

@@ -315,8 +315,9 @@ impl Agent {
                 "[profiles] applying per-profile session gate"
             );
         }
-        let runtime: Arc<dyn host_runtime::RuntimeAdapter> =
-            Arc::from(host_runtime::create_runtime(&config.runtime)?);
+        let runtime: Arc<dyn host_runtime::RuntimeAdapter> = Arc::from(
+            host_runtime::create_runtime(&config.runtime, config.shell.hide_window)?,
+        );
         let security = Arc::new(SecurityPolicy::from_config(
             &config.autonomy,
             &config.workspace_dir,
@@ -872,6 +873,16 @@ impl Agent {
                 .map(|t| t.name().to_string())
                 .collect(),
         };
+        // Compaction applies to every agent's tool output, so the CCR recovery
+        // tool must be a *real* member of any non-empty allowlist — this is the
+        // single source of truth that the policy session, advertised specs, and
+        // the run-time visible-name gate all consume, so adding it here makes a
+        // `retrieve_tool_output("…")` footer actionable for Named-scope agents
+        // (e.g. the orchestrator's curated list). An empty set already means
+        // "no filter", so it needs nothing. Added BEFORE the disallow filter
+        // below so an agent that explicitly disallows it still has it removed.
+        super::ensure_recovery_tool_visible(&mut visible);
+
         if let Some(def) = target_def {
             if !def.disallowed_tools.is_empty() {
                 match &def.tools {

@@ -153,11 +153,13 @@ impl ExtractedEntities {
 
     /// Count of unique `(kind, text)` pairs, case-insensitive. Used as a scoring signal.
     pub fn unique_entity_count(&self) -> usize {
-        use std::collections::BTreeSet;
+        use std::collections::HashSet;
+        // Only the cardinality matters, so a hash set counts the distinct
+        // `(kind, text)` pairs without paying for ordered insertion.
         self.entities
             .iter()
             .map(|e| (e.kind, e.text.to_lowercase()))
-            .collect::<BTreeSet<_>>()
+            .collect::<HashSet<_>>()
             .len()
     }
 
@@ -172,8 +174,11 @@ impl ExtractedEntities {
     /// The reason from whichever side won the max wins; if they tied or
     /// both are absent, the non-empty one (if any) is kept.
     pub fn merge(&mut self, other: ExtractedEntities) {
-        use std::collections::BTreeSet;
-        let mut seen: BTreeSet<(EntityKind, String, u32)> = self
+        use std::collections::HashSet;
+        // Both sets are membership-only dedup guards — the surviving order is
+        // the existing `Vec` push order, never the set's — so a hash set keeps
+        // the merge result identical while dropping the ordered-key overhead.
+        let mut seen: HashSet<(EntityKind, String, u32)> = self
             .entities
             .iter()
             .map(|e| (e.kind, e.text.to_lowercase(), e.span_start))
@@ -184,8 +189,7 @@ impl ExtractedEntities {
                 self.entities.push(e);
             }
         }
-        let mut topic_seen: BTreeSet<String> =
-            self.topics.iter().map(|t| t.label.clone()).collect();
+        let mut topic_seen: HashSet<String> = self.topics.iter().map(|t| t.label.clone()).collect();
         for t in other.topics {
             if topic_seen.insert(t.label.clone()) {
                 self.topics.push(t);

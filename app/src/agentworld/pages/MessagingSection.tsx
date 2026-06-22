@@ -27,6 +27,7 @@ import {
   PaymentRequiredError,
   type SignalKeyStatus,
 } from '../../lib/agentworld/invokeApiClient';
+import { useT } from '../../lib/i18n/I18nContext';
 import { fetchWalletStatus } from '../../services/walletApi';
 import { apiClient } from '../AgentWorldShell';
 import { useTinyplaceStream } from '../hooks/useTinyplaceStream';
@@ -1049,7 +1050,21 @@ interface DecryptedMessage {
   outgoing?: boolean;
 }
 
-function useDirectMessages(peerId: string) {
+function formatDirectMessageError(err: unknown, missingBundleMessage: string): string {
+  const message = String(err);
+  const rawBundle404 = /http\s*404/i.test(message) && /\/keys\/[^/\s]+\/bundle\b/i.test(message);
+  const mappedMissingBundle =
+    /recipient/i.test(message) &&
+    /not\s+set\s+up/i.test(message) &&
+    /encrypted\s+messaging/i.test(message);
+  if (rawBundle404 || mappedMissingBundle) {
+    log('[agentworld:dm] recipient key bundle missing');
+    return missingBundleMessage;
+  }
+  return message;
+}
+
+function useDirectMessages(peerId: string, missingBundleMessage: string) {
   const [messages, setMessages] = useState<DecryptedMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1086,11 +1101,11 @@ function useDirectMessages(peerId: string) {
         return merged.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
       });
     } catch (err) {
-      setError(String(err));
+      setError(formatDirectMessageError(err, missingBundleMessage));
     } finally {
       setLoading(false);
     }
-  }, [peerId]);
+  }, [missingBundleMessage, peerId]);
 
   const send = useCallback(
     async (plaintext: string) => {
@@ -1113,12 +1128,12 @@ function useDirectMessages(peerId: string) {
         );
         await refresh();
       } catch (err) {
-        setError(String(err));
+        setError(formatDirectMessageError(err, missingBundleMessage));
       } finally {
         setSending(false);
       }
     },
-    [peerId, refresh]
+    [missingBundleMessage, peerId, refresh]
   );
 
   useEffect(() => {
@@ -1139,7 +1154,15 @@ function ActiveDmView({
   composeText: string;
   setComposeText: (v: string) => void;
 }) {
-  const { messages, loading, error, sending, send } = useDirectMessages(peerId);
+  const { t } = useT();
+  const missingBundleMessage = t(
+    'agentworld.messaging.missingSignalBundle',
+    "This user hasn't enabled encrypted messaging yet. Ask them to open Agent World and enable secure DMs before sending a message."
+  );
+  const { messages, loading, error, sending, send } = useDirectMessages(
+    peerId,
+    missingBundleMessage
+  );
 
   const handleSend = useCallback(async () => {
     if (!composeText.trim()) return;

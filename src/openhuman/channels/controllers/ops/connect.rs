@@ -22,6 +22,34 @@ pub(crate) fn credential_provider(channel_id: &str, mode: ChannelAuthMode) -> St
     format!("channel:{}:{}", channel_id, mode)
 }
 
+/// Merge a channel's live supervised-listener health into its credential/config
+/// derived `connected` flag (issue #3712).
+///
+/// Only listener-backed modes (those that materialise a TOML config block —
+/// `has_config`) have a `channel:<id>` health component, kept current by the
+/// supervisor's `ChannelConnected`/`ChannelDisconnected` events. For those, a
+/// live `error` overrides the optimistic presence-based `connected` and carries
+/// the failure reason to the UI; an `ok` confirms it. While the listener is
+/// still `starting` (or has no component yet) we keep the presence-based value
+/// so a freshly-configured channel isn't reported as broken before its first
+/// connect attempt. Modes without a runtime listener (e.g. managed-DM) are left
+/// untouched. Returns `(connected, error)`.
+pub(crate) fn merge_listener_health(
+    presence_connected: bool,
+    has_config: bool,
+    health_status: Option<&str>,
+    health_last_error: Option<&str>,
+) -> (bool, Option<String>) {
+    if !has_config {
+        return (presence_connected, None);
+    }
+    match health_status {
+        Some("error") => (false, health_last_error.map(str::to_string)),
+        Some("ok") => (true, None),
+        _ => (presence_connected, None),
+    }
+}
+
 pub(crate) fn channel_config_connected(
     config: &Config,
     channel_id: &str,
@@ -255,6 +283,16 @@ pub async fn connect_channel(
             .to_string();
         let allowed_users = parse_allowed_users(creds_map.get("allowed_users"));
         let allowed_users_count = allowed_users.len();
+        // Default chat for recipient-less proactive sends (mirrors Discord's
+        // `channel_id`). Read fresh from the form each connect: present ⇒ use it
+        // (empty ⇒ cleared); absent ⇒ unset.
+        let chat_id = creds_map
+            .get("chat_id")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        let has_chat_id = chat_id.is_some();
 
         let mut persisted = config.clone();
         let (stream_mode, draft_update_interval_ms, silent_streaming, mention_only) =
@@ -276,6 +314,7 @@ pub async fn connect_channel(
 
         persisted.channels_config.telegram = Some(TelegramConfig {
             bot_token,
+            chat_id,
             allowed_users,
             stream_mode,
             draft_update_interval_ms,
@@ -291,6 +330,7 @@ pub async fn connect_channel(
         tracing::info!(
             target: "openhuman::channels",
             allowed_users_count,
+            has_chat_id,
             mention_only,
             "[telegram] connect_channel: wrote channels_config.telegram; restart core for listener to load token"
         );
@@ -318,13 +358,21 @@ pub async fn connect_channel(
 
         let mut persisted = config.clone();
         let existing = persisted.channels_config.discord.as_ref();
-        let parsed_allowed_users = parse_allowed_users(creds_map.get("allowed_users"));
-        let allowed_users = if parsed_allowed_users.is_empty() {
-            existing
+        // Distinguish an *explicitly cleared* allowlist from an *omitted* one.
+        // The field is advertised as "blank = everyone" (definitions.rs) and the
+        // provider treats an empty list as allow-all, but the old logic reused
+        // the saved list whenever the parsed value was empty — so a user who
+        // cleared the allowlist on reconnect stayed restricted to the previous
+        // users (#3794 review — Codex P2). The key is present in `creds_map`
+        // (even as an empty string) only when the FE sends it; a cleared field
+        // now submits an explicit empty value. So: present ⇒ honor literally
+        // (empty ⇒ allow-all); absent ⇒ reuse the saved list (reconnect
+        // convenience for callers that don't resend the field at all).
+        let allowed_users = match creds_map.get("allowed_users") {
+            Some(raw) => parse_allowed_users(Some(raw)),
+            None => existing
                 .map(|cfg| cfg.allowed_users.clone())
-                .unwrap_or_default()
-        } else {
-            parsed_allowed_users
+                .unwrap_or_default(),
         };
         let allowed_users_count = allowed_users.len();
         let listen_to_bots = parse_optional_bool(creds_map.get("listen_to_bots"))
@@ -505,13 +553,25 @@ pub async fn channel_status(
         None => all_channel_definitions(),
     };
 
+    // Snapshot live listener health once so every entry reflects the same
+    // moment. The supervisor keeps `channel:<id>` components current via
+    // `ChannelConnected`/`ChannelDisconnected` (issue #3712).
+    let health = crate::openhuman::health::snapshot();
+
     let mut entries = Vec::new();
     for def in &defs {
+        let comp = health.components.get(&format!("channel:{}", def.id));
         for spec in &def.auth_modes {
             let provider_key = credential_provider(def.id, spec.mode);
             let has_creds = stored_providers.iter().any(|p| p == &provider_key);
             let has_config = channel_config_connected(config, def.id, spec.mode);
-            let connected = has_creds || has_config;
+            let presence_connected = has_creds || has_config;
+            let (connected, error) = merge_listener_health(
+                presence_connected,
+                has_config,
+                comp.map(|c| c.status.as_str()),
+                comp.and_then(|c| c.last_error.as_deref()),
+            );
             entries.push(ChannelStatusEntry {
                 channel_id: def.id.to_string(),
                 auth_mode: spec.mode,
@@ -521,11 +581,56 @@ pub async fn channel_status(
                 // credentials. Collapsing these misleads callers that branch on
                 // credential presence (e.g. "needs re-auth" surfaces).
                 has_credentials: has_creds,
+                error,
             });
         }
     }
 
     Ok(RpcOutcome::new(entries, vec![]))
+}
+
+/// Set the default messaging channel for proactive agent delivery (issue #3712
+/// — "switch default channel Telegram↔Discord"). Persists
+/// `channels_config.active_channel` and applies a runtime override
+/// ([`crate::openhuman::channels::proactive::set_runtime_active_channel`]) so the
+/// change takes effect immediately, without restarting the channel runtime.
+pub async fn set_default_channel(
+    config: &mut Config,
+    channel: &str,
+) -> Result<RpcOutcome<Value>, String> {
+    let canonical = channel.trim().to_ascii_lowercase();
+    if canonical.is_empty() {
+        return Err("channel must not be empty".to_string());
+    }
+    // Accept any known channel definition, plus the in-app "web" channel.
+    if canonical != "web" && find_channel_definition(&canonical).is_none() {
+        return Err(format!("unknown channel: {channel}"));
+    }
+
+    config.channels_config.active_channel = Some(canonical.clone());
+    config
+        .save()
+        .await
+        .map_err(|e| format!("failed to persist default channel: {e}"))?;
+
+    // Apply live so proactive routing follows the new default immediately.
+    crate::openhuman::channels::proactive::set_runtime_active_channel(Some(canonical.clone()));
+
+    Ok(RpcOutcome::single_log(
+        json!({ "active_channel": canonical, "restart_required": false }),
+        format!("default messaging channel set to {canonical}"),
+    ))
+}
+
+/// Return the persisted default messaging channel
+/// (`channels_config.active_channel`), defaulting to `"web"` when unset.
+pub fn get_default_channel(config: &Config) -> Result<RpcOutcome<Value>, String> {
+    let active = config
+        .channels_config
+        .active_channel
+        .clone()
+        .unwrap_or_else(|| "web".to_string());
+    Ok(RpcOutcome::new(json!({ "active_channel": active }), vec![]))
 }
 
 /// Return the slugs of all messaging channels currently connected,

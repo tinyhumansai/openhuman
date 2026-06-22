@@ -209,6 +209,16 @@ fn identity_section_creates_missing_workspace_files() {
         soul.starts_with("# OpenHuman"),
         "SOUL.md should be seeded from src/openhuman/agent/prompts/SOUL.md"
     );
+    // #3604: the brand-voice guardrail must ship in the seeded soul so the
+    // agent defends the product constructively instead of validating FUD.
+    assert!(
+        soul.contains("## When OpenHuman is criticized"),
+        "SOUL.md must carry the brand-voice section (#3604)"
+    );
+    assert!(
+        soul.contains("Don't validate FUD"),
+        "SOUL.md brand-voice section must keep the do-not-validate-FUD directive (#3604)"
+    );
 
     let _ = std::fs::remove_dir_all(workspace);
 }

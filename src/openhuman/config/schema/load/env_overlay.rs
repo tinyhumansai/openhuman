@@ -118,6 +118,32 @@ impl Config {
             }
         }
 
+        if let Some(flag) = env.get_any(&["OPENHUMAN_SHELL_HIDE_WINDOW", "SHELL_HIDE_WINDOW"]) {
+            let normalized = flag.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => {
+                    self.shell.hide_window = true;
+                    tracing::debug!(
+                        value = %flag,
+                        "[config][shell] OPENHUMAN_SHELL_HIDE_WINDOW applied: hide_window=true"
+                    );
+                }
+                "0" | "false" | "no" | "off" => {
+                    self.shell.hide_window = false;
+                    tracing::debug!(
+                        value = %flag,
+                        "[config][shell] OPENHUMAN_SHELL_HIDE_WINDOW applied: hide_window=false"
+                    );
+                }
+                _ => tracing::warn!(
+                    value = %flag,
+                    "[config][shell] OPENHUMAN_SHELL_HIDE_WINDOW unrecognized value ignored; \
+                     keeping current hide_window={}",
+                    self.shell.hide_window
+                ),
+            }
+        }
+
         self.apply_search_env(env);
         self.apply_proxy_env(env);
         self.apply_runtime_env(env);
@@ -785,6 +811,19 @@ impl Config {
         if let Some(val) = env.get("OPENHUMAN_CONTEXT_TOOL_RESULT_BUDGET_BYTES") {
             if let Ok(n) = val.trim().parse::<usize>() {
                 self.context.tool_result_budget_bytes = n;
+            }
+        }
+        // Kill-switch for native tool-output compaction (Stage 1a). On by
+        // default; `OPENHUMAN_COMPACTION=0` disables it for a support/A-B
+        // bisect. Accepts the canonical short name and the namespaced form.
+        if let Some(flag) = env
+            .get("OPENHUMAN_COMPACTION")
+            .or_else(|| env.get("OPENHUMAN_CONTEXT_COMPACTION_ENABLED"))
+        {
+            match flag.trim().to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => self.context.compaction_enabled = true,
+                "0" | "false" | "no" | "off" => self.context.compaction_enabled = false,
+                _ => {}
             }
         }
         if let Some(model) = env.get("OPENHUMAN_CONTEXT_SUMMARIZER_MODEL") {

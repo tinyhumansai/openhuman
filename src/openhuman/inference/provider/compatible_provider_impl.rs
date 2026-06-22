@@ -1257,6 +1257,10 @@ impl Provider for OpenAiCompatibleProvider {
         Ok(())
     }
 
+    fn is_local_provider(&self) -> bool {
+        self.local_provider_kind.is_some()
+    }
+
     /// Resolve the effective context window for pre-dispatch trimming.
     ///
     /// For cloud (non-local) providers this is the static model table. For
@@ -1284,6 +1288,20 @@ impl Provider for OpenAiCompatibleProvider {
             model,
             Some(kind),
         )
+    }
+
+    /// Authoritative runtime-loaded window: only the value the local runtime
+    /// genuinely reports. Today that is LM Studio's native `/api/v0/models`
+    /// `loaded_context_length`. For every other case — cloud, llama.cpp / vLLM
+    /// (no loaded window endpoint), or a missing probe — we return `None`
+    /// rather than a guess, so the engine's hard pre-dispatch abort never fires
+    /// on an estimated window (Codex P1 review on PR #3771 / TAURI-RUST-6V0).
+    async fn loaded_context_window(&self, model: &str) -> Option<u64> {
+        use crate::openhuman::inference::local::profile::LocalProviderKind;
+        if self.local_provider_kind == Some(LocalProviderKind::LmStudio) {
+            return self.lm_studio_loaded_context_window(model).await;
+        }
+        None
     }
 }
 

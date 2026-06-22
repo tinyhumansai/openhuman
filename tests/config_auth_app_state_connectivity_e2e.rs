@@ -154,12 +154,9 @@ async fn serve_mock_backend() -> (
     let app = Router::new()
         .route("/auth/me", get(mock_auth_me))
         .route("/api/auth/me", get(mock_auth_me))
+        .route("/auth/login-token/consume", post(mock_consume_login_token))
         .route(
-            "/telegram/login-tokens/{token}/consume",
-            post(mock_consume_login_token),
-        )
-        .route(
-            "/api/telegram/login-tokens/{token}/consume",
+            "/api/auth/login-token/consume",
             post(mock_consume_login_token),
         )
         .route(
@@ -370,11 +367,17 @@ async fn static_auth_me(
     }))
 }
 
-async fn mock_consume_login_token(AxumPath(token): AxumPath<String>) -> Json<Value> {
+async fn mock_consume_login_token(Json(body): Json<Value>) -> Json<Value> {
+    // Token now arrives in the JSON body (`{ token }`), not the URL path, and the
+    // response field is `jwt` (matches backend `routes/auth.ts`).
+    let token = body
+        .get("token")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
     Json(json!({
         "success": true,
         "data": {
-            "jwtToken": format!("jwt-from-{token}")
+            "jwt": format!("jwt-from-{token}")
         }
     }))
 }
@@ -2106,6 +2109,7 @@ async fn config_save_and_load_encrypts_channel_secret_fields() {
     config.search.querit.api_key = Some("querit-secret".into());
     config.channels_config.telegram = Some(TelegramConfig {
         bot_token: "telegram-secret".into(),
+        chat_id: None,
         allowed_users: vec!["alice".into()],
         stream_mode: Default::default(),
         draft_update_interval_ms: 1000,

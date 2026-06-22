@@ -23,8 +23,79 @@ defaults:
     shell: bash
 
 jobs:
+  changes:
+    name: Detect Changed Areas
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      i18n: ${{ steps.filter.outputs.i18n }}
+      rust-core: ${{ steps.filter.outputs['rust-core'] }}
+      rust-tauri: ${{ steps.filter.outputs['rust-tauri'] }}
+      playwright: ${{ steps.filter.outputs.playwright }}
+      coverage: ${{ steps.filter.outputs.frontend == 'true' || steps.filter.outputs['rust-core'] == 'true' || steps.filter.outputs['rust-tauri'] == 'true' }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            frontend:
+              - '.github/workflows/pr-ci.yml'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'app/package.json'
+              - 'app/index.html'
+              - 'app/public/**'
+              - 'app/src/**'
+              - 'app/test/vitest.config.ts'
+              - 'app/tsconfig*.json'
+              - 'app/vite.config.*'
+              - 'app/tailwind.config.*'
+              - 'app/postcss.config.*'
+              - 'scripts/ci-cancel-aware.sh'
+            i18n:
+              - '.github/workflows/pr-ci.yml'
+              - 'app/src/**'
+              - 'scripts/ci-cancel-aware.sh'
+            rust-core:
+              - '.github/workflows/pr-ci.yml'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'src/**'
+              - 'tests/**'
+              - 'scripts/ci-cancel-aware.sh'
+              - 'scripts/test-rust-with-mock.sh'
+            rust-tauri:
+              - '.github/workflows/pr-ci.yml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'app/src-tauri/**'
+              - 'scripts/ci-cancel-aware.sh'
+            playwright:
+              - '.github/workflows/pr-ci.yml'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'src/**'
+              - 'app/package.json'
+              - 'app/index.html'
+              - 'app/public/**'
+              - 'app/src/**'
+              - 'app/test/e2e/**'
+              - 'app/scripts/e2e-web-*.sh'
+              - 'scripts/ci-cancel-aware.sh'
+
   frontend-quality:
     name: Frontend Quality (typecheck, lint, format)
+    needs: [changes]
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     container:
@@ -71,6 +142,8 @@ jobs:
 
   i18n-coverage:
     name: i18n Coverage (parity)
+    needs: [changes]
+    if: needs.changes.outputs.i18n == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     container:
@@ -105,6 +178,8 @@ jobs:
 
   rust-quality:
     name: Rust Quality (fmt, clippy)
+    needs: [changes]
+    if: needs.changes.outputs['rust-core'] == 'true' || needs.changes.outputs['rust-tauri'] == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     container:
@@ -139,6 +214,8 @@ jobs:
 
   build-playwright-e2e-artifact:
     name: Build Playwright E2E Artifact
+    needs: [changes]
+    if: needs.changes.outputs.playwright == 'true'
     runs-on: ubuntu-22.04
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:latest
@@ -236,7 +313,8 @@ jobs:
 
   frontend-coverage:
     name: Frontend Coverage (Vitest)
-    needs: [frontend-quality]
+    needs: [changes, frontend-quality]
+    if: always() && needs.changes.outputs.frontend == 'true' && needs['frontend-quality'].result == 'success'
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     container:
@@ -289,7 +367,8 @@ jobs:
 
   rust-core-coverage:
     name: Rust Core Coverage (cargo-llvm-cov)
-    needs: [rust-quality]
+    needs: [changes, rust-quality]
+    if: always() && needs.changes.outputs['rust-core'] == 'true' && needs['rust-quality'].result == 'success'
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     container:
@@ -349,14 +428,35 @@ jobs:
 
   rust-tauri-coverage:
     name: Rust Tauri Coverage (cargo-llvm-cov)
-    needs: [rust-quality]
+    needs: [changes, rust-quality]
+    if: always() && needs.changes.outputs['rust-tauri'] == 'true' && needs['rust-quality'].result == 'success'
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     env:
       CARGO_INCREMENTAL: "0"
+      # The instrumented Tauri shell binary (whole tauri/zbus/CEF graph) is
+      # dominated by DWARF debug info, which exhausts the runner disk and
+      # SIGBUSes the linker (collect2: ld terminated with signal 7) during the
+      # final link. Drop debug info — llvm-cov reads coverage from the embedded
+      # __llvm_covmap/__llvm_covfun sections, NOT from DWARF, so coverage
+      # numbers are unaffected. Mirrors rust-core-coverage.
+      CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
+      - name: Free disk space
+        run: |
+          # Coverage-instrumented builds produce huge binaries that exhaust the
+          # runner's ~14GB free disk during linking (SIGBUS). Inside a container,
+          # host paths are bind-mounted:
+          #   /opt/hostedtoolcache → /__t
+          #   /home/runner/work    → /__w
+          # Deleting /__t frees ~8GB on the same partition the build uses.
+          # Mirrors rust-core-coverage.
+          rm -rf /__t/* || true
+          echo "Disk after cleanup:"
+          df -h /__w || true
+
       - name: Checkout code
         uses: actions/checkout@v5
         with:
@@ -391,6 +491,11 @@ jobs:
 
       - name: Run cargo llvm-cov for Tauri shell
         run: bash scripts/ci-cancel-aware.sh cargo llvm-cov --manifest-path app/src-tauri/Cargo.toml --lcov --output-path lcov-tauri.info
+        env:
+          # Serialize codegen/link to cap peak memory + disk during the
+          # instrumented Tauri-shell link (SIGBUS otherwise). Mirrors
+          # rust-core-coverage.
+          CARGO_BUILD_JOBS: "1"
 
       - name: Save CEF binary distribution cache
         if: always() && steps.cef-cache.outputs.cache-hit != 'true'
@@ -411,7 +516,8 @@ jobs:
 
   rust-e2e:
     name: Rust E2E (mock backend)
-    needs: [rust-quality]
+    needs: [changes, rust-quality]
+    if: always() && needs.changes.outputs['rust-core'] == 'true' && needs['rust-quality'].result == 'success'
     runs-on: ubuntu-22.04
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:latest
@@ -477,7 +583,13 @@ jobs:
 
   playwright-e2e:
     name: E2E (Playwright / web lane ${{ matrix.shard }}/4)
-    needs: [frontend-quality, rust-quality, build-playwright-e2e-artifact]
+    needs: [changes, frontend-quality, rust-quality, build-playwright-e2e-artifact]
+    if: |
+      always() &&
+      needs.changes.outputs.playwright == 'true' &&
+      needs['build-playwright-e2e-artifact'].result == 'success' &&
+      contains(fromJSON('["success", "skipped"]'), needs['frontend-quality'].result) &&
+      contains(fromJSON('["success", "skipped"]'), needs['rust-quality'].result)
     runs-on: ubuntu-22.04
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:latest
@@ -574,14 +686,14 @@ jobs:
     steps:
       - name: Require all Playwright shards to pass
         run: |
-          result="${{ needs.playwright-e2e.result }}"
+          result="${{ needs['playwright-e2e'].result }}"
           echo "Playwright web lane aggregate result: ${result}"
           # NOTE: the shards currently carry continue-on-error: true, so this
           # aggregate is 'success' even when a shard hit a known flake — the
           # gate passes today. Once continue-on-error is removed from the shards
           # (after the flakes are fixed) this same check enforces a real pass.
-          if [ "${result}" = "success" ]; then
-            echo "Playwright shards passed."
+          if [ "${result}" = "success" ] || [ "${result}" = "skipped" ]; then
+            echo "Playwright shards passed or were intentionally skipped."
             exit 0
           fi
           echo "::error::Playwright web lane did not succeed (result=${result})."
@@ -589,16 +701,44 @@ jobs:
 
   coverage-gate:
     name: Coverage Gate (diff-cover >= 80%)
-    needs: [frontend-coverage, rust-core-coverage, rust-tauri-coverage]
+    needs: [changes, frontend-coverage, rust-core-coverage, rust-tauri-coverage]
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Verify coverage lanes completed
+        run: |
+          set -euo pipefail
+          coverage="${{ needs.changes.outputs.coverage }}"
+          frontend="${{ needs['frontend-coverage'].result }}"
+          core="${{ needs['rust-core-coverage'].result }}"
+          tauri="${{ needs['rust-tauri-coverage'].result }}"
+
+          echo "Coverage needed: ${coverage}"
+          echo "Frontend coverage result: ${frontend}"
+          echo "Rust core coverage result: ${core}"
+          echo "Rust Tauri coverage result: ${tauri}"
+
+          if [ "${coverage}" != "true" ]; then
+            echo "No coverage-relevant changes detected; skipping diff-cover."
+            exit 0
+          fi
+
+          for result in "${frontend}" "${core}" "${tauri}"; do
+            if [ "${result}" != "success" ] && [ "${result}" != "skipped" ]; then
+              echo "::error::A required coverage lane did not succeed or skip cleanly (result=${result})."
+              exit 1
+            fi
+          done
+
       - name: Checkout code
+        if: needs.changes.outputs.coverage == 'true'
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Resolve coverage compare ref
+        if: needs.changes.outputs.coverage == 'true'
         id: coverage-compare
         run: |
           set -euo pipefail
@@ -612,14 +752,17 @@ jobs:
           fi
 
       - name: Setup Python
+        if: needs.changes.outputs.coverage == 'true'
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Install diff-cover
+        if: needs.changes.outputs.coverage == 'true'
         run: pip install 'diff-cover>=9.2.0'
 
       - name: Download all lcov artifacts
+        if: needs.changes.outputs.coverage == 'true'
         uses: actions/download-artifact@v5
         with:
           path: lcov-artifacts
@@ -627,11 +770,13 @@ jobs:
           merge-multiple: false
 
       - name: List collected lcov files
+        if: needs.changes.outputs.coverage == 'true'
         run: |
           set -euo pipefail
           find lcov-artifacts -type f -name '*.info' -print
 
       - name: Enforce >= 80% coverage on changed lines
+        if: needs.changes.outputs.coverage == 'true'
         run: |
           set -euo pipefail
           mapfile -t LCOV_FILES < <(find lcov-artifacts -type f -name '*.info' | sort)
@@ -646,7 +791,7 @@ jobs:
             --markdown-report diff-coverage.md
 
       - name: Upload diff-cover report
-        if: always()
+        if: always() && needs.changes.outputs.coverage == 'true'
         uses: actions/upload-artifact@v5
         with:
           name: diff-coverage-report
@@ -655,3 +800,52 @@ jobs:
             diff-coverage.md
           retention-days: 14
           if-no-files-found: warn
+
+  pr-ci-gate:
+    name: PR CI Gate
+    needs:
+      - changes
+      - frontend-quality
+      - i18n-coverage
+      - rust-quality
+      - build-playwright-e2e-artifact
+      - frontend-coverage
+      - rust-core-coverage
+      - rust-tauri-coverage
+      - rust-e2e
+      - playwright-e2e-gate
+      - coverage-gate
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require PR CI jobs to pass
+        run: |
+          set -euo pipefail
+          declare -A results=(
+            ["Detect Changed Areas"]="${{ needs.changes.result }}"
+            ["Frontend Quality"]="${{ needs['frontend-quality'].result }}"
+            ["i18n Coverage"]="${{ needs['i18n-coverage'].result }}"
+            ["Rust Quality"]="${{ needs['rust-quality'].result }}"
+            ["Build Playwright E2E Artifact"]="${{ needs['build-playwright-e2e-artifact'].result }}"
+            ["Frontend Coverage"]="${{ needs['frontend-coverage'].result }}"
+            ["Rust Core Coverage"]="${{ needs['rust-core-coverage'].result }}"
+            ["Rust Tauri Coverage"]="${{ needs['rust-tauri-coverage'].result }}"
+            ["Rust E2E"]="${{ needs['rust-e2e'].result }}"
+            ["Playwright E2E Gate"]="${{ needs['playwright-e2e-gate'].result }}"
+            ["Coverage Gate"]="${{ needs['coverage-gate'].result }}"
+          )
+
+          failed=0
+          for name in "${!results[@]}"; do
+            result="${results[$name]}"
+            echo "${name}: ${result}"
+            if [ "${result}" != "success" ] && [ "${result}" != "skipped" ]; then
+              echo "::error::${name} did not pass (result=${result})."
+              failed=1
+            fi
+          done
+
+          if [ "${failed}" -ne 0 ]; then
+            exit 1
+          fi

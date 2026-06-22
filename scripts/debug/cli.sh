@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Dispatcher for `pnpm debug <cmd> <args…>`.
 # Agent-friendly wrappers around the project's test/run scripts.
-# Commands: unit | e2e | rust | logs
+# Commands: unit | e2e | rust | logs | harness-cache-audit
 
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,6 +22,8 @@ Commands:
         Full log goes to target/debug-logs/rust-<ts>.log.
   logs  [list|<run-id>|last] [--head N | --tail N]
         Inspect saved debug-log files. `last` shows the most recent.
+  harness-cache-audit [options]
+        Run live harness turns over JSON-RPC and summarize transcript token/cache deltas.
 
 Flags common to runners:
   --verbose   Stream full output to stdout in addition to the log file.
@@ -40,6 +42,9 @@ shift
 case "$cmd" in
   unit|e2e|rust|logs)
     exec "$here/${cmd}.sh" "$@"
+    ;;
+  harness-cache-audit)
+    exec node "$here/harness-cache-audit.mjs" "$@"
     ;;
   *)
     echo "[debug] unknown command: $cmd" >&2

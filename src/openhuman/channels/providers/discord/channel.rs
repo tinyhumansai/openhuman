@@ -42,10 +42,58 @@ impl DiscordChannel {
     }
 
     /// Check if a Discord user ID is in the allowlist.
-    /// Empty list means deny everyone until explicitly configured.
-    /// `"*"` means allow everyone.
+    ///
+    /// Empty list ⇒ allow-all: an unconfigured allowlist applies no per-user
+    /// restriction (the bot is still scoped to its configured guild/channel).
+    /// Previously an empty list denied *everyone*, so a bot connected via the UI
+    /// with the default-empty allowlist silently ignored every message and never
+    /// replied (issue #3712). This now matches the WhatsApp provider's
+    /// empty-⇒-allow-all convention. `"*"` also allows everyone; populate the
+    /// list with specific user IDs to restrict.
     fn is_user_allowed(&self, user_id: &str) -> bool {
-        self.allowed_users.iter().any(|u| u == "*" || u == user_id)
+        self.allowed_users.is_empty() || self.allowed_users.iter().any(|u| u == "*" || u == user_id)
+    }
+
+    /// Decide whether a message passes the bot's guild scoping.
+    ///
+    /// - No configured guild → all messages pass (guild filter inactive).
+    /// - Configured guild, message in a *different* guild → blocked.
+    /// - Configured guild, message in that guild → allowed.
+    /// - Configured guild, DM (no `guild_id`) → only when the allowlist is
+    ///   non-empty (explicit). `is_user_allowed` treats an empty list as
+    ///   allow-all (the intended *within-guild* default), but DMs bypass the
+    ///   guild filter — so a blank allowlist must not open a guild-scoped bot to
+    ///   arbitrary DMs (#3794 review — Codex P1). `"*"` (non-empty) still allows.
+    fn passes_guild_scope(
+        configured_guild: Option<&str>,
+        msg_guild: Option<&str>,
+        allowlist_empty: bool,
+    ) -> bool {
+        let Some(gid) = configured_guild else {
+            return true;
+        };
+        match msg_guild {
+            Some(g) => g == gid,
+            None => !allowlist_empty,
+        }
+    }
+
+    /// Resolve the outbound recipient channel id. Prefer the message's explicit
+    /// recipient (e.g. the channel a reply targets); fall back to the bot's
+    /// configured `channel_id` for recipient-less sends such as proactive
+    /// cron/heartbeat delivery (#3794 review — Codex P2). `None` when neither is
+    /// available, so the caller surfaces an error instead of POSTing to an empty
+    /// channel id.
+    fn resolve_recipient<'a>(
+        msg_recipient: &'a str,
+        configured: Option<&'a str>,
+    ) -> Option<&'a str> {
+        let recipient = if msg_recipient.is_empty() {
+            configured.unwrap_or("")
+        } else {
+            msg_recipient
+        };
+        (!recipient.is_empty()).then_some(recipient)
     }
 
     fn bot_user_id_from_token(token: &str) -> Option<String> {
@@ -191,14 +239,34 @@ impl Channel for DiscordChannel {
         "discord"
     }
 
+    /// Recipient-less proactive sends (cron/heartbeat) deliver to the bot's
+    /// configured default `channel_id`. `None` when unconfigured, so proactive
+    /// routing skips Discord rather than letting `send` bail on an empty target
+    /// (#3794 review — Codex P2).
+    fn proactive_target(&self) -> Option<String> {
+        self.channel_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    }
+
     async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {
+        // Resolve the target channel: explicit recipient (replies) or the
+        // configured default channel (recipient-less proactive sends). Bail with
+        // a clear error rather than POSTing to an empty channel id (#3794 review).
+        let Some(recipient) =
+            Self::resolve_recipient(&message.recipient, self.channel_id.as_deref())
+        else {
+            anyhow::bail!(
+                "Discord send: no target channel — message had no recipient and no channel_id is configured"
+            );
+        };
+
         let chunks = split_message_for_discord(&message.content);
 
         for (i, chunk) in chunks.iter().enumerate() {
-            let url = format!(
-                "https://discord.com/api/v10/channels/{}/messages",
-                message.recipient
-            );
+            let url = format!("https://discord.com/api/v10/channels/{recipient}/messages");
 
             let body = json!({ "content": chunk });
 
@@ -378,15 +446,13 @@ impl Channel for DiscordChannel {
                         continue;
                     }
 
-                    // Guild filter
-                    if let Some(ref gid) = guild_filter {
-                        let msg_guild = d.get("guild_id").and_then(serde_json::Value::as_str);
-                        // DMs have no guild_id — let them through; for guild messages, enforce the filter
-                        if let Some(g) = msg_guild {
-                            if g != gid {
-                                continue;
-                            }
-                        }
+                    // Guild filter + DM scoping (#3794 review — Codex P1)
+                    if !Self::passes_guild_scope(
+                        guild_filter.as_deref(),
+                        d.get("guild_id").and_then(serde_json::Value::as_str),
+                        self.allowed_users.is_empty(),
+                    ) {
+                        continue;
                     }
 
                     // Channel filter — only process messages from the configured channel

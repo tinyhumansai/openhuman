@@ -130,6 +130,21 @@ pub enum DomainEvent {
         reason: Option<String>,
     },
 
+    // ── Subconscious orchestrator ───────────────────────────────────────
+    /// A subconscious trigger finished gate evaluation (promote or drop).
+    /// Observability only — lets dashboards see ingestion volume and the
+    /// gate's promote/drop ratio without reading logs.
+    SubconsciousTriggerProcessed {
+        /// Trigger source family (`cron` / `user_message` / …).
+        source: String,
+        /// Gate decision (`promote` / `drop`).
+        decision: String,
+        /// Whether the trigger was promoted into the long-lived session.
+        promoted: bool,
+        /// Gate evaluation latency in milliseconds.
+        latency_ms: u64,
+    },
+
     // ── Run Queue ──────────────────────────────────────────────────────
     /// A message was queued into the active-run queue instead of interrupting.
     RunQueueMessageQueued {
@@ -1211,6 +1226,8 @@ impl DomainEvent {
 
             Self::TaskPlanAwaitingApproval { .. } | Self::TaskRunReclaimed { .. } => "agent",
 
+            Self::SubconsciousTriggerProcessed { .. } => "subconscious",
+
             Self::Voice(_) => "voice",
 
             Self::ApprovalRequested { .. }
@@ -1263,6 +1280,7 @@ impl DomainEvent {
             Self::AgentOrchestrationCompleted { .. } => "AgentOrchestrationCompleted",
             Self::AgentOrchestrationFailed { .. } => "AgentOrchestrationFailed",
             Self::AgentOrchestrationClosed { .. } => "AgentOrchestrationClosed",
+            Self::SubconsciousTriggerProcessed { .. } => "SubconsciousTriggerProcessed",
             Self::RunQueueMessageQueued { .. } => "RunQueueMessageQueued",
             Self::RunQueueMessageDelivered { .. } => "RunQueueMessageDelivered",
             Self::RunQueueFollowupDispatched { .. } => "RunQueueFollowupDispatched",

@@ -245,6 +245,13 @@ pub struct Agent {
     /// next user message is built so the note rides the user turn (NOT the
     /// system prompt) and the KV-cache prefix stays byte-identical.
     pub(super) pending_skill_announcement: Vec<String>,
+    /// Skill ids removed mid-session (uninstalled after session build) that
+    /// still need retracting on the next user message. Symmetric to
+    /// [`Self::pending_skill_announcement`]: parked by `refresh_workflows`,
+    /// rendered + cleared when the next user message is built so the retraction
+    /// note rides the user turn (NOT the system prompt) and the KV-cache prefix
+    /// stays byte-identical.
+    pub(super) pending_skill_retraction: Vec<String>,
     /// Skill ids already surfaced to the model as installed this session, so
     /// each newly-installed skill is announced exactly once and never
     /// re-announced per turn. Seeded from the session-build catalogue.

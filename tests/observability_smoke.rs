@@ -9,9 +9,9 @@
 //! and aggregate `all_exhausted` events still surface.
 
 use openhuman_core::core::observability::{
-    is_budget_event, is_session_expired_event, is_transient_backend_api_failure,
-    is_transient_integrations_failure, is_transient_provider_http_failure,
-    is_updater_transient_event,
+    is_all_transient_provider_exhaustion_event, is_budget_event, is_session_expired_event,
+    is_transient_backend_api_failure, is_transient_integrations_failure,
+    is_transient_provider_http_failure, is_updater_transient_event,
 };
 use sentry::protocol::Event;
 use std::collections::BTreeMap;
@@ -58,6 +58,7 @@ fn count_captured(events: Vec<Event<'static>>) -> usize {
         // Same filter shape the real binary installs in main.rs.
         before_send: Some(Arc::new(|event| {
             if is_transient_provider_http_failure(&event)
+                || is_all_transient_provider_exhaustion_event(&event)
                 || is_transient_backend_api_failure(&event)
                 || is_transient_integrations_failure(&event)
                 || is_budget_event(&event)
@@ -240,6 +241,40 @@ fn keeps_aggregate_all_exhausted_event() {
         count_captured(vec![event]),
         1,
         "aggregate all_exhausted event must surface for genuine outages"
+    );
+}
+
+#[test]
+fn drops_aggregate_all_exhausted_when_attempts_are_transient() {
+    let event = event_with_tags_and_message(
+        &[
+            ("domain", "llm_provider"),
+            ("failure", "all_exhausted"),
+            ("attempts", "2"),
+        ],
+        "All providers/models failed. Attempts: openai API error (503 Service Unavailable); custom_openai API error (502 Bad Gateway)",
+    );
+    assert_eq!(
+        count_captured(vec![event]),
+        0,
+        "all-transient aggregate should not recreate per-attempt Sentry noise"
+    );
+}
+
+#[test]
+fn keeps_aggregate_all_exhausted_with_permanent_attempt() {
+    let event = event_with_tags_and_message(
+        &[
+            ("domain", "llm_provider"),
+            ("failure", "all_exhausted"),
+            ("attempts", "2"),
+        ],
+        "All providers/models failed. Attempts: openai API error (401 Unauthorized); custom_openai API error (503 Service Unavailable)",
+    );
+    assert_eq!(
+        count_captured(vec![event]),
+        1,
+        "mixed/permanent aggregate should remain actionable"
     );
 }
 

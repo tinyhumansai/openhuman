@@ -738,11 +738,31 @@ pub(crate) fn build_native_assistant_history(
     let calls_json: Vec<serde_json::Value> = tool_calls
         .iter()
         .map(|tc| {
-            serde_json::json!({
+            let mut call = serde_json::json!({
                 "id": tc.id,
                 "name": tc.name,
                 "arguments": tc.arguments,
-            })
+            });
+            // Persist Gemini's per-call `thought_signature` (TAURI-RUST-4PK /
+            // 4PJ) into the stored assistant turn. PR #3553 threaded the
+            // signature through the live response→request hop and the
+            // stored-history *parser* (`parse_provider_tool_call_from_value`),
+            // but this writer — the single sink the agent loop persists every
+            // native tool-call turn through (engine/core.rs) — dropped it. On a
+            // history reload the rebuilt assistant turn therefore lacked
+            // `extra_content`, so the echoed `functionCall` part went out with
+            // no `thought_signature` and Gemini 400'd ("Function call is
+            // missing a thought_signature in functionCall parts"). Write it
+            // per-part so EVERY call in a parallel/multi-call turn round-trips,
+            // not just the first; `skip_serializing_if = "Option::is_none"` on
+            // `extra_content` keeps the stored JSON byte-identical for every
+            // provider that doesn't emit it.
+            if let Some(extra) = tc.extra_content.clone() {
+                if let Some(obj) = call.as_object_mut() {
+                    obj.insert("extra_content".to_string(), extra);
+                }
+            }
+            call
         })
         .collect();
 

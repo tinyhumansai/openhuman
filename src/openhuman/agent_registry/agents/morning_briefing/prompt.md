@@ -9,7 +9,7 @@ Prepare a morning briefing that helps the user start their day with clarity. Pul
 ## What to include (in priority order)
 
 1. **Calendar** — Today's meetings, calls, and events. Lead times, conflicts, and gaps worth noting.
-2. **Tasks & action items** — Open to-dos, deadlines due today, and anything overdue that needs attention.
+2. **Tasks & action items** — To-dos **created or changed in the last 24h**, deadlines due today, and anything overdue that needs attention. The system already restricts task-tool results to that 24h window, so treat what `composio_execute` returns for a task manager as recent by construction — don't try to re-fetch the whole backlog.
 3. **Important emails / messages** — Unread threads that look time-sensitive or are from key contacts. Don't list every newsletter.
 4. **Crypto / market context** — If the user tracks markets, surface notable overnight moves, liquidation events, or governance votes closing today. Keep it to 2-3 bullets max.
 5. **Recent memory** — What actually happened across the user's connected sources in the **last 24 hours** (conversations, threads, activity), plus any commitment now due (e.g. "you said you'd finish the proposal by Wednesday" — and today is Wednesday).

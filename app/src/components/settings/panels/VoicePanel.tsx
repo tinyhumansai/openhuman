@@ -1,3 +1,4 @@
+import debug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
@@ -88,6 +89,9 @@ const PIPER_VOICE_PRESET_IDS = [
   'en_GB-northern_english_male-medium',
 ] as const;
 
+const LOCAL_INSTALL_STATUS_POLL_MS = 2_000;
+const log = debug('voice:settings');
+
 interface VoicePanelProps {
   /** When true, render without the SettingsHeader chrome (used when embedded
    *  inside the onboarding custom wizard). */
@@ -164,15 +168,11 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
             // Status polls happen on a 2s loop; a single transient error
             // shouldn't blow up the entire settings panel. Log + keep the
             // previous snapshot.
-            if (process.env.NODE_ENV !== 'production') {
-              console.debug('[voice-install:whisper] status poll failed', err);
-            }
+            log('[voice-install:whisper] status poll failed %o', err);
             return null;
           }),
           piperInstallStatus().catch(err => {
-            if (process.env.NODE_ENV !== 'production') {
-              console.debug('[voice-install:piper] status poll failed', err);
-            }
+            log('[voice-install:piper] status poll failed %o', err);
             return null;
           }),
         ]);
@@ -228,9 +228,7 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
           setSavedTtsProvider(ttsStr);
         })
         .catch(err => {
-          if (process.env.NODE_ENV !== 'production') {
-            console.debug('[VoicePanel] voice settings load failed (expected on older cores)', err);
-          }
+          log('[VoicePanel] voice settings load failed (expected on older cores) %o', err);
           // Fallback: seed from legacy voice_status
           if (voiceResponse.stt_provider) {
             const seeded = voiceResponse.stt_provider === 'whisper' ? 'whisper' : 'cloud';
@@ -254,6 +252,52 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
     void loadData(true);
   }, []);
 
+  const shouldPollWhisperInstall = whisperInstall?.state === 'installing';
+  const shouldPollPiperInstall = piperInstall?.state === 'installing';
+
+  useEffect(() => {
+    if (!shouldPollWhisperInstall && !shouldPollPiperInstall) return;
+
+    let cancelled = false;
+    let inFlight = false;
+    const pollInstallStatuses = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const [nextWhisperStatus, nextPiperStatus] = await Promise.all([
+          shouldPollWhisperInstall
+            ? whisperInstallStatus().catch(err => {
+                log('[voice-install:whisper] status poll failed %o', err);
+                return null;
+              })
+            : Promise.resolve(null),
+          shouldPollPiperInstall
+            ? piperInstallStatus().catch(err => {
+                log('[voice-install:piper] status poll failed %o', err);
+                return null;
+              })
+            : Promise.resolve(null),
+        ]);
+
+        if (cancelled) return;
+        if (nextWhisperStatus) setWhisperInstall(nextWhisperStatus);
+        if (nextPiperStatus) setPiperInstall(nextPiperStatus);
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    void pollInstallStatuses();
+    const intervalId = window.setInterval(() => {
+      void pollInstallStatuses();
+    }, LOCAL_INSTALL_STATUS_POLL_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [shouldPollWhisperInstall, shouldPollPiperInstall]);
+
   const persistProviders = async (
     update: Partial<VoiceProvidersSnapshot> & {
       stt_provider?: string;
@@ -271,9 +315,7 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
         stt_model: update.stt_model,
         tts_voice: update.tts_voice,
       });
-      if (process.env.NODE_ENV !== 'production') {
-        console.debug('[VoicePanel:providers] saved', snapshot);
-      }
+      log('[VoicePanel:providers] saved %o', snapshot);
       setNotice(t('voice.providers.saved'));
       // Force a reload so the rest of the panel reflects the new state.
       await loadData(true);
@@ -370,9 +412,7 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
         setPendingKeySlug(null);
         setPendingKeyValue('');
         setNotice(t('voice.providers.saved'));
-        if (process.env.NODE_ENV !== 'production') {
-          console.debug('[VoicePanel:chip] enabled external provider', slug);
-        }
+        log('[VoicePanel:chip] enabled external provider %s', slug);
       } catch (err) {
         setError(err instanceof Error ? err.message : t('voice.providers.failedToSave'));
       } finally {
@@ -432,13 +472,37 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
     return t('voice.providers.installLocally');
   };
 
+  const installStatusText = (status: VoiceInstallStatus | null, ready: boolean): string => {
+    if (status?.state === 'installing') {
+      const progress =
+        typeof status.progress === 'number'
+          ? `${t('voice.providers.installing')} ${status.progress}%`
+          : t('voice.providers.installing');
+      return status.stage ? `${progress} · ${status.stage}` : progress;
+    }
+    if (ready) return t('voice.providers.installed');
+    if (status?.state === 'error' || status?.state === 'broken') {
+      return status.error_detail ?? t('voice.providers.installFailed');
+    }
+    return t('voice.providers.notInstalled');
+  };
+
+  const installStatusClassName = (status: VoiceInstallStatus | null, ready: boolean): string => {
+    if (status?.state === 'error' || status?.state === 'broken') {
+      return 'text-red-600 dark:text-red-300';
+    }
+    if (status?.state === 'installing') return 'text-amber-600 dark:text-amber-300';
+    if (ready) return 'text-emerald-600 dark:text-emerald-300';
+    return 'text-neutral-500 dark:text-neutral-400';
+  };
+
   const handleInstallWhisper = async () => {
     setIsInstallingWhisper(true);
     setError(null);
     setNotice(null);
     try {
       const force = whisperInstall?.state === 'installed';
-      console.debug('[voice-install:whisper] install click force=%s', force);
+      log('[voice-install:whisper] install click force=%s', force);
       const result = await installWhisper({ modelSize: sttModel || undefined, force });
       setWhisperInstall(result);
       setNotice(
@@ -462,7 +526,7 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
     setNotice(null);
     try {
       const force = piperInstall?.state === 'installed';
-      console.debug('[voice-install:piper] install click force=%s', force);
+      log('[voice-install:piper] install click force=%s', force);
       const result = await installPiper({ voiceId: ttsVoice || undefined, force });
       setPiperInstall(result);
       setNotice(
@@ -480,8 +544,14 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
     }
   };
 
-  const whisperReady = whisperInstall?.state === 'installed';
-  const piperReady = piperInstall?.state === 'installed';
+  const whisperReady =
+    whisperInstall?.state !== 'installing' &&
+    (whisperInstall?.state === 'installed' || Boolean(voiceStatus?.stt_available));
+  const piperReady =
+    piperInstall?.state !== 'installing' &&
+    (piperInstall?.state === 'installed' || Boolean(voiceStatus?.tts_available));
+  const pendingLocalProviderReady =
+    pendingKeySlug === 'whisper' ? whisperReady : pendingKeySlug === 'piper' ? piperReady : true;
 
   return (
     <PanelPage
@@ -747,18 +817,8 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
                         {installButtonLabel(whisperInstall, isInstallingWhisper, 'Whisper')}
                       </Button>
                       <span
-                        className={`text-[11px] ${
-                          whisperReady
-                            ? 'text-emerald-600 dark:text-emerald-300'
-                            : whisperInstall?.state === 'error'
-                              ? 'text-red-600 dark:text-red-300'
-                              : 'text-neutral-500 dark:text-neutral-400'
-                        }`}>
-                        {whisperReady
-                          ? t('voice.providers.installed')
-                          : whisperInstall?.state === 'error'
-                            ? (whisperInstall.error_detail ?? t('voice.providers.installFailed'))
-                            : t('voice.providers.notInstalled')}
+                        className={`text-[11px] ${installStatusClassName(whisperInstall, whisperReady)}`}>
+                        {installStatusText(whisperInstall, whisperReady)}
                       </span>
                     </div>
                   )}
@@ -774,18 +834,8 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
                         {installButtonLabel(piperInstall, isInstallingPiper, 'Piper')}
                       </Button>
                       <span
-                        className={`text-[11px] ${
-                          piperReady
-                            ? 'text-emerald-600 dark:text-emerald-300'
-                            : piperInstall?.state === 'error'
-                              ? 'text-red-600 dark:text-red-300'
-                              : 'text-neutral-500 dark:text-neutral-400'
-                        }`}>
-                        {piperReady
-                          ? t('voice.providers.installed')
-                          : piperInstall?.state === 'error'
-                            ? (piperInstall.error_detail ?? t('voice.providers.installFailed'))
-                            : t('voice.providers.notInstalled')}
+                        className={`text-[11px] ${installStatusClassName(piperInstall, piperReady)}`}>
+                        {installStatusText(piperInstall, piperReady)}
                       </span>
                     </div>
                   )}
@@ -806,6 +856,7 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
                       variant="primary"
                       size="xs"
                       onClick={() => {
+                        if (!pendingLocalProviderReady) return;
                         if (pendingKeySlug === 'whisper') {
                           onSttProviderChange('whisper');
                           if (sttModel) void persistProviders({ stt_model: sttModel });
@@ -815,7 +866,8 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
                         }
                         setPendingKeySlug(null);
                         setKeyTestResult(null);
-                      }}>
+                      }}
+                      disabled={!pendingLocalProviderReady || isSavingProviders}>
                       {t('voice.modal.enable')}
                     </Button>
                   </div>

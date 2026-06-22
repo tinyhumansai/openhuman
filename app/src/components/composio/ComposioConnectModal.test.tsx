@@ -716,3 +716,30 @@ describe('<ComposioConnectModal> — WhatsApp WABA id parity (#2127)', () => {
     });
   });
 });
+
+describe('ComposioConnectModal — connection-failed copy (issue #3759)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('substitutes the status into the failure message when polling sees a FAILED connection', async () => {
+    // A PENDING connection resumes polling on mount; the first poll observes a
+    // FAILED connection and must SUBSTITUTE {status} into the error copy
+    // (issue #3759) — not concatenate/leak the literal placeholder.
+    vi.mocked(composioApi.listConnections).mockResolvedValue({
+      connections: [{ id: 'ca_err', toolkit: 'gmail', status: 'FAILED' }],
+    });
+
+    render(
+      <ComposioConnectModal
+        toolkit={mockToolkit}
+        connections={[{ id: 'ca_pending', toolkit: 'gmail', status: 'PENDING' }]}
+        onClose={() => {}}
+      />
+    );
+
+    expect(await screen.findByText('Connection failed (status: FAILED).')).toBeInTheDocument();
+    // Regression guard: the raw placeholder must never reach the screen.
+    expect(screen.queryByText(/\{status\}/)).not.toBeInTheDocument();
+  });
+});

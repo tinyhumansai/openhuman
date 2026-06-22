@@ -432,9 +432,7 @@ describe('IntelligenceTasksTab', () => {
     await waitFor(() => expect(screen.getByText('Worked card')).toBeInTheDocument());
     fireEvent.click(screen.getByText('stub-view-session'));
 
-    expect(hoisted.navigate).toHaveBeenCalledWith('/chat', {
-      state: { openThreadId: 'task-session-99' },
-    });
+    expect(hoisted.navigate).toHaveBeenCalledWith('/chat/task-session-99');
   });
 
   test('renders persisted agent boards from the turn-state list', async () => {
