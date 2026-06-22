@@ -244,7 +244,9 @@ async fn fetch_catalog_uncached() -> Result<Vec<CatalogEntry>, String> {
         "[skill_registry] parsing catalog"
     );
 
-    let entries: Vec<CatalogEntry> = raw_items.iter().filter_map(parse_hermes_entry).collect();
+    let mut entries: Vec<CatalogEntry> =
+        raw_items.iter().filter_map(parse_hermes_entry).collect();
+    ensure_unique_catalog_ids(&mut entries);
 
     tracing::info!(count = entries.len(), "[skill_registry] catalog indexed");
 
@@ -463,6 +465,11 @@ pub(crate) fn parse_hermes_entry(item: &serde_json::Value) -> Option<CatalogEntr
         .get("sourceUrl")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    tracing::trace!(
+        name = %name,
+        has_source_url = source_url.is_some(),
+        "[skill_registry] parsed catalog entry"
+    );
 
     let download_url = derive_download_url(
         &source,
@@ -500,12 +507,14 @@ fn derive_download_url(
     if let Ok(base) = std::env::var(DOWNLOAD_BASE_URL_ENV) {
         let base = base.trim().trim_end_matches('/');
         if !base.is_empty() {
+            tracing::debug!(name = %name, "[skill_registry] download_url resolved via env override");
             return format!("{base}/{name}/SKILL.md");
         }
     }
     // Bundled built-in / optional skills carry a `docsPath` and live in the
     // Hermes repo, so derive their raw URL from that (canonical path).
     if let Some(url) = docs_path.and_then(download_url_from_docs_path) {
+        tracing::debug!(name = %name, "[skill_registry] download_url resolved via docsPath");
         return url;
     }
     // Aggregated community skills (ClawHub, skills.sh, browse.sh, …) carry a
@@ -513,6 +522,7 @@ fn derive_download_url(
     // at a fetchable raw GitHub file. Without this every aggregated skill fell
     // back to the Hermes base below and 404'd at install time (#3741).
     if let Some(url) = source_url.and_then(normalize_source_url) {
+        tracing::debug!(name = %name, url = %url, "[skill_registry] download_url resolved via sourceUrl");
         return url;
     }
     // Last-resort fallback: assume the skill lives in the Hermes repo. Correct
@@ -523,6 +533,7 @@ fn derive_download_url(
         "optional" => "optional-skills",
         _ => "skills",
     };
+    tracing::debug!(name = %name, source = %source, "[skill_registry] download_url resolved via Hermes fallback");
     format!(
         "https://raw.githubusercontent.com/NousResearch/hermes-agent/main/{root}/{category}/{name}/SKILL.md"
     )
@@ -542,12 +553,65 @@ fn normalize_source_url(source_url: &str) -> Option<String> {
     }
     let rest = url.strip_prefix("https://github.com/")?;
     let (repo, after_blob) = rest.split_once("/blob/")?;
-    if repo.is_empty() || !after_blob.ends_with(".md") {
+    // `repo` must be the full `{owner}/{repository}` pair — a malformed URL like
+    // `github.com/owner/blob/main/SKILL.md` yields just `owner`, which would
+    // produce an invalid raw URL missing the repository segment.
+    if repo.is_empty() || !repo.contains('/') || !after_blob.ends_with(".md") {
         return None;
     }
     Some(format!(
         "https://raw.githubusercontent.com/{repo}/{after_blob}"
     ))
+}
+
+/// Ensure every catalog entry has a globally-unique `id`. The Hermes catalog
+/// keys entries by bare `name`, so generic names (`login`, `search`, …) recur
+/// across different community repos. Now that each resolves to its own
+/// `sourceUrl` download URL (#3741), a duplicate `id` would let an install
+/// request for one entry silently resolve to a different repo's URL (the
+/// install handlers pick the first `id` match). Disambiguate any colliding ids
+/// by appending a short stable hash of the download URL; unique ids are left
+/// untouched so the common case keeps its friendly id.
+fn ensure_unique_catalog_ids(entries: &mut [CatalogEntry]) {
+    use std::collections::{HashMap, HashSet};
+
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for entry in entries.iter() {
+        *counts.entry(entry.id.as_str()).or_default() += 1;
+    }
+    let colliding: HashSet<String> = counts
+        .into_iter()
+        .filter(|(_, n)| *n > 1)
+        .map(|(id, _)| id.to_string())
+        .collect();
+    if colliding.is_empty() {
+        return;
+    }
+
+    let mut disambiguated = 0usize;
+    for entry in entries.iter_mut() {
+        if colliding.contains(&entry.id) {
+            entry.id = format!("{}#{}", entry.id, short_hash(&entry.download_url));
+            disambiguated += 1;
+        }
+    }
+    tracing::debug!(
+        groups = colliding.len(),
+        entries = disambiguated,
+        "[skill_registry] disambiguated colliding catalog ids by download_url hash"
+    );
+}
+
+/// FNV-1a 64-bit hash rendered as 8 hex chars. Deterministic across builds
+/// (unlike `DefaultHasher`), so a given download URL maps to the same id suffix
+/// on every catalog fetch — keeping disambiguated ids stable for the UI/agent.
+fn short_hash(input: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in input.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{:08x}", hash & 0xffff_ffff)
 }
 
 fn download_url_from_docs_path(docs_path: &str) -> Option<String> {
@@ -690,6 +754,49 @@ mod tests {
         assert!(normalize_source_url("https://github.com/acme/repo/blob/main/skills/x").is_none());
         // Bare hosts / tree listings are not files either.
         assert!(normalize_source_url("https://github.com/acme/repo").is_none());
+        // A blob URL missing the repository segment (`owner` only) would yield an
+        // invalid raw URL, so it is rejected.
+        assert!(normalize_source_url("https://github.com/owner/blob/main/SKILL.md").is_none());
+    }
+
+    #[test]
+    fn ensure_unique_catalog_ids_disambiguates_colliding_names() {
+        let make = |name: &str, repo: &str| {
+            parse_hermes_entry(&json!({
+                "name": name,
+                "description": "d",
+                "category": "auth",
+                "source": "browse.sh",
+                "sourceUrl": format!("https://github.com/acme/{repo}/blob/main/skills/{name}/SKILL.md"),
+            }))
+            .expect("entry")
+        };
+
+        // Two entries share the generic name `login` but live in different repos,
+        // so they resolve to different download URLs.
+        let mut entries = vec![
+            make("login", "alpha"),
+            make("login", "beta"),
+            make("unique-tool", "gamma"),
+        ];
+        ensure_unique_catalog_ids(&mut entries);
+
+        // The singleton keeps its friendly id.
+        assert_eq!(entries[2].id, "unique-tool");
+        // The colliding pair is disambiguated and the two ids now differ.
+        assert!(entries[0].id.starts_with("login#"));
+        assert!(entries[1].id.starts_with("login#"));
+        assert_ne!(entries[0].id, entries[1].id);
+        // Every id in the catalog is globally unique.
+        let ids: std::collections::HashSet<&String> = entries.iter().map(|e| &e.id).collect();
+        assert_eq!(ids.len(), entries.len());
+    }
+
+    #[test]
+    fn short_hash_is_stable_and_differs_by_input() {
+        assert_eq!(short_hash("https://example.com/a"), short_hash("https://example.com/a"));
+        assert_ne!(short_hash("https://example.com/a"), short_hash("https://example.com/b"));
+        assert_eq!(short_hash("anything").len(), 8);
     }
 
     #[test]
