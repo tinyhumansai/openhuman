@@ -485,6 +485,19 @@ impl Agent {
         self.skill_events_rx.is_some()
     }
 
+    /// Test-only: inject a specific composio-integrations receiver so the
+    /// drain path can be exercised against an isolated bus instead of the
+    /// global singleton (which other parallel tests publish into, racing the
+    /// "drained after one pass" assertion). Mirror of
+    /// [`Self::set_skill_events_rx_for_test`].
+    #[cfg(test)]
+    pub(in super::super) fn set_composio_integrations_rx_for_test(
+        &mut self,
+        rx: tokio::sync::broadcast::Receiver<crate::core::event_bus::DomainEvent>,
+    ) {
+        self.composio_integrations_rx = Some(rx);
+    }
+
     /// Re-synthesise `delegate_*` tools for the orchestrator's `subagents`
     /// declaration using the live `connected_integrations` slice, and
     /// reconcile the resulting set into `self.tools` / `self.tool_specs` /

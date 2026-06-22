@@ -49,6 +49,7 @@ impl TelegramChannel {
 
         Self {
             bot_token,
+            chat_id: None,
             api_base,
             allowed_users: Arc::new(RwLock::new(normalized_allowed)),
             pairing,
@@ -76,6 +77,16 @@ impl TelegramChannel {
         self.stream_mode = stream_mode;
         self.draft_update_interval_ms = draft_update_interval_ms;
         self.silent_streaming = silent_streaming;
+        self
+    }
+
+    /// Set the default chat for recipient-less proactive sends. A blank or
+    /// whitespace-only value is treated as unset (`None`), so proactive routing
+    /// skips Telegram rather than POSTing to an empty `chat_id`.
+    pub fn with_chat_id(mut self, chat_id: Option<String>) -> Self {
+        self.chat_id = chat_id
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
         self
     }
 

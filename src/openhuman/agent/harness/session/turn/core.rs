@@ -518,10 +518,28 @@ impl Agent {
             // local providers (LM Studio) trim to their runtime-loaded n_ctx
             // rather than the trained-max table (#3550 / TAURI-RUST-6V0).
             // Must run before `agent: self` takes the &mut borrow below.
+            //
+            // For local providers this is always `Some` (a conservative floor
+            // backs up any missing profile default), so trimming always engages.
+            // `None` means a cloud provider with an unknown model — trimming is
+            // intentionally skipped there (large window; over-trimming is worse).
             let turn_context_window = self
                 .provider
                 .effective_context_window(&effective_model)
                 .await;
+            match turn_context_window {
+                Some(context_window) => tracing::debug!(
+                    provider = %provider_name,
+                    model = %effective_model,
+                    context_window,
+                    "[agent_loop] effective context window resolved for turn"
+                ),
+                None => tracing::debug!(
+                    provider = %provider_name,
+                    model = %effective_model,
+                    "[agent_loop] effective context window unavailable (cloud unknown model); pre-dispatch trimming skipped this turn"
+                ),
+            }
             let mut observer = AgentObserver {
                 agent: self,
                 artifact_store,

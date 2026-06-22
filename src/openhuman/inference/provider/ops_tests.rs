@@ -682,12 +682,37 @@ mod context_window_exceeded_suppression {
     }
 
     #[test]
+    fn classifies_lmstudio_n_keep_exceeds_n_ctx_body() {
+        // TAURI-RUST-6V0: LM Studio / llama.cpp reject a prompt whose
+        // un-evictable prefix (`n_keep`) is larger than the model's loaded
+        // context (`n_ctx`). The user loaded the model with too small a
+        // context length; the remediation lives in the user's local server,
+        // so the matcher must demote this from Sentry. Verbatim wire body.
+        let body = "lmstudio API error (400 Bad Request): {\"error\":\"The number of tokens to keep from the initial prompt is greater than the context length (n_keep: 10978 >= n_ctx: 8192). Try to load the model with a larger context length, or provide a shorter input.\"}";
+        assert!(
+            is_context_window_exceeded_message(body),
+            "LM Studio n_keep >= n_ctx body must classify as context-window overflow"
+        );
+        // Both anchors fire independently: the `greater than the context
+        // length` phrase AND the paired `n_keep`/`n_ctx` diagnostic.
+        assert!(is_context_window_exceeded_message(
+            "request rejected: prompt is greater than the context length of the loaded model"
+        ));
+        assert!(is_context_window_exceeded_message(
+            "n_keep: 9000 >= n_ctx: 4096"
+        ));
+    }
+
+    #[test]
     fn does_not_match_unrelated_bodies() {
         for body in [
             "rate limit exceeded, retry after 30s",
             "Invalid request: model not found",
             "Insufficient budget",
             "tool call exceeded the allowed budget",
+            // Only one of the paired n_keep/n_ctx tokens present — must NOT
+            // match (guards the paired-anchor arm against bare n_ctx logging).
+            "loaded model with n_ctx: 8192 and 32 layers",
         ] {
             assert!(
                 !is_context_window_exceeded_message(body),

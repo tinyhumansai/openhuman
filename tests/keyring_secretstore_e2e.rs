@@ -77,6 +77,7 @@ async fn config_secrets_roundtrip_via_keyring_backed_master_key_migration() {
         channels_config: openhuman_core::openhuman::config::schema::ChannelsConfig {
             telegram: Some(TelegramConfig {
                 bot_token: "tg-bot-secret".into(),
+                chat_id: None,
                 allowed_users: vec!["alice".into()],
                 stream_mode: StreamMode::default(),
                 draft_update_interval_ms: 1000,

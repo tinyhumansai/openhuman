@@ -287,6 +287,8 @@ test.describe('Harness - Composio tool-call prompt flow', () => {
 
     await sendMessage(page, 'create a linear issue titled Fix authentication timeout');
     await expect(page.getByText(CANARY).first()).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByText(/I have created the Linear issue/i)).toBeVisible();
+    // `.first()` — the confirmation text also appears in the tool-result echo
+    // pane, so an unscoped match trips Playwright strict mode (2 elements).
+    await expect(page.getByText(/I have created the Linear issue/i).first()).toBeVisible();
   });
 });

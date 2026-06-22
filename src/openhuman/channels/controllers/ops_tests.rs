@@ -52,6 +52,7 @@ fn channel_config_connected_covers_config_backed_modes() {
 
     config.channels_config.telegram = Some(TelegramConfig {
         bot_token: "telegram-token".into(),
+        chat_id: None,
         allowed_users: vec![],
         stream_mode: Default::default(),
         draft_update_interval_ms: 1000,
@@ -304,6 +305,120 @@ async fn connect_discord_bot_token_persists_runtime_config() {
     assert_eq!(
         discord.get("channel_id").and_then(toml::Value::as_str),
         Some("channel-2")
+    );
+}
+
+#[tokio::test]
+async fn connect_telegram_bot_token_persists_chat_id() {
+    let (_tmp, config) = isolated_test_config();
+    let result = connect_channel(
+        &config,
+        "telegram",
+        ChannelAuthMode::BotToken,
+        serde_json::json!({
+            "bot_token": "telegram-token-123",
+            "chat_id": "  987654  "
+        }),
+    )
+    .await
+    .expect("telegram connect should succeed");
+
+    assert_eq!(result.value.status, "connected");
+    assert!(result.value.restart_required);
+
+    let raw = tokio::fs::read_to_string(&config.config_path)
+        .await
+        .expect("saved config should exist");
+    let parsed: toml::Value = toml::from_str(&raw).expect("saved config should parse");
+    let telegram = parsed
+        .get("channels_config")
+        .and_then(|v| v.get("telegram"))
+        .and_then(toml::Value::as_table)
+        .expect("channels_config.telegram should be persisted");
+
+    // chat_id is trimmed before persistence (mirrors Discord channel_id).
+    assert_eq!(
+        telegram.get("chat_id").and_then(toml::Value::as_str),
+        Some("987654")
+    );
+}
+
+/// Read the persisted Discord `allowed_users` array from the saved config.toml.
+async fn reload_discord_allowed_users(config: &Config) -> Vec<String> {
+    let raw = tokio::fs::read_to_string(&config.config_path)
+        .await
+        .expect("saved config should exist");
+    let parsed: toml::Value = toml::from_str(&raw).expect("saved config should parse");
+    parsed
+        .get("channels_config")
+        .and_then(|v| v.get("discord"))
+        .and_then(|v| v.get("allowed_users"))
+        .and_then(toml::Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(toml::Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn seed_discord_with_allowlist(config: &mut Config) {
+    config.channels_config.discord = Some(DiscordConfig {
+        bot_token: "discord-token-abc".to_string(),
+        guild_id: None,
+        channel_id: None,
+        allowed_users: vec!["111".to_string(), "222".to_string()],
+        listen_to_bots: false,
+        mention_only: false,
+    });
+}
+
+#[tokio::test]
+async fn connect_discord_omitted_allowlist_reuses_existing() {
+    // Reconnecting without resending `allowed_users` keeps the saved list — the
+    // reconnect-convenience path (#3794 review — Codex P2).
+    let (_tmp, mut config) = isolated_test_config();
+    seed_discord_with_allowlist(&mut config);
+    config.save().await.expect("seed should persist");
+
+    connect_channel(
+        &config,
+        "discord",
+        ChannelAuthMode::BotToken,
+        serde_json::json!({ "bot_token": "discord-token-abc" }),
+    )
+    .await
+    .expect("reconnect should succeed");
+
+    assert_eq!(
+        reload_discord_allowed_users(&config).await,
+        vec!["111".to_string(), "222".to_string()],
+        "omitted allowed_users must reuse the previously-saved list"
+    );
+}
+
+#[tokio::test]
+async fn connect_discord_cleared_allowlist_allows_everyone() {
+    // Clearing the allowlist in the UI submits an explicit empty value; the
+    // backend must honor it (empty ⇒ allow-all) instead of reusing the old list
+    // (#3794 review — Codex P2).
+    let (_tmp, mut config) = isolated_test_config();
+    seed_discord_with_allowlist(&mut config);
+    config.save().await.expect("seed should persist");
+
+    connect_channel(
+        &config,
+        "discord",
+        ChannelAuthMode::BotToken,
+        serde_json::json!({ "bot_token": "discord-token-abc", "allowed_users": "" }),
+    )
+    .await
+    .expect("reconnect should succeed");
+
+    assert!(
+        reload_discord_allowed_users(&config).await.is_empty(),
+        "an explicit empty allowed_users must clear the list (allow-all), not reuse it"
     );
 }
 
@@ -632,6 +747,168 @@ async fn channel_status_reports_managed_dm_credential_as_connected() {
         result.value
     );
     assert!(managed_dm.has_credentials);
+}
+
+// ---------------------------------------------------------------------------
+// Issue #3712: `channel_status` must reflect the *live* supervised-listener
+// health, not just credential/config presence, so the Messaging tab never
+// shows a false "Connected" while the listener is actually failing.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn merge_listener_health_ignores_modes_without_a_listener() {
+    // managed-DM and other listener-less modes have no `channel:<id>` health
+    // component — presence must pass through untouched and never set an error.
+    assert_eq!(
+        merge_listener_health(true, false, Some("error"), Some("boom")),
+        (true, None)
+    );
+    assert_eq!(
+        merge_listener_health(false, false, None, None),
+        (false, None)
+    );
+}
+
+#[test]
+fn merge_listener_health_error_overrides_presence_and_surfaces_reason() {
+    // Configured (presence == connected) but the live listener is failing →
+    // report disconnected and carry the reason to the UI.
+    assert_eq!(
+        merge_listener_health(true, true, Some("error"), Some("gateway 4004")),
+        (false, Some("gateway 4004".to_string()))
+    );
+}
+
+#[test]
+fn merge_listener_health_ok_confirms_connected() {
+    assert_eq!(
+        merge_listener_health(true, true, Some("ok"), None),
+        (true, None)
+    );
+}
+
+#[test]
+fn merge_listener_health_starting_keeps_presence() {
+    // Before the first connect attempt the component is "starting" (or absent):
+    // keep the presence-based value so a freshly-configured channel isn't shown
+    // as broken prematurely.
+    assert_eq!(
+        merge_listener_health(true, true, Some("starting"), None),
+        (true, None)
+    );
+    assert_eq!(merge_listener_health(true, true, None, None), (true, None));
+}
+
+#[tokio::test]
+async fn channel_status_surfaces_live_listener_error() {
+    let (_tmp, mut config) = isolated_test_config();
+
+    // Configure a bot_token Discord channel (materialises a runtime listener).
+    config.channels_config.discord = Some(DiscordConfig {
+        bot_token: "tok".to_string(),
+        guild_id: None,
+        channel_id: None,
+        allowed_users: vec![],
+        listen_to_bots: false,
+        mention_only: false,
+    });
+
+    // Simulate the supervisor reporting the listener as failed.
+    crate::openhuman::health::mark_component_error("channel:discord", "gateway closed (4004)");
+
+    let result = channel_status(&config, Some("discord"))
+        .await
+        .expect("channel_status should succeed");
+
+    let bot_token = result
+        .value
+        .iter()
+        .find(|e| e.auth_mode == ChannelAuthMode::BotToken)
+        .expect("bot_token entry");
+    assert!(
+        !bot_token.connected,
+        "a failing listener must report not-connected: {:?}",
+        result.value
+    );
+    assert_eq!(
+        bot_token.error.as_deref(),
+        Some("gateway closed (4004)"),
+        "the disconnect reason must be surfaced: {:?}",
+        result.value
+    );
+
+    // Recovery: once the supervisor marks the listener healthy, status flips
+    // back to connected with the error cleared.
+    crate::openhuman::health::mark_component_ok("channel:discord");
+    let recovered = channel_status(&config, Some("discord"))
+        .await
+        .expect("channel_status should succeed");
+    let bot_token = recovered
+        .value
+        .iter()
+        .find(|e| e.auth_mode == ChannelAuthMode::BotToken)
+        .expect("bot_token entry");
+    assert!(
+        bot_token.connected,
+        "healthy listener should report connected"
+    );
+    assert!(bot_token.error.is_none(), "error should clear on recovery");
+}
+
+// ---------------------------------------------------------------------------
+// Issue #3712: default messaging channel switch (Telegram↔Discord). Setting the
+// default must persist to `channels_config.active_channel`; an unknown channel
+// must be rejected without clobbering the current value.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn set_default_channel_persists_known_channels() {
+    let (_tmp, mut config) = isolated_test_config();
+    assert!(config.channels_config.active_channel.is_none());
+
+    set_default_channel(&mut config, "Discord")
+        .await
+        .expect("set discord");
+    assert_eq!(
+        config.channels_config.active_channel.as_deref(),
+        Some("discord"),
+        "channel must be canonicalised to lowercase and persisted"
+    );
+
+    set_default_channel(&mut config, "telegram")
+        .await
+        .expect("set telegram");
+    assert_eq!(
+        config.channels_config.active_channel.as_deref(),
+        Some("telegram")
+    );
+}
+
+#[tokio::test]
+async fn set_default_channel_rejects_unknown_and_empty() {
+    let (_tmp, mut config) = isolated_test_config();
+    set_default_channel(&mut config, "discord")
+        .await
+        .expect("seed discord");
+
+    assert!(set_default_channel(&mut config, "myspace")
+        .await
+        .unwrap_err()
+        .contains("unknown channel"),);
+    assert!(set_default_channel(&mut config, "   ").await.is_err());
+
+    // A rejected set must not clobber the previously persisted value.
+    assert_eq!(
+        config.channels_config.active_channel.as_deref(),
+        Some("discord")
+    );
+}
+
+#[test]
+fn get_default_channel_defaults_to_web_when_unset() {
+    let (_tmp, config) = isolated_test_config();
+    let out = get_default_channel(&config).expect("get default");
+    assert_eq!(out.value["active_channel"], "web");
 }
 
 #[tokio::test]

@@ -41,6 +41,7 @@ fn has_listening_integrations_detects_telegram() {
     let mut cfg = ChannelsConfig::default();
     cfg.telegram = Some(TelegramConfig {
         bot_token: "tok".into(),
+        chat_id: None,
         allowed_users: vec![],
         stream_mode: StreamMode::Off,
         draft_update_interval_ms: 1000,

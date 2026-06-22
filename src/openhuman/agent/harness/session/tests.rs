@@ -6,7 +6,7 @@
 //! (`MockProvider`, `RecordingProvider`, `MockTool`) are defined here.
 
 use super::types::{Agent, AgentBuilder};
-use crate::core::event_bus::{init_global, publish_global, DomainEvent};
+use crate::core::event_bus::DomainEvent;
 use crate::openhuman::agent::dispatcher::{NativeToolDispatcher, XmlToolDispatcher};
 use crate::openhuman::inference::provider::{ChatRequest, ConversationMessage, Provider};
 use crate::openhuman::memory::Memory;
@@ -400,12 +400,19 @@ fn refresh_delegation_tools_no_duplicate_specs_across_shared_arc_connects() {
 
 #[test]
 fn composio_listener_drains_integrations_changed_events() {
-    let _ = init_global(64);
     let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
-    agent.ensure_composio_integrations_listener();
-    publish_global(DomainEvent::ComposioIntegrationsChanged {
+    // Use an isolated bus, NOT the global singleton: other tests (e.g.
+    // `events_tests` and any composio-listener publisher) emit
+    // `ComposioIntegrationsChanged` on the global bus in parallel, which would
+    // leak into this receiver and make the second drain observe a foreign
+    // event — racing the "drained after one pass" assertion. Injecting a
+    // locally-owned channel keeps this test deterministic.
+    let (tx, rx) = tokio::sync::broadcast::channel::<DomainEvent>(64);
+    agent.set_composio_integrations_rx_for_test(rx);
+    tx.send(DomainEvent::ComposioIntegrationsChanged {
         toolkits: vec!["gmail".into()],
-    });
+    })
+    .expect("isolated bus has a live receiver");
     assert!(agent.drain_composio_integrations_changed_events());
     assert!(
         !agent.drain_composio_integrations_changed_events(),
@@ -415,12 +422,20 @@ fn composio_listener_drains_integrations_changed_events() {
 
 #[test]
 fn skill_listener_drains_workflows_changed_events() {
-    let _ = init_global(64);
     let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
-    agent.ensure_skill_events_listener();
-    publish_global(DomainEvent::WorkflowsChanged {
+    // Use an isolated bus, NOT the global singleton: other tests publish
+    // `WorkflowsChanged` on the global bus in parallel — `skill_listener_
+    // treats_lag_as_signal` floods 256 of them and
+    // `create_workflow_inner_emits_workflows_changed` emits one — so a foreign
+    // event could land between the two drains below and flip the second drain
+    // to `true`, failing the "drained after one pass" assertion. Injecting a
+    // locally-owned channel isolates this test from those publishers.
+    let (tx, rx) = tokio::sync::broadcast::channel::<DomainEvent>(64);
+    agent.set_skill_events_rx_for_test(rx);
+    tx.send(DomainEvent::WorkflowsChanged {
         reason: "install".into(),
-    });
+    })
+    .expect("isolated bus has a live receiver");
     assert!(
         agent.drain_skill_events(),
         "a WorkflowsChanged event should be observed"
@@ -433,14 +448,17 @@ fn skill_listener_drains_workflows_changed_events() {
 
 #[test]
 fn skill_listener_treats_lag_as_signal() {
-    let _ = init_global(64);
     let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
-    agent.ensure_skill_events_listener();
-    // Flood well past the 64-slot bounded bus so the receiver lags. The
-    // `Lagged` arm must still report a signal (returns true) so a refresh
-    // isn't silently dropped under load.
+    // Isolated bus (see `skill_listener_drains_workflows_changed_events` for
+    // why the global singleton races). Flood well past the 64-slot bounded
+    // channel so the receiver lags. The `Lagged` arm must still report a
+    // signal (returns true) so a refresh isn't silently dropped under load.
+    let (tx, rx) = tokio::sync::broadcast::channel::<DomainEvent>(64);
+    agent.set_skill_events_rx_for_test(rx);
     for _ in 0..256 {
-        publish_global(DomainEvent::WorkflowsChanged {
+        // Sender outlives the receiver here, so `send` only errors when there
+        // are zero receivers — ignore the bounded-channel overwrite path.
+        let _ = tx.send(DomainEvent::WorkflowsChanged {
             reason: "install".into(),
         });
     }

@@ -18,6 +18,28 @@ fn telegram_channel_name() {
 }
 
 #[test]
+fn proactive_target_uses_configured_chat_id() {
+    // Unset by default ⇒ proactive routing skips Telegram (#3712 parity).
+    let default = TelegramChannel::new("fake-token".into(), vec!["*".into()], false);
+    assert_eq!(default.proactive_target(), None);
+
+    // Configured chat_id ⇒ recipient-less proactive sends have a target.
+    let with_chat = TelegramChannel::new("fake-token".into(), vec!["*".into()], false)
+        .with_chat_id(Some("12345".into()));
+    assert_eq!(with_chat.proactive_target(), Some("12345".to_string()));
+
+    // Whitespace-only chat_id is normalized to unset.
+    let blank = TelegramChannel::new("fake-token".into(), vec!["*".into()], false)
+        .with_chat_id(Some("   ".into()));
+    assert_eq!(blank.proactive_target(), None);
+
+    // Explicit None passed to the builder stays unset.
+    let none =
+        TelegramChannel::new("fake-token".into(), vec!["*".into()], false).with_chat_id(None);
+    assert_eq!(none.proactive_target(), None);
+}
+
+#[test]
 fn typing_handle_starts_as_none() {
     let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false);
     let guard = ch.typing_handle.lock();

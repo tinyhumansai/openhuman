@@ -2016,6 +2016,46 @@ pub fn is_transient_provider_transport_failure(event: &sentry::protocol::Event<'
     event_has_transient_transport_phrase(event)
 }
 
+/// Defense-in-depth filter for aggregate provider exhaustion events where the
+/// aggregate only restates transient attempt failures.
+///
+/// Keep ordinary `failure=all_exhausted` events: they are the useful "every
+/// fallback failed" signal. Drop only the narrow shape observed in #3542,
+/// where the aggregate body starts with the reliable-provider exhaustion
+/// prefix and contains transient HTTP/transport wording already classified by
+/// [`is_transient_message_failure`].
+pub fn is_all_transient_provider_exhaustion_event(event: &sentry::protocol::Event<'_>) -> bool {
+    let tags = &event.tags;
+    if tags.get("domain").map(String::as_str) != Some("llm_provider") {
+        return false;
+    }
+    if tags.get("failure").map(String::as_str) != Some("all_exhausted") {
+        return false;
+    }
+
+    let direct = event.message.as_deref();
+    let from_logentry = event.logentry.as_ref().map(|log| log.message.as_str());
+    let from_exception = event.exception.last().and_then(|e| e.value.as_deref());
+    [direct, from_logentry, from_exception]
+        .into_iter()
+        .flatten()
+        .any(all_provider_attempts_are_transient)
+}
+
+fn all_provider_attempts_are_transient(message: &str) -> bool {
+    let Some(attempts) = message.strip_prefix("All providers/models failed. Attempts:") else {
+        return false;
+    };
+    let mut saw_attempt = false;
+    for attempt in attempts.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+        saw_attempt = true;
+        if !is_transient_message_failure(attempt) {
+            return false;
+        }
+    }
+    saw_attempt
+}
+
 /// Returns true when a Sentry event's message/exception text contains the
 /// canonical max-tool-iterations cap phrase (see
 /// `openhuman::agent::error::MAX_ITERATIONS_ERROR_PREFIX`).
@@ -2847,6 +2887,41 @@ mod tests {
                 "should classify as context-window-exceeded: {raw}"
             );
         }
+    }
+
+    #[test]
+    fn classifies_lmstudio_n_keep_exceeds_n_ctx_rereport() {
+        // TAURI-RUST-6V0: the verbatim LM Studio 400 body — the un-evictable
+        // prefix (`n_keep`) is larger than the model's loaded context
+        // (`n_ctx`). When this 400 slips past the pre-dispatch guard and is
+        // re-raised by the agent/web_channel, `report_error_or_expected` must
+        // classify it as expected user-state so it stays out of Sentry.
+        assert_eq!(
+            expected_error_kind(
+                "lmstudio API error (400 Bad Request): {\"error\":\"The number of tokens to keep from the initial prompt is greater than the context length (n_keep: 10978 >= n_ctx: 8192). Try to load the model with a larger context length, or provide a shorter input.\"}"
+            ),
+            Some(ExpectedErrorKind::ContextWindowExceeded)
+        );
+    }
+
+    #[test]
+    fn context_prefix_too_large_error_display_classifies_as_expected() {
+        // S3.5.d coupling test: the pre-dispatch actionable error's Display
+        // string MUST classify as the suppressed ContextWindowExceeded bucket,
+        // so a wording drift in the user-facing message (which is what gets
+        // re-raised and re-reported up the stack) fails CI instead of silently
+        // leaking the event to Sentry.
+        let err = crate::openhuman::agent::harness::token_budget::ContextPrefixTooLargeError {
+            prefix_tokens: 10_978,
+            context_window: 8_192,
+            max_input_tokens: 7_372,
+        };
+        assert_eq!(
+            expected_error_kind(&err.to_string()),
+            Some(ExpectedErrorKind::ContextWindowExceeded),
+            "ContextPrefixTooLargeError Display must stay coupled to the \
+             context-window-exceeded classifier (drift would leak Sentry events)"
+        );
     }
 
     #[test]

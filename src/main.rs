@@ -14,6 +14,8 @@ use regex::Regex;
 /// information is redacted before being sent to the server. After setup, it
 /// delegates execution to the core library based on CLI arguments.
 fn main() {
+    restore_default_sigpipe();
+
     // Load `.env` before `sentry::init` so a DSN defined only in the dotenv
     // file is visible to the Sentry client at startup. `dotenvy::dotenv()` is
     // a no-op for variables already present in the process environment, and
@@ -57,6 +59,11 @@ fn main() {
             // (transient codes excluded). This filter catches any future call
             // site that bypasses it.
             if openhuman_core::core::observability::is_transient_provider_http_failure(&event) {
+                return None;
+            }
+            if openhuman_core::core::observability::is_all_transient_provider_exhaustion_event(
+                &event,
+            ) {
                 return None;
             }
             // Defense-in-depth: drop managed-backend `errorCode` events (#870)
@@ -187,6 +194,19 @@ fn main() {
         std::process::exit(1);
     }
 }
+
+#[cfg(unix)]
+fn restore_default_sigpipe() {
+    // Rust ignores SIGPIPE at startup. That makes writes to a closed pipe
+    // return EPIPE, which the print macros turn into a panic. CLI tools should
+    // instead terminate quietly when a downstream reader such as `head` exits.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+}
+
+#[cfg(not(unix))]
+fn restore_default_sigpipe() {}
 
 // ---------------------------------------------------------------------------
 // Release / environment resolution for Sentry

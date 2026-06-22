@@ -6,6 +6,10 @@ struct MockProvider {
     calls: Arc<AtomicUsize>,
     response: &'static str,
     last_model: parking_lot::Mutex<String>,
+    /// When set, this mock reports as a local runtime and exposes an
+    /// authoritative loaded context window — used to exercise the model-aware
+    /// locality routing for the engine's pre-dispatch prefix guard (#3771).
+    local_loaded_ctx: Option<u64>,
 }
 
 impl MockProvider {
@@ -14,6 +18,17 @@ impl MockProvider {
             calls: Arc::new(AtomicUsize::new(0)),
             response,
             last_model: parking_lot::Mutex::new(String::new()),
+            local_loaded_ctx: None,
+        }
+    }
+
+    /// A mock that reports as local with the given authoritative loaded window.
+    fn new_local(response: &'static str, loaded_ctx: u64) -> Self {
+        Self {
+            calls: Arc::new(AtomicUsize::new(0)),
+            response,
+            last_model: parking_lot::Mutex::new(String::new()),
+            local_loaded_ctx: Some(loaded_ctx),
         }
     }
 
@@ -38,6 +53,14 @@ impl Provider for MockProvider {
         self.calls.fetch_add(1, Ordering::SeqCst);
         *self.last_model.lock() = model.to_string();
         Ok(self.response.to_string())
+    }
+
+    fn is_local_provider(&self) -> bool {
+        self.local_loaded_ctx.is_some()
+    }
+
+    async fn loaded_context_window(&self, _model: &str) -> Option<u64> {
+        self.local_loaded_ctx
     }
 }
 
@@ -92,6 +115,14 @@ impl Provider for Arc<MockProvider> {
         self.as_ref()
             .chat_with_system(system_prompt, message, model, temperature)
             .await
+    }
+
+    fn is_local_provider(&self) -> bool {
+        self.as_ref().is_local_provider()
+    }
+
+    async fn loaded_context_window(&self, model: &str) -> Option<u64> {
+        self.as_ref().loaded_context_window(model).await
     }
 }
 
@@ -306,6 +337,73 @@ fn skips_routes_with_unknown_provider() {
     );
 
     assert!(!router.routes.contains_key("broken"));
+}
+
+// -- #3771: model-aware locality for the pre-dispatch un-evictable-prefix guard --
+
+#[tokio::test]
+async fn is_local_provider_for_model_resolves_routed_provider_not_default() {
+    // Default provider is CLOUD; a hint routes a model to a LOCAL provider.
+    // The model-blind `is_local_provider()` reports the default (cloud), but
+    // the model-aware `is_local_provider_for_model()` must follow the route to
+    // the local provider so the engine arms its prefix guard (Codex P2 +
+    // CodeRabbit PR #3771). `effective_context_window`/`loaded_context_window`
+    // already resolve the route, so all three must agree per-model.
+    let cloud = Arc::new(MockProvider::new("cloud"));
+    let local = Arc::new(MockProvider::new_local("local", 8_192));
+    let router = RouterProvider::new(
+        vec![
+            (
+                "cloud".to_string(),
+                Box::new(Arc::clone(&cloud)) as Box<dyn Provider>,
+            ),
+            (
+                "local".to_string(),
+                Box::new(Arc::clone(&local)) as Box<dyn Provider>,
+            ),
+        ],
+        vec![(
+            "fast".to_string(),
+            Route {
+                provider_name: "local".to_string(),
+                model: "qwen3:8b".to_string(),
+                context_window: None,
+            },
+        )],
+        "cloud-default-model".to_string(),
+    );
+
+    // Model-blind locality reflects the (cloud) default.
+    assert!(
+        !router.is_local_provider(),
+        "default provider is cloud → model-blind locality is false"
+    );
+
+    // A model that routes to the local provider must report local + expose its
+    // authoritative loaded window.
+    assert!(
+        router.is_local_provider_for_model("hint:fast"),
+        "a model routed to the local provider must report local"
+    );
+    assert_eq!(
+        router.loaded_context_window("hint:fast").await,
+        Some(8_192),
+        "loaded window must come from the routed local provider"
+    );
+
+    // A model that falls through to the cloud default must NOT report local and
+    // has no authoritative loaded window.
+    assert!(
+        !router.is_local_provider_for_model("anthropic/claude-sonnet-4"),
+        "a model on the cloud default must not report local"
+    );
+    assert_eq!(
+        router
+            .loaded_context_window("anthropic/claude-sonnet-4")
+            .await,
+        None,
+        "cloud provider exposes no authoritative loaded window"
+    );
 }
 
 #[tokio::test]

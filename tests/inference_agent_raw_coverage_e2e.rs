@@ -3899,36 +3899,45 @@ fn agent_dispatchers_and_host_runtime_cover_public_edge_paths() {
     assert!(provider_messages[2].content.contains("call-1"));
     assert_eq!(provider_messages[3].content, "done");
 
-    let native_runtime = create_runtime(&RuntimeConfig {
-        kind: "native".into(),
-        ..Default::default()
-    })
+    let native_runtime = create_runtime(
+        &RuntimeConfig {
+            kind: "native".into(),
+            ..Default::default()
+        },
+        false,
+    )
     .expect("native runtime");
     assert_eq!(native_runtime.name(), "native");
     assert!(native_runtime.has_shell_access());
 
-    let docker_runtime = create_runtime(&RuntimeConfig {
-        kind: "docker".into(),
-        docker: DockerRuntimeConfig {
-            image: "alpine:coverage".into(),
-            network: "none".into(),
-            mount_workspace: false,
-            read_only_rootfs: false,
-            memory_limit_mb: Some(128),
-            cpu_limit: None,
+    let docker_runtime = create_runtime(
+        &RuntimeConfig {
+            kind: "docker".into(),
+            docker: DockerRuntimeConfig {
+                image: "alpine:coverage".into(),
+                network: "none".into(),
+                mount_workspace: false,
+                read_only_rootfs: false,
+                memory_limit_mb: Some(128),
+                cpu_limit: None,
+                ..Default::default()
+            },
             ..Default::default()
         },
-        ..Default::default()
-    })
+        false,
+    )
     .expect("docker runtime");
     assert_eq!(docker_runtime.name(), "docker");
     assert!(!docker_runtime.has_filesystem_access());
     assert_eq!(docker_runtime.memory_budget(), 128);
 
-    let unsupported = match create_runtime(&RuntimeConfig {
-        kind: "wasm".into(),
-        ..Default::default()
-    }) {
+    let unsupported = match create_runtime(
+        &RuntimeConfig {
+            kind: "wasm".into(),
+            ..Default::default()
+        },
+        false,
+    ) {
         Ok(runtime) => panic!(
             "unsupported runtime unexpectedly created: {}",
             runtime.name()

@@ -496,7 +496,7 @@ pub async fn consume_login_token(
         serde_json::json!({ "jwtToken": jwt_token }),
         vec![
             format!(
-                "login token consumed via POST /telegram/login-tokens/:token/consume on {}",
+                "login token consumed via POST /auth/login-token/consume on {}",
                 api_url.trim_end_matches('/')
             ),
             "session JWT received".to_string(),

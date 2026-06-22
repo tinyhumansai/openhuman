@@ -35,6 +35,19 @@ pub struct DockerRuntimeConfig {
     pub allowed_workspace_roots: Vec<String>,
 }
 
+/// `[shell]` — behaviour of the shell-family tools (`shell`, `node_exec`,
+/// `npm_exec`, monitor) when they spawn child processes.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ShellConfig {
+    /// On Windows, suppress the console window that briefly flashes for every
+    /// child process the shell tool spawns by passing `CREATE_NO_WINDOW`
+    /// (`0x08000000`) in the process creation flags. No-op on macOS/Linux.
+    /// Defaults to `false` for backward compatibility.
+    #[serde(default)]
+    pub hide_window: bool,
+}
+
 fn default_true() -> bool {
     defaults::default_true()
 }
@@ -173,5 +186,30 @@ impl Default for SchedulerConfig {
             max_tasks: default_scheduler_max_tasks(),
             max_concurrent: default_scheduler_max_concurrent(),
         }
+    }
+}
+
+#[cfg(test)]
+mod shell_config_tests {
+    use super::ShellConfig;
+
+    #[test]
+    fn shell_config_defaults_hide_window_off() {
+        // Backward compatibility: absent `[shell]` section must not change
+        // behaviour, so `hide_window` defaults to false.
+        assert!(!ShellConfig::default().hide_window);
+    }
+
+    #[test]
+    fn shell_config_parses_hide_window_from_toml() {
+        let cfg: ShellConfig = toml::from_str("hide_window = true").unwrap();
+        assert!(cfg.hide_window);
+    }
+
+    #[test]
+    fn shell_config_empty_table_keeps_default() {
+        // An empty `[shell]` table relies on `#[serde(default)]` for the field.
+        let cfg: ShellConfig = toml::from_str("").unwrap();
+        assert!(!cfg.hide_window);
     }
 }

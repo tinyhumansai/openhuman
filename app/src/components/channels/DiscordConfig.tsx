@@ -154,7 +154,10 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
 
         const credentials: Record<string, string> = {};
         for (const field of spec.fields) {
-          const val = fieldValues[key]?.[field.key]?.trim() ?? '';
+          // `rawVal` is `undefined` only when the user never touched the field;
+          // an empty string means they entered something and then cleared it.
+          const rawVal = fieldValues[key]?.[field.key];
+          const val = rawVal?.trim() ?? '';
           if (field.required && !val) {
             dispatch(
               setChannelConnectionStatus({
@@ -169,7 +172,16 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
             );
             return;
           }
-          if (val) credentials[field.key] = val;
+          if (val) {
+            credentials[field.key] = val;
+          } else if (rawVal !== undefined) {
+            // Field was edited and then cleared — submit an explicit empty value
+            // instead of omitting it, so the backend can distinguish "cleared"
+            // from "never entered". For the allowlist this is what makes clearing
+            // it on reconnect mean "allow everyone" rather than silently reusing
+            // the previously-saved list (#3794 review — Codex P2).
+            credentials[field.key] = '';
+          }
         }
 
         const result = await channelConnectionsApi.connectChannel('discord', {
