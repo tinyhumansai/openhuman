@@ -278,6 +278,19 @@ describe('parseMessageImages', () => {
     expect(result.text).toBe('');
     expect(result.dataUris).toEqual([]);
   });
+
+  it('preserves paragraph breaks (double newlines) in user text', () => {
+    const result = parseMessageImages('first paragraph\n\nsecond paragraph');
+    expect(result.text).toBe('first paragraph\n\nsecond paragraph');
+  });
+
+  it('preserves newlines when stripping a marker', () => {
+    const result = parseMessageImages(
+      'first paragraph\n\n[FILE:data:application/pdf;base64,x]\n\nsecond paragraph'
+    );
+    expect(result.text).toBe('first paragraph\n\n\n\nsecond paragraph');
+    expect(result.text).toContain('\n\n');
+  });
 });
 
 describe('formatFileSize', () => {

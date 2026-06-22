@@ -1835,6 +1835,13 @@ const Conversations = ({
             )}
             {visibleMessages.map(msg => {
               const isAgentTextMode = msg.sender === 'agent' && agentMessageViewMode === 'text';
+              // Parsed once per message: for current messages (extraMetadata
+              // present, or agent messages) msg.content already has no markers,
+              // so this is a no-op. For legacy persisted user messages with raw
+              // [IMAGE:...]/[FILE:...] markers and no extraMetadata, this is
+              // what keeps the marker text out of both the rendered bubble and
+              // the copy-to-clipboard action.
+              const parsedContent = parseMessageImages(msg.content ?? '');
               return (
                 <div key={msg.id}>
                   <div
@@ -1893,9 +1900,10 @@ const Conversations = ({
                       ) : (
                         <div className="flex flex-col items-end gap-1">
                           {(() => {
+                            const displayText = parsedContent.text;
                             const dataUris = Array.isArray(msg.extraMetadata?.attachmentDataUris)
                               ? (msg.extraMetadata.attachmentDataUris as string[])
-                              : parseMessageImages(msg.content ?? '').dataUris;
+                              : parsedContent.dataUris;
                             const hasImages = dataUris.length > 0;
                             // Document attachments carry no image data-URI (only
                             // images do); surface them as filename chips from the
@@ -1953,14 +1961,14 @@ const Conversations = ({
                                     ))}
                                   </div>
                                 )}
-                                {(msg.content || showTime) && (
+                                {(displayText || showTime) && (
                                   <div className="rounded-2xl px-4 py-2.5 bg-primary-500 text-white rounded-br-md break-words overflow-hidden">
-                                    {msg.content && (
-                                      <BubbleMarkdown content={msg.content} tone="user" />
+                                    {displayText && (
+                                      <BubbleMarkdown content={displayText} tone="user" />
                                     )}
                                     {showTime && (
                                       <p
-                                        className={`${msg.content ? 'mt-1' : ''} text-[10px] text-white/60`}>
+                                        className={`${displayText ? 'mt-1' : ''} text-[10px] text-white/60`}>
                                         {formatRelativeTime(msg.createdAt)}
                                       </p>
                                     )}
@@ -1974,7 +1982,7 @@ const Conversations = ({
                       <button
                         type="button"
                         data-analytics-id="chat-message-copy"
-                        onClick={() => handleCopyMessage(msg.id, msg.content)}
+                        onClick={() => handleCopyMessage(msg.id, parsedContent.text)}
                         className={`absolute -top-1 ${
                           isAgentTextMode
                             ? 'right-0'

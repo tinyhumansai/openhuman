@@ -259,7 +259,10 @@ export function parseMessageImages(content: string): { text: string; dataUris: s
       return '';
     })
     .replace(/\[FILE:([^\]]+)\]/g, '') // Strip file markers
-    .replace(/\s{2,}/g, ' ') // Collapse multiple spaces
+    // Collapse only runs of plain spaces (not \s) left behind by marker
+    // removal — using \s here would also eat intentional newlines/paragraph
+    // breaks in the user's own text.
+    .replace(/ {2,}/g, ' ')
     .trim();
   return { text, dataUris };
 }
