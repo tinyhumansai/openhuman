@@ -48,6 +48,7 @@ export const NAV_TABS: NavTab[] = [
     path: '/connections',
     walkthroughAttr: 'tab-connections',
   },
+  { id: 'feedback', labelKey: 'nav.feedback', path: '/feedback', walkthroughAttr: 'tab-feedback' },
   // Settings is reached via the gear icon in the sidebar header, so it no
   // longer has its own primary nav tab.
 ];

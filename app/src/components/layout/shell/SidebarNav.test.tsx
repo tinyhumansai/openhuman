@@ -1,7 +1,8 @@
-import { screen } from '@testing-library/react';
+import { fireEvent, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderWithProviders } from '../../../test/test-utils';
+import { AGENT_ACCOUNT_ID } from '../../../utils/accountsFullscreen';
 import SidebarNav from './SidebarNav';
 
 // Analytics is fire-and-forget; stub it so the nav renders without a transport.
@@ -32,5 +33,35 @@ describe('SidebarNav active matching', () => {
 
     expect(tabButton('Tiny.Place')).not.toHaveAttribute('aria-current');
     expect(tabButton('Chat')).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('clears an active provider selection when clicking the already-active nav item', () => {
+    const { store } = renderWithProviders(<SidebarNav />, {
+      initialEntries: ['/connections'],
+      preloadedState: {
+        accounts: {
+          accounts: {
+            'acct-slack': {
+              id: 'acct-slack',
+              provider: 'slack',
+              label: 'Slack',
+              createdAt: '2026-01-01T00:00:00.000Z',
+              status: 'open',
+            },
+          },
+          order: ['acct-slack'],
+          activeAccountId: 'acct-slack',
+          lastActiveAccountId: 'acct-slack',
+          messages: {},
+          unread: {},
+          logs: {},
+          overlayOpen: false,
+        },
+      },
+    });
+
+    fireEvent.click(tabButton('Connections'));
+
+    expect(store.getState().accounts.activeAccountId).toBe(AGENT_ACCOUNT_ID);
   });
 });

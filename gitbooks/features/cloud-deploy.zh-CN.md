@@ -487,9 +487,7 @@ fly machine restart --config .fly/fly.toml
 
 ## 冒烟测试
 
-仓库附带 [`.github/workflows/deploy-smoke.yml`](../../.github/workflows/deploy-smoke.yml)，它在每次触及部署工件的 PR 上运行。它构建 Docker 镜像、启动它并轮询 `/health`，以便云部署路径中的回归在到达 `main` 之前就在 CI 中失败。
-
-该 workflow 包含两个 job：
+云部署路径有两种需要防范的失败模式：
 
 - **`docker-image`**——设置 `OPENHUMAN_CORE_TOKEN` 且不挂载卷。保护 DigitalOcean App Platform 路径（`.do/app.yaml`），其中 token 始终预置且不挂载持久卷。
 - **`docker-volume-permissions`**——省略 `OPENHUMAN_CORE_TOKEN` 并在 `/home/openhuman/.openhuman` 挂载一个新的匿名卷。复现 issue #2065 的确切失败模式，并断言 `/health` 返回 200 且日志中不存在 `Permission denied (os error 13)`。

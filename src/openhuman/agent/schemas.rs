@@ -12,6 +12,7 @@ struct AgentChatParams {
     message: String,
     model_override: Option<String>,
     temperature: Option<f64>,
+    thread_id: Option<String>,
 }
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -69,6 +70,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required_string("message", "User message."),
                 optional_string("model_override", "Optional model override."),
                 optional_f64("temperature", "Optional temperature override."),
+                optional_string(
+                    "thread_id",
+                    "Optional backend thread id for cache grouping and inference logs.",
+                ),
             ],
             outputs: vec![json_output("response", "Agent response payload.")],
         },
@@ -80,6 +85,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required_string("message", "User message."),
                 optional_string("model_override", "Optional model override."),
                 optional_f64("temperature", "Optional temperature override."),
+                optional_string(
+                    "thread_id",
+                    "Optional backend thread id for cache grouping and inference logs.",
+                ),
             ],
             outputs: vec![json_output("response", "Agent response payload.")],
         },
@@ -170,6 +179,7 @@ fn handle_chat(params: Map<String, Value>) -> ControllerFuture {
                 &p.message,
                 p.model_override,
                 p.temperature,
+                p.thread_id,
             )
             .await?,
         )
@@ -186,6 +196,7 @@ fn handle_chat_simple(params: Map<String, Value>) -> ControllerFuture {
                 &p.message,
                 p.model_override,
                 p.temperature,
+                p.thread_id,
             )
             .await?,
         )
@@ -434,8 +445,12 @@ mod tests {
     fn schemas_expose_expected_inputs_and_unknown_fallback() {
         let chat = schemas("chat");
         assert_eq!(chat.namespace, "agent");
-        assert_eq!(chat.inputs.len(), 3);
+        assert_eq!(chat.inputs.len(), 4);
         assert!(matches!(chat.inputs[1].ty, TypeSchema::Option(_)));
+        assert!(chat
+            .inputs
+            .iter()
+            .any(|input| input.name == "thread_id" && !input.required));
 
         let triage = schemas("triage_evaluate");
         assert_eq!(triage.inputs.len(), 7);

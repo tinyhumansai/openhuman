@@ -365,6 +365,148 @@ validate_sharun_lib_path() {
   fi
 }
 
+# is_elf — true if the file begins with the ELF magic, regardless of the +x
+# bit. Shared objects (.so) are not executable but still carry the
+# DT_RPATH/DT_RUNPATH we need to sanitize, so the executable-only check in
+# is_executable_elf is too narrow here.
+is_elf() {
+  local candidate="$1"
+  [ -f "$candidate" ] || return 1
+  [ "$(LC_ALL=C head -c 4 "$candidate" 2>/dev/null || true)" = $'\177ELF' ]
+}
+
+# sanitize_elf_rpaths — strip absolute CI build-machine paths (/home/runner,
+# /__w) from the DT_RPATH/DT_RUNPATH of every bundled ELF and rewrite them to
+# $ORIGIN-relative entries.
+#
+# Problem (issue #3224): libcef.so is copied verbatim into usr/lib by the
+# vendored sharun_cef bundler and is never ldd-processed by lib4bin, so any
+# absolute RUNPATH baked in on the build runner (e.g.
+# `/home/runner/.cache/tauri-cef/.../shared/lib`) survives into the shipped
+# AppImage. rewrite_sharun_lib_path() above only sanitizes the sharun lib.path
+# TEXT file — it never touches ELF headers. Those absolute, non-existent search
+# dirs leak the build-machine layout and, on a host that happens to have a
+# matching path, could shadow a bundled library.
+#
+# Fix: patchelf every ELF whose RPATH/RUNPATH contains a CI marker, dropping the
+# absolute CI components and keeping $ORIGIN-relative ones. Falls back to a
+# conservative `$ORIGIN:$ORIGIN/../shared/lib` when nothing relative remains.
+# ELFs whose RPATH is already clean ($ORIGIN-only or empty) are left untouched,
+# so the pass is idempotent.
+#
+# Returns 0 if any ELF was rewritten, 1 otherwise.
+sanitize_elf_rpaths() {
+  local appdir="$1"
+  if ! command -v patchelf >/dev/null 2>&1; then
+    echo "[strip-libs] ERROR: patchelf not found; cannot sanitize build-machine RPATHs from bundled ELFs (issue #3224). Install patchelf on the build runner." >&2
+    exit 1
+  fi
+
+  # Inverted truthiness: 1 == "no change" (shell-false), flips to 0 (shell-true)
+  # the first time an ELF is rewritten.
+  local rewrote=1
+  local search_roots=(
+    "$appdir/usr/lib"
+    "$appdir/shared/lib"
+    "$appdir/lib"
+    "$appdir/usr/bin"
+    "$appdir/bin"
+  )
+
+  local root f cur cleaned entry
+  for root in "${search_roots[@]}"; do
+    [ -d "$root" ] || continue
+    while IFS= read -r -d '' f; do
+      is_elf "$f" || continue
+      cur="$(patchelf --print-rpath "$f" 2>/dev/null || true)"
+      [ -n "$cur" ] || continue
+      case "$cur" in
+        *"/home/runner/"*|*"/__w/"*) ;;
+        *) continue ;; # already clean — leave it untouched (idempotent)
+      esac
+
+      # Keep only $ORIGIN-relative entries; drop absolute / CI-marked ones.
+      local -a kept=()
+      local seen=""
+      local old_ifs="$IFS"
+      IFS=':'
+      for entry in $cur; do
+        IFS="$old_ifs"
+        [ -n "$entry" ] || { IFS=':'; continue; }
+        case "$entry" in
+          '$ORIGIN'*) ;;     # relative — keep
+          *) IFS=':'; continue ;; # absolute — drop
+        esac
+        case "+${seen}+" in
+          *"+${entry}+"*) IFS=':'; continue ;;
+        esac
+        seen="${seen}+${entry}"
+        kept+=("$entry")
+        IFS=':'
+      done
+      IFS="$old_ifs"
+
+      if [ "${#kept[@]}" -eq 0 ]; then
+        # No relative entry survived — synthesize a fallback that reaches the
+        # bundle's top-level shared/lib FROM THIS ELF's own directory. $ORIGIN is
+        # the ELF's dir, so the number of `../` hops equals the ELF's directory
+        # depth below the AppDir root: a file in usr/lib needs
+        # `$ORIGIN/../../shared/lib`, one in lib needs `$ORIGIN/../shared/lib`. A
+        # flat `$ORIGIN/../shared/lib` (the naive form) resolves to
+        # `usr/shared/lib` for usr/* files and would still miss libs at runtime.
+        local rel_dir comp up=""
+        rel_dir="$(dirname "${f#"$appdir"/}")"
+        local ifs_save="$IFS"
+        IFS='/'
+        for comp in $rel_dir; do
+          [ -n "$comp" ] && [ "$comp" != "." ] && up="../$up"
+        done
+        IFS="$ifs_save"
+        cleaned="\$ORIGIN:\$ORIGIN/${up}shared/lib"
+      else
+        cleaned="$(IFS=':'; echo "${kept[*]}")"
+      fi
+
+      patchelf --set-rpath "$cleaned" "$f"
+      echo "[strip-libs]   patchelf rpath ${f#"$appdir"/}: '$cur' -> '$cleaned'"
+      rewrote=0
+    done < <(find "$root" -type f -print0)
+  done
+
+  return $rewrote
+}
+
+# validate_appimage_required_libs — fail the build loudly if a library the app
+# binary hard-links (NEEDED) but which MUST travel inside the AppImage is absent
+# from the bundle.
+#
+# Problem (issue #3224): the app links libxdo.so.3 via enigo
+# (`#[link(name = "xdo")]`, used by src/openhuman/tools/impl/computer for Linux
+# mouse/keyboard control). lib4bin's ldd-walk normally bundles it into
+# shared/lib, but if a future runner image drops libxdo-dev or bumps its soname,
+# the lib silently vanishes from the AppImage and the binary segfaults on launch
+# on any host lacking the legacy soname (e.g. Arch, which ships libxdo.so.4). The
+# .deb path already guards this via its `depends` (libxdo3) +
+# linux_cef_deb_runtime_e2e; the AppImage path had no equivalent. This turns a
+# silent runtime segfault into a loud build failure.
+validate_appimage_required_libs() {
+  local appdir="$1"
+  if ! uses_sharun_launcher "$appdir"; then
+    return 0
+  fi
+
+  local root
+  for root in "$appdir/shared/lib" "$appdir/usr/lib" "$appdir/lib"; do
+    [ -d "$root" ] || continue
+    if [ -n "$(find "$root" -name 'libxdo.so*' -print -quit 2>/dev/null)" ]; then
+      return 0
+    fi
+  done
+
+  echo "[strip-libs] ERROR: AppImage is missing libxdo.so.* — the enigo NEEDED dependency was not bundled (issue #3224). The app would segfault on launch on hosts without the legacy libxdo soname (e.g. Arch). Ensure libxdo-dev is installed on the build runner so lib4bin's ldd-walk bundles it." >&2
+  exit 1
+}
+
 # patch_apprun_sharun_cwd — inject `cd "$APPDIR"` into AppRun before the final
 # exec call so sharun resolves preload/library paths relative to the AppDir
 # rather than the caller's CWD.
@@ -463,6 +605,7 @@ strip_one_appimage() {
   local added_loader=0
   local rewrote_libpath=0
   local patched_apprun=0
+  local rewrote_rpaths=0
   local lib_roots=()
   for candidate in \
     "$appdir/usr/lib" \
@@ -500,14 +643,18 @@ strip_one_appimage() {
   if patch_apprun_sharun_cwd "$appdir"; then
     patched_apprun=1
   fi
+  if sanitize_elf_rpaths "$appdir"; then
+    rewrote_rpaths=1
+  fi
   validate_sharun_lib_path "$appdir"
+  validate_appimage_required_libs "$appdir"
 
-  if [ "$removed" -eq 0 ] && [ "$added_loader" -eq 0 ] && [ "$rewrote_libpath" -eq 0 ] && [ "$patched_apprun" -eq 0 ]; then
-    echo "[strip-libs] No graphics libs or missing sharun interpreter found in $original; leaving unchanged."
+  if [ "$removed" -eq 0 ] && [ "$added_loader" -eq 0 ] && [ "$rewrote_libpath" -eq 0 ] && [ "$patched_apprun" -eq 0 ] && [ "$rewrote_rpaths" -eq 0 ]; then
+    echo "[strip-libs] No graphics libs, missing sharun interpreter, or build-machine RPATHs found in $original; leaving unchanged."
     rm -rf "$workdir"
     return
   fi
-  echo "[strip-libs] Removed $removed file(s), added $added_loader loader file(s), patched AppRun=$patched_apprun; repacking AppImage."
+  echo "[strip-libs] Removed $removed file(s), added $added_loader loader file(s), patched AppRun=$patched_apprun, rewrote RPATHs=$rewrote_rpaths; repacking AppImage."
 
   local rebuilt="$workdir/$name"
   local appimage_arch
@@ -577,4 +724,9 @@ main() {
   done
 }
 
-main "$@"
+# Run main only when executed directly, not when sourced (e.g. by the
+# scripts/release/test-strip-appimage-rpaths.sh regression test, which exercises
+# sanitize_elf_rpaths / validate_appimage_required_libs in isolation).
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  main "$@"
+fi

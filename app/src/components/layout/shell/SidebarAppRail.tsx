@@ -1,6 +1,6 @@
 import debugFactory from 'debug';
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { trackEvent } from '../../../services/analytics';
@@ -92,6 +92,7 @@ export default function SidebarAppRail() {
   const { t } = useT();
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
+  const location = useLocation();
   const accountsById = useAppSelector(state => state.accounts.accounts);
   const order = useAppSelector(state => state.accounts.order);
   const activeAccountId = useAppSelector(state => state.accounts.activeAccountId);
@@ -120,11 +121,12 @@ export default function SidebarAppRail() {
     dispatch(setAccountsOverlayOpen(overlayOpen));
   }, [overlayOpen, dispatch]);
 
-  // Bring the chat surface forward whenever the user picks something on the
-  // rail from another route — that's where the agent chat / provider webview
-  // actually render.
+  // Bring the chat surface forward when the user explicitly picks the agent.
+  // Provider CEF selection is a high-level rail overlay and intentionally does
+  // not mutate the current route.
   const goToChat = () => {
-    if (!window.location.hash.replace(/^#/, '').startsWith('/chat')) {
+    const onChat = location.pathname === '/chat' || location.pathname.startsWith('/chat/');
+    if (!onChat) {
       navigate('/chat');
     }
   };
@@ -145,7 +147,6 @@ export default function SidebarAppRail() {
     // Issue #1233 — record this real-account selection in the persisted MRU
     // pointer so the next session can prewarm it.
     dispatch(setLastActiveAccount(id));
-    goToChat();
   };
 
   const selectAgent = () => {
@@ -170,7 +171,6 @@ export default function SidebarAppRail() {
     }
     dispatch(setActiveAccount(id));
     dispatch(setLastActiveAccount(id));
-    goToChat();
   };
 
   const openContextMenu = (accountId: string, e: React.MouseEvent) => {

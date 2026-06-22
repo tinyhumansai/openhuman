@@ -261,6 +261,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::voice::all_voice_registered_controllers());
     // Background awareness and autonomous tasks
     controllers.extend(crate::openhuman::subconscious::all_subconscious_registered_controllers());
+    controllers.extend(
+        crate::openhuman::subconscious_triggers::all_subconscious_triggers_registered_controllers(),
+    );
     // Webhook tunnel management
     controllers.extend(crate::openhuman::webhooks::all_webhooks_registered_controllers());
     // Core binary update management
@@ -416,6 +419,9 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::text_input::all_text_input_controller_schemas());
     schemas.extend(crate::openhuman::voice::all_voice_controller_schemas());
     schemas.extend(crate::openhuman::subconscious::all_subconscious_controller_schemas());
+    schemas.extend(
+        crate::openhuman::subconscious_triggers::all_subconscious_triggers_controller_schemas(),
+    );
     schemas.extend(crate::openhuman::webhooks::all_webhooks_controller_schemas());
     schemas.extend(crate::openhuman::update::all_update_controller_schemas());
     schemas.extend(crate::openhuman::memory_tree::all_tree_summarizer_controller_schemas());
@@ -565,6 +571,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         ),
         "voice" => Some("Speech-to-text and text-to-speech using local models."),
         "subconscious" => Some("Periodic local-model background awareness loop."),
+        "subconscious_triggers" => {
+            Some("Event-driven trigger pipeline feeding the background orchestrator.")
+        }
         "text_input" => Some("Read, insert, and preview text in the OS-focused input field."),
         "webhooks" => {
             Some("Webhook tunnel registrations and captured request/response debug logs.")

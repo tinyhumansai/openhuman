@@ -38,6 +38,9 @@ pub(super) struct AgentToolExecCtx<'a> {
     pub agent_definition_id: &'a str,
     pub prefer_markdown: bool,
     pub budget_bytes: usize,
+    /// Whether Stage 1a (native content-aware compaction) runs before the
+    /// byte budget. Sourced from `ContextManager::compaction_enabled`.
+    pub compaction_enabled: bool,
     pub artifact_store: Option<&'a ToolResultArtifactStore>,
 }
 
@@ -225,6 +228,16 @@ pub(super) async fn run_agent_tool_call(
     } else {
         (format!("Unknown tool: {}", call.name), false)
     };
+
+    // Stage 1a — content-aware compaction. Runs before the byte budget on the
+    // fresh tool output (never sent to the backend yet, so it's cache-safe like
+    // the budget below). Routes by tool name; only ever shrinks, otherwise
+    // passes the original through. See `agent::harness::compaction`.
+    let raw_result = crate::openhuman::agent::harness::compaction::compact_tool_output(
+        raw_result,
+        &call.name,
+        ctx.compaction_enabled,
+    );
 
     // Per-result byte budget — the only cache-safe reduction stage (the full
     // body has never been sent to the backend). Oversized outputs are persisted

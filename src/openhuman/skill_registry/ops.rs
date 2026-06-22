@@ -366,6 +366,18 @@ pub async fn install_from_catalog(
         "[skill_registry] installing from catalog"
     );
 
+    if entry.download_url.trim().is_empty() {
+        let where_to_find = entry
+            .source_url
+            .as_deref()
+            .map(|u| format!(" View it at {u}."))
+            .unwrap_or_default();
+        return Err(format!(
+            "'{}' is hosted on {} and has no direct SKILL.md download, so it can't be installed automatically yet.{}",
+            entry.name, entry.source, where_to_find
+        ));
+    }
+
     let params = crate::openhuman::workflows::ops_install::InstallWorkflowFromUrlParams {
         url: entry.download_url.clone(),
         timeout_secs: Some(60),
@@ -457,9 +469,22 @@ pub(crate) fn parse_hermes_entry(item: &serde_json::Value) -> Option<CatalogEntr
     let docs_path = item
         .get("docsPath")
         .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
 
-    let download_url = derive_download_url(&source, &category, &name, docs_path.as_deref());
+    let source_url = item
+        .get("sourceUrl")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    let download_url = derive_download_url(
+        &source,
+        &category,
+        &name,
+        docs_path.as_deref(),
+        source_url.as_deref(),
+    );
 
     Some(CatalogEntry {
         id: name.clone(),
@@ -472,6 +497,7 @@ pub(crate) fn parse_hermes_entry(item: &serde_json::Value) -> Option<CatalogEntr
         tags,
         platforms,
         download_url,
+        source_url,
         docs_path,
         commands,
         env_vars,
@@ -479,11 +505,28 @@ pub(crate) fn parse_hermes_entry(item: &serde_json::Value) -> Option<CatalogEntr
     })
 }
 
+/// Resolve a fetchable `SKILL.md` URL for a catalog entry.
+///
+/// Precedence:
+/// 1. `OPENHUMAN_SKILL_REGISTRY_DOWNLOAD_BASE_URL` test override.
+/// 2. `docsPath` — Hermes' own bundled / optional skills, which live in the
+///    `NousResearch/hermes-agent` repo under `skills/` / `optional-skills/`.
+/// 3. `sourceUrl` — community skills (ClawHub / LobeHub / skills.sh / browse.sh
+///    / NVIDIA). When it points at a GitHub blob/tree it is rewritten to the
+///    `raw.githubusercontent.com` `SKILL.md`; non-GitHub portals have no raw
+///    download.
+///
+/// Returns an empty string when no direct download can be derived (portal-only
+/// community skills). [`install_from_catalog`] turns that into an actionable
+/// error rather than fetching a guaranteed-404 URL. Previously every community
+/// skill was force-templated onto a `NousResearch/hermes-agent` path it never
+/// lived at, so virtually all community installs 404'd — issue #3741.
 fn derive_download_url(
-    source: &str,
-    category: &str,
+    _source: &str,
+    _category: &str,
     name: &str,
     docs_path: Option<&str>,
+    source_url: Option<&str>,
 ) -> String {
     if let Ok(base) = std::env::var(DOWNLOAD_BASE_URL_ENV) {
         let base = base.trim().trim_end_matches('/');
@@ -494,13 +537,50 @@ fn derive_download_url(
     if let Some(url) = docs_path.and_then(download_url_from_docs_path) {
         return url;
     }
-    let root = match source {
-        "optional" => "optional-skills",
-        _ => "skills",
-    };
-    format!(
-        "https://raw.githubusercontent.com/NousResearch/hermes-agent/main/{root}/{category}/{name}/SKILL.md"
-    )
+    if let Some(url) = source_url.and_then(download_url_from_source_url) {
+        return url;
+    }
+    // No resolvable direct download (portal-only community skill).
+    String::new()
+}
+
+/// Rewrite a GitHub `sourceUrl` (blob or tree view) into the raw
+/// `SKILL.md` download URL. Returns `None` for non-GitHub hosts (portal pages
+/// that serve HTML, not raw markdown).
+///
+/// - blob: `…/github.com/{owner}/{repo}/blob/{branch}/{path}` →
+///   `…/raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}`
+/// - tree (directory): same rewrite, then append `/SKILL.md`.
+fn download_url_from_source_url(source_url: &str) -> Option<String> {
+    let rest = source_url
+        .strip_prefix("https://github.com/")
+        .or_else(|| source_url.strip_prefix("http://github.com/"))?;
+
+    // {owner}/{repo}/{blob|tree}/{branch}/{path...}
+    let parts: Vec<&str> = rest.splitn(5, '/').collect();
+    if parts.len() < 5 {
+        return None;
+    }
+    let (owner, repo, kind, branch, path) = (parts[0], parts[1], parts[2], parts[3], parts[4]);
+    if owner.is_empty() || repo.is_empty() || branch.is_empty() || path.is_empty() {
+        return None;
+    }
+
+    let path = path.trim_end_matches('/');
+    let raw = format!("https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}");
+    match kind {
+        // blob points directly at a file; only append SKILL.md if it isn't one.
+        "blob" => {
+            if raw.ends_with("/SKILL.md") || raw.ends_with(".md") {
+                Some(raw)
+            } else {
+                Some(format!("{raw}/SKILL.md"))
+            }
+        }
+        // tree points at a directory — the skill's SKILL.md lives inside it.
+        "tree" => Some(format!("{raw}/SKILL.md")),
+        _ => None,
+    }
 }
 
 fn download_url_from_docs_path(docs_path: &str) -> Option<String> {
@@ -561,6 +641,116 @@ mod tests {
         assert_eq!(
             entry.download_url,
             "https://raw.githubusercontent.com/NousResearch/hermes-agent/main/optional-skills/devops/docker-management/SKILL.md"
+        );
+    }
+
+    #[test]
+    fn parse_hermes_entry_derives_github_tree_source_url() {
+        // NVIDIA shape: sourceUrl is a GitHub *tree* (directory) view, no
+        // docsPath. The raw SKILL.md lives inside that directory. (#3741)
+        let item = json!({
+            "name": "aiq-deploy",
+            "description": "Deploy AIQ",
+            "category": "agentic-ai",
+            "source": "NVIDIA",
+            "docsPath": "",
+            "sourceUrl": "https://github.com/NVIDIA/skills/tree/main/skills/aiq-deploy"
+        });
+        let entry = parse_hermes_entry(&item).expect("entry");
+        assert_eq!(
+            entry.download_url,
+            "https://raw.githubusercontent.com/NVIDIA/skills/main/skills/aiq-deploy/SKILL.md"
+        );
+        assert_eq!(
+            entry.source_url.as_deref(),
+            Some("https://github.com/NVIDIA/skills/tree/main/skills/aiq-deploy")
+        );
+    }
+
+    #[test]
+    fn parse_hermes_entry_derives_github_blob_source_url() {
+        // browse.sh shape: sourceUrl is a GitHub *blob* pointing straight at the
+        // SKILL.md file — rewrite host to raw, keep the path. (#3741)
+        let item = json!({
+            "name": "account-management",
+            "description": "Account mgmt",
+            "category": "account-management",
+            "source": "browse.sh",
+            "sourceUrl": "https://github.com/browserbase/browse.sh/blob/main/skills/plugandpay.com/account-management-ic4kjh/SKILL.md"
+        });
+        let entry = parse_hermes_entry(&item).expect("entry");
+        assert_eq!(
+            entry.download_url,
+            "https://raw.githubusercontent.com/browserbase/browse.sh/main/skills/plugandpay.com/account-management-ic4kjh/SKILL.md"
+        );
+    }
+
+    #[test]
+    fn parse_hermes_entry_leaves_portal_source_url_undownloadable() {
+        // ClawHub / LobeHub / skills.sh portals serve HTML, not raw markdown —
+        // no direct download. download_url is empty; source_url is preserved so
+        // install can point the user at the page. (#3741)
+        for url in [
+            "https://clawhub.ai/skills/agentkilox-code-audit",
+            "https://lobehub.com/agent/9-somboon",
+            "https://skills.sh/sickn33/antigravity-awesome-skills/00-andruia-consultant",
+        ] {
+            let item = json!({
+                "name": "portal-skill",
+                "description": "x",
+                "category": "other",
+                "source": "ClawHub",
+                "sourceUrl": url
+            });
+            let entry = parse_hermes_entry(&item).expect("entry");
+            assert_eq!(
+                entry.download_url, "",
+                "portal url must not be downloadable: {url}"
+            );
+            assert_eq!(entry.source_url.as_deref(), Some(url));
+        }
+    }
+
+    #[test]
+    fn download_url_from_source_url_rejects_non_github_and_malformed() {
+        assert_eq!(
+            download_url_from_source_url("https://lobehub.com/agent/x"),
+            None
+        );
+        // GitHub URL missing the branch/path tail.
+        assert_eq!(
+            download_url_from_source_url("https://github.com/owner/repo"),
+            None
+        );
+        // Unknown ref kind.
+        assert_eq!(
+            download_url_from_source_url("https://github.com/o/r/raw/main/x"),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn install_from_catalog_errors_for_portal_skill_without_download() {
+        // A portal-only entry (empty download_url) must fail fast with an
+        // actionable message naming the source + page — never fetch a 404. (#3741)
+        let tmp = tempfile::tempdir().unwrap();
+        let entry = parse_hermes_entry(&json!({
+            "name": "code-audit",
+            "description": "x",
+            "category": "other",
+            "source": "ClawHub",
+            "sourceUrl": "https://clawhub.ai/skills/agentkilox-code-audit"
+        }))
+        .expect("entry");
+        assert_eq!(entry.download_url, "");
+
+        let err = install_from_catalog(tmp.path(), &entry)
+            .await
+            .expect_err("portal skill cannot install");
+        assert!(err.contains("ClawHub"), "names the source: {err}");
+        assert!(
+            err.contains("https://clawhub.ai/skills/agentkilox-code-audit"),
+            "links the source page: {err}"
         );
     }
 

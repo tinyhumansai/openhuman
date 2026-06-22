@@ -17,7 +17,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SyncAuditEntry } from '../../utils/tauriCommands';
-import { SyncAuditPanel } from './SyncAuditPanel';
+import { SyncAuditPanel, timeAgo } from './SyncAuditPanel';
 
 const mockAuditLog = vi.fn();
 
@@ -164,5 +164,18 @@ describe('<SyncAuditPanel />', () => {
     expect(within(table).getByText('When')).toBeInTheDocument();
     expect(within(table).getByText('Source')).toBeInTheDocument();
     expect(within(table).getByText('Cost')).toBeInTheDocument();
+  });
+});
+
+describe('timeAgo', () => {
+  // Resolve to the fallback English so the `{n}` interpolation is exercised.
+  const t = (_key: string, fallback?: string) => fallback ?? _key;
+  const isoAgo = (ms: number) => new Date(Date.now() - ms).toISOString();
+
+  it('covers every relative-time bucket and substitutes the {n} placeholder', () => {
+    expect(timeAgo(isoAgo(0), t)).toBe('just now');
+    expect(timeAgo(isoAgo(5 * 60_000), t)).toBe('5m ago');
+    expect(timeAgo(isoAgo(3 * 60 * 60_000), t)).toBe('3h ago');
+    expect(timeAgo(isoAgo(2 * 24 * 60 * 60_000), t)).toBe('2d ago');
   });
 });

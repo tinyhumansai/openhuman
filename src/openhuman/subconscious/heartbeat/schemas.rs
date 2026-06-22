@@ -83,7 +83,15 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 ),
                 optional_string(
                     "subconscious_mode",
-                    "Subconscious operating mode: off, simple, or aggressive.",
+                    "Subconscious operating mode: off, simple, aggressive, or event_driven.",
+                ),
+                optional_bool(
+                    "triggers_enabled",
+                    "Enable the event-driven subconscious trigger pipeline.",
+                ),
+                optional_u64(
+                    "max_promotions_per_hour",
+                    "Per-hour cap on trigger promotions (long-lived session runs).",
                 ),
             ],
             outputs: vec![FieldSchema {

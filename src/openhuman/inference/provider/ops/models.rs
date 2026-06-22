@@ -132,6 +132,21 @@ pub async fn list_configured_models_from_config(
         let body = response.text().await.unwrap_or_default();
         let sanitized = sanitize_api_error(&body);
         let truncated = crate::openhuman::util::truncate_with_ellipsis(&sanitized, 300);
+        // TAURI-RUST-8X3: a 404 from the `<base>/models` probe means the
+        // configured base URL does not host an OpenAI-compatible `/models`
+        // listing (wrong base, a model-only proxy, or a missing `/v1`
+        // suffix). Append an actionable hint so the model-dropdown probe
+        // surfaces *recovery guidance* inline instead of the bare Go-style
+        // `404 page not found`. The `provider returned 404` prefix is kept
+        // verbatim so the `is_provider_user_state_message` classifier anchor
+        // (which demotes this preventable user-state case out of Sentry)
+        // still matches — see `src/core/observability.rs`.
+        if status.as_u16() == 404 {
+            return Err(format!(
+                "provider returned 404: {} — the configured base URL does not expose a `/models` endpoint; check the provider's base URL (it usually ends in `/v1`)",
+                truncated
+            ));
+        }
         return Err(format!(
             "provider returned {}: {}",
             status.as_u16(),

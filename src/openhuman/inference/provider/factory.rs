@@ -289,6 +289,77 @@ pub fn provider_for_role(role: &str, config: &Config) -> String {
     }
 }
 
+/// #3767: Whether the OpenHuman managed-credits gate should be bypassed for a
+/// single workload role.
+///
+/// Returns true when `role` resolves (via [`provider_for_role`]) to a non-managed
+/// provider the user funds themselves — a BYO cloud key (incl. OpenAI OAuth), a
+/// local runtime, or claude-code — with usable credentials. When the role is on
+/// the OpenHuman managed backend, or a BYO route has no usable key, it returns
+/// false (the gate stays on; #3767: "BYO key present but invalid/unverified →
+/// still gated").
+///
+/// The gate is evaluated per-tier so the UI can check the tier the user actually
+/// selected: the chat header's "Quick" mode runs on the `chat` tier and
+/// "Reasoning" mode on the `reasoning` tier, so each is checked respectively.
+/// These per-role results are surfaced under `credits_bypass` in the
+/// client-config snapshot. Tiers that stay managed and run anyway surface the
+/// per-call `USER_INSUFFICIENT_CREDITS` (402) error reactively.
+pub fn role_bypasses_managed_credits(role: &str, config: &Config) -> bool {
+    let resolved = provider_for_role(role, config);
+    let r = resolved.trim();
+    let is_managed =
+        r.is_empty() || r == "cloud" || r == PROVIDER_OPENHUMAN || r == BYOK_INCOMPLETE_SENTINEL;
+    let usable_byo = !is_managed && route_has_usable_credentials(r, config);
+    log::debug!(
+        "[billing] role_bypasses_managed_credits role={role} resolved={resolved} \
+         is_managed={is_managed} usable_byo={usable_byo}"
+    );
+    usable_byo
+}
+
+/// True when a resolved chat-tier provider string can actually run on the
+/// user's own funding: local runtimes / claude-code carry their own creds; a
+/// concrete cloud slug requires a non-empty stored key. Managed/sentinel
+/// strings are filtered by the caller and never reach here as "usable".
+fn route_has_usable_credentials(resolved: &str, config: &Config) -> bool {
+    let r = resolved.trim();
+    // Local runtimes (ollama/lmstudio/mlx/local-openai) and the local CLI
+    // delegates carry their own credentials / run on-device.
+    if crate::openhuman::inference::local::profile::is_local_provider_string(r)
+        || r.starts_with(crate::openhuman::inference::provider::claude_code::PROVIDER_PREFIX)
+        || r == CLAUDE_AGENT_SDK_PROVIDER
+        || r.starts_with(CLAUDE_AGENT_SDK_PREFIX)
+    {
+        return true;
+    }
+    // Concrete cloud slug "<slug>:<model>" — require a usable stored key.
+    if let Some((slug, _)) = r.split_once(':') {
+        let slug = slug.trim();
+        if !slug.is_empty() {
+            // Don't silently swallow auth-store / OAuth lookup failures — a
+            // transient Err would otherwise keep the credits gate on for a
+            // valid BYO setup with no diagnostics. Log and treat as not-usable.
+            match lookup_key_for_slug(slug, config) {
+                Ok(key) => {
+                    let usable = !key.trim().is_empty();
+                    log::debug!(
+                        "[billing] route_has_usable_credentials slug={slug} usable={usable}"
+                    );
+                    return usable;
+                }
+                Err(e) => {
+                    log::debug!(
+                        "[billing] route_has_usable_credentials slug={slug} lookup_error={e}"
+                    );
+                    return false;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Find the first BYOK cloud provider string configured across all workload
 /// routes, skipping local providers (ollama, lmstudio) and managed-backend
 /// sentinels ("openhuman", "cloud", empty).
@@ -337,11 +408,11 @@ pub(crate) fn resolve_byok_fallback_provider_string(config: &Config) -> Option<S
 /// detached `tokio::spawn`s — a thread/task-local would not reach them.
 ///
 /// Because it is global, tests that install an override MUST run serially
-/// (hold the shared lock in [`crate::openhuman::workflows::e2e_run_tests`])
 /// and clear it via the returned guard. Inert in production: the check below
-/// is `#[cfg(test)]`, so the override is never consulted in release builds.
-#[cfg(test)]
-pub(crate) mod test_provider_override {
+/// is gated on `cfg(test)` or the off-by-default `e2e-test-support` feature,
+/// so the override is never consulted in shipped builds.
+#[cfg(any(test, feature = "e2e-test-support"))]
+pub mod test_provider_override {
     use super::Provider;
     use crate::openhuman::inference::provider::traits::{
         ChatRequest, ChatResponse, ProviderCapabilities,
@@ -360,11 +431,11 @@ pub(crate) mod test_provider_override {
 
     /// Install a mock provider; the returned guard clears it on drop.
     #[must_use]
-    pub(crate) fn install(provider: Arc<dyn Provider>) -> InstallGuard {
+    pub fn install(provider: Arc<dyn Provider>) -> InstallGuard {
         *cell().lock().unwrap() = Some(provider);
         InstallGuard
     }
-    pub(crate) struct InstallGuard;
+    pub struct InstallGuard;
     impl Drop for InstallGuard {
         fn drop(&mut self) {
             *cell().lock().unwrap() = None;
@@ -411,8 +482,9 @@ pub fn create_chat_provider(
     config: &Config,
 ) -> anyhow::Result<(Box<dyn Provider>, String)> {
     // Test-only: a scripted mock provider injected by an e2e test wins over
-    // anything config-derived. Never compiled into release builds.
-    #[cfg(test)]
+    // anything config-derived. Gated on cfg(test) / the off-by-default
+    // `e2e-test-support` feature; never consulted in shipped builds.
+    #[cfg(any(test, feature = "e2e-test-support"))]
     if let Some(p) = test_provider_override::current() {
         return Ok((
             Box::new(test_provider_override::ProviderHandle(p)),

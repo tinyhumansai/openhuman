@@ -17,6 +17,7 @@ pub mod types;
 pub mod users;
 
 mod provider;
+mod source;
 
 pub use provider::{run_backfill_via_search, SlackProvider, BACKFILL_DAYS};
 pub use schemas::{all_slack_memory_controller_schemas, all_slack_memory_registered_controllers};

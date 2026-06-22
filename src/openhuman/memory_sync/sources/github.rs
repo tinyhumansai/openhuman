@@ -24,7 +24,7 @@ use crate::openhuman::memory_sync::sources::audit::{
 use crate::openhuman::memory_sync::traits::{SyncOutcome, SyncPipeline, SyncPipelineKind};
 use crate::openhuman::memory_tree::ingest::{ingest_summary, SummaryIngestInput};
 use crate::openhuman::memory_tree::summarise::{
-    fallback_summary, summarise, SummaryContext, SummaryInput,
+    fallback_summary, summarise, SummaryContext, SummaryInput, SummaryOutput,
 };
 use futures::stream::StreamExt;
 use std::path::Path;
@@ -169,29 +169,66 @@ pub async fn run_github_sync(
     // when every batch reported them (issue #3110). See `RealCostAccumulator`.
     let mut cost = RealCostAccumulator::new();
 
-    for (batch_idx, (batch_inputs, batch_labels, batch_basenames)) in
-        batches.into_iter().enumerate()
+    // ── Phase 1: summarise every batch (bounded concurrency) ──
+    // The per-batch summarise is an independent LLM round-trip; ingest below
+    // is the only ordered, serial part (it writes into the shared source tree).
+    // Cloud providers overlap these calls; a local model stays serial. Futures
+    // are materialized into a Vec before `buffered` so the higher-ranked
+    // closure lifetime stays tied to this frame (avoids the "FnOnce is not
+    // general enough" error). `buffered` preserves order so outputs[i] maps to
+    // batches[i].
+    let concurrency = summarise_concurrency(config.workload_uses_local("memory"));
+    tracing::debug!(
+        source_id = %source_id,
+        tree_id = %tree.id,
+        batch_count = batches.len(),
+        concurrency,
+        "[memory_sync:github] starting concurrent summarise phase"
+    );
+    let summarise_futs: Vec<_> = batches
+        .iter()
+        .enumerate()
+        .map(|(batch_idx, (batch_inputs, _labels, _basenames))| {
+            let config = config;
+            let tree_id = &tree.id;
+            async move {
+                let ctx = SummaryContext {
+                    tree_id,
+                    tree_kind: TreeKind::Source,
+                    target_level: 1,
+                    token_budget: 5_000,
+                };
+                match summarise(config, batch_inputs, &ctx).await {
+                    Ok(o) => o,
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            batch = batch_idx,
+                            "[memory_sync:github] summarise failed, using fallback"
+                        );
+                        fallback_summary(batch_inputs, ctx.token_budget)
+                    }
+                }
+            }
+        })
+        .collect();
+
+    let outputs: Vec<SummaryOutput> = futures::stream::iter(summarise_futs)
+        .buffered(concurrency)
+        .collect()
+        .await;
+    tracing::debug!(
+        source_id = %source_id,
+        tree_id = %tree.id,
+        outputs = outputs.len(),
+        "[memory_sync:github] concurrent summarise phase complete"
+    );
+
+    // ── Phase 2: fold cost + ingest in batch order (serial) ──
+    for (batch_idx, ((batch_inputs, batch_labels, batch_basenames), output)) in
+        batches.into_iter().zip(outputs.into_iter()).enumerate()
     {
         let batch_input_tokens: u64 = batch_inputs.iter().map(|i| i.token_count as u64).sum();
-
-        let ctx = SummaryContext {
-            tree_id: &tree.id,
-            tree_kind: TreeKind::Source,
-            target_level: 1,
-            token_budget: 5_000,
-        };
-
-        let output = match summarise(config, &batch_inputs, &ctx).await {
-            Ok(o) => o,
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    batch = batch_idx,
-                    "[memory_sync:github] summarise failed, using fallback"
-                );
-                fallback_summary(&batch_inputs, ctx.token_budget)
-            }
-        };
 
         cost.add_batch(
             batch_input_tokens,
@@ -340,6 +377,26 @@ pub async fn run_github_sync(
 /// a large repo from opening hundreds of concurrent requests and tripping
 /// GitHub's secondary rate limits.
 const GITHUB_READ_CONCURRENCY: usize = 8;
+
+/// Max in-flight summarise LLM calls when the memory workload routes to a
+/// **cloud** provider. Local models are single-GPU/single-process, so they are
+/// driven serially (see [`summarise_concurrency`]).
+const GITHUB_SUMMARISE_CONCURRENCY: usize = 4;
+
+/// Effective summarise concurrency given the memory workload routing.
+///
+/// Cloud providers tolerate (and benefit from) overlapping the per-batch LLM
+/// round-trips, so we fan out to [`GITHUB_SUMMARISE_CONCURRENCY`]. A local model
+/// is a single inference engine — concurrent calls would just queue (or
+/// oversubscribe VRAM), so we keep it strictly serial (`1`), preserving the old
+/// one-batch-at-a-time behaviour. Pure so it can be unit-tested.
+fn summarise_concurrency(uses_local: bool) -> usize {
+    if uses_local {
+        1
+    } else {
+        GITHUB_SUMMARISE_CONCURRENCY
+    }
+}
 
 /// Read every listed item into the parallel `(inputs, labels, basenames)`
 /// vectors used to build the source tree.
@@ -544,6 +601,18 @@ fn write_raw_archive(
 mod tests {
     use super::*;
     use crate::openhuman::memory_sources::types::ContentType;
+
+    #[test]
+    fn summarise_concurrency_serial_for_local_model() {
+        // A local model is a single inference engine — must stay serial.
+        assert_eq!(summarise_concurrency(true), 1);
+    }
+
+    #[test]
+    fn summarise_concurrency_fans_out_for_cloud_model() {
+        assert_eq!(summarise_concurrency(false), GITHUB_SUMMARISE_CONCURRENCY);
+        assert!(GITHUB_SUMMARISE_CONCURRENCY > 1, "cloud path must overlap");
+    }
 
     fn content_with(meta: serde_json::Value) -> SourceContent {
         SourceContent {

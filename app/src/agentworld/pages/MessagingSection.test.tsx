@@ -279,6 +279,76 @@ describe('DMs panel (E2E enabled)', () => {
     // The messages namespace has no 'send' method — only signal.sendMessage is callable
   });
 
+  test('shows a friendly error when the recipient has no published key bundle', async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiClient.messages.list).mockResolvedValue({ messages: [] });
+    vi.mocked(apiClient.signal.sendMessage).mockRejectedValueOnce(
+      new Error(
+        'CoreRpcError: HTTP 404: HTTP 404: /keys/61KcG5aGLqpnJz2fn4tujFKAdzqsdGR9XqiUeVoT3vPg/bundle: not found'
+      )
+    );
+
+    render(<MessagingSection />);
+    const peerInput = screen.getByPlaceholderText(/Recipient @handle/);
+    await user.type(peerInput, 'peer456');
+    await user.click(screen.getByRole('button', { name: 'Open DM' }));
+
+    const composeInput = await screen.findByPlaceholderText(/Type a message/);
+    await user.type(composeInput, 'secret');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(
+      await screen.findByText(/This user hasn't enabled encrypted messaging yet/)
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/CoreRpcError/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/\/keys\//)).not.toBeInTheDocument();
+  });
+
+  test('normalizes the core mapped missing encrypted messaging setup error', async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiClient.messages.list).mockResolvedValue({ messages: [] });
+    vi.mocked(apiClient.signal.sendMessage).mockRejectedValueOnce(
+      new Error(
+        'CoreRpcError: Recipient has not set up encrypted messaging yet. They need to provision Signal keys before receiving DMs. (resolved agent_id: resolved-crypto-id)'
+      )
+    );
+
+    render(<MessagingSection />);
+    const peerInput = screen.getByPlaceholderText(/Recipient @handle/);
+    await user.type(peerInput, 'peer456');
+    await user.click(screen.getByRole('button', { name: 'Open DM' }));
+
+    const composeInput = await screen.findByPlaceholderText(/Type a message/);
+    await user.type(composeInput, 'secret');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(
+      await screen.findByText(/This user hasn't enabled encrypted messaging yet/)
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/CoreRpcError/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/resolved agent_id/)).not.toBeInTheDocument();
+  });
+
+  test('normalizes missing key bundle errors while refreshing direct messages', async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiClient.messages.list).mockRejectedValueOnce(
+      new Error(
+        'CoreRpcError: HTTP 404: HTTP 404: /keys/61KcG5aGLqpnJz2fn4tujFKAdzqsdGR9XqiUeVoT3vPg/bundle: not found'
+      )
+    );
+
+    render(<MessagingSection />);
+    const peerInput = screen.getByPlaceholderText(/Recipient @handle/);
+    await user.type(peerInput, 'peer456');
+    await user.click(screen.getByRole('button', { name: 'Open DM' }));
+
+    expect(
+      await screen.findByText(/This user hasn't enabled encrypted messaging yet/)
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/CoreRpcError/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/\/keys\//)).not.toBeInTheDocument();
+  });
+
   test('received messages are decrypted before display', async () => {
     // directory.resolve returns 'resolved-crypto-id'; messages must use that id
     // in the 'from' field to survive the peerId filter in useDirectMessages.

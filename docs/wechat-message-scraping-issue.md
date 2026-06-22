@@ -26,7 +26,7 @@ Add a dedicated WeChat webview ingestion path, following the existing Franz-styl
 - [ ] **Unread/respond surfaces** — unread or actionable WeChat activity appears in the same provider-surface/respond-queue flows used by other messaging integrations where applicable.
 - [ ] **Privacy + control** — users can understand, disable, and purge stored WeChat-derived data using existing account/memory controls or clearly-scoped additions.
 - [ ] **Tests** — add focused Vitest and Rust coverage for the WeChat provider path, including at least one failure/edge case.
-- [ ] **Diff coverage ≥ 80%** — the implementing PR meets the changed-lines coverage gate (Vitest + cargo-llvm-cov, enforced by [`.github/workflows/coverage.yml`](../.github/workflows/coverage.yml)).
+- [ ] **Diff coverage ≥ 80%** — the implementing PR meets the changed-lines coverage gate (Vitest + cargo-llvm-cov, enforced by [`.github/workflows/pr-ci.yml`](../.github/workflows/pr-ci.yml)).
 
 - Evaluate whether WeChat needs a native scanner path, injected bridge, or hybrid approach after validating what the embedded web client exposes at runtime.
 

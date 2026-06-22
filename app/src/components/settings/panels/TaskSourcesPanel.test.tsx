@@ -289,9 +289,15 @@ describe('<TaskSourcesPanel />', () => {
   it('clicking Refresh calls load() (line 586)', async () => {
     renderPanel();
     await screen.findByTestId('task-source-s-1');
+    // The Refresh button early-returns inside load() while a load is in flight
+    // (and is disabled in the UI for the same reason). Wait for the mount load
+    // to finish — i.e. the button to become enabled — before clicking, mirroring
+    // what a real user can do and removing the mount-vs-click race.
+    const refreshButton = screen.getByRole('button', { name: /Refresh/i });
+    await waitFor(() => expect(refreshButton).toBeEnabled());
     // The first listMock call happens on mount; clicking Refresh triggers another
     const beforeCount = listMock.mock.calls.length;
-    fireEvent.click(screen.getByRole('button', { name: /Refresh/i }));
+    fireEvent.click(refreshButton);
     await waitFor(() => {
       expect(listMock.mock.calls.length).toBeGreaterThan(beforeCount);
     });

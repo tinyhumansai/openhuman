@@ -33,12 +33,10 @@ fn collect_reports_each_missing_var() {
     );
 }
 
-// `OPENHUMAN_AGENTBOX_MODE` is process-global. No other test mutates it
-// concurrently (see `disabled_mode_tests.rs`), so toggling it inline here is
-// safe today; we restore the prior value to avoid leaking state into other
-// tests in the same binary.
+// `OPENHUMAN_AGENTBOX_MODE` is process-global, so serialize tests that mutate it.
 #[test]
 fn mode_enabled_only_when_flag_is_exactly_one() {
+    let _lock = super::test_support::test_env_lock();
     let prior = std::env::var(AGENTBOX_MODE_ENV_VAR).ok();
 
     std::env::set_var(AGENTBOX_MODE_ENV_VAR, "1");

@@ -19,17 +19,22 @@
 //! [`SyncScope`] is the abstraction that lets the same orchestrator drive both
 //! shapes:
 //!
-//!   * **Flat** providers (gmail, github, notion, linear) expose a *single
-//!     implicit scope* — [`SyncScope::flat`] — and page straight through their
-//!     one result stream.
+//!   * **Flat** providers (github, notion, linear) expose a *single implicit
+//!     scope* — [`SyncScope::flat`] — and page straight through their one
+//!     result stream.
 //!   * **Nested** providers (clickup workspaces → tasks, slack channels →
 //!     history) resolve their containers in [`IncrementalSource::preamble`] and
 //!     return one [`SyncScope`] per container; the orchestrator's
 //!     `for scope { for page {…} }` loop is byte-for-byte identical for both.
 //!
-//! Only Notion (flat) rides this path today, but the scope loop is written so
-//! the nested providers slot in without a control-flow change — see the
-//! migration checklist in the issue.
+//! ## Per-scope cursors + error tolerance (Slack)
+//!
+//! Slack is the structural outlier: it keeps a watermark **per channel** (not a
+//! single global cursor) and must not let one bad channel abort the rest. Two
+//! opt-in trait hooks — [`IncrementalSource::per_scope_cursors`] and
+//! [`IncrementalSource::tolerate_scope_errors`] — bend the same scope loop to
+//! that shape without touching the single-cursor providers, which leave both
+//! `false` and keep the advance-once-at-the-end path verbatim.
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -173,10 +178,31 @@ pub(crate) trait IncrementalSource: Send + Sync {
     /// Build the `sync_depth_days` floor in the *same representation* as
     /// [`Self::item_sort_ts`] so the lexicographic compare is valid. Default is
     /// RFC3339 UTC; providers whose timestamps are epoch-millis strings
-    /// (clickup) override.
+    /// (clickup) override. Unused when [`Self::server_side_depth`] is `true`.
     fn depth_floor(&self, days: u32) -> String {
         let floor = chrono::Utc::now() - chrono::Duration::days(days as i64);
         floor.to_rfc3339()
+    }
+
+    /// Noun used for this provider's `{noun}_fetched` / `{noun}_persisted`
+    /// keys in the [`SyncOutcome::details`] diagnostic blob, preserving each
+    /// provider's historical detail shape (notion: `results`, github/linear:
+    /// `issues`, clickup: `tasks`, …). `details` is for logging/UI status only;
+    /// nothing reads these keys in production.
+    fn detail_noun(&self) -> &'static str {
+        "results"
+    }
+
+    /// Whether the provider applies the `sync_depth_days` window **itself**
+    /// (server-side — e.g. GitHub's `updated:>{date}` search qualifier),
+    /// rather than relying on the orchestrator's client-side timestamp
+    /// truncation. When `true`, the orchestrator skips its client-side depth
+    /// filter and the provider must inject the window inside
+    /// [`Self::fetch_page`] (typically only on the first sync, before a cursor
+    /// exists). Default `false` — the orchestrator filters client-side via
+    /// [`Self::depth_floor`].
+    fn server_side_depth(&self) -> bool {
+        false
     }
 
     /// Whether to hold (not advance) the cursor when an ingest reported a
@@ -187,6 +213,44 @@ pub(crate) trait IncrementalSource: Send + Sync {
     fn hold_cursor_on_ingest_failure(&self) -> bool {
         true
     }
+
+    /// Whether this source keeps a **cursor per scope** (Slack: one `oldest`
+    /// watermark per channel) instead of the single global watermark every
+    /// other provider uses. Default `false`.
+    ///
+    /// When `true` the orchestrator:
+    ///   * disables its global-cursor boundary detection in [`select_pending`]
+    ///     (the scope's watermark is read by the provider's own
+    ///     [`Self::fetch_page`] — usually injected as a server-side `oldest`
+    ///     filter, so `server_side_depth` is typically `true` too);
+    ///   * tracks the newest timestamp **per scope** and, after each scope
+    ///     finishes cleanly, calls [`Self::advance_scope_cursor`] to advance
+    ///     that one scope's watermark, persisting state between scopes;
+    ///   * holds a scope's watermark (does not advance it) when that scope hit
+    ///     an ingest failure or the `max_items` cap truncated it — so the next
+    ///     pass re-fetches that scope's unseen/failed tail.
+    ///
+    /// Single-cursor providers leave this `false` and keep the global
+    /// advance-once-at-the-end path verbatim.
+    fn per_scope_cursors(&self) -> bool {
+        false
+    }
+
+    /// Whether a scope-level failure is **non-fatal**. Default `false` — a
+    /// `fetch_page` error aborts the whole pass (every single-cursor provider's
+    /// behaviour). When `true` (Slack), a `fetch_page` error or a scope's
+    /// ingest failure is logged, counted in `scopes_errored`, and the
+    /// orchestrator continues to the next scope instead of returning `Err`.
+    fn tolerate_scope_errors(&self) -> bool {
+        false
+    }
+
+    /// Advance the persisted watermark for a single `scope` to `newest_ts`
+    /// (per-scope-cursor mode only). The default is a no-op; Slack overrides it
+    /// to fold the new watermark into its per-channel cursor map serialized in
+    /// [`SyncState::cursor`]. Never called when [`Self::per_scope_cursors`] is
+    /// `false`.
+    fn advance_scope_cursor(&self, _state: &mut SyncState, _scope: &SyncScope, _newest_ts: &str) {}
 
     /// Persist a batch of already-filtered items. May spend budget via `state`
     /// (e.g. Notion's per-page body fetch). Returns which dedup keys succeeded
@@ -239,9 +303,15 @@ fn skipped_outcome(
 /// This is the generic form of every provider's old `select_pending`. All
 /// order-dependent decisions live here so the (possibly concurrent) ingest
 /// stage never has to reason about ordering.
+///
+/// `boundary_cursor` is the watermark used for cursor-boundary detection.
+/// Single-cursor providers pass `state.cursor`; per-scope-cursor providers
+/// (Slack) pass `None` to disable the global-cursor boundary entirely — their
+/// per-scope watermark is enforced server-side inside `fetch_page` instead.
 fn select_pending<S: IncrementalSource + ?Sized>(
     source: &S,
     items: &[Value],
+    boundary_cursor: Option<&str>,
     state: &SyncState,
     newest_ts: &mut Option<String>,
 ) -> (Vec<SyncItem>, bool) {
@@ -267,8 +337,8 @@ fn select_pending<S: IncrementalSource + ?Sized>(
         }
 
         // Older-or-equal to the cursor AND already synced → we have caught up.
-        if let (Some(cursor), Some(ts)) = (&state.cursor, &sort_ts) {
-            if ts <= cursor && state.is_synced(&dedup_key) {
+        if let (Some(cursor), Some(ts)) = (boundary_cursor, &sort_ts) {
+            if ts.as_str() <= cursor && state.is_synced(&dedup_key) {
                 hit_cursor_boundary = true;
                 continue;
             }
@@ -376,28 +446,50 @@ pub(crate) async fn run_sync<S: IncrementalSource + ?Sized>(
         );
     }
 
-    let depth_floor: Option<String> = ctx.sync_depth_days.map(|days| {
-        let floor = source.depth_floor(days);
-        tracing::debug!(
-            toolkit,
-            connection_id = %connection_id,
-            sync_depth_days = days,
-            oldest_allowed = %floor,
-            "[composio:sync_orch] [memory_sync] applying sync_depth_days floor"
-        );
-        floor
-    });
+    // Server-side-depth providers (GitHub) inject the window into the request
+    // in `fetch_page`, so the orchestrator skips its client-side floor for them.
+    let depth_floor: Option<String> = if source.server_side_depth() {
+        None
+    } else {
+        ctx.sync_depth_days.map(|days| {
+            let floor = source.depth_floor(days);
+            tracing::debug!(
+                toolkit,
+                connection_id = %connection_id,
+                sync_depth_days = days,
+                oldest_allowed = %floor,
+                "[composio:sync_orch] [memory_sync] applying sync_depth_days floor"
+            );
+            floor
+        })
+    };
 
     // ── Step 5: scope × page loop ───────────────────────────────────────
+    //
+    // `per_scope` providers (Slack) advance a watermark per scope inside the
+    // loop and hold it on a cap-truncated / failed scope; single-cursor
+    // providers advance one global watermark once, in Step 6. `tolerate`
+    // providers continue past a scope-level failure instead of aborting.
+    let per_scope = source.per_scope_cursors();
+    let tolerate = source.tolerate_scope_errors();
+
     let mut total_fetched: usize = 0;
     let mut total_persisted: usize = 0;
     let mut newest_ts: Option<String> = None;
     let mut had_ingest_failures = false;
     let mut hit_cap_boundary = false;
+    let mut scopes_synced: usize = 0;
+    let mut scopes_errored: usize = 0;
 
     'scopes: for scope in &scopes {
         // The page cursor is per-scope — reset at the top of every scope.
         let mut cursor: Option<String> = None;
+        // Newest timestamp observed *within this scope*, for per-scope advance.
+        let mut scope_newest_ts: Option<String> = None;
+        // This scope hit an ingest failure (hold its watermark, count errored).
+        let mut scope_had_failure = false;
+        // This scope was truncated by the global cap (hold its watermark).
+        let mut scope_hit_cap = false;
 
         for page_num in 0..effective_max_pages {
             if state.budget_exhausted() {
@@ -414,13 +506,28 @@ pub(crate) async fn run_sync<S: IncrementalSource + ?Sized>(
             // provider-reported failures) per its contract. On error we persist
             // whatever budget/dedup progress we have before propagating —
             // parity with the per-provider loops, which saved state before
-            // returning a failed-page error.
+            // returning a failed-page error. When the source tolerates
+            // scope-level errors (Slack), we instead log, count, persist, and
+            // move on to the next scope.
             let fetch = match source
                 .fetch_page(ctx, scope, cursor.as_deref(), reason, &mut state)
                 .await
             {
                 Ok(fetch) => fetch,
                 Err(e) => {
+                    if tolerate {
+                        tracing::warn!(
+                            toolkit,
+                            connection_id = %connection_id,
+                            scope = %scope.label,
+                            page = page_num,
+                            error = %e,
+                            "[composio:sync_orch] scope fetch failed (continuing with next scope)"
+                        );
+                        scopes_errored += 1;
+                        let _ = state.save(&memory).await;
+                        continue 'scopes;
+                    }
                     let _ = state.save(&memory).await;
                     return Err(e);
                 }
@@ -437,9 +544,21 @@ pub(crate) async fn run_sync<S: IncrementalSource + ?Sized>(
                 break;
             }
 
-            // Dedup + cursor-boundary detection + newest-ts tracking.
+            // Dedup + cursor-boundary detection + newest-ts tracking. Per-scope
+            // providers disable the global-cursor boundary (pass `None`) and
+            // accumulate the newest ts into their per-scope tracker.
+            let boundary_cursor = if per_scope {
+                None
+            } else {
+                state.cursor.as_deref()
+            };
+            let ts_acc = if per_scope {
+                &mut scope_newest_ts
+            } else {
+                &mut newest_ts
+            };
             let (mut pending, mut hit_cursor_boundary) =
-                select_pending(source, &fetch.items, &state, &mut newest_ts);
+                select_pending(source, &fetch.items, boundary_cursor, &state, ts_acc);
 
             // sync_depth_days: `pending` is in descending-timestamp order, so
             // truncate at the first item below the floor and stop paginating.
@@ -468,12 +587,15 @@ pub(crate) async fn run_sync<S: IncrementalSource + ?Sized>(
             cap.record(outcome.persisted);
             if outcome.had_failures {
                 had_ingest_failures = true;
+                scope_had_failure = true;
             }
 
-            // Precise cap reached → stop the entire pass.
+            // Precise cap reached → stop the entire pass (after settling this
+            // scope's watermark below).
             if cap.is_reached() {
                 hit_cap_boundary = true;
-                break 'scopes;
+                scope_hit_cap = true;
+                break;
             }
 
             if hit_cursor_boundary {
@@ -497,28 +619,72 @@ pub(crate) async fn run_sync<S: IncrementalSource + ?Sized>(
                 break;
             }
         }
+
+        // ── Per-scope watermark settle (per_scope providers only) ────────
+        if per_scope {
+            if scope_had_failure {
+                // Ingest failure → hold this scope's watermark, count errored.
+                scopes_errored += 1;
+                tracing::warn!(
+                    toolkit,
+                    connection_id = %connection_id,
+                    scope = %scope.label,
+                    "[composio:sync_orch] scope ingest failed; watermark held, re-fetch next pass"
+                );
+            } else {
+                if scope_hit_cap {
+                    // Cap truncated this scope → hold its watermark so the next
+                    // pass re-scans the unseen tail; still a processed scope.
+                    tracing::debug!(
+                        toolkit,
+                        scope = %scope.label,
+                        "[composio:sync_orch] cap truncated scope; watermark held"
+                    );
+                } else if let Some(ref nt) = scope_newest_ts {
+                    source.advance_scope_cursor(&mut state, scope, nt);
+                }
+                scopes_synced += 1;
+            }
+            // Persist between scopes for crash-resilience (parity with the
+            // per-provider Slack loop, which saved state after each channel).
+            if let Err(err) = state.save(&memory).await {
+                tracing::warn!(
+                    toolkit,
+                    error = %err,
+                    "[composio:sync_orch] per-scope state save failed (non-fatal)"
+                );
+            }
+        }
+
+        if scope_hit_cap {
+            break 'scopes;
+        }
     }
 
     // ── Step 6: advance cursor (or hold) and persist state ──────────────
     //
-    // Hold the cursor on a cap-truncated pass so the next sync re-scans the
+    // Per-scope providers already advanced/held each scope's watermark inline,
+    // so the global advance is skipped for them. Single-cursor providers hold
+    // the global cursor on a cap-truncated pass so the next sync re-scans the
     // unseen tail, and on an ingest failure when the source opts in (Notion's
     // delete-first safety). Otherwise advance to the newest timestamp seen.
-    let hold_cursor =
-        hit_cap_boundary || (had_ingest_failures && source.hold_cursor_on_ingest_failure());
-    if !hold_cursor {
-        if let Some(new_cursor) = newest_ts {
-            state.advance_cursor(&new_cursor);
+    if !per_scope {
+        let hold_cursor =
+            hit_cap_boundary || (had_ingest_failures && source.hold_cursor_on_ingest_failure());
+        if !hold_cursor {
+            if let Some(new_cursor) = newest_ts {
+                state.advance_cursor(&new_cursor);
+            }
+        } else {
+            tracing::warn!(
+                toolkit,
+                connection_id = %connection_id,
+                had_ingest_failures,
+                hit_cap_boundary,
+                "[composio:sync_orch] holding cursor — cap-truncated pass or ingest failures; \
+                 next sync will re-fetch the unseen/failed range"
+            );
         }
-    } else {
-        tracing::warn!(
-            toolkit,
-            connection_id = %connection_id,
-            had_ingest_failures,
-            hit_cap_boundary,
-            "[composio:sync_orch] holding cursor — cap-truncated pass or ingest failures; \
-             next sync will re-fetch the unseen/failed range"
-        );
     }
     state.set_last_sync_at_ms(now_ms());
     state.save(&memory).await?;
@@ -540,6 +706,28 @@ pub(crate) async fn run_sync<S: IncrementalSource + ?Sized>(
         "[composio:sync_orch] incremental sync complete"
     );
 
+    // Provider-named `{noun}_fetched` / `{noun}_persisted` keys preserve each
+    // provider's historical `details` shape (notion `results`, github/linear
+    // `issues`, …). Built dynamically since `json!` can't take runtime keys.
+    let noun = source.detail_noun();
+    let mut details = json!({
+        "budget_remaining": state.budget_remaining(),
+        "cursor": state.cursor,
+        "synced_ids_total": state.synced_ids.len(),
+    });
+    if let Some(obj) = details.as_object_mut() {
+        obj.insert(format!("{noun}_fetched"), json!(total_fetched));
+        obj.insert(format!("{noun}_persisted"), json!(total_persisted));
+        // Scope accounting is only meaningful for providers that iterate real
+        // per-scope work with tolerance/advance (Slack); emitting it for
+        // single-cursor providers would change their historical `details` shape.
+        if per_scope || tolerate {
+            obj.insert("scopes_total".to_string(), json!(scopes.len()));
+            obj.insert("scopes_synced".to_string(), json!(scopes_synced));
+            obj.insert("scopes_errored".to_string(), json!(scopes_errored));
+        }
+    }
+
     Ok(SyncOutcome {
         toolkit: toolkit.to_string(),
         connection_id: Some(connection_id),
@@ -548,13 +736,7 @@ pub(crate) async fn run_sync<S: IncrementalSource + ?Sized>(
         started_at_ms,
         finished_at_ms,
         summary,
-        details: json!({
-            "results_fetched": total_fetched,
-            "results_persisted": total_persisted,
-            "budget_remaining": state.budget_remaining(),
-            "cursor": state.cursor,
-            "synced_ids_total": state.synced_ids.len(),
-        }),
+        details,
     })
 }
 
@@ -586,6 +768,18 @@ mod tests {
         /// provider-reported failure — pins that a failed page still consumes
         /// the daily budget.
         provider_fail_fetch: bool,
+        /// When true, advertise server-side depth so the orchestrator skips its
+        /// client-side window filter (GitHub's behaviour).
+        server_side_depth: bool,
+        /// When true, keep a per-scope watermark map in `state.cursor`
+        /// (Slack's behaviour) instead of a single global cursor.
+        per_scope: bool,
+        /// When true, a scope-level fetch failure is non-fatal — the pass
+        /// continues to the next scope and records `scopes_errored`.
+        tolerate: bool,
+        /// Scope id whose `fetch_page` returns a transport error (used to
+        /// exercise per-scope error tolerance). `None` → every scope succeeds.
+        fail_scope: Option<String>,
     }
 
     impl FakeSource {
@@ -621,6 +815,23 @@ mod tests {
             }
             Ok(self.scopes.clone())
         }
+        fn per_scope_cursors(&self) -> bool {
+            self.per_scope
+        }
+        fn tolerate_scope_errors(&self) -> bool {
+            self.tolerate
+        }
+        fn advance_scope_cursor(&self, state: &mut SyncState, scope: &SyncScope, newest_ts: &str) {
+            // Mirror Slack: fold the watermark into a per-scope map serialized
+            // in `state.cursor`.
+            let mut map: std::collections::BTreeMap<String, String> = state
+                .cursor
+                .as_deref()
+                .and_then(|s| serde_json::from_str(s).ok())
+                .unwrap_or_default();
+            map.insert(scope.id.clone(), newest_ts.to_string());
+            state.cursor = Some(serde_json::to_string(&map).unwrap());
+        }
         async fn fetch_page(
             &self,
             _ctx: &ProviderContext,
@@ -629,6 +840,10 @@ mod tests {
             _reason: SyncReason,
             state: &mut SyncState,
         ) -> Result<PageFetch, String> {
+            if self.fail_scope.as_deref() == Some(scope.id.as_str()) {
+                // A scope-level transport error — exercises tolerate_scope_errors.
+                return Err(format!("fake scope fetch failure for {}", scope.id));
+            }
             if self.fail_fetch {
                 // Simulate a transport error (no completed round-trip) → not
                 // recorded, matching the contract.
@@ -668,6 +883,9 @@ mod tests {
         }
         fn item_sort_ts(&self, item: &Value) -> Option<String> {
             item.get("ts").and_then(Value::as_str).map(str::to_string)
+        }
+        fn server_side_depth(&self) -> bool {
+            self.server_side_depth
         }
         async fn ingest(
             &self,
@@ -758,6 +976,33 @@ mod tests {
         assert_eq!(
             outcome.items_ingested, 2,
             "sync_depth_days=7 must drop the three ancient items"
+        );
+    }
+
+    #[tokio::test]
+    async fn server_side_depth_skips_the_client_side_filter() {
+        // Same ancient items, but the source advertises server-side depth — so
+        // the orchestrator must NOT client-side-truncate (the provider would
+        // have filtered in fetch_page). All five survive here.
+        let tmp = TempDir::new().unwrap();
+        let ctx = fake_ctx(&tmp, None, Some(7));
+        let items = vec![
+            json!({ "id": "a", "ts": "2099-01-02T00:00:00Z" }),
+            json!({ "id": "b", "ts": "2000-01-01T00:00:00Z" }),
+            json!({ "id": "c", "ts": "2000-01-02T00:00:00Z" }),
+        ];
+        let source = FakeSource {
+            scopes: vec![SyncScope::flat()],
+            explicit_items: Some(items),
+            server_side_depth: true,
+            ..Default::default()
+        };
+        let outcome = run_sync(&source, &ctx, SyncReason::Manual)
+            .await
+            .expect("run_sync");
+        assert_eq!(
+            outcome.items_ingested, 3,
+            "server_side_depth must skip the orchestrator's client-side window filter"
         );
     }
 
@@ -914,7 +1159,13 @@ mod tests {
         ];
 
         let mut newest: Option<String> = None;
-        let (pending, hit_boundary) = select_pending(&source, &items, &state, &mut newest);
+        let (pending, hit_boundary) = select_pending(
+            &source,
+            &items,
+            state.cursor.as_deref(),
+            &state,
+            &mut newest,
+        );
 
         assert_eq!(pending.len(), 1, "only the new item A survives");
         assert_eq!(pending[0].dedup_key, "a");
@@ -923,5 +1174,95 @@ mod tests {
             "older synced item B trips the cursor boundary"
         );
         assert_eq!(newest.as_deref(), Some("2026-05-01T00:00:00Z"));
+    }
+
+    #[tokio::test]
+    async fn per_scope_cursors_advance_each_scope_independently() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = fake_ctx(&tmp, None, None);
+        let source = FakeSource {
+            scopes: vec![
+                SyncScope::nested("s1", "Scope 1"),
+                SyncScope::nested("s2", "Scope 2"),
+            ],
+            items_per_scope: 3,
+            per_scope: true,
+            ..Default::default()
+        };
+        let outcome = run_sync(&source, &ctx, SyncReason::Periodic)
+            .await
+            .expect("run_sync");
+        assert_eq!(outcome.items_ingested, 6, "both scopes' items ingested");
+        assert_eq!(outcome.details["scopes_synced"], 2);
+        assert_eq!(outcome.details["scopes_errored"], 0);
+
+        // The persisted cursor is a per-scope watermark map carrying *both*
+        // scopes — proof the orchestrator advanced each scope independently.
+        let memory = ctx.memory_client().expect("memory client");
+        let state = SyncState::load(&memory, "faketoolkit", "conn-fake")
+            .await
+            .unwrap();
+        let map: std::collections::BTreeMap<String, String> =
+            serde_json::from_str(state.cursor.as_deref().unwrap()).expect("cursor map");
+        assert_eq!(map.len(), 2, "both scopes have a watermark");
+        assert!(map.contains_key("s1") && map.contains_key("s2"));
+    }
+
+    #[tokio::test]
+    async fn tolerate_scope_errors_continues_past_a_failed_scope() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = fake_ctx(&tmp, None, None);
+        // Scope s1 fails its fetch; s2 succeeds. With tolerance the pass
+        // ingests s2's items, counts s1 errored, and never returns Err.
+        let source = FakeSource {
+            scopes: vec![
+                SyncScope::nested("s1", "Scope 1"),
+                SyncScope::nested("s2", "Scope 2"),
+            ],
+            items_per_scope: 3,
+            per_scope: true,
+            tolerate: true,
+            fail_scope: Some("s1".to_string()),
+            ..Default::default()
+        };
+        let outcome = run_sync(&source, &ctx, SyncReason::Periodic)
+            .await
+            .expect("tolerant run_sync must not error");
+        assert_eq!(
+            outcome.items_ingested, 3,
+            "only the healthy scope's items are ingested"
+        );
+        assert_eq!(outcome.details["scopes_errored"], 1);
+        assert_eq!(outcome.details["scopes_synced"], 1);
+
+        // The failed scope advanced no watermark; only the healthy one did.
+        let memory = ctx.memory_client().expect("memory client");
+        let state = SyncState::load(&memory, "faketoolkit", "conn-fake")
+            .await
+            .unwrap();
+        let map: std::collections::BTreeMap<String, String> =
+            serde_json::from_str(state.cursor.as_deref().unwrap_or("{}")).expect("cursor map");
+        assert!(map.contains_key("s2"), "healthy scope advanced");
+        assert!(!map.contains_key("s1"), "failed scope watermark held");
+    }
+
+    #[tokio::test]
+    async fn per_scope_fatal_when_tolerance_off() {
+        // Same failing scope, but tolerance off → the fetch error aborts the
+        // whole pass (single-cursor providers' default behaviour).
+        let tmp = TempDir::new().unwrap();
+        let ctx = fake_ctx(&tmp, None, None);
+        let source = FakeSource {
+            scopes: vec![SyncScope::nested("s1", "Scope 1")],
+            items_per_scope: 3,
+            per_scope: true,
+            tolerate: false,
+            fail_scope: Some("s1".to_string()),
+            ..Default::default()
+        };
+        let err = run_sync(&source, &ctx, SyncReason::Periodic)
+            .await
+            .expect_err("without tolerance a scope fetch error propagates");
+        assert!(err.contains("scope fetch failure"), "got: {err}");
     }
 }

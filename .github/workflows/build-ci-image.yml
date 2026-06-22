@@ -1,5 +1,5 @@
 ---
-name: Build CI Docker Image
+name: Build CI Image
 on:
   workflow_dispatch:
 permissions:

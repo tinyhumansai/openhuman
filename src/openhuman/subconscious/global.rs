@@ -92,7 +92,48 @@ pub async fn bootstrap_after_login() -> Result<(), String> {
         config.heartbeat.interval_minutes
     );
 
+    // Opt-in event-driven trigger pipeline. Require BOTH the flag and an
+    // event-driven effective mode: if the user enables triggers and later
+    // switches the subconscious mode to Off/Simple/Aggressive via the mode
+    // selector (which doesn't clear `triggers_enabled`), the stale flag must
+    // not silently reactivate background trigger processing.
+    if config.heartbeat.triggers_enabled
+        && config
+            .heartbeat
+            .effective_subconscious_mode()
+            .is_event_driven()
+    {
+        bootstrap_trigger_orchestrator(&config);
+    }
+
     Ok(())
+}
+
+/// Spawn the background trigger orchestrator (event loop) and register its
+/// bus subscriber. Idempotent via the orchestrator's process-global slot.
+fn bootstrap_trigger_orchestrator(config: &crate::openhuman::config::Config) {
+    use crate::openhuman::subconscious_triggers::{
+        init_orchestrator, register_subconscious_triggers_subscriber, OrchestratorConfig,
+        TriggerOrchestrator,
+    };
+
+    let mode = config.heartbeat.effective_subconscious_mode();
+    let session = Arc::new(super::LongLivedSession::new(
+        config.workspace_dir.clone(),
+        mode,
+    ));
+    let orch_config = OrchestratorConfig {
+        max_promotions_per_hour: config.heartbeat.max_promotions_per_hour,
+        ..OrchestratorConfig::default()
+    };
+    let orchestrator = init_orchestrator(Arc::new(TriggerOrchestrator::new(session, orch_config)));
+    register_subconscious_triggers_subscriber(orchestrator);
+    tracing::info!(
+        workspace = %config.workspace_dir.display(),
+        mode = %mode.as_str(),
+        max_promotions_per_hour = config.heartbeat.max_promotions_per_hour,
+        "[subconscious_triggers] event-driven orchestrator bootstrapped"
+    );
 }
 
 pub async fn stop_heartbeat_loop() {
@@ -110,6 +151,13 @@ pub async fn stop_heartbeat_loop() {
             }
         }
     }
+
+    // Tear down the event-driven trigger orchestrator + its bus subscriber on
+    // every stop (disable, mode change, user switch) so a stale session/loop
+    // never keeps routing trigger work after the pipeline is turned off or the
+    // workspace changes. A subsequent bootstrap re-creates them when enabled.
+    crate::openhuman::subconscious_triggers::shutdown_orchestrator();
+    crate::openhuman::subconscious_triggers::unregister_subconscious_triggers_subscriber();
 
     BOOTSTRAPPED.store(false, Ordering::SeqCst);
 }

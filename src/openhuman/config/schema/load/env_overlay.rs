@@ -787,6 +787,19 @@ impl Config {
                 self.context.tool_result_budget_bytes = n;
             }
         }
+        // Kill-switch for native tool-output compaction (Stage 1a). On by
+        // default; `OPENHUMAN_COMPACTION=0` disables it for a support/A-B
+        // bisect. Accepts the canonical short name and the namespaced form.
+        if let Some(flag) = env
+            .get("OPENHUMAN_COMPACTION")
+            .or_else(|| env.get("OPENHUMAN_CONTEXT_COMPACTION_ENABLED"))
+        {
+            match flag.trim().to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => self.context.compaction_enabled = true,
+                "0" | "false" | "no" | "off" => self.context.compaction_enabled = false,
+                _ => {}
+            }
+        }
         if let Some(model) = env.get("OPENHUMAN_CONTEXT_SUMMARIZER_MODEL") {
             let model = model.trim();
             if !model.is_empty() {
