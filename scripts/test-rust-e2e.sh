@@ -128,14 +128,19 @@ export VITE_BACKEND_URL="$MOCK_API_URL"
 
 cd "$REPO_ROOT"
 source "$HOME/.cargo/env" 2>/dev/null || true
+RUSTC_BIN="$(command -v rustc)"
+CARGO_BIN="${CARGO_BIN:-$(dirname "$RUSTC_BIN")/cargo}"
+if [ ! -x "$CARGO_BIN" ]; then
+  CARGO_BIN="$(command -v cargo)"
+fi
 
 echo "[rust-e2e] Running ${#SUITES[@]} suite(s) serially."
 for suite in "${SUITES[@]}"; do
   if [ "${#EXTRA_ARGS[@]}" -gt 0 ]; then
-    echo "[rust-e2e]   cargo test --manifest-path Cargo.toml --test $suite -- ${EXTRA_ARGS[*]}"
-    cargo test --manifest-path Cargo.toml --test "$suite" -- "${EXTRA_ARGS[@]}"
+    echo "[rust-e2e]   $CARGO_BIN test --manifest-path Cargo.toml --test $suite -- ${EXTRA_ARGS[*]}"
+    "$CARGO_BIN" test --manifest-path Cargo.toml --test "$suite" -- "${EXTRA_ARGS[@]}"
   else
-    echo "[rust-e2e]   cargo test --manifest-path Cargo.toml --test $suite"
-    cargo test --manifest-path Cargo.toml --test "$suite"
+    echo "[rust-e2e]   $CARGO_BIN test --manifest-path Cargo.toml --test $suite"
+    "$CARGO_BIN" test --manifest-path Cargo.toml --test "$suite"
   fi
 done
