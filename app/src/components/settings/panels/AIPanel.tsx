@@ -641,7 +641,7 @@ const ProviderToggleChip = ({
         <SettingsSwitch
           id={`provider-toggle-${slug}`}
           checked={enabled}
-          onCheckedChange={onToggle ?? (() => {})}
+          onCheckedChange={() => onToggle?.()}
           disabled={busy || locked}
           aria-label={providerToggleAriaLabel(t, enabled, label)}
         />
