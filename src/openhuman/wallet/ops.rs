@@ -17,6 +17,14 @@ use crate::rpc::RpcOutcome;
 
 const LOG_PREFIX: &str = "[wallet]";
 const WALLET_STATE_FILENAME: &str = "wallet-state.json";
+/// Error message returned when the wallet has not been set up yet.
+///
+/// This is an expected user-state (the user simply has not created a wallet),
+/// not an internal failure. Downstream boundaries that surface this condition
+/// — e.g. the `tinyplace` client builder — match against this constant to
+/// classify it as `expected_user_state` so it stays out of Sentry. Keep it a
+/// shared constant so the producer here and any classifier cannot drift apart.
+pub const WALLET_NOT_CONFIGURED_MESSAGE: &str = "wallet is not configured; run wallet setup first";
 const VALID_MNEMONIC_WORD_COUNTS: [u8; 5] = [12, 15, 18, 21, 24];
 /// Keychain key for the encrypted mnemonic blob (user_id is added by the keyring module).
 const KEYCHAIN_MNEMONIC_KEY: &str = "wallet.mnemonic";
@@ -738,7 +746,7 @@ pub(crate) async fn secret_material(chain: WalletChain) -> Result<WalletSecretMa
                 "{LOG_PREFIX} secret_material missing wallet state chain={}",
                 chain.as_str()
             );
-            return Err("wallet is not configured; run wallet setup first".to_string());
+            return Err(WALLET_NOT_CONFIGURED_MESSAGE.to_string());
         }
     };
     let encrypted_mnemonic = state
