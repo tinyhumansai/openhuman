@@ -1479,6 +1479,81 @@ async fn lmstudio_provider_does_not_fall_back_to_responses_on_404() {
     );
 }
 
+/// Regression guard for TAURI-RUST-863: OpenRouter is a builtin cloud
+/// provider (`AuthStyle::Bearer`) but does NOT implement the OpenAI Responses
+/// API — its `/v1/responses` rejects our request body with `invalid_union`.
+/// So a `chat/completions` 404 (e.g. "No endpoints found that support tool
+/// use" for a model whose providers can't do tool calling) must NOT trigger
+/// the `/v1/responses` fallback: that second request is guaranteed to fail and
+/// produced ~3.1k Sentry events while masking OpenRouter's real, actionable
+/// error. Same class as the Ollama / LM Studio guards (TAURI-RUST-59Y), but
+/// keyed via `is_openrouter_provider` in the Bearer arm.
+#[tokio::test]
+async fn openrouter_provider_does_not_fall_back_to_responses_on_404() {
+    let mock_server = MockServer::start().await;
+
+    // chat/completions returns OpenRouter's tool-routing 404.
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(404).set_body_string(
+            r#"{"error":{"message":"No endpoints found that support tool use. Try disabling \"spawn_async_subagent\".","code":404}}"#,
+        ))
+        .expect(1) // exactly one attempt — no retry
+        .mount(&mock_server)
+        .await;
+
+    // /v1/responses must NOT be called for OpenRouter.
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(r#"{"output_text":"should not reach here"}"#),
+        )
+        .expect(0) // must not be called
+        .mount(&mock_server)
+        .await;
+
+    // Point the builtin `openrouter` slug at the mock server. The slug match in
+    // `is_openrouter_provider` drives the no-fallback construction regardless of
+    // the (mock) host. A tempdir-backed config + seeded key let the request
+    // actually fire (OpenRouter is `AuthStyle::Bearer`, so it requires a key).
+    let tmp = TempDir::new().expect("tempdir");
+    let config = config_with_providers_in_tempdir(
+        &tmp,
+        vec![CloudProviderCreds {
+            id: "p_openrouter".to_string(),
+            slug: "openrouter".to_string(),
+            label: "OpenRouter".to_string(),
+            endpoint: format!("{}/v1", mock_server.uri()),
+            auth_style: AuthStyle::Bearer,
+            default_model: Some("nvidia/nemotron-3.5-content-safety:free".to_string()),
+            ..Default::default()
+        }],
+    );
+    store_byo_key(&config, "openrouter", "sk-or-test");
+
+    let (provider, model) = create_chat_provider_from_string(
+        "chat",
+        "openrouter:nvidia/nemotron-3.5-content-safety:free",
+        &config,
+    )
+    .expect("openrouter provider must build");
+
+    // The call fails with the genuine 404 — and must NOT reach `/v1/responses`.
+    let result = provider.chat_with_system(None, "hello", &model, 0.0).await;
+    assert!(
+        result.is_err(),
+        "provider should fail with 404, got success"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("404") || err_msg.contains("No endpoints found"),
+        "error should reference the genuine 404, got: {err_msg}"
+    );
+
+    // wiremock verifies expect(0) on the responses mock when the server is dropped.
+}
+
 /// Counterpart to the no-fallback tests: a cloud provider (responses_fallback=true)
 /// MUST retry against `/v1/responses` when chat/completions returns 404.
 /// This guards against an accidental inversion of the supports_responses_fallback flag.
