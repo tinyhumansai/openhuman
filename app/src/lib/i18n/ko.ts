@@ -3650,6 +3650,9 @@ const messages: TranslationMap = {
   'settings.ai.memoryWorkerPolls': '메모리 작업자 설문 조사',
   'settings.ai.defaultProviderName': 'OpenHuman',
   'settings.ai.routing.managed': '관리됨',
+  'settings.ai.routing.managedAlwaysOn': 'Always on',
+  'settings.ai.routing.managedHint':
+    'Managed is always available as a fallback. To use your own model, choose a routing mode below.',
   'settings.ai.routing.managedDesc':
     'OpenHuman이 모든 추론을 클라우드에서 실행하고, 작업에 가장 적합한 모델을 선택하며, 비용을 최적화하고 가장 안전한 라우팅 기본값을 유지합니다.',
   'settings.ai.routing.managedMsg':

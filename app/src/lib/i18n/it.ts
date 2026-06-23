@@ -3733,6 +3733,9 @@ const messages: TranslationMap = {
   'settings.ai.memoryWorkerPolls': 'Sondaggi del Memory Worker',
   'settings.ai.defaultProviderName': 'OpenHuman',
   'settings.ai.routing.managed': 'Gestiti',
+  'settings.ai.routing.managedAlwaysOn': 'Always on',
+  'settings.ai.routing.managedHint':
+    'Managed is always available as a fallback. To use your own model, choose a routing mode below.',
   'settings.ai.routing.managedDesc':
     'OpenHuman eseguirà tutte le inferenze nel cloud, sceglierà il miglior modello per il compito, ottimizzerà i costi e manterrà le impostazioni di routing più sicure.',
   'settings.ai.routing.managedMsg':

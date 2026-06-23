@@ -3603,6 +3603,9 @@ const messages: TranslationMap = {
   'settings.ai.memoryWorkerPolls': 'استطلاعات عاملي الذاكرة',
   'settings.ai.defaultProviderName': 'OpenHuman',
   'settings.ai.routing.managed': 'المُدارة',
+  'settings.ai.routing.managedAlwaysOn': 'Always on',
+  'settings.ai.routing.managedHint':
+    'Managed is always available as a fallback. To use your own model, choose a routing mode below.',
   'settings.ai.routing.managedDesc':
     '(Xqx0xx) سيحقق كل شيء في السحابة، ويختار أفضل نموذج للمهمة، ويرفع التكاليف إلى أقصى حد، ويحتفظ بأمن التخلف عن الدفع.',
   'settings.ai.routing.managedMsg':

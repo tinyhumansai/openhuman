@@ -3677,6 +3677,9 @@ const messages: TranslationMap = {
   'settings.ai.memoryWorkerPolls': 'মেমরি কর্মী পোল',
   'settings.ai.defaultProviderName': 'OpenHuman',
   'settings.ai.routing.managed': 'পরিচালিত',
+  'settings.ai.routing.managedAlwaysOn': 'Always on',
+  'settings.ai.routing.managedHint':
+    'Managed is always available as a fallback. To use your own model, choose a routing mode below.',
   'settings.ai.routing.managedDesc':
     'xq0xqx সমস্ত প্রকার মেঘে রান করা হবে, কর্মের জন্য সেরা মডেল নির্বাচন করুন, খরচের জন্য ব্যবহারযোগ্য ডিফল্ট মান নির্বাচন করুন।',
   'settings.ai.routing.managedMsg':

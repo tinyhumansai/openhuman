@@ -3683,6 +3683,9 @@ const messages: TranslationMap = {
   'settings.ai.memoryWorkerPolls': 'स्मृति कार्यकर्ता सर्वेक्षण',
   'settings.ai.defaultProviderName': 'OpenHuman',
   'settings.ai.routing.managed': 'प्रबंधित',
+  'settings.ai.routing.managedAlwaysOn': 'Always on',
+  'settings.ai.routing.managedHint':
+    'Managed is always available as a fallback. To use your own model, choose a routing mode below.',
   'settings.ai.routing.managedDesc':
     'OpenHuman बादल में सभी अनुमान चला जाएगा, कार्य के लिए सबसे अच्छा मॉडल चुनें, लागत के लिए अनुकूलन करें और सबसे सुरक्षित रूटिंग डिफ़ॉल्ट रखें।',
   'settings.ai.routing.managedMsg':
