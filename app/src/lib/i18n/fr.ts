@@ -2767,7 +2767,7 @@ const messages: TranslationMap = {
   'app.errorFallback.contactSupport': 'Contacter le support',
   'app.errorFallback.copyEventId': 'Copier',
   'app.errorFallback.eventIdCopied': 'Copié',
-  'app.errorFallback.eventIdLabel': 'ID d\'erreur',
+  'app.errorFallback.eventIdLabel': "ID d'erreur",
   'app.errorFallback.revealLogs': 'Afficher les journaux',
   'app.errorFallback.downloadLatest': 'Télécharger la dernière version',
   'app.errorFallback.heading': 'Titre',

@@ -2745,7 +2745,7 @@ const messages: TranslationMap = {
   'app.connectionIndicator.offline': 'Offline',
   'app.connectionIndicator.reconnecting': 'Riconnessione…',
   'app.errorFallback.componentStack': 'Stack del componente',
-  'app.errorFallback.contactSupport': 'Contatta l\'assistenza',
+  'app.errorFallback.contactSupport': "Contatta l'assistenza",
   'app.errorFallback.copyEventId': 'Copia',
   'app.errorFallback.eventIdCopied': 'Copiato',
   'app.errorFallback.eventIdLabel': 'ID errore',
