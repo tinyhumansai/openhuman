@@ -1536,6 +1536,130 @@ async fn cloud_provider_falls_back_to_responses_on_404() {
     drop(result);
 }
 
+/// TAURI-RUST-5EN: a built-in chat-completions-only cloud provider (DeepSeek)
+/// must NOT fall back to `/v1/responses` on a chat-completions 404. DeepSeek
+/// exposes no Responses API, so the fallback is a guaranteed second 404 that
+/// floods Sentry with an empty-body "deepseek Responses API error:" event.
+/// Bearer-path counterpart to `ollama_provider_does_not_fall_back_to_responses_on_404`.
+#[tokio::test]
+async fn deepseek_builtin_does_not_fall_back_to_responses_on_404() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(404)
+                .set_body_string(r#"{"error":{"message":"model not found","code":404}}"#),
+        )
+        .expect(1) // exactly one attempt — no retry, no fallback
+        .mount(&mock_server)
+        .await;
+
+    // DeepSeek has no /v1/responses — the fallback must never reach it.
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(ResponseTemplate::new(404).set_body_string(""))
+        .expect(0) // must not be called
+        .mount(&mock_server)
+        .await;
+
+    let tmp = TempDir::new().expect("tempdir");
+    let entry = CloudProviderCreds {
+        id: "p_deepseek".to_string(),
+        slug: "deepseek".to_string(),
+        label: "DeepSeek".to_string(),
+        endpoint: format!("{}/v1", mock_server.uri()),
+        auth_style: AuthStyle::Bearer,
+        default_model: Some("deepseek-v4-flash".to_string()),
+        ..Default::default()
+    };
+    let config = config_with_providers_in_tempdir(&tmp, vec![entry]);
+    // Bearer providers fail at call time with "API key not set" before any HTTP
+    // request, so stash a key to let the chat-completions call reach the mock.
+    AuthService::from_config(&config)
+        .store_provider_token(
+            "provider:deepseek",
+            "default",
+            "sk-test",
+            Default::default(),
+            true,
+        )
+        .expect("store provider token");
+
+    let (provider, model) =
+        create_chat_provider_from_string("chat", "deepseek:deepseek-v4-flash", &config)
+            .expect("deepseek provider must build");
+
+    let result = provider.chat_with_system(None, "hello", &model, 0.0).await;
+    assert!(
+        result.is_err(),
+        "chat-completions 404 should surface as an error, not a success"
+    );
+
+    // wiremock verifies expect(0) on /v1/responses when the server is dropped.
+}
+
+/// Counterpart guard: a custom (non-built-in) Bearer slug KEEPS the responses
+/// fallback — its endpoint may be a genuine OpenAI proxy that serves
+/// `/v1/responses`. Ensures the 5EN slug-gate only disables the fallback for
+/// known chat-completions-only built-ins, not for unknown providers.
+#[tokio::test]
+async fn custom_bearer_provider_keeps_responses_fallback_on_404() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(404)
+                .set_body_string(r#"{"error":{"message":"model not found","code":404}}"#),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // Unknown slug → fallback retained → /v1/responses MUST be called.
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(
+                r#"{"output":[{"content":[{"type":"output_text","text":"ok"}]}]}"#,
+            ),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let tmp = TempDir::new().expect("tempdir");
+    let entry = CloudProviderCreds {
+        id: "p_custom".to_string(),
+        slug: "my-openai-proxy".to_string(),
+        label: "My Proxy".to_string(),
+        endpoint: format!("{}/v1", mock_server.uri()),
+        auth_style: AuthStyle::Bearer,
+        default_model: Some("proxy-model".to_string()),
+        ..Default::default()
+    };
+    let config = config_with_providers_in_tempdir(&tmp, vec![entry]);
+    AuthService::from_config(&config)
+        .store_provider_token(
+            "provider:my-openai-proxy",
+            "default",
+            "sk-test",
+            Default::default(),
+            true,
+        )
+        .expect("store provider token");
+
+    let (provider, model) =
+        create_chat_provider_from_string("chat", "my-openai-proxy:proxy-model", &config)
+            .expect("custom bearer provider must build");
+
+    let result = provider.chat_with_system(None, "hello", &model, 0.0).await;
+    drop(result);
+
+    // wiremock verifies expect(1) on /v1/responses when the server is dropped.
+}
+
 #[tokio::test]
 #[ignore = "requires live LM Studio on localhost:1234"]
 async fn live_lmstudio_provider_streams_thinking_and_text() {
