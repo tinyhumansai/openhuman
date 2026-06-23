@@ -71,7 +71,10 @@ export default function ErrorFallbackScreen({
 
   const openSupport = () => {
     if (!hasEventId) return;
-    openUrl(`${SUPPORT_URL}?ref=${encodeURIComponent(eventId as string)}`);
+    // `&` when SUPPORT_URL already carries a query (env override) so the ref
+    // never produces a malformed double-`?` link.
+    const sep = SUPPORT_URL.includes('?') ? '&' : '?';
+    openUrl(`${SUPPORT_URL}${sep}ref=${encodeURIComponent(eventId as string)}`);
   };
 
   return (

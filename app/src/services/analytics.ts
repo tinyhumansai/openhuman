@@ -217,7 +217,8 @@ export function initSentry(): void {
       // event's own id + a static base (no PII). Mirrors the id the user
       // sees + copies on `ErrorFallbackScreen`.
       if (event.event_id) {
-        event.tags.support_url = `${SUPPORT_URL}?ref=${event.event_id}`;
+        const sep = SUPPORT_URL.includes('?') ? '&' : '?';
+        event.tags.support_url = `${SUPPORT_URL}${sep}ref=${event.event_id}`;
       }
 
       // Strip PII; keep a stable account id only.
