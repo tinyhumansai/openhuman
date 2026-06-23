@@ -147,6 +147,15 @@ export function initSentry(): void {
     tracesSampleRate: 0,
     defaultIntegrations: false,
     integrations: [
+      // `defaultIntegrations: false` (above) drops InboundFilters, which is
+      // the only integration that consumes the `ignoreErrors` option below.
+      // Without it that whole list is dead config and the listed
+      // non-actionable errors — e.g. "ResizeObserver loop completed with
+      // undelivered notifications" (TAURI-REACT-1R) — all leak to the
+      // dashboard. Re-include it explicitly (same pattern as httpContext for
+      // #1403). It runs as an event processor before `beforeSend`, so filtered
+      // errors are dropped before the consent gate even sees them.
+      Sentry.inboundFiltersIntegration(),
       Sentry.functionToStringIntegration(),
       Sentry.linkedErrorsIntegration(),
       Sentry.dedupeIntegration(),

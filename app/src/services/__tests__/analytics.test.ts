@@ -10,6 +10,7 @@ const hoisted = vi.hoisted(() => ({
   init: vi.fn(),
   // Integration stubs — these aren't introspected, just need to exist so
   // `Sentry.init()` accepts the integrations array without throwing.
+  inboundFiltersIntegration: vi.fn(() => ({ name: 'InboundFilters' })),
   functionToStringIntegration: vi.fn(() => ({})),
   linkedErrorsIntegration: vi.fn(() => ({})),
   dedupeIntegration: vi.fn(() => ({})),
@@ -29,6 +30,7 @@ vi.mock('@sentry/react', () => ({
   captureMessage: hoisted.captureMessage,
   flush: hoisted.flush,
   init: hoisted.init,
+  inboundFiltersIntegration: hoisted.inboundFiltersIntegration,
   functionToStringIntegration: hoisted.functionToStringIntegration,
   linkedErrorsIntegration: hoisted.linkedErrorsIntegration,
   dedupeIntegration: hoisted.dedupeIntegration,
@@ -306,6 +308,27 @@ describe('initSentry beforeSend manual-staging bypass', () => {
     expect(opts.replaysOnErrorSampleRate).toBe(0);
     const names = opts.integrations.map(i => i.name).filter(Boolean);
     expect(names).toContain('HttpContext');
+  });
+
+  test('registers inboundFiltersIntegration so ignoreErrors is live (TAURI-REACT-1R)', async () => {
+    // Regression for TAURI-REACT-1R: `defaultIntegrations: false` drops
+    // InboundFilters, the only integration that consumes `ignoreErrors`. When
+    // a past edit re-added a curated integration list but omitted it, the whole
+    // `ignoreErrors` list went inert and "ResizeObserver loop completed with
+    // undelivered notifications" (plus the other non-actionable errors) leaked
+    // to the dashboard for months. Assert both halves stay coupled: the
+    // integration is present AND the filter list still carries the patterns.
+    hoisted.init.mockReset();
+    const { initSentry } = await import('../analytics');
+    initSentry();
+
+    const opts = hoisted.init.mock.calls[0][0] as {
+      integrations: Array<{ name?: string }>;
+      ignoreErrors: string[];
+    };
+    const names = opts.integrations.map(i => i.name).filter(Boolean);
+    expect(names).toContain('InboundFilters');
+    expect(opts.ignoreErrors).toContain('ResizeObserver loop');
   });
 
   test('keeps os/browser/device contexts and forwards them through beforeSend (#1403)', async () => {
