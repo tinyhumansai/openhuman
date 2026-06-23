@@ -595,20 +595,13 @@ pub async fn get_data_paths() -> Result<RpcOutcome<serde_json::Value>, String> {
 mod loader_io_chain_tests {
     use super::*;
 
-    // Both assertions below lock in the #3962 contract: a config READ failure
-    // surfaced through the RPC string boundary must carry the full anyhow chain
-    // (`{:#}`) — the top `with_context` line PLUS the underlying io cause
-    // (`os error N`) — not just the opaque top context. Without it the
-    // observability classifier (`is_config_read_io_failure_message`) and Sentry
-    // triage cannot tell a user-environment denial from an app-side race.
-    //
-    // Portable trigger: a *directory* at the config path. `exists()` is true so
-    // the read branch is taken, but `read_to_string` fails with EISDIR (unix) /
-    // ERROR_ACCESS_DENIED (windows) — neither transient, so it returns straight
-    // away with the chained error.
-
+    // A directory at the config path is corruption, not a transient/denied read:
+    // the read site fails it fast with distinct wording, and the observability
+    // classifier MUST keep paging it (never demote to ConfigReadIoFailure). This
+    // guards the Codex P2 hole where a Windows directory-at-config surfaces the
+    // same `os error 5` shape as a real ACL denial (#3962).
     #[tokio::test]
-    async fn reload_snapshot_surfaces_full_io_chain() {
+    async fn config_directory_pages_and_is_not_demoted() {
         let tmp = tempfile::tempdir().unwrap();
         let config_path = tmp.path().join("config.toml");
         std::fs::create_dir(&config_path).unwrap();
@@ -621,27 +614,28 @@ mod loader_io_chain_tests {
 
         let err = reload_config_snapshot_with_timeout(&snapshot)
             .await
-            .expect_err("reading a directory as config.toml must fail");
+            .expect_err("a directory at the config path must fail");
 
         assert!(
-            err.contains("reading config.toml from"),
-            "reload error must carry the read context: {err}"
+            err.contains("is a directory") || err.contains("not a file"),
+            "directory-at-config must report a distinct, non-read error: {err}"
         );
-        assert!(
-            err.contains("os error"),
-            "reload error must carry the underlying io cause (#3962), not just the top context: {err}"
+        assert_ne!(
+            crate::core::observability::expected_error_kind(&err),
+            Some(crate::core::observability::ExpectedErrorKind::ConfigReadIoFailure),
+            "a directory at the config path is corruption — it must keep paging, not demote: {err}"
         );
     }
 
+    // load_config_with_timeout resolves the process-global OPENHUMAN_WORKSPACE,
+    // so serialize against the other env-mutating config tests. Exercises the
+    // load_or_init directory guard + the `Ok(Err) => format!("{e:#}")` arm.
     #[tokio::test]
-    async fn load_config_with_timeout_surfaces_full_io_chain() {
+    async fn load_config_with_timeout_rejects_directory_config() {
         let tmp = tempfile::tempdir().unwrap();
         let config_path = tmp.path().join("config.toml");
         std::fs::create_dir(&config_path).unwrap();
 
-        // `load_config_with_timeout` resolves the process-global
-        // `OPENHUMAN_WORKSPACE`, so serialize against the other env-mutating
-        // config tests via the shared crate lock.
         let _g = crate::openhuman::config::TEST_ENV_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
@@ -655,14 +649,51 @@ mod loader_io_chain_tests {
             None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
         }
 
-        let err = result.expect_err("reading a directory as config.toml must fail");
+        let err = result.expect_err("a directory at the config path must fail");
         assert!(
-            err.contains("Failed to read config file"),
-            "load error must carry the read context: {err}"
+            err.contains("is a directory") || err.contains("not a file"),
+            "directory-at-config must report a distinct, non-read error: {err}"
+        );
+    }
+
+    // The #3962 keystone: a genuine read failure on a regular file must surface
+    // the full anyhow chain (`{:#}`) — the read context PLUS the underlying io
+    // cause (`os error N`) — through the RPC String boundary, not just the top
+    // `with_context` line. Triggered portably with a 0o000 (unreadable) file;
+    // skipped under root, which ignores file permissions.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn load_surfaces_full_io_chain_on_unreadable_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("config.toml");
+        std::fs::write(&config_path, "default_temperature = 0.5\n").unwrap();
+        std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        // Root bypasses file-permission checks — the read would succeed and the
+        // assertion would be meaningless, so skip in that environment.
+        if std::fs::read_to_string(&config_path).is_ok() {
+            return;
+        }
+
+        let snapshot = Config {
+            config_path: config_path.clone(),
+            workspace_dir: tmp.path().join("workspace"),
+            ..Default::default()
+        };
+
+        let err = reload_config_snapshot_with_timeout(&snapshot)
+            .await
+            .expect_err("an unreadable config file must fail");
+
+        assert!(
+            err.contains("reading config.toml from"),
+            "error must carry the read context: {err}"
         );
         assert!(
             err.contains("os error"),
-            "load error must carry the underlying io cause (#3962), not just the top context: {err}"
+            "error must carry the underlying io cause via {{:#}} (#3962): {err}"
         );
     }
 }

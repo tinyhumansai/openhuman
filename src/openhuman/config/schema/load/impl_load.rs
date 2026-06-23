@@ -179,6 +179,20 @@ impl Config {
                 }
             }
 
+            // A directory (or other non-regular file) at the config path is a
+            // bad-install / corruption signal, not a transient read failure. On
+            // Windows `read_to_string` of a directory returns the same
+            // `Access is denied. (os error 5)` shape as a real ACL denial, which
+            // the observability classifier would otherwise demote. Fail fast with
+            // distinct wording so it keeps paging instead of being suppressed as
+            // an expected user-state config-read failure (#3962, Codex P2).
+            if config_path.is_dir() {
+                anyhow::bail!(
+                    "Config path is a directory, not a file: {}",
+                    config_path.display()
+                );
+            }
+
             let contents = crate::openhuman::util::retry_with_backoff_async(
                 "read config file",
                 5,
@@ -345,6 +359,16 @@ impl Config {
             };
             config.apply_env_overrides_from(&ProcessEnvWithoutWorkspace);
             return Ok(config);
+        }
+
+        // See the `load_or_init` read branch: a directory at the config path is
+        // corruption, not a transient read failure — fail fast with distinct
+        // wording so it pages instead of being demoted (#3962, Codex P2).
+        if config_path.is_dir() {
+            anyhow::bail!(
+                "Config path is a directory, not a file: {}",
+                config_path.display()
+            );
         }
 
         let raw = fs::read_to_string(&config_path)
