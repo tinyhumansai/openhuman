@@ -35,9 +35,29 @@ const log = debug('agentworld:feed');
 
 type FeedState =
   | { status: 'loading' }
+  | { status: 'wallet_unconfigured' }
   | { status: 'payment_required'; challenge: unknown }
   | { status: 'error'; message: string }
   | { status: 'ok'; items: GqlHomeFeedItem[] };
+
+/**
+ * Result of resolving the local wallet on mount.
+ *
+ * `configured`:
+ * - `'resolving'` → wallet_status still in flight; callers must NOT fire
+ *   wallet-requiring RPCs yet.
+ * - `'no'`        → wallet_status resolved with no usable (Solana) account,
+ *   i.e. no wallet is configured at all. This is the only state where we have
+ *   a positive lever to skip the wallet-gated RPC entirely.
+ * - `'yes'`       → a usable wallet account exists.
+ * - `'unknown'`   → wallet_status fetch failed (transport/RPC error). We can't
+ *   prove the wallet is absent, so callers should proceed and let the backend
+ *   boundary classifier handle any wallet-locked error (defense-in-depth).
+ *
+ * `agentId` is the resolved Solana address when one exists, else `null`.
+ */
+type WalletConfigured = 'resolving' | 'no' | 'yes' | 'unknown';
+type WalletResolution = { agentId: string | null; configured: WalletConfigured };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -102,19 +122,49 @@ function InitialAvatar({ name }: { name: string }) {
   );
 }
 
-// ── useMyAgentId ──────────────────────────────────────────────────────────────
+// ── useWalletResolution ───────────────────────────────────────────────────────
 
-function useMyAgentId(): string | null {
-  const [agentId, setAgentId] = useState<string | null>(null);
+/**
+ * Resolve the local wallet once on mount.
+ *
+ * Mirrors WalletAddressChip's convention: a wallet is "configured" (usable for
+ * the wallet-gated feed RPCs) when wallet_status resolves with a Solana account.
+ * A successful response with no Solana account means no wallet is set up. A
+ * rejected fetch (transport/RPC error) is treated as "unknown" — we leave
+ * `configured` null so the caller surfaces a transient error rather than
+ * mislabelling a configured wallet as unconfigured.
+ *
+ * Exposing the tri-state lets FeedSection gate the wallet-requiring `homeFeed()`
+ * fetch on wallet status *before* invoking it — so wallet-less users never hit
+ * the RPC and trip the boundary classifier.
+ */
+function useWalletResolution(): WalletResolution {
+  const [resolution, setResolution] = useState<WalletResolution>({
+    agentId: null,
+    configured: 'resolving',
+  });
   useEffect(() => {
+    let cancelled = false;
     void fetchWalletStatus()
       .then(status => {
+        if (cancelled) return;
         const solana = (status.accounts ?? []).find(a => a.chain === 'solana');
-        if (solana?.address) setAgentId(solana.address);
+        const address = solana?.address ?? null;
+        setResolution({ agentId: address, configured: address !== null ? 'yes' : 'no' });
       })
-      .catch(() => {});
+      .catch(() => {
+        // Transport/RPC failure: we can't prove the wallet is absent, so mark
+        // it 'unknown' — the feed proceeds and the backend boundary classifier
+        // handles any wallet-locked error rather than us showing a false
+        // "not configured" state for a wallet that may well exist.
+        if (cancelled) return;
+        setResolution({ agentId: null, configured: 'unknown' });
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
-  return agentId;
+  return resolution;
 }
 
 // ── CommentComposer ───────────────────────────────────────────────────────────
@@ -540,7 +590,7 @@ export default function FeedSection() {
   const [followLoading, setFollowLoading] = useState<Record<string, boolean>>({});
   const [likeState, setLikeState] = useState<Record<string, { liked: boolean; count: number }>>({});
 
-  const myAgentId = useMyAgentId();
+  const { agentId: myAgentId, configured: walletConfigured } = useWalletResolution();
 
   // ── Hydrate follow state from the server ───────────────────────────────────
   // The home feed doesn't carry "am I following this author?", so seed the
@@ -567,7 +617,28 @@ export default function FeedSection() {
   }, [myAgentId]);
 
   // ── Fetch home feed ────────────────────────────────────────────────────────
+  // Gate the wallet-requiring `homeFeed()` RPC on wallet status. While wallet
+  // resolution is still in flight ('resolving') we stay on the loading state
+  // and fire nothing. When no wallet is configured ('no') we render the
+  // configure-wallet state WITHOUT calling the RPC — so wallet-less users never
+  // trip the backend's wallet-not-configured error (prevention at source; the
+  // boundary classifier remains as defense-in-depth). A configured wallet
+  // ('yes') — or an inconclusive wallet_status fetch ('unknown') — fires the
+  // feed fetch as before.
   useEffect(() => {
+    if (walletConfigured === 'resolving') {
+      // Still resolving — stay on the initial loading state, fire nothing yet.
+      return;
+    }
+    if (walletConfigured === 'no') {
+      // Positive "no wallet" signal — skip the wallet-gated RPC entirely.
+      log('skipping homeFeed: no wallet configured');
+      setFeedState({ status: 'wallet_unconfigured' });
+      return;
+    }
+    // 'yes' or 'unknown' → fire the feed fetch ('unknown' falls through so the
+    // backend classifier can handle a wallet-locked error as before).
+
     let cancelled = false;
     setFeedState({ status: 'loading' });
 
@@ -590,7 +661,7 @@ export default function FeedSection() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [walletConfigured]);
 
   // ── Follow / Unfollow ──────────────────────────────────────────────────────
 
@@ -674,6 +745,14 @@ export default function FeedSection() {
       <div className="flex h-64 items-center justify-center text-stone-400 dark:text-neutral-500">
         <span className="animate-pulse text-sm">Loading feed…</span>
       </div>
+    );
+  } else if (feedState.status === 'wallet_unconfigured') {
+    body = (
+      <StatusBlock
+        tone="text-stone-700 dark:text-neutral-200"
+        title="Set up your wallet to view your feed"
+        body="Your personalized feed uses your wallet identity. Set up or import a wallet in Settings to continue."
+      />
     );
   } else if (feedState.status === 'payment_required') {
     body = (

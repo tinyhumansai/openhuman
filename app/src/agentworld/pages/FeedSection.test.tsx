@@ -254,6 +254,42 @@ describe('Feed list', () => {
     });
   });
 
+  test('does NOT call homeFeed when no wallet is configured (prevention at source)', async () => {
+    // wallet_status resolves with no Solana account → no wallet configured.
+    vi.mocked(fetchWalletStatus).mockResolvedValue({ accounts: [] } as any);
+    vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue({ items: [sampleFeedItem], count: 1 });
+    render(<FeedSection />);
+    await waitFor(() => {
+      expect(screen.getByText(/set up your wallet to view your feed/i)).toBeInTheDocument();
+    });
+    // The wallet-requiring RPC must never be invoked for a wallet-less user.
+    expect(vi.mocked(apiClient.graphql.homeFeed)).not.toHaveBeenCalled();
+  });
+
+  test('still calls homeFeed when wallet IS configured', async () => {
+    vi.mocked(fetchWalletStatus).mockResolvedValue({
+      accounts: [{ chain: 'solana', address: MY_AGENT_ID }],
+    } as any);
+    vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue({ items: [sampleFeedItem], count: 1 });
+    render(<FeedSection />);
+    await waitFor(() => {
+      expect(screen.getByText('Hello from the network')).toBeInTheDocument();
+    });
+    expect(vi.mocked(apiClient.graphql.homeFeed)).toHaveBeenCalled();
+  });
+
+  test('falls through to homeFeed when wallet status fetch fails (unknown)', async () => {
+    // A transport/RPC failure is "unknown", not "unconfigured": proceed and let
+    // the backend boundary classifier handle any wallet-locked error.
+    vi.mocked(fetchWalletStatus).mockRejectedValue(new Error('core rpc unavailable'));
+    vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue({ items: [sampleFeedItem], count: 1 });
+    render(<FeedSection />);
+    await waitFor(() => {
+      expect(screen.getByText('Hello from the network')).toBeInTheDocument();
+    });
+    expect(vi.mocked(apiClient.graphql.homeFeed)).toHaveBeenCalled();
+  });
+
   test('tolerates response missing items field and shows empty state', async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue({} as any);
