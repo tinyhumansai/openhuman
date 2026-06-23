@@ -47,9 +47,20 @@ export function splitAgentMessageIntoBubbles(content: string): string[] {
       if (currentLines.length > 0) {
         flushCurrent();
       }
+      // A prose line that merely contains a pipe (e.g. "pick A | B, then run
+      // `ps aux | grep x`") satisfies looksLikeMarkdownTableRow but is not a
+      // table row. Require the same column count as the header so it isn't
+      // absorbed into the table — otherwise parseMarkdownTable rejects the
+      // mismatched block (returns null), suppressing the table UI and merging
+      // the prose line into the table bubble.
+      const headerCellCount = splitMarkdownTableCells(line).length;
       const tableLines = [line, lines[index + 1]];
       index += 2;
-      while (index < lines.length && looksLikeMarkdownTableRow(lines[index])) {
+      while (
+        index < lines.length &&
+        looksLikeMarkdownTableRow(lines[index]) &&
+        splitMarkdownTableCells(lines[index]).length === headerCellCount
+      ) {
         tableLines.push(lines[index]);
         index += 1;
       }

@@ -51,6 +51,19 @@ describe('splitAgentMessageIntoBubbles', () => {
     ]);
   });
 
+  it('does not absorb a following prose line whose pipes give a different column count', () => {
+    // The prose line satisfies looksLikeMarkdownTableRow (it contains pipes) but
+    // has 3 "cells" vs the table's 2; absorbing it makes parseMarkdownTable
+    // reject the block (null), suppressing the table renderer and merging the
+    // prose into the table bubble.
+    const content =
+      '| Plan | Cost |\n| --- | --- |\n| Basic | $10 |\nEither pick Basic | Pro, then run `ps aux | grep node`.';
+    expect(splitAgentMessageIntoBubbles(content)).toEqual([
+      '| Plan | Cost |\n| --- | --- |\n| Basic | $10 |',
+      'Either pick Basic | Pro, then run `ps aux | grep node`.',
+    ]);
+  });
+
   it('keeps double-newline paragraphs in the same bubble', () => {
     const content = 'First line\nSecond line\n\nThird paragraph\nFourth line';
     expect(splitAgentMessageIntoBubbles(content)).toEqual([
