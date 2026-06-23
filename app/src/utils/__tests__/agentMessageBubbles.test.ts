@@ -64,6 +64,16 @@ describe('splitAgentMessageIntoBubbles', () => {
     ]);
   });
 
+  it('keeps a table whose first data row carries a code-span pipe as one readable block', () => {
+    // splitMarkdownTableCells splits naively on "|", so a genuine first data row
+    // with a pipe inside a code span over-counts its cells (3 vs the header's 2).
+    // Dropping it would leave a header+separator-only block that renders as an
+    // empty-row table and detaches the real row; keeping the first data row makes
+    // parseMarkdownTable return null so the block falls back to readable markdown.
+    const content = '| Command | Use |\n| --- | --- |\n| `ps aux | grep node` | Find it |';
+    expect(splitAgentMessageIntoBubbles(content)).toEqual([content]);
+  });
+
   it('keeps double-newline paragraphs in the same bubble', () => {
     const content = 'First line\nSecond line\n\nThird paragraph\nFourth line';
     expect(splitAgentMessageIntoBubbles(content)).toEqual([
