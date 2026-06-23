@@ -1,9 +1,10 @@
 import { useState } from 'react';
 
 import { useT } from '../lib/i18n/I18nContext';
+import { isAnalyticsEnabled } from '../services/analytics';
 import { LATEST_APP_DOWNLOAD_URL, SUPPORT_URL } from '../utils/config';
 import { openUrl } from '../utils/openUrl';
-import { safeInvoke as invoke, isTauri } from '../utils/tauriCommands/common';
+import { safeInvoke as invoke } from '../utils/tauriCommands/common';
 
 /**
  * ErrorFallbackScreen
@@ -43,7 +44,11 @@ export default function ErrorFallbackScreen({
   const [copied, setCopied] = useState(false);
   const errorName = error instanceof Error ? error.name : 'Error';
   const errorMessage = error instanceof Error ? error.message : String(error);
-  const hasEventId = typeof eventId === 'string' && eventId.length > 0;
+  // Only surface the Error ID / support ref when analytics is on: with consent
+  // off, `analytics.ts::beforeSend` drops the event, yet the SDK still hands the
+  // boundary a generated id — showing it would let an opted-out user copy a ref
+  // support can never look up (Codex P2 on #3980).
+  const hasEventId = typeof eventId === 'string' && eventId.length > 0 && isAnalyticsEnabled();
 
   const copyEventId = async () => {
     if (!hasEventId) return;
@@ -59,7 +64,9 @@ export default function ErrorFallbackScreen({
 
   const revealLogs = () => {
     // Diagnostics escape hatch: works even when the UI is otherwise dead.
-    void invoke('reveal_logs_folder');
+    // `.catch` swallows the rejection on non-desktop / pre-bootstrap so a
+    // fire-and-forget invoke can't surface as an unhandled rejection.
+    void invoke('reveal_logs_folder').catch(() => {});
   };
 
   const openSupport = () => {
@@ -153,13 +160,15 @@ export default function ErrorFallbackScreen({
               className="bg-coral-500 hover:bg-coral-600 text-white text-sm font-medium rounded-xl px-4 py-3 transition-colors">
               {t('app.errorFallback.reloadApp')}
             </button>
-            {isTauri() && (
-              <button
-                onClick={revealLogs}
-                className="bg-stone-800 hover:bg-stone-700 text-white text-sm font-medium rounded-xl px-4 py-3 transition-colors border border-stone-600">
-                {t('app.errorFallback.revealLogs')}
-              </button>
-            )}
+            {/* Always rendered — `isTauri()` is false during the CEF IPC
+                bootstrap gap, which is exactly when an early deterministic
+                crash needs this escape hatch; the invoke fails safe off-desktop
+                (Codex P2 on #3980). */}
+            <button
+              onClick={revealLogs}
+              className="bg-stone-800 hover:bg-stone-700 text-white text-sm font-medium rounded-xl px-4 py-3 transition-colors border border-stone-600">
+              {t('app.errorFallback.revealLogs')}
+            </button>
           </div>
 
           {/* Secondary links */}
