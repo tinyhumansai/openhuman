@@ -34,6 +34,13 @@ const TICK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60
 /// Per-tool-call timeout injected into the agent config.
 const TOOL_CALL_TIMEOUT_SECS: u64 = 5 * 60;
 
+/// Actionable reason surfaced (via `SubconsciousStatus.provider_unavailable_reason`)
+/// when a subconscious tick fails because the configured chat model has no
+/// tool-use endpoint. The subconscious turn is inherently tool-bearing (it
+/// maintains its scratchpad through tools), so a tool-incapable model can never
+/// satisfy a tick — this tells the user how to recover. See TAURI-RUST-ADC.
+const TOOL_UNSUPPORTED_REASON: &str = "The selected chat model has no tool-use endpoint, so Subconscious can't run. Pick a tool-capable model in Settings > AI.";
+
 /// Pick the `TrustedAutomationSource` variant for a subconscious tick.
 ///
 /// Extracted from the engine's `run_agent` body so the
@@ -285,6 +292,21 @@ impl SubconsciousEngine {
         state.total_ticks += 1;
         if agent_failed {
             state.consecutive_failures += 1;
+            // Surface an actionable reason when the failure is a permanent
+            // tool-capability error: the subconscious turn is inherently
+            // tool-bearing, so the configured chat model can never satisfy it
+            // and the user must pick a tool-capable model. The hard Sentry
+            // flood from this error is suppressed at the provider classifier
+            // (is_provider_config_rejection_message, TAURI-RUST-ADC); here we
+            // only make the cause visible in Subconscious status.
+            if let Err(e) = &agent_result {
+                if is_tool_capability_error(e) {
+                    info!(
+                        "[subconscious] configured chat model has no tool-use endpoint — Subconscious can't run until the model changes (TAURI-RUST-ADC)"
+                    );
+                    state.provider_unavailable_reason = Some(TOOL_UNSUPPORTED_REASON.to_string());
+                }
+            }
         } else {
             state.consecutive_failures = 0;
             state.last_tick_at = tick_at;
@@ -462,6 +484,18 @@ fn resolve_subconscious_route(config: &Config) -> SubconsciousProviderRoute {
     } else {
         SubconsciousProviderRoute::Other(raw.to_string())
     }
+}
+
+/// True when an agent-run error means the configured chat model can't do tool
+/// calls at all — a permanent, user-actionable condition (pick a tool-capable
+/// model). Matches both the direct-provider body (`<model> does not support
+/// tools`) and OpenRouter's router-level phrasing (`No endpoints found that
+/// support tool use`, TAURI-RUST-ADC). Kept narrow to tool capability so an
+/// unrelated provider error (auth, billing, rate-limit) is not misread as one.
+fn is_tool_capability_error(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    lower.contains("no endpoints found that support tool use")
+        || lower.contains("does not support tools")
 }
 
 // ── Pre-LLM memory retrieval ────────────────────────────────────────────────
