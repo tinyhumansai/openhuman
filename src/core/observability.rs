@@ -648,6 +648,15 @@ fn is_config_read_io_failure_message(lower: &str) -> bool {
     if !has_config_read_anchor {
         return false;
     }
+    // A directory (or otherwise non-regular file) at the config path is a
+    // bad-install / corruption signal that MUST keep paging. On Windows reading
+    // a directory surfaces the same `Access is denied. (os error 5)` shape as a
+    // genuine ACL denial, so the io-signal check below cannot tell them apart;
+    // the read site (`impl_load.rs`) now fails a directory fast with this
+    // distinct wording, and we belt-and-braces exclude it here too. (Codex P2.)
+    if lower.contains("is a directory") || lower.contains("not a file") {
+        return false;
+    }
     lower.contains("access is denied")
         || lower.contains("permission denied")
         || lower.contains("being used by another process")
@@ -1839,12 +1848,15 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
             // we cannot make the file readable, and the same poll re-reports it
             // every cycle (TAURI-RUST-DME). Demote at `warn!` so it stays in the
             // local log for support without paging on every poll.
+            // Metadata-only: the raw message embeds the absolute config path
+            // (username / home dir). Keep this arm PII-free like the other
+            // path-sensitive demotions — domain/operation/kind are enough to
+            // see the condition without leaking the path into local logs.
             tracing::warn!(
                 domain = domain,
                 operation = operation,
                 kind = "config_read_io_failure",
-                error = %message,
-                "[observability] {domain}.{operation} skipped expected config-read io failure (OS access denied/locked): {message}"
+                "[observability] {domain}.{operation} skipped expected config-read io failure (OS access denied/locked)"
             );
         }
         ExpectedErrorKind::SubconsciousSchemaUnavailable => {
@@ -3452,6 +3464,22 @@ mod tests {
         // not be hijacked into the config bucket.
         assert_ne!(
             expected_error_kind("opening keychain failed: Access is denied. (os error 5)"),
+            Some(ExpectedErrorKind::ConfigReadIoFailure),
+        );
+        // A directory at the config path is corruption — keep paging even though
+        // it carries an access-denied / os-error-5 shape (Codex P2). Both the
+        // unix wording and the Windows os-error-5 + read-site wording are
+        // excluded by the `is a directory` / `not a file` guard.
+        assert_ne!(
+            expected_error_kind(
+                "Failed to read config file: /home/u/.openhuman/users/local/config.toml: Is a directory (os error 21)"
+            ),
+            Some(ExpectedErrorKind::ConfigReadIoFailure),
+        );
+        assert_ne!(
+            expected_error_kind(
+                "Config path is a directory, not a file: C:\\Users\\u\\.openhuman\\users\\local-wb\\config.toml: Access is denied. (os error 5)"
+            ),
             Some(ExpectedErrorKind::ConfigReadIoFailure),
         );
     }
