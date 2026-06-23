@@ -9,14 +9,12 @@ vi.mock('../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (k: string) => k }
 const hoisted = vi.hoisted(() => ({
   openUrl: vi.fn(),
   safeInvoke: vi.fn().mockResolvedValue(undefined),
-  isTauri: vi.fn(() => true),
+  isAnalyticsEnabled: vi.fn(() => true),
 }));
 
 vi.mock('../utils/openUrl', () => ({ openUrl: hoisted.openUrl }));
-vi.mock('../utils/tauriCommands/common', () => ({
-  safeInvoke: hoisted.safeInvoke,
-  isTauri: hoisted.isTauri,
-}));
+vi.mock('../utils/tauriCommands/common', () => ({ safeInvoke: hoisted.safeInvoke }));
+vi.mock('../services/analytics', () => ({ isAnalyticsEnabled: hoisted.isAnalyticsEnabled }));
 vi.mock('../utils/config', () => ({
   SUPPORT_URL: 'https://support.example/help',
   LATEST_APP_DOWNLOAD_URL: 'https://downloads.example/latest',
@@ -30,10 +28,12 @@ const baseProps = {
 
 afterEach(() => {
   vi.clearAllMocks();
+  hoisted.isAnalyticsEnabled.mockReturnValue(true);
 });
 
 describe('ErrorFallbackScreen', () => {
   test('shows a copyable Error ID and copies it on click', async () => {
+    const originalClipboard = navigator.clipboard;
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.assign(navigator, { clipboard: { writeText } });
 
@@ -47,10 +47,21 @@ describe('ErrorFallbackScreen', () => {
     await waitFor(() =>
       expect(screen.getByText('app.errorFallback.eventIdCopied')).toBeInTheDocument()
     );
+
+    Object.assign(navigator, { clipboard: originalClipboard });
   });
 
   test('hides the Error ID and support link when no event id', () => {
     render(<ErrorFallbackScreen {...baseProps} eventId={null} />);
+    expect(screen.queryByText('app.errorFallback.eventIdLabel')).not.toBeInTheDocument();
+    expect(screen.queryByText('app.errorFallback.contactSupport')).not.toBeInTheDocument();
+  });
+
+  test('hides the Error ID when analytics is disabled (event was dropped)', () => {
+    // Consent off → beforeSend drops the event, so the generated id maps to
+    // nothing support can look up; the chip / support ref must stay hidden.
+    hoisted.isAnalyticsEnabled.mockReturnValue(false);
+    render(<ErrorFallbackScreen {...baseProps} eventId="abc123def456" />);
     expect(screen.queryByText('app.errorFallback.eventIdLabel')).not.toBeInTheDocument();
     expect(screen.queryByText('app.errorFallback.contactSupport')).not.toBeInTheDocument();
   });
@@ -69,10 +80,9 @@ describe('ErrorFallbackScreen', () => {
     expect(hoisted.safeInvoke).toHaveBeenCalledWith('reveal_logs_folder');
   });
 
-  test('hides Reveal logs outside Tauri', () => {
-    hoisted.isTauri.mockReturnValueOnce(false);
-    render(<ErrorFallbackScreen {...baseProps} eventId="x" />);
-    expect(screen.queryByText('app.errorFallback.revealLogs')).not.toBeInTheDocument();
+  test('always renders Reveal logs (escape hatch survives the bootstrap gap)', () => {
+    render(<ErrorFallbackScreen {...baseProps} eventId={null} />);
+    expect(screen.getByText('app.errorFallback.revealLogs')).toBeInTheDocument();
   });
 
   test('Try recover calls onReset', () => {
