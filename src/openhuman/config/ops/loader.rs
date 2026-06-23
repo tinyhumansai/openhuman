@@ -42,7 +42,13 @@ pub async fn load_config_with_timeout() -> Result<Config, String> {
             normalize_loaded_config(&mut config).await;
             Ok(config)
         }
-        Ok(Err(e)) => Err(e.to_string()),
+        // Surface the full anyhow chain (`{:#}`), not just the top `with_context`
+        // line, so the underlying io error kind (e.g. `(os error 5)` access-denied
+        // / `(os error 32)` sharing-lock) reaches Sentry. Without it the config
+        // classifier and triage only ever see "Failed to read config file: <path>"
+        // and cannot tell a user-environment denial from an app-side race
+        // (#3962 / TAURI-RUST-DME).
+        Ok(Err(e)) => Err(format!("{e:#}")),
         Err(_) => Err("Config loading timed out".to_string()),
     }
 }
@@ -64,7 +70,13 @@ pub async fn reload_config_snapshot_with_timeout(snapshot: &Config) -> Result<Co
             normalize_loaded_config(&mut config).await;
             Ok(config)
         }
-        Ok(Err(e)) => Err(e.to_string()),
+        // Surface the full anyhow chain (`{:#}`), not just the top `with_context`
+        // line, so the underlying io error kind (e.g. `(os error 5)` access-denied
+        // / `(os error 32)` sharing-lock) reaches Sentry. Without it the config
+        // classifier and triage only ever see "Failed to read config file: <path>"
+        // and cannot tell a user-environment denial from an app-side race
+        // (#3962 / TAURI-RUST-DME).
+        Ok(Err(e)) => Err(format!("{e:#}")),
         Err(_) => Err("Config loading timed out".to_string()),
     }
 }
@@ -577,4 +589,80 @@ pub async fn get_data_paths() -> Result<RpcOutcome<serde_json::Value>, String> {
             default_openhuman_dir.display()
         )],
     ))
+}
+
+#[cfg(test)]
+mod loader_io_chain_tests {
+    use super::*;
+
+    // Both assertions below lock in the #3962 contract: a config READ failure
+    // surfaced through the RPC string boundary must carry the full anyhow chain
+    // (`{:#}`) — the top `with_context` line PLUS the underlying io cause
+    // (`os error N`) — not just the opaque top context. Without it the
+    // observability classifier (`is_config_read_io_failure_message`) and Sentry
+    // triage cannot tell a user-environment denial from an app-side race.
+    //
+    // Portable trigger: a *directory* at the config path. `exists()` is true so
+    // the read branch is taken, but `read_to_string` fails with EISDIR (unix) /
+    // ERROR_ACCESS_DENIED (windows) — neither transient, so it returns straight
+    // away with the chained error.
+
+    #[tokio::test]
+    async fn reload_snapshot_surfaces_full_io_chain() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("config.toml");
+        std::fs::create_dir(&config_path).unwrap();
+
+        let snapshot = Config {
+            config_path: config_path.clone(),
+            workspace_dir: tmp.path().join("workspace"),
+            ..Default::default()
+        };
+
+        let err = reload_config_snapshot_with_timeout(&snapshot)
+            .await
+            .expect_err("reading a directory as config.toml must fail");
+
+        assert!(
+            err.contains("reading config.toml from"),
+            "reload error must carry the read context: {err}"
+        );
+        assert!(
+            err.contains("os error"),
+            "reload error must carry the underlying io cause (#3962), not just the top context: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn load_config_with_timeout_surfaces_full_io_chain() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("config.toml");
+        std::fs::create_dir(&config_path).unwrap();
+
+        // `load_config_with_timeout` resolves the process-global
+        // `OPENHUMAN_WORKSPACE`, so serialize against the other env-mutating
+        // config tests via the shared crate lock.
+        let _g = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("OPENHUMAN_WORKSPACE").ok();
+        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path().to_str().unwrap());
+
+        let result = load_config_with_timeout().await;
+
+        match prev {
+            Some(v) => std::env::set_var("OPENHUMAN_WORKSPACE", v),
+            None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
+        }
+
+        let err = result.expect_err("reading a directory as config.toml must fail");
+        assert!(
+            err.contains("Failed to read config file"),
+            "load error must carry the read context: {err}"
+        );
+        assert!(
+            err.contains("os error"),
+            "load error must carry the underlying io cause (#3962), not just the top context: {err}"
+        );
+    }
 }
