@@ -3675,3 +3675,133 @@ async fn effective_context_window_lmstudio_falls_back_when_native_unavailable() 
         Some(8_192)
     );
 }
+
+/// Verbatim TAURI-RUST-4QF DeepSeek 402 body. The demote arms key on the
+/// "insufficient balance" phrase via `body_indicates_insufficient_credits`, so
+/// pinning the exact wire shape makes a provider wording drift fail CI rather
+/// than silently re-flood Sentry (23,970 events from 17 BYO users).
+const DEEPSEEK_4QF_402_BODY: &str =
+    r#"{"error":{"message":"Insufficient Balance","type":"unknown_error","param":null,"code":"invalid_request_error"}}"#;
+
+/// Build a Sentry hub backed by a `TestTransport` and install it for the
+/// current scope, returning the transport so the test can assert no events
+/// were captured. Mirrors the inline setup used by the other
+/// `*_not_reported_to_sentry` guards above.
+fn install_test_sentry_hub() -> (Arc<TestTransport>, sentry::HubSwitchGuard) {
+    let transport = TestTransport::new();
+    let options = sentry::ClientOptions {
+        dsn: Some("https://public@sentry.invalid/1".parse().unwrap()),
+        transport: Some(Arc::new(transport.clone())),
+        ..Default::default()
+    };
+    let hub = Arc::new(sentry::Hub::new(
+        Some(Arc::new(options.into())),
+        Arc::new(Default::default()),
+    ));
+    let guard = sentry::HubSwitchGuard::new(hub);
+    (transport, guard)
+}
+
+#[tokio::test]
+async fn chat_with_system_insufficient_balance_402_not_reported_to_sentry() {
+    // TAURI-RUST-4QF: a BYO DeepSeek account out of balance 402s on every agent
+    // turn. The non-streaming `chat_with_system` path (operation=chat_completions
+    // in the Sentry tags) must still propagate the error, but must NOT page
+    // Sentry — the user's own provider balance is exhausted, no local lever.
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(402).set_body_string(DEEPSEEK_4QF_402_BODY))
+        .mount(&mock_server)
+        .await;
+
+    let (transport, _guard) = install_test_sentry_hub();
+
+    let provider = make_provider("deepseek", &mock_server.uri(), Some("byo-key"));
+    let err = provider
+        .chat_with_system(None, "hello", "deepseek-v4-flash", 0.7)
+        .await
+        .expect_err("a 402 insufficient-balance must still propagate as Err");
+    assert!(err.to_string().contains("402"), "err: {err}");
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "an exhausted BYO balance 402 must not be reported to Sentry"
+    );
+}
+
+#[tokio::test]
+async fn chat_with_history_insufficient_balance_402_not_reported_to_sentry() {
+    // Same 402 user-state reached through `chat_with_history`, which routes its
+    // non-2xx through the shared `api_error` helper. Guards the api_error arm.
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(402).set_body_string(DEEPSEEK_4QF_402_BODY))
+        .mount(&mock_server)
+        .await;
+
+    let (transport, _guard) = install_test_sentry_hub();
+
+    let provider = make_provider("deepseek", &mock_server.uri(), Some("byo-key"));
+    let err = provider
+        .chat_with_history(&[ChatMessage::user("hello")], "deepseek-v4-flash", 0.0)
+        .await
+        .expect_err("a 402 insufficient-balance must still propagate as Err");
+    assert!(err.to_string().contains("402"), "err: {err}");
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "an exhausted BYO balance 402 (api_error path) must not be reported to Sentry"
+    );
+}
+
+#[tokio::test]
+async fn streaming_chat_insufficient_balance_402_not_reported_to_sentry() {
+    // The streaming entry (`stream_native_chat`, operation=streaming_chat) has
+    // its own non-2xx cascade. A 402 insufficient-balance there must demote too.
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(402).set_body_string(DEEPSEEK_4QF_402_BODY))
+        .mount(&mock_server)
+        .await;
+
+    let (transport, _guard) = install_test_sentry_hub();
+
+    let provider =
+        OpenAiCompatibleProvider::new("deepseek", &mock_server.uri(), None, AuthStyle::None);
+    let request = NativeChatRequest {
+        model: "deepseek-v4-flash".to_string(),
+        messages: vec![NativeMessage {
+            role: "user".to_string(),
+            content: Some("hello".into()),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        temperature: Some(0.7),
+        stream: Some(true),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: Some(super::compatible_types::OpenAiStreamOptions {
+            include_usage: true,
+        }),
+        options: None,
+        frequency_penalty: None,
+        max_tokens: None,
+    };
+    let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(8);
+
+    let err = provider
+        .stream_native_chat(None, &request, &delta_tx, 0)
+        .await
+        .expect_err("a 402 insufficient-balance must still propagate as Err");
+    assert!(
+        err.to_string().contains("streaming API error"),
+        "err: {err}"
+    );
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "an exhausted BYO balance 402 (streaming path) must not be reported to Sentry"
+    );
+}
