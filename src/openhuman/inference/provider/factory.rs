@@ -24,7 +24,9 @@
 //!
 //! Unknown slugs and missing-creds configurations produce actionable errors.
 
-use crate::openhuman::config::schema::cloud_providers::AuthStyle;
+use crate::openhuman::config::schema::cloud_providers::{
+    builtin_cloud_supports_responses_api, is_builtin_cloud_slug, AuthStyle,
+};
 use crate::openhuman::config::Config;
 use crate::openhuman::credentials::AuthService;
 use crate::openhuman::inference::provider::claude_agent_sdk::subprocess::ClaudeAgentSdkProvider;
@@ -1509,14 +1511,36 @@ fn make_cloud_provider_by_slug(
                 redact_endpoint(&openai_codex_routing.endpoint),
                 openai_codex_routing.account_id.is_some()
             );
-            let mut provider = OpenAiCompatibleProvider::new(
-                slug,
-                &openai_codex_routing.endpoint,
-                (!key.trim().is_empty()).then_some(key.as_str()),
-                CompatAuthStyle::Bearer,
-            )
-            .with_temperature_unsupported_models(unsupported.to_vec())
-            .with_temperature_override(temperature_override);
+            // Enable the chat-completions-404 → `/v1/responses` fallback only
+            // for providers that actually expose the Responses API. Built-in
+            // chat-completions-only providers (DeepSeek, Groq, Mistral, …) do
+            // not — hitting their non-existent `/responses` guarantees a second
+            // 404 and floods Sentry with an empty-body "<provider> Responses
+            // API error:" event (TAURI-RUST-5EN, same class as the
+            // local-provider TAURI-RUST-59Y fix). OpenAI keeps the fallback
+            // (genuine `/responses`), and so do custom / unknown slugs, whose
+            // endpoint may be a real OpenAI proxy.
+            let responses_fallback =
+                !is_builtin_cloud_slug(slug) || builtin_cloud_supports_responses_api(slug);
+            let credential = (!key.trim().is_empty()).then_some(key.as_str());
+            let base_provider = if responses_fallback {
+                OpenAiCompatibleProvider::new(
+                    slug,
+                    &openai_codex_routing.endpoint,
+                    credential,
+                    CompatAuthStyle::Bearer,
+                )
+            } else {
+                OpenAiCompatibleProvider::new_no_responses_fallback(
+                    slug,
+                    &openai_codex_routing.endpoint,
+                    credential,
+                    CompatAuthStyle::Bearer,
+                )
+            };
+            let mut provider = base_provider
+                .with_temperature_unsupported_models(unsupported.to_vec())
+                .with_temperature_override(temperature_override);
             if let Some(account_id) = openai_codex_routing.account_id.as_deref() {
                 provider = provider.with_extra_header(OPENAI_CODEX_ACCOUNT_HEADER, account_id);
             }
