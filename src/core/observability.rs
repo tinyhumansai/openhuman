@@ -833,7 +833,7 @@ fn is_loopback_unavailable(lower: &str) -> bool {
 /// the local Ollama daemon — pure user-state errors the UI already surfaces
 /// (toast / settings page warning) where Sentry has no remediation path.
 ///
-/// Three canonical wire shapes are covered, all emitted by
+/// Several canonical wire shapes are covered, all emitted by
 /// `openhuman::embeddings::ollama::OllamaEmbedding::embed` and the embed
 /// service fallback path:
 ///
@@ -848,21 +848,31 @@ fn is_loopback_unavailable(lower: &str) -> bool {
 ///   `ollama embed failed with status 404 Not Found: {"error":"model \"<id>\" not found, try pulling it first"}`.
 ///   (Self-hosted Sentry events still flow from older client releases that
 ///   predate this matcher; they drop off naturally as users upgrade.)
+/// - **TAURI-RUST-3X / -8WA** (~982 events on 0.57.52): 501 "embeddings not
+///   supported". Two bodies — the model is chat/vision-only
+///   (`{"error":"this model does not support embeddings"}`) or the Ollama
+///   daemon was started without embed support
+///   (`{"error":"This server does not support embeddings. Start it with `--embeddings`"}`).
+/// - **TAURI-RUST-3E** (~249 events): 401 auth-required Ollama endpoint with
+///   no credentials configured. Wire shape:
+///   `ollama embed failed with status 401 Unauthorized: {"error": "unauthorized"}`.
 /// - **OPENHUMAN-TAURI-GX**: user opted into Ollama embeddings but the
 ///   daemon isn't running on `localhost:11434`, so the embed service falls
 ///   back to cloud embeddings for the session. Wire shape:
 ///   `ollama embeddings opted-in but daemon unreachable at http://localhost:11434; falling back to cloud embeddings for this session`.
 ///
-/// All three are user-config: the user picked the wrong model id, forgot to
-/// pull it, or forgot to start the daemon. The remediation is "fix the
-/// model id in Settings" / "run `ollama pull <id>`" / "start ollama" —
-/// none of which Sentry can do for them.
+/// All are user-config: the user picked the wrong model id, forgot to pull
+/// it, ran a daemon without embed support, omitted credentials, or forgot to
+/// start the daemon. The remediation is "fix the model id in Settings" /
+/// "run `ollama pull <id>`" / "start ollama with `--embeddings`" / "add a
+/// key" / "start ollama" — none of which Sentry can do for them.
 ///
-/// The classifier is anchored on the `"ollama embed"` prefix
-/// (`"ollama embed failed"` for the 400/404 shapes, `"ollama embeddings opted-in"`
-/// for the daemon-unreachable fallback) so unrelated 400/404 errors elsewhere
-/// in the codebase that happen to contain `"invalid model name"` or
-/// `"not found"` substrings are not silenced.
+/// Each arm is anchored on the `"ollama embed"` prefix
+/// (`"ollama embed failed"` for the failed-request shapes,
+/// `"ollama embeddings opted-in"` for the daemon-unreachable fallback) so
+/// unrelated errors elsewhere in the codebase that happen to contain
+/// `"invalid model name"`, `"not found"`, or `"does not support embeddings"`
+/// substrings are not silenced.
 ///
 /// Routes to [`ExpectedErrorKind::ProviderUserState`] — the same bucket that
 /// holds the composio / gmail / OAuth user-state errors. We deliberately do
@@ -890,9 +900,17 @@ fn is_ollama_user_config_rejection(lower: &str) -> bool {
         return true;
     }
 
-    if lower.contains("ollama embed failed")
-        && lower.contains("this model does not support embeddings")
-    {
+    // 3X / 8WA — 501-status "embeddings not supported". Ollama emits two
+    // bodies for this: the model is chat/vision-only
+    // (`{"error":"this model does not support embeddings"}`) or the daemon
+    // itself was started without embedding support
+    // (`{"error":"This server does not support embeddings. Start it with `--embeddings`"}`,
+    // TAURI-RUST-8WA, ~982 events on 0.57.52). Both are user-side Ollama
+    // config the app can't fix — it can neither swap the user's model nor
+    // restart their daemon with `--embeddings`. Anchor on the shared
+    // `does not support embeddings` phrase (still gated by the
+    // `ollama embed failed` prefix) so a future qualifier wording still demotes.
+    if lower.contains("ollama embed failed") && lower.contains("does not support embeddings") {
         return true;
     }
 
@@ -2751,6 +2769,9 @@ mod tests {
             "ollama embeddings opted-in but daemon unreachable at http://localhost:11434; falling back to cloud embeddings for this session",
             // TAURI-RUST-3X — 501-status model-does-not-support-embeddings.
             r#"ollama embed failed with status 501 Not Implemented: {"error":"this model does not support embeddings"}"#,
+            // TAURI-RUST-8WA — 501-status daemon started without embed support.
+            // Exact wire body so a narrow-back to "this model …" fails CI.
+            r#"ollama embed failed with status 501 Not Implemented: {"error":"This server does not support embeddings. Start it with `--embeddings`"}"#,
             // TAURI-RUST-3E — 401 unauthorized embed (auth required at ollama endpoint).
             r#"ollama embed failed with status 401 Unauthorized: {"error": "unauthorized"}"#,
         ] {
