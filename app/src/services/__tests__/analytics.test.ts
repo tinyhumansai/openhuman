@@ -10,6 +10,7 @@ const hoisted = vi.hoisted(() => ({
   init: vi.fn(),
   // Integration stubs — these aren't introspected, just need to exist so
   // `Sentry.init()` accepts the integrations array without throwing.
+  inboundFiltersIntegration: vi.fn(() => ({ name: 'InboundFilters' })),
   functionToStringIntegration: vi.fn(() => ({})),
   linkedErrorsIntegration: vi.fn(() => ({})),
   dedupeIntegration: vi.fn(() => ({})),
@@ -29,6 +30,7 @@ vi.mock('@sentry/react', () => ({
   captureMessage: hoisted.captureMessage,
   flush: hoisted.flush,
   init: hoisted.init,
+  inboundFiltersIntegration: hoisted.inboundFiltersIntegration,
   functionToStringIntegration: hoisted.functionToStringIntegration,
   linkedErrorsIntegration: hoisted.linkedErrorsIntegration,
   dedupeIntegration: hoisted.dedupeIntegration,
@@ -306,6 +308,33 @@ describe('initSentry beforeSend manual-staging bypass', () => {
     expect(opts.replaysOnErrorSampleRate).toBe(0);
     const names = opts.integrations.map(i => i.name).filter(Boolean);
     expect(names).toContain('HttpContext');
+  });
+
+  test('registers inboundFiltersIntegration so ignoreErrors is not inert (#3963)', async () => {
+    // Regression for #3963: `defaultIntegrations: false` drops the integration
+    // that consumes the top-level `ignoreErrors` option. The curated list must
+    // re-include `inboundFiltersIntegration`, otherwise the intended
+    // `ResizeObserver loop` / network-noise filters silently leak to Sentry.
+    // Asserting both the integration AND the non-empty filter list guards the
+    // coupling — dropping either re-opens the flood.
+    hoisted.init.mockReset();
+    hoisted.inboundFiltersIntegration.mockClear();
+    const { initSentry } = await import('../analytics');
+    initSentry();
+
+    const opts = hoisted.init.mock.calls[0][0] as {
+      integrations: Array<{ name?: string }>;
+      ignoreErrors: string[];
+    };
+    expect(hoisted.inboundFiltersIntegration).toHaveBeenCalledTimes(1);
+    const names = opts.integrations.map(i => i.name).filter(Boolean);
+    expect(names).toContain('InboundFilters');
+    expect(opts.ignoreErrors).toEqual([
+      'ResizeObserver loop',
+      'Network request failed',
+      'Load failed',
+      'AbortError',
+    ]);
   });
 
   test('keeps os/browser/device contexts and forwards them through beforeSend (#1403)', async () => {

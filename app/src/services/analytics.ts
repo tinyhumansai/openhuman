@@ -147,6 +147,14 @@ export function initSentry(): void {
     tracesSampleRate: 0,
     defaultIntegrations: false,
     integrations: [
+      // #3963: `defaultIntegrations: false` (above) drops the integration that
+      // consumes the top-level `ignoreErrors` option (below), so the intended
+      // noise filter has been dead config since it was added. Re-include it
+      // explicitly so `ignoreErrors` runs again. It executes as an event
+      // processor *before* `beforeSend`, so the consent/privacy logic there is
+      // unaffected — this only restores the pre-`beforeSend` drop of the four
+      // benign `ResizeObserver loop` / network-noise patterns.
+      Sentry.inboundFiltersIntegration(),
       Sentry.functionToStringIntegration(),
       Sentry.linkedErrorsIntegration(),
       Sentry.dedupeIntegration(),
