@@ -62,6 +62,16 @@ pub const CLAUDE_AGENT_SDK_PROVIDER: &str = "claude_agent_sdk";
 /// instead of silently routing through the managed OpenHuman backend.
 pub const BYOK_INCOMPLETE_SENTINEL: &str = "__byok_incomplete__";
 
+/// Interpolation-free substring of the empty-model bail emitted by
+/// [`make_cloud_provider_by_slug`] when a `<slug>` provider string carries
+/// no model and the `cloud_providers` entry has no `default_model` (the
+/// #2784 guard). The Sentry-demotion + user-copy classifier
+/// [`super::is_provider_config_rejection_message`] keys on this exact literal,
+/// and a round-trip test in `factory_tests.rs` asserts the bail body still
+/// contains it — so a wording drift fails CI instead of silently re-flooding
+/// Sentry (TAURI-RUST-GKV).
+pub(crate) const NO_MODEL_CONFIGURED_ANCHOR: &str = "resolved to an empty model id";
+
 fn is_abstract_tier_model(model: &str) -> bool {
     use crate::openhuman::config::{
         MODEL_AGENTIC_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1,

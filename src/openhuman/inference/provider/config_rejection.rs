@@ -166,6 +166,21 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         // `{"error":{"message":"model field is required","code":"missing_required_field"}}`
         // when the request body contains an empty `"model":""` field.
         "model field is required",
+        // TAURI-RUST-GKV (~2.3k events / 1 user) — the LOCAL form of the
+        // 4NM empty-model state, caught one layer earlier. The #2784 guard
+        // in `factory::make_cloud_provider_by_slug` bails BEFORE any
+        // provider HTTP call when a `<slug>` provider string carries no
+        // model and the `cloud_providers` entry has no `default_model`:
+        //   "[chat-factory] no model configured: role '<r>' resolved to an
+        //    empty model id for slug '<s>'. Include a model in the provider
+        //    string (e.g. '<s>:<model-id>') or set default_model …".
+        // User-state — the remediation is "add/pick a model in Settings →
+        // LLM", which the user-facing copy surfaces; Sentry has no
+        // remediation. Anchored on the role/slug-interpolation-free
+        // substring, which is also `factory::NO_MODEL_CONFIGURED_ANCHOR`; a
+        // round-trip test in `factory_tests.rs` couples the two so a
+        // wording drift fails CI instead of silently re-flooding Sentry.
+        "resolved to an empty model id",
         // TAURI-RUST-2G (~2684 events) / TAURI-RUST-2F (~950 events) —
         // thinking-mode model (DeepSeek-R1 / Moonshot K2-thinking on
         // `provider=cloud` custom_openai) rejects a follow-up turn that
@@ -602,6 +617,36 @@ mod tests {
         assert!(is_provider_config_rejection_message(
             "model field is required"
         ));
+    }
+
+    #[test]
+    fn detects_chat_factory_empty_model_local_bail() {
+        // TAURI-RUST-GKV — the #2784 factory guard
+        // (`make_cloud_provider_by_slug`) catches the empty-model state
+        // BEFORE the provider HTTP call (the local form of 4NM) and bails
+        // with this body (role/slug interpolated). Verbatim from Sentry
+        // issue 18482 (role='chat', slug='nvidia').
+        let body = "[chat-factory] no model configured: role 'chat' resolved to an empty model id \
+                    for slug 'nvidia'. Include a model in the provider string (e.g. \
+                    'nvidia:<model-id>') or set default_model on the cloud_providers entry for \
+                    slug 'nvidia'.";
+        assert!(
+            is_provider_config_rejection_message(body),
+            "TAURI-RUST-GKV empty-model bail must classify as provider config-rejection: {body:?}"
+        );
+        // Bare anchor on its own (the literal shared with
+        // `factory::NO_MODEL_CONFIGURED_ANCHOR`).
+        assert!(is_provider_config_rejection_message(
+            "resolved to an empty model id"
+        ));
+        // Negative: a near-miss model-resolution error that does NOT carry
+        // the anchor (or any other phrase) must stay Sentry-actionable.
+        assert!(
+            !is_provider_config_rejection_message(
+                "could not resolve the model registry for slug 'nvidia'"
+            ),
+            "unrelated model-resolution error must not classify on the GKV anchor"
+        );
     }
 
     #[test]
