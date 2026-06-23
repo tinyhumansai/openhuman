@@ -133,6 +133,17 @@ impl OpenAiCompatibleProvider {
                     Some(native_request.model.as_str()),
                     status,
                 );
+            } else if super::super::is_provider_insufficient_credits_402(status, &body) {
+                // Residual 402 after the request already caps max_tokens: the
+                // user's own BYO provider balance is exhausted — no local lever,
+                // so demote to info instead of paging on every retry
+                // (TAURI-RUST-4QF — DeepSeek "Insufficient Balance").
+                super::super::log_provider_insufficient_credits_402(
+                    "streaming_chat",
+                    self.name.as_str(),
+                    Some(native_request.model.as_str()),
+                    status,
+                );
             } else if super::super::should_report_provider_http_failure(status) {
                 crate::core::observability::report_error(
                     message.as_str(),
