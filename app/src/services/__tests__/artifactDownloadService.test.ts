@@ -15,6 +15,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   deleteArtifact,
   downloadArtifact,
+  listArtifactsForThread,
   revealArtifactInFileManager,
   saveArtifactViaDialog,
 } from '../artifactDownloadService';
@@ -36,6 +37,80 @@ vi.mock('../coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
 vi.mock('@tauri-apps/plugin-opener', () => ({
   revealItemInDir: (...args: unknown[]) => hoisted.revealItemInDir(...args),
 }));
+
+describe('listArtifactsForThread', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns an error for empty / whitespace thread ids without calling the RPC', async () => {
+    const outcome = await listArtifactsForThread('   ');
+    expect(outcome).toEqual({ ok: false, artifacts: [], error: 'thread id missing' });
+    expect(callCoreRpc).not.toHaveBeenCalled();
+  });
+
+  it('calls ai_list_artifacts with a thread filter and maps ready artifacts', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({
+      artifacts: [
+        {
+          id: 'art-1',
+          kind: 'document',
+          title: 'Report',
+          path: 'artifacts/art-1/report.pdf',
+          size_bytes: 1234,
+          status: 'ready',
+        },
+        {
+          id: 'art-pending',
+          kind: 'presentation',
+          title: 'Pending Deck',
+          path: 'artifacts/art-pending/deck.pptx',
+          size_bytes: 55,
+          status: 'pending',
+        },
+        {
+          id: 'art-bad-kind',
+          kind: 'video',
+          title: 'Unsupported',
+          path: 'artifacts/art-bad-kind/video.mp4',
+          size_bytes: 99,
+          status: 'ready',
+        },
+      ],
+    });
+
+    const outcome = await listArtifactsForThread(' thread-1 ');
+
+    expect(callCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.ai_list_artifacts',
+      params: { thread_id: 'thread-1', offset: 0, limit: 200 },
+    });
+    expect(outcome).toEqual({
+      ok: true,
+      artifacts: [
+        {
+          artifactId: 'art-1',
+          kind: 'document',
+          title: 'Report',
+          path: 'artifacts/art-1/report.pdf',
+          sizeBytes: 1234,
+        },
+      ],
+    });
+  });
+
+  it('returns an empty list for nullish core payloads', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce(null);
+    const outcome = await listArtifactsForThread('thread-1');
+    expect(outcome).toEqual({ ok: true, artifacts: [] });
+  });
+
+  it('returns a failed outcome when the core RPC throws', async () => {
+    vi.mocked(callCoreRpc).mockRejectedValueOnce(new Error('rpc down'));
+    const outcome = await listArtifactsForThread('thread-1');
+    expect(outcome).toEqual({ ok: false, artifacts: [], error: 'rpc down' });
+  });
+});
 
 describe('downloadArtifact', () => {
   beforeEach(() => {
