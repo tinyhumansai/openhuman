@@ -71,6 +71,7 @@ vi.mock('../../utils/config', () => ({
   SENTRY_DSN: 'https://abc@example.ingest.sentry.io/1',
   SENTRY_RELEASE: 'openhuman@test+abc',
   SENTRY_SMOKE_TEST: false,
+  SUPPORT_URL: 'https://support.example/help',
   TAURI_CARGO_VERSION: '0.57.4',
   // analytics.ts now imports CoreRpcError from coreRpcClient, whose
   // dependency chain reads CORE_RPC_URL and CORE_RPC_TIMEOUT_MS. Provide
@@ -227,6 +228,30 @@ describe('initSentry beforeSend manual-staging bypass', () => {
     const beforeSend = await captureBeforeSend();
     const result = beforeSend({ message: 'react-sentry-smoke-test', tags: {}, contexts: {} });
     expect(result).not.toBeNull();
+  });
+
+  test('seeds a support_url tag keyed on the event id (#3980)', async () => {
+    const beforeSend = await captureBeforeSend();
+    const result = beforeSend({
+      message: 'react-sentry-smoke-test', // bypasses consent gate
+      event_id: 'deadbeefcafe',
+      tags: {},
+      contexts: {},
+    }) as { tags: Record<string, string> } | null;
+    expect(result).not.toBeNull();
+    // Set as a TAG (extras are scrubbed); carries only the event's own id.
+    expect(result?.tags.support_url).toBe('https://support.example/help?ref=deadbeefcafe');
+    // Extras still dropped — the support link must not reintroduce a leak path.
+    expect(result).not.toHaveProperty('extra');
+  });
+
+  test('omits support_url when the event has no id', async () => {
+    const beforeSend = await captureBeforeSend();
+    const result = beforeSend({ message: 'react-sentry-smoke-test', tags: {}, contexts: {} }) as {
+      tags: Record<string, string>;
+    } | null;
+    expect(result).not.toBeNull();
+    expect(result?.tags).not.toHaveProperty('support_url');
   });
 
   test('drops CoreRpcError with kind=timeout via the originalException hint', async () => {
