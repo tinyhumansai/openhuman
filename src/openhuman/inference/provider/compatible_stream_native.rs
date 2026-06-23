@@ -134,9 +134,12 @@ impl OpenAiCompatibleProvider {
                     status,
                 );
             } else if super::super::is_provider_insufficient_credits_402(status, &body) {
-                // Residual 402 after the request already caps max_tokens: the
-                // user's own BYO provider balance is exhausted — no local lever,
-                // so demote to info instead of paging on every retry
+                // Insufficient-credits 402: the user's own BYO provider account
+                // is out of balance — a flat billing fact, not a reservation-
+                // window error, so there is NO local max_tokens lever to apply.
+                // Demote to info instead of paging on every retry; this is the
+                // complete classification for a genuinely-unpreventable
+                // BYO-balance condition
                 // (TAURI-RUST-4QF — DeepSeek "Insufficient Balance").
                 super::super::log_provider_insufficient_credits_402(
                     "streaming_chat",

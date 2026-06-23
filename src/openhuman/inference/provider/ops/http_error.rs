@@ -719,12 +719,13 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
     // from Sentry (TAURI-RUST-8FQ flood).
     let is_openai_oauth_session_expired =
         is_openai_oauth_session_expired_http(provider, status, &body);
-    // Residual insufficient-credits 402: the user's own BYO provider account is
-    // out of balance — no local lever once the request already caps max_tokens,
-    // so demote from Sentry like the per-method compatible-provider arms
-    // (TAURI-RUST-4QF DeepSeek "Insufficient Balance" / -C62 OpenRouter). This
-    // shared helper backs the two methods that delegate here (chat_via_responses
-    // fallback and the non-streaming completion path).
+    // Insufficient-credits 402: the user's own BYO provider account is out of
+    // balance — a flat billing fact, not a reservation-window error, so there is
+    // NO local max_tokens lever to apply. Demote from Sentry like the per-method
+    // compatible-provider arms; the complete classification for a genuinely-
+    // unpreventable BYO-balance condition (TAURI-RUST-4QF DeepSeek "Insufficient
+    // Balance"). This shared helper backs the two methods that delegate here
+    // (chat_via_responses fallback and the non-streaming completion path).
     let is_insufficient_credits_402 = is_provider_insufficient_credits_402(status, &body);
 
     if is_auth_failure && is_backend {
