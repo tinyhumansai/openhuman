@@ -262,7 +262,16 @@ impl LocalAiService {
 
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            tracing::error!(
+            // Defense-in-depth (TAURI-RUST-A3T): the diagnostics caller already
+            // tolerates this failure (degrades to empty models + surfaces the
+            // error to the UI as `tags_error`). A non-2xx from the configured
+            // endpoint is an external/server condition, not an openhuman code
+            // defect, so log at `warn!` (breadcrumb) instead of `error!` to
+            // avoid flooding Sentry on every diagnostics poll. The root-cause
+            // fix for the common case lives in `validate_ollama_url` /
+            // `reject_registry_host_or_default` (rejecting the ollama.com
+            // public-website host, which returns 429).
+            tracing::warn!(
                 target: "local_ai::ollama_admin",
                 %url,
                 %status,
