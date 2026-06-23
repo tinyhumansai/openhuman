@@ -103,6 +103,16 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
                     "[rpc] expected-user-state error — skipping Sentry: {}",
                     display_message
                 );
+            } else if is_wallet_not_configured_error(&display_message) {
+                // A `tinyplace_*` RPC needs a wallet-derived signer but the user
+                // has not set one up. Expected user-state (the UI shows a
+                // "set up wallet" prompt), not an internal failure — skip Sentry
+                // here so the message is left untouched for direct (agent-tool)
+                // callers. See `is_wallet_not_configured_error`.
+                tracing::info!(
+                    method = %method,
+                    "[rpc] wallet-not-configured (expected user-state) — skipping Sentry"
+                );
             } else if is_param_validation_error(&display_message) {
                 tracing::info!(
                     method = %method,
@@ -345,6 +355,27 @@ fn is_param_validation_error(msg: &str) -> bool {
     msg.starts_with("unknown param '")
         || msg.starts_with("missing required param '")
         || msg.starts_with("invalid params: ")
+}
+
+/// Returns `true` when the error is the wallet's "not configured yet" message.
+///
+/// Several `tinyplace_*` RPCs derive a signer seed from the wallet before they
+/// can run (the feed, signal/messaging, etc. — backend `GraphQLAuth::Agent`
+/// requires a signer). For a user who has not set up a wallet, the wallet layer
+/// returns [`crate::openhuman::wallet::WALLET_NOT_CONFIGURED_MESSAGE`]. That is
+/// an expected user-state, not an internal failure: the UI already renders a
+/// "set up wallet" prompt, and there is no local lever to make the call succeed
+/// until the user creates a wallet. Classifying it here — at the single Sentry
+/// boundary — keeps it out of Sentry for *every* path that surfaces it (the
+/// shared client builder and the direct `signal_store` seed call alike) without
+/// the controllers returning a structured envelope, which would leak the raw
+/// sentinel string to agent tools that call those handlers directly.
+///
+/// Matched against the shared wallet constant (exact equality) so a wording
+/// change in the wallet layer fails the coupling test in `jsonrpc_tests.rs`
+/// rather than silently letting the noise back into Sentry.
+fn is_wallet_not_configured_error(msg: &str) -> bool {
+    msg == crate::openhuman::wallet::WALLET_NOT_CONFIGURED_MESSAGE
 }
 
 /// Internal method invocation logic.
