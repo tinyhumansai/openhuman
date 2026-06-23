@@ -453,6 +453,23 @@ fn cloud_provider_with_no_model_and_no_default_rejected() {
         msg.contains("nvidia-nim"),
         "error must name the slug; got: {msg}"
     );
+
+    // TAURI-RUST-GKV coupling — the SAME bail body that floods Sentry must:
+    //   (a) still contain the classifier anchor const, and
+    //   (b) be recognised by the shared config-rejection classifier
+    //       (which both demotes the Sentry event AND drives the actionable
+    //       user-facing copy in `classify_inference_error`).
+    // If the bail wording drifts off the anchor, (a) fails; if the
+    // classifier phrase drifts, (b) fails — CI catches either direction, so
+    // the demotion can never silently regress into an error flood.
+    assert!(
+        msg.contains(super::NO_MODEL_CONFIGURED_ANCHOR),
+        "bail body must contain NO_MODEL_CONFIGURED_ANCHOR; got: {msg}"
+    );
+    assert!(
+        crate::openhuman::inference::provider::is_provider_config_rejection_message(&msg),
+        "empty-model bail must classify as provider config-rejection: {msg}"
+    );
 }
 
 #[test]
