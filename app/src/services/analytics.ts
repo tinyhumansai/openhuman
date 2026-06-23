@@ -32,6 +32,7 @@ import {
   SENTRY_DSN,
   SENTRY_RELEASE,
   SENTRY_SMOKE_TEST,
+  SUPPORT_URL,
   TAURI_CARGO_VERSION,
 } from '../utils/config';
 import { CoreRpcError } from './coreRpcClient';
@@ -208,6 +209,16 @@ export function initSentry(): void {
 
       // Tag with surface so events filter cleanly inside `openhuman-react`.
       event.tags = { ...(event.tags ?? {}), surface: 'react' };
+
+      // Seed a support deep link keyed on this event's own id so the crash
+      // report links back to the support channel (#3980). Set as a TAG, not
+      // an `extra` — the privacy scrub above deletes `event.extra`, but the
+      // event id is known here and tags survive. The URL carries only the
+      // event's own id + a static base (no PII). Mirrors the id the user
+      // sees + copies on `ErrorFallbackScreen`.
+      if (event.event_id) {
+        event.tags.support_url = `${SUPPORT_URL}?ref=${event.event_id}`;
+      }
 
       // Strip PII; keep a stable account id only.
       const userId = getCoreStateSnapshot().snapshot.currentUser?._id;
