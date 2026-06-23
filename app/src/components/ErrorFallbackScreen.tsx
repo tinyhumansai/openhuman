@@ -1,6 +1,9 @@
+import { useState } from 'react';
+
 import { useT } from '../lib/i18n/I18nContext';
-import { LATEST_APP_DOWNLOAD_URL } from '../utils/config';
+import { LATEST_APP_DOWNLOAD_URL, SUPPORT_URL } from '../utils/config';
 import { openUrl } from '../utils/openUrl';
+import { safeInvoke as invoke, isTauri } from '../utils/tauriCommands/common';
 
 /**
  * ErrorFallbackScreen
@@ -11,23 +14,58 @@ import { openUrl } from '../utils/openUrl';
  *
  * Errors caught by the boundary are auto-forwarded to Sentry by the
  * `Sentry.ErrorBoundary` wrapper in `App.tsx` (subject to user analytics
- * consent enforced in `analytics.ts::beforeSend`).
+ * consent enforced in `analytics.ts::beforeSend`). When the capture
+ * produces an event id, it is surfaced here as a copyable Error ID so the
+ * user can share it with support, and a support deep link is pre-seeded
+ * with it. When the user hasn't opted into analytics (no event id), the
+ * Error ID / support affordances are hidden rather than shown empty.
+ *
+ * Recovery escalates: `Try recover` (in-place `resetError`) → `Reload app`
+ * (hard reload to /home) → `Reveal logs` (open the logs folder so a user
+ * trapped by a deterministic crash can still pull diagnostics for support).
  */
 
 interface ErrorFallbackScreenProps {
   error: unknown;
   componentStack?: string;
+  /** Sentry event id for the captured crash, when analytics is enabled. */
+  eventId?: string | null;
   onReset: () => void;
 }
 
 export default function ErrorFallbackScreen({
   error,
   componentStack,
+  eventId,
   onReset,
 }: ErrorFallbackScreenProps) {
   const { t } = useT();
+  const [copied, setCopied] = useState(false);
   const errorName = error instanceof Error ? error.name : 'Error';
   const errorMessage = error instanceof Error ? error.message : String(error);
+  const hasEventId = typeof eventId === 'string' && eventId.length > 0;
+
+  const copyEventId = async () => {
+    if (!hasEventId) return;
+    try {
+      await navigator.clipboard.writeText(eventId as string);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      // Clipboard unavailable (permissions / non-secure context) — no-op;
+      // the id stays visible for manual copy.
+    }
+  };
+
+  const revealLogs = () => {
+    // Diagnostics escape hatch: works even when the UI is otherwise dead.
+    void invoke('reveal_logs_folder');
+  };
+
+  const openSupport = () => {
+    if (!hasEventId) return;
+    openUrl(`${SUPPORT_URL}?ref=${encodeURIComponent(eventId as string)}`);
+  };
 
   return (
     <div className="fixed inset-0 flex items-center justify-center bg-gradient-to-b from-stone-950 to-stone-900">
@@ -63,6 +101,27 @@ export default function ErrorFallbackScreen({
           </p>
           <p className="text-xs text-stone-500 text-center mb-6">{t('app.errorFallback.hint')}</p>
 
+          {/* Sentry Event ID — copyable; hidden when analytics produced no id */}
+          {hasEventId && (
+            <div className="flex items-center justify-between gap-3 bg-stone-800/50 border border-stone-700/50 rounded-xl px-3 py-2.5 mb-4">
+              <div className="flex flex-col min-w-0">
+                <span className="text-[10px] uppercase tracking-wide text-stone-500">
+                  {t('app.errorFallback.eventIdLabel')}
+                </span>
+                <span className="font-mono text-xs text-stone-300 truncate">{eventId}</span>
+              </div>
+              <button
+                onClick={copyEventId}
+                className={`flex-none text-xs font-medium rounded-lg px-3 py-1.5 transition-colors ${
+                  copied
+                    ? 'bg-primary-500/20 text-primary-300'
+                    : 'bg-stone-700 hover:bg-stone-600 text-white'
+                }`}>
+                {copied ? t('app.errorFallback.eventIdCopied') : t('app.errorFallback.copyEventId')}
+              </button>
+            </div>
+          )}
+
           {/* Error details */}
           <div className="bg-stone-800/50 border border-stone-700/50 rounded-xl p-4 mb-6">
             <p className="text-sm font-medium text-coral-400 mb-1">{errorName}</p>
@@ -79,7 +138,7 @@ export default function ErrorFallbackScreen({
             )}
           </div>
 
-          {/* Actions */}
+          {/* Primary actions — escalate recover → reload → reveal logs */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <button
               onClick={onReset}
@@ -94,9 +153,27 @@ export default function ErrorFallbackScreen({
               className="bg-coral-500 hover:bg-coral-600 text-white text-sm font-medium rounded-xl px-4 py-3 transition-colors">
               {t('app.errorFallback.reloadApp')}
             </button>
+            {isTauri() && (
+              <button
+                onClick={revealLogs}
+                className="bg-stone-800 hover:bg-stone-700 text-white text-sm font-medium rounded-xl px-4 py-3 transition-colors border border-stone-600">
+                {t('app.errorFallback.revealLogs')}
+              </button>
+            )}
+          </div>
+
+          {/* Secondary links */}
+          <div className="flex items-center justify-center gap-4 mt-5 text-xs">
+            {hasEventId && (
+              <button
+                onClick={openSupport}
+                className="text-primary-400 hover:text-primary-300 hover:underline transition-colors">
+                {t('app.errorFallback.contactSupport')}
+              </button>
+            )}
             <button
               onClick={() => openUrl(LATEST_APP_DOWNLOAD_URL)}
-              className="bg-stone-800 hover:bg-stone-700 text-white text-sm font-medium rounded-xl px-4 py-3 transition-colors border border-stone-600">
+              className="text-stone-500 hover:text-stone-300 hover:underline transition-colors">
               {t('app.errorFallback.downloadLatest')}
             </button>
           </div>

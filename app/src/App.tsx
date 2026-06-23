@@ -103,8 +103,13 @@ function App() {
 
   return (
     <Sentry.ErrorBoundary
-      fallback={({ error, componentStack, resetError }) => (
-        <ErrorFallbackScreen error={error} componentStack={componentStack} onReset={resetError} />
+      fallback={({ error, componentStack, resetError, eventId }) => (
+        <ErrorFallbackScreen
+          error={error}
+          componentStack={componentStack}
+          eventId={eventId}
+          onReset={resetError}
+        />
       )}>
       <Provider store={store}>
         <PersistGate loading={<PersistRehydrationScreen />} persistor={persistor}>
