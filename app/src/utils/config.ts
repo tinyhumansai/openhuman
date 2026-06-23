@@ -208,6 +208,11 @@ export const LATEST_APP_DOWNLOAD_URL =
   (import.meta.env.VITE_LATEST_APP_DOWNLOAD_URL as string | undefined)?.trim() ||
   'https://github.com/tinyhumansai/openhuman/releases/latest';
 
+/** Support page base URL. The crash screen appends `?ref=<sentryEventId>` so support can correlate a user's pasted Error ID to the exact Sentry event. Override via VITE_SUPPORT_URL for deployment-specific support endpoints. */
+export const SUPPORT_URL =
+  (import.meta.env.VITE_SUPPORT_URL as string | undefined)?.trim() ||
+  'https://tinyhumans.ai/support';
+
 /**
  * Set `VITE_SENTRY_SMOKE_TEST=true` in one build (or in `.env.local`) to
  * fire a one-shot diagnostic event at `initSentry()` time and verify the
