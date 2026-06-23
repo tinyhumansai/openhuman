@@ -1509,14 +1509,33 @@ fn make_cloud_provider_by_slug(
                 redact_endpoint(&openai_codex_routing.endpoint),
                 openai_codex_routing.account_id.is_some()
             );
-            let mut provider = OpenAiCompatibleProvider::new(
-                slug,
-                &openai_codex_routing.endpoint,
-                (!key.trim().is_empty()).then_some(key.as_str()),
-                CompatAuthStyle::Bearer,
-            )
-            .with_temperature_unsupported_models(unsupported.to_vec())
-            .with_temperature_override(temperature_override);
+            // OpenRouter does not implement the OpenAI Responses API: its
+            // `/v1/responses` rejects our `ResponsesRequest` body with
+            // `invalid_union` (TAURI-RUST-863). Skip the `/v1/responses`
+            // fallback for it so a `chat/completions` 404 surfaces
+            // OpenRouter's real, actionable error (e.g. "No endpoints found
+            // that support tool use") instead of issuing a doomed second
+            // request. Same class as the Ollama / LM Studio guard
+            // (TAURI-RUST-59Y).
+            let base_provider =
+                if crate::openhuman::inference::provider::ops::is_openrouter_provider(entry) {
+                    OpenAiCompatibleProvider::new_no_responses_fallback(
+                        slug,
+                        &openai_codex_routing.endpoint,
+                        (!key.trim().is_empty()).then_some(key.as_str()),
+                        CompatAuthStyle::Bearer,
+                    )
+                } else {
+                    OpenAiCompatibleProvider::new(
+                        slug,
+                        &openai_codex_routing.endpoint,
+                        (!key.trim().is_empty()).then_some(key.as_str()),
+                        CompatAuthStyle::Bearer,
+                    )
+                };
+            let mut provider = base_provider
+                .with_temperature_unsupported_models(unsupported.to_vec())
+                .with_temperature_override(temperature_override);
             if let Some(account_id) = openai_codex_routing.account_id.as_deref() {
                 provider = provider.with_extra_header(OPENAI_CODEX_ACCOUNT_HEADER, account_id);
             }
