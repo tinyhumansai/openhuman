@@ -96,10 +96,45 @@ fn parse_message_path(path: &str) -> Option<(&str, &str)> {
 
 const CLIENT_VERSION_HEADER_MAX_LEN: usize = 64;
 
-/// Max bytes of a non-2xx response body echoed into the `authed_json` Sentry
-/// report (`body_preview=…`). Bounded so a large/hostile error page can't bloat
-/// the event or the Sentry tag indexes; the truncation is UTF-8-safe.
-const BACKEND_API_BODY_PREVIEW_MAX_BYTES: usize = 120;
+/// Max bytes of the `body_shape` key-name list echoed into the `authed_json`
+/// report. Bounded so a body with pathologically many keys can't bloat the
+/// event; truncation is UTF-8-safe.
+const BACKEND_API_BODY_SHAPE_MAX_BYTES: usize = 120;
+
+/// PII-safe classification of a non-2xx response body for telemetry.
+///
+/// `report_error`'s message is written to the core/Tauri daily logs BEFORE any
+/// Sentry `before_send` scrubbing, and that scrubber only catches a few
+/// secret-shaped patterns — so the raw body must never be echoed (a non-2xx body
+/// can carry emails / profile JSON / OAuth errors / nonstandard token fields).
+/// We emit only the SHAPE: for a JSON object, its sorted top-level key NAMES
+/// (schema, never values); otherwise a coarse label. Key names are enough to
+/// identify which backend/gateway produced a response — the `TAURI-RUST-8C` case
+/// (a 91-byte body matching no route this backend emits), where our canonical
+/// envelope is `{success,error,errorCode}` and a foreign gateway/proxy is not.
+fn backend_api_body_shape(body: &str) -> String {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return "empty".to_string();
+    }
+    match serde_json::from_str::<Value>(trimmed) {
+        Ok(Value::Object(map)) => {
+            let mut keys: Vec<&str> = map.keys().map(String::as_str).collect();
+            keys.sort_unstable();
+            let joined = keys.join(",");
+            format!(
+                "object{{{}}}",
+                crate::openhuman::util::truncate_at_byte_boundary(
+                    &joined,
+                    BACKEND_API_BODY_SHAPE_MAX_BYTES,
+                )
+            )
+        }
+        Ok(Value::Array(_)) => "array".to_string(),
+        Ok(_) => "scalar".to_string(),
+        Err(_) => "non_json".to_string(),
+    }
+}
 
 fn sanitize_client_version(raw: &str) -> Option<String> {
     let sanitized: String = raw
@@ -678,30 +713,25 @@ impl BackendOAuthClient {
                 );
             } else {
                 // Enrich the report with the two fields triage needs to pin a
-                // non-2xx's origin: the outbound `host` and a bounded snippet of
-                // the response body. `report_error` previously logged only
+                // non-2xx's origin: the outbound `host` and a PII-safe `body_shape`
+                // (top-level JSON key names only — never values; see
+                // `backend_api_body_shape`). `report_error` previously logged only
                 // `response_body_len`, leaving us blind when a client hits a
                 // non-canonical backend (custom BACKEND_URL / proxy / foreign
                 // host) — TAURI-RUST-8C: 12k `GET /teams/me/usage` 404s from one
                 // user whose 91-byte body matched no route this backend emits,
-                // un-diagnosable because neither host nor body was captured.
-                // The snippet is UTF-8-safe truncated (never slices mid-codepoint
-                // — feedback_http_body_byte_slice_utf8_panic) and rides the
-                // Sentry `before_send` PII scrub; `host_str()` carries no
-                // scheme/path/query/token. Telemetry only — the error still
-                // propagates below (no suppression).
+                // un-diagnosable because neither host nor shape was captured.
+                // `host_str()` carries no scheme/path/query/token. Telemetry only
+                // — the error still propagates below (no suppression).
                 let host = url.host_str().unwrap_or("");
-                let body_preview = crate::openhuman::util::truncate_at_byte_boundary(
-                    text.trim(),
-                    BACKEND_API_BODY_PREVIEW_MAX_BYTES,
-                );
+                let body_shape = backend_api_body_shape(&text);
                 crate::core::observability::report_error(
                     format!(
-                        "{} {} failed ({status}); response_body_len={}; body_preview={}",
+                        "{} {} failed ({status}); response_body_len={}; body_shape={}",
                         method.as_str(),
                         url.path(),
                         text.len(),
-                        body_preview,
+                        body_shape,
                     )
                     .as_str(),
                     "backend_api",

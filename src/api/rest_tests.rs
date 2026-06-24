@@ -1,6 +1,6 @@
 use super::{
-    flatten_authed_error, key_bytes_from_string, parse_message_path, sanitize_client_version,
-    BackendApiError, BackendOAuthClient,
+    backend_api_body_shape, flatten_authed_error, key_bytes_from_string, parse_message_path,
+    sanitize_client_version, BackendApiError, BackendOAuthClient,
 };
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -415,24 +415,56 @@ async fn authed_json_surfaces_unauthorized_on_401() {
     assert_eq!(path, "/referral/stats");
 }
 
+#[test]
+fn backend_api_body_shape_emits_keys_not_values() {
+    // PII guard (Codex P1 on #4058): the body SHAPE must expose top-level JSON
+    // key NAMES (schema) and NEVER the values — a non-2xx body can carry emails /
+    // tokens / profile JSON that would otherwise leak to unscrubbed daily logs.
+    let body = r#"{"error":"not found","email":"jo@example.com","token":"sk-secret"}"#;
+    let shape = backend_api_body_shape(body);
+    assert_eq!(shape, "object{email,error,token}"); // sorted key names only
+    assert!(!shape.contains("jo@example.com"), "value leaked: {shape}");
+    assert!(!shape.contains("sk-secret"), "value leaked: {shape}");
+    assert!(!shape.contains("not found"), "value leaked: {shape}");
+}
+
+#[test]
+fn backend_api_body_shape_classifies_non_object_bodies() {
+    assert_eq!(backend_api_body_shape(""), "empty");
+    assert_eq!(backend_api_body_shape("   "), "empty");
+    assert_eq!(
+        backend_api_body_shape("Cannot GET /teams/me/usage"),
+        "non_json"
+    );
+    assert_eq!(backend_api_body_shape("<html>404</html>"), "non_json");
+    assert_eq!(backend_api_body_shape("[1,2,3]"), "array");
+    assert_eq!(backend_api_body_shape("42"), "scalar");
+}
+
+#[test]
+fn backend_api_body_shape_truncates_multibyte_keys_without_panicking() {
+    // mid-codepoint guard (feedback_http_body_byte_slice_utf8_panic): the joined
+    // key list is truncated at BACKEND_API_BODY_SHAPE_MAX_BYTES = 120. A 1-byte
+    // ASCII prefix + 3-byte unicode chars forces the cap INSIDE a codepoint
+    // (byte 120 = 1 + 119, and 119 % 3 != 0), so a naive byte slice would panic.
+    let long_key = format!("a{}", "あ".repeat(60)); // 1 + 180 = 181 bytes
+    let body = format!("{{{:?}:1}}", long_key); // {"aあああ…":1}
+    let shape = backend_api_body_shape(&body); // must not panic
+    assert!(shape.starts_with("object{"), "unexpected shape: {shape}");
+}
+
 #[tokio::test]
-async fn authed_json_reports_non_channel_404_with_multibyte_body_without_panicking() {
+async fn authed_json_reports_non_channel_404_still_propagates() {
     // TAURI-RUST-8C: a GET 404 on a non-channel path (e.g. `/teams/me/usage`)
-    // falls through to `report_error` (not a typed/suppressed state). That report
-    // now embeds a UTF-8-safe truncated `body_preview` + the outbound `host`.
-    // Guard: a multibyte body larger than the preview cap must NOT panic from a
-    // mid-codepoint byte slice (feedback_http_body_byte_slice_utf8_panic), and
-    // the error must still propagate verbatim (telemetry-only — no suppression).
-    //
-    // Body = 40×"🤖" = 160 bytes (> BACKEND_API_BODY_PREVIEW_MAX_BYTES = 120),
-    // so truncation lands inside a 4-byte codepoint region.
-    let body = "🤖".repeat(40);
-    let body_for_route = body.clone();
+    // falls through to `report_error` (not a typed/suppressed state) — it must
+    // still return an Err (no suppression) and not a typed `BackendApiError`.
     let app = Router::new().route(
         "/teams/me/usage",
-        get(move || {
-            let b = body_for_route.clone();
-            async move { (axum::http::StatusCode::NOT_FOUND, b) }
+        get(|| async {
+            (
+                axum::http::StatusCode::NOT_FOUND,
+                r#"{"message":"Not Found"}"#,
+            )
         }),
     );
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -444,8 +476,6 @@ async fn authed_json_reports_non_channel_404_with_multibyte_body_without_panicki
     let base_url = format!("http://{addr}");
     let client = BackendOAuthClient::new(&base_url).unwrap();
 
-    // Must return an Err (404 still propagates), not panic, and not a typed
-    // `BackendApiError` (this path is neither 401 nor a channel-message 404).
     let err = client
         .authed_json("mock-jwt", Method::GET, "/teams/me/usage", None)
         .await
