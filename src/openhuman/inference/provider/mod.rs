@@ -29,6 +29,7 @@ pub mod traits;
 pub use traits::{
     ChatMessage, ChatRequest, ChatResponse, ConversationMessage, PromptCacheCapabilities, Provider,
     ProviderCapabilityError, ProviderDelta, ToolCall, ToolResultMessage, UsageInfo,
+    AGENT_TURN_MAX_OUTPUT_TOKENS,
 };
 
 pub use billing_error::is_budget_exhausted_message;
