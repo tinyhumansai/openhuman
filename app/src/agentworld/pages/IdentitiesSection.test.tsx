@@ -1081,7 +1081,14 @@ const auctionListing = {
 };
 
 describe('Trading tab — bid / offer commitments', () => {
-  test('Bid opens the amount dialog and submits a commitment', async () => {
+  // Helper: enter a human amount and advance past the amount dialog into the
+  // confirm-before-spend review step (the new second phase).
+  async function enterAmountAndReview(human: string) {
+    await userEvent.type(screen.getByTestId('commit-amount-input'), human);
+    await userEvent.click(screen.getByTestId('commit-submit')); // "Continue" → review
+  }
+
+  test('Bid is two-phase: review appears BEFORE the RPC fires, then commits', async () => {
     vi.mocked(apiClient.marketplace.listIdentities).mockResolvedValue({
       identities: [auctionListing],
     });
@@ -1089,10 +1096,17 @@ describe('Trading tab — bid / offer commitments', () => {
     await gotoTab('Trading');
     await userEvent.click(await screen.findByRole('button', { name: 'Bid' }));
 
-    await userEvent.type(screen.getByTestId('commit-amount-input'), '35000000');
-    await userEvent.click(screen.getByTestId('commit-submit'));
+    // Phase 1 — amount (human decimal). Continuing must NOT fire the RPC yet.
+    await enterAmountAndReview('35');
+    expect(apiClient.marketplace.bid).not.toHaveBeenCalled();
+
+    // Phase 2 — review step (confirm-before-spend parity with Buy).
+    const confirm = await screen.findByTestId('x402-confirm');
+    expect(apiClient.marketplace.bid).not.toHaveBeenCalled();
+    await userEvent.click(confirm);
 
     await screen.findByTestId('commit-success');
+    // Human "35" USDC → 35_000_000 base units (decimals = 6).
     expect(apiClient.marketplace.bid).toHaveBeenCalledWith('auc-1', {
       amount: '35000000',
       asset: 'USDC',
@@ -1100,7 +1114,7 @@ describe('Trading tab — bid / offer commitments', () => {
     });
   });
 
-  test('Offer submits a commitment for the handle', async () => {
+  test('Offer submits a commitment for the handle after review', async () => {
     vi.mocked(apiClient.marketplace.listIdentities).mockResolvedValue({
       identities: [auctionListing],
     });
@@ -1108,8 +1122,9 @@ describe('Trading tab — bid / offer commitments', () => {
     await gotoTab('Trading');
     await userEvent.click(await screen.findByRole('button', { name: 'Offer' }));
 
-    await userEvent.type(screen.getByTestId('commit-amount-input'), '25000000');
-    await userEvent.click(screen.getByTestId('commit-submit'));
+    await enterAmountAndReview('25');
+    expect(apiClient.marketplace.offer).not.toHaveBeenCalled();
+    await userEvent.click(await screen.findByTestId('x402-confirm'));
 
     await screen.findByTestId('commit-success');
     expect(apiClient.marketplace.offer).toHaveBeenCalledWith('@auction', {
@@ -1117,6 +1132,20 @@ describe('Trading tab — bid / offer commitments', () => {
       asset: 'USDC',
       network: 'solana-devnet',
     });
+  });
+
+  test('the review step surfaces the "couldn\'t verify balance" note', async () => {
+    // Bid/offer have no balance probe, so the review renders an unknown balance:
+    // the dialog must say so (and still allow confirm), not pretend it's enough.
+    vi.mocked(apiClient.marketplace.listIdentities).mockResolvedValue({
+      identities: [auctionListing],
+    });
+    render(<IdentitiesSection />);
+    await gotoTab('Trading');
+    await userEvent.click(await screen.findByRole('button', { name: 'Bid' }));
+    await enterAmountAndReview('5');
+    expect(await screen.findByTestId('x402-balance-unverified')).toBeInTheDocument();
+    expect(screen.getByTestId('x402-confirm')).toBeEnabled();
   });
 
   test('a failed commitment surfaces an error banner', async () => {
@@ -1127,13 +1156,13 @@ describe('Trading tab — bid / offer commitments', () => {
     render(<IdentitiesSection />);
     await gotoTab('Trading');
     await userEvent.click(await screen.findByRole('button', { name: 'Bid' }));
-    await userEvent.type(screen.getByTestId('commit-amount-input'), '1');
-    await userEvent.click(screen.getByTestId('commit-submit'));
+    await enterAmountAndReview('1');
+    await userEvent.click(await screen.findByTestId('x402-confirm'));
 
     expect(await screen.findByTestId('commit-error')).toHaveTextContent('bid-rejected');
   });
 
-  test('Cancel closes the commitment dialog without calling the API', async () => {
+  test('Cancel on the amount dialog closes without calling the API', async () => {
     vi.mocked(apiClient.marketplace.listIdentities).mockResolvedValue({
       identities: [auctionListing],
     });
