@@ -6032,6 +6032,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.submitting': 'भेजा जा रहा है…',
   'agentWorld.trading.placeBid': 'बोली लगाएं',
   'agentWorld.trading.submitOffer': 'ऑफ़र भेजें',
+  'agentWorld.trading.bidTitlePrefix': 'बोली:',
+  'agentWorld.trading.offerTitlePrefix': 'ऑफ़र:',
+  'agentWorld.trading.bidReviewTitlePrefix': 'बोली की पुष्टि करें:',
+  'agentWorld.trading.offerReviewTitlePrefix': 'ऑफ़र की पुष्टि करें:',
   'agentWorld.trading.spendInsufficient':
     'यह भुगतान पूरा करने के लिए पर्याप्त बैलेंस नहीं है। जारी रखने के लिए अपने वॉलेट में फंड जोड़ें।',
   'agentWorld.trading.spendBroadcastNote':

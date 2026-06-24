@@ -6051,6 +6051,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.submitting': 'Mengirim…',
   'agentWorld.trading.placeBid': 'Ajukan tawaran',
   'agentWorld.trading.submitOffer': 'Kirim penawaran',
+  'agentWorld.trading.bidTitlePrefix': 'Tawar untuk',
+  'agentWorld.trading.offerTitlePrefix': 'Penawaran untuk',
+  'agentWorld.trading.bidReviewTitlePrefix': 'Konfirmasi tawaran untuk',
+  'agentWorld.trading.offerReviewTitlePrefix': 'Konfirmasi penawaran untuk',
   'agentWorld.trading.spendInsufficient':
     'Saldo tidak cukup untuk menyelesaikan pembayaran ini. Tambahkan dana ke dompet Anda untuk melanjutkan.',
   'agentWorld.trading.spendBroadcastNote':

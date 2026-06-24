@@ -5727,6 +5727,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.submitting': '正在提交…',
   'agentWorld.trading.placeBid': '出价',
   'agentWorld.trading.submitOffer': '提交报价',
+  'agentWorld.trading.bidTitlePrefix': '出价：',
+  'agentWorld.trading.offerTitlePrefix': '报价：',
+  'agentWorld.trading.bidReviewTitlePrefix': '确认出价：',
+  'agentWorld.trading.offerReviewTitlePrefix': '确认报价：',
   'agentWorld.trading.spendInsufficient':
     '余额不足，无法完成此次支付。请向你的钱包添加资金以继续。',
   'agentWorld.trading.spendBroadcastNote': '你的钱包将对此次支付进行签名并广播至',

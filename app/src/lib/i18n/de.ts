@@ -6196,6 +6196,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.submitting': 'Wird gesendet…',
   'agentWorld.trading.placeBid': 'Gebot abgeben',
   'agentWorld.trading.submitOffer': 'Angebot senden',
+  'agentWorld.trading.bidTitlePrefix': 'Gebot für',
+  'agentWorld.trading.offerTitlePrefix': 'Angebot für',
+  'agentWorld.trading.bidReviewTitlePrefix': 'Gebot bestätigen für',
+  'agentWorld.trading.offerReviewTitlePrefix': 'Angebot bestätigen für',
   'agentWorld.trading.spendInsufficient':
     'Nicht genügend Guthaben, um diese Zahlung abzuschließen. Lade dein Wallet auf, um fortzufahren.',
   'agentWorld.trading.spendBroadcastNote':

@@ -6095,6 +6095,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.submitting': 'Отправка…',
   'agentWorld.trading.placeBid': 'Сделать ставку',
   'agentWorld.trading.submitOffer': 'Отправить предложение',
+  'agentWorld.trading.bidTitlePrefix': 'Ставка на',
+  'agentWorld.trading.offerTitlePrefix': 'Предложение для',
+  'agentWorld.trading.bidReviewTitlePrefix': 'Подтвердите ставку на',
+  'agentWorld.trading.offerReviewTitlePrefix': 'Подтвердите предложение для',
   'agentWorld.trading.spendInsufficient':
     'Недостаточно средств для совершения этого платежа. Пополните кошелёк, чтобы продолжить.',
   'agentWorld.trading.spendBroadcastNote': 'Ваш кошелёк подпишет и отправит этот платёж в сети',

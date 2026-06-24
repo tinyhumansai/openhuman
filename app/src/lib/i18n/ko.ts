@@ -5974,6 +5974,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.submitting': '제출 중…',
   'agentWorld.trading.placeBid': '입찰하기',
   'agentWorld.trading.submitOffer': '제안 보내기',
+  'agentWorld.trading.bidTitlePrefix': '입찰:',
+  'agentWorld.trading.offerTitlePrefix': '제안:',
+  'agentWorld.trading.bidReviewTitlePrefix': '입찰 확인:',
+  'agentWorld.trading.offerReviewTitlePrefix': '제안 확인:',
   'agentWorld.trading.spendInsufficient':
     '이 결제를 완료하기에 잔액이 부족합니다. 계속하려면 지갑에 자금을 추가하세요.',
   'agentWorld.trading.spendBroadcastNote': '지갑이 이 결제에 서명하여 다음 네트워크에 전파합니다',

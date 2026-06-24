@@ -6157,6 +6157,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.submitting': 'Enviando…',
   'agentWorld.trading.placeBid': 'Pujar',
   'agentWorld.trading.submitOffer': 'Enviar oferta',
+  'agentWorld.trading.bidTitlePrefix': 'Pujar por',
+  'agentWorld.trading.offerTitlePrefix': 'Oferta por',
+  'agentWorld.trading.bidReviewTitlePrefix': 'Confirmar puja por',
+  'agentWorld.trading.offerReviewTitlePrefix': 'Confirmar oferta por',
   'agentWorld.trading.spendInsufficient':
     'Saldo insuficiente para completar este pago. Añade fondos a tu billetera para continuar.',
   'agentWorld.trading.spendBroadcastNote': 'Tu billetera firmará y transmitirá este pago en',

@@ -78,14 +78,18 @@ export default function CommitFlow({
   const { t } = useT();
   const [phase, setPhase] = useState<Phase>({ step: 'amount' });
 
+  // The i18n `t(key, fallback)` has NO interpolation, so the listing `name`
+  // cannot be a translation param — we translate a PREFIX and compose with the
+  // name in code. (Keys must exist in en.ts + every locale; a key with a `${name}`
+  // fallback would always fall through to English and slip past i18n parity.)
   const amountTitle =
     kind === 'bid'
-      ? t('agentWorld.trading.bidTitle', `Bid on ${name}`)
-      : t('agentWorld.trading.offerTitle', `Offer for ${name}`);
+      ? `${t('agentWorld.trading.bidTitlePrefix')} ${name}`
+      : `${t('agentWorld.trading.offerTitlePrefix')} ${name}`;
   const reviewTitle =
     kind === 'bid'
-      ? t('agentWorld.trading.bidReviewTitle', `Confirm bid on ${name}`)
-      : t('agentWorld.trading.offerReviewTitle', `Confirm offer for ${name}`);
+      ? `${t('agentWorld.trading.bidReviewTitlePrefix')} ${name}`
+      : `${t('agentWorld.trading.offerReviewTitlePrefix')} ${name}`;
   const confirmLabel =
     kind === 'bid'
       ? t('agentWorld.trading.placeBid', 'Place bid')

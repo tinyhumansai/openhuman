@@ -5907,6 +5907,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.submitting': 'جارٍ الإرسال…',
   'agentWorld.trading.placeBid': 'تقديم عرض السعر',
   'agentWorld.trading.submitOffer': 'تقديم العرض',
+  'agentWorld.trading.bidTitlePrefix': 'عرض سعر على',
+  'agentWorld.trading.offerTitlePrefix': 'عرض لـ',
+  'agentWorld.trading.bidReviewTitlePrefix': 'تأكيد عرض السعر على',
+  'agentWorld.trading.offerReviewTitlePrefix': 'تأكيد العرض لـ',
   'agentWorld.trading.spendInsufficient':
     'الرصيد غير كافٍ لإتمام هذه الدفعة. أضف أموالاً إلى محفظتك للمتابعة.',
   'agentWorld.trading.spendBroadcastNote': 'ستوقّع محفظتك هذه الدفعة وتبثّها على',

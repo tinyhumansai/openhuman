@@ -6175,6 +6175,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.submitting': 'Envoi…',
   'agentWorld.trading.placeBid': 'Enchérir',
   'agentWorld.trading.submitOffer': 'Envoyer l’offre',
+  'agentWorld.trading.bidTitlePrefix': 'Enchérir sur',
+  'agentWorld.trading.offerTitlePrefix': 'Offre pour',
+  'agentWorld.trading.bidReviewTitlePrefix': 'Confirmer l’enchère sur',
+  'agentWorld.trading.offerReviewTitlePrefix': 'Confirmer l’offre pour',
   'agentWorld.trading.spendInsufficient':
     'Solde insuffisant pour effectuer ce paiement. Approvisionnez votre portefeuille pour continuer.',
   'agentWorld.trading.spendBroadcastNote':

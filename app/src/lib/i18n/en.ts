@@ -85,6 +85,12 @@ const en: TranslationMap = {
   'agentWorld.trading.submitting': 'Submitting…',
   'agentWorld.trading.placeBid': 'Place bid',
   'agentWorld.trading.submitOffer': 'Submit offer',
+  // Commit-dialog title PREFIXES — composed with the listing name in code
+  // (`t(...) + ' ' + name`) because `t(key, fallback)` has no interpolation.
+  'agentWorld.trading.bidTitlePrefix': 'Bid on',
+  'agentWorld.trading.offerTitlePrefix': 'Offer for',
+  'agentWorld.trading.bidReviewTitlePrefix': 'Confirm bid on',
+  'agentWorld.trading.offerReviewTitlePrefix': 'Confirm offer for',
   'agentWorld.trading.spendInsufficient':
     'Insufficient balance to complete this payment. Add funds to your wallet to continue.',
   'agentWorld.trading.spendBroadcastNote': 'Your wallet will sign and broadcast this payment on',

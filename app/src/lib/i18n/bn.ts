@@ -6030,6 +6030,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.submitting': 'জমা দেওয়া হচ্ছে…',
   'agentWorld.trading.placeBid': 'বিড করুন',
   'agentWorld.trading.submitOffer': 'অফার জমা দিন',
+  'agentWorld.trading.bidTitlePrefix': 'বিড:',
+  'agentWorld.trading.offerTitlePrefix': 'অফার:',
+  'agentWorld.trading.bidReviewTitlePrefix': 'বিড নিশ্চিত করুন:',
+  'agentWorld.trading.offerReviewTitlePrefix': 'অফার নিশ্চিত করুন:',
   'agentWorld.trading.spendInsufficient':
     'এই পেমেন্ট সম্পূর্ণ করার জন্য পর্যাপ্ত ব্যালেন্স নেই। চালিয়ে যেতে আপনার ওয়ালেটে অর্থ যোগ করুন।',
   'agentWorld.trading.spendBroadcastNote': 'আপনার ওয়ালেট এই পেমেন্টে স্বাক্ষর করে সম্প্রচার করবে',

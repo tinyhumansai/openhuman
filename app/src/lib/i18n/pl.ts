@@ -6122,6 +6122,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.submitting': 'Wysyłanie…',
   'agentWorld.trading.placeBid': 'Złóż ofertę',
   'agentWorld.trading.submitOffer': 'Wyślij ofertę',
+  'agentWorld.trading.bidTitlePrefix': 'Licytacja:',
+  'agentWorld.trading.offerTitlePrefix': 'Oferta dla',
+  'agentWorld.trading.bidReviewTitlePrefix': 'Potwierdź licytację:',
+  'agentWorld.trading.offerReviewTitlePrefix': 'Potwierdź ofertę dla',
   'agentWorld.trading.spendInsufficient':
     'Niewystarczające saldo, aby zrealizować tę płatność. Dodaj środki do portfela, aby kontynuować.',
   'agentWorld.trading.spendBroadcastNote': 'Twój portfel podpisze i rozgłosi tę płatność w sieci',
