@@ -394,7 +394,18 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
     it('flushes queued follow-ups into the transcript when a turn ends', async () => {
       const listeners = renderProvider();
       store.dispatch(
-        enqueueFollowup({ threadId: 't-fup', id: 'f1', text: 'queued follow-up text' })
+        enqueueFollowup({
+          threadId: 't-fup',
+          message: {
+            id: 'f1',
+            content: 'queued follow-up text',
+            type: 'text',
+            extraMetadata: {},
+            sender: 'user',
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+          label: 'queued follow-up text',
+        })
       );
 
       await act(async () => {

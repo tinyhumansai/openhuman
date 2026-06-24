@@ -2,6 +2,7 @@ import { createAsyncThunk, createSlice, type PayloadAction } from '@reduxjs/tool
 import debug from 'debug';
 
 import { threadApi } from '../services/api/threadApi';
+import type { ThreadMessage } from '../types/thread';
 import type {
   AgentRun,
   PersistedSubagentActivity,
@@ -324,10 +325,18 @@ export interface QueueStatus {
 
 /** A follow-up message queued from the composer while a turn was streaming. */
 export interface QueuedFollowup {
-  /** Client-generated id, used as the React key and removal handle. */
-  id: string;
-  /** The trimmed text the user typed (for display in the queued strip). */
-  text: string;
+  /**
+   * The full user message, built exactly like a normal send (content +
+   * attachment metadata). It is persisted verbatim when the turn ends so the
+   * follow-up lands in the transcript identically to an interactive send.
+   * `message.id` doubles as the React key / removal handle.
+   */
+  message: ThreadMessage;
+  /**
+   * Display label for the pill — the message text, or the attachment file
+   * names for an attachments-only follow-up, so the row is never blank.
+   */
+  label: string;
 }
 
 const initialState: ChatRuntimeState = {
@@ -835,18 +844,18 @@ const chatRuntimeSlice = createSlice({
     /** Append a follow-up the user queued while a turn was streaming. */
     enqueueFollowup: (
       state,
-      action: PayloadAction<{ threadId: string; id: string; text: string }>
+      action: PayloadAction<{ threadId: string; message: ThreadMessage; label: string }>
     ) => {
-      const { threadId, id, text } = action.payload;
+      const { threadId, message, label } = action.payload;
       const bucket = state.queuedFollowupsByThread[threadId] ?? [];
-      bucket.push({ id, text });
+      bucket.push({ message, label });
       state.queuedFollowupsByThread[threadId] = bucket;
     },
-    /** Drop a single queued follow-up by id (e.g. the user removed it). */
+    /** Drop a single queued follow-up by message id (e.g. the user removed it). */
     removeFollowup: (state, action: PayloadAction<{ threadId: string; id: string }>) => {
       const bucket = state.queuedFollowupsByThread[action.payload.threadId];
       if (!bucket) return;
-      const next = bucket.filter(item => item.id !== action.payload.id);
+      const next = bucket.filter(item => item.message.id !== action.payload.id);
       if (next.length) {
         state.queuedFollowupsByThread[action.payload.threadId] = next;
       } else {

@@ -48,6 +48,7 @@ import {
   enqueueFollowup,
   fetchAndHydrateTurnState,
   markSubagentCancelled,
+  type QueuedFollowup,
   registerParallelRequest,
   setTaskBoardForThread,
   setToolTimelineForThread,
@@ -159,7 +160,7 @@ const EMPTY_ACTIVE_THREADS: Record<string, true> = {};
 
 // Stable empty reference for the queued-follow-ups map, so the selector keeps
 // the same identity when the slice field is absent (narrow test stores).
-const EMPTY_QUEUED_FOLLOWUPS: Record<string, { id: string; text: string }[]> = {};
+const EMPTY_QUEUED_FOLLOWUPS: Record<string, QueuedFollowup[]> = {};
 
 export function isComposerInteractionBlocked(args: {
   /** Whether the *currently selected* thread has an in-flight inference turn. */
@@ -1127,9 +1128,37 @@ const Conversations = ({
     const modelOverride =
       agentProfiles.find(p => p.id === selectedAgentProfileId)?.modelOverride ?? CHAT_MODEL_HINT;
     const messageText = buildMessageWithAttachments(normalized, pendingAttachments);
-    // Never render a blank pill/row for an attachments-only follow-up: fall back
-    // to the attachment file names as the label.
-    const pillText = normalized || pendingAttachments.map(a => a.file.name).join(', ');
+    // Build the full user message exactly like a normal send (content +
+    // attachment metadata) so the follow-up persists identically when it is
+    // flushed into the transcript on turn end. Guard `crypto.randomUUID` like
+    // the rest of the codebase (threadSlice) for runtimes that lack it.
+    const messageId = `msg_${
+      globalThis.crypto?.randomUUID
+        ? globalThis.crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    }`;
+    const followupMessage: ThreadMessage = {
+      id: messageId,
+      content: normalized,
+      type: 'text',
+      extraMetadata:
+        pendingAttachments.length > 0
+          ? {
+              attachmentCount: pendingAttachments.length,
+              attachmentNames: pendingAttachments.map(a => a.file.name),
+              attachmentKinds: pendingAttachments.map(a => a.kind),
+              attachmentDataUris: pendingAttachments
+                .filter(a => a.kind === 'image')
+                .map(a => a.previewUri ?? a.dataUri),
+              attachmentCompressed: pendingAttachments.map(a => a.compressed),
+            }
+          : {},
+      sender: 'user',
+      createdAt: new Date().toISOString(),
+    };
+    // Never render a blank pill for an attachments-only follow-up: fall back to
+    // the attachment file names as the label.
+    const label = normalized || pendingAttachments.map(a => a.file.name).join(', ');
 
     setSendError(null);
     setAttachError(null);
@@ -1147,9 +1176,7 @@ const Conversations = ({
       // failed send leaves the user's draft + attachments intact to retry.
       setInputValue('');
       setAttachments([]);
-      dispatch(
-        enqueueFollowup({ threadId, id: `fup_${globalThis.crypto.randomUUID()}`, text: pillText })
-      );
+      dispatch(enqueueFollowup({ threadId, message: followupMessage, label }));
       trackEvent('chat_followup_queued');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

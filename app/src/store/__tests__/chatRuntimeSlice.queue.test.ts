@@ -118,44 +118,57 @@ describe('chatRuntimeSlice — queue status', () => {
 });
 
 describe('chatRuntimeSlice — queued follow-ups', () => {
-  it('enqueues follow-ups in order per thread', () => {
-    let state = reducer(undefined, enqueueFollowup({ threadId: 't1', id: 'a', text: 'first' }));
-    state = reducer(state, enqueueFollowup({ threadId: 't1', id: 'b', text: 'second' }));
+  const enq = (threadId: string, id: string, text: string) =>
+    enqueueFollowup({
+      threadId,
+      message: {
+        id,
+        content: text,
+        type: 'text',
+        extraMetadata: {},
+        sender: 'user',
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+      label: text,
+    });
 
-    expect(state.queuedFollowupsByThread['t1']).toEqual([
-      { id: 'a', text: 'first' },
-      { id: 'b', text: 'second' },
-    ]);
+  it('enqueues follow-ups in order per thread', () => {
+    let state = reducer(undefined, enq('t1', 'a', 'first'));
+    state = reducer(state, enq('t1', 'b', 'second'));
+
+    expect(state.queuedFollowupsByThread['t1'].map(f => f.message.id)).toEqual(['a', 'b']);
+    expect(state.queuedFollowupsByThread['t1'].map(f => f.label)).toEqual(['first', 'second']);
+    expect(state.queuedFollowupsByThread['t1'][0].message.content).toBe('first');
   });
 
   it('keeps follow-up queues isolated per thread', () => {
-    let state = reducer(undefined, enqueueFollowup({ threadId: 't1', id: 'a', text: 'one' }));
-    state = reducer(state, enqueueFollowup({ threadId: 't2', id: 'b', text: 'two' }));
+    let state = reducer(undefined, enq('t1', 'a', 'one'));
+    state = reducer(state, enq('t2', 'b', 'two'));
 
     expect(state.queuedFollowupsByThread['t1']).toHaveLength(1);
     expect(state.queuedFollowupsByThread['t2']).toHaveLength(1);
   });
 
-  it('removeFollowup drops one entry by id and prunes empty buckets', () => {
-    let state = reducer(undefined, enqueueFollowup({ threadId: 't1', id: 'a', text: 'one' }));
-    state = reducer(state, enqueueFollowup({ threadId: 't1', id: 'b', text: 'two' }));
+  it('removeFollowup drops one entry by message id and prunes empty buckets', () => {
+    let state = reducer(undefined, enq('t1', 'a', 'one'));
+    state = reducer(state, enq('t1', 'b', 'two'));
 
     state = reducer(state, removeFollowup({ threadId: 't1', id: 'a' }));
-    expect(state.queuedFollowupsByThread['t1']).toEqual([{ id: 'b', text: 'two' }]);
+    expect(state.queuedFollowupsByThread['t1'].map(f => f.message.id)).toEqual(['b']);
 
     state = reducer(state, removeFollowup({ threadId: 't1', id: 'b' }));
     expect(state.queuedFollowupsByThread['t1']).toBeUndefined();
   });
 
   it('clearFollowupsForThread drops all entries for the thread', () => {
-    let state = reducer(undefined, enqueueFollowup({ threadId: 't1', id: 'a', text: 'one' }));
+    let state = reducer(undefined, enq('t1', 'a', 'one'));
     state = reducer(state, clearFollowupsForThread({ threadId: 't1' }));
 
     expect(state.queuedFollowupsByThread['t1']).toBeUndefined();
   });
 
   it('endInferenceTurn clears the thread follow-up queue (it is being dispatched)', () => {
-    let state = reducer(undefined, enqueueFollowup({ threadId: 't1', id: 'a', text: 'one' }));
+    let state = reducer(undefined, enq('t1', 'a', 'one'));
     state = reducer(state, beginInferenceTurn({ threadId: 't1' }));
     state = reducer(state, endInferenceTurn({ threadId: 't1' }));
 
@@ -163,8 +176,8 @@ describe('chatRuntimeSlice — queued follow-ups', () => {
   });
 
   it('clearRuntimeForThread and clearAllChatRuntime drop follow-up queues', () => {
-    let state = reducer(undefined, enqueueFollowup({ threadId: 't1', id: 'a', text: 'one' }));
-    state = reducer(state, enqueueFollowup({ threadId: 't2', id: 'b', text: 'two' }));
+    let state = reducer(undefined, enq('t1', 'a', 'one'));
+    state = reducer(state, enq('t2', 'b', 'two'));
 
     const perThread = reducer(state, clearRuntimeForThread({ threadId: 't1' }));
     expect(perThread.queuedFollowupsByThread['t1']).toBeUndefined();

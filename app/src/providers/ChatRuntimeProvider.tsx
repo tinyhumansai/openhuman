@@ -351,26 +351,27 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
     // `endInferenceTurn` clears the pills) keeps the append-log order correct:
     // user → assistant → queued follow-up. Without this the queued prompts are
     // lost on reload and the dispatched answer has no visible user message.
-    const flushQueuedFollowups = (threadId: string) => {
+    const flushQueuedFollowups = async (threadId: string) => {
       const queued = store.getState().chatRuntime.queuedFollowupsByThread[threadId] ?? [];
+      // Persist sequentially so the queued prompts land in the append-log in the
+      // order the user queued them (concurrent dispatches would race), and
+      // surface failures instead of dropping them silently. The stored message
+      // carries the original content + attachment metadata, so the follow-up
+      // persists identically to an interactive send.
       for (const item of queued) {
-        void dispatch(
-          addMessageLocal({
-            threadId,
-            message: {
-              id: `msg_${globalThis.crypto.randomUUID()}`,
-              content: item.text,
-              type: 'text',
-              extraMetadata: {},
-              sender: 'user',
-              createdAt: new Date().toISOString(),
-            },
-          })
-        );
+        try {
+          await dispatch(addMessageLocal({ threadId, message: item.message })).unwrap();
+        } catch (error) {
+          rtLog('flush_followup_append_failed', {
+            thread: threadId,
+            message: item.message.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
     };
 
-    const finishChatDoneTurn = (event: ChatDoneEvent, path: string) => {
+    const finishChatDoneTurn = async (event: ChatDoneEvent, path: string) => {
       rtLog('refresh_usage_counter', {
         thread: event.thread_id,
         request: event.request_id,
@@ -384,7 +385,9 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         path,
       });
       refetchSnapshot();
-      flushQueuedFollowups(event.thread_id);
+      // Persist queued follow-ups (in order, after this turn's assistant reply)
+      // and only then clear the queue + lifecycle.
+      await flushQueuedFollowups(event.thread_id);
       dispatch(endInferenceTurn({ threadId: event.thread_id }));
       dispatch(clearThreadInferenceActive(event.thread_id));
     };
@@ -1075,7 +1078,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
                 error: error instanceof Error ? error.message : String(error),
               });
             }
-            finishChatDoneTurn(event, 'proactive');
+            await finishChatDoneTurn(event, 'proactive');
           })();
           return;
         }
@@ -1110,7 +1113,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
                 error: error instanceof Error ? error.message : String(error),
               });
             }
-            finishChatDoneTurn(event, 'segment_reconcile');
+            await finishChatDoneTurn(event, 'segment_reconcile');
           })();
           return;
         }
@@ -1121,7 +1124,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
             assistantMessage: event.full_response,
           })
         );
-        finishChatDoneTurn(event, 'ordinary');
+        void finishChatDoneTurn(event, 'ordinary');
       },
       onError: event => {
         const eventKey = `error:${event.thread_id}:${event.request_id ?? 'none'}:${event.error_type}`;
@@ -1215,8 +1218,8 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
 
         // The backend drains + dispatches queued follow-ups even when the turn
         // errored, so flush them to the transcript here too (otherwise their
-        // prompts are lost). Mirrors the done path.
-        flushQueuedFollowups(event.thread_id);
+        // prompts are lost). Mirrors the done path (sequential internally).
+        void flushQueuedFollowups(event.thread_id);
         dispatch(endInferenceTurn({ threadId: event.thread_id }));
         dispatch(clearThreadInferenceActive(event.thread_id));
       },

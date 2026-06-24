@@ -38,10 +38,10 @@ export default function QueuedFollowups({ items, onClear }: QueuedFollowupsProps
       <ul className="flex flex-col gap-1">
         {items.map(item => (
           <li
-            key={item.id}
+            key={item.message.id}
             className="truncate text-sm text-stone-700 dark:text-neutral-200"
-            title={item.text}>
-            {item.text}
+            title={item.label}>
+            {item.label}
           </li>
         ))}
       </ul>
