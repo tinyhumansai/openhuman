@@ -726,10 +726,24 @@ pub async fn store_provider_credentials(
             set_active.unwrap_or(true),
         )
         .map_err(|e| e.to_string())?;
+    // A freshly-stored key supersedes any prior auth rejection for this
+    // provider — clear the recorded BYO auth error so the AI-settings notice
+    // disappears and the notification latch re-arms (a future rejection will
+    // notify again). Credentials are keyed `provider:<slug>`; the auth-error
+    // registry is keyed by the bare provider slug used by the chat factory.
+    clear_provider_auth_error(&provider);
     Ok(RpcOutcome::single_log(
         summarize_auth_profile(&stored),
         "provider credentials stored",
     ))
+}
+
+/// Clear any recorded BYO provider auth error for a credentials `provider`
+/// key. Strips the `provider:` namespace prefix so the lookup matches the
+/// bare slug (`openrouter`) the inference classifier records under.
+fn clear_provider_auth_error(provider: &str) {
+    let slug = provider.strip_prefix("provider:").unwrap_or(provider);
+    crate::openhuman::inference::provider::auth_error_registry::clear(slug);
 }
 
 pub async fn remove_provider_credentials(
@@ -742,6 +756,9 @@ pub async fn remove_provider_credentials(
     let removed = auth
         .remove_profile(provider, profile_name)
         .map_err(|e| e.to_string())?;
+    // Removing the key clears any recorded BYO auth error for this provider —
+    // there is no longer a key to be "rejected", so the stale notice must go.
+    clear_provider_auth_error(provider);
     Ok(RpcOutcome::single_log(
         json!({
             "removed": removed,
