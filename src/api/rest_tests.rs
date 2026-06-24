@@ -416,16 +416,30 @@ async fn authed_json_surfaces_unauthorized_on_401() {
 }
 
 #[test]
-fn backend_api_body_shape_emits_keys_not_values() {
-    // PII guard (Codex P1 on #4058): the body SHAPE must expose top-level JSON
-    // key NAMES (schema) and NEVER the values — a non-2xx body can carry emails /
+fn backend_api_body_shape_emits_safe_keys_not_values() {
+    // PII guard (Codex P1 on #4058): the body SHAPE must expose only schema-like
+    // top-level key NAMES and NEVER the values — a non-2xx body can carry emails /
     // tokens / profile JSON that would otherwise leak to unscrubbed daily logs.
     let body = r#"{"error":"not found","email":"jo@example.com","token":"sk-secret"}"#;
     let shape = backend_api_body_shape(body);
-    assert_eq!(shape, "object{email,error,token}"); // sorted key names only
+    assert_eq!(shape, "object(keys=3,safe=[email,error,token],redacted=0)");
     assert!(!shape.contains("jo@example.com"), "value leaked: {shape}");
     assert!(!shape.contains("sk-secret"), "value leaked: {shape}");
     assert!(!shape.contains("not found"), "value leaked: {shape}");
+}
+
+#[test]
+fn backend_api_body_shape_redacts_pii_and_nonidentifier_keys() {
+    // CodeRabbit Major on #4058: key NAMES are response-controlled too. A foreign
+    // backend can put an email / free text / unicode in the KEY position; those
+    // must be counted as `redacted`, never echoed.
+    let body = r#"{"jo@example.com":1,"a b":2,"naïve":3,"error":4}"#;
+    let shape = backend_api_body_shape(body);
+    // Only the schema-like `error` survives; the other three are redacted.
+    assert_eq!(shape, "object(keys=4,safe=[error],redacted=3)");
+    assert!(!shape.contains("jo@example.com"), "PII key leaked: {shape}");
+    assert!(!shape.contains("naïve"), "non-ascii key leaked: {shape}");
+    assert!(!shape.contains("a b"), "free-text key leaked: {shape}");
 }
 
 #[test]
@@ -442,30 +456,32 @@ fn backend_api_body_shape_classifies_non_object_bodies() {
 }
 
 #[test]
-fn backend_api_body_shape_truncates_multibyte_keys_without_panicking() {
-    // mid-codepoint guard (feedback_http_body_byte_slice_utf8_panic): the joined
-    // key list is truncated at BACKEND_API_BODY_SHAPE_MAX_BYTES = 120. A 1-byte
-    // ASCII prefix + 3-byte unicode chars forces the cap INSIDE a codepoint
-    // (byte 120 = 1 + 119, and 119 % 3 != 0), so a naive byte slice would panic.
-    let long_key = format!("a{}", "あ".repeat(60)); // 1 + 180 = 181 bytes
-    let body = format!("{{{:?}:1}}", long_key); // {"aあああ…":1}
-    let shape = backend_api_body_shape(&body); // must not panic
-    assert!(shape.starts_with("object{"), "unexpected shape: {shape}");
+fn backend_api_body_shape_bounds_long_safe_key_list() {
+    // The `safe=[…]` list is truncated at BACKEND_API_BODY_SHAPE_MAX_BYTES = 120.
+    // Surviving keys are ASCII identifiers (non-ASCII keys are redacted upstream),
+    // so build many ASCII keys to overflow the cap and assert the truncation
+    // CONTRACT: bounded, ellipsis-terminated, and not carrying the last key.
+    let mut obj = serde_json::Map::new();
+    for i in 0..30 {
+        obj.insert(format!("field{i:02}"), json!(1)); // 30 × "fieldNN" (7 bytes) ≫ 120
+    }
+    let body = serde_json::to_string(&Value::Object(obj)).unwrap();
+    let shape = backend_api_body_shape(&body);
 
-    // Assert the truncation CONTRACT, not just absence of panic: the key list
-    // must actually be clipped — bounded by the cap, ellipsis-terminated, and
-    // never carrying the full 181-byte key.
     let keys = shape
-        .strip_prefix("object{")
-        .and_then(|s| s.strip_suffix('}'))
-        .expect("framed shape");
+        .strip_prefix("object(keys=30,safe=[")
+        .and_then(|s| s.strip_suffix("],redacted=0)"))
+        .unwrap_or_else(|| panic!("unexpected shape: {shape}"));
     assert!(
         keys.len() <= BACKEND_API_BODY_SHAPE_MAX_BYTES,
-        "key list exceeds cap ({} > {BACKEND_API_BODY_SHAPE_MAX_BYTES}): {keys}",
+        "safe list exceeds cap ({} > {BACKEND_API_BODY_SHAPE_MAX_BYTES}): {keys}",
         keys.len()
     );
     assert!(keys.ends_with('…'), "expected ellipsis-terminated: {keys}");
-    assert!(!shape.contains(&long_key), "full key leaked: {shape}");
+    assert!(
+        !keys.contains("field29"),
+        "last key should be truncated away: {keys}"
+    );
 }
 
 #[tokio::test]

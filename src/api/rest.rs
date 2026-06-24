@@ -107,11 +107,15 @@ const BACKEND_API_BODY_SHAPE_MAX_BYTES: usize = 120;
 /// Sentry `before_send` scrubbing, and that scrubber only catches a few
 /// secret-shaped patterns — so the raw body must never be echoed (a non-2xx body
 /// can carry emails / profile JSON / OAuth errors / nonstandard token fields).
-/// We emit only the SHAPE: for a JSON object, its sorted top-level key NAMES
-/// (schema, never values); otherwise a coarse label. Key names are enough to
-/// identify which backend/gateway produced a response — the `TAURI-RUST-8C` case
-/// (a 91-byte body matching no route this backend emits), where our canonical
-/// envelope is `{success,error,errorCode}` and a foreign gateway/proxy is not.
+/// We emit only the SHAPE: for a JSON object, the count of top-level keys plus
+/// the sorted subset that look like schema field names; otherwise a coarse
+/// label. Even key NAMES are response-controlled (a foreign backend could return
+/// `{"jo@example.com": 1}`), so only keys matching a conservative ASCII-identifier
+/// shape are echoed — everything else is counted as `redacted` and never logged.
+/// The surviving names are enough to identify which backend/gateway produced a
+/// response — the `TAURI-RUST-8C` case (a 91-byte body matching no route this
+/// backend emits), where our canonical envelope is `{success,error,errorCode}`
+/// and a foreign gateway/proxy is not.
 fn backend_api_body_shape(body: &str) -> String {
     let trimmed = body.trim();
     if trimmed.is_empty() {
@@ -119,21 +123,40 @@ fn backend_api_body_shape(body: &str) -> String {
     }
     match serde_json::from_str::<Value>(trimmed) {
         Ok(Value::Object(map)) => {
-            let mut keys: Vec<&str> = map.keys().map(String::as_str).collect();
-            keys.sort_unstable();
-            let joined = keys.join(",");
-            format!(
-                "object{{{}}}",
-                crate::openhuman::util::truncate_at_byte_boundary(
-                    &joined,
-                    BACKEND_API_BODY_SHAPE_MAX_BYTES,
-                )
-            )
+            let total = map.len();
+            let mut safe: Vec<&str> = map
+                .keys()
+                .map(String::as_str)
+                .filter(|k| is_schema_like_key(k))
+                .collect();
+            safe.sort_unstable();
+            let redacted = total - safe.len();
+            // `safe` keys are ASCII identifiers, so the join is ASCII and the
+            // truncation can only ever land on a byte boundary — but route it
+            // through the UTF-8-safe truncator regardless (defence-in-depth).
+            let keys = crate::openhuman::util::truncate_at_byte_boundary(
+                &safe.join(","),
+                BACKEND_API_BODY_SHAPE_MAX_BYTES,
+            );
+            format!("object(keys={total},safe=[{keys}],redacted={redacted})")
         }
         Ok(Value::Array(_)) => "array".to_string(),
         Ok(_) => "scalar".to_string(),
         Err(_) => "non_json".to_string(),
     }
+}
+
+/// A JSON key safe to echo into telemetry: a short ASCII identifier (the shape
+/// of a schema field name). Anything else — non-ASCII, punctuation like `@`,
+/// whitespace, or overlong — is treated as response-controlled data and excluded
+/// so `body_shape` can never leak an email/UUID/free-text used as a key.
+fn is_schema_like_key(key: &str) -> bool {
+    const MAX_KEY_LEN: usize = 40;
+    !key.is_empty()
+        && key.len() <= MAX_KEY_LEN
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
 }
 
 fn sanitize_client_version(raw: &str) -> Option<String> {
