@@ -2547,6 +2547,46 @@ pub fn is_insufficient_credits_event(event: &sentry::protocol::Event<'_>) -> boo
     })
 }
 
+/// Message-level matcher for a provider **monthly-quota / usage-limit
+/// exhausted** failure. Status-agnostic by design — unlike
+/// [`is_insufficient_credits_message`] it does NOT anchor on a 402 status,
+/// because the Kiro IDE proxy wraps its 402 inside a 500 envelope
+/// (TAURI-RUST-C9A). Delegates to the single-source quota-phrase set in
+/// [`crate::openhuman::inference::provider::body_indicates_quota_exhausted`], so
+/// the emit-site guard and this `before_send` net can't drift. Shared with the
+/// event-level filter [`is_quota_exhausted_event`].
+pub fn is_quota_exhausted_message(text: &str) -> bool {
+    crate::openhuman::inference::provider::body_indicates_quota_exhausted(text)
+}
+
+/// Defense-in-depth `before_send` filter for provider **monthly-quota
+/// exhausted** events (TAURI-RUST-C9A): the user's third-party plan has spent
+/// its allotment for the period — a billing/plan state OpenHuman has no lever
+/// over.
+///
+/// The primary emit-site demotion lives in the `Provider::chat()` native_chat
+/// cascade and the shared `api_error` helper (`is_provider_quota_exhausted`),
+/// but the compatible provider reports the same failure from several other
+/// paths that don't run those guards. This filter is the single outermost net
+/// that catches all of them, keyed on the formatted message rather than tags so
+/// it matches regardless of which path emitted it (and regardless of whether
+/// the upstream wrapped the 402 in a 500 envelope).
+pub fn is_quota_exhausted_event(event: &sentry::protocol::Event<'_>) -> bool {
+    if event
+        .message
+        .as_deref()
+        .is_some_and(is_quota_exhausted_message)
+    {
+        return true;
+    }
+    event.exception.values.iter().any(|exception| {
+        exception
+            .value
+            .as_deref()
+            .is_some_and(is_quota_exhausted_message)
+    })
+}
+
 /// 404 on PATCH/DELETE to a channel-message path is an expected backend state
 /// (user deleted the message provider-side, backend GC'd the relay row). The
 /// primary suppression lives in `authed_json` via `parse_message_path` +
@@ -5840,6 +5880,32 @@ mod tests {
         }]
         .into();
         event
+    }
+
+    #[test]
+    fn quota_exhausted_filter_matches_500_wrapped_kiro_event() {
+        // TAURI-RUST-C9A: verbatim message as formatted by the provider emit
+        // site — a 500 envelope around an inner 402 / MONTHLY_REQUEST_COUNT.
+        // The status-agnostic quota filter must catch it on the message path
+        // and the exception path.
+        let body = "kiro API error (500 Internal Server Error): {\"error\":{\"message\":\
+            \"HTTP 402 from Kiro IDE: {\\\"reason\\\":\\\"MONTHLY_REQUEST_COUNT\\\"}\",\
+            \"type\":\"server_error\"}}";
+        assert!(is_quota_exhausted_event(&event_with_message(body)));
+        assert!(is_quota_exhausted_event(&event_with_exception_value(body)));
+        assert!(is_quota_exhausted_message(body));
+    }
+
+    #[test]
+    fn quota_exhausted_filter_ignores_generic_500_and_rate_limit() {
+        // A generic 500 outage and a 429 rate-limit are not plan-quota
+        // exhaustion — they must keep reaching Sentry / their own handling.
+        assert!(!is_quota_exhausted_event(&event_with_message(
+            "kiro API error (500 Internal Server Error): upstream connection reset"
+        )));
+        assert!(!is_quota_exhausted_event(&event_with_message(
+            "provider API error (429 Too Many Requests): rate_limit_exceeded"
+        )));
     }
 
     #[test]

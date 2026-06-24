@@ -99,6 +99,13 @@ fn main() {
             if openhuman_core::core::observability::is_insufficient_credits_event(&event) {
                 return None;
             }
+            // Drop provider monthly-quota exhausted events — third-party plan
+            // allotment spent (e.g. Kiro `MONTHLY_REQUEST_COUNT`, sometimes
+            // wrapped in a 500 envelope so the 402-gated credits filter above
+            // misses it). No local lever (TAURI-RUST-C9A).
+            if openhuman_core::core::observability::is_quota_exhausted_event(&event) {
+                return None;
+            }
             // Defense-in-depth: drop max-tool-iterations cap events that
             // slipped past the call-site filters in
             // `agent::harness::session::runtime::run_single`,
