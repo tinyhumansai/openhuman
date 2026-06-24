@@ -786,6 +786,17 @@ impl Provider for OpenAiCompatibleProvider {
                     Some(model),
                     status,
                 );
+            } else if super::super::is_provider_quota_exhausted(&error) {
+                // Upstream plan quota spent (e.g. Kiro `MONTHLY_REQUEST_COUNT`),
+                // sometimes wrapped in a 500 envelope so the credits matcher
+                // above (402-gated) misses it — no local lever, demote instead
+                // of paging once per memory-extraction retry (TAURI-RUST-C9A).
+                super::super::log_provider_quota_exhausted(
+                    "native_chat",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
             } else if super::super::should_report_provider_http_failure(status) {
                 crate::core::observability::report_error(
                     message.as_str(),
