@@ -17,6 +17,7 @@ import {
   listProviderModels,
   loadAISettings,
   loadLocalProviderSnapshot,
+  loadProviderAuthErrors,
   localProvider,
   modelRegistryVision,
   OPENAI_CODEX_OAUTH_MISSING_AUTH_URL,
@@ -921,6 +922,55 @@ describe('listProviderModels', () => {
     const models = await listProviderModels('openai');
 
     expect(models).toEqual([]);
+  });
+});
+
+describe('loadProviderAuthErrors', () => {
+  beforeEach(() => {
+    mockCallCoreRpc.mockReset();
+    mockIsTauri.mockReturnValue(true);
+  });
+
+  it('dispatches openhuman.inference_provider_auth_errors and returns the errors', async () => {
+    mockCallCoreRpc.mockResolvedValue({
+      result: {
+        errors: [
+          {
+            provider: 'openrouter',
+            status: 401,
+            message: 'openrouter rejected the API key (HTTP 401). Update it in Settings → AI.',
+            timestamp_ms: 1000,
+          },
+        ],
+      },
+    });
+
+    const errors = await loadProviderAuthErrors();
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.inference_provider_auth_errors',
+      params: {},
+    });
+    expect(errors).toHaveLength(1);
+    expect(errors[0].provider).toBe('openrouter');
+    expect(errors[0].status).toBe(401);
+  });
+
+  it('returns empty array when not running in Tauri', async () => {
+    mockIsTauri.mockReturnValue(false);
+
+    const errors = await loadProviderAuthErrors();
+
+    expect(errors).toEqual([]);
+    expect(mockCallCoreRpc).not.toHaveBeenCalled();
+  });
+
+  it('returns empty array when result has no errors field', async () => {
+    mockCallCoreRpc.mockResolvedValue({ result: {} });
+
+    const errors = await loadProviderAuthErrors();
+
+    expect(errors).toEqual([]);
   });
 });
 

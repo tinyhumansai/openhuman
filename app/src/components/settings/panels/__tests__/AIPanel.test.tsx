@@ -10,6 +10,7 @@ import {
   listProviderModels,
   loadAISettings,
   loadLocalProviderSnapshot,
+  loadProviderAuthErrors,
   OPENAI_CODEX_OAUTH_MISSING_AUTH_URL,
   OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL,
   saveAISettings,
@@ -50,6 +51,7 @@ vi.mock('../../../../services/api/aiSettingsApi', () => ({
   loadAISettings: vi.fn(),
   saveAISettings: vi.fn(),
   loadLocalProviderSnapshot: vi.fn(),
+  loadProviderAuthErrors: vi.fn().mockResolvedValue([]),
   testProviderModel: vi.fn(),
   modelRegistryVision: vi.fn(() => false),
   upsertModelRegistryVision: vi.fn((registry: unknown[]) => registry),
@@ -221,6 +223,7 @@ describe('AIPanel', () => {
     vi.clearAllMocks();
     vi.mocked(loadAISettings).mockResolvedValue(baseSettings);
     vi.mocked(loadLocalProviderSnapshot).mockResolvedValue(baseLocalSnapshot);
+    vi.mocked(loadProviderAuthErrors).mockResolvedValue([]);
     vi.mocked(setCloudProviderKey).mockResolvedValue(undefined);
     vi.mocked(clearCloudProviderKey).mockResolvedValue(undefined);
     vi.mocked(importOpenAiCodexCliAuth).mockResolvedValue(undefined);
@@ -269,6 +272,26 @@ describe('AIPanel', () => {
     expect(screen.queryByText(/^Auth$/)).not.toBeInTheDocument();
     expect(screen.queryByText(/^Cloud providers$/)).not.toBeInTheDocument();
     expect(screen.getAllByText(/^Routing$/).length).toBeGreaterThan(0);
+  });
+
+  it('surfaces a provider-error notice when a BYO key was rejected at runtime', async () => {
+    vi.mocked(loadProviderAuthErrors).mockResolvedValue([
+      {
+        provider: 'openrouter',
+        status: 401,
+        message:
+          'openrouter rejected the API key (HTTP 401). Update your openrouter API key in Settings → AI to restore it.',
+        timestamp_ms: 1000,
+      },
+    ]);
+    renderWithProviders(<AIPanel />);
+    expect(await screen.findByText(/rejected the API key/i)).toBeInTheDocument();
+  });
+
+  it('renders no provider-error notice when there are no rejected keys', async () => {
+    renderWithProviders(<AIPanel />);
+    await waitFor(() => expect(screen.getAllByText(/^LLM Providers$/).length).toBeGreaterThan(0));
+    expect(screen.queryByText(/rejected the API key/i)).not.toBeInTheDocument();
   });
 
   it('renders the OpenHuman primary card after load', async () => {

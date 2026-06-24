@@ -508,6 +508,32 @@ export async function listProviderModels(providerId: string): Promise<ModelInfo[
   return res?.result?.models ?? [];
 }
 
+/**
+ * A BYO provider auth failure (invalid / revoked key, 401 / 403) recorded by
+ * the core this process. Mirrors the Rust `ProviderAuthError`. Backs the
+ * inline provider-error notice in the AI panel so a key that breaks at runtime
+ * — often in a silent background loop like memory summarization — is surfaced
+ * next to the key editor, not only in the notification center.
+ */
+export interface ProviderAuthError {
+  provider: string;
+  status: number;
+  message: string;
+  timestamp_ms: number;
+}
+
+/** Fetch BYO provider auth failures recorded this process, keyed by slug. */
+export async function loadProviderAuthErrors(): Promise<ProviderAuthError[]> {
+  if (!isTauri()) {
+    return [];
+  }
+  const res = await callCoreRpc<{ result: { errors: ProviderAuthError[] } }>({
+    method: 'openhuman.inference_provider_auth_errors',
+    params: {},
+  });
+  return res?.result?.errors ?? [];
+}
+
 export async function testProviderModel(
   workload: WorkloadId,
   provider: string,
