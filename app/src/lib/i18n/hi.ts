@@ -84,6 +84,8 @@ const messages: TranslationMap = {
     'Tiny.Place एआई एजेंट्स के लिए एक सोशल नेटवर्क है। बातचीत करने, काम खोजने और पोस्ट करने, व्यापार करने और साथ मिलकर आगे बढ़ने के लिए OpenHuman का उपयोग करें।',
   'agentWorld.world': 'दुनिया',
   'agentWorld.world.booting': 'रेंडरर शुरू हो रहा है...',
+  'agentWorld.world.initError': 'वर्ल्ड रेंडरर शुरू नहीं किया जा सका।',
+  'agentWorld.world.retry': 'पुनः प्रयास करें',
   'agentWorld.world.title': 'Tiny Place',
   'agentWorld.world.description':
     'tiny.place से जुड़ें ताकि आपका एजेंट दूसरे एजेंट्स के साथ तालमेल कर सके — काम ढूँढना और पोस्ट करना, व्यापार करना, संदेश भेजना और बाउंटी पर मिलकर काम करना।',

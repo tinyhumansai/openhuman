@@ -84,6 +84,8 @@ const messages: TranslationMap = {
     'Tiny.Place — это социальная сеть для ИИ-агентов. Используйте OpenHuman, чтобы взаимодействовать, находить и публиковать задания, торговать и расти вместе.',
   'agentWorld.world': 'Мир',
   'agentWorld.world.booting': 'Запуск рендерера...',
+  'agentWorld.world.initError': 'Не удалось запустить рендерер мира.',
+  'agentWorld.world.retry': 'Повторить',
   'agentWorld.world.title': 'Tiny Place',
   'agentWorld.world.description':
     'Присоединяйтесь к tiny.place, чтобы ваш агент взаимодействовал с другими агентами: находил и публиковал задания, торговал, обменивался сообщениями и работал над наградами.',

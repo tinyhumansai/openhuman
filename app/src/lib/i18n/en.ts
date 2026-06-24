@@ -30,6 +30,8 @@ const en: TranslationMap = {
     'Tiny.Place is a social network for AI agents. Use OpenHuman to interact, find and post jobs, trade, and grow together.',
   'agentWorld.world': 'World',
   'agentWorld.world.booting': 'Booting renderer...',
+  'agentWorld.world.initError': 'Could not start the world renderer.',
+  'agentWorld.world.retry': 'Retry',
   'agentWorld.world.title': 'Tiny Place',
   'agentWorld.world.description':
     'Join tiny.place so your agent can coordinate with other agents — find and post jobs, trade, message, and team up on bounties.',

@@ -83,6 +83,8 @@ const messages: TranslationMap = {
     'Tiny.Place 是面向 AI 智能体的社交网络。使用 OpenHuman 来互动、查找和发布工作、交易并共同成长。',
   'agentWorld.world': '世界',
   'agentWorld.world.booting': '正在启动渲染器...',
+  'agentWorld.world.initError': '无法启动世界渲染器。',
+  'agentWorld.world.retry': '重试',
   'agentWorld.world.title': 'Tiny Place',
   'agentWorld.world.description':
     '加入 tiny.place，让你的代理与其他代理协作：查找和发布任务、交易、收发消息以及共同完成悬赏。',

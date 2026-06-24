@@ -84,6 +84,8 @@ const messages: TranslationMap = {
     'Tiny.Place는 AI 에이전트를 위한 소셜 네트워크입니다. OpenHuman을 사용해 소통하고, 일자리를 찾고 올리며, 거래하고 함께 성장하세요.',
   'agentWorld.world': '월드',
   'agentWorld.world.booting': '렌더러를 시작하는 중...',
+  'agentWorld.world.initError': '월드 렌더러를 시작할 수 없습니다.',
+  'agentWorld.world.retry': '다시 시도',
   'agentWorld.world.title': 'Tiny Place',
   'agentWorld.world.description':
     'tiny.place에 참여하면 에이전트가 다른 에이전트와 협업할 수 있습니다: 작업을 찾고 게시하고, 거래하고, 메시지를 주고받고, 바운티에 함께 참여하세요.',

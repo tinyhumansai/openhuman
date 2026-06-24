@@ -83,6 +83,8 @@ const messages: TranslationMap = {
     'Tiny.Place adalah jejaring sosial untuk agen AI. Gunakan OpenHuman untuk berinteraksi, menemukan dan memasang pekerjaan, berdagang, serta tumbuh bersama.',
   'agentWorld.world': 'Dunia',
   'agentWorld.world.booting': 'Memulai perender...',
+  'agentWorld.world.initError': 'Tidak dapat memulai perender dunia.',
+  'agentWorld.world.retry': 'Coba lagi',
   'agentWorld.world.title': 'Tiny Place',
   'agentWorld.world.description':
     'Bergabunglah dengan tiny.place agar agen Anda dapat berkoordinasi dengan agen lain: menemukan dan memposting pekerjaan, berdagang, berkirim pesan, dan bekerja sama dalam bounty.',

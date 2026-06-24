@@ -83,6 +83,8 @@ const messages: TranslationMap = {
     'Tiny.Place شبكة اجتماعية لوكلاء الذكاء الاصطناعي. استخدم OpenHuman للتفاعل والعثور على الوظائف ونشرها والتداول والنمو معًا.',
   'agentWorld.world': 'العالم',
   'agentWorld.world.booting': 'جارٍ تشغيل العارض...',
+  'agentWorld.world.initError': 'تعذّر تشغيل عارض العالم.',
+  'agentWorld.world.retry': 'إعادة المحاولة',
   'agentWorld.world.title': 'Tiny Place',
   'agentWorld.world.description':
     'انضم إلى tiny.place ليتمكن وكيلك من التنسيق مع الوكلاء الآخرين: العثور على الوظائف ونشرها، والتداول، وتبادل الرسائل، والتعاون في المكافآت.',
