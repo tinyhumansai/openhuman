@@ -6037,6 +6037,34 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.body':
     'Penyedia AI Anda kehabisan kredit. Isi ulang atau perbarui kunci API-nya.',
   'userErrors.scope.chat': 'Obrolan',
+  // Agent World — Identity trading (confirm-before-spend + balance gate)
+  'agentWorld.trading.amountLabel': 'Jumlah',
+  'agentWorld.trading.networkLabel': 'Jaringan',
+  'agentWorld.trading.balanceLabel': 'Saldo Anda',
+  'agentWorld.trading.walletLabel': 'Dompet',
+  'agentWorld.trading.balanceUnknown': 'Tidak diketahui',
+  'agentWorld.trading.cancel': 'Batal',
+  'agentWorld.trading.addFunds': 'Tambah dana',
+  'agentWorld.trading.confirmPay': 'Konfirmasi & bayar',
+  'agentWorld.trading.confirmCommit': 'Konfirmasi',
+  'agentWorld.trading.continue': 'Lanjutkan',
+  'agentWorld.trading.submitting': 'Mengirim…',
+  'agentWorld.trading.placeBid': 'Ajukan tawaran',
+  'agentWorld.trading.submitOffer': 'Kirim penawaran',
+  'agentWorld.trading.spendInsufficient':
+    'Saldo tidak cukup untuk menyelesaikan pembayaran ini. Tambahkan dana ke dompet Anda untuk melanjutkan.',
+  'agentWorld.trading.spendBroadcastNote':
+    'Dompet Anda akan menandatangani dan menyiarkan pembayaran ini di',
+  'agentWorld.trading.commitInsufficientWarning':
+    'Saldo Anda mungkin tidak menutupi ini jika komitmen diterima. Anda tetap dapat mengirimkannya — dana hanya berpindah saat diterima.',
+  'agentWorld.trading.commitSettleNote':
+    'Ini adalah komitmen bertanda tangan — dana hanya berpindah jika diterima.',
+  'agentWorld.trading.commitReviewSubtitle': 'Tinjau komitmen Anda sebelum mengirim.',
+  'agentWorld.trading.balanceUnverified':
+    'Kami tidak dapat memverifikasi saldo dompet Anda. Anda tetap dapat melanjutkan — pembayaran diperiksa saat dikirim.',
+  'agentWorld.trading.amountTooManyDecimals': 'Jumlah ini memiliki terlalu banyak angka desimal.',
+  'agentWorld.trading.amountMustBePositive': 'Masukkan jumlah lebih besar dari nol.',
+  'agentWorld.trading.amountInvalid': 'Masukkan jumlah yang valid.',
 };
 
 export default messages;

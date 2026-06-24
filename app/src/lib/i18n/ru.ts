@@ -6081,6 +6081,33 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.title': 'Требуются кредиты провайдера',
   'userErrors.insufficientCredits.body': 'У провайдера закончились кредиты. Пополните их.',
   'userErrors.scope.chat': 'Чат',
+  // Agent World — Identity trading (confirm-before-spend + balance gate)
+  'agentWorld.trading.amountLabel': 'Сумма',
+  'agentWorld.trading.networkLabel': 'Сеть',
+  'agentWorld.trading.balanceLabel': 'Ваш баланс',
+  'agentWorld.trading.walletLabel': 'Кошелёк',
+  'agentWorld.trading.balanceUnknown': 'Неизвестно',
+  'agentWorld.trading.cancel': 'Отмена',
+  'agentWorld.trading.addFunds': 'Пополнить',
+  'agentWorld.trading.confirmPay': 'Подтвердить и оплатить',
+  'agentWorld.trading.confirmCommit': 'Подтвердить',
+  'agentWorld.trading.continue': 'Продолжить',
+  'agentWorld.trading.submitting': 'Отправка…',
+  'agentWorld.trading.placeBid': 'Сделать ставку',
+  'agentWorld.trading.submitOffer': 'Отправить предложение',
+  'agentWorld.trading.spendInsufficient':
+    'Недостаточно средств для совершения этого платежа. Пополните кошелёк, чтобы продолжить.',
+  'agentWorld.trading.spendBroadcastNote': 'Ваш кошелёк подпишет и отправит этот платёж в сети',
+  'agentWorld.trading.commitInsufficientWarning':
+    'Вашего баланса может не хватить, если обязательство будет принято. Вы всё равно можете его отправить — средства списываются только при принятии.',
+  'agentWorld.trading.commitSettleNote':
+    'Это подписанное обязательство — средства списываются только при его принятии.',
+  'agentWorld.trading.commitReviewSubtitle': 'Проверьте обязательство перед отправкой.',
+  'agentWorld.trading.balanceUnverified':
+    'Нам не удалось проверить баланс вашего кошелька. Вы всё равно можете продолжить — платёж проверяется при отправке.',
+  'agentWorld.trading.amountTooManyDecimals': 'В этой сумме слишком много знаков после запятой.',
+  'agentWorld.trading.amountMustBePositive': 'Введите сумму больше нуля.',
+  'agentWorld.trading.amountInvalid': 'Введите корректную сумму.',
 };
 
 export default messages;

@@ -6018,6 +6018,34 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.body':
     'AI प्रदाता के क्रेडिट समाप्त। रिचार्ज करें या API कुंजी बदलें।',
   'userErrors.scope.chat': 'चैट',
+  // Agent World — Identity trading (confirm-before-spend + balance gate)
+  'agentWorld.trading.amountLabel': 'राशि',
+  'agentWorld.trading.networkLabel': 'नेटवर्क',
+  'agentWorld.trading.balanceLabel': 'आपका बैलेंस',
+  'agentWorld.trading.walletLabel': 'वॉलेट',
+  'agentWorld.trading.balanceUnknown': 'अज्ञात',
+  'agentWorld.trading.cancel': 'रद्द करें',
+  'agentWorld.trading.addFunds': 'फंड जोड़ें',
+  'agentWorld.trading.confirmPay': 'पुष्टि करें और भुगतान करें',
+  'agentWorld.trading.confirmCommit': 'पुष्टि करें',
+  'agentWorld.trading.continue': 'जारी रखें',
+  'agentWorld.trading.submitting': 'भेजा जा रहा है…',
+  'agentWorld.trading.placeBid': 'बोली लगाएं',
+  'agentWorld.trading.submitOffer': 'ऑफ़र भेजें',
+  'agentWorld.trading.spendInsufficient':
+    'यह भुगतान पूरा करने के लिए पर्याप्त बैलेंस नहीं है। जारी रखने के लिए अपने वॉलेट में फंड जोड़ें।',
+  'agentWorld.trading.spendBroadcastNote':
+    'आपका वॉलेट इस भुगतान पर हस्ताक्षर करके इसे प्रसारित करेगा',
+  'agentWorld.trading.commitInsufficientWarning':
+    'यदि प्रतिबद्धता स्वीकार की जाती है तो आपका बैलेंस इसे कवर नहीं कर सकता। आप फिर भी इसे भेज सकते हैं — फंड केवल स्वीकृति पर ही स्थानांतरित होते हैं।',
+  'agentWorld.trading.commitSettleNote':
+    'यह एक हस्ताक्षरित प्रतिबद्धता है — फंड केवल स्वीकार किए जाने पर ही स्थानांतरित होते हैं।',
+  'agentWorld.trading.commitReviewSubtitle': 'भेजने से पहले अपनी प्रतिबद्धता की समीक्षा करें।',
+  'agentWorld.trading.balanceUnverified':
+    'हम आपके वॉलेट बैलेंस की पुष्टि नहीं कर सके। आप फिर भी जारी रख सकते हैं — भुगतान भेजे जाने पर जांचा जाता है।',
+  'agentWorld.trading.amountTooManyDecimals': 'इस राशि में बहुत अधिक दशमलव स्थान हैं।',
+  'agentWorld.trading.amountMustBePositive': 'शून्य से बड़ी राशि दर्ज करें।',
+  'agentWorld.trading.amountInvalid': 'एक मान्य राशि दर्ज करें।',
 };
 
 export default messages;

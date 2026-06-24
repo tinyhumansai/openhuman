@@ -6016,6 +6016,33 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.body':
     'AI প্রদানকারীর ক্রেডিট শেষ। রিচার্জ করুন বা API কী বদলান।',
   'userErrors.scope.chat': 'চ্যাট',
+  // Agent World — Identity trading (confirm-before-spend + balance gate)
+  'agentWorld.trading.amountLabel': 'পরিমাণ',
+  'agentWorld.trading.networkLabel': 'নেটওয়ার্ক',
+  'agentWorld.trading.balanceLabel': 'আপনার ব্যালেন্স',
+  'agentWorld.trading.walletLabel': 'ওয়ালেট',
+  'agentWorld.trading.balanceUnknown': 'অজানা',
+  'agentWorld.trading.cancel': 'বাতিল',
+  'agentWorld.trading.addFunds': 'অর্থ যোগ করুন',
+  'agentWorld.trading.confirmPay': 'নিশ্চিত করুন ও পরিশোধ করুন',
+  'agentWorld.trading.confirmCommit': 'নিশ্চিত করুন',
+  'agentWorld.trading.continue': 'চালিয়ে যান',
+  'agentWorld.trading.submitting': 'জমা দেওয়া হচ্ছে…',
+  'agentWorld.trading.placeBid': 'বিড করুন',
+  'agentWorld.trading.submitOffer': 'অফার জমা দিন',
+  'agentWorld.trading.spendInsufficient':
+    'এই পেমেন্ট সম্পূর্ণ করার জন্য পর্যাপ্ত ব্যালেন্স নেই। চালিয়ে যেতে আপনার ওয়ালেটে অর্থ যোগ করুন।',
+  'agentWorld.trading.spendBroadcastNote': 'আপনার ওয়ালেট এই পেমেন্টে স্বাক্ষর করে সম্প্রচার করবে',
+  'agentWorld.trading.commitInsufficientWarning':
+    'প্রতিশ্রুতিটি গৃহীত হলে আপনার ব্যালেন্স এটি কভার নাও করতে পারে। আপনি এটি জমা দিতে পারেন — অর্থ কেবল গ্রহণের সময়ই স্থানান্তরিত হয়।',
+  'agentWorld.trading.commitSettleNote':
+    'এটি একটি স্বাক্ষরিত প্রতিশ্রুতি — গৃহীত হলেই কেবল অর্থ স্থানান্তরিত হয়।',
+  'agentWorld.trading.commitReviewSubtitle': 'জমা দেওয়ার আগে আপনার প্রতিশ্রুতি পর্যালোচনা করুন।',
+  'agentWorld.trading.balanceUnverified':
+    'আমরা আপনার ওয়ালেট ব্যালেন্স যাচাই করতে পারিনি। আপনি চালিয়ে যেতে পারেন — জমা দেওয়ার সময় পেমেন্ট যাচাই করা হয়।',
+  'agentWorld.trading.amountTooManyDecimals': 'এই পরিমাণে অত্যধিক দশমিক স্থান রয়েছে।',
+  'agentWorld.trading.amountMustBePositive': 'শূন্যের চেয়ে বড় একটি পরিমাণ লিখুন।',
+  'agentWorld.trading.amountInvalid': 'একটি বৈধ পরিমাণ লিখুন।',
 };
 
 export default messages;

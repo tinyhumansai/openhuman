@@ -6108,6 +6108,33 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.body':
     'Twój dostawca AI nie ma już środków. Doładuj je lub zaktualizuj klucz API.',
   'userErrors.scope.chat': 'Czat',
+  // Agent World — Identity trading (confirm-before-spend + balance gate)
+  'agentWorld.trading.amountLabel': 'Kwota',
+  'agentWorld.trading.networkLabel': 'Sieć',
+  'agentWorld.trading.balanceLabel': 'Twoje saldo',
+  'agentWorld.trading.walletLabel': 'Portfel',
+  'agentWorld.trading.balanceUnknown': 'Nieznane',
+  'agentWorld.trading.cancel': 'Anuluj',
+  'agentWorld.trading.addFunds': 'Dodaj środki',
+  'agentWorld.trading.confirmPay': 'Potwierdź i zapłać',
+  'agentWorld.trading.confirmCommit': 'Potwierdź',
+  'agentWorld.trading.continue': 'Kontynuuj',
+  'agentWorld.trading.submitting': 'Wysyłanie…',
+  'agentWorld.trading.placeBid': 'Złóż ofertę',
+  'agentWorld.trading.submitOffer': 'Wyślij ofertę',
+  'agentWorld.trading.spendInsufficient':
+    'Niewystarczające saldo, aby zrealizować tę płatność. Dodaj środki do portfela, aby kontynuować.',
+  'agentWorld.trading.spendBroadcastNote': 'Twój portfel podpisze i rozgłosi tę płatność w sieci',
+  'agentWorld.trading.commitInsufficientWarning':
+    'Twoje saldo może nie pokryć tego, jeśli zobowiązanie zostanie przyjęte. Nadal możesz je wysłać — środki przemieszczają się dopiero po przyjęciu.',
+  'agentWorld.trading.commitSettleNote':
+    'To podpisane zobowiązanie — środki przemieszczają się tylko po jego przyjęciu.',
+  'agentWorld.trading.commitReviewSubtitle': 'Sprawdź swoje zobowiązanie przed wysłaniem.',
+  'agentWorld.trading.balanceUnverified':
+    'Nie udało nam się zweryfikować salda portfela. Nadal możesz kontynuować — płatność jest sprawdzana przy wysyłaniu.',
+  'agentWorld.trading.amountTooManyDecimals': 'Ta kwota ma zbyt wiele miejsc po przecinku.',
+  'agentWorld.trading.amountMustBePositive': 'Wprowadź kwotę większą od zera.',
+  'agentWorld.trading.amountInvalid': 'Wprowadź prawidłową kwotę.',
 };
 
 export default messages;

@@ -6121,6 +6121,34 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.body':
     'Seu provedor de IA ficou sem créditos. Recarregue-o ou atualize a chave de API.',
   'userErrors.scope.chat': 'Chat',
+  // Agent World — Identity trading (confirm-before-spend + balance gate)
+  'agentWorld.trading.amountLabel': 'Valor',
+  'agentWorld.trading.networkLabel': 'Rede',
+  'agentWorld.trading.balanceLabel': 'Seu saldo',
+  'agentWorld.trading.walletLabel': 'Carteira',
+  'agentWorld.trading.balanceUnknown': 'Desconhecido',
+  'agentWorld.trading.cancel': 'Cancelar',
+  'agentWorld.trading.addFunds': 'Adicionar fundos',
+  'agentWorld.trading.confirmPay': 'Confirmar e pagar',
+  'agentWorld.trading.confirmCommit': 'Confirmar',
+  'agentWorld.trading.continue': 'Continuar',
+  'agentWorld.trading.submitting': 'Enviando…',
+  'agentWorld.trading.placeBid': 'Dar lance',
+  'agentWorld.trading.submitOffer': 'Enviar oferta',
+  'agentWorld.trading.spendInsufficient':
+    'Saldo insuficiente para concluir este pagamento. Adicione fundos à sua carteira para continuar.',
+  'agentWorld.trading.spendBroadcastNote':
+    'Sua carteira vai assinar e transmitir este pagamento na',
+  'agentWorld.trading.commitInsufficientWarning':
+    'Seu saldo pode não cobrir isso se o compromisso for aceito. Você ainda pode enviá-lo — os fundos só se movem na aceitação.',
+  'agentWorld.trading.commitSettleNote':
+    'Este é um compromisso assinado — os fundos só se movem se for aceito.',
+  'agentWorld.trading.commitReviewSubtitle': 'Revise seu compromisso antes de enviar.',
+  'agentWorld.trading.balanceUnverified':
+    'Não conseguimos verificar o saldo da sua carteira. Você ainda pode continuar — o pagamento é verificado no envio.',
+  'agentWorld.trading.amountTooManyDecimals': 'Este valor tem casas decimais em excesso.',
+  'agentWorld.trading.amountMustBePositive': 'Insira um valor maior que zero.',
+  'agentWorld.trading.amountInvalid': 'Insira um valor válido.',
 };
 
 export default messages;

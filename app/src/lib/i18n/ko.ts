@@ -5960,6 +5960,33 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.title': '제공업체 크레딧 필요',
   'userErrors.insufficientCredits.body': 'AI 제공업체 크레딧이 소진되었습니다.',
   'userErrors.scope.chat': '채팅',
+  // Agent World — Identity trading (confirm-before-spend + balance gate)
+  'agentWorld.trading.amountLabel': '금액',
+  'agentWorld.trading.networkLabel': '네트워크',
+  'agentWorld.trading.balanceLabel': '내 잔액',
+  'agentWorld.trading.walletLabel': '지갑',
+  'agentWorld.trading.balanceUnknown': '알 수 없음',
+  'agentWorld.trading.cancel': '취소',
+  'agentWorld.trading.addFunds': '자금 추가',
+  'agentWorld.trading.confirmPay': '확인 및 결제',
+  'agentWorld.trading.confirmCommit': '확인',
+  'agentWorld.trading.continue': '계속',
+  'agentWorld.trading.submitting': '제출 중…',
+  'agentWorld.trading.placeBid': '입찰하기',
+  'agentWorld.trading.submitOffer': '제안 보내기',
+  'agentWorld.trading.spendInsufficient':
+    '이 결제를 완료하기에 잔액이 부족합니다. 계속하려면 지갑에 자금을 추가하세요.',
+  'agentWorld.trading.spendBroadcastNote': '지갑이 이 결제에 서명하여 다음 네트워크에 전파합니다',
+  'agentWorld.trading.commitInsufficientWarning':
+    '약정이 수락되면 잔액이 이를 충당하지 못할 수 있습니다. 그래도 제출할 수 있습니다 — 자금은 수락 시에만 이동합니다.',
+  'agentWorld.trading.commitSettleNote':
+    '이것은 서명된 약정입니다 — 수락된 경우에만 자금이 이동합니다.',
+  'agentWorld.trading.commitReviewSubtitle': '제출하기 전에 약정을 검토하세요.',
+  'agentWorld.trading.balanceUnverified':
+    '지갑 잔액을 확인할 수 없습니다. 그래도 계속할 수 있습니다 — 결제는 제출 시 확인됩니다.',
+  'agentWorld.trading.amountTooManyDecimals': '이 금액의 소수점 자릿수가 너무 많습니다.',
+  'agentWorld.trading.amountMustBePositive': '0보다 큰 금액을 입력하세요.',
+  'agentWorld.trading.amountInvalid': '유효한 금액을 입력하세요.',
 };
 
 export default messages;

@@ -6143,6 +6143,33 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.body':
     'Tu proveedor de IA se quedó sin créditos. Recárgalo o actualiza su clave de API.',
   'userErrors.scope.chat': 'Chat',
+  // Agent World — Identity trading (confirm-before-spend + balance gate)
+  'agentWorld.trading.amountLabel': 'Importe',
+  'agentWorld.trading.networkLabel': 'Red',
+  'agentWorld.trading.balanceLabel': 'Tu saldo',
+  'agentWorld.trading.walletLabel': 'Billetera',
+  'agentWorld.trading.balanceUnknown': 'Desconocido',
+  'agentWorld.trading.cancel': 'Cancelar',
+  'agentWorld.trading.addFunds': 'Añadir fondos',
+  'agentWorld.trading.confirmPay': 'Confirmar y pagar',
+  'agentWorld.trading.confirmCommit': 'Confirmar',
+  'agentWorld.trading.continue': 'Continuar',
+  'agentWorld.trading.submitting': 'Enviando…',
+  'agentWorld.trading.placeBid': 'Pujar',
+  'agentWorld.trading.submitOffer': 'Enviar oferta',
+  'agentWorld.trading.spendInsufficient':
+    'Saldo insuficiente para completar este pago. Añade fondos a tu billetera para continuar.',
+  'agentWorld.trading.spendBroadcastNote': 'Tu billetera firmará y transmitirá este pago en',
+  'agentWorld.trading.commitInsufficientWarning':
+    'Tu saldo podría no cubrir esto si se acepta el compromiso. Aún puedes enviarlo: los fondos solo se mueven al aceptarse.',
+  'agentWorld.trading.commitSettleNote':
+    'Este es un compromiso firmado: los fondos solo se mueven si se acepta.',
+  'agentWorld.trading.commitReviewSubtitle': 'Revisa tu compromiso antes de enviarlo.',
+  'agentWorld.trading.balanceUnverified':
+    'No pudimos verificar el saldo de tu billetera. Aún puedes continuar: el pago se comprueba al enviarlo.',
+  'agentWorld.trading.amountTooManyDecimals': 'Este importe tiene demasiados decimales.',
+  'agentWorld.trading.amountMustBePositive': 'Introduce un importe mayor que cero.',
+  'agentWorld.trading.amountInvalid': 'Introduce un importe válido.',
 };
 
 export default messages;

@@ -5893,6 +5893,33 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.title': 'مطلوب رصيد المزود',
   'userErrors.insufficientCredits.body': 'نفد رصيد المزود. أعد الشحن أو حدّث مفتاح API.',
   'userErrors.scope.chat': 'الدردشة',
+  // Agent World — Identity trading (confirm-before-spend + balance gate)
+  'agentWorld.trading.amountLabel': 'المبلغ',
+  'agentWorld.trading.networkLabel': 'الشبكة',
+  'agentWorld.trading.balanceLabel': 'رصيدك',
+  'agentWorld.trading.walletLabel': 'المحفظة',
+  'agentWorld.trading.balanceUnknown': 'غير معروف',
+  'agentWorld.trading.cancel': 'إلغاء',
+  'agentWorld.trading.addFunds': 'إضافة أموال',
+  'agentWorld.trading.confirmPay': 'تأكيد والدفع',
+  'agentWorld.trading.confirmCommit': 'تأكيد',
+  'agentWorld.trading.continue': 'متابعة',
+  'agentWorld.trading.submitting': 'جارٍ الإرسال…',
+  'agentWorld.trading.placeBid': 'تقديم عرض السعر',
+  'agentWorld.trading.submitOffer': 'تقديم العرض',
+  'agentWorld.trading.spendInsufficient':
+    'الرصيد غير كافٍ لإتمام هذه الدفعة. أضف أموالاً إلى محفظتك للمتابعة.',
+  'agentWorld.trading.spendBroadcastNote': 'ستوقّع محفظتك هذه الدفعة وتبثّها على',
+  'agentWorld.trading.commitInsufficientWarning':
+    'قد لا يغطي رصيدك هذا الالتزام في حال قبوله. لا يزال بإمكانك تقديمه — لن تُحوّل الأموال إلا عند القبول.',
+  'agentWorld.trading.commitSettleNote': 'هذا التزام موقّع — لن تُحوّل الأموال إلا إذا تم قبوله.',
+  'agentWorld.trading.commitReviewSubtitle': 'راجع التزامك قبل تقديمه.',
+  'agentWorld.trading.balanceUnverified':
+    'تعذّر علينا التحقق من رصيد محفظتك. لا يزال بإمكانك المتابعة — يتم التحقق من الدفعة عند تقديمها.',
+  'agentWorld.trading.amountTooManyDecimals':
+    'يحتوي هذا المبلغ على عدد كبير جدًا من المنازل العشرية.',
+  'agentWorld.trading.amountMustBePositive': 'أدخل مبلغًا أكبر من صفر.',
+  'agentWorld.trading.amountInvalid': 'أدخل مبلغًا صالحًا.',
 };
 
 export default messages;

@@ -6182,6 +6182,34 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.body':
     'Deinem KI-Anbieter ist das Guthaben ausgegangen. Lade es auf oder aktualisiere den Schlüssel.',
   'userErrors.scope.chat': 'Chat',
+  // Agent World — Identity trading (confirm-before-spend + balance gate)
+  'agentWorld.trading.amountLabel': 'Betrag',
+  'agentWorld.trading.networkLabel': 'Netzwerk',
+  'agentWorld.trading.balanceLabel': 'Dein Guthaben',
+  'agentWorld.trading.walletLabel': 'Wallet',
+  'agentWorld.trading.balanceUnknown': 'Unbekannt',
+  'agentWorld.trading.cancel': 'Abbrechen',
+  'agentWorld.trading.addFunds': 'Guthaben aufladen',
+  'agentWorld.trading.confirmPay': 'Bestätigen & zahlen',
+  'agentWorld.trading.confirmCommit': 'Bestätigen',
+  'agentWorld.trading.continue': 'Weiter',
+  'agentWorld.trading.submitting': 'Wird gesendet…',
+  'agentWorld.trading.placeBid': 'Gebot abgeben',
+  'agentWorld.trading.submitOffer': 'Angebot senden',
+  'agentWorld.trading.spendInsufficient':
+    'Nicht genügend Guthaben, um diese Zahlung abzuschließen. Lade dein Wallet auf, um fortzufahren.',
+  'agentWorld.trading.spendBroadcastNote':
+    'Dein Wallet signiert diese Zahlung und überträgt sie auf',
+  'agentWorld.trading.commitInsufficientWarning':
+    'Dein Guthaben deckt dies möglicherweise nicht ab, falls die Zusage angenommen wird. Du kannst sie trotzdem absenden – Geld bewegt sich nur bei Annahme.',
+  'agentWorld.trading.commitSettleNote':
+    'Dies ist eine signierte Zusage – Geld bewegt sich nur bei Annahme.',
+  'agentWorld.trading.commitReviewSubtitle': 'Überprüfe deine Zusage vor dem Absenden.',
+  'agentWorld.trading.balanceUnverified':
+    'Wir konnten dein Wallet-Guthaben nicht überprüfen. Du kannst trotzdem fortfahren – die Zahlung wird beim Absenden geprüft.',
+  'agentWorld.trading.amountTooManyDecimals': 'Dieser Betrag hat zu viele Nachkommastellen.',
+  'agentWorld.trading.amountMustBePositive': 'Gib einen Betrag größer als null ein.',
+  'agentWorld.trading.amountInvalid': 'Gib einen gültigen Betrag ein.',
 };
 
 export default messages;

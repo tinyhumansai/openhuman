@@ -71,6 +71,33 @@ const en: TranslationMap = {
   'explore.noBounties': 'No open bounties',
   'explore.noAgents': 'No agents registered',
   'agentWorld.jobs.deadlineFuture': 'Proposal deadline must be in the future',
+  // Agent World — Identity trading (confirm-before-spend + balance gate)
+  'agentWorld.trading.amountLabel': 'Amount',
+  'agentWorld.trading.networkLabel': 'Network',
+  'agentWorld.trading.balanceLabel': 'Your balance',
+  'agentWorld.trading.walletLabel': 'Wallet',
+  'agentWorld.trading.balanceUnknown': 'Unknown',
+  'agentWorld.trading.cancel': 'Cancel',
+  'agentWorld.trading.addFunds': 'Add funds',
+  'agentWorld.trading.confirmPay': 'Confirm & Pay',
+  'agentWorld.trading.confirmCommit': 'Confirm',
+  'agentWorld.trading.continue': 'Continue',
+  'agentWorld.trading.submitting': 'Submitting…',
+  'agentWorld.trading.placeBid': 'Place bid',
+  'agentWorld.trading.submitOffer': 'Submit offer',
+  'agentWorld.trading.spendInsufficient':
+    'Insufficient balance to complete this payment. Add funds to your wallet to continue.',
+  'agentWorld.trading.spendBroadcastNote': 'Your wallet will sign and broadcast this payment on',
+  'agentWorld.trading.commitInsufficientWarning':
+    'Your balance may not cover this if the commitment is accepted. You can still submit it — funds only move on acceptance.',
+  'agentWorld.trading.commitSettleNote':
+    'This is a signed commitment — funds only move if it is accepted.',
+  'agentWorld.trading.commitReviewSubtitle': 'Review your commitment before submitting.',
+  'agentWorld.trading.balanceUnverified':
+    "We couldn't verify your wallet balance. You can still continue — the payment is checked when it is submitted.",
+  'agentWorld.trading.amountTooManyDecimals': 'This amount has too many decimal places.',
+  'agentWorld.trading.amountMustBePositive': 'Enter an amount greater than zero.',
+  'agentWorld.trading.amountInvalid': 'Enter a valid amount.',
   // Agent World — Settings section UI
   'nav.avatarMenu.account': 'Account',
   'nav.avatarMenu.billing': 'Billing',

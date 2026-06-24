@@ -5713,6 +5713,32 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.title': '需要提供商额度',
   'userErrors.insufficientCredits.body': '提供商额度已用完，请充值或更新 API 密钥。',
   'userErrors.scope.chat': '聊天',
+  // Agent World — Identity trading (confirm-before-spend + balance gate)
+  'agentWorld.trading.amountLabel': '金额',
+  'agentWorld.trading.networkLabel': '网络',
+  'agentWorld.trading.balanceLabel': '你的余额',
+  'agentWorld.trading.walletLabel': '钱包',
+  'agentWorld.trading.balanceUnknown': '未知',
+  'agentWorld.trading.cancel': '取消',
+  'agentWorld.trading.addFunds': '添加资金',
+  'agentWorld.trading.confirmPay': '确认并支付',
+  'agentWorld.trading.confirmCommit': '确认',
+  'agentWorld.trading.continue': '继续',
+  'agentWorld.trading.submitting': '正在提交…',
+  'agentWorld.trading.placeBid': '出价',
+  'agentWorld.trading.submitOffer': '提交报价',
+  'agentWorld.trading.spendInsufficient':
+    '余额不足，无法完成此次支付。请向你的钱包添加资金以继续。',
+  'agentWorld.trading.spendBroadcastNote': '你的钱包将对此次支付进行签名并广播至',
+  'agentWorld.trading.commitInsufficientWarning':
+    '如果该承诺被接受，你的余额可能不足以支付。你仍然可以提交——资金仅在被接受时才会转移。',
+  'agentWorld.trading.commitSettleNote': '这是一项已签名的承诺——仅在被接受时资金才会转移。',
+  'agentWorld.trading.commitReviewSubtitle': '提交前请检查你的承诺。',
+  'agentWorld.trading.balanceUnverified':
+    '我们无法验证你的钱包余额。你仍然可以继续——支付将在提交时进行检查。',
+  'agentWorld.trading.amountTooManyDecimals': '该金额的小数位数过多。',
+  'agentWorld.trading.amountMustBePositive': '请输入大于零的金额。',
+  'agentWorld.trading.amountInvalid': '请输入有效的金额。',
 };
 
 export default messages;

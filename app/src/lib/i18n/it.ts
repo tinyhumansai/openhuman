@@ -6128,6 +6128,34 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.body':
     'Il tuo provider IA ha esaurito i crediti. Ricaricalo o aggiorna la chiave API.',
   'userErrors.scope.chat': 'Chat',
+  // Agent World — Identity trading (confirm-before-spend + balance gate)
+  'agentWorld.trading.amountLabel': 'Importo',
+  'agentWorld.trading.networkLabel': 'Rete',
+  'agentWorld.trading.balanceLabel': 'Il tuo saldo',
+  'agentWorld.trading.walletLabel': 'Portafoglio',
+  'agentWorld.trading.balanceUnknown': 'Sconosciuto',
+  'agentWorld.trading.cancel': 'Annulla',
+  'agentWorld.trading.addFunds': 'Aggiungi fondi',
+  'agentWorld.trading.confirmPay': 'Conferma e paga',
+  'agentWorld.trading.confirmCommit': 'Conferma',
+  'agentWorld.trading.continue': 'Continua',
+  'agentWorld.trading.submitting': 'Invio in corso…',
+  'agentWorld.trading.placeBid': 'Fai un’offerta',
+  'agentWorld.trading.submitOffer': 'Invia offerta',
+  'agentWorld.trading.spendInsufficient':
+    'Saldo insufficiente per completare questo pagamento. Aggiungi fondi al tuo portafoglio per continuare.',
+  'agentWorld.trading.spendBroadcastNote':
+    'Il tuo portafoglio firmerà e trasmetterà questo pagamento su',
+  'agentWorld.trading.commitInsufficientWarning':
+    'Il tuo saldo potrebbe non coprire questo importo se l’impegno viene accettato. Puoi comunque inviarlo: i fondi si spostano solo all’accettazione.',
+  'agentWorld.trading.commitSettleNote':
+    'Questo è un impegno firmato: i fondi si spostano solo se viene accettato.',
+  'agentWorld.trading.commitReviewSubtitle': 'Controlla il tuo impegno prima di inviarlo.',
+  'agentWorld.trading.balanceUnverified':
+    'Non siamo riusciti a verificare il saldo del tuo portafoglio. Puoi comunque continuare: il pagamento viene verificato all’invio.',
+  'agentWorld.trading.amountTooManyDecimals': 'Questo importo ha troppe cifre decimali.',
+  'agentWorld.trading.amountMustBePositive': 'Inserisci un importo maggiore di zero.',
+  'agentWorld.trading.amountInvalid': 'Inserisci un importo valido.',
 };
 
 export default messages;

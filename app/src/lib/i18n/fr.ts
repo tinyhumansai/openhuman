@@ -6161,6 +6161,34 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.body':
     "Votre fournisseur IA n'a plus de crédits. Rechargez-le ou mettez à jour sa clé API.",
   'userErrors.scope.chat': 'Chat',
+  // Agent World — Identity trading (confirm-before-spend + balance gate)
+  'agentWorld.trading.amountLabel': 'Montant',
+  'agentWorld.trading.networkLabel': 'Réseau',
+  'agentWorld.trading.balanceLabel': 'Votre solde',
+  'agentWorld.trading.walletLabel': 'Portefeuille',
+  'agentWorld.trading.balanceUnknown': 'Inconnu',
+  'agentWorld.trading.cancel': 'Annuler',
+  'agentWorld.trading.addFunds': 'Ajouter des fonds',
+  'agentWorld.trading.confirmPay': 'Confirmer et payer',
+  'agentWorld.trading.confirmCommit': 'Confirmer',
+  'agentWorld.trading.continue': 'Continuer',
+  'agentWorld.trading.submitting': 'Envoi…',
+  'agentWorld.trading.placeBid': 'Enchérir',
+  'agentWorld.trading.submitOffer': 'Envoyer l’offre',
+  'agentWorld.trading.spendInsufficient':
+    'Solde insuffisant pour effectuer ce paiement. Approvisionnez votre portefeuille pour continuer.',
+  'agentWorld.trading.spendBroadcastNote':
+    'Votre portefeuille signera et diffusera ce paiement sur',
+  'agentWorld.trading.commitInsufficientWarning':
+    'Votre solde pourrait ne pas couvrir cela si l’engagement est accepté. Vous pouvez quand même l’envoyer : les fonds ne bougent qu’à l’acceptation.',
+  'agentWorld.trading.commitSettleNote':
+    'Il s’agit d’un engagement signé : les fonds ne bougent qu’en cas d’acceptation.',
+  'agentWorld.trading.commitReviewSubtitle': 'Vérifiez votre engagement avant de l’envoyer.',
+  'agentWorld.trading.balanceUnverified':
+    'Nous n’avons pas pu vérifier le solde de votre portefeuille. Vous pouvez quand même continuer : le paiement est vérifié lors de l’envoi.',
+  'agentWorld.trading.amountTooManyDecimals': 'Ce montant comporte trop de décimales.',
+  'agentWorld.trading.amountMustBePositive': 'Saisissez un montant supérieur à zéro.',
+  'agentWorld.trading.amountInvalid': 'Saisissez un montant valide.',
 };
 
 export default messages;
