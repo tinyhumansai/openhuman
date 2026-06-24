@@ -25,7 +25,13 @@ import Button from '../../components/ui/Button';
 import { ModalShell } from '../../components/ui/ModalShell';
 import { useT } from '../../lib/i18n/I18nContext';
 import { openUrl } from '../../utils/openUrl';
-import { decimalsForAsset, resolveAssetSymbol } from '../assets';
+import { decimalsForAsset, formatUnits, resolveAssetSymbol } from '../assets';
+
+// Re-exported from `../assets` so existing importers (LedgerSection, BountiesSection,
+// ExploreSection, tests) keep importing `formatUnits` from this module unchanged.
+// The implementation lives in `assets.ts` because the marketplace price formatter
+// needs it too, and `assets.ts` cannot import from here without a cycle.
+export { formatUnits };
 
 /** tiny.place hosted funding page — handles deposits / on-ramp for the wallet. */
 const FUND_PAGE_URL = 'https://tiny.place/fund';
@@ -88,17 +94,6 @@ export interface X402ConfirmDialogProps {
   confirmLabel?: string;
   onConfirm: () => void;
   onCancel: () => void;
-}
-
-/** Format a raw base-unit integer string to a decimal string with `decimals`. */
-export function formatUnits(raw: string, decimals: number): string {
-  if (decimals <= 0) return raw;
-  const negative = raw.startsWith('-');
-  const digits = (negative ? raw.slice(1) : raw).padStart(decimals + 1, '0');
-  const whole = digits.slice(0, digits.length - decimals);
-  const frac = digits.slice(digits.length - decimals).replace(/0+$/, '');
-  const body = frac ? `${whole}.${frac}` : whole;
-  return negative ? `-${body}` : body;
 }
 
 /**

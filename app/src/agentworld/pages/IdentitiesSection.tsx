@@ -29,7 +29,7 @@ import {
   type RegistryWalletBalance,
 } from '../../lib/agentworld/invokeApiClient';
 import { apiClient } from '../AgentWorldShell';
-import { decimalsForAsset } from '../assets';
+import { decimalsForAsset, formatAssetAmount } from '../assets';
 import CommitFlow from '../components/CommitFlow';
 import X402ConfirmDialog from '../components/X402ConfirmDialog';
 import { explorerTxUrl as buyExplorerTxUrl, useX402Buy } from '../hooks/useX402Buy';
@@ -267,9 +267,17 @@ function ErrorBanner({ message }: { message: string }) {
   );
 }
 
-// Formats price amount + asset for display
+// Formats a marketplace price for display. Listing/floor/sale `price.amount`
+// strings are in the asset's smallest BASE units (same convention as the x402
+// buy challenge `amount` and bounty `reward.amount`) — a 30 USDC price arrives as
+// "30000000". We humanize here via the shared {@link formatAssetAmount} so the
+// DISPLAYED price ("30 USDC") matches the human-decimal value the user types in
+// AmountCommitDialog when bidding/offering (which then scales ×10^decimals to base
+// units). Rendering the raw base-unit string verbatim previously invited a
+// catastrophic over-spend (user reads "30000000 USDC", types it, signs 30000000 ×
+// 10^6 base units).
 function formatPrice(amount: string, asset: string): string {
-  return `${amount} ${asset}`;
+  return formatAssetAmount(amount, asset);
 }
 
 // ── Register tab ──────────────────────────────────────────────────────────────

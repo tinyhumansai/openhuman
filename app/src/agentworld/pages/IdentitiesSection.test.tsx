@@ -562,7 +562,8 @@ describe('Registry tab', () => {
           seller: 'seller-one',
           updatedAt: '2026-02-03T00:00:00Z',
           status: 'active',
-          price: { amount: '100', asset: 'USDC' },
+          // Marketplace prices are BASE units (USDC = 6 decimals); 100 USDC = 100_000_000.
+          price: { amount: '100000000', asset: 'USDC' },
         },
         // no seller, no price → em-dash fallbacks; non-active status branch
         { listingId: 'listing-2', name: '@beta', updatedAt: 'not-a-date', status: 'pending' },
@@ -655,7 +656,7 @@ describe('Trading tab — floor prices', () => {
   test('shows a price when a floor card resolves with a price', async () => {
     vi.mocked(apiClient.marketplace.identityFloor).mockImplementation((length?: number) => {
       if (length === 3)
-        return Promise.resolve({ length: 3, price: { amount: '250', asset: 'USDC' } });
+        return Promise.resolve({ length: 3, price: { amount: '250000000', asset: 'USDC' } });
       return Promise.resolve({ length, price: undefined });
     });
     render(<IdentitiesSection />);
@@ -679,14 +680,14 @@ describe('Trading tab — floor prices', () => {
             {
               listingId: 'sold-floor',
               name: '@soldfloor',
-              price: { amount: '50', asset: 'USDC' },
+              price: { amount: '50000000', asset: 'USDC' },
               status: 'sold',
               updatedAt: '2026-02-03T00:00:00Z',
             },
             {
               listingId: 'active-floor',
               name: '@activefloor',
-              price: { amount: '250', asset: 'USDC' },
+              price: { amount: '250000000', asset: 'USDC' },
               status: 'active',
               updatedAt: '2026-02-03T00:00:00Z',
             },
@@ -710,7 +711,7 @@ describe('Trading tab — floor prices', () => {
           identities: Array.from({ length: 20 }, (_, index) => ({
             listingId: `sold-floor-${index}`,
             name: `@soldfloor${index}`,
-            price: { amount: '50', asset: 'USDC' },
+            price: { amount: '50000000', asset: 'USDC' },
             status: 'sold',
             updatedAt: '2026-02-03T00:00:00Z',
           })),
@@ -721,7 +722,7 @@ describe('Trading tab — floor prices', () => {
           {
             listingId: 'active-floor-page-2',
             name: '@activefloorpage2',
-            price: { amount: '250', asset: 'USDC' },
+            price: { amount: '250000000', asset: 'USDC' },
             status: 'active',
             updatedAt: '2026-02-03T00:00:00Z',
           },
@@ -785,7 +786,7 @@ describe('Trading tab — listed for sale', () => {
           {
             listingId: 'sale-1',
             name: '@forsale',
-            price: { amount: '42', asset: 'USDC' },
+            price: { amount: '42000000', asset: 'USDC' },
             listingType: 'auction',
             seller: 'seller-x',
             updatedAt: '2026-02-03T00:00:00Z',
@@ -793,7 +794,7 @@ describe('Trading tab — listed for sale', () => {
           {
             listingId: 'sale-2',
             name: '@fixedone',
-            price: { amount: '7', asset: 'USDC' },
+            price: { amount: '7000000', asset: 'USDC' },
             listingType: 'fixed',
             updatedAt: '2026-02-03T00:00:00Z',
           },
@@ -928,7 +929,7 @@ describe('Trading tab — recent sales', () => {
         {
           saleId: 'sale-a',
           name: '@solddomain',
-          price: { amount: '999', asset: 'USDC' },
+          price: { amount: '999000000', asset: 'USDC' },
           buyer: 'buyer0123456789abcdef',
           createdAt: '2026-03-15T12:00:00Z',
         },
@@ -955,7 +956,7 @@ describe('Trading tab — recent sales', () => {
   test('renders all three Trading sub-views together when populated', async () => {
     vi.mocked(apiClient.marketplace.identityFloor).mockImplementation((length?: number) =>
       length === 3
-        ? Promise.resolve({ length: 3, price: { amount: '250', asset: 'USDC' } })
+        ? Promise.resolve({ length: 3, price: { amount: '250000000', asset: 'USDC' } })
         : Promise.resolve({ length, price: undefined })
     );
     vi.mocked(apiClient.marketplace.listIdentities).mockResolvedValue({
@@ -963,7 +964,7 @@ describe('Trading tab — recent sales', () => {
         {
           listingId: 'sale-1',
           name: '@listed',
-          price: { amount: '42', asset: 'USDC' },
+          price: { amount: '42000000', asset: 'USDC' },
           listingType: 'fixed',
           updatedAt: '2026-02-03T00:00:00Z',
         },
@@ -974,7 +975,7 @@ describe('Trading tab — recent sales', () => {
         {
           saleId: 'sale-a',
           name: '@sold',
-          price: { amount: '999', asset: 'USDC' },
+          price: { amount: '999000000', asset: 'USDC' },
           buyer: 'buyerabcdef0123456789',
           createdAt: '2026-03-15T12:00:00Z',
         },
