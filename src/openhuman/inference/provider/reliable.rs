@@ -50,6 +50,13 @@ pub(crate) fn is_non_retryable(err: &anyhow::Error) -> bool {
     if crate::core::observability::is_session_expired_message(&msg) {
         return true;
     }
+    // Monthly-quota / usage-limit exhaustion (e.g. Kiro `MONTHLY_REQUEST_COUNT`,
+    // possibly wrapped in a 500 envelope so `structured_http_4xx` can't see the
+    // inner 402) is terminal for the period — retrying a spent plan quota only
+    // multiplies wasted calls and Sentry events (TAURI-RUST-C9A).
+    if crate::openhuman::inference::provider::body_indicates_quota_exhausted(&msg) {
+        return true;
+    }
 
     if let Some(reqwest_err) = err.downcast_ref::<reqwest::Error>() {
         if let Some(status) = reqwest_err.status() {

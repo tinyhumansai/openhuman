@@ -221,6 +221,26 @@ fn non_retryable_detects_common_patterns() {
     )));
 }
 
+// TAURI-RUST-C9A: a monthly-quota refusal wrapped in a 500 envelope (so the
+// `structured_http_4xx` regex can't see the inner 402) must still be terminal —
+// retrying a spent plan quota only multiplies wasted calls + Sentry events.
+#[test]
+fn non_retryable_detects_monthly_quota_exhaustion() {
+    assert!(is_non_retryable(&anyhow::anyhow!(
+        "kiro API error (500 Internal Server Error): {{\"error\":{{\"message\":\
+         \"HTTP 402 from Kiro IDE: {{\\\"reason\\\":\\\"MONTHLY_REQUEST_COUNT\\\"}}\",\
+         \"type\":\"server_error\"}}}}"
+    )));
+    assert!(is_non_retryable(&anyhow::anyhow!(
+        "provider returned: you have reached the limit on your monthly requests"
+    )));
+    // A generic 500 outage stays retryable (transient) — the quota arm must not
+    // over-match.
+    assert!(!is_non_retryable(&anyhow::anyhow!(
+        "kiro API error (500 Internal Server Error): upstream connection reset"
+    )));
+}
+
 // C10: a 4xx-looking digit run that appears in *free text* (latency figures,
 // model ids, token counts) must NOT be inferred as a permanent HTTP client
 // error — that wrongly short-circuits retries/fallback for transient failures.
