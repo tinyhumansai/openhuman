@@ -46,6 +46,7 @@ use crate::openhuman::agent_tool_policy::ToolPolicySession;
 use crate::openhuman::context::ReductionOutcome;
 use crate::openhuman::inference::provider::{
     ChatMessage, ChatRequest, ConversationMessage, Provider, ProviderDelta, ToolCall, UsageInfo,
+    AGENT_TURN_MAX_OUTPUT_TOKENS,
 };
 use crate::openhuman::tools::{Tool, ToolSpec};
 
@@ -476,7 +477,8 @@ impl CheckpointStrategy for AgentCheckpoint {
                     messages: &messages,
                     tools: None,
                     stream: delta_tx_opt.as_ref(),
-                    max_tokens: None,
+                    // Reservation-pricing pre-flight budget cap (TAURI-RUST-C62).
+                    max_tokens: Some(AGENT_TURN_MAX_OUTPUT_TOKENS),
                 },
                 &self.model,
                 self.temperature,

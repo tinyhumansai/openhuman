@@ -27,7 +27,7 @@ use crate::openhuman::agent::stop_hooks::{current_stop_hooks, StopDecision, Turn
 use crate::openhuman::context::guard::{ContextCheckResult, ContextGuard};
 use crate::openhuman::context::{summarize_chat_history, EngineAutocompact};
 use crate::openhuman::inference::provider::{
-    ChatMessage, ChatRequest, Provider, ProviderCapabilityError,
+    ChatMessage, ChatRequest, Provider, ProviderCapabilityError, AGENT_TURN_MAX_OUTPUT_TOKENS,
 };
 
 use super::super::parse::build_native_assistant_history;
@@ -528,7 +528,10 @@ pub(crate) async fn run_turn_engine(
                     messages: &prepared_messages_vec,
                     tools: request_tools,
                     stream: delta_tx_opt.as_ref(),
-                    max_tokens: None,
+                    // Cap the turn so reservation-pricing providers price their
+                    // pre-flight against a realistic budget, not the full output
+                    // window (TAURI-RUST-C62).
+                    max_tokens: Some(AGENT_TURN_MAX_OUTPUT_TOKENS),
                 },
                 model,
                 temperature,
