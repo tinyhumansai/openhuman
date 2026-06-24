@@ -249,16 +249,17 @@ pub(crate) async fn run_chat_task(
             // Only consult the cross-turn signal for an empty response that is
             // not already a budget error — avoids taking the lock on every turn.
             let has_fresh_signal = if !is_budget && is_empty {
-                super::ops::has_fresh_budget_signal(thread_id).await
+                super::ops::has_fresh_budget_signal(thread_id, &current_fp.provider_binding).await
             } else {
                 false
             };
             match super::ops::classify_budget_correlation(is_budget, is_empty, has_fresh_signal) {
                 BudgetCorrelation::BudgetExhausted => {
-                    // Remember the exhaustion so a follow-up empty 200 on this
-                    // thread (managed route closes the SSE clean under credit
-                    // exhaustion, no inline marker) reclassifies as budget. #3386.
-                    super::ops::record_budget_signal(thread_id).await;
+                    // Remember the exhaustion (scoped to this provider binding)
+                    // so a follow-up empty 200 on this thread+provider (managed
+                    // route closes the SSE clean under credit exhaustion, no
+                    // inline marker) reclassifies as budget. #3386.
+                    super::ops::record_budget_signal(thread_id, &current_fp.provider_binding).await;
                     log::warn!(
                         "[web-channel] inference budget exhausted for client={} thread={} request_id={} error_category=budget_exhausted",
                         client_id,
