@@ -471,6 +471,15 @@ pub fn is_byo_provider_auth_failure_http(
         "no api key supplied",
         "incorrect api key",
         "invalid authentication",
+        // OpenRouter's wording for a key that resolves to no account
+        // (revoked / deleted user): `401 {"error":{"message":"User not
+        // found.","code":401}}`. Same invalid-BYO-key user-state as the
+        // markers above — OpenHuman has no lever to make the user's
+        // third-party account exist. Without this anchor the 401 leaks to
+        // Sentry once per memory-summarization retry (TAURI-RUST-4RC:
+        // ~9k events / 6 users). A verbatim-body test couples it to this
+        // payload so a wording drift fails CI instead of silently leaking.
+        "user not found",
     ];
     let matched = AUTH_ERROR_MARKERS
         .iter()
@@ -507,6 +516,28 @@ pub fn log_byo_provider_auth_failure(
         "[llm_provider] {operation} BYO provider auth failure ({status}) — \
          user API key missing/invalid, not reporting to Sentry"
     );
+
+    // Demoting from Sentry hides the failure from us, so it must not also be
+    // invisible to the user — the failing path is often a silent background
+    // loop (memory summarization) that just degrades to regex-only. Record the
+    // rejection into the process registry that backs the AI-settings
+    // provider-error notice, and on the *first* record of this episode publish
+    // a one-shot notification. The 401 repeats per retry (~9k events for
+    // TAURI-RUST-4RC), so the registry latch is what keeps this from
+    // re-flooding the notification center the way the raw error flooded Sentry.
+    let status_code = status.as_u16();
+    if crate::openhuman::inference::provider::auth_error_registry::record(provider, status_code) {
+        crate::core::event_bus::publish_global(
+            crate::core::event_bus::DomainEvent::ProviderApiKeyRejected {
+                provider: provider.to_string(),
+                message:
+                    crate::openhuman::inference::provider::auth_error_registry::auth_error_message(
+                        provider,
+                        status_code,
+                    ),
+            },
+        );
+    }
 }
 
 /// Whether a `401` is the OpenAI **OAuth** (ChatGPT-subscription / Codex)
@@ -890,6 +921,50 @@ mod tests {
             openhuman_backend::PROVIDER_LABEL,
             StatusCode::UNAUTHORIZED,
             OAUTH_EXPIRED_8FQ_BODY
+        ));
+    }
+
+    /// Verbatim TAURI-RUST-4RC OpenRouter body. The matcher keys on the
+    /// `"user not found"` prose, so coupling the test to the exact payload
+    /// makes a wording drift fail CI rather than silently leak the 401 flood
+    /// (~9k events / 6 users) back to Sentry.
+    const OPENROUTER_USER_NOT_FOUND_4RC_BODY: &str =
+        "{\"error\":{\"message\":\"User not found.\",\"code\":401}}";
+
+    #[test]
+    fn byo_auth_failure_matches_openrouter_user_not_found_401() {
+        assert!(is_byo_provider_auth_failure_http(
+            "openrouter",
+            StatusCode::UNAUTHORIZED,
+            OPENROUTER_USER_NOT_FOUND_4RC_BODY
+        ));
+    }
+
+    #[test]
+    fn byo_auth_failure_user_not_found_ignores_non_auth_status() {
+        // Same prose on a non-401/403 status is not this user-state — keep it
+        // reportable so an unrelated "user not found" elsewhere isn't masked.
+        assert!(!is_byo_provider_auth_failure_http(
+            "openrouter",
+            StatusCode::NOT_FOUND,
+            OPENROUTER_USER_NOT_FOUND_4RC_BODY
+        ));
+        assert!(!is_byo_provider_auth_failure_http(
+            "openrouter",
+            StatusCode::INTERNAL_SERVER_ERROR,
+            OPENROUTER_USER_NOT_FOUND_4RC_BODY
+        ));
+    }
+
+    #[test]
+    fn byo_auth_failure_user_not_found_excludes_backend_provider() {
+        // A backend 401 is app-session expiry (handled by
+        // `publish_backend_session_expired`), never a BYO key — even if the
+        // body happens to carry the same prose.
+        assert!(!is_byo_provider_auth_failure_http(
+            openhuman_backend::PROVIDER_LABEL,
+            StatusCode::UNAUTHORIZED,
+            OPENROUTER_USER_NOT_FOUND_4RC_BODY
         ));
     }
 }
