@@ -451,8 +451,8 @@ describe('chatService.chatClearQueue', () => {
     expect(await chatClearQueue('thread-9')).toBe(0);
   });
 
-  it('returns 0 when the RPC throws', async () => {
+  it('returns null when the RPC throws so callers can keep the pills', async () => {
     mockCallCoreRpc.mockRejectedValue(new Error('rpc down'));
-    expect(await chatClearQueue('thread-9')).toBe(0);
+    expect(await chatClearQueue('thread-9')).toBeNull();
   });
 });

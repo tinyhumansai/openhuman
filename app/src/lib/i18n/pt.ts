@@ -483,6 +483,7 @@ const messages: TranslationMap = {
     'Enfileirar um acompanhamento — enviado após esta resposta · ⌘/Ctrl+Enter para uma ramificação paralela',
   'chat.queuedFollowups.label': 'Acompanhamentos na fila',
   'chat.queuedFollowups.clear': 'Limpar',
+  'chat.queuedFollowups.clearFailed': 'Não foi possível limpar a fila — tente novamente.',
   'chat.parallelBranchLabel': 'Ramificação paralela',
   'chat.thinking': 'Pensando...',
   'chat.noMessages': 'Nenhuma mensagem ainda',

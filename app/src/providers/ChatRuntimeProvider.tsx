@@ -48,6 +48,7 @@ import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { selectSocketStatus } from '../store/socketSelectors';
 import {
   addInferenceResponse,
+  addMessageLocal,
   clearThreadInferenceActive,
   createNewThread,
   generateThreadTitleIfNeeded,
@@ -342,6 +343,33 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
       return { ...entry, displayName: formatted.title, detail: formatted.detail };
     };
 
+    // When a turn ends, any follow-ups the user queued behind it are about to be
+    // dispatched by the backend as fresh turns. Nothing else persists their
+    // prompt — the web channel never writes user messages; the composer does
+    // (`addMessageLocal` → `appendMessage`) — so append them to the transcript
+    // now. Doing it here (after this turn's assistant reply was appended, before
+    // `endInferenceTurn` clears the pills) keeps the append-log order correct:
+    // user → assistant → queued follow-up. Without this the queued prompts are
+    // lost on reload and the dispatched answer has no visible user message.
+    const flushQueuedFollowups = (threadId: string) => {
+      const queued = store.getState().chatRuntime.queuedFollowupsByThread[threadId] ?? [];
+      for (const item of queued) {
+        void dispatch(
+          addMessageLocal({
+            threadId,
+            message: {
+              id: `msg_${globalThis.crypto.randomUUID()}`,
+              content: item.text,
+              type: 'text',
+              extraMetadata: {},
+              sender: 'user',
+              createdAt: new Date().toISOString(),
+            },
+          })
+        );
+      }
+    };
+
     const finishChatDoneTurn = (event: ChatDoneEvent, path: string) => {
       rtLog('refresh_usage_counter', {
         thread: event.thread_id,
@@ -356,6 +384,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         path,
       });
       refetchSnapshot();
+      flushQueuedFollowups(event.thread_id);
       dispatch(endInferenceTurn({ threadId: event.thread_id }));
       dispatch(clearThreadInferenceActive(event.thread_id));
     };
@@ -1184,6 +1213,10 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           requestUsageRefresh();
         }
 
+        // The backend drains + dispatches queued follow-ups even when the turn
+        // errored, so flush them to the transcript here too (otherwise their
+        // prompts are lost). Mirrors the done path.
+        flushQueuedFollowups(event.thread_id);
         dispatch(endInferenceTurn({ threadId: event.thread_id }));
         dispatch(clearThreadInferenceActive(event.thread_id));
       },

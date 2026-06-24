@@ -475,6 +475,7 @@ const messages: TranslationMap = {
     'Dodaj wiadomość uzupełniającą do kolejki — wyślemy po tej odpowiedzi · ⌘/Ctrl+Enter dla równoległej gałęzi',
   'chat.queuedFollowups.label': 'Wiadomości w kolejce',
   'chat.queuedFollowups.clear': 'Wyczyść',
+  'chat.queuedFollowups.clearFailed': 'Nie udało się wyczyścić kolejki — spróbuj ponownie.',
   'chat.parallelBranchLabel': 'Równoległa gałąź',
   'chat.thinking': 'Myślę...',
   'chat.noMessages': 'Brak wiadomości',

@@ -1111,24 +1111,26 @@ const Conversations = ({
 
   // Queue a FOLLOW-UP on the selected thread while a turn is streaming
   // (queue_mode 'followup'): the backend sends it as a fresh turn once the
-  // current turn finishes. Unlike `handleSendMessage` we do NOT add the message
-  // to the transcript optimistically — it would duplicate the real user message
-  // that arrives on the dispatched turn — and we do NOT touch the primary turn's
-  // lifecycle (silence timer, active marker). Instead we record a lightweight
-  // queued-follow-up pill so the user can see (and clear) what they queued.
+  // current turn finishes. We do NOT insert it into the transcript now —
+  // appending it mid-stream would persist it BEFORE the in-flight assistant
+  // reply (the conversation store is an append log), so the prompt would show
+  // out of order on reload. Instead we record a queued-follow-up pill; the pill
+  // is flushed into the transcript (persisted, in order, after the assistant
+  // reply) when the turn ends — see `ChatRuntimeProvider`'s done/error paths.
   const handleSendFollowup = async (text?: string) => {
     if (!rustChat || !selectedThreadId) return;
     const threadId = selectedThreadId;
     const normalized = (text ?? inputValue).trim();
-    if (!normalized && attachments.length === 0) return;
-
     const pendingAttachments = attachments.slice();
+    if (!normalized && pendingAttachments.length === 0) return;
+
     const modelOverride =
       agentProfiles.find(p => p.id === selectedAgentProfileId)?.modelOverride ?? CHAT_MODEL_HINT;
     const messageText = buildMessageWithAttachments(normalized, pendingAttachments);
+    // Never render a blank pill/row for an attachments-only follow-up: fall back
+    // to the attachment file names as the label.
+    const pillText = normalized || pendingAttachments.map(a => a.file.name).join(', ');
 
-    setInputValue('');
-    setAttachments([]);
     setSendError(null);
     setAttachError(null);
 
@@ -1141,8 +1143,12 @@ const Conversations = ({
         locale: uiLocale,
         queueMode: 'followup',
       });
+      // Only clear the composer once the backend has accepted the queue, so a
+      // failed send leaves the user's draft + attachments intact to retry.
+      setInputValue('');
+      setAttachments([]);
       dispatch(
-        enqueueFollowup({ threadId, id: `fup_${globalThis.crypto.randomUUID()}`, text: normalized })
+        enqueueFollowup({ threadId, id: `fup_${globalThis.crypto.randomUUID()}`, text: pillText })
       );
       trackEvent('chat_followup_queued');
     } catch (err) {
@@ -1151,13 +1157,19 @@ const Conversations = ({
     }
   };
 
-  // Dismiss every queued follow-up for the selected thread: clear the backend
-  // run-queue so the messages are never dispatched, then drop the local pills.
+  // Dismiss every queued follow-up for the selected thread. Clear the backend
+  // run-queue FIRST and only drop the local pills if it succeeded — on failure
+  // the backend still holds (and will dispatch) the follow-ups, so keep the
+  // pills and surface the error rather than falsely showing them removed.
   const handleClearQueuedFollowups = async () => {
     if (!selectedThreadId) return;
     const threadId = selectedThreadId;
+    const dropped = await chatClearQueue(threadId);
+    if (dropped === null) {
+      setSendError(chatSendError('cloud_send_failed', t('chat.queuedFollowups.clearFailed')));
+      return;
+    }
     dispatch(clearFollowupsForThread({ threadId }));
-    await chatClearQueue(threadId);
   };
 
   // The composer's Send button (and plain Enter) route to a queued follow-up

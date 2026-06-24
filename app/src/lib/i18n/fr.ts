@@ -484,6 +484,7 @@ const messages: TranslationMap = {
     'Mettre un suivi en file — envoyé après cette réponse · ⌘/Ctrl+Entrée pour une branche parallèle',
   'chat.queuedFollowups.label': 'Suivis en file',
   'chat.queuedFollowups.clear': 'Effacer',
+  'chat.queuedFollowups.clearFailed': 'Impossible de vider la file — réessayez.',
   'chat.parallelBranchLabel': 'Branche parallèle',
   'chat.thinking': 'En train de réfléchir…',
   'chat.noMessages': "Aucun message pour l'instant",

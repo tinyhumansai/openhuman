@@ -2125,6 +2125,16 @@ describe('Conversations — active-thread restore across in-app navigation', () 
 });
 
 describe('Conversations — queued follow-ups while a turn streams', () => {
+  // Reset shared mock call history + defaults per test so `toHaveBeenCalledWith`
+  // assertions reflect only the current case (not bleed from an earlier one).
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetThreads.mockResolvedValue({ threads: [], count: 0 });
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+    vi.mocked(chatSend).mockResolvedValue(undefined);
+    vi.mocked(chatClearQueue).mockResolvedValue(0);
+  });
+
   // A selected thread that is actively streaming (`activeThreadIds`) keeps the
   // composer open for follow-up queueing — the placeholder flips to the
   // follow-up hint and a plain-Enter / Send submission queues a follow-up.
@@ -2197,5 +2207,48 @@ describe('Conversations — queued follow-ups while a turn streams', () => {
 
     await waitFor(() => expect(chatClearQueue).toHaveBeenCalledWith('fup-thread'));
     await waitFor(() => expect(screen.queryByTestId('queued-followups')).not.toBeInTheDocument());
+  });
+
+  it('keeps the queued pills when the backend clear fails', async () => {
+    vi.mocked(chatClearQueue).mockResolvedValueOnce(null);
+    const { textarea } = await renderStreamingConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'still queued' } });
+    });
+    await act(async () => {
+      fireEvent.keyDown(textarea, { key: 'Enter' });
+    });
+
+    const strip = await screen.findByTestId('queued-followups');
+    await act(async () => {
+      fireEvent.click(within(strip).getByText('Clear'));
+    });
+
+    await waitFor(() => expect(chatClearQueue).toHaveBeenCalledWith('fup-thread'));
+    // Clear failed (null) → the backend will still dispatch them, so the pills
+    // stay put instead of falsely showing the queue emptied.
+    expect(screen.getByTestId('queued-followups')).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('queued-followups')).getByText('still queued')
+    ).toBeInTheDocument();
+  });
+
+  it('keeps the draft intact when the follow-up send fails', async () => {
+    vi.mocked(chatSend).mockRejectedValueOnce(new Error('send boom'));
+    const { textarea } = await renderStreamingConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'keep me on failure' } });
+    });
+    await act(async () => {
+      fireEvent.keyDown(textarea, { key: 'Enter' });
+    });
+
+    // Send rejected → no pill queued and the composer keeps the user's text so
+    // they can retry instead of silently losing it.
+    await waitFor(() => expect(chatSend).toHaveBeenCalled());
+    expect(screen.queryByTestId('queued-followups')).not.toBeInTheDocument();
+    expect(textarea).toHaveValue('keep me on failure');
   });
 });

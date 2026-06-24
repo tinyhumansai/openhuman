@@ -483,6 +483,7 @@ const messages: TranslationMap = {
     'Pon en cola un seguimiento — se envía tras esta respuesta · ⌘/Ctrl+Enter para una rama paralela',
   'chat.queuedFollowups.label': 'Seguimientos en cola',
   'chat.queuedFollowups.clear': 'Borrar',
+  'chat.queuedFollowups.clearFailed': 'No se pudo vaciar la cola: inténtalo de nuevo.',
   'chat.parallelBranchLabel': 'Rama paralela',
   'chat.thinking': 'Pensando...',
   'chat.noMessages': 'Sin mensajes aún',

@@ -480,6 +480,7 @@ const messages: TranslationMap = {
     'Metti in coda un follow-up — inviato dopo questa risposta · ⌘/Ctrl+Invio per un ramo parallelo',
   'chat.queuedFollowups.label': 'Follow-up in coda',
   'chat.queuedFollowups.clear': 'Cancella',
+  'chat.queuedFollowups.clearFailed': 'Impossibile svuotare la coda — riprova.',
   'chat.parallelBranchLabel': 'Ramo parallelo',
   'chat.thinking': 'Sto pensando...',
   'chat.noMessages': 'Nessun messaggio',

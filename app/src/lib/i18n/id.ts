@@ -472,6 +472,7 @@ const messages: TranslationMap = {
     'Antrekan tindak lanjut — dikirim setelah balasan ini · ⌘/Ctrl+Enter untuk cabang paralel',
   'chat.queuedFollowups.label': 'Tindak lanjut dalam antrean',
   'chat.queuedFollowups.clear': 'Hapus',
+  'chat.queuedFollowups.clearFailed': 'Gagal mengosongkan antrean — coba lagi.',
   'chat.parallelBranchLabel': 'Cabang paralel',
   'chat.thinking': 'Berpikir...',
   'chat.noMessages': 'Belum ada pesan',

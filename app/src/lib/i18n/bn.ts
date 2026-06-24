@@ -470,6 +470,7 @@ const messages: TranslationMap = {
     'একটি ফলো-আপ সারিবদ্ধ করুন — এই উত্তরের পরে পাঠানো হবে · সমান্তরাল শাখার জন্য ⌘/Ctrl+Enter',
   'chat.queuedFollowups.label': 'সারিবদ্ধ ফলো-আপ',
   'chat.queuedFollowups.clear': 'সাফ করুন',
+  'chat.queuedFollowups.clearFailed': 'সারি সাফ করা যায়নি — আবার চেষ্টা করুন।',
   'chat.parallelBranchLabel': 'সমান্তরাল শাখা',
   'chat.thinking': 'ভাবছে...',
   'chat.noMessages': 'এখনো কোনো বার্তা নেই',

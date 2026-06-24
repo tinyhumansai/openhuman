@@ -493,6 +493,7 @@ const en: TranslationMap = {
     'Queue a follow-up — sent after this reply · ⌘/Ctrl+Enter for a parallel branch',
   'chat.queuedFollowups.label': 'Queued follow-ups',
   'chat.queuedFollowups.clear': 'Clear',
+  'chat.queuedFollowups.clearFailed': "Couldn't clear the queue — try again.",
   'chat.parallelBranchLabel': 'Parallel branch',
   'chat.thinking': 'Thinking...',
   'chat.noMessages': 'No messages yet',

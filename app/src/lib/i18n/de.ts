@@ -484,6 +484,8 @@ const messages: TranslationMap = {
     'Folgenachricht einreihen — wird nach dieser Antwort gesendet · ⌘/Strg+Enter für parallelen Zweig',
   'chat.queuedFollowups.label': 'Eingereihte Folgenachrichten',
   'chat.queuedFollowups.clear': 'Löschen',
+  'chat.queuedFollowups.clearFailed':
+    'Warteschlange konnte nicht geleert werden – bitte erneut versuchen.',
   'chat.parallelBranchLabel': 'Paralleler Zweig',
   'chat.thinking': 'Denken...',
   'chat.noMessages': 'Noch keine Nachrichten',

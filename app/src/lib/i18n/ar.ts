@@ -462,6 +462,7 @@ const messages: TranslationMap = {
   'chat.followupHint': 'أضِف متابعة إلى القائمة — تُرسَل بعد هذا الرد · ⌘/Ctrl+Enter لفرع متوازٍ',
   'chat.queuedFollowups.label': 'متابعات في قائمة الانتظار',
   'chat.queuedFollowups.clear': 'مسح',
+  'chat.queuedFollowups.clearFailed': 'تعذّر مسح القائمة — حاول مرة أخرى.',
   'chat.parallelBranchLabel': 'فرع متوازٍ',
   'chat.thinking': 'جارٍ التفكير...',
   'chat.noMessages': 'لا توجد رسائل بعد',

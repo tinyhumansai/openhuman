@@ -452,6 +452,7 @@ const messages: TranslationMap = {
   'chat.followupHint': '将后续消息加入队列 — 将在本次回复后发送 · ⌘/Ctrl+Enter 开启并行分支',
   'chat.queuedFollowups.label': '排队的后续消息',
   'chat.queuedFollowups.clear': '清除',
+  'chat.queuedFollowups.clearFailed': '无法清空队列 — 请重试。',
   'chat.parallelBranchLabel': '并行分支',
   'chat.thinking': '思考中...',
   'chat.noMessages': '暂无消息',
