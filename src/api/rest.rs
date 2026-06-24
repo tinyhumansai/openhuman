@@ -96,6 +96,11 @@ fn parse_message_path(path: &str) -> Option<(&str, &str)> {
 
 const CLIENT_VERSION_HEADER_MAX_LEN: usize = 64;
 
+/// Max bytes of a non-2xx response body echoed into the `authed_json` Sentry
+/// report (`body_preview=…`). Bounded so a large/hostile error page can't bloat
+/// the event or the Sentry tag indexes; the truncation is UTF-8-safe.
+const BACKEND_API_BODY_PREVIEW_MAX_BYTES: usize = 120;
+
 fn sanitize_client_version(raw: &str) -> Option<String> {
     let sanitized: String = raw
         .trim()
@@ -672,12 +677,31 @@ impl BackendOAuthClient {
                     url.path(),
                 );
             } else {
+                // Enrich the report with the two fields triage needs to pin a
+                // non-2xx's origin: the outbound `host` and a bounded snippet of
+                // the response body. `report_error` previously logged only
+                // `response_body_len`, leaving us blind when a client hits a
+                // non-canonical backend (custom BACKEND_URL / proxy / foreign
+                // host) — TAURI-RUST-8C: 12k `GET /teams/me/usage` 404s from one
+                // user whose 91-byte body matched no route this backend emits,
+                // un-diagnosable because neither host nor body was captured.
+                // The snippet is UTF-8-safe truncated (never slices mid-codepoint
+                // — feedback_http_body_byte_slice_utf8_panic) and rides the
+                // Sentry `before_send` PII scrub; `host_str()` carries no
+                // scheme/path/query/token. Telemetry only — the error still
+                // propagates below (no suppression).
+                let host = url.host_str().unwrap_or("");
+                let body_preview = crate::openhuman::util::truncate_at_byte_boundary(
+                    text.trim(),
+                    BACKEND_API_BODY_PREVIEW_MAX_BYTES,
+                );
                 crate::core::observability::report_error(
                     format!(
-                        "{} {} failed ({status}); response_body_len={}",
+                        "{} {} failed ({status}); response_body_len={}; body_preview={}",
                         method.as_str(),
                         url.path(),
-                        text.len()
+                        text.len(),
+                        body_preview,
                     )
                     .as_str(),
                     "backend_api",
@@ -685,6 +709,7 @@ impl BackendOAuthClient {
                     &[
                         ("method", method.as_str()),
                         ("path", url.path()),
+                        ("host", host),
                         ("status", status_str.as_str()),
                         ("failure", "non_2xx"),
                     ],
