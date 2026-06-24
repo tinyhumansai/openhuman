@@ -415,6 +415,50 @@ async fn authed_json_surfaces_unauthorized_on_401() {
     assert_eq!(path, "/referral/stats");
 }
 
+#[tokio::test]
+async fn authed_json_reports_non_channel_404_with_multibyte_body_without_panicking() {
+    // TAURI-RUST-8C: a GET 404 on a non-channel path (e.g. `/teams/me/usage`)
+    // falls through to `report_error` (not a typed/suppressed state). That report
+    // now embeds a UTF-8-safe truncated `body_preview` + the outbound `host`.
+    // Guard: a multibyte body larger than the preview cap must NOT panic from a
+    // mid-codepoint byte slice (feedback_http_body_byte_slice_utf8_panic), and
+    // the error must still propagate verbatim (telemetry-only — no suppression).
+    //
+    // Body = 40×"🤖" = 160 bytes (> BACKEND_API_BODY_PREVIEW_MAX_BYTES = 120),
+    // so truncation lands inside a 4-byte codepoint region.
+    let body = "🤖".repeat(40);
+    let body_for_route = body.clone();
+    let app = Router::new().route(
+        "/teams/me/usage",
+        get(move || {
+            let b = body_for_route.clone();
+            async move { (axum::http::StatusCode::NOT_FOUND, b) }
+        }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base_url = format!("http://{addr}");
+    let client = BackendOAuthClient::new(&base_url).unwrap();
+
+    // Must return an Err (404 still propagates), not panic, and not a typed
+    // `BackendApiError` (this path is neither 401 nor a channel-message 404).
+    let err = client
+        .authed_json("mock-jwt", Method::GET, "/teams/me/usage", None)
+        .await
+        .unwrap_err();
+    assert!(err.downcast_ref::<BackendApiError>().is_none());
+    let msg = format!("{err:#}");
+    assert!(msg.contains("404"), "error should carry the status: {msg}");
+    assert!(
+        msg.contains("/teams/me/usage"),
+        "error should carry the path: {msg}"
+    );
+}
+
 #[test]
 fn flatten_authed_error_maps_unauthorized_to_session_expired_sentinel() {
     // #3297: the typed `Unauthorized` (expected session-lapse 401) must flatten
