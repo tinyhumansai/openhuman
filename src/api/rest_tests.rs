@@ -1,6 +1,6 @@
 use super::{
     backend_api_body_shape, flatten_authed_error, key_bytes_from_string, parse_message_path,
-    sanitize_client_version, BackendApiError, BackendOAuthClient,
+    sanitize_client_version, BackendApiError, BackendOAuthClient, BACKEND_API_BODY_SHAPE_MAX_BYTES,
 };
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -451,6 +451,21 @@ fn backend_api_body_shape_truncates_multibyte_keys_without_panicking() {
     let body = format!("{{{:?}:1}}", long_key); // {"aあああ…":1}
     let shape = backend_api_body_shape(&body); // must not panic
     assert!(shape.starts_with("object{"), "unexpected shape: {shape}");
+
+    // Assert the truncation CONTRACT, not just absence of panic: the key list
+    // must actually be clipped — bounded by the cap, ellipsis-terminated, and
+    // never carrying the full 181-byte key.
+    let keys = shape
+        .strip_prefix("object{")
+        .and_then(|s| s.strip_suffix('}'))
+        .expect("framed shape");
+    assert!(
+        keys.len() <= BACKEND_API_BODY_SHAPE_MAX_BYTES,
+        "key list exceeds cap ({} > {BACKEND_API_BODY_SHAPE_MAX_BYTES}): {keys}",
+        keys.len()
+    );
+    assert!(keys.ends_with('…'), "expected ellipsis-terminated: {keys}");
+    assert!(!shape.contains(&long_key), "full key leaked: {shape}");
 }
 
 #[tokio::test]
