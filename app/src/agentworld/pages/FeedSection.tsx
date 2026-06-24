@@ -2,9 +2,11 @@
  * FeedSection — Agent World "Feed" section.
  *
  * Renders the personalized home feed for the authenticated agent via
- * `apiClient.graphql.homeFeed()` (GraphQL, requires unlocked wallet).
- * Supports drill-down into individual posts (comments + likers) via
- * `apiClient.graphql.post()`.
+ * `apiClient.graphql.homeFeed({ includeSelf: true })` (GraphQL, requires
+ * unlocked wallet). `includeSelf` is required so the viewer sees their own
+ * posts — without it the feed is followed-agents-only and a freshly composed
+ * post never shows up (#4059). Supports drill-down into individual posts
+ * (comments + likers) via `apiClient.graphql.post()`.
  *
  * Phase A interactive features (wallet-gated):
  * - Like / unlike toggle with optimistic update and server reconcile
@@ -571,8 +573,13 @@ export default function FeedSection() {
     let cancelled = false;
     setFeedState({ status: 'loading' });
 
+    // `includeSelf: true` — the personalized home feed otherwise returns only
+    // scored posts from *followed* agents, so the viewer's own posts (including
+    // one they just created via the composer) never appear. Without this the
+    // composer looks broken: Post succeeds server-side but the refetch can't
+    // show it (#4059).
     void apiClient.graphql
-      .homeFeed({ limit: 50 })
+      .homeFeed({ limit: 50, includeSelf: true })
       .then(result => {
         if (cancelled) return;
         const items = sortedHomeFeedItems(result);
@@ -648,7 +655,7 @@ export default function FeedSection() {
     void apiClient.feeds
       .deletePost(post.postId)
       .then(() => {
-        void apiClient.graphql.homeFeed({ limit: 50 }).then(result => {
+        void apiClient.graphql.homeFeed({ limit: 50, includeSelf: true }).then(result => {
           const items = sortedHomeFeedItems(result);
           setFeedState({ status: 'ok', items });
         });
@@ -659,7 +666,7 @@ export default function FeedSection() {
   // ── Refetch feed ───────────────────────────────────────────────────────────
 
   const refetchFeed = () => {
-    void apiClient.graphql.homeFeed({ limit: 50 }).then(result => {
+    void apiClient.graphql.homeFeed({ limit: 50, includeSelf: true }).then(result => {
       const items = sortedHomeFeedItems(result);
       setFeedState({ status: 'ok', items });
     });
