@@ -1,6 +1,6 @@
 /** Public surface of the isometric agent world engine. */
 
-export { GameWorld } from './GameWorld';
+export { GameWorld, RendererInitError } from './GameWorld';
 export type { AgentSummary } from './GameWorld';
 export { BaseRoom } from './BaseRoom';
 export {
