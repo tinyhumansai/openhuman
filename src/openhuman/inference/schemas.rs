@@ -142,6 +142,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("update_model_settings"),
         schemas("update_local_settings"),
         schemas("list_models"),
+        schemas("provider_auth_errors"),
         schemas("device_profile"),
         schemas("presets"),
         schemas("apply_preset"),
@@ -189,6 +190,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("list_models"),
             handler: handle_inference_list_models,
+        },
+        RegisteredController {
+            schema: schemas("provider_auth_errors"),
+            handler: handle_inference_provider_auth_errors,
         },
         RegisteredController {
             schema: schemas("device_profile"),
@@ -356,6 +361,16 @@ pub fn schemas(function: &str) -> ControllerSchema {
             description: "Fetch the available model list from a configured inference provider's /models API.",
             inputs: vec![required_string("provider_id", "Opaque id of the cloud provider entry to query.")],
             outputs: vec![json_output("models", "Provider model list payload.")],
+        },
+        "provider_auth_errors" => ControllerSchema {
+            namespace: "inference",
+            function: "provider_auth_errors",
+            description: "List BYO provider auth failures (invalid/revoked key, 401/403) recorded this process, for the AI settings provider-error notice.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "errors",
+                "Array of {provider, status, message, timestamp_ms} provider auth errors.",
+            )],
         },
         "device_profile" => ControllerSchema {
             namespace: "inference",
@@ -803,6 +818,12 @@ fn handle_inference_device_profile(_params: Map<String, Value>) -> ControllerFut
     Box::pin(
         async move { to_json(crate::openhuman::inference::rpc::inference_device_profile().await?) },
     )
+}
+
+fn handle_inference_provider_auth_errors(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        to_json(crate::openhuman::inference::rpc::inference_provider_auth_errors().await?)
+    })
 }
 
 fn handle_inference_presets(_params: Map<String, Value>) -> ControllerFuture {

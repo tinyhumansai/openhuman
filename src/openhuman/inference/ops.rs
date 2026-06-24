@@ -348,6 +348,21 @@ pub async fn inference_device_profile() -> Result<RpcOutcome<Value>, String> {
     result
 }
 
+/// Snapshot of BYO provider auth failures (invalid / revoked key, 401 / 403)
+/// recorded this process. Backs the AI-settings provider-error notice so a
+/// key that breaks at runtime — most often in a silent background loop like
+/// memory summarization (TAURI-RUST-4RC) — is surfaced inline next to the key
+/// editor, not only in the notification center. Cleared when the user updates
+/// or removes the offending key.
+pub async fn inference_provider_auth_errors() -> Result<RpcOutcome<Value>, String> {
+    let errors = providers::auth_error_registry::snapshot();
+    debug!(count = errors.len(), "{LOG_PREFIX} provider_auth_errors:ok");
+    Ok(RpcOutcome::single_log(
+        json!({ "errors": errors }),
+        "inference provider auth errors fetched",
+    ))
+}
+
 pub async fn inference_presets() -> Result<RpcOutcome<Value>, String> {
     debug!("{LOG_PREFIX} presets:start");
     let config = config_rpc::load_config_with_timeout().await?;
