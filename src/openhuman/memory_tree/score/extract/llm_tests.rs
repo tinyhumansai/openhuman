@@ -654,6 +654,66 @@ async fn extract_does_not_retry_on_permanent_402() {
 }
 
 #[tokio::test]
+async fn extract_does_not_retry_on_500_wrapped_monthly_quota() {
+    // TAURI-RUST-C9A: the Kiro IDE proxy wraps a 402 monthly-quota refusal
+    // inside a 500 envelope. Before the quota classifier, `is_non_retryable`
+    // saw only a 500 and treated it as a transient transport failure — so
+    // extract() retried 3× and each attempt fired a provider Sentry event
+    // (9k events from a single quota-capped user). It must now call the
+    // provider exactly once and map to the budget-exhausted cause.
+    let _health_guard = crate::openhuman::memory_tree::health::test_guard();
+    use crate::openhuman::memory::chat::{ChatPrompt, ChatProvider};
+    use async_trait::async_trait;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct MonthlyQuotaProvider {
+        calls: AtomicUsize,
+    }
+    #[async_trait]
+    impl ChatProvider for MonthlyQuotaProvider {
+        fn name(&self) -> &str {
+            "test:kiro"
+        }
+        async fn chat_for_json(&self, _p: &ChatPrompt) -> anyhow::Result<String> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            // Verbatim shape of the TAURI-RUST-C9A provider error (500 envelope
+            // around the inner 402 / MONTHLY_REQUEST_COUNT).
+            Err(anyhow::anyhow!(
+                "kiro API error (500 Internal Server Error): {{\"error\":{{\"message\":\
+                 \"HTTP 402 from Kiro IDE: {{\\\"message\\\":\\\"You have reached the \
+                 limit.\\\",\\\"reason\\\":\\\"MONTHLY_REQUEST_COUNT\\\"}}\",\
+                 \"type\":\"server_error\"}}}}"
+            ))
+        }
+    }
+
+    let mock = Arc::new(MonthlyQuotaProvider {
+        calls: AtomicUsize::new(0),
+    });
+    let ex = LlmEntityExtractor::new(LlmExtractorConfig::default(), mock.clone());
+    let out = ex.extract("some text").await.unwrap();
+
+    assert_eq!(
+        mock.calls.load(Ordering::SeqCst),
+        1,
+        "a 500-wrapped monthly-quota refusal must not be retried"
+    );
+    assert!(out.entities.is_empty());
+
+    let state = crate::openhuman::memory_tree::health::current_degraded_state();
+    assert!(
+        state.structure,
+        "a permanent extraction failure must still mark structure degraded"
+    );
+    assert_eq!(
+        state.cause.expect("degraded cause present").code,
+        crate::openhuman::memory_tree::health::FailureCode::BudgetExhausted,
+        "monthly-quota exhaustion must map to the budget-exhausted cause"
+    );
+}
+
+#[tokio::test]
 async fn extract_retries_transient_provider_error() {
     // The de-amplification fix must only short-circuit *permanent* errors. A
     // transport/transient failure (no 4xx, no auth marker) must still exhaust
