@@ -167,6 +167,39 @@ fn native_request_serializes_max_tokens_only_when_set() {
 }
 
 #[test]
+fn agent_turn_cap_reaches_the_wire() {
+    // The agent turns now set `max_tokens: Some(AGENT_TURN_MAX_OUTPUT_TOKENS)`
+    // (#4005); assert that exact cap serializes onto the wire so a careless edit
+    // to the const — or a regression to `None` on the agent path — fails CI and
+    // can't silently restore the full-window reservation that 402s low-balance
+    // BYO users (TAURI-RUST-C62).
+    let cap = crate::openhuman::inference::provider::AGENT_TURN_MAX_OUTPUT_TOKENS;
+    assert!(
+        (8192..=32768).contains(&cap),
+        "agent cap must stay well above realistic turns yet below the model's full output window; got {cap}"
+    );
+    let req = super::NativeChatRequest {
+        model: "anthropic/claude-fable-5".to_string(),
+        messages: Vec::new(),
+        temperature: Some(0.0),
+        stream: Some(false),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: None,
+        options: None,
+        frequency_penalty: None,
+        max_tokens: Some(cap),
+    };
+    let json = serde_json::to_value(&req).unwrap();
+    assert_eq!(
+        json.get("max_tokens").and_then(serde_json::Value::as_u64),
+        Some(u64::from(cap)),
+        "the agent-turn cap must be forwarded as OpenAI max_tokens"
+    );
+}
+
+#[test]
 fn responses_request_serializes_max_output_tokens_only_when_set() {
     // The Responses-API branch must carry the cap as `max_output_tokens` so a
     // capped request isn't silently uncapped when responses_api_primary is on
