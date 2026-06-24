@@ -11,6 +11,7 @@ interface ParsedToolArgs {
   pattern?: string;
   query?: string;
   tool_name?: string;
+  question?: string;
 }
 
 const TOOL_DISPLAY_NAMES: Record<string, string> = {
@@ -69,6 +70,7 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   audio_email_podcast: 'Emailing podcast',
   audio_generate_and_email_podcast: 'Generating & emailing podcast',
   composio_list_connections: 'Viewing your Connections',
+  agent_prepare_context: 'Preparing context',
 };
 
 /**
@@ -77,6 +79,20 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
  */
 export function formatToolName(toolName: string): string {
   return TOOL_DISPLAY_NAMES[toolName] ?? humanizeIdentifier(toolName);
+}
+
+/**
+ * Strip `<tool_call>…</tool_call>` envelopes that some models emit inline in
+ * their visible / reasoning text. The structured call is already surfaced as
+ * its own timeline row, so the raw envelope is pure noise in displayed prose.
+ * Also removes a trailing, still-streaming unclosed `<tool_call>…` so a
+ * half-arrived delta never flashes raw markup. Whitespace is left intact —
+ * callers that render single-line previews collapse it themselves.
+ */
+export function stripToolCallEnvelopes(text: string): string {
+  return text
+    .replace(/<tool_call\b[^>]*>[\s\S]*?<\/tool_call>/gi, '')
+    .replace(/<tool_call\b[^>]*>[\s\S]*$/i, '');
 }
 
 export function formatTimelineEntry(entry: ToolTimelineEntry): { title: string; detail?: string } {
@@ -106,6 +122,12 @@ export function formatTimelineEntry(entry: ToolTimelineEntry): { title: string; 
 
   if (entry.name === 'subagent:researcher' || entry.name === 'researcher') {
     return { title: 'Researching', detail: entry.detail };
+  }
+  if (entry.name === 'agent_prepare_context') {
+    return { title: 'Preparing context', detail: parsedArgs?.question?.trim() || entry.detail };
+  }
+  if (entry.name === 'subagent:context_scout' || entry.name === 'context_scout') {
+    return { title: 'Scouting context', detail: entry.detail };
   }
   if (entry.name === 'composio_list_connections') {
     return { title: 'Viewing your Connections', detail: entry.detail };

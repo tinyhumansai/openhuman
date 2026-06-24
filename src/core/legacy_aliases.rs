@@ -68,6 +68,16 @@ const LEGACY_ALIASES: &[(&str, &str)] = &[
         "openhuman.tool_registry_call",
         "openhuman.mcp_clients_tool_call",
     ),
+    // #3294: old desktop bundles called the tool-registry diagnostics
+    // controller with the dotted `tool_registry.diagnostics` spelling, before
+    // the canonical `openhuman.<namespace>_<function>` form
+    // (`openhuman.tool_registry_diagnostics`) was established. Without this
+    // alias the Tool Policy diagnostics panel's RPC failed with "unknown
+    // method" on those clients.
+    (
+        "tool_registry.diagnostics",
+        "openhuman.tool_registry_diagnostics",
+    ),
     (
         "openhuman.update_analytics_settings",
         "openhuman.config_update_analytics_settings",
@@ -574,6 +584,18 @@ mod tests {
         assert_eq!(
             resolve_legacy("openhuman.channels.list"),
             "openhuman.channels_list"
+        );
+    }
+
+    #[test]
+    fn resolve_legacy_rewrites_tool_registry_diagnostics() {
+        // #3294: the dotted `tool_registry.diagnostics` spelling sent by older
+        // desktop bundles must resolve to the canonical controller name so the
+        // Tool Policy diagnostics panel works instead of failing with
+        // "unknown method".
+        assert_eq!(
+            resolve_legacy("tool_registry.diagnostics"),
+            "openhuman.tool_registry_diagnostics"
         );
     }
 

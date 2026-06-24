@@ -199,6 +199,36 @@ fn builtin_cloud_provider(type_str: &str) -> Option<&'static BuiltinCloudProvide
         .find(|provider| provider.slug == type_str)
 }
 
+/// Whether `slug` matches a built-in cloud provider preset.
+///
+/// The chat factory uses this to decide capability defaults (e.g. whether the
+/// provider exposes the OpenAI Responses API) only for providers we ship and
+/// therefore know the API surface of. Custom / user-defined slugs are treated
+/// as unknown and keep the permissive defaults.
+pub fn is_builtin_cloud_slug(slug: &str) -> bool {
+    builtin_cloud_provider(slug).is_some()
+}
+
+/// Whether a built-in cloud provider exposes the OpenAI **Responses API**
+/// (`/v1/responses`).
+///
+/// Only OpenAI's first-party endpoint serves `/responses`; every other built-in
+/// preset (DeepSeek, Groq, Mistral, Fireworks, …) is chat-completions-only.
+/// Enabling the chat-completions-404 → `/responses` fallback for those
+/// guarantees a second 404 against an endpoint that does not exist, which floods
+/// Sentry with an empty-body `"<provider> Responses API error:"` event
+/// (TAURI-RUST-5EN — same class as the local-provider TAURI-RUST-59Y fix). The
+/// factory consults this to build chat-completions-only built-ins with
+/// `new_no_responses_fallback`.
+///
+/// Custom / unknown slugs are intentionally NOT covered here (see
+/// [`is_builtin_cloud_slug`]): a user-defined OpenAI-compatible endpoint may be
+/// a genuine OpenAI proxy that does support `/responses`, so the factory keeps
+/// the fallback for those.
+pub fn builtin_cloud_supports_responses_api(slug: &str) -> bool {
+    matches!(slug, "openai")
+}
+
 /// Authentication header style for a cloud provider.
 ///
 /// Wire format is lowercase (e.g. `"bearer"`). Determines which HTTP headers
@@ -474,8 +504,8 @@ impl CloudProviderType {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_slug_reserved, migrate_legacy_fields, AuthStyle, CloudProviderCreds,
-        BUILTIN_CLOUD_PROVIDERS,
+        builtin_cloud_supports_responses_api, is_builtin_cloud_slug, is_slug_reserved,
+        migrate_legacy_fields, AuthStyle, CloudProviderCreds, BUILTIN_CLOUD_PROVIDERS,
     };
 
     #[test]
@@ -558,6 +588,48 @@ mod tests {
             assert!(
                 slugs.insert(provider.slug),
                 "duplicate built-in cloud provider slug {}",
+                provider.slug
+            );
+        }
+    }
+
+    #[test]
+    fn is_builtin_cloud_slug_matches_presets_only() {
+        for slug in ["openai", "deepseek", "groq", "mistral"] {
+            assert!(is_builtin_cloud_slug(slug), "{slug} is a built-in preset");
+        }
+        for slug in ["my-proxy", "custom-openai", "totally-unknown", ""] {
+            assert!(
+                !is_builtin_cloud_slug(slug),
+                "{slug:?} is not a built-in preset"
+            );
+        }
+    }
+
+    #[test]
+    fn only_openai_builtin_exposes_responses_api() {
+        assert!(builtin_cloud_supports_responses_api("openai"));
+        for slug in ["deepseek", "groq", "mistral", "fireworks", "together"] {
+            assert!(
+                !builtin_cloud_supports_responses_api(slug),
+                "{slug} is chat-completions-only and must not advertise the Responses API"
+            );
+        }
+    }
+
+    /// Drift guard (TAURI-RUST-5EN): couple the capability helper to the
+    /// preset list so adding a new built-in that wrongly claims the Responses
+    /// API — or renaming `openai` — fails CI rather than silently re-enabling
+    /// the guaranteed-404 `/responses` fallback. OpenAI's first-party endpoint
+    /// is the only built-in that serves `/v1/responses`.
+    #[test]
+    fn responses_api_capability_is_coupled_to_the_preset_list() {
+        for provider in BUILTIN_CLOUD_PROVIDERS {
+            let expected = provider.slug == "openai";
+            assert_eq!(
+                builtin_cloud_supports_responses_api(provider.slug),
+                expected,
+                "built-in {} Responses-API capability drifted from the openai-only invariant",
                 provider.slug
             );
         }

@@ -795,6 +795,133 @@ async fn subagent_delegation_happy_path_inner() {
     stack.shutdown();
 }
 
+// ─── agent_prepare_context: context-scout happy path ──────────────────────────
+//
+// Tool surface (src/openhuman/agent_orchestration/tools/agent_prepare_context.rs,
+//   src/openhuman/agent_registry/agents/context_scout/agent.toml):
+//   - `agent_prepare_context` is a DIRECT tool on the orchestrator's [tools].named
+//     list (not a delegate). It runs the read-only `context_scout` sub-agent
+//     inline and returns the scout's `[context_bundle]` envelope as the tool
+//     result, which the orchestrator then synthesizes from.
+//
+// Actual LLM request ordering (with registry init):
+//   request[0] = orchestrator → model returns { tool_calls: [agent_prepare_context(...)] }
+//   request[1] = context_scout subagent inner loop → model returns the bundle text
+//   request[2] = orchestrator synthesis → final text, having read the bundle
+
+/// Orchestrator calls `agent_prepare_context`; the `context_scout` subagent runs
+/// its own inner LLM call and returns a `[context_bundle]`; the final
+/// orchestrator synthesis reads it. Three upstream requests prove the full
+/// scout path ran, and the synthesis request carries the bundle as a tool result.
+#[test]
+fn agent_prepare_context_happy_path() {
+    run_on_agent_stack(
+        "agent_prepare_context_happy_path",
+        agent_prepare_context_happy_path_inner,
+    );
+}
+
+async fn agent_prepare_context_happy_path_inner() {
+    let _lock = env_lock();
+    let scout_bundle = "[context_bundle]\n\
+         has_enough_context: true\n\
+         summary: CTX_CANARY_7 — the user wants the marker phrase (memory).\n\
+         recommended_tool_calls:\n\
+         \x20 - tool: spawn_worker_thread\n\
+         \x20   args: {\"prompt\": \"act on the marker\"}\n\
+         \x20   why: execute the prepared plan\n\
+         [/context_bundle]";
+    reset_script(vec![
+        // request[0]: Orchestrator calls the direct `agent_prepare_context` tool.
+        tool_call_completion(
+            "agent_prepare_context",
+            json!({ "question": "find the marker phrase" }),
+        ),
+        // request[1]: context_scout subagent inner LLM call returns the bundle.
+        text_completion(scout_bundle),
+        // request[2]: Orchestrator reads the bundle and synthesizes.
+        text_completion("Prepared. CTX_CANARY_7 noted; next I'd spawn a worker."),
+    ]);
+    let stack = boot_stack().await;
+
+    let mut events = spawn_sse_collector(format!(
+        "{}/events?client_id=harness-prepctx",
+        stack.rpc_base
+    ));
+    send_web_chat(
+        &stack.rpc_base,
+        400,
+        "harness-prepctx",
+        "thread-prepctx",
+        "prepare context for the marker",
+    )
+    .await;
+
+    let done = wait_for_terminal(&mut events, Duration::from_secs(120)).await;
+    assert_eq!(
+        done.get("event").and_then(Value::as_str),
+        Some("chat_done"),
+        "expected chat_done for agent_prepare_context: {done}"
+    );
+    let full_response = done
+        .get("full_response")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("chat_done missing 'full_response': {done}"));
+    assert!(
+        full_response.contains("CTX_CANARY_7"),
+        "final response missing scout canary; full_response: {full_response}\nevent: {done}"
+    );
+
+    let requests = with_captured(|c| c.clone());
+    assert!(
+        requests.len() >= 3,
+        "expected ≥3 upstream requests (orchestrator + context_scout + synthesis), got {};\n{}",
+        requests.len(),
+        serde_json::to_string_pretty(&requests).unwrap_or_default()
+    );
+
+    let all_serialized = serde_json::to_string(&requests).unwrap_or_default();
+    assert!(
+        !all_serialized.contains("Unknown tool:"),
+        "found 'Unknown tool:' — agent_prepare_context was not registered/visible; requests: {}",
+        serde_json::to_string_pretty(&requests).unwrap_or_default()
+    );
+
+    // The synthesis turn must carry the scout's bundle back as a tool result —
+    // proves the [context_bundle] flowed into the orchestrator's context.
+    let last_messages = serde_json::to_string(
+        requests
+            .last()
+            .and_then(|r| r.pointer("/body/messages"))
+            .unwrap_or(&Value::Null),
+    )
+    .unwrap_or_default();
+    assert!(
+        last_messages.contains("[context_bundle]") && last_messages.contains("CTX_CANARY_7"),
+        "synthesis request missing the scout bundle as a tool result; messages: {last_messages}"
+    );
+
+    // request[1] (context_scout) must build a different context than request[0]
+    // (orchestrator) — proves a genuinely separate scout agent ran.
+    let req0_sys = requests
+        .first()
+        .and_then(|r| r.pointer("/body/messages/0/content"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let req1_sys = requests
+        .get(1)
+        .and_then(|r| r.pointer("/body/messages/0/content"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    assert_ne!(
+        req0_sys, req1_sys,
+        "request[0] and request[1] share identical first-message content — \
+         context_scout did not build its own context"
+    );
+
+    stack.shutdown();
+}
+
 // ─── Task 4: Subagent clarification flow ──────────────────────────────────────
 //
 // Exercises the ask_user_clarification path via scheduler_agent

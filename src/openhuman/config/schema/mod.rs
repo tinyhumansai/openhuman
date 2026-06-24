@@ -67,7 +67,7 @@ pub use learning::{LearningConfig, ReflectionSource};
 pub use local_ai::{LocalAiConfig, LocalAiUsage};
 pub use meet::{AutoJoinPolicy, AutoSummarizePolicy, MeetConfig};
 pub use node::NodeConfig;
-pub use observability::ObservabilityConfig;
+pub use observability::{AgentTracingBackend, AgentTracingConfig, ObservabilityConfig};
 pub use proxy::{
     apply_runtime_proxy_to_builder, build_runtime_proxy_client,
     build_runtime_proxy_client_with_timeouts, runtime_proxy_config, set_runtime_proxy_config,

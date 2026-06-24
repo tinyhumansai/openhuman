@@ -7,6 +7,9 @@
   },
   "scripts": {
     "build": "pnpm --filter openhuman-app build",
+    "docs:generate": "node scripts/generate-architecture-docs.mjs",
+    "docs:check": "node scripts/generate-architecture-docs.mjs --check",
+    "docs:test": "node --test scripts/__tests__/generate-architecture-docs.test.mjs",
     "compile": "pnpm --filter openhuman-app compile",
     "dev": "pnpm --filter openhuman-app dev",
     "dev:app": "pnpm --filter openhuman-app dev:app",

@@ -136,6 +136,20 @@ const messages: TranslationMap = {
   'brain.tabs.memory': 'Pamięć',
   'brain.tabs.subconscious': 'Podświadomość',
   'brain.tabs.graph': 'Graf',
+  'brain.tabs.goals': 'Cele',
+  'brain.goals.title': 'Cele długoterminowe',
+  'brain.goals.description':
+    'Trwałe cele agenta we współpracy z Tobą. Edytuj je tutaj lub pozwól, aby Refleksja je zaktualizowała.',
+  'brain.goals.reflect': 'Refleksja',
+  'brain.goals.reflecting': 'Refleksja…',
+  'brain.goals.reflectDone': 'Cele zaktualizowane.',
+  'brain.goals.add': 'Dodaj',
+  'brain.goals.addPlaceholder': 'Dodaj cel długoterminowy…',
+  'brain.goals.empty':
+    'Brak celów. Dodaj jeden lub użyj Refleksji, aby utworzyć je na podstawie ostatniego kontekstu.',
+  'brain.goals.editGoal': 'Edytuj cel',
+  'brain.goals.deleteGoal': 'Usuń cel',
+  'brain.goals.actionError': 'Coś poszło nie tak. Spróbuj ponownie.',
   'brain.tabs.sources': 'Źródła',
   'brain.tabs.sync': 'Synchronizacja',
   'brain.empty': 'Twój mózg jest na razie pusty — połącz źródło, aby zacząć budować pamięć.',
@@ -2620,6 +2634,13 @@ const messages: TranslationMap = {
   'bootCheck.portConflictFixing': 'Naprawianie…',
   'bootCheck.portConflictFixFailed':
     'Automatyczna naprawa się nie powiodła. Zrestartuj komputer i spróbuj ponownie.',
+  'bootCheck.portConflictOwner': '{name} (PID {pid}) używa portu sieciowego potrzebnego OpenHuman.',
+  'bootCheck.portConflictGuidance':
+    'Zamknij ten program, aby zwolnić port, lub wymuś jego zamknięcie poniżej, a następnie spróbuj ponownie.',
+  'bootCheck.portConflictForceQuit': 'Wymuś zamknięcie {name}',
+  'bootCheck.portConflictForceQuitting': 'Zamykanie {name}…',
+  'bootCheck.portConflictForceQuitFailed':
+    'Nie udało się zamknąć tego programu. Może być konieczne zamknięcie go ręcznie i ponowienie próby.',
   'notifications.justNow': 'przed chwilą',
   'notifications.minAgo': '{n} min temu',
   'notifications.hrAgo': '{n} godz. temu',
@@ -2729,6 +2750,11 @@ const messages: TranslationMap = {
   'app.connectionIndicator.offline': 'Offline',
   'app.connectionIndicator.reconnecting': 'Ponowne łączenie…',
   'app.errorFallback.componentStack': 'Stos komponentów',
+  'app.errorFallback.contactSupport': 'Skontaktuj się z pomocą',
+  'app.errorFallback.copyEventId': 'Kopiuj',
+  'app.errorFallback.eventIdCopied': 'Skopiowano',
+  'app.errorFallback.eventIdLabel': 'Identyfikator błędu',
+  'app.errorFallback.revealLogs': 'Pokaż dzienniki',
   'app.errorFallback.downloadLatest': 'Pobierz najnowszą wersję',
   'app.errorFallback.heading': 'Coś poszło nie tak',
   'app.errorFallback.hint': 'Wskazówka',
@@ -3011,6 +3037,7 @@ const messages: TranslationMap = {
   'conversations.taskKanban.moveLeft': 'Przesuń w lewo',
   'conversations.taskKanban.moveRight': 'Przesuń w prawo',
   'conversations.taskKanban.title': 'Zadania',
+  'conversations.threadTodo.title': 'Plan',
   'conversations.taskKanban.approval.default': 'Domyślne',
   'conversations.taskKanban.approval.notRequired': 'Niewymagane',
   'conversations.taskKanban.approval.notRequiredBadge': 'bez zatwierdzenia',
@@ -3059,10 +3086,14 @@ const messages: TranslationMap = {
   'conversations.subagent.viewProcessing': 'Zobacz pełne przetwarzanie',
   'conversations.subagent.parent': 'Nadrzędny',
   'conversations.subagent.thinking': 'Myślenie',
+  'conversations.subagent.thoughts': 'Myśli',
   'conversations.subagent.response': 'Odpowiedź',
   'conversations.subagent.toolCalls': 'Wywołania narzędzi',
   'conversations.subagent.working': 'Pracuje…',
   'conversations.subagent.noOutputYet': 'Brak wyników',
+  'conversations.subagent.input': 'Wejście',
+  'conversations.subagent.output': 'Wyjście',
+  'conversations.subagent.noOutput': 'Brak zwróconych danych wyjściowych',
   'conversations.subagent.close': 'Zamknij',
   'conversations.subagent.cancel': 'Anuluj zadanie',
   'conversations.subagent.cancelling': 'Anulowanie…',
@@ -3073,11 +3104,13 @@ const messages: TranslationMap = {
   'conversations.subagent.statusAwaitingUser': 'oczekiwanie na użytkownika',
   'conversations.subagent.statusCancelled': 'anulowano',
   'conversations.agentTaskInsights.title': 'Wgląd w zadania agenta',
+  'conversations.agentTaskInsights.response': 'Odpowiedź',
   'conversations.agentTaskInsights.processSourceTitle': 'Źródło procesu agenta',
   'conversations.agentTaskInsights.stepsHeading': 'Kroki',
   'conversations.agentTaskInsights.sourcesHeading': 'Źródła',
   'conversations.agentTaskInsights.noSteps': 'Brak zarejestrowanych kroków',
   'conversations.agentTaskInsights.viewProcessSource': 'Zobacz pełne źródło procesu agenta',
+  'conversations.agentTaskInsights.processing': 'Przetwarzanie',
   'daemon.serviceBlockingGate.body':
     'Rdzeń OpenHuman nie odpowiada. Spróbuj ponownie lub pobierz najnowszą wersję aplikacji.',
   'daemon.serviceBlockingGate.downloadHint':
@@ -3733,6 +3766,9 @@ const messages: TranslationMap = {
   'settings.ai.memoryWorkerPolls': 'Odpytywania procesu pamięci',
   'settings.ai.defaultProviderName': 'OpenHuman',
   'settings.ai.routing.managed': 'Zarządzane',
+  'settings.ai.routing.managedAlwaysOn': 'Always on',
+  'settings.ai.routing.managedHint':
+    'Managed is always available as a fallback. To use your own model, choose a routing mode below.',
   'settings.ai.routing.managedDesc':
     'OpenHuman uruchomi całą inferencję w chmurze, wybierze najlepszy model dla zadania, zoptymalizuje koszty i zachowa najbezpieczniejsze domyślne ustawienia routingu.',
   'settings.ai.routing.managedMsg':
@@ -4477,6 +4513,10 @@ const messages: TranslationMap = {
   'settings.agentAccess.requireTaskPlanApproval.label': 'Wymagaj zatwierdzenia planu zadania',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     'Wstrzymaj, zanim przypisany agent wykona opis zadania utworzony przez agenta.',
+  'settings.agentAccess.tinyplaceAutopilot.title': 'Autonomiczny agent tiny.place',
+  'settings.agentAccess.tinyplaceAutopilot.desc':
+    'Pozwól OpenHuman działać na tiny.place samodzielnie: zgodnie z harmonogramem szuka wartościowej pracy — najpierw otwartych nagród —, wykonuje to, co pasuje do jego umiejętności, i działa z Twojej tożsamości. Działa bez nadzoru i może wydawać środki, więc podczas testów używaj devnet. Domyślnie wyłączone.',
+  'settings.agentAccess.tinyplaceAutopilot.label': 'Uruchamiaj automatycznie',
   'settings.agentAccess.timeout.label': 'Limit czasu akcji',
   'settings.agentAccess.timeout.desc':
     'Jak długo pojedyncze narzędzie lub akcja może działać przed anulowaniem. Zwiększ tę wartość, jeśli duży lokalny model jest przerywany, zanim zakończy odpowiedź.',
@@ -4651,6 +4691,9 @@ const messages: TranslationMap = {
     'Wyłączone — etykiety pojawiają się tylko po najechaniu lub dla aktywnej zakładki.',
   'settings.appearance.chatHeading': 'Czat',
   'settings.appearance.assistantTextMode': 'Odpowiedzi asystenta jako tekst',
+  'settings.appearance.hideAgentInsights': 'Ukryj myślenie agenta',
+  'settings.appearance.hideAgentInsightsDesc':
+    'Zwija oś czasu z krokami agenta na żywo w czacie. Migający link „Przetwarzanie” nadal pozwala otworzyć pełny przebieg.',
   'settings.appearance.assistantTextModeDesc':
     'Wyświetla odpowiedzi asystenta jako tekst bez ramki, a Twoje wiadomości pozostawia w dymkach.',
   'settings.mascot.active': 'Aktywny',
@@ -5699,6 +5742,24 @@ const messages: TranslationMap = {
   'chat.files.error.download_failed': 'Pobieranie nie powiodło się. Prosimy spróbować ponownie.',
   'chat.files.error.delete_failed': 'Nie udało się usunąć pliku. Prosimy spróbować ponownie.',
 
+  'harnessInit.title': 'Trwa konfiguracja',
+  'harnessInit.subtitle':
+    'OpenHuman przygotowuje komponenty potrzebne przy pierwszym uruchomieniu.',
+  'harnessInit.stepPython': 'Środowisko uruchomieniowe Python',
+  'harnessInit.stepSpacy': 'Model językowy',
+  'harnessInit.stepNode': 'Środowisko uruchomieniowe Node.js',
+  'harnessInit.statePending': 'Oczekiwanie',
+  'harnessInit.stateRunning': 'Instalowanie…',
+  'harnessInit.stateDone': 'Gotowe',
+  'harnessInit.stateSkipped': 'Pominięto',
+  'harnessInit.stateFailed': 'Niepowodzenie',
+  'harnessInit.failedMessage':
+    'Niektóre kroki konfiguracji nie zostały ukończone. Możesz spróbować ponownie lub kontynuować — OpenHuman użyje wbudowanego rozwiązania zastępczego.',
+  'harnessInit.retry': 'Spróbuj ponownie',
+  'harnessInit.continueAnyway': 'Kontynuuj mimo to',
+  'harnessInit.runInBackground': 'Uruchom w tle',
+  'harnessInit.backgroundHint': 'Możesz dalej korzystać z OpenHuman, dopóki to się nie zakończy.',
+
   'keyring.consent.title': 'Bezpieczne przechowywanie niedostępne',
   'keyring.consent.description':
     'Pęk kluczy systemu operacyjnego jest niedostępny. OpenHuman potrzebuje Twojej zgody na przechowywanie sekretów w lokalnym zaszyfrowanym magazynie.',
@@ -6034,6 +6095,19 @@ const messages: TranslationMap = {
   'agentworld.jobs.applyModal.submitting': 'Wysyłanie…',
   'agentworld.messaging.missingSignalBundle':
     'Ten użytkownik nie włączył jeszcze szyfrowanych wiadomości. Poproś go, aby otworzył Agent World i włączył bezpieczne DM przed wysłaniem wiadomości.',
+
+  // User-actionable runtime errors (#3931)
+  'userErrors.title': 'Wymagane działanie',
+  'userErrors.dismiss': 'Odrzuć',
+  'userErrors.action.openBilling': 'Otwórz rozliczenia',
+  'userErrors.action.openProviderSettings': 'Ustawienia dostawcy',
+  'userErrors.budgetExceeded.title': 'Wyczerpano zarządzany budżet',
+  'userErrors.budgetExceeded.body':
+    'Twój zarządzany budżet AI został wyczerpany. Dodaj budżet lub zmień plan.',
+  'userErrors.insufficientCredits.title': 'Wymagane środki u dostawcy',
+  'userErrors.insufficientCredits.body':
+    'Twój dostawca AI nie ma już środków. Doładuj je lub zaktualizuj klucz API.',
+  'userErrors.scope.chat': 'Czat',
 };
 
 export default messages;

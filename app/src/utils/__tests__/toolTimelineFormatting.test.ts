@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ToolTimelineEntry } from '../../store/chatRuntimeSlice';
-import { formatTimelineEntry, formatToolName } from '../toolTimelineFormatting';
+import {
+  formatTimelineEntry,
+  formatToolName,
+  stripToolCallEnvelopes,
+} from '../toolTimelineFormatting';
 
 function entry(overrides: Partial<ToolTimelineEntry>): ToolTimelineEntry {
   return { id: 'x', name: 'delegate_notion', round: 1, status: 'running', ...overrides };
@@ -243,5 +247,27 @@ describe('formatToolName', () => {
 
   it('falls back to humanized identifier for unknown tools', () => {
     expect(formatToolName('custom_fancy_tool')).toBe('Custom Fancy Tool');
+  });
+});
+
+describe('stripToolCallEnvelopes', () => {
+  it('removes a complete <tool_call>…</tool_call> envelope, keeping the prose', () => {
+    const out = stripToolCallEnvelopes(
+      'Searching now. <tool_call> {"name": "NOTION_SEARCH", "arguments": {"q": "x"}} </tool_call> done.'
+    );
+    expect(out).toContain('Searching now.');
+    expect(out).toContain('done.');
+    expect(out).not.toContain('tool_call');
+    expect(out).not.toContain('NOTION_SEARCH');
+  });
+
+  it('removes a trailing, still-streaming unclosed <tool_call>…', () => {
+    const out = stripToolCallEnvelopes('Let me check. <tool_call> {"name": "X", "argum');
+    expect(out.trim()).toBe('Let me check.');
+    expect(out).not.toContain('tool_call');
+  });
+
+  it('leaves text without an envelope untouched', () => {
+    expect(stripToolCallEnvelopes('just a normal sentence')).toBe('just a normal sentence');
   });
 });

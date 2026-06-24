@@ -19,6 +19,7 @@ import { chatSend } from '../../services/chatService';
 import { CoreRpcError } from '../../services/coreRpcClient';
 import agentProfileReducer from '../../store/agentProfileSlice';
 import chatRuntimeReducer, {
+  beginInferenceTurn,
   setInferenceStatusForThread,
   setTaskBoardForThread,
   setToolTimelineForThread,
@@ -74,6 +75,9 @@ vi.mock('../../services/api/threadApi', () => ({
       .fn()
       .mockResolvedValue({ threadId: 't-1', cards: [], updatedAt: '2026-05-04T10:00:00Z' }),
     putTaskBoard: vi
+      .fn()
+      .mockResolvedValue({ threadId: 't-1', cards: [], updatedAt: '2026-05-04T10:00:00Z' }),
+    decidePlan: vi
       .fn()
       .mockResolvedValue({ threadId: 't-1', cards: [], updatedAt: '2026-05-04T10:00:00Z' }),
     appendMessage: vi.fn().mockResolvedValue({}),
@@ -1295,109 +1299,6 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
   });
 
-  it('rolls back and shows feedback when task board move persistence fails', async () => {
-    const thread = makeThread({ id: 'board-thread', title: 'Board Thread' });
-    const board = {
-      threadId: 'board-thread',
-      updatedAt: '2026-05-04T10:00:00Z',
-      cards: [
-        {
-          id: 'task-1',
-          title: 'Plan rollout',
-          status: 'todo' as const,
-          order: 0,
-          updatedAt: '2026-05-04T10:00:00Z',
-        },
-      ],
-    };
-    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
-    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
-    vi.mocked(threadApi.getTaskBoard).mockResolvedValueOnce(board);
-    vi.mocked(threadApi.putTaskBoard).mockRejectedValueOnce(new Error('write failed'));
-
-    await act(async () => {
-      await renderConversations({
-        thread: selectedThreadState(thread),
-        socket: socketState('connected'),
-      });
-    });
-
-    expect(await screen.findByText('Plan rollout')).toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText('Move right'));
-
-    await waitFor(() => {
-      expect(
-        screen.getByText('Could not update task; changes were not saved.')
-      ).toBeInTheDocument();
-    });
-    // With the 5-column model, todo → right → awaiting_approval (not in_progress)
-    expect(threadApi.putTaskBoard).toHaveBeenCalledWith(
-      'board-thread',
-      expect.arrayContaining([
-        expect.objectContaining({ id: 'task-1', status: 'awaiting_approval' }),
-      ])
-    );
-  });
-
-  it('rolls back and shows feedback when task board edit persistence fails', async () => {
-    const thread = makeThread({ id: 'edit-board-thread', title: 'Edit Board Thread' });
-    const board = {
-      threadId: 'edit-board-thread',
-      updatedAt: '2026-05-04T10:00:00Z',
-      cards: [
-        {
-          id: 'task-1',
-          title: 'Plan rollout',
-          status: 'todo' as const,
-          objective: 'Draft the launch task brief',
-          assignedAgent: 'planner',
-          approvalMode: 'required' as const,
-          plan: ['Read docs'],
-          allowedTools: ['todo'],
-          acceptanceCriteria: ['Saved board round-trips'],
-          evidence: [],
-          order: 0,
-          updatedAt: '2026-05-04T10:00:00Z',
-        },
-      ],
-    };
-    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
-    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
-    vi.mocked(threadApi.getTaskBoard).mockResolvedValueOnce(board);
-    vi.mocked(threadApi.putTaskBoard).mockRejectedValueOnce(new Error('write failed'));
-
-    await act(async () => {
-      await renderConversations({
-        thread: selectedThreadState(thread),
-        socket: socketState('connected'),
-      });
-    });
-
-    expect(await screen.findByText('Plan rollout')).toBeInTheDocument();
-    fireEvent.click(screen.getByText('Task brief'));
-    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Updated rollout' } });
-    fireEvent.change(screen.getByLabelText('Assigned agent'), {
-      target: { value: 'code_executor' },
-    });
-    fireEvent.click(screen.getByText('Save changes'));
-
-    await waitFor(() => {
-      expect(
-        screen.getByText('Could not update task; changes were not saved.')
-      ).toBeInTheDocument();
-    });
-    expect(threadApi.putTaskBoard).toHaveBeenCalledWith(
-      'edit-board-thread',
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: 'task-1',
-          title: 'Updated rollout',
-          assignedAgent: 'code_executor',
-        }),
-      ])
-    );
-  });
-
   it('sends with Enter when the composer is not composing text', async () => {
     const { textarea, thread } = await renderSelectedConversation();
 
@@ -1544,9 +1445,8 @@ describe('Conversations — worker thread back-to-parent navigation (#1624)', ()
       });
     });
 
-    // The mount effect resumes onto the first visible General thread. Re-select
-    // the worker thread now that mount has settled to mimic opening it from the
-    // Tasks bucket or parent reference card.
+    // The mount effect now restores the persisted worker session directly;
+    // re-select it explicitly so the assertion is independent of mount timing.
     await act(async () => {
       store!.dispatch(setSelectedThread('t-child'));
     });
@@ -1778,6 +1678,183 @@ describe('Conversations — agent task insights panel anchoring (#3717 Bug 2)', 
       fireEvent.click(screen.getByTestId('subagent-view-processing'));
     });
   });
+
+  it('hides the verbose timeline when "hide agent thinking" is on, but still opens the source panel', async () => {
+    const thread = makeThread({ id: 'hide-insights-thread', title: 'Hide insights' });
+    const messages: ThreadMessage[] = [
+      {
+        id: 'm-user',
+        sender: 'user',
+        type: 'text',
+        content: 'How many posts?',
+        extraMetadata: {},
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'm-agent',
+        sender: 'agent',
+        type: 'text',
+        content: 'Zero posts went up.',
+        extraMetadata: {},
+        createdAt: '2026-01-01T00:01:00.000Z',
+      },
+    ];
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    mockGetThreadMessages.mockResolvedValue({ messages, count: messages.length });
+
+    let store: ReturnType<typeof buildStore> | undefined;
+    await act(async () => {
+      store = await renderConversations({
+        thread: {
+          ...selectedThreadState(thread),
+          messagesByThreadId: { [thread.id]: messages },
+          messages,
+        },
+        socket: socketState('connected'),
+        theme: {
+          mode: 'system',
+          tabBarLabels: 'hover',
+          fontSize: 'medium',
+          hideAgentInsights: true,
+        },
+      });
+    });
+
+    await screen.findByText('Zero posts went up.');
+    await act(async () => {
+      store!.dispatch(
+        setToolTimelineForThread({
+          threadId: thread.id,
+          entries: [{ id: 'tl-1', name: 'web_fetch', round: 1, status: 'success' }],
+        })
+      );
+    });
+
+    // Settled turn + preference ON: the verbose inline timeline is suppressed…
+    expect(screen.queryByTestId('agent-task-insights')).toBeNull();
+    // …but the "View full agent process Source" affordance still works and the
+    // full run is one click away in the side panel (which renders the timeline).
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('view-process-source'));
+    });
+    expect(await screen.findByTestId('agent-task-insights')).toBeInTheDocument();
+  });
+
+  it('shows a blinking "Processing" link instead of the timeline while in flight', async () => {
+    const thread = makeThread({ id: 'processing-thread', title: 'Processing' });
+    const messages: ThreadMessage[] = [
+      {
+        id: 'm-user',
+        sender: 'user',
+        type: 'text',
+        content: 'Go.',
+        extraMetadata: {},
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+    ];
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    mockGetThreadMessages.mockResolvedValue({ messages, count: messages.length });
+
+    let store: ReturnType<typeof buildStore> | undefined;
+    await act(async () => {
+      store = await renderConversations({
+        thread: {
+          ...selectedThreadState(thread),
+          messagesByThreadId: { [thread.id]: messages },
+          messages,
+        },
+        socket: socketState('connected'),
+        theme: {
+          mode: 'system',
+          tabBarLabels: 'hover',
+          fontSize: 'medium',
+          hideAgentInsights: true,
+        },
+      });
+    });
+
+    await screen.findByText('Go.');
+    // Drive the thread into an in-flight turn so `isSending` is true, then seed
+    // a running timeline that the preference should keep hidden behind the link.
+    await act(async () => {
+      store!.dispatch(beginInferenceTurn({ threadId: thread.id }));
+      store!.dispatch(
+        setToolTimelineForThread({
+          threadId: thread.id,
+          entries: [{ id: 'tl-1', name: 'web_fetch', round: 1, status: 'running' }],
+        })
+      );
+    });
+
+    const link = await screen.findByTestId('agent-processing-link');
+    expect(link).toBeInTheDocument();
+    expect(screen.queryByTestId('agent-task-insights')).toBeNull();
+
+    // Clicking the compact link opens the full run in the source panel.
+    await act(async () => {
+      fireEvent.click(link);
+    });
+    expect(await screen.findByTestId('agent-task-insights')).toBeInTheDocument();
+  });
+
+  it('keeps a settled source opener when hidden and no agent message exists (cancelled first turn)', async () => {
+    // A cancelled first turn records timeline steps but never persists an agent
+    // message, so the hoisted "View full agent process Source" button does not
+    // render. With the timeline hidden, the fallback opener must keep those
+    // steps reachable.
+    const thread = makeThread({ id: 'cancelled-first-turn', title: 'Cancelled' });
+    const messages: ThreadMessage[] = [
+      {
+        id: 'm-user',
+        sender: 'user',
+        type: 'text',
+        content: 'Start then stop.',
+        extraMetadata: {},
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+    ];
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    mockGetThreadMessages.mockResolvedValue({ messages, count: messages.length });
+
+    let store: ReturnType<typeof buildStore> | undefined;
+    await act(async () => {
+      store = await renderConversations({
+        thread: {
+          ...selectedThreadState(thread),
+          messagesByThreadId: { [thread.id]: messages },
+          messages,
+        },
+        socket: socketState('connected'),
+        theme: {
+          mode: 'system',
+          tabBarLabels: 'hover',
+          fontSize: 'medium',
+          hideAgentInsights: true,
+        },
+      });
+    });
+
+    await screen.findByText('Start then stop.');
+    // Settled (no in-flight turn) timeline with steps but no agent message.
+    await act(async () => {
+      store!.dispatch(
+        setToolTimelineForThread({
+          threadId: thread.id,
+          entries: [{ id: 'tl-1', name: 'web_fetch', round: 1, status: 'cancelled' }],
+        })
+      );
+    });
+
+    // No verbose timeline, and the hoisted opener is absent (no agent message)…
+    expect(screen.queryByTestId('agent-task-insights')).toBeNull();
+    expect(screen.queryByTestId('view-process-source')).toBeNull();
+    // …so the fallback opener carries access to the recorded steps.
+    const fallback = await screen.findByTestId('agent-process-source-fallback');
+    await act(async () => {
+      fireEvent.click(fallback);
+    });
+    expect(await screen.findByTestId('agent-task-insights')).toBeInTheDocument();
+  });
 });
 
 describe('Conversations — open-session resume (View work)', () => {
@@ -1907,5 +1984,141 @@ describe('Conversations — open-session resume (View work)', () => {
 
     await waitFor(() => expect(store.getState().thread.selectedThreadId).toBe('sess-99'));
     expect(screen.getByTestId('route-path')).toHaveTextContent('/human');
+  });
+
+  it('approves a parked plan card from the thread todo strip', async () => {
+    const thread = makeThread({ id: 'approve-thread', title: 'Approve thread' });
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+
+    const store = await renderConversations({ thread: selectedThreadState(thread) });
+    const selectedId = store.getState().thread.selectedThreadId ?? 'approve-thread';
+    await act(async () => {
+      store.dispatch(
+        setTaskBoardForThread({
+          threadId: selectedId,
+          board: {
+            threadId: selectedId,
+            updatedAt: '',
+            cards: [
+              {
+                id: 'pc1',
+                title: 'Needs sign-off',
+                status: 'awaiting_approval',
+                order: 0,
+                updatedAt: '',
+              },
+            ],
+          },
+        })
+      );
+    });
+
+    // The strip surfaces Approve/Reject only for parked cards; approving routes
+    // through onDecidePlan → runDecidePlan → threadApi.decidePlan.
+    const approveBtn = await screen.findByTitle('Approve');
+    await act(async () => {
+      fireEvent.click(approveBtn);
+    });
+
+    await waitFor(() => expect(threadApi.decidePlan).toHaveBeenCalledWith(selectedId, 'pc1', true));
+  });
+});
+
+// Returning to the Chat tab must restore the thread the user last had open
+// (persisted on the `thread` slice, kept in-memory across in-app navigation),
+// even when it's hidden behind the default General tab — a task / worker /
+// subconscious / meeting session. The previous General-only resume default
+// dropped such a session and, when it was the only thread, spawned a fresh
+// chat — losing the active conversation.
+describe('Conversations — active-thread restore across in-app navigation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+  });
+
+  it('restores a non-General active session on remount instead of spawning a new chat', async () => {
+    const taskThread = makeThread({
+      id: 'task-active-1',
+      title: 'Active task session',
+      labels: ['tasks'],
+    });
+    // Only the (hidden) task session exists — pre-fix this falls through to
+    // handleCreateNewThread and replaces the active session with a new chat.
+    mockGetThreads.mockResolvedValue({ threads: [taskThread], count: 1 });
+
+    let store: ReturnType<typeof buildStore> | undefined;
+    await act(async () => {
+      store = await renderConversations({
+        thread: {
+          ...emptyThreadState,
+          threads: [taskThread],
+          selectedThreadId: 'task-active-1',
+          messagesByThreadId: { 'task-active-1': [] },
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(store!.getState().thread.selectedThreadId).toBe('task-active-1');
+    });
+    expect(threadApi.createNewThread).not.toHaveBeenCalled();
+    expect(mockGetThreadMessages).toHaveBeenCalledWith('task-active-1');
+  });
+
+  it('keeps the General-only sidebar while restoring a non-General session', async () => {
+    const taskThread = makeThread({
+      id: 'task-active-2',
+      title: 'Restored task',
+      labels: ['tasks'],
+    });
+    mockGetThreads.mockResolvedValue({ threads: [taskThread], count: 1 });
+
+    await act(async () => {
+      await renderConversations({
+        thread: {
+          ...emptyThreadState,
+          threads: [taskThread],
+          selectedThreadId: 'task-active-2',
+          messagesByThreadId: { 'task-active-2': [] },
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(threadApi.createNewThread).not.toHaveBeenCalled();
+    });
+    // Main removed the visible General/Subconscious/Tasks chips; restoring a
+    // task session should not reintroduce that tab UI.
+    await openSidebar();
+    expect(screen.queryByRole('tab', { name: 'Tasks' })).not.toBeInTheDocument();
+  });
+
+  it('reuses an empty General thread when there is no active selection', async () => {
+    // Fresh session (no persisted selection) keeps main's new-window behaviour:
+    // reuse an existing empty General thread rather than spawning duplicates.
+    const threads = [makeThread({ id: 'g-1', title: 'Recent general' })];
+    mockGetThreads.mockResolvedValue({ threads, count: 1 });
+
+    let store: ReturnType<typeof buildStore> | undefined;
+    await act(async () => {
+      store = await renderConversations({ thread: emptyThreadState });
+    });
+
+    await waitFor(() => {
+      expect(store!.getState().thread.selectedThreadId).toBe('g-1');
+    });
+    expect(threadApi.createNewThread).not.toHaveBeenCalled();
+  });
+
+  it('opens a new chat for a genuinely fresh session with no threads', async () => {
+    mockGetThreads.mockResolvedValue({ threads: [], count: 0 });
+
+    await act(async () => {
+      await renderConversations({ thread: emptyThreadState });
+    });
+
+    await waitFor(() => {
+      expect(threadApi.createNewThread).toHaveBeenCalled();
+    });
   });
 });

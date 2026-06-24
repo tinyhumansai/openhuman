@@ -301,6 +301,12 @@ export interface ChatSubagentToolCallEvent {
   skill_id: string;
   /** Provider-assigned tool call id. */
   tool_call_id: string;
+  /**
+   * Full arguments the sub-agent invoked the tool with, so the processing
+   * drawer can show *what exactly* the child did. Absent for tools called
+   * with no/`null` arguments.
+   */
+  args?: unknown;
   subagent?: SubagentProgressDetail;
 }
 
@@ -313,7 +319,11 @@ export interface ChatSubagentToolResultEvent {
   skill_id: string;
   tool_call_id: string;
   success: boolean;
-  /** Stringified JSON `{ output_chars, elapsed_ms }` matching `tool_result`. */
+  /**
+   * The child tool's actual output text, so the drawer can show what came
+   * back. Size/timing still arrive via `subagent.output_chars` /
+   * `subagent.elapsed_ms`.
+   */
   output?: string;
   subagent?: SubagentProgressDetail;
 }

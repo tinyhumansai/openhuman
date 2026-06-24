@@ -7,8 +7,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     build_http_schema_dump, default_state, escape_html, invoke_method, is_param_validation_error,
-    is_session_expired_error, is_unconfirmed_unauthorized_error, params_to_object,
-    parse_json_params, rpc_handler, type_name,
+    is_session_expired_error, is_unconfirmed_unauthorized_error, is_wallet_not_configured_error,
+    params_to_object, parse_json_params, rpc_handler, type_name,
 };
 
 struct EnvVarGuard {
@@ -1406,4 +1406,41 @@ async fn desktop_auth_rejects_embedded_fetch_metadata() {
         .expect("response body");
     let body = String::from_utf8(body.to_vec()).expect("html body should be utf8");
     assert!(body.contains("must be opened as a browser page"));
+}
+
+#[test]
+fn is_wallet_not_configured_error_matches_wallet_constant() {
+    // The classifier keys off the wallet layer's exact "not configured"
+    // message so a wallet-less user's tinyplace RPC stays out of Sentry.
+    assert!(is_wallet_not_configured_error(
+        crate::openhuman::wallet::WALLET_NOT_CONFIGURED_MESSAGE
+    ));
+}
+
+#[test]
+fn is_wallet_not_configured_error_is_coupled_to_the_wallet_constant() {
+    // Drift guard: if the wallet wording changes without updating the shared
+    // constant the classifier matches, this fails — preventing the noise from
+    // silently returning to Sentry. Mirrors the param-validation prefix locks.
+    assert_eq!(
+        crate::openhuman::wallet::WALLET_NOT_CONFIGURED_MESSAGE,
+        "wallet is not configured; run wallet setup first"
+    );
+}
+
+#[test]
+fn is_wallet_not_configured_error_does_not_match_other_errors() {
+    // Other wallet/seed-derivation failures (decrypt, key derivation, locked
+    // keychain) are real defects and must keep reaching Sentry.
+    assert!(!is_wallet_not_configured_error(
+        "tinyplace signer init: bad seed"
+    ));
+    assert!(!is_wallet_not_configured_error(
+        "decrypt secret: kms timeout"
+    ));
+    assert!(!is_wallet_not_configured_error(""));
+    // Substring-only must not qualify — exact equality is required.
+    assert!(!is_wallet_not_configured_error(
+        "rpc failed: wallet is not configured; run wallet setup first"
+    ));
 }

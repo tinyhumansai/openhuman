@@ -1,3 +1,5 @@
+#[path = "tools/agent_prepare_context.rs"]
+mod agent_prepare_context;
 #[path = "tools/archetype_delegation.rs"]
 mod archetype_delegation;
 #[path = "tools/close_subagent.rs"]
@@ -30,6 +32,7 @@ mod worker_thread;
 
 pub(crate) use dispatch::dispatch_subagent;
 
+pub use agent_prepare_context::AgentPrepareContextTool;
 pub use archetype_delegation::ArchetypeDelegationTool;
 pub use close_subagent::CloseSubagentTool;
 pub use continue_subagent::ContinueSubagentTool;

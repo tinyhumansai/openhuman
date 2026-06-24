@@ -79,7 +79,7 @@ describe('ProfileEditorPage', () => {
     expect(sent.id).toBe('my-research');
     expect(sent.name).toBe('My Research');
     expect(sent.includeAgentConversations).toBe(true);
-    expect(mockNavigate).toHaveBeenCalledWith('/settings/profiles');
+    expect(mockNavigate).toHaveBeenCalledWith('/settings/profiles', expect.anything());
   });
 
   it('disables Create until a non-empty resolved id exists', () => {

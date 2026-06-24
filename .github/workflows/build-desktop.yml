@@ -434,19 +434,46 @@ jobs:
           # copied into the AppDir at usr/lib/libcef.so, but the binary's
           # RUNPATH does not include either location, so plain `ldd` reports
           # `libcef.so => not found` and lib4bin aborts with the generic
-          # "is missing libraries! Aborting..." banner. To get past it we:
-          #   1. Run `cargo tauri build --no-bundle` first so the cef-dll-sys
-          #      build script downloads libcef.so into the cache dir.
-          #   2. Re-invoke `cargo tauri build` (incremental — cargo skips the
-          #      already-compiled artifacts) with that cache dir on
-          #      LD_LIBRARY_PATH so the bundler's ldd call resolves libcef.so.
-          # macOS / Windows take the original single-call path.
+          # "is missing libraries! Aborting..." banner. libcef.so is downloaded
+          # by the cef-dll-sys build script into the CEF cache dir, which the
+          # "Cache CEF binary distribution" step restores across runs.
+          #
+          # Build-once (#3877): this used to compile the whole app twice — a
+          # throwaway `cargo tauri build --no-bundle` purely to fetch CEF, then
+          # the real bundling build — which also re-ran the Vite/bundler
+          # orchestration twice. We now resolve libcef.so cheaply and bundle in
+          # a SINGLE `cargo tauri build`:
+          #   1. Warm CEF cache (the common case): libcef.so is already restored,
+          #      so we skip straight to the single bundling build.
+          #   2. Cold cache: prewarm with a TARGETED `cargo build -p cef-dll-sys`
+          #      (compiles only the CEF downloader crate + its deps, not the
+          #      whole app) to populate the cache.
+          #   3. If that still didn't yield libcef.so, fall back to the
+          #      historical full `--no-bundle` prebuild — so correctness can
+          #      never regress relative to the old double build.
+          # macOS / Windows take the single-call path unchanged.
+          find_cef_lib_dir() {
+            find "$HOME/.cache/tauri-cef" -name libcef.so -printf '%h\n' 2>/dev/null | head -1
+          }
           if [ "${RUNNER_OS}" = "Linux" ]; then
-            echo "[appimage-fix] linux split build: compile first to fetch CEF"
-            NODE_OPTIONS="--max-old-space-size=8192" bash ../scripts/ci-cancel-aware.sh cargo tauri build --no-bundle $PROFILE_FLAG -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
-            CEF_LIB_DIR="$(find "$HOME/.cache/tauri-cef" -name libcef.so -printf '%h\n' 2>/dev/null | head -1)"
+            CEF_LIB_DIR="$(find_cef_lib_dir)"
             if [ -z "$CEF_LIB_DIR" ]; then
-              echo "::error::libcef.so not found under ~/.cache/tauri-cef after --no-bundle compile; cannot satisfy lib4bin ldd resolution." >&2
+              echo "[appimage-fix] CEF not cached — targeted prewarm via cef-dll-sys build script"
+              # `cargo tauri build --debug` maps to cargo's default (dev)
+              # profile; release maps to `--release`. Match the profile so the
+              # prewarm's artifacts are reused by the bundling build below.
+              CARGO_BUILD_PROFILE="--release"
+              [ "$PROFILE_FLAG" = "--debug" ] && CARGO_BUILD_PROFILE=""
+              NODE_OPTIONS="--max-old-space-size=8192" bash ../scripts/ci-cancel-aware.sh cargo build -p cef-dll-sys $CARGO_BUILD_PROFILE || true
+              CEF_LIB_DIR="$(find_cef_lib_dir)"
+            fi
+            if [ -z "$CEF_LIB_DIR" ]; then
+              echo "[appimage-fix] targeted prewarm did not yield libcef.so — falling back to full --no-bundle prebuild"
+              NODE_OPTIONS="--max-old-space-size=8192" bash ../scripts/ci-cancel-aware.sh cargo tauri build --no-bundle $PROFILE_FLAG -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
+              CEF_LIB_DIR="$(find_cef_lib_dir)"
+            fi
+            if [ -z "$CEF_LIB_DIR" ]; then
+              echo "::error::libcef.so not found under ~/.cache/tauri-cef after prewarm; cannot satisfy lib4bin ldd resolution." >&2
               exit 1
             fi
             echo "[appimage-fix] prepending CEF lib dir to LD_LIBRARY_PATH: $CEF_LIB_DIR"

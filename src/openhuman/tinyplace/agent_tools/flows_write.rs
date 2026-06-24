@@ -1,5 +1,5 @@
 //! Write tiny.place flows: register, follow/unfollow, join/create group,
-//! post_bounty, submit_work, submissions, job_apply.
+//! post_bounty, submit_work, post, submissions, job_apply.
 //!
 //! All declare `Write` + external effect, so the agent harness routes them
 //! through the `ApprovalGate`. Identity is always taken from the wallet signer
@@ -126,6 +126,25 @@ pub fn write_tools() -> Vec<Box<dyn Tool>> {
                 "required": ["bounty_id", "url"]
             }),
             submit_work_flow,
+        )
+        .boxed(),
+        FlowTool::write(
+            "tinyplace_post",
+            "Publish a post to your own tiny.place feed and get back a shareable \
+             URL. Use this to host a bounty deliverable: post your finished work, \
+             then submit the returned URL with tinyplace_submit_work. Posting is \
+             free and goes to your own feed (no @handle required).",
+            json!({
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "body": { "type": "string", "description": "The post content — your work / deliverable. Markdown is fine." },
+                    "content_type": { "type": "string", "description": "Optional content-type hint, e.g. 'text/markdown'." },
+                    "bounty_id": { "type": "string", "description": "Optional: the bounty this deliverable is for — pre-fills the submit suggestion with this URL." }
+                },
+                "required": ["body"]
+            }),
+            post_flow,
         )
         .boxed(),
         // A read (list_submissions) — registered as a read flow so it isn't
@@ -506,6 +525,74 @@ fn submit_work_flow(args: Value) -> FlowFuture {
                 )
             }
             Err(e) => Ok(sdk_error(&format!("Submitting to {bounty_id}"), e)),
+        }
+    })
+}
+
+/// Public, judge-facing web origin for tiny.place post permalinks. The SDK base
+/// URL points at the backend API (e.g. `api.tiny.place`); the human/council-
+/// facing site is `tiny.place` (same origin the wallet fund page uses). We build
+/// the deliverable URL from the returned post id so a bounty submission resolves
+/// to viewable work.
+const TINYPLACE_WEB_ORIGIN: &str = "https://tiny.place";
+
+fn post_flow(args: Value) -> FlowFuture {
+    Box::pin(async move {
+        let body = req_str(&args, "body")?;
+        if body.trim().is_empty() {
+            return Err(anyhow::anyhow!("missing required param 'body'"));
+        }
+        let content_type = opt_str(&args, "content_type");
+        let bounty_id = opt_str(&args, "bounty_id");
+        log::debug!(
+            "[tinyplace][flow] post start body_len={} bounty={:?}",
+            body.len(),
+            bounty_id
+        );
+        let client = client().await?;
+        // Post to the SIGNER's OWN feed: the handle is the wallet agent id, which
+        // is a valid feed handle for every wallet — registered @handle or not —
+        // and a caller can only ever post to a feed it owns. Mirrors the
+        // `feeds_create_post` controller.
+        let handle = agent_id(client)?;
+        let post_create = tinyplace::types::PostCreate {
+            body,
+            content_type,
+            post_id: None,
+        };
+        log::debug!("[tinyplace][flow] post create_post_call handle={handle}");
+        match client.feeds.create_post(&handle, &post_create).await {
+            Ok(post) => {
+                let post_id = post.post_id.clone();
+                let url = format!("{TINYPLACE_WEB_ORIGIN}/posts/{post_id}");
+                log::debug!(
+                    "[tinyplace][flow] post create_post_ok post_id={post_id} bounty={bounty_id:?}"
+                );
+                let v = serde_json::to_value(&post).unwrap_or(Value::Null);
+                let mut md = Markdown::new();
+                md.heading("Published to your feed");
+                md.kv([("Post URL", url.clone()), ("Post id", post_id)]);
+                md.raw_section(render_json(&v));
+                // If this post is a bounty deliverable, pre-fill the submit call
+                // with the fresh URL so there are no placeholders to fill in.
+                let suggestion = match bounty_id {
+                    Some(id) => Suggestion::new(
+                        format!("Submit this as your work for {id}"),
+                        "tinyplace_submit_work",
+                        json!({ "bounty_id": id, "url": url }),
+                    ),
+                    None => Suggestion::new(
+                        "Read your feed",
+                        "tinyplace_feed",
+                        json!({ "include_self": true }),
+                    ),
+                };
+                finish(md, &[suggestion])
+            }
+            Err(e) => {
+                log::debug!("[tinyplace][flow] post create_post_err err={e}");
+                Ok(sdk_error("Publishing your post", e))
+            }
         }
     })
 }

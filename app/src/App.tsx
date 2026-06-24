@@ -18,6 +18,7 @@ import CommandProvider from './components/commands/CommandProvider';
 import ServiceBlockingGate from './components/daemon/ServiceBlockingGate';
 import DictationHotkeyManager from './components/DictationHotkeyManager';
 import ErrorFallbackScreen from './components/ErrorFallbackScreen';
+import HarnessInitOverlay from './components/InitProgressScreen/HarnessInitOverlay';
 import KeyringConsentOverlay from './components/keyring/KeyringConsentOverlay';
 import AppSidebar from './components/layout/shell/AppSidebar';
 import RootShellLayout from './components/layout/shell/RootShellLayout';
@@ -28,7 +29,10 @@ import OpenhumanLinkModal from './components/OpenhumanLinkModal';
 import PersistRehydrationScreen from './components/PersistRehydrationScreen';
 import PttHotkeyManager from './components/PttHotkeyManager';
 import SecurityBanner from './components/SecurityBanner';
+import SettingsModal from './components/settings/modal/SettingsModal';
+import { resolveSettingsOverlay } from './components/settings/modal/settingsOverlay';
 import GlobalUpsellBanner from './components/upsell/GlobalUpsellBanner';
+import UserErrorCenter from './components/userErrors/UserErrorCenter';
 import AppWalkthrough from './components/walkthrough/AppWalkthrough';
 import { MascotFrameProducer } from './features/meet/MascotFrameProducer';
 import { useNotchBootSync } from './hooks/useNotchBootSync';
@@ -101,10 +105,37 @@ function App() {
   const socketWrapped = (children: React.ReactNode) =>
     onMobile ? <>{children}</> : <SocketProvider>{children}</SocketProvider>;
 
+  /*
+   * @generated-source:provider-chain
+   * Authoritative top-level provider / gate nesting for the desktop shell,
+   * outermost first. Keep this list in sync with the JSX returned below;
+   * `scripts/generate-architecture-docs.mjs` renders it into
+   * `gitbooks/developing/architecture/frontend.md` and CI (`pnpm docs:check`)
+   * fails if the doc drifts. Refresh the doc with `pnpm docs:generate`.
+   * Format per line: `<order>. <Component> — <role>` (role must not contain " — ").
+   * 1. Sentry.ErrorBoundary — Crash boundary; renders ErrorFallbackScreen
+   * 2. Provider — Redux store; enables useAppSelector / dispatch app-wide
+   * 3. PersistGate — Holds UI until persisted Redux slices rehydrate
+   * 4. ThemeProvider — Theme tokens and dark-mode handling
+   * 5. I18nProvider — Localization context consumed via useT
+   * 6. BootCheckGate — Blocks render until the core boot snapshot resolves
+   * 7. CoreStateProvider — Core app snapshot: auth, session, onboarding state
+   * 8. SocketProvider — Core socket.io events; desktop only (mobile uses the TunnelTransport relay)
+   * 9. ChatRuntimeProvider — Chat runtime events, tool timeline, and approvals
+   * 10. Router — HashRouter navigation for all routes
+   * 11. CommandProvider — Command palette context
+   * 12. ServiceBlockingGate — Blocks the shell until required services are configured
+   * @end-source:provider-chain
+   */
   return (
     <Sentry.ErrorBoundary
-      fallback={({ error, componentStack, resetError }) => (
-        <ErrorFallbackScreen error={error} componentStack={componentStack} onReset={resetError} />
+      fallback={({ error, componentStack, resetError, eventId }) => (
+        <ErrorFallbackScreen
+          error={error}
+          componentStack={componentStack}
+          eventId={eventId}
+          onReset={resetError}
+        />
       )}>
       <Provider store={store}>
         <PersistGate loading={<PersistRehydrationScreen />} persistor={persistor}>
@@ -124,6 +155,7 @@ function App() {
                             {!onMobile && <LocalAIDownloadSnackbar />}
                             {!onMobile && <AppUpdatePrompt />}
                             <KeyringConsentOverlay />
+                            <HarnessInitOverlay />
                             <SecretPromptDialog />
                           </ServiceBlockingGate>
                         </CommandProvider>
@@ -244,6 +276,12 @@ export function AppShellDesktop() {
   );
   const chromeless = !token || onOnboardingRoute || onHiddenChromePath;
 
+  // Desktop Settings is a modal overlay (the backgroundLocation pattern): when
+  // the URL is a settings path we keep rendering the page *behind* it
+  // (`baseLocation`) and mount <SettingsModal/> on top (z-50 portal), which sits
+  // above the provider WebviewHost overlay (z-30) below.
+  const { settingsOpen, baseLocation } = resolveSettingsOverlay(location);
+
   const activeProviderAccount =
     activeAccountId && activeAccountId !== AGENT_ACCOUNT_ID
       ? (accountsById[activeAccountId] ?? null)
@@ -252,7 +290,7 @@ export function AppShellDesktop() {
   const content = (
     <div ref={scrollRef} className="relative h-full overflow-y-auto">
       <GlobalUpsellBanner />
-      <AppRoutes />
+      <AppRoutes location={baseLocation} />
       {activeProviderAccount && !accountsOverlayOpen && (
         <div className="absolute inset-0 z-30">
           <WebviewHost
@@ -275,7 +313,15 @@ export function AppShellDesktop() {
             <RootShellLayout sidebar={<AppSidebar />}>{content}</RootShellLayout>
           )}
         </div>
+        {/* Desktop Settings modal — mounted over whatever page is rendered
+            beneath when the URL is a settings path. */}
+        {settingsOpen && !chromeless && <SettingsModal />}
         <OpenhumanLinkModal />
+        {/* User-actionable runtime errors (#3931): a first-class panel for
+            expected user states (insufficient BYO credits, managed-budget
+            exhaustion). Mounted outside the routes so entries survive route
+            changes and background-job completion. */}
+        <UserErrorCenter />
         {/* Hidden Remotion-driven producer for the Meet camera. Mounts a
             640×480 JPEG frame stream to the Rust frame bus while a meet
             call is active; idle no-op otherwise. See

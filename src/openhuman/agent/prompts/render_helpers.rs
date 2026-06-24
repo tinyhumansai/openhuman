@@ -681,6 +681,11 @@ pub fn default_workspace_file_content(filename: &str) -> &'static str {
         "HEARTBEAT.md" => {
             "# Periodic Tasks\n\n# Add tasks below (one per line, starting with `- `)\n"
         }
+        // The agent's long-term goals list. Header-only template so the file
+        // is discoverable in the workspace from first boot; items are managed
+        // by the memory_goals domain (RPC / tools / enrichment agent). Must
+        // match `GoalsDoc::render()` of an empty doc so parse↔render is stable.
+        "MEMORY_GOALS.md" => "# Long-term Goals\n\n",
         _ => "",
     }
 }

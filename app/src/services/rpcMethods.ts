@@ -60,6 +60,7 @@ export const CORE_RPC_METHODS = {
   channelsList: 'openhuman.channels_list',
   mcpClientsInstalledList: 'openhuman.mcp_clients_installed_list',
   mcpClientsToolCall: 'openhuman.mcp_clients_tool_call',
+  toolRegistryDiagnostics: 'openhuman.tool_registry_diagnostics',
   healthSnapshot: 'openhuman.health_snapshot',
   healthSystemInfo: 'openhuman.health_system_info',
 } as const;
@@ -77,6 +78,12 @@ export const LEGACY_METHOD_ALIASES: Record<string, CoreRpcMethod> = {
   'openhuman.mcp_list': CORE_RPC_METHODS.mcpClientsInstalledList,
   'openhuman.mcp_servers_list': CORE_RPC_METHODS.mcpClientsInstalledList,
   'openhuman.tool_registry_call': CORE_RPC_METHODS.mcpClientsToolCall,
+  // #3294: old desktop bundles called the tool-registry diagnostics
+  // controller with the dotted `tool_registry.diagnostics` spelling before the
+  // canonical `openhuman.tool_registry_diagnostics` form, so the Tool Policy
+  // diagnostics panel failed with "unknown method". Keep in sync with the
+  // Rust-side mirror in src/core/legacy_aliases.rs.
+  'tool_registry.diagnostics': CORE_RPC_METHODS.toolRegistryDiagnostics,
   'openhuman.get_analytics_settings': CORE_RPC_METHODS.configGetAnalyticsSettings,
   'openhuman.get_composio_trigger_settings': CORE_RPC_METHODS.configGetComposioTriggerSettings,
   'openhuman.get_dashboard_settings': CORE_RPC_METHODS.configGetDashboardSettings,

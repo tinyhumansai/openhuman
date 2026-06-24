@@ -612,6 +612,7 @@ const ProviderToggleChip = ({
   enabled,
   busy,
   locked = false,
+  alwaysOn = false,
   onToggle,
 }: {
   slug: string;
@@ -619,7 +620,11 @@ const ProviderToggleChip = ({
   enabled: boolean;
   busy?: boolean;
   locked?: boolean;
-  onToggle: () => void;
+  // When true the provider is permanently available (e.g. Managed) and renders
+  // a static "Always on" indicator instead of a toggle. A locked toggle reads
+  // as switchable-but-broken (#3760); a badge has no affordance to fight.
+  alwaysOn?: boolean;
+  onToggle?: () => void;
 }) => {
   const { t } = useT();
   const tone = slugTone(slug);
@@ -627,13 +632,20 @@ const ProviderToggleChip = ({
     <div
       className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ring-1 transition-colors dark:ring-neutral-700 ${tone}`}>
       <span>{label}</span>
-      <SettingsSwitch
-        id={`provider-toggle-${slug}`}
-        checked={enabled}
-        onCheckedChange={onToggle}
-        disabled={busy || locked}
-        aria-label={providerToggleAriaLabel(t, enabled, label)}
-      />
+      {alwaysOn ? (
+        <span className="inline-flex items-center gap-1 opacity-80">
+          <LuCheck className="h-3 w-3" />
+          {t('settings.ai.routing.managedAlwaysOn')}
+        </span>
+      ) : (
+        <SettingsSwitch
+          id={`provider-toggle-${slug}`}
+          checked={enabled}
+          onCheckedChange={() => onToggle?.()}
+          disabled={busy || locked}
+          aria-label={providerToggleAriaLabel(t, enabled, label)}
+        />
+      )}
     </div>
   );
 };
@@ -3162,8 +3174,7 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                 slug="openhuman"
                 label={t('settings.ai.routing.managed')}
                 enabled
-                locked
-                onToggle={() => {}}
+                alwaysOn
               />
 
               {/* Built-in cloud providers */}
@@ -3282,6 +3293,13 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                 );
               })}
             </div>
+
+            {/* #3760: Managed is always-on and can't be turned off; point users
+                who want a local model at the Routing card below instead of
+                letting them fight the (now badge, formerly locked) Managed chip. */}
+            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+              {t('settings.ai.routing.managedHint')}
+            </p>
 
             <div className="flex flex-col gap-2 pt-1">
               {/* Codex — imports the existing Codex CLI login as an OpenAI credential. */}

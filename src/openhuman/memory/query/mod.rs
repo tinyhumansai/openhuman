@@ -9,12 +9,11 @@
 mod backend;
 mod cover_window;
 mod drill_down;
+mod fast_walk;
 mod fetch_leaves;
 mod ingest_document;
 mod query_source;
 mod search_entities;
-pub mod smart_walk;
-pub mod walk;
 
 // Re-export individual tool types for callers that need them directly
 // (e.g. tool registration in ops.rs).
@@ -24,12 +23,6 @@ pub use fetch_leaves::MemoryTreeFetchLeavesTool;
 pub use ingest_document::MemoryTreeIngestDocumentTool;
 pub use query_source::MemoryTreeQuerySourceTool;
 pub use search_entities::MemoryTreeSearchEntitiesTool;
-pub use smart_walk::{
-    run_smart_walk, SmartMemoryWalkTool, SmartWalkOptions, SmartWalkOutcome, SmartWalkStep,
-    SmartWalkStopReason,
-};
-pub use walk::MemoryTreeWalkTool as MemoryQueryWalkTool;
-pub use walk::{run_walk, MemoryTreeWalkTool, WalkOptions, WalkOutcome, WalkStep, WalkStopReason};
 pub use MemoryTreeTool as MemoryQueryTool;
 
 use crate::openhuman::tools::traits::{Tool, ToolResult};
@@ -55,9 +48,9 @@ impl Tool for MemoryTreeTool {
          `drill_down` (expand a coarse summary one level), \
          `cover_window` (minimum node set covering a time window [since_ms, until_ms] — use for last-24h / time-bounded recaps), \
          `fetch_leaves` (pull raw chunks for citation), `ingest_document` (write a document into the tree for future retrieval), \
-         `walk` (agentic multi-turn walk — LLM navigates summaries and returns a synthesized answer for a natural-language query), \
-         `smart_walk` (multi-strategy retrieval — combines vector search, keyword search, entity lookup, \
-         and tree browsing across raw files, wiki summaries, documents, and episodic memories)."
+         `walk` / `smart_walk` (deterministic E2GraphRAG retrieval — extracts query entities, routes between \
+         entity-graph (local) and dense-summary (global) search with no LLM, and returns ranked evidence \
+         hits for a natural-language query)."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -97,7 +90,12 @@ impl Tool for MemoryTreeTool {
                 },
                 "time_window_days": {
                     "type": "integer",
-                    "description": "query_source: look-back window in days."
+                    "description": "query_source / walk / smart_walk: look-back window in days (applied to the dense/global branch for walk)."
+                },
+                // walk / smart_walk params
+                "max_hops": {
+                    "type": "integer",
+                    "description": "walk / smart_walk: entity-graph relatedness hop threshold for E2GraphRAG routing (default 2, capped at 4)."
                 },
                 // drill_down params
                 "node_id": {
@@ -158,8 +156,7 @@ impl Tool for MemoryTreeTool {
             "cover_window" => MemoryTreeCoverWindowTool.execute(args).await,
             "fetch_leaves" => MemoryTreeFetchLeavesTool.execute(args).await,
             "ingest_document" => MemoryTreeIngestDocumentTool.execute(args).await,
-            "walk" => MemoryTreeWalkTool.execute(args).await,
-            "smart_walk" => SmartMemoryWalkTool.execute(args).await,
+            "walk" | "smart_walk" => fast_walk::run_fast_walk(args).await,
             other => {
                 log::debug!("[tool][memory_tree] unknown_mode mode={other}");
                 Err(anyhow::anyhow!(

@@ -6,7 +6,7 @@
  * Intelligence setup modal.
  */
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { useCoreState } from '../../providers/CoreStateProvider';
@@ -14,6 +14,7 @@ import {
   openhumanAutocompleteSetStyle,
   openhumanAutocompleteStart,
 } from '../../utils/tauriCommands/autocomplete';
+import { settingsNavState } from '../settings/modal/settingsOverlay';
 import {
   SetupNotice,
   SetupSettingRow,
@@ -29,6 +30,7 @@ interface Props {
 
 export default function AutocompleteSetupModal({ onClose }: Props) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { t } = useT();
   const { snapshot, refresh } = useCoreState();
   const status = snapshot.runtime.autocomplete;
@@ -58,7 +60,7 @@ export default function AutocompleteSetupModal({ onClose }: Props) {
 
   const handleGoToSettings = () => {
     onClose();
-    navigate('/settings/autocomplete');
+    navigate('/settings/autocomplete', settingsNavState(location));
   };
 
   return (

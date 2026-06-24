@@ -181,6 +181,11 @@ hint = "chat"
 named = [
     "read_workspace_state",
     "ask_user_clarification",
+    # "Plan mode as a subagent": before answering or delegating a non-trivial
+    # request, the orchestrator calls `agent_prepare_context` to run the
+    # read-only `context_scout`, which returns a bounded context bundle plus a
+    # recommended plan of next tool calls drawn from this allowlist.
+    "agent_prepare_context",
     "spawn_worker_thread",
     "spawn_async_subagent",
     "spawn_parallel_agents",

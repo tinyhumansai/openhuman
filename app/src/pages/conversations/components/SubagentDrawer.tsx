@@ -8,6 +8,7 @@ import type {
   ToolTimelineEntryStatus,
 } from '../../../store/chatRuntimeSlice';
 import type { ThreadMessage } from '../../../types/thread';
+import { stripToolCallEnvelopes } from '../../../utils/toolTimelineFormatting';
 import { BubbleMarkdown } from './AgentMessageBubble';
 
 /**
@@ -349,7 +350,7 @@ export function SubagentDrawer({
                           {t('conversations.subagent.thinking')}
                         </div>
                         <pre className="whitespace-pre-wrap break-words font-sans text-[12px] leading-relaxed text-stone-600 dark:text-neutral-300">
-                          {item.text}
+                          {stripToolCallEnvelopes(item.text).trim()}
                         </pre>
                       </div>
                     </ItemWrapper>
@@ -360,7 +361,7 @@ export function SubagentDrawer({
                   return (
                     <ItemWrapper key={`tx-${idx}`} divider={turnDivider}>
                       <div data-testid="subagent-transcript-text">
-                        <BubbleMarkdown content={item.text} />
+                        <BubbleMarkdown content={stripToolCallEnvelopes(item.text)} />
                         {isRunning && idx === lastTextIdx ? (
                           <span className="ml-0.5 inline-block h-3 w-1 animate-pulse bg-primary-400 align-middle" />
                         ) : null}
@@ -369,34 +370,9 @@ export function SubagentDrawer({
                   );
                 }
 
-                const callTone =
-                  item.status === 'running'
-                    ? 'text-amber-700 dark:text-amber-300'
-                    : item.status === 'success'
-                      ? 'text-sage-700 dark:text-sage-300'
-                      : 'text-coral-700 dark:text-coral-300';
-                const statusLabel =
-                  item.status === 'running'
-                    ? t('conversations.subagent.statusRunning')
-                    : item.status === 'success'
-                      ? t('conversations.subagent.statusCompleted')
-                      : t('conversations.subagent.statusFailed');
                 return (
                   <ItemWrapper key={`tl-${item.callId}`} divider={turnDivider}>
-                    <div
-                      className="flex items-center gap-2 rounded-md border border-stone-200 bg-stone-50 px-2.5 py-1.5 text-xs dark:border-neutral-800 dark:bg-neutral-800/60"
-                      data-testid="subagent-drawer-tool-call">
-                      <span className={callTone}>🔧</span>
-                      <span className="font-mono text-stone-700 dark:text-neutral-200">
-                        {item.toolName}
-                      </span>
-                      <span className={`ml-auto ${callTone}`}>{statusLabel}</span>
-                      {item.elapsedMs != null && item.status !== 'running' ? (
-                        <span className="text-[10px] text-stone-400 dark:text-neutral-500">
-                          {formatElapsed(item.elapsedMs)}
-                        </span>
-                      ) : null}
-                    </div>
+                    <ToolCallRow item={item} />
                   </ItemWrapper>
                 );
               })}
@@ -415,5 +391,117 @@ function ItemWrapper({ divider, children }: { divider: ReactNode; children: Reac
       {divider}
       <li>{children}</li>
     </>
+  );
+}
+
+type SubagentToolItem = Extract<SubagentTranscriptItem, { kind: 'tool' }>;
+
+/**
+ * Pretty-print a tool's input arguments for display. Objects/arrays are
+ * rendered as indented JSON; a string is shown verbatim. Returns `null` when
+ * there are no arguments to show (e.g. a tool called with no input, or a
+ * transcript reopened from memory where args weren't persisted).
+ */
+function formatArgs(args: unknown): string | null {
+  if (args == null) return null;
+  if (typeof args === 'string') return args.length > 0 ? args : null;
+  try {
+    return JSON.stringify(args, null, 2);
+  } catch {
+    return String(args);
+  }
+}
+
+/**
+ * One child tool call in the drawer transcript, expandable to reveal exactly
+ * *what happened*: the input arguments the sub-agent passed and the raw output
+ * the tool returned. Collapsed by default to keep the transcript scannable;
+ * the chevron only appears once there's detail to reveal (args present, or the
+ * call completed with a captured result). Reopened-from-memory transcripts
+ * carry no args/result, so those rows stay non-expandable.
+ */
+function ToolCallRow({ item }: { item: SubagentToolItem }) {
+  const { t } = useT();
+  const [expanded, setExpanded] = useState(false);
+
+  const callTone =
+    item.status === 'running'
+      ? 'text-amber-700 dark:text-amber-300'
+      : item.status === 'success'
+        ? 'text-sage-700 dark:text-sage-300'
+        : item.status === 'cancelled'
+          ? 'text-stone-600 dark:text-neutral-300'
+          : item.status === 'awaiting_user'
+            ? 'text-amber-700 dark:text-amber-300'
+            : 'text-coral-700 dark:text-coral-300';
+  const statusLabel =
+    item.status === 'running'
+      ? t('conversations.subagent.statusRunning')
+      : item.status === 'success'
+        ? t('conversations.subagent.statusCompleted')
+        : item.status === 'cancelled'
+          ? t('conversations.subagent.statusCancelled')
+          : item.status === 'awaiting_user'
+            ? t('conversations.subagent.statusAwaitingUser')
+            : t('conversations.subagent.statusFailed');
+
+  const argsText = formatArgs(item.args);
+  const hasOutput = item.result != null;
+  const expandable = argsText != null || hasOutput;
+
+  const detailPre =
+    'max-h-60 overflow-auto whitespace-pre-wrap break-words rounded bg-white px-2 py-1.5 ' +
+    'font-mono text-[11px] leading-relaxed text-stone-600 dark:bg-neutral-900 dark:text-neutral-300';
+  const detailLabel =
+    'mb-1 text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500';
+
+  return (
+    <div
+      className="rounded-md border border-stone-200 bg-stone-50 text-xs dark:border-neutral-800 dark:bg-neutral-800/60"
+      data-testid="subagent-drawer-tool-call">
+      <button
+        type="button"
+        disabled={!expandable}
+        onClick={() => setExpanded(v => !v)}
+        aria-expanded={expandable ? expanded : undefined}
+        data-testid="subagent-tool-call-toggle"
+        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left disabled:cursor-default">
+        {expandable ? (
+          <span className="shrink-0 text-[9px] text-stone-400 dark:text-neutral-500">
+            {expanded ? '▾' : '▸'}
+          </span>
+        ) : (
+          <span className="w-[9px] shrink-0" aria-hidden />
+        )}
+        <span className={callTone}>🔧</span>
+        <span className="font-mono text-stone-700 dark:text-neutral-200">{item.toolName}</span>
+        <span className={`ml-auto ${callTone}`}>{statusLabel}</span>
+        {item.elapsedMs != null && item.status !== 'running' ? (
+          <span className="text-[10px] text-stone-400 dark:text-neutral-500">
+            {formatElapsed(item.elapsedMs)}
+          </span>
+        ) : null}
+      </button>
+      {expandable && expanded ? (
+        <div className="space-y-2 border-t border-stone-200 px-2.5 py-2 dark:border-neutral-800">
+          {argsText != null ? (
+            <div data-testid="subagent-tool-call-input">
+              <div className={detailLabel}>{t('conversations.subagent.input')}</div>
+              <pre className={detailPre}>{argsText}</pre>
+            </div>
+          ) : null}
+          {hasOutput ? (
+            <div data-testid="subagent-tool-call-output">
+              <div className={detailLabel}>{t('conversations.subagent.output')}</div>
+              <pre className={detailPre}>
+                {item.result && item.result.length > 0
+                  ? item.result
+                  : t('conversations.subagent.noOutput')}
+              </pre>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   );
 }

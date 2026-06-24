@@ -9,7 +9,6 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { LuPencil, LuPlus, LuRotateCcw, LuTrash2 } from 'react-icons/lu';
-import { useNavigate } from 'react-router-dom';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { agentRegistryApi, type AgentRegistryEntry } from '../../../services/api/agentRegistryApi';
@@ -23,8 +22,7 @@ const ORCHESTRATOR_ID = 'orchestrator';
 
 const AgentsPanel = () => {
   const { t } = useT();
-  const navigate = useNavigate();
-  const { navigateBack } = useSettingsNavigation();
+  const { navigateBack, navigateToSettings } = useSettingsNavigation();
 
   const [agents, setAgents] = useState<AgentRegistryEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -107,7 +105,7 @@ const AgentsPanel = () => {
             type="button"
             variant="primary"
             size="xs"
-            onClick={() => navigate('/settings/agents/new')}>
+            onClick={() => navigateToSettings('agents/new')}>
             <LuPlus className="h-3.5 w-3.5 mr-1" />
             {t('settings.agents.newAgent')}
           </Button>
@@ -138,7 +136,7 @@ const AgentsPanel = () => {
                 agent={agent}
                 busy={busyId === agent.id}
                 onToggle={() => handleToggle(agent)}
-                onEdit={() => navigate(`/settings/agents/edit/${agent.id}`)}
+                onEdit={() => navigateToSettings(`agents/edit/${agent.id}`)}
                 onRemove={() => handleRemove(agent)}
               />
             ))}

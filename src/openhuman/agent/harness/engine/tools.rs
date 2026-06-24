@@ -41,6 +41,39 @@ pub(crate) struct ToolRunResult {
     pub success: bool,
 }
 
+/// Grace added to the outer harness deadline when a tool enforces its **own**
+/// per-call timeout internally (a `Secs` policy). The tool's own timeout then
+/// fires first — it produces a more specific message and actually kills the
+/// child process, whereas the harness backstop merely drops the future.
+const TOOL_TIMEOUT_GRACE_SECS: u64 = 5;
+
+/// Map a [`ToolTimeout`] policy to `(deadline, effective_secs)` for
+/// [`run_one_tool`]. `deadline` is `None` for an unbounded run (no harness
+/// timeout); `effective_secs` is the value surfaced in the timeout message
+/// (unused when `deadline` is `None`).
+fn resolve_tool_deadline(
+    policy: crate::openhuman::tools::traits::ToolTimeout,
+) -> (Option<std::time::Duration>, u64) {
+    use crate::openhuman::tool_timeout::{MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS};
+    use crate::openhuman::tools::traits::ToolTimeout;
+    match policy {
+        ToolTimeout::Inherit => {
+            let s = crate::openhuman::tool_timeout::tool_execution_timeout_secs();
+            (Some(std::time::Duration::from_secs(s)), s)
+        }
+        ToolTimeout::Secs(req) => {
+            let s = req.clamp(MIN_TIMEOUT_SECS, MAX_TIMEOUT_SECS);
+            (
+                Some(std::time::Duration::from_secs(
+                    s.saturating_add(TOOL_TIMEOUT_GRACE_SECS),
+                )),
+                s,
+            )
+        }
+        ToolTimeout::Unbounded => (None, 0),
+    }
+}
+
 /// Execute one parsed tool call end-to-end. See the module docs for the full
 /// lifecycle. `tool_opt` is the (already visibility-filtered) tool the caller
 /// resolved by name — `None` means the model requested an unknown/filtered-out
@@ -71,14 +104,14 @@ pub(crate) async fn run_one_tool(
     // (denied / CliRpcOnly / unknown) so the client row flips to `error`
     // instead of staying running.
     let emit_failed_completion = |message: &str| {
-        let output_chars = message.chars().count();
+        let message = message.to_string();
         async move {
             progress
                 .tool_completed(
                     progress_call_id,
                     &call.name,
                     false,
-                    output_chars,
+                    &message,
                     0,
                     iteration_u32,
                 )
@@ -189,10 +222,41 @@ pub(crate) async fn run_one_tool(
         }
     }
 
-    let tool_deadline = crate::openhuman::tool_timeout::tool_execution_timeout_duration();
-    let timeout_secs = crate::openhuman::tool_timeout::tool_execution_timeout_secs();
+    // A tool that exposes a caller-supplied per-call budget (e.g. `shell`'s
+    // `timeout_secs`) raises/lowers the outer harness deadline to match; the
+    // resolver bounds it and falls back to the global config when absent or
+    // out of range. Without this, the global cap would kill a long-running
+    // command before the tool's own per-call timeout could take effect.
+    // Resolve this call's wall-clock policy. Most tools `Inherit` the global,
+    // config-driven timeout; scripting tools (`shell`/`node_exec`/`npm_exec`)
+    // run `Unbounded` unless the caller passed an explicit `timeout_secs`
+    // (`Secs`). See issue #4023 — a long-but-legitimate script must not be
+    // hard-killed by a default cap.
+    let policy = tool.timeout_policy(&call.arguments);
+    let (tool_deadline, timeout_secs) = resolve_tool_deadline(policy);
+    match policy {
+        crate::openhuman::tools::traits::ToolTimeout::Secs(req) => tracing::debug!(
+            iteration,
+            tool = call.name.as_str(),
+            requested_timeout_secs = req,
+            effective_timeout_secs = timeout_secs,
+            "[agent_loop] tool requested an explicit per-call timeout"
+        ),
+        crate::openhuman::tools::traits::ToolTimeout::Unbounded => tracing::debug!(
+            iteration,
+            tool = call.name.as_str(),
+            "[agent_loop] tool runs unbounded (no harness timeout) — no explicit timeout_secs"
+        ),
+        crate::openhuman::tools::traits::ToolTimeout::Inherit => {}
+    }
     let tool_started = std::time::Instant::now();
-    let outcome = tokio::time::timeout(tool_deadline, tool.execute(call.arguments.clone())).await;
+    let outcome = match tool_deadline {
+        Some(deadline) => {
+            tokio::time::timeout(deadline, tool.execute(call.arguments.clone())).await
+        }
+        // Unbounded: run to completion with no harness-imposed deadline.
+        None => Ok(tool.execute(call.arguments.clone()).await),
+    };
     let elapsed_ms = tool_started.elapsed().as_millis() as u64;
     let (result_text, success) = match outcome {
         Ok(Ok(r)) => {
@@ -361,7 +425,7 @@ pub(crate) async fn run_one_tool(
             progress_call_id,
             &call.name,
             success,
-            result_text.chars().count(),
+            &result_text,
             elapsed_ms,
             iteration_u32,
         )
@@ -391,5 +455,51 @@ pub(crate) async fn run_one_tool(
     ToolRunResult {
         text: result_text,
         success,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::openhuman::tools::traits::ToolTimeout;
+
+    #[test]
+    fn unbounded_policy_imposes_no_deadline() {
+        let (deadline, _secs) = resolve_tool_deadline(ToolTimeout::Unbounded);
+        assert!(
+            deadline.is_none(),
+            "scripting tools with no explicit timeout must run unbounded"
+        );
+    }
+
+    #[test]
+    fn explicit_secs_policy_adds_grace_and_reports_value() {
+        let (deadline, secs) = resolve_tool_deadline(ToolTimeout::Secs(300));
+        // Reported value is the requested budget; the outer deadline gets a
+        // grace margin so the tool's own timeout fires first.
+        assert_eq!(secs, 300);
+        assert_eq!(
+            deadline,
+            Some(std::time::Duration::from_secs(
+                300 + TOOL_TIMEOUT_GRACE_SECS
+            ))
+        );
+    }
+
+    #[test]
+    fn explicit_secs_policy_clamps_out_of_range() {
+        // Above MAX clamps down; the deadline is built from the clamped value.
+        let (deadline, secs) = resolve_tool_deadline(ToolTimeout::Secs(999_999));
+        assert_eq!(secs, crate::openhuman::tool_timeout::MAX_TIMEOUT_SECS);
+        assert_eq!(
+            deadline,
+            Some(std::time::Duration::from_secs(
+                crate::openhuman::tool_timeout::MAX_TIMEOUT_SECS + TOOL_TIMEOUT_GRACE_SECS
+            ))
+        );
+
+        // Below MIN clamps up to MIN.
+        let (_d, secs_min) = resolve_tool_deadline(ToolTimeout::Secs(0));
+        assert_eq!(secs_min, crate::openhuman::tool_timeout::MIN_TIMEOUT_SECS);
     }
 }

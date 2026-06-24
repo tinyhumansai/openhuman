@@ -3923,3 +3923,112 @@ async fn stream_chat_with_history_insufficient_balance_402_propagates_error() {
         "msg: {msg}"
     );
 }
+
+// ----------------------------------------------------------
+// Prompt-cache capability model (#3939)
+// ----------------------------------------------------------
+
+#[test]
+fn prompt_cache_caps_openai_style_for_known_slugs() {
+    for slug in ["openai", "openrouter", "gmi"] {
+        let caps = super::prompt_cache_for_compatible_slug(slug);
+        assert!(
+            caps.automatic_prefix_cache,
+            "{slug} should advertise automatic prefix cache"
+        );
+        assert!(
+            caps.usage_reports_cached_input,
+            "{slug} should report cached input tokens"
+        );
+        assert!(
+            !caps.explicit_cache_control,
+            "OpenAI-compatible chat API has no cache-control field"
+        );
+        assert!(
+            !caps.cache_key_grouping,
+            "thread/session grouping is OpenHuman-backend-only"
+        );
+    }
+}
+
+#[test]
+fn prompt_cache_caps_match_slug_family_variants() {
+    // Case-insensitive, leading-segment family match so renamed/suffixed slugs
+    // still resolve to the verified family.
+    for slug in ["OpenAI", "openai:gpt-5.1", "openai/responses", "openai-eu"] {
+        let caps = super::prompt_cache_for_compatible_slug(slug);
+        assert!(
+            caps.automatic_prefix_cache && caps.usage_reports_cached_input,
+            "{slug} should resolve to the openai family"
+        );
+    }
+}
+
+#[test]
+fn prompt_cache_caps_conservative_for_unknown_or_custom_slugs() {
+    // Custom / local / unverified providers must not advertise caching — they
+    // get the all-false default so we never send or assume unsupported behaviour.
+    let conservative =
+        crate::openhuman::inference::provider::traits::PromptCacheCapabilities::default();
+    for slug in ["custom_openai", "lmstudio", "deepseek", "mystery-proxy", ""] {
+        assert_eq!(
+            super::prompt_cache_for_compatible_slug(slug),
+            conservative,
+            "{slug} must stay conservative"
+        );
+    }
+}
+
+#[test]
+fn compatible_provider_declares_prompt_cache_from_its_slug() {
+    let conservative =
+        crate::openhuman::inference::provider::traits::PromptCacheCapabilities::default();
+
+    let openai = make_provider("openai", "https://api.openai.com", Some("k"));
+    let caps = openai.prompt_cache_capabilities();
+    assert!(
+        caps.automatic_prefix_cache && caps.usage_reports_cached_input,
+        "openai provider must advertise OpenAI-style caching"
+    );
+
+    let custom = make_provider("custom_openai", "https://proxy.example", Some("k"));
+    assert_eq!(
+        custom.prompt_cache_capabilities(),
+        conservative,
+        "unknown custom provider must stay conservative"
+    );
+}
+
+#[test]
+fn extract_usage_normalizes_openai_cached_prompt_tokens() {
+    // Regression: an OpenAI-compatible usage block carrying cached prefix tokens
+    // (`prompt_tokens_details.cached_tokens`) must normalize into
+    // `UsageInfo.cached_input_tokens` so cached-prefix cost accounting is exact.
+    let json = r#"{
+        "choices":[{"message":{"role":"assistant","content":"hi"}}],
+        "usage":{"prompt_tokens":1000,"completion_tokens":20,"total_tokens":1020,
+                 "prompt_tokens_details":{"cached_tokens":768}}
+    }"#;
+    let resp: ApiChatResponse = serde_json::from_str(json).expect("parse api response");
+    let usage = OpenAiCompatibleProvider::extract_usage(&resp).expect("usage present");
+    assert_eq!(usage.input_tokens, 1000);
+    assert_eq!(usage.output_tokens, 20);
+    assert_eq!(
+        usage.cached_input_tokens, 768,
+        "cached prefix tokens must be normalized into cached_input_tokens"
+    );
+}
+
+#[test]
+fn extract_usage_defaults_cached_tokens_to_zero_when_absent() {
+    // A provider that omits cache details must yield cached_input_tokens = 0,
+    // keeping cost accounting coherent (full prompt charged at the input rate).
+    let json = r#"{
+        "choices":[{"message":{"role":"assistant","content":"hi"}}],
+        "usage":{"prompt_tokens":500,"completion_tokens":10,"total_tokens":510}
+    }"#;
+    let resp: ApiChatResponse = serde_json::from_str(json).expect("parse api response");
+    let usage = OpenAiCompatibleProvider::extract_usage(&resp).expect("usage present");
+    assert_eq!(usage.cached_input_tokens, 0);
+    assert_eq!(usage.input_tokens, 500);
+}

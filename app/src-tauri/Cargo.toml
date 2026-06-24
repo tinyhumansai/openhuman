@@ -257,3 +257,19 @@ lto = false
 incremental = false
 strip = true
 debug = false
+
+# Faster local + CI iteration (#3877): compile third-party dependencies in the
+# dev/test profiles WITHOUT debuginfo. The Tauri shell embeds the full core
+# crate, so its dev dependency graph is huge (a local checkout showed
+# `app/src-tauri/target/` ~4.4G) and DWARF generation + linking for every
+# dependency dominates `cargo build` / `cargo tauri dev` / `cargo llvm-cov`.
+#
+# Scope is intentionally narrow and low-risk (kept in sync with the root
+# crate's `Cargo.toml` so both Cargo worlds get the same discipline):
+#   * `package."*"` targets dependencies only — the shell + core crates keep
+#     full debuginfo, so panics/backtraces still resolve to file:line.
+#   * Only the unoptimised `dev`/`test` profiles change; `release`/`ci` are
+#     untouched, so shipped bundles and Sentry symbolication are unaffected.
+#   * No artifact paths, features, or runtime behaviour change.
+[profile.dev.package."*"]
+debug = false

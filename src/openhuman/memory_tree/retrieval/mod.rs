@@ -19,6 +19,7 @@
 
 pub mod cover;
 pub mod drill_down;
+pub mod fast;
 pub mod fetch;
 pub mod rpc;
 pub mod schemas;
@@ -33,6 +34,7 @@ mod integration_tests;
 
 pub use cover::cover_window;
 pub use drill_down::drill_down;
+pub use fast::{fast_retrieve, FastRetrieveOptions};
 pub use fetch::fetch_leaves;
 pub use schemas::{
     all_controller_schemas as all_retrieval_controller_schemas,

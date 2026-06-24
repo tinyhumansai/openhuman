@@ -339,6 +339,7 @@ fn make_parent(provider: Arc<dyn Provider>, tools: Vec<Box<dyn Tool>>) -> Parent
         provider,
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(tool_specs),
+        visible_tool_names: std::collections::HashSet::new(),
         model_name: "test-model".into(),
         temperature: 0.5,
         workspace_dir: std::env::temp_dir(),

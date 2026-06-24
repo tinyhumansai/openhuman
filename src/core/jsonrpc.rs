@@ -103,6 +103,16 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
                     "[rpc] expected-user-state error — skipping Sentry: {}",
                     display_message
                 );
+            } else if is_wallet_not_configured_error(&display_message) {
+                // A `tinyplace_*` RPC needs a wallet-derived signer but the user
+                // has not set one up. Expected user-state (the UI shows a
+                // "set up wallet" prompt), not an internal failure — skip Sentry
+                // here so the message is left untouched for direct (agent-tool)
+                // callers. See `is_wallet_not_configured_error`.
+                tracing::info!(
+                    method = %method,
+                    "[rpc] wallet-not-configured (expected user-state) — skipping Sentry"
+                );
             } else if is_param_validation_error(&display_message) {
                 tracing::info!(
                     method = %method,
@@ -345,6 +355,27 @@ fn is_param_validation_error(msg: &str) -> bool {
     msg.starts_with("unknown param '")
         || msg.starts_with("missing required param '")
         || msg.starts_with("invalid params: ")
+}
+
+/// Returns `true` when the error is the wallet's "not configured yet" message.
+///
+/// Several `tinyplace_*` RPCs derive a signer seed from the wallet before they
+/// can run (the feed, signal/messaging, etc. — backend `GraphQLAuth::Agent`
+/// requires a signer). For a user who has not set up a wallet, the wallet layer
+/// returns [`crate::openhuman::wallet::WALLET_NOT_CONFIGURED_MESSAGE`]. That is
+/// an expected user-state, not an internal failure: the UI already renders a
+/// "set up wallet" prompt, and there is no local lever to make the call succeed
+/// until the user creates a wallet. Classifying it here — at the single Sentry
+/// boundary — keeps it out of Sentry for *every* path that surfaces it (the
+/// shared client builder and the direct `signal_store` seed call alike) without
+/// the controllers returning a structured envelope, which would leak the raw
+/// sentinel string to agent tools that call those handlers directly.
+///
+/// Matched against the shared wallet constant (exact equality) so a wording
+/// change in the wallet layer fails the coupling test in `jsonrpc_tests.rs`
+/// rather than silently letting the noise back into Sentry.
+fn is_wallet_not_configured_error(msg: &str) -> bool {
+    msg == crate::openhuman::wallet::WALLET_NOT_CONFIGURED_MESSAGE
 }
 
 /// Internal method invocation logic.
@@ -2062,6 +2093,14 @@ async fn run_server_inner(
                     return;
                 }
                 log::info!("[cron] spawning scheduler polling loop");
+                // Ensure proactive agent jobs (e.g. the autonomous bounty job)
+                // exist for already-onboarded users upgrading from a build that
+                // predates them — otherwise their Settings toggle stays hidden.
+                // Idempotent; no-op until onboarding is complete.
+                if let Err(e) = crate::openhuman::cron::seed::seed_proactive_agents_on_boot(&config)
+                {
+                    log::warn!("[cron] boot seed of proactive agent jobs failed: {e}");
+                }
                 if let Err(e) = crate::openhuman::cron::scheduler::run(config).await {
                     log::error!("[cron] scheduler loop ended with error: {e}");
                 }
@@ -2170,7 +2209,7 @@ fn register_domain_subscribers(
         }
 
         crate::openhuman::health::bus::register_health_subscriber();
-        crate::openhuman::notifications::register_notification_bridge_subscriber();
+        crate::openhuman::notifications::register_notification_bridge_subscriber(config.clone());
         crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
             workspace_dir.clone(),
         );
@@ -2283,6 +2322,14 @@ fn register_domain_subscribers(
         // originating chat as an idle-gated, batched, system-injected turn.
         crate::openhuman::agent_orchestration::background_delivery::register_background_delivery();
 
+        // Run-ledger finalizer: detached `spawn_async_subagent` runs outlive
+        // their parent turn, so their terminal `AgentProgress` never reaches the
+        // per-turn progress bridge that settles the ledger. This global-bus
+        // subscriber settles `agent_runs` from `DomainEvent::Subagent{Completed,
+        // Failed}` (always fired from the detached task), preventing rows from
+        // leaking as perpetual `running` timeline entries on thread reopen.
+        crate::openhuman::agent_orchestration::run_ledger_finalize::register_run_ledger_finalize_subscriber(&config);
+
         // MCP clients lifecycle subscriber: logs McpServer{Installed,Connected,
         // Disconnected} + McpClientToolExecuted for observability. The boot-time
         // spawn of installed servers (boot::spawn_installed_servers) runs later
@@ -2327,6 +2374,20 @@ pub async fn bootstrap_core_runtime(host_kind: crate::core::types::HostKind) {
     // Uses a Once guard so repeated calls to bootstrap_core_runtime()
     // cannot double-subscribe.
     register_domain_subscribers(workspace_dir.clone(), cfg.clone(), embedded_core);
+
+    // One-time first-run initialization (managed Python runtime, spaCy model,
+    // managed Node runtime). Spawned AFTER subscribers are live but does NOT
+    // block the ready signal — the core becomes RPC-ready immediately and the
+    // frontend watches per-step progress via `openhuman.harness_init_status`.
+    // On a warm host every step's `is_done` probe passes and this settles
+    // instantly. See `crate::openhuman::harness_init`.
+    {
+        let cfg_for_init = cfg.clone();
+        tokio::spawn(async move {
+            crate::openhuman::harness_init::run_harness_init(cfg_for_init).await;
+        });
+    }
+
     // Warm the remote skills catalog on every core load. This updates the
     // cached registry used by skill discovery/search, but runs best-effort in
     // the background so Hermes/network latency cannot block core readiness.
@@ -2351,6 +2412,18 @@ pub async fn bootstrap_core_runtime(host_kind: crate::core::types::HostKind) {
                 log::warn!("[runtime] failed to mark stale turn snapshots interrupted: {err}")
             }
         }
+    }
+
+    // --- Run-ledger recovery -------------------------------------------
+    // Detached sub-agent runs (`spawn_async_subagent`) from a previous process
+    // are gone with that process. Any `agent_runs` row still marked `running`
+    // at boot is orphaned — its driver died without firing a terminal event, so
+    // the finalizer never settled it. Stamp such rows `interrupted` so they stop
+    // rendering as perpetual "running" timeline entries on thread reopen.
+    match crate::openhuman::session_db::run_ledger::interrupt_orphaned_agent_runs(&cfg) {
+        Ok(0) => {}
+        Ok(count) => log::info!("[runtime] settled {count} orphaned agent run(s) on startup"),
+        Err(err) => log::warn!("[runtime] failed to settle orphaned agent runs: {err}"),
     }
 
     // --- Cost dashboard tracker ---

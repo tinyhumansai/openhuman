@@ -63,12 +63,45 @@ fn de_opt_string_or_object<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Str
 
 // ── Toolkits ────────────────────────────────────────────────────────
 
+/// One toolkit from the live Composio catalog, forwarded verbatim from the
+/// backend (`GET /agent-integrations/composio/toolkits`).
+///
+/// The core does not interpret these fields — it passes them straight through
+/// to the desktop UI so the app no longer hardcodes toolkit display metadata
+/// (see the workspace `COMPOSIO_DYNAMIC_CATALOG_PLAN.md`). Everything except
+/// `slug` is best-effort; backends predating the dynamic catalog omit the
+/// whole `catalog` array, in which case the UI falls back to local metadata.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ComposioToolkitCatalogEntry {
+    /// Toolkit slug as Composio emits it, e.g. `"googlecalendar"`.
+    pub slug: String,
+    /// Human-readable name, e.g. `"Google Calendar"`.
+    #[serde(default)]
+    pub name: String,
+    /// Composio-hosted logo URL (`meta.logo`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logo: Option<String>,
+    /// Short description (`meta.description`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Composio category names (`meta.categories`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub categories: Vec<String>,
+    /// Whether the user can connect/use this toolkit (passed the backend gate).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+}
+
 /// Response body of `GET /agent-integrations/composio/toolkits`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ComposioToolkitsResponse {
     /// Server-enforced toolkit allowlist, e.g. `["gmail", "notion"]`.
     #[serde(default)]
     pub toolkits: Vec<String>,
+    /// Rich render model from the live Composio catalog. Optional — empty when
+    /// the backend predates the dynamic catalog. Forwarded as-is to the UI.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub catalog: Vec<ComposioToolkitCatalogEntry>,
 }
 
 /// One row in OpenHuman's local Composio capability matrix.
@@ -490,11 +523,45 @@ mod tests {
     fn toolkits_response_roundtrips() {
         let resp = ComposioToolkitsResponse {
             toolkits: vec!["gmail".into(), "notion".into()],
+            ..Default::default()
         };
         let value = serde_json::to_value(&resp).unwrap();
+        // Empty catalog is skipped on the wire — back-compat with old cores.
         assert_eq!(value, json!({ "toolkits": ["gmail", "notion"] }));
         let back: ComposioToolkitsResponse = serde_json::from_value(value).unwrap();
         assert_eq!(back.toolkits, vec!["gmail", "notion"]);
+        assert!(back.catalog.is_empty());
+    }
+
+    #[test]
+    fn toolkits_response_forwards_catalog() {
+        // A backend that sends the dynamic catalog must deserialize and
+        // re-serialize verbatim so the field reaches the desktop UI.
+        let raw = json!({
+            "toolkits": ["gmail"],
+            "catalog": [
+                {
+                    "slug": "gmail",
+                    "name": "Gmail",
+                    "logo": "https://logos.composio.dev/api/gmail",
+                    "description": "Send and read email",
+                    "categories": ["productivity"],
+                    "enabled": true
+                }
+            ]
+        });
+        let resp: ComposioToolkitsResponse = serde_json::from_value(raw).unwrap();
+        assert_eq!(resp.catalog.len(), 1);
+        let entry = &resp.catalog[0];
+        assert_eq!(entry.slug, "gmail");
+        assert_eq!(entry.name, "Gmail");
+        assert_eq!(entry.enabled, Some(true));
+        assert_eq!(entry.categories, vec!["productivity".to_string()]);
+
+        // Round-trips back out with the catalog intact.
+        let value = serde_json::to_value(&resp).unwrap();
+        assert_eq!(value["catalog"][0]["slug"], "gmail");
+        assert_eq!(value["catalog"][0]["enabled"], true);
     }
 
     #[test]

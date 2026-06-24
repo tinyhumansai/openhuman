@@ -1,0 +1,48 @@
+id = "context_scout"
+display_name = "Context Scout"
+when_to_use = "Pre-flight context collector. Reads memory, the user's goals/profile, connected integrations, and the web, then returns a tight context bundle plus a recommended plan of next tool calls. Read-only; produces a structured bundle, not actions."
+temperature = 0.3
+max_iterations = 6
+iteration_policy = "extended"
+# ~1000-token cap on the returned bundle. The runner truncates the final
+# output to this many characters (char-safe) before handing it back to the
+# parent, so the orchestrator's context only ever grows by a bounded amount.
+max_result_chars = 4000
+sandbox_mode = "read_only"
+
+# Spawn hierarchy: leaf worker. The scout gathers context and stops — it
+# never delegates onward. (No `[subagents]` block; loader rejects any
+# subagents on a worker tier.)
+agent_tier = "worker"
+
+omit_identity = true
+omit_memory_context = true
+omit_safety_preamble = true
+omit_skills_catalog = true
+# Keep PROFILE.md (onboarding enrichment — the user's stated goals) and
+# MEMORY.md (archivist-curated long-term memory) IN the prompt: the scout's
+# whole job is to ground the orchestrator in who the user is and what they
+# want, so it must be able to read goals/profile directly.
+omit_profile = false
+omit_memory_md = false
+
+[model]
+# Multi-step gathering loop (recall → maybe fetch → assess), so the agentic
+# tier fits — not the slow reasoning tier (the scout is meant to be cheap).
+hint = "agentic"
+
+[tools]
+# Strictly read-only context-gathering surface. No writes, no shell, no
+# delegation — the scout collects and reports.
+named = [
+    # Targeted recall over the memory namespaces (global, background, …).
+    # NOTE: `memory_tree` is intentionally NOT here. That tool bundles a
+    # write mode (`ingest_document` → MemoryTreeIngestDocumentTool) under a
+    # ReadOnly-declared wrapper, so an auto-run, prompt-injectable scout could
+    # mutate memory ("remember this document") despite running read-only.
+    # Retrieval-only `memory_recall` covers the scout's needs safely.
+    "memory_recall",
+    # Fresh external facts when the question needs them.
+    "web_search_tool",
+    "web_fetch",
+]

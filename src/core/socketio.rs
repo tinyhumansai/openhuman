@@ -944,6 +944,30 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
                     });
                     let _ = io_memory_sync.emit("memory:build_progress", &payload);
                 }
+                crate::core::event_bus::DomainEvent::HarnessInitProgress {
+                    step_id,
+                    state,
+                    message,
+                    percent,
+                } => {
+                    let payload = serde_json::json!({
+                        "step_id": step_id,
+                        "state": state,
+                        "message": message,
+                        "percent": percent,
+                    });
+                    let _ = io_memory_sync.emit("init:progress", &payload);
+                }
+                crate::core::event_bus::DomainEvent::HarnessInitCompleted {
+                    overall,
+                    failed_required,
+                } => {
+                    let payload = serde_json::json!({
+                        "overall": overall,
+                        "failed_required": failed_required,
+                    });
+                    let _ = io_memory_sync.emit("init:completed", &payload);
+                }
                 _ => {}
             }
         }

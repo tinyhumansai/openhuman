@@ -5,9 +5,11 @@
 //! It is flavor-agnostic; the specific tree instances (global, topic,
 //! source) and their policies live in [`crate::openhuman::memory`].
 
+pub mod graph;
 pub mod health;
 pub mod ingest;
 pub mod io;
+pub mod nlp;
 pub mod retrieval;
 pub mod score;
 pub mod summarise;

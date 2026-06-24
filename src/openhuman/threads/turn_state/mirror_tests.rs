@@ -238,6 +238,7 @@ fn subagent_lifecycle_records_and_clears_active() {
         task_id: "sub-1".into(),
         call_id: "ctc-1".into(),
         tool_name: "search".into(),
+        arguments: serde_json::Value::Null,
         iteration: 1,
     });
     let activity = m.snapshot().tool_timeline[0]

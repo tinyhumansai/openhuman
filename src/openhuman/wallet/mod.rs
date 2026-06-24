@@ -38,7 +38,7 @@ pub(crate) use execution::{sign_and_broadcast_evm, sign_and_broadcast_solana};
 pub(crate) use ops::secret_material;
 pub use ops::{
     reveal_recovery_phrase, setup, status, RevealRecoveryPhraseResult, WalletAccount, WalletChain,
-    WalletSetupParams, WalletSetupSource, WalletStatus,
+    WalletSetupParams, WalletSetupSource, WalletStatus, WALLET_NOT_CONFIGURED_MESSAGE,
 };
 pub use schemas::{
     all_controller_schemas, all_registered_controllers, all_wallet_controller_schemas,

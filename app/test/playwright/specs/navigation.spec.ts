@@ -24,7 +24,10 @@ const ROUTES: RouteEntry[] = [
   { route: '/activity', expectedHash: '/settings/notifications' }, // back-compat redirect
   { route: '/intelligence', expectedHash: '/settings/notifications' }, // back-compat redirect
   { route: '/rewards' },
-  { route: '/settings' },
+  // Desktop Settings is a modal overlay (the backgroundLocation pattern): the
+  // /settings index redirects to the first panel and the modal renders on top
+  // of the /chat fallback backdrop.
+  { route: '/settings', expectedHash: '/settings/account' },
 ];
 
 test.describe('Navigation', () => {

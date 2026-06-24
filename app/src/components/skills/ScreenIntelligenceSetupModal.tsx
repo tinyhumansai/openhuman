@@ -6,11 +6,12 @@
  * skill setup flows (Gmail, etc.).
  */
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import { useScreenIntelligenceState } from '../../features/screen-intelligence/useScreenIntelligenceState';
 import { useT } from '../../lib/i18n/I18nContext';
 import { openhumanUpdateScreenIntelligenceSettings } from '../../utils/tauriCommands';
+import { settingsNavState } from '../settings/modal/settingsOverlay';
 import { CheckIcon } from '../ui';
 import {
   SetupNotice,
@@ -90,6 +91,7 @@ const PermissionRow = ({
 
 export default function ScreenIntelligenceSetupModal({ onClose, initialStep }: Props) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { t } = useT();
   const {
     status,
@@ -151,7 +153,7 @@ export default function ScreenIntelligenceSetupModal({ onClose, initialStep }: P
 
   const handleGoToSettings = () => {
     onClose();
-    navigate('/settings/screen-intelligence');
+    navigate('/settings/screen-intelligence', settingsNavState(location));
   };
 
   if (status?.platform_supported === false) {

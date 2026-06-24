@@ -24,6 +24,12 @@ pub const MIN_TIMEOUT_SECS: u64 = 1;
 pub const MAX_TIMEOUT_SECS: u64 = 3600;
 /// Operator override env var. Takes precedence over the persisted config value.
 pub const ENV_VAR: &str = "OPENHUMAN_TOOL_TIMEOUT_SECS";
+/// Effective-unbounded cap (24h) for sandbox backends, which require a finite
+/// deadline. Scripting tools run truly unbounded on the native path, but the
+/// sandbox path substitutes this generous cap when no explicit `timeout_secs`
+/// was requested — long enough not to kill a legitimate long job, finite
+/// enough to eventually reclaim a wedged sandbox process.
+pub const SANDBOX_UNBOUNDED_CAP_SECS: u64 = 86_400;
 
 /// Effective timeout in seconds. `0` is the "not yet seeded" sentinel: the
 /// first read resolves env/default and stores it. Config pushes overwrite it
@@ -118,6 +124,34 @@ pub fn tool_execution_timeout_duration() -> Duration {
     Duration::from_secs(current_secs())
 }
 
+/// Resolve an **explicit** per-call timeout request for a tool that is
+/// otherwise unbounded (the scripting tools: `shell`, `node_exec`, `npm_exec`).
+///
+/// Unlike most tools — which inherit the global config-driven timeout so a hung
+/// network/MCP call can't wedge a session — scripting tools run with **no**
+/// default deadline: a build / solver / test run legitimately takes minutes and
+/// must not be hard-killed by a default cap (issue #4023). A deadline applies
+/// only when the caller explicitly asks for one via `timeout_secs`.
+///
+/// Returns:
+/// - `None` → run unbounded. Used when no `timeout_secs` was supplied
+///   (`None`) or it was explicitly disabled (`Some(0)`).
+/// - `Some(secs)` → enforce this budget, clamped to `MIN_TIMEOUT_SECS..=cap`.
+///   `cap` lets callers with a tighter own-ceiling (e.g. node/npm at 1800s)
+///   pass it; most callers pass [`MAX_TIMEOUT_SECS`].
+pub fn explicit_call_timeout_secs(requested: Option<u64>, cap: u64) -> Option<u64> {
+    let cap = cap.clamp(MIN_TIMEOUT_SECS, MAX_TIMEOUT_SECS);
+    match requested {
+        None | Some(0) => None,
+        Some(n) => Some(n.clamp(MIN_TIMEOUT_SECS, cap)),
+    }
+}
+
+/// [`explicit_call_timeout_secs`] as a [`Duration`], or `None` for unbounded.
+pub fn explicit_call_timeout_duration(requested: Option<u64>, cap: u64) -> Option<Duration> {
+    explicit_call_timeout_secs(requested, cap).map(Duration::from_secs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,6 +226,45 @@ mod tests {
         // being applied verbatim.
         assert_eq!(resolve_effective(0, None), DEFAULT_TIMEOUT_SECS);
         assert_eq!(resolve_effective(99_999, None), DEFAULT_TIMEOUT_SECS);
+    }
+
+    #[test]
+    fn explicit_call_timeout_unbounded_when_absent_or_disabled() {
+        // No request, or an explicit 0, means "run unbounded" (None).
+        assert_eq!(explicit_call_timeout_secs(None, MAX_TIMEOUT_SECS), None);
+        assert_eq!(explicit_call_timeout_secs(Some(0), MAX_TIMEOUT_SECS), None);
+    }
+
+    #[test]
+    fn explicit_call_timeout_enforces_and_clamps_request() {
+        // An in-range request is enforced verbatim.
+        assert_eq!(
+            explicit_call_timeout_secs(Some(900), MAX_TIMEOUT_SECS),
+            Some(900)
+        );
+        // Below the floor clamps up to MIN.
+        assert_eq!(
+            explicit_call_timeout_secs(Some(0), MAX_TIMEOUT_SECS),
+            None,
+            "0 disables rather than clamping to MIN"
+        );
+        // Above the cap clamps down to the cap.
+        assert_eq!(
+            explicit_call_timeout_secs(Some(99_999), MAX_TIMEOUT_SECS),
+            Some(MAX_TIMEOUT_SECS)
+        );
+        // A tool with a tighter own ceiling (node/npm at 1800) clamps to it.
+        assert_eq!(explicit_call_timeout_secs(Some(99_999), 1800), Some(1800));
+        assert_eq!(explicit_call_timeout_secs(Some(600), 1800), Some(600));
+    }
+
+    #[test]
+    fn explicit_call_timeout_duration_matches_secs() {
+        assert_eq!(
+            explicit_call_timeout_duration(Some(900), MAX_TIMEOUT_SECS),
+            Some(Duration::from_secs(900))
+        );
+        assert_eq!(explicit_call_timeout_duration(None, MAX_TIMEOUT_SECS), None);
     }
 
     #[test]

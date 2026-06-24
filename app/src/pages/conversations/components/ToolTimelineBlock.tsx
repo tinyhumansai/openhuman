@@ -1,8 +1,16 @@
 import WorktreeActions from '../../../components/worktree/WorktreeActions';
 import { useT } from '../../../lib/i18n/I18nContext';
-import type { SubagentActivity, ToolTimelineEntry } from '../../../store/chatRuntimeSlice';
+import type {
+  SubagentActivity,
+  ToolTimelineEntry,
+  ToolTimelineEntryStatus,
+} from '../../../store/chatRuntimeSlice';
 import { basename } from '../../../utils/pathUtils';
-import { formatTimelineEntry, formatToolName } from '../../../utils/toolTimelineFormatting';
+import {
+  formatTimelineEntry,
+  formatToolName,
+  stripToolCallEnvelopes,
+} from '../../../utils/toolTimelineFormatting';
 import { parseWorkerThreadRef } from '../utils/workerThreadRef';
 import { agentNameTone, AgentTimelineRail } from './AgentTimelineRail';
 import { WorkerThreadRefCard, type WorkerThreadStatus } from './WorkerThreadRefCard';
@@ -26,21 +34,143 @@ function workerStatusFromEntry(
   return undefined;
 }
 
-/**
- * Render the live activity of one running (or completed) sub-agent
- * inside its parent timeline row — the mode/dedicated-thread badge,
- * the child iteration counter, the final-run statistics, and the
- * flat list of child tool calls the sub-agent has executed.
- *
- * Kept as a sibling of the existing worker-thread / detail block so
- * the surrounding `<details>` chevron + status pill behaviour is
- * unaffected — this component only renders when `subagent` is
- * present on the entry, which is true for any row produced by the
- * `subagent_*` socket events from a current core.
- */
-/** Chars of streamed subagent text/thinking shown in the inline card tail. */
-const SUBAGENT_PREVIEW_CHARS = 140;
+/** Tone classes for a child tool-call row keyed by its lifecycle status. */
+function toolCallTone(status: ToolTimelineEntryStatus): string {
+  if (status === 'running') return 'text-amber-700 dark:text-amber-300';
+  if (status === 'success') return 'text-sage-700 dark:text-sage-300';
+  return 'text-coral-700 dark:text-coral-300';
+}
 
+/**
+ * One child tool-call row in a sub-agent's inline activity. Shared by the
+ * ordered transcript (interleaved with {@link ThoughtBlock}) and the flat
+ * `toolCalls` fallback, so the row markup lives in exactly one place.
+ */
+function ToolCallRow({
+  call,
+}: {
+  call: {
+    callId: string;
+    toolName: string;
+    status: ToolTimelineEntryStatus;
+    elapsedMs?: number;
+    iteration?: number;
+  };
+}) {
+  const tone = toolCallTone(call.status);
+  return (
+    <div className="flex items-center gap-1.5" data-testid="subagent-tool-call">
+      <span className={`text-[9px] ${tone}`}>•</span>
+      <span className="text-[10px] text-stone-700 dark:text-neutral-200">
+        {formatToolName(call.toolName)}
+      </span>
+      {call.iteration != null ? (
+        <span className="text-[9px] text-stone-400 dark:text-neutral-500">·t{call.iteration}</span>
+      ) : null}
+      <span className={`text-[9px] ${tone}`}>{call.status}</span>
+      {call.elapsedMs != null && call.status !== 'running' ? (
+        <span className="text-[9px] text-stone-400 dark:text-neutral-500">
+          {call.elapsedMs >= 1000
+            ? `${(call.elapsedMs / 1000).toFixed(1)}s`
+            : `${call.elapsedMs}ms`}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The agent's reasoning or visible narration, surfaced inline in the timeline
+ * as a quoted/italic "Thoughts" block at the position it streamed — so a
+ * thought shows up wherever it occurred between tool calls. Both `thinking`
+ * and `text` transcript items render through here. Renders nothing for an
+ * all-whitespace delta so a half-streamed item never flashes an empty quote.
+ */
+function ThoughtBlock({ text }: { text: string }) {
+  const { t } = useT();
+  // Drop any inline `<tool_call>…</tool_call>` envelope the model emitted as
+  // text — the call already shows as its own row — then flatten to one line.
+  const clean = stripToolCallEnvelopes(text).replace(/\s+/g, ' ').trim();
+  if (!clean) return null;
+  return (
+    <details
+      open
+      data-testid="subagent-thought"
+      className="group/thought my-0.5 border-l-2 border-stone-200 pl-2 dark:border-neutral-700">
+      <summary className="flex cursor-pointer list-none items-center gap-1 select-none marker:hidden">
+        <span aria-hidden className="text-[9px] leading-none">
+          💭
+        </span>
+        <span className="text-[9px] font-semibold tracking-wide text-stone-400 uppercase dark:text-neutral-500">
+          {t('conversations.subagent.thoughts')}
+        </span>
+        <span className="text-[8px] text-stone-300 transition-transform group-open/thought:rotate-90 dark:text-neutral-600">
+          ▶
+        </span>
+      </summary>
+      <div className="mt-0.5 text-[10px] break-words text-stone-500 italic dark:text-neutral-400">
+        “{clean}”
+      </div>
+    </details>
+  );
+}
+
+/** Tail of the parent's in-flight response shown in the processing panel. */
+const RESPONSE_PREVIEW_CHARS = 320;
+
+/**
+ * The parent agent's live response, surfaced inside the processing panel while
+ * the turn is in flight — its lead-in narration ("Let me check your Notion…")
+ * belongs with the work it's narrating, not in a standalone chat bubble. The
+ * final answer still lands in the message bubble once the turn settles.
+ * Collapsible + accented apart from the stone-toned sub-agent Thoughts so the
+ * parent's own voice reads as the primary thread.
+ */
+function LiveResponseBlock({ text }: { text: string }) {
+  const { t } = useT();
+  const clean = stripToolCallEnvelopes(text)
+    .replace(/[ \t]+\n/g, '\n')
+    .trimEnd();
+  const shown = clean.slice(-RESPONSE_PREVIEW_CHARS);
+  if (!shown.trim()) return null;
+  return (
+    <details
+      open
+      data-testid="agent-live-response"
+      className="group/resp mt-1.5 border-l-2 border-primary-300 pl-2 dark:border-primary-500/50">
+      <summary className="flex cursor-pointer list-none items-center gap-1 select-none marker:hidden">
+        <span aria-hidden className="text-[9px] leading-none">
+          💬
+        </span>
+        <span className="text-[9px] font-semibold tracking-wide text-primary-500 uppercase dark:text-primary-300">
+          {t('conversations.agentTaskInsights.response')}
+        </span>
+        <span className="text-[8px] text-stone-300 transition-transform group-open/resp:rotate-90 dark:text-neutral-600">
+          ▶
+        </span>
+      </summary>
+      <p className="mt-0.5 text-[10px] leading-snug break-words whitespace-pre-wrap text-stone-600 dark:text-neutral-300">
+        {clean.length > RESPONSE_PREVIEW_CHARS ? (
+          <span className="text-stone-400 dark:text-neutral-500">…</span>
+        ) : null}
+        {shown}
+        <span className="ml-0.5 inline-block h-3 w-1 animate-pulse bg-primary-400 align-middle" />
+      </p>
+    </details>
+  );
+}
+
+/**
+ * Render the live activity of one running (or completed) sub-agent inside its
+ * parent timeline row — the mode/dedicated-thread badge, the child iteration
+ * counter, the final-run statistics, and the ordered transcript of child tool
+ * calls interleaved with the agent's "Thoughts" (reasoning + narration).
+ *
+ * Kept as a sibling of the existing worker-thread / detail block so the
+ * surrounding `<details>` chevron + status pill behaviour is unaffected — this
+ * component only renders when `subagent` is present on the entry, which is true
+ * for any row produced by the `subagent_*` socket events from a current core.
+ */
 export function SubagentActivityBlock({
   subagent,
   onView,
@@ -77,20 +207,12 @@ export function SubagentActivityBlock({
     );
   }
 
-  // Live one-line preview of the subagent's streamed processing, derived
-  // from the ordered transcript: prefer the latest visible-output tail, then
-  // fall back to the latest reasoning tail while the child is still thinking
-  // and hasn't emitted visible text yet. Drives the at-a-glance "what is it
-  // doing right now" affordance on the card.
+  // The ordered transcript drives the inline activity: child tool-call rows
+  // and the agent's "Thoughts" (reasoning + visible narration) render in the
+  // exact order they streamed, so each thought appears wherever it occurred
+  // between tool calls. Falls back to the flat tool-call list when the prose
+  // transcript is absent (e.g. a rehydrated/interrupted snapshot).
   const transcript = subagent.transcript ?? [];
-  const lastTextItem = [...transcript].reverse().find(i => i.kind === 'text');
-  const lastThinkingItem = [...transcript].reverse().find(i => i.kind === 'thinking');
-  const previewItem = lastTextItem ?? lastThinkingItem;
-  const previewIcon = previewItem?.kind === 'text' ? '📝' : '💭';
-  const preview =
-    previewItem && 'text' in previewItem
-      ? previewItem.text.replace(/\s+/g, ' ').trim().slice(-SUBAGENT_PREVIEW_CHARS)
-      : '';
 
   return (
     <div
@@ -107,48 +229,21 @@ export function SubagentActivityBlock({
           ))}
         </div>
       ) : null}
-      {subagent.toolCalls.length > 0 ? (
-        <ul className="ml-1 space-y-0.5">
-          {subagent.toolCalls.map(call => {
-            const tone =
-              call.status === 'running'
-                ? 'text-amber-700 dark:text-amber-300'
-                : call.status === 'success'
-                  ? 'text-sage-700 dark:text-sage-300'
-                  : 'text-coral-700 dark:text-coral-300';
-            return (
-              <li
-                key={call.callId}
-                className="flex items-center gap-1.5"
-                data-testid="subagent-tool-call">
-                <span className={`text-[9px] ${tone}`}>•</span>
-                <span className="text-[10px] text-stone-700 dark:text-neutral-200">
-                  {formatToolName(call.toolName)}
-                </span>
-                {call.iteration != null ? (
-                  <span className="text-[9px] text-stone-400 dark:text-neutral-500">
-                    ·t{call.iteration}
-                  </span>
-                ) : null}
-                <span className={`text-[9px] ${tone}`}>{call.status}</span>
-                {call.elapsedMs != null && call.status !== 'running' ? (
-                  <span className="text-[9px] text-stone-400 dark:text-neutral-500">
-                    {call.elapsedMs >= 1000
-                      ? `${(call.elapsedMs / 1000).toFixed(1)}s`
-                      : `${call.elapsedMs}ms`}
-                  </span>
-                ) : null}
-              </li>
-            );
-          })}
-        </ul>
-      ) : null}
-      {preview ? (
-        <div
-          className="flex items-start gap-1 text-[10px] text-stone-500 dark:text-neutral-400"
-          data-testid="subagent-preview">
-          <span aria-hidden>{previewIcon}</span>
-          <span className="line-clamp-2 break-words italic">{preview}</span>
+      {transcript.length > 0 ? (
+        <div className="ml-1 space-y-0.5" data-testid="subagent-transcript">
+          {transcript.map((item, i) =>
+            item.kind === 'tool' ? (
+              <ToolCallRow key={item.callId} call={item} />
+            ) : (
+              <ThoughtBlock key={`thought-${i}`} text={item.text} />
+            )
+          )}
+        </div>
+      ) : subagent.toolCalls.length > 0 ? (
+        <div className="ml-1 space-y-0.5">
+          {subagent.toolCalls.map(call => (
+            <ToolCallRow key={call.callId} call={call} />
+          ))}
         </div>
       ) : null}
       {subagent.worktreePath ? (
@@ -230,6 +325,7 @@ export function ToolTimelineBlock({
   entries,
   onViewSubagent,
   expandAllRows = false,
+  liveResponse,
 }: {
   entries: ToolTimelineEntry[];
   /** Opens the full-transcript drawer for a subagent row. When omitted,
@@ -240,6 +336,12 @@ export function ToolTimelineBlock({
    * Source" panel, where the whole run should be visible at a glance).
    * In the inline chat only the latest running row auto-expands. */
   expandAllRows?: boolean;
+  /** The parent agent's in-flight response text. While the turn streams, its
+   * narration renders inside this panel (as a "Response" block) instead of a
+   * standalone chat bubble, so the lead-in sits with the work it narrates.
+   * Omitted/empty once the turn settles — the final answer is the message
+   * bubble. */
+  liveResponse?: string;
 }) {
   const { t } = useT();
   const latestRunningEntryId = [...entries].reverse().find(entry => entry.status === 'running')?.id;
@@ -325,6 +427,7 @@ export function ToolTimelineBlock({
           );
         })}
       </div>
+      {liveResponse ? <LiveResponseBlock text={liveResponse} /> : null}
     </details>
   );
 }

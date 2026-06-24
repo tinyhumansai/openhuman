@@ -81,6 +81,7 @@ fn parent_context(provider: Arc<dyn Provider>) -> ParentExecutionContext {
         provider,
         all_tools: Arc::new(Vec::<Box<dyn Tool>>::new()),
         all_tool_specs: Arc::new(Vec::<ToolSpec>::new()),
+        visible_tool_names: std::collections::HashSet::new(),
         model_name: "test-model".to_string(),
         temperature: 0.2,
         workspace_dir: std::env::temp_dir(),

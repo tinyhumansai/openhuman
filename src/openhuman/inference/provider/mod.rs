@@ -27,8 +27,8 @@ pub mod traits;
 
 #[allow(unused_imports)]
 pub use traits::{
-    ChatMessage, ChatRequest, ChatResponse, ConversationMessage, Provider, ProviderCapabilityError,
-    ProviderDelta, ToolCall, ToolResultMessage, UsageInfo,
+    ChatMessage, ChatRequest, ChatResponse, ConversationMessage, PromptCacheCapabilities, Provider,
+    ProviderCapabilityError, ProviderDelta, ToolCall, ToolResultMessage, UsageInfo,
 };
 
 pub use billing_error::is_budget_exhausted_message;

@@ -31,7 +31,11 @@ describe('SidebarHeader', () => {
   it('wallet button navigates to /settings/wallet-balances', () => {
     renderWithProviders(<SidebarHeader />, { initialEntries: ['/home'] });
     fireEvent.click(screen.getByRole('button', { name: 'nav.wallet' }));
-    expect(mockNavigate).toHaveBeenCalledWith('/settings/wallet-balances');
+    // Carries the backgroundLocation so the desktop Settings modal renders over
+    // the page it was opened from.
+    expect(mockNavigate).toHaveBeenCalledWith('/settings/wallet-balances', {
+      state: { backgroundLocation: expect.objectContaining({ pathname: '/home' }) },
+    });
   });
 
   it('wallet button has correct data-analytics-id', () => {
@@ -46,13 +50,17 @@ describe('SidebarHeader', () => {
     renderWithProviders(<SidebarHeader />, { initialEntries: ['/home'] });
     const btn = screen.getByRole('button', { name: 'nav.wallet' });
     expect(btn).toHaveAttribute('aria-label', 'nav.wallet');
+    // The styled <Tooltip> wrapper re-applies a native `title` fallback so the
+    // label still surfaces if the portal pill is occluded by a CEF webview.
     expect(btn).toHaveAttribute('title', 'nav.wallet');
   });
 
   it('settings button navigates to /settings', () => {
     renderWithProviders(<SidebarHeader />, { initialEntries: ['/home'] });
     fireEvent.click(screen.getByRole('button', { name: 'nav.settings' }));
-    expect(mockNavigate).toHaveBeenCalledWith('/settings');
+    expect(mockNavigate).toHaveBeenCalledWith('/settings', {
+      state: { backgroundLocation: expect.objectContaining({ pathname: '/home' }) },
+    });
   });
 
   it('Home button invokes the shared Home action', () => {

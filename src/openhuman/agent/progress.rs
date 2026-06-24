@@ -149,6 +149,10 @@ pub enum AgentProgress {
         task_id: String,
         call_id: String,
         tool_name: String,
+        /// Full arguments the child invoked the tool with, so the parent
+        /// thread's UI can show *what exactly* the sub-agent did (not just
+        /// the tool name). Mirrors the top-level `ToolCallStarted.arguments`.
+        arguments: serde_json::Value,
         /// 1-based child iteration index this call belongs to.
         iteration: u32,
     },
@@ -161,6 +165,10 @@ pub enum AgentProgress {
         tool_name: String,
         success: bool,
         output_chars: usize,
+        /// Full text the tool returned, so the UI can show the sub-agent's
+        /// actual result/output. `output_chars` is kept as a cheap size hint
+        /// for consumers that only want the length.
+        output: String,
         elapsed_ms: u64,
         /// 1-based child iteration index.
         iteration: u32,

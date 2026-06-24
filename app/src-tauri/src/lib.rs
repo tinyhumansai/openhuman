@@ -307,6 +307,24 @@ async fn recover_port_conflict(
     Ok(outcome)
 }
 
+/// Terminate the foreign process holding the core RPC port, after the user
+/// consented to the specific pid surfaced by `recover_port_conflict`.
+#[tauri::command]
+async fn force_quit_port_owner(
+    pid: u32,
+    state: tauri::State<'_, core_process::CoreProcessHandle>,
+) -> Result<core_process::RecoveryOutcome, String> {
+    log::info!("[core] force_quit_port_owner: command invoked for pid {pid}");
+    let _guard = state.inner().restart_lock().await;
+    let outcome = state.inner().force_quit_port_owner(pid).await;
+    log::debug!(
+        "[core] force_quit_port_owner: result success={} message={}",
+        outcome.success,
+        outcome.message
+    );
+    Ok(outcome)
+}
+
 /// Start the embedded core process on demand.
 ///
 /// Called by the BootCheckGate (Local mode) before the version check.  The
@@ -1994,6 +2012,46 @@ fn append_platform_cef_gpu_workarounds(
     }
 }
 
+/// Whether a CEF command-line flag is `--time-ticks-at-unix-epoch` (in any
+/// dash/casing form, with or without an inline `=<value>` suffix). See
+/// [`strip_time_ticks_at_unix_epoch`] for why we care.
+fn is_time_ticks_at_unix_epoch_flag(flag: &str) -> bool {
+    let name = flag.trim_start_matches('-');
+    // Chromium switches can carry their value inline (`--flag=value`); compare
+    // only the switch name so the inline form can't slip past the guard.
+    let name = name.split_once('=').map_or(name, |(n, _)| n);
+    name.eq_ignore_ascii_case("time-ticks-at-unix-epoch")
+}
+
+/// Issue #3554: `--time-ticks-at-unix-epoch` carries the monotonic-clock
+/// origin (in microseconds) that CEF child processes — renderer / GPU /
+/// utility — use to map Chromium's `TimeTicks` onto wall-clock time. Chromium
+/// derives this value itself when it spawns each child, and it must stay
+/// consistent with the host clock.
+///
+/// OpenHuman must never inject this switch into the CEF command line: a stale
+/// or negative value (e.g. the `-1780937467390432` reported in #3554) pins the
+/// renderer's internal clock ~56 years before the Unix epoch, which surfaces
+/// as a wrong "Current Date & Time" in the app. The CEF command line is
+/// assembled from several sources (the static list here plus any
+/// `RuntimeInitAttribute::CommandLineArgs` contributed elsewhere), so strip the
+/// flag from the final list as a guard and let Chromium compute the origin
+/// locally for each process.
+fn strip_time_ticks_at_unix_epoch(args: &mut Vec<CefCommandLineArg>) {
+    args.retain(|(flag, value)| {
+        if is_time_ticks_at_unix_epoch_flag(flag) {
+            log::warn!(
+                "[cef-startup] dropping OpenHuman-supplied --time-ticks-at-unix-epoch{} so \
+                 Chromium computes the clock origin locally (issue #3554)",
+                value.map(|v| format!("={v}")).unwrap_or_default()
+            );
+            false
+        } else {
+            true
+        }
+    });
+}
+
 /// Linux only: replace Xlib's default error handler with a logging no-op.
 ///
 /// Why: on Wayland sessions (GNOME/KDE/Hyprland) running CEF via XWayland,
@@ -2635,6 +2693,10 @@ pub fn run() {
             std::env::consts::ARCH,
             force_gpu_env.as_deref(),
         );
+        // #3554: never forward a `--time-ticks-at-unix-epoch` switch to CEF —
+        // a corrupt/negative value drives the renderer's clock decades off and
+        // shows a wrong "Current Date & Time". Let Chromium compute it.
+        strip_time_ticks_at_unix_epoch(&mut args);
         tauri::Builder::<tauri::Cef>::new().command_line_args::<&str, &str>(args)
     };
 
@@ -3463,6 +3525,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             core_rpc_url,
             core_rpc_token,
+            // Host-side HTTP relay so the renderer can reach a self-hosted
+            // runtime on a LAN IP that the secure `tauri://localhost` webview
+            // cannot fetch directly (cleartext mixed content). See #3865.
+            core_rpc::relay_http_rpc,
             overlay_parent_rpc_url,
             process_diagnostics_list_owned,
             // `mod artifact_commands;` is `#[cfg(any(target_os = "macos", target_os = "linux"))]`
@@ -3479,6 +3545,7 @@ pub fn run() {
             install_app_update,
             restart_core_process,
             recover_port_conflict,
+            force_quit_port_owner,
             start_core_process,
             local_data_reset::reset_local_data,
             app_quit,

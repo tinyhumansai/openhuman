@@ -1304,6 +1304,125 @@ fn repeat_failure_guard_halts_on_6_consecutive_varied() {
 }
 
 #[test]
+fn recoverable_failure_classifier_recognizes_timeouts_and_transients() {
+    for recoverable in [
+        "Error: tool 'shell' timed out after 60 seconds",
+        "Command timed out after 60s and was killed",
+        "deadline exceeded while fetching",
+        "connection reset by peer",
+        "503 Service Unavailable",
+        "rate limit exceeded; retry after 1s",
+    ] {
+        assert!(
+            is_recoverable_tool_failure(recoverable),
+            "expected recoverable marker in {recoverable:?}"
+        );
+    }
+
+    for terminal in [
+        "externally-managed-environment",
+        "No such file or directory",
+        "permission denied",
+        "syntax error near unexpected token",
+    ] {
+        assert!(
+            !is_recoverable_tool_failure(terminal),
+            "non-transient failures should keep the generic breaker path: {terminal:?}"
+        );
+    }
+}
+
+#[test]
+fn recoverable_identical_failures_get_extended_headroom() {
+    let mut g = RepeatFailureGuard::new();
+    let timeout = "Error: tool 'shell' timed out after 60 seconds";
+
+    for i in 0..(REPEAT_FAILURE_THRESHOLD + 2) {
+        assert!(
+            g.record("shell", "python solve.py", false, timeout)
+                .is_none(),
+            "recoverable identical timeout should not halt at generic failure count {}",
+            i + 1
+        );
+    }
+
+    for i in (REPEAT_FAILURE_THRESHOLD + 2)..(RECOVERABLE_REPEAT_FAILURE_THRESHOLD - 1) {
+        assert!(
+            g.record("shell", "python solve.py", false, timeout)
+                .is_none(),
+            "recoverable identical timeout should keep headroom until count {}",
+            i + 1
+        );
+    }
+
+    let halt = g.record("shell", "python solve.py", false, timeout);
+    let msg = halt.expect("identical recoverable failures still eventually trip");
+    assert!(
+        msg.contains(&format!(
+            "retried {} times",
+            RECOVERABLE_REPEAT_FAILURE_THRESHOLD
+        )),
+        "got: {msg}"
+    );
+    assert!(
+        msg.contains("extended transient-failure headroom"),
+        "recoverable halt should explain why it waited longer: {msg}"
+    );
+}
+
+#[test]
+fn recoverable_varied_failures_do_not_trip_generic_no_progress() {
+    let mut g = RepeatFailureGuard::new();
+    let timeout = "Error: tool 'shell' timed out after 60 seconds";
+
+    for i in 0..(NO_PROGRESS_FAILURE_THRESHOLD + 2) {
+        assert!(
+            g.record(
+                "shell",
+                &format!("python solve.py --attempt={i}"),
+                false,
+                timeout
+            )
+            .is_none(),
+            "varied recoverable failures should not halt at generic no-progress count {}",
+            i + 1
+        );
+    }
+
+    for i in (NO_PROGRESS_FAILURE_THRESHOLD + 2)..(RECOVERABLE_NO_PROGRESS_FAILURE_THRESHOLD - 1) {
+        assert!(
+            g.record(
+                "shell",
+                &format!("python solve.py --attempt={i}"),
+                false,
+                timeout
+            )
+            .is_none(),
+            "varied recoverable failures should keep headroom until count {}",
+            i + 1
+        );
+    }
+
+    let halt = g.record(
+        "shell",
+        &format!(
+            "python solve.py --attempt={}",
+            RECOVERABLE_NO_PROGRESS_FAILURE_THRESHOLD - 1
+        ),
+        false,
+        timeout,
+    );
+    let msg = halt.expect("recoverable no-progress failures remain bounded");
+    assert!(
+        msg.contains(&format!(
+            "{} recoverable-looking tool failures",
+            RECOVERABLE_NO_PROGRESS_FAILURE_THRESHOLD
+        )),
+        "got: {msg}"
+    );
+}
+
+#[test]
 fn repeat_failure_guard_success_resets_consecutive() {
     let mut g = RepeatFailureGuard::new();
     for i in 0..5 {
@@ -1635,10 +1754,10 @@ fn terminal_failure_halts_first_even_across_varied_delegation_tools() {
 #[test]
 fn terminal_classifier_does_not_short_circuit_transient_grace() {
     // A genuinely transient (retryable) failure must still flow through the
-    // existing no-progress backstop — proving the terminal halt is additive,
-    // not a blanket "halt on first failure" regression.
+    // recoverable-failure headroom — proving the terminal halt is additive, not
+    // a blanket "halt on first failure" regression.
     let mut g = RepeatFailureGuard::new();
-    for i in 0..5 {
+    for i in 0..(RECOVERABLE_NO_PROGRESS_FAILURE_THRESHOLD - 1) {
         assert!(
             g.record(
                 "run_code",
@@ -1647,14 +1766,16 @@ fn terminal_classifier_does_not_short_circuit_transient_grace() {
                 "Error: timed out"
             )
             .is_none(),
-            "transient failures must NOT halt before the 6-consecutive threshold"
+            "transient failures must NOT halt before the recoverable no-progress threshold"
         );
     }
-    assert!(
-        g.record("run_code", "attempt5", false, "Error: timed out")
-            .is_some(),
-        "6 consecutive transient failures still trip the no-progress guard"
+    let halt = g.record(
+        "run_code",
+        &format!("attempt{}", RECOVERABLE_NO_PROGRESS_FAILURE_THRESHOLD - 1),
+        false,
+        "Error: timed out",
     );
+    assert!(halt.is_some(), "recoverable failures still remain bounded");
 }
 
 /// Provider that records the tool-spec names of every `chat()` request

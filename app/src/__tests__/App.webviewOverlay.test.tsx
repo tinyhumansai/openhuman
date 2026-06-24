@@ -29,6 +29,10 @@ const baseState = {
     logs: {},
     overlayOpen: false,
   },
+  // The desktop shell now mounts <UserErrorCenter/>, which reads this slice
+  // via selectActiveUserErrors; include its empty initial shape so the
+  // component renders null instead of throwing on an undefined slice (#3931).
+  userErrors: { byId: {}, order: [] },
 };
 
 let mockState = baseState;

@@ -361,6 +361,24 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         privacy: LOCAL_RAW,
     },
     Capability {
+        id: "intelligence.long_term_goals",
+        name: "Long-term Goals",
+        domain: "intelligence",
+        category: CapabilityCategory::Intelligence,
+        description: "An editable list of the assistant's durable long-term goals for working with \
+            you, stored locally in MEMORY_GOALS.md (capped ~500 tokens). A background goals agent \
+            keeps the list fresh: it runs when the conversation context is summarized, and on first \
+            run populates initial goals from context. Items can be added/edited/deleted explicitly \
+            via RPC or agent tools.",
+        how_to: "Automatic — refreshed on context summarization. Manage via \
+            memory_goals.list / memory_goals.add / memory_goals.edit / memory_goals.delete / \
+            memory_goals.reflect (RPC), or the goals_* agent tools.",
+        status: CapabilityStatus::Beta,
+        // Enrichment runs a cloud agentic model, so goal/context text can leave
+        // the device during a reflect pass (CRUD/storage stays local).
+        privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
         id: "intelligence.memory_tree_retrieval",
         name: "Memory Tree Retrieval (chat)",
         domain: "intelligence",

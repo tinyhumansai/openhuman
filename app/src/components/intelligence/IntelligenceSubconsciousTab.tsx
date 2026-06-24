@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import type { SubconsciousMode } from '../../utils/tauriCommands/heartbeat';
 import type { SubconsciousStatus } from '../../utils/tauriCommands/subconscious';
+import { settingsNavState } from '../settings/modal/settingsOverlay';
 
 interface ModeOption {
   id: SubconsciousMode;
@@ -67,6 +68,7 @@ export default function IntelligenceSubconsciousTab({
 }: IntelligenceSubconsciousTabProps) {
   const { t } = useT();
   const navigate = useNavigate();
+  const location = useLocation();
   const providerUnavailable = status?.provider_available === false;
   const providerUnavailableReason = providerUnavailable
     ? (status?.provider_unavailable_reason ?? t('subconscious.providerUnavailableTitle'))
@@ -238,7 +240,7 @@ export default function IntelligenceSubconsciousTab({
             </div>
             <button
               type="button"
-              onClick={() => navigate('/settings/llm')}
+              onClick={() => navigate('/settings/llm', settingsNavState(location))}
               className="flex-shrink-0 rounded-md bg-amber-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-amber-700 transition-colors">
               {t('subconscious.providerSettings')}
             </button>

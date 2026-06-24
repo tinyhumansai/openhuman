@@ -559,7 +559,9 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
     setSkillsLoading(true);
     setSkillsError(null);
     try {
-      const result = await workflowsApi.listWorkflows();
+      // Include `skills/`-root installs (registry installs land there) so they
+      // appear in the Installed tab and flip the catalog Install button.
+      const result = await workflowsApi.listWorkflows({ includeSkills: true });
       log('fetchSkills: count=%d', result.length);
       setSkills(result);
     } catch (err) {
@@ -697,7 +699,11 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
       setInstallingId(entry.id);
       try {
         const result = await skillRegistryApi.install(entry.id);
-        void fetchSkills();
+        // Await the refetch so `installedKeys` is fresh before the button
+        // re-renders — otherwise it briefly flips back to "Install" between
+        // clearing the installing state and the list updating. `fetchSkills`
+        // swallows its own errors, so this never throws into the catch below.
+        await fetchSkills();
         onToast?.({
           type: 'success',
           title: t('skills.install.installComplete'),

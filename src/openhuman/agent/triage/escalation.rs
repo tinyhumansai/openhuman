@@ -275,6 +275,7 @@ async fn dispatch_target_agent(agent_id: &str, prompt: &str) -> anyhow::Result<S
         provider: agent.provider_arc(),
         all_tools: agent.tools_arc(),
         all_tool_specs: agent.tool_specs_arc(),
+        visible_tool_names: std::collections::HashSet::new(),
         model_name: agent.model_name().to_string(),
         temperature: agent.temperature(),
         workspace_dir: agent.workspace_dir().to_path_buf(),

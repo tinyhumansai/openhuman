@@ -252,114 +252,63 @@ pub(super) fn handle_set_enabled(params: Map<String, Value>) -> ControllerFuture
 
 pub(super) fn handle_smart_walk(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        use crate::openhuman::memory::chat::build_chat_provider;
-        use crate::openhuman::memory::query::smart_walk::{
-            run_smart_walk, SmartWalkOptions, SmartWalkStopReason,
-        };
+        use crate::openhuman::memory_tree::retrieval::{fast_retrieve, FastRetrieveOptions};
 
+        // `max_turns`/`model` are accepted for backwards compatibility but
+        // ignored — retrieval is now deterministic (E2GraphRAG), so there are
+        // no LLM turns or model to select. `namespace` is NOT silently
+        // ignored: fast-retrieve operates over the whole leaf/summary store
+        // (leaf storage is intentionally not namespace-scoped), so a caller
+        // that previously relied on `namespace` as a retrieval boundary must
+        // fail closed rather than receive unscoped hits.
         #[derive(serde::Deserialize)]
         struct Req {
             query: String,
-            #[serde(default = "default_namespace")]
-            namespace: String,
             #[serde(default)]
+            limit: Option<u64>,
+            #[serde(default)]
+            time_window_days: Option<u32>,
+            #[serde(default)]
+            max_hops: Option<u32>,
+            #[serde(default)]
+            namespace: Option<String>,
+            #[serde(default)]
+            #[allow(dead_code)]
             max_turns: Option<u64>,
             #[serde(default)]
+            #[allow(dead_code)]
             model: Option<String>,
-        }
-        fn default_namespace() -> String {
-            "default".into()
         }
 
         let req = parse_value::<Req>(Value::Object(params))?;
+
+        // Fail closed for a non-default namespace: deterministic retrieval has
+        // no namespace boundary, so honouring it silently would leak
+        // cross-namespace hits. The default namespace is the whole store.
+        if let Some(ns) = req.namespace.as_deref() {
+            if !ns.is_empty() && ns != "default" {
+                return Err(format!(
+                    "smart_walk: namespace `{ns}` is not supported — deterministic \
+                     retrieval is not namespace-scoped (leaf storage is global). \
+                     Omit `namespace` or pass \"default\"."
+                ));
+            }
+        }
+
         let config = config_rpc::load_config_with_timeout().await?;
 
-        let chat_provider = build_chat_provider(&config)
-            .map_err(|e| format!("smart_walk: build chat provider failed: {e}"))?;
-
-        struct Adapter {
-            inner: std::sync::Arc<dyn crate::openhuman::memory::chat::ChatProvider>,
-        }
-
-        #[async_trait::async_trait]
-        impl crate::openhuman::inference::provider::traits::Provider for Adapter {
-            async fn chat_with_system(
-                &self,
-                system: Option<&str>,
-                message: &str,
-                _model: &str,
-                temperature: f64,
-            ) -> anyhow::Result<String> {
-                let prompt = crate::openhuman::memory::chat::ChatPrompt {
-                    system: system.unwrap_or("").to_string(),
-                    user: message.to_string(),
-                    temperature,
-                    kind: "memory_smart_walk_rpc",
-                    max_tokens: None,
-                };
-                self.inner.chat_for_text(&prompt).await
-            }
-
-            async fn chat_with_history(
-                &self,
-                messages: &[crate::openhuman::inference::provider::traits::ChatMessage],
-                model: &str,
-                temperature: f64,
-            ) -> anyhow::Result<String> {
-                let system = messages
-                    .iter()
-                    .find(|m| m.role == "system")
-                    .map(|m| m.content.as_str());
-                let user: String = messages
-                    .iter()
-                    .filter(|m| m.role != "system")
-                    .map(|m| m.content.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                self.chat_with_system(system, &user, model, temperature)
-                    .await
-            }
-        }
-
-        let adapter = Adapter {
-            inner: chat_provider,
+        let opts = FastRetrieveOptions {
+            limit: req.limit.map(|n| n as usize).unwrap_or(10),
+            max_hops: req.max_hops.unwrap_or(2),
+            time_window_days: req.time_window_days,
         };
 
-        let opts = SmartWalkOptions {
-            max_turns: req.max_turns.map(|n| n as usize).unwrap_or(12),
-            namespace: req.namespace,
-            model: req.model,
-            content_root: None,
-        };
-
-        let outcome = run_smart_walk(&config, &adapter, &req.query, opts)
+        let resp = fast_retrieve(&config, &req.query, opts)
             .await
             .map_err(|e| format!("smart_walk error: {e}"))?;
 
-        let stopped = match outcome.stopped_reason {
-            SmartWalkStopReason::Answered => "answered",
-            SmartWalkStopReason::MaxTurnsReached => "max_turns",
-            SmartWalkStopReason::LlmGaveUp => "llm_gave_up",
-            SmartWalkStopReason::Error(_) => "error",
-        };
-
-        let result = serde_json::json!({
-            "answer": outcome.answer,
-            "turns_used": outcome.turns_used,
-            "evidence_count": outcome.evidence.len(),
-            "stopped_reason": stopped,
-            "evidence": outcome.evidence.iter().map(|e| serde_json::json!({
-                "source_path": e.source_path,
-                "snippet": e.snippet,
-                "relevance": e.relevance,
-            })).collect::<Vec<_>>(),
-            "trace": outcome.trace.iter().map(|s| serde_json::json!({
-                "turn": s.turn,
-                "action": s.action,
-                "args_summary": s.args_summary,
-                "result_preview": s.result_preview,
-            })).collect::<Vec<_>>(),
-        });
+        let result = serde_json::to_value(&resp)
+            .map_err(|e| format!("smart_walk: serialize response failed: {e}"))?;
         to_json(RpcOutcome::new(result, vec![]))
     })
 }

@@ -29,6 +29,14 @@ const GMI_REGISTRATION_BUDGET: std::time::Duration = std::time::Duration::from_s
 /// GMI MaaS provider seeded from `GMI_*` env vars.
 pub const AGENTBOX_MODE_ENV_VAR: &str = "OPENHUMAN_AGENTBOX_MODE";
 
+#[cfg(test)]
+pub(crate) fn agentbox_env_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// Whether the core is running as a GMI Cloud AgentBox marketplace container.
 ///
 /// Single source of truth for the `OPENHUMAN_AGENTBOX_MODE=1` check so the

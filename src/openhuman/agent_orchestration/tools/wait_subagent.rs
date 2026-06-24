@@ -135,6 +135,9 @@ impl Tool for WaitSubagentTool {
             timeout_secs
         );
 
+        let resume_ref =
+            running_subagents::resume_ref_for_task(&resolved_task_id, &parent_session).ok();
+
         match running_subagents::wait(
             &resolved_task_id,
             &parent_session,
@@ -143,35 +146,95 @@ impl Tool for WaitSubagentTool {
         .await
         {
             Ok(WaitOutcome::Terminal(SubagentStatus::Completed { output, iterations })) => {
+                log::debug!(
+                    "[wait_subagent] outcome=completed task_id={} iterations={}",
+                    resolved_task_id,
+                    iterations
+                );
                 Ok(ToolResult::success(format!(
-                    "Sub-agent `{task_id}` completed in {iterations} iteration(s):\n\n{output}",
-                    task_id = resolved_task_id
+                    "Sub-agent completed in {iterations} iteration(s):\n\n{output}"
                 )))
             }
             Ok(WaitOutcome::Terminal(SubagentStatus::AwaitingUser { question })) => {
-                Ok(ToolResult::success(format!(
-                    "Sub-agent `{}` paused for clarification and did not finish: {question}\n\n\
+                log::debug!(
+                    "[wait_subagent] outcome=awaiting_user task_id={} question_chars={}",
+                    resolved_task_id,
+                    question.chars().count()
+                );
+                let mut message = format!(
+                    "Sub-agent paused for clarification and did not finish: {question}\n\n\
                      It cannot proceed unattended. Resume it with continue_subagent once you have an answer."
-                    , resolved_task_id
+                );
+                if let Some(reference) = resume_ref {
+                    message.push_str("\n\n[subagent_resume_ref]\n");
+                    message.push_str(
+                        &serde_json::to_string(&serde_json::json!({
+                            "task_id": reference.task_id,
+                            "agent_id": reference.agent_id,
+                            "subagent_session_id": reference.subagent_session_id,
+                            "tool": "continue_subagent"
+                        }))
+                        .unwrap_or_else(|_| "{}".to_string()),
+                    );
+                    message.push_str("\n[/subagent_resume_ref]");
+                } else {
+                    log::debug!(
+                        "[wait_subagent] resume_ref_unavailable task_id={}",
+                        resolved_task_id
+                    );
+                }
+                Ok(ToolResult::success(message))
+            }
+            Ok(WaitOutcome::Terminal(SubagentStatus::Failed { error })) => {
+                log::debug!(
+                    "[wait_subagent] outcome=failed task_id={} error={}",
+                    resolved_task_id,
+                    error
+                );
+                Ok(ToolResult::error(format!("Sub-agent failed: {error}")))
+            }
+            // `Running` is never terminal; treat defensively as a timeout-style result.
+            Ok(WaitOutcome::Terminal(SubagentStatus::Running)) => {
+                log::debug!(
+                    "[wait_subagent] outcome=running task_id={} timeout_secs={}",
+                    resolved_task_id,
+                    timeout_secs
+                );
+                Ok(ToolResult::success(format!(
+                    "Sub-agent is still running after {timeout_secs}s. \
+                     Continue with other work and call wait_subagent again later, or steer_subagent to redirect it."
                 )))
             }
-            Ok(WaitOutcome::Terminal(SubagentStatus::Failed { error })) => Ok(ToolResult::error(
-                format!("Sub-agent `{resolved_task_id}` failed: {error}"),
-            )),
-            // `Running` is never terminal; treat defensively as a timeout-style result.
-            Ok(WaitOutcome::Terminal(SubagentStatus::Running))
-            | Ok(WaitOutcome::TimedOut(_)) => Ok(ToolResult::success(format!(
-                "Sub-agent `{task_id}` is still running after {timeout_secs}s. \
-                 Continue with other work and call wait_subagent again later, or steer_subagent to redirect it.",
-                task_id = resolved_task_id
-            ))),
-            Err(WaitError::Unknown) => Ok(ToolResult::error(format!(
-                "wait_subagent: no sub-agent with task_id `{resolved_task_id}`. It may have already finished and \
-                 been collected, or the task_id is wrong."
-            ))),
-            Err(WaitError::NotOwned) => Ok(ToolResult::error(format!(
-                "wait_subagent: sub-agent `{resolved_task_id}` was not started by this agent."
-            ))),
+            Ok(WaitOutcome::TimedOut(_)) => {
+                log::debug!(
+                    "[wait_subagent] outcome=timed_out task_id={} timeout_secs={}",
+                    resolved_task_id,
+                    timeout_secs
+                );
+                Ok(ToolResult::success(format!(
+                    "Sub-agent is still running after {timeout_secs}s. \
+                     Continue with other work and call wait_subagent again later, or steer_subagent to redirect it."
+                )))
+            }
+            Err(WaitError::Unknown) => {
+                log::debug!(
+                    "[wait_subagent] outcome=unknown task_id={}",
+                    resolved_task_id
+                );
+                Ok(ToolResult::error(format!(
+                    "wait_subagent: no sub-agent was found for that reference. It may have already finished and \
+                     been collected, or the task_id is wrong."
+                )))
+            }
+            Err(WaitError::NotOwned) => {
+                log::debug!(
+                    "[wait_subagent] outcome=not_owned task_id={}",
+                    resolved_task_id
+                );
+                Ok(ToolResult::error(format!(
+                    "wait_subagent: that sub-agent was not started by this agent."
+                )))
+            }
         }
     }
 }

@@ -138,6 +138,21 @@ impl Provider for OpenHumanBackendProvider {
         }
     }
 
+    fn prompt_cache_capabilities(
+        &self,
+    ) -> crate::openhuman::inference::provider::traits::PromptCacheCapabilities {
+        // The hosted backend caches byte-stable prefixes, reports cached input
+        // tokens via `openhuman.usage.cached_input_tokens`, and groups calls by
+        // the `thread_id` extension for cache locality + InferenceLog grouping
+        // (#3939). It does not accept explicit cache-control markers.
+        crate::openhuman::inference::provider::traits::PromptCacheCapabilities {
+            automatic_prefix_cache: true,
+            explicit_cache_control: false,
+            usage_reports_cached_input: true,
+            cache_key_grouping: true,
+        }
+    }
+
     async fn chat_with_system(
         &self,
         system_prompt: Option<&str>,
@@ -215,6 +230,19 @@ mod tests {
     // empty `model` field with 400 `model is required`. `resolve_model` must
     // intercept blank / whitespace-only values before they hit the wire and
     // substitute the canonical default tier.
+
+    #[test]
+    fn backend_declares_grouping_aware_prompt_cache() {
+        // #3939: the hosted backend caches prefixes, reports cached input
+        // tokens, and groups by thread_id — but accepts no explicit
+        // cache-control field.
+        let provider = OpenHumanBackendProvider::new(None, &ProviderRuntimeOptions::default());
+        let caps = provider.prompt_cache_capabilities();
+        assert!(caps.automatic_prefix_cache);
+        assert!(caps.usage_reports_cached_input);
+        assert!(caps.cache_key_grouping);
+        assert!(!caps.explicit_cache_control);
+    }
 
     #[test]
     fn resolve_model_substitutes_default_for_empty() {

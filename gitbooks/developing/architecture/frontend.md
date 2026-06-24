@@ -70,24 +70,34 @@ OpenHuman’s desktop UI is a **React 19** app (`app/src/`) that:
 
 ### Provider chain
 
-```
-Redux Provider
-  └─ PersistGate
-      └─ UserProvider
-          └─ SocketProvider
-              └─ AIProvider
-                  └─ SkillProvider
-                      └─ HashRouter
-                          └─ AppRoutes (pages + settings)
-```
+<!-- BEGIN GENERATED: provider-chain — source app/src/App.tsx via scripts/generate-architecture-docs.mjs; do not edit between markers (run `pnpm docs:generate`) -->
+
+_Generated from `app/src/App.tsx` by `scripts/generate-architecture-docs.mjs`. Do not edit by hand — run `pnpm docs:generate` to refresh._
+
+| # | Component | Role |
+| --- | --- | --- |
+| 1 | `Sentry.ErrorBoundary` | Crash boundary; renders ErrorFallbackScreen |
+| 2 | `Provider` | Redux store; enables useAppSelector / dispatch app-wide |
+| 3 | `PersistGate` | Holds UI until persisted Redux slices rehydrate |
+| 4 | `ThemeProvider` | Theme tokens and dark-mode handling |
+| 5 | `I18nProvider` | Localization context consumed via useT |
+| 6 | `BootCheckGate` | Blocks render until the core boot snapshot resolves |
+| 7 | `CoreStateProvider` | Core app snapshot: auth, session, onboarding state |
+| 8 | `SocketProvider` | Core socket.io events; desktop only (mobile uses the TunnelTransport relay) |
+| 9 | `ChatRuntimeProvider` | Chat runtime events, tool timeline, and approvals |
+| 10 | `Router` | HashRouter navigation for all routes |
+| 11 | `CommandProvider` | Command palette context |
+| 12 | `ServiceBlockingGate` | Blocks the shell until required services are configured |
+
+<!-- END GENERATED: provider-chain -->
 
 **Why this order**
 
-1. Redux is outermost for `useAppSelector` / dispatch everywhere.
-2. `PersistGate` rehydrates persisted slices before children assume stable auth.
-3. `SocketProvider` uses the auth token for Socket.io.
-4. `AIProvider` / `SkillProvider` wrap features that depend on socket and store state.
-5. `HashRouter` supplies navigation to all routes.
+1. Redux `Provider` is outermost so `useAppSelector` / dispatch work everywhere.
+2. `PersistGate` rehydrates persisted slices before children assume stable auth/session.
+3. `BootCheckGate` / `CoreStateProvider` resolve the core boot snapshot (auth, onboarding) before feature providers mount.
+4. `SocketProvider` (desktop only) and `ChatRuntimeProvider` depend on that core state for realtime events and approvals.
+5. `Router` supplies navigation to all routes.
 
 ### Module relationships (simplified)
 

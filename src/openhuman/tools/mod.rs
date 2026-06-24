@@ -31,6 +31,7 @@ pub use crate::openhuman::learning::tools::*;
 pub use crate::openhuman::mcp_registry::tools::*;
 pub use crate::openhuman::memory::tools::*;
 pub use crate::openhuman::memory_diff::tools::*;
+pub use crate::openhuman::memory_goals::tools::*;
 pub use crate::openhuman::memory_search::*;
 pub use crate::openhuman::monitor::tools::*;
 pub use crate::openhuman::people::tools::*;
@@ -63,4 +64,4 @@ pub use traits::{
     PermissionLevel, Tool, ToolCallOptions, ToolCategory, ToolContent, ToolResult, ToolScope,
     ToolSpec,
 };
-pub(crate) use user_filter::filter_tools_by_user_preference;
+pub(crate) use user_filter::{enables_app_ui_control_mutations, filter_tools_by_user_preference};

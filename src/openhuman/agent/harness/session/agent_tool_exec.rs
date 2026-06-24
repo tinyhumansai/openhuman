@@ -279,7 +279,7 @@ pub(super) async fn run_agent_tool_call(
             &call_id,
             &call.name,
             success,
-            result.chars().count(),
+            &result,
             elapsed_ms,
             (iteration + 1) as u32,
         )

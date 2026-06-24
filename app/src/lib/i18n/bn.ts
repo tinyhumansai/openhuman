@@ -136,6 +136,20 @@ const messages: TranslationMap = {
   'brain.tabs.memory': 'স্মৃতি',
   'brain.tabs.subconscious': 'অবচেতন',
   'brain.tabs.graph': 'গ্রাফ',
+  'brain.tabs.goals': 'লক্ষ্য',
+  'brain.goals.title': 'দীর্ঘমেয়াদী লক্ষ্য',
+  'brain.goals.description':
+    'আপনার সঙ্গে কাজ করার জন্য এজেন্টের স্থায়ী লক্ষ্য। এখানে সম্পাদনা করুন বা রিফ্লেক্ট দিয়ে আপডেট করতে দিন।',
+  'brain.goals.reflect': 'রিফ্লেক্ট',
+  'brain.goals.reflecting': 'রিফ্লেক্ট করা হচ্ছে…',
+  'brain.goals.reflectDone': 'লক্ষ্য আপডেট হয়েছে।',
+  'brain.goals.add': 'যোগ করুন',
+  'brain.goals.addPlaceholder': 'একটি দীর্ঘমেয়াদী লক্ষ্য যোগ করুন…',
+  'brain.goals.empty':
+    'এখনও কোনো লক্ষ্য নেই। একটি যোগ করুন, অথবা সাম্প্রতিক প্রসঙ্গ থেকে পূরণ করতে রিফ্লেক্ট ব্যবহার করুন।',
+  'brain.goals.editGoal': 'লক্ষ্য সম্পাদনা করুন',
+  'brain.goals.deleteGoal': 'লক্ষ্য মুছুন',
+  'brain.goals.actionError': 'কিছু ভুল হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।',
   'brain.tabs.sources': 'উৎস',
   'brain.tabs.sync': 'সিঙ্ক',
   'brain.empty': 'আপনার ব্রেইন এখন খালি — মেমরি তৈরি শুরু করতে একটি উৎস সংযুক্ত করুন।',
@@ -2597,6 +2611,14 @@ const messages: TranslationMap = {
   'bootCheck.portConflictFixing': 'ঠিক করা হচ্ছে…',
   'bootCheck.portConflictFixFailed':
     'স্বয়ংক্রিয় সংশোধন কাজ করেনি। অনুগ্রহ করে আপনার কম্পিউটার পুনরায় চালু করুন এবং আবার চেষ্টা করুন।',
+  'bootCheck.portConflictOwner':
+    '{name} (PID {pid}) OpenHuman-এর প্রয়োজনীয় নেটওয়ার্ক পোর্টটি ব্যবহার করছে।',
+  'bootCheck.portConflictGuidance':
+    'পোর্টটি মুক্ত করতে ওই প্রোগ্রামটি বন্ধ করুন, অথবা নিচে থেকে জোর করে বন্ধ করুন, তারপর আবার চেষ্টা করুন।',
+  'bootCheck.portConflictForceQuit': '{name} জোর করে বন্ধ করুন',
+  'bootCheck.portConflictForceQuitting': '{name} বন্ধ করা হচ্ছে…',
+  'bootCheck.portConflictForceQuitFailed':
+    'প্রোগ্রামটি বন্ধ করা যায়নি। আপনাকে সম্ভবত এটি ম্যানুয়ালি বন্ধ করে আবার চেষ্টা করতে হবে।',
   'notifications.justNow': 'এইমাত্র',
   'notifications.minAgo': '{n} মিনিট আগে',
   'notifications.hrAgo': '{n} ঘণ্টা আগে',
@@ -2705,6 +2727,11 @@ const messages: TranslationMap = {
   'app.connectionIndicator.offline': 'অফলাইন',
   'app.connectionIndicator.reconnecting': 'পুনঃসংযোগ হচ্ছে…',
   'app.errorFallback.componentStack': 'কম্পোনেন্ট স্ট্যাক',
+  'app.errorFallback.contactSupport': 'সহায়তায় যোগাযোগ করুন',
+  'app.errorFallback.copyEventId': 'অনুলিপি',
+  'app.errorFallback.eventIdCopied': 'অনুলিপি হয়েছে',
+  'app.errorFallback.eventIdLabel': 'ত্রুটি আইডি',
+  'app.errorFallback.revealLogs': 'লগ দেখান',
   'app.errorFallback.downloadLatest': 'সর্বশেষ ডাউনলোড করুন',
   'app.errorFallback.heading': 'শিরোনাম',
   'app.errorFallback.hint': 'হিন্ট',
@@ -2980,6 +3007,7 @@ const messages: TranslationMap = {
   'conversations.taskKanban.moveLeft': 'বামে সরান',
   'conversations.taskKanban.moveRight': 'ডানে সরান',
   'conversations.taskKanban.title': 'টাস্ক',
+  'conversations.threadTodo.title': 'পরিকল্পনা',
   'conversations.taskKanban.approval.default': 'ডিফল্ট',
   'conversations.taskKanban.approval.notRequired': 'প্রয়োজন নেই',
   'conversations.taskKanban.approval.notRequiredBadge': 'অনুমোদন করা হবে না',
@@ -3026,10 +3054,14 @@ const messages: TranslationMap = {
   'conversations.subagent.viewProcessing': 'সম্পূর্ণ প্রক্রিয়া দেখুন',
   'conversations.subagent.parent': 'মূল',
   'conversations.subagent.thinking': 'ভাবছে',
+  'conversations.subagent.thoughts': 'চিন্তাভাবনা',
   'conversations.subagent.response': 'প্রতিক্রিয়া',
   'conversations.subagent.toolCalls': 'টুল কল',
   'conversations.subagent.working': 'কাজ করছে…',
   'conversations.subagent.noOutputYet': 'এখনও কোনো আউটপুট নেই',
+  'conversations.subagent.input': 'ইনপুট',
+  'conversations.subagent.output': 'আউটপুট',
+  'conversations.subagent.noOutput': 'কোনো আউটপুট ফেরত আসেনি',
   'conversations.subagent.close': 'বন্ধ করুন',
   'conversations.subagent.cancel': 'কাজ বাতিল করুন',
   'conversations.subagent.cancelling': 'বাতিল করা হচ্ছে…',
@@ -3040,11 +3072,13 @@ const messages: TranslationMap = {
   'conversations.subagent.statusAwaitingUser': 'ব্যবহারকারীর অপেক্ষায়',
   'conversations.subagent.statusCancelled': 'বাতিল হয়েছে',
   'conversations.agentTaskInsights.title': 'এজেন্ট টাস্ক অন্তর্দৃষ্টি',
+  'conversations.agentTaskInsights.response': 'প্রতিক্রিয়া',
   'conversations.agentTaskInsights.processSourceTitle': 'এজেন্ট প্রক্রিয়া উৎস',
   'conversations.agentTaskInsights.stepsHeading': 'ধাপসমূহ',
   'conversations.agentTaskInsights.sourcesHeading': 'উৎসসমূহ',
   'conversations.agentTaskInsights.noSteps': 'কোনো ধাপ রেকর্ড করা হয়নি',
   'conversations.agentTaskInsights.viewProcessSource': 'সম্পূর্ণ এজেন্ট প্রক্রিয়ার উৎস দেখুন',
+  'conversations.agentTaskInsights.processing': 'প্রসেসিং',
   'daemon.serviceBlockingGate.body': 'বডি',
   'daemon.serviceBlockingGate.downloadHint': 'ডাউনলোড হিন্ট',
   'daemon.serviceBlockingGate.downloadLatest': 'সর্বশেষ সংস্করণ ডাউনলোড করুন',
@@ -3677,6 +3711,9 @@ const messages: TranslationMap = {
   'settings.ai.memoryWorkerPolls': 'মেমরি কর্মী পোল',
   'settings.ai.defaultProviderName': 'OpenHuman',
   'settings.ai.routing.managed': 'পরিচালিত',
+  'settings.ai.routing.managedAlwaysOn': 'Always on',
+  'settings.ai.routing.managedHint':
+    'Managed is always available as a fallback. To use your own model, choose a routing mode below.',
   'settings.ai.routing.managedDesc':
     'xq0xqx সমস্ত প্রকার মেঘে রান করা হবে, কর্মের জন্য সেরা মডেল নির্বাচন করুন, খরচের জন্য ব্যবহারযোগ্য ডিফল্ট মান নির্বাচন করুন।',
   'settings.ai.routing.managedMsg':
@@ -4409,6 +4446,10 @@ const messages: TranslationMap = {
   'settings.agentAccess.requireTaskPlanApproval.label': 'কাজের পরিকল্পনা অনুমোদন প্রয়োজন',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     'নির্ধারিত কর্মের পূর্বে একটি author-ed কর্মের সঞ্চালনার পূর্বে কর্ম স্থগিত করা হবে।',
+  'settings.agentAccess.tinyplaceAutopilot.title': 'স্বয়ংক্রিয় tiny.place এজেন্ট',
+  'settings.agentAccess.tinyplaceAutopilot.desc':
+    'OpenHuman-কে tiny.place-এ নিজে কাজ করতে দিন: এটি নির্ধারিত সময় অনুযায়ী মূল্যবান কাজ খোঁজে — প্রথমে খোলা বাউন্টি —, নিজের দক্ষতার সাথে মানানসই কাজ করে এবং আপনার পরিচয় থেকে কাজ করে। এটি তত্ত্বাবধান ছাড়াই চলে এবং অর্থ ব্যয় করতে পারে, তাই পরীক্ষার সময় এটি devnet-এ রাখুন। ডিফল্টভাবে বন্ধ।',
+  'settings.agentAccess.tinyplaceAutopilot.label': 'স্বয়ংক্রিয়ভাবে চালান',
   'settings.agentAccess.timeout.label': 'অ্যাকশন টাইমআউট',
   'settings.agentAccess.timeout.desc':
     'একটি একক টুল বা অ্যাকশন বাতিল হওয়ার আগে কতক্ষণ চলতে পারে। বড় লোকাল মডেল উত্তর শেষ করার আগেই থেমে গেলে এটি বাড়ান।',
@@ -4580,6 +4621,9 @@ const messages: TranslationMap = {
     'বন্ধ থাকা অবস্থায়, লেবেলগুলি শুধুমাত্র হোভারে বা সক্রিয় ট্যাবের জন্য প্রদর্শিত হয়৷',
   'settings.appearance.chatHeading': 'চ্যাট',
   'settings.appearance.assistantTextMode': 'অ্যাসিস্ট্যান্টের উত্তর টেক্সট হিসেবে',
+  'settings.appearance.hideAgentInsights': 'এজেন্টের চিন্তা লুকান',
+  'settings.appearance.hideAgentInsightsDesc':
+    'চ্যাটে এজেন্টের ধাপে ধাপে লাইভ টাইমলাইন সংকুচিত করুন। একটি ব্লিঙ্কিং "প্রসেসিং" লিঙ্ক এখনও আপনাকে সম্পূর্ণ প্রক্রিয়া খুলতে দেয়।',
   'settings.appearance.assistantTextModeDesc':
     'আপনার বার্তাগুলি বাবলে রেখে অ্যাসিস্ট্যান্টের উত্তর ফ্রেমহীন টেক্সট হিসেবে দেখান।',
   'settings.mascot.active': 'সক্রিয়',
@@ -5613,6 +5657,24 @@ const messages: TranslationMap = {
   'memory.tab.cohesion': 'Cohesion',
 
   // Keyring consent & security
+  'harnessInit.title': 'সেটআপ করা হচ্ছে',
+  'harnessInit.subtitle': 'প্রথম চালুর সময় OpenHuman প্রয়োজনীয় উপাদানগুলো প্রস্তুত করছে।',
+  'harnessInit.stepPython': 'Python রানটাইম',
+  'harnessInit.stepSpacy': 'ভাষা মডেল',
+  'harnessInit.stepNode': 'Node.js রানটাইম',
+  'harnessInit.statePending': 'অপেক্ষমাণ',
+  'harnessInit.stateRunning': 'ইনস্টল করা হচ্ছে…',
+  'harnessInit.stateDone': 'প্রস্তুত',
+  'harnessInit.stateSkipped': 'এড়িয়ে যাওয়া হয়েছে',
+  'harnessInit.stateFailed': 'ব্যর্থ',
+  'harnessInit.failedMessage':
+    'কিছু সেটআপ ধাপ সম্পন্ন হয়নি। আপনি পুনরায় চেষ্টা করতে পারেন, অথবা চালিয়ে যেতে পারেন — OpenHuman একটি অন্তর্নির্মিত ফলব্যাক ব্যবহার করবে।',
+  'harnessInit.retry': 'পুনরায় চেষ্টা করুন',
+  'harnessInit.continueAnyway': 'তবুও চালিয়ে যান',
+  'harnessInit.runInBackground': 'ব্যাকগ্রাউন্ডে চালান',
+  'harnessInit.backgroundHint':
+    'এটি শেষ হওয়া পর্যন্ত আপনি OpenHuman ব্যবহার করা চালিয়ে যেতে পারেন।',
+
   'keyring.consent.title': 'নিরাপদ সঞ্চয়স্থান অনুপলব্ধ',
   'keyring.consent.description':
     'আপনার অপারেটিং সিস্টেমের কিচেন অ্যাক্সেসযোগ্য নয়। OpenHuman-এর পরিবর্তে স্থানীয় এনক্রিপ্টেড সঞ্চয়স্থান ব্যবহার করে গোপনীয়তা সংরক্ষণ করতে আপনার অনুমতি প্রয়োজন।',
@@ -5942,6 +6004,18 @@ const messages: TranslationMap = {
   'agentworld.jobs.applyModal.submitting': 'আবেদন করা হচ্ছে…',
   'agentworld.messaging.missingSignalBundle':
     'এই ব্যবহারকারী এখনো এনক্রিপ্টেড মেসেজিং চালু করেননি। বার্তা পাঠানোর আগে তাকে Agent World খুলে নিরাপদ DM চালু করতে বলুন।',
+
+  // User-actionable runtime errors (#3931)
+  'userErrors.title': 'পদক্ষেপ প্রয়োজন',
+  'userErrors.dismiss': 'বাতিল করুন',
+  'userErrors.action.openBilling': 'বিলিং খুলুন',
+  'userErrors.action.openProviderSettings': 'প্রদানকারী সেটিংস',
+  'userErrors.budgetExceeded.title': 'পরিচালিত বাজেট শেষ',
+  'userErrors.budgetExceeded.body': 'পরিচালিত AI বাজেট শেষ। বাজেট যোগ করুন বা প্ল্যান বদলান।',
+  'userErrors.insufficientCredits.title': 'প্রদানকারীর ক্রেডিট প্রয়োজন',
+  'userErrors.insufficientCredits.body':
+    'AI প্রদানকারীর ক্রেডিট শেষ। রিচার্জ করুন বা API কী বদলান।',
+  'userErrors.scope.chat': 'চ্যাট',
 };
 
 export default messages;

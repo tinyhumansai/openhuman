@@ -136,6 +136,20 @@ const messages: TranslationMap = {
   'brain.tabs.memory': 'Mémoire',
   'brain.tabs.subconscious': 'Subconscient',
   'brain.tabs.graph': 'Graphe',
+  'brain.tabs.goals': 'Objectifs',
+  'brain.goals.title': 'Objectifs à long terme',
+  'brain.goals.description':
+    'Les objectifs durables de l’agent pour travailler avec vous. Modifiez-les ici ou laissez l’agent les mettre à jour.',
+  'brain.goals.reflect': 'Réfléchir',
+  'brain.goals.reflecting': 'Réflexion…',
+  'brain.goals.reflectDone': 'Objectifs mis à jour.',
+  'brain.goals.add': 'Ajouter',
+  'brain.goals.addPlaceholder': 'Ajouter un objectif à long terme…',
+  'brain.goals.empty':
+    'Aucun objectif pour l’instant. Ajoutez-en un ou utilisez le bouton Réfléchir pour les générer à partir du contexte récent.',
+  'brain.goals.editGoal': 'Modifier l’objectif',
+  'brain.goals.deleteGoal': 'Supprimer l’objectif',
+  'brain.goals.actionError': 'Une erreur s’est produite. Veuillez réessayer.',
   'brain.tabs.sources': 'Sources',
   'brain.tabs.sync': 'Synchronisation',
   'brain.empty':
@@ -2656,6 +2670,14 @@ const messages: TranslationMap = {
   'bootCheck.portConflictFixing': 'Correction en cours…',
   'bootCheck.portConflictFixFailed':
     "La correction automatique n'a pas fonctionné. Veuillez redémarrer votre ordinateur et réessayer.",
+  'bootCheck.portConflictOwner':
+    '{name} (PID {pid}) utilise le port réseau dont OpenHuman a besoin.',
+  'bootCheck.portConflictGuidance':
+    'Fermez ce programme pour libérer le port, ou forcez sa fermeture ci-dessous, puis réessayez.',
+  'bootCheck.portConflictForceQuit': 'Forcer la fermeture de {name}',
+  'bootCheck.portConflictForceQuitting': 'Fermeture de {name}…',
+  'bootCheck.portConflictForceQuitFailed':
+    'Impossible de fermer ce programme. Vous devrez peut-être le fermer manuellement, puis réessayer.',
   'notifications.justNow': "à l'instant",
   'notifications.minAgo': 'il y a {n} min',
   'notifications.hrAgo': 'il y a {n} h',
@@ -2764,6 +2786,11 @@ const messages: TranslationMap = {
   'app.connectionIndicator.offline': 'Hors ligne',
   'app.connectionIndicator.reconnecting': 'Reconnexion…',
   'app.errorFallback.componentStack': 'Pile de composants',
+  'app.errorFallback.contactSupport': 'Contacter le support',
+  'app.errorFallback.copyEventId': 'Copier',
+  'app.errorFallback.eventIdCopied': 'Copié',
+  'app.errorFallback.eventIdLabel': "ID d'erreur",
+  'app.errorFallback.revealLogs': 'Afficher les journaux',
   'app.errorFallback.downloadLatest': 'Télécharger la dernière version',
   'app.errorFallback.heading': 'Titre',
   'app.errorFallback.hint': 'Indice',
@@ -3044,6 +3071,7 @@ const messages: TranslationMap = {
   'conversations.taskKanban.moveLeft': 'Déplacer à gauche',
   'conversations.taskKanban.moveRight': 'Déplacer à droite',
   'conversations.taskKanban.title': 'Tâches',
+  'conversations.threadTodo.title': 'Plan',
   'conversations.taskKanban.approval.default': 'Par défaut',
   'conversations.taskKanban.approval.notRequired': 'Non requis',
   'conversations.taskKanban.approval.notRequiredBadge': 'aucune approbation',
@@ -3092,10 +3120,14 @@ const messages: TranslationMap = {
   'conversations.subagent.viewProcessing': 'Voir le traitement complet',
   'conversations.subagent.parent': 'Parent',
   'conversations.subagent.thinking': 'Réflexion',
+  'conversations.subagent.thoughts': 'Réflexions',
   'conversations.subagent.response': 'Réponse',
   'conversations.subagent.toolCalls': 'Appels d’outils',
   'conversations.subagent.working': 'En cours…',
   'conversations.subagent.noOutputYet': 'Aucun résultat pour l’instant',
+  'conversations.subagent.input': 'Entrée',
+  'conversations.subagent.output': 'Sortie',
+  'conversations.subagent.noOutput': 'Aucune sortie renvoyée',
   'conversations.subagent.close': 'Fermer',
   'conversations.subagent.cancel': 'Annuler la tâche',
   'conversations.subagent.cancelling': 'Annulation…',
@@ -3106,12 +3138,14 @@ const messages: TranslationMap = {
   'conversations.subagent.statusAwaitingUser': "en attente de l'utilisateur",
   'conversations.subagent.statusCancelled': 'annulé',
   'conversations.agentTaskInsights.title': "Aperçu des tâches de l'agent",
+  'conversations.agentTaskInsights.response': 'Réponse',
   'conversations.agentTaskInsights.processSourceTitle': "Source du processus de l'agent",
   'conversations.agentTaskInsights.stepsHeading': 'Étapes',
   'conversations.agentTaskInsights.sourcesHeading': 'Sources',
   'conversations.agentTaskInsights.noSteps': 'Aucune étape enregistrée',
   'conversations.agentTaskInsights.viewProcessSource':
     "Voir la source complète du processus de l'agent",
+  'conversations.agentTaskInsights.processing': 'Traitement en cours',
   'daemon.serviceBlockingGate.body': 'Corps',
   'daemon.serviceBlockingGate.downloadHint': 'Indice de téléchargement',
   'daemon.serviceBlockingGate.downloadLatest': 'Télécharger la dernière version',
@@ -3756,6 +3790,9 @@ const messages: TranslationMap = {
   'settings.ai.memoryWorkerPolls': 'Sondages de mémoire',
   'settings.ai.defaultProviderName': 'OpenHuman',
   'settings.ai.routing.managed': 'Géré',
+  'settings.ai.routing.managedAlwaysOn': 'Always on',
+  'settings.ai.routing.managedHint':
+    'Managed is always available as a fallback. To use your own model, choose a routing mode below.',
   'settings.ai.routing.managedDesc':
     'OpenHuman exécutera toutes les inférences dans le cloud, choisira le meilleur modèle pour la tâche, optimisera les coûts et conservera les paramètres de routage les plus sûrs par défaut.',
   'settings.ai.routing.managedMsg':
@@ -4505,6 +4542,10 @@ const messages: TranslationMap = {
   'settings.agentAccess.requireTaskPlanApproval.label': "Exiger l'approbation du plan de tâche",
   'settings.agentAccess.requireTaskPlanApproval.desc':
     "Pause avant qu'un agent assigné n'exécute un briefing de tâche rédigé par un agent.",
+  'settings.agentAccess.tinyplaceAutopilot.title': 'Agent tiny.place autonome',
+  'settings.agentAccess.tinyplaceAutopilot.desc':
+    'Laissez OpenHuman agir sur tiny.place tout seul : de façon planifiée, il cherche du travail intéressant — les primes ouvertes d’abord —, fait ce qui correspond à ses compétences et agit depuis votre identité. Il fonctionne sans surveillance et peut dépenser ; gardez-le sur devnet pendant vos tests. Désactivé par défaut.',
+  'settings.agentAccess.tinyplaceAutopilot.label': 'Exécuter automatiquement',
   'settings.agentAccess.timeout.label': "Délai d'expiration de l'action",
   'settings.agentAccess.timeout.desc':
     "Durée pendant laquelle un seul outil ou une seule action peut s'exécuter avant d'être annulé. Augmentez cette valeur si un grand modèle local est interrompu avant d'avoir terminé sa réponse.",
@@ -4685,6 +4726,9 @@ const messages: TranslationMap = {
     "Lorsqu'elle est désactivée, les étiquettes n'apparaissent qu'au survol ou pour l'onglet actif.",
   'settings.appearance.chatHeading': 'Chat',
   'settings.appearance.assistantTextMode': "Réponses de l'assistant en texte",
+  'settings.appearance.hideAgentInsights': 'Masquer le raisonnement de l’agent',
+  'settings.appearance.hideAgentInsightsDesc':
+    'Réduit la chronologie en direct des étapes de l’agent dans le chat. Un lien clignotant « Traitement en cours » permet toujours d’ouvrir le déroulé complet.',
   'settings.appearance.assistantTextModeDesc':
     "Affiche les réponses de l'assistant en texte sans cadre tout en gardant vos messages en bulles.",
   'settings.mascot.active': 'Actif',
@@ -5741,6 +5785,25 @@ const messages: TranslationMap = {
   'graphCohesion.title': 'Cohésion du graphe',
   'memory.tab.cohesion': 'Cohesion',
 
+  'harnessInit.title': 'Configuration en cours',
+  'harnessInit.subtitle':
+    'OpenHuman prépare les composants dont il a besoin lors du premier lancement.',
+  'harnessInit.stepPython': "Environnement d'exécution Python",
+  'harnessInit.stepSpacy': 'Modèle de langage',
+  'harnessInit.stepNode': "Environnement d'exécution Node.js",
+  'harnessInit.statePending': 'En attente',
+  'harnessInit.stateRunning': 'Installation…',
+  'harnessInit.stateDone': 'Prêt',
+  'harnessInit.stateSkipped': 'Ignoré',
+  'harnessInit.stateFailed': 'Échec',
+  'harnessInit.failedMessage':
+    'Certaines étapes de configuration ne se sont pas terminées. Vous pouvez réessayer ou continuer — OpenHuman utilisera une solution de secours intégrée.',
+  'harnessInit.retry': 'Réessayer',
+  'harnessInit.continueAnyway': 'Continuer quand même',
+  'harnessInit.runInBackground': 'Exécuter en arrière-plan',
+  'harnessInit.backgroundHint':
+    'Vous pouvez continuer à utiliser OpenHuman pendant que cela se termine.',
+
   'keyring.consent.title': 'Stockage sécurisé indisponible',
   'keyring.consent.description':
     "Le trousseau de votre système d'exploitation n'est pas accessible. OpenHuman a besoin de votre autorisation pour stocker les secrets en utilisant un stockage local chiffré.",
@@ -6085,6 +6148,19 @@ const messages: TranslationMap = {
   'agentworld.jobs.applyModal.submitting': 'Envoi en cours…',
   'agentworld.messaging.missingSignalBundle':
     "Cet utilisateur n'a pas encore activé la messagerie chiffrée. Demandez-lui d'ouvrir Agent World et d'activer les messages privés sécurisés avant d'envoyer un message.",
+
+  // User-actionable runtime errors (#3931)
+  'userErrors.title': 'Action requise',
+  'userErrors.dismiss': 'Ignorer',
+  'userErrors.action.openBilling': 'Ouvrir la facturation',
+  'userErrors.action.openProviderSettings': 'Paramètres du fournisseur',
+  'userErrors.budgetExceeded.title': 'Budget géré atteint',
+  'userErrors.budgetExceeded.body':
+    'Votre budget IA géré est épuisé. Ajoutez du budget ou changez de forfait.',
+  'userErrors.insufficientCredits.title': 'Crédits du fournisseur requis',
+  'userErrors.insufficientCredits.body':
+    "Votre fournisseur IA n'a plus de crédits. Rechargez-le ou mettez à jour sa clé API.",
+  'userErrors.scope.chat': 'Chat',
 };
 
 export default messages;

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef } from 'react';
 
 import { requestUsageRefresh } from '../hooks/usageRefresh';
 import { useRefetchSnapshotOnTurnEnd } from '../hooks/useRefetchSnapshotOnTurnEnd';
+import { ingestRuntimeErrorSignal } from '../lib/userErrors/report';
 import {
   type ChatApprovalRequestEvent,
   type ChatDoneEvent,
@@ -640,6 +641,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
                 toolName: event.tool_name,
                 status: 'running',
                 iteration: event.subagent?.child_iteration,
+                args: event.args,
               },
             ],
           },
@@ -654,6 +656,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
             callId: event.tool_call_id,
             toolName: event.tool_name,
             iteration: event.subagent?.child_iteration,
+            args: event.args,
           })
         );
       },
@@ -675,6 +678,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           status: event.success ? 'success' : 'error',
           elapsedMs: event.subagent?.elapsed_ms ?? updatedCalls[callIdx].elapsedMs,
           outputChars: event.subagent?.output_chars ?? updatedCalls[callIdx].outputChars,
+          result: event.output ?? updatedCalls[callIdx].result,
         };
         const next = [...existing];
         next[idx] = { ...entry, subagent: { ...entry.subagent, toolCalls: updatedCalls } };
@@ -687,6 +691,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
             success: event.success,
             elapsedMs: event.subagent?.elapsed_ms,
             outputChars: event.subagent?.output_chars,
+            result: event.output,
           })
         );
       },
@@ -1101,6 +1106,19 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           request: event.request_id,
           err: event.error_type,
         });
+
+        // #3931: surface expected, user-actionable provider/billing states
+        // (insufficient BYO credits, managed-budget exhaustion) in the shell's
+        // dedicated error panel — in ADDITION to the inline chat message below.
+        // Additive + defensive: no-op for non-actionable errors, never throws.
+        if (event.error_type !== 'cancelled') {
+          ingestRuntimeErrorSignal(dispatch, {
+            message: event.message,
+            errorType: event.error_type,
+            scope: 'chat',
+            sourceDomain: 'chat',
+          });
+        }
 
         // Parallel (forked) turn error: resolve only its lane, leaving the
         // primary turn untouched. Surface a non-cancellation error as a message

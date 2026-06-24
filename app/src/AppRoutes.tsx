@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { type Location, Navigate, Route, Routes } from 'react-router-dom';
 
 import AgentWorldShell from './agentworld/AgentWorldShell';
 import AgentWorld from './agentworld/pages/AgentWorld';
@@ -17,14 +17,23 @@ import Notifications from './pages/Notifications';
 import Onboarding from './pages/onboarding/Onboarding';
 import { PttOverlayPage } from './pages/PttOverlayPage';
 import Rewards from './pages/Rewards';
-import Settings from './pages/Settings';
 import Skills from './pages/Skills';
 import WebCallbackPage from './pages/WebCallbackPage';
 import Welcome from './pages/Welcome';
 import WorkflowNew from './pages/WorkflowNew';
 import WorkflowsRun from './pages/WorkflowsRun';
 
-const AppRoutes = () => {
+interface AppRoutesProps {
+  /**
+   * Optional location override. The desktop shell passes the *background*
+   * location here while the Settings modal is open, so the page behind the
+   * modal stays rendered even though the URL is `/settings/*`. Omitted
+   * everywhere else (router uses the ambient location).
+   */
+  location?: Location | string;
+}
+
+const AppRoutes = ({ location }: AppRoutesProps = {}) => {
   // Mobile target (iOS or Android): pair → Human/Chat/Settings only.
   // Desktop routes are not rendered.
   if (getIsMobile()) {
@@ -32,7 +41,7 @@ const AppRoutes = () => {
   }
 
   return (
-    <Routes>
+    <Routes location={location}>
       {/* Public routes - redirect to /home if logged in */}
       <Route
         path="/"
@@ -187,14 +196,10 @@ const AppRoutes = () => {
 
       <Route path="/webhooks" element={<Navigate to="/settings/integrations#webhooks" replace />} />
 
-      <Route
-        path="/settings/*"
-        element={
-          <ProtectedRoute requireAuth={true}>
-            <Settings />
-          </ProtectedRoute>
-        }
-      />
+      {/* Desktop Settings renders as a modal overlay mounted by AppShellDesktop
+          (App.tsx) using the backgroundLocation pattern — it is no longer an
+          inline route here. iOS keeps its own /settings/* route in
+          AppRoutesIOS.tsx. */}
 
       <Route path="/ptt-overlay" element={<PttOverlayPage />} />
 

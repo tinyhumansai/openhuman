@@ -33,7 +33,8 @@ fn collect_reports_each_missing_var() {
     );
 }
 
-// `OPENHUMAN_AGENTBOX_MODE` is process-global, so serialize tests that mutate it.
+// `OPENHUMAN_AGENTBOX_MODE` is process-global, so hold the shared AgentBox env
+// lock while toggling it and restore the prior value before releasing the lock.
 #[test]
 fn mode_enabled_only_when_flag_is_exactly_one() {
     let _lock = super::test_support::test_env_lock();

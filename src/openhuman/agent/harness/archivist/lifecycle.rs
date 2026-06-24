@@ -410,6 +410,29 @@ impl ArchivistHook {
                     .await;
             }
         }
+
+        // ── Long-term goals enrichment (best-effort, background) ───────────
+        // When context is summarized we kick the turn-based `goals_agent` so
+        // the user's durable goals list stays fresh. Feed it the fresh recap
+        // as context. Detached + non-fatal: never blocks segment close.
+        if let Some(ref cfg) = self.config {
+            if cfg.learning.goals_enrichment_enabled && !summary.trim().is_empty() {
+                tracing::debug!(
+                    "[memory_goals] segment closed — spawning goals enrichment \
+                     session={session_id} segment={}",
+                    segment.segment_id
+                );
+                let context = format!(
+                    "Recent conversation recap (segment {}):\n\n{}",
+                    segment.segment_id, summary
+                );
+                crate::openhuman::memory_goals::spawn_enrich_goals(
+                    cfg.clone(),
+                    cfg.workspace_dir.clone(),
+                    context,
+                );
+            }
+        }
     }
 
     /// Embed `summary` for `segment_id` and write the per-model embedding row.

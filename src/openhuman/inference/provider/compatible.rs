@@ -297,6 +297,56 @@ impl OpenAiCompatibleProvider {
     }
 }
 
+/// Prompt-cache behaviour for an OpenAI-compatible provider, keyed on its
+/// configured slug (#3939).
+///
+/// Conservative by default: only providers we have verified to both (a) cache
+/// identical request prefixes server-side and (b) report cached input tokens
+/// via the OpenAI `prompt_tokens_details.cached_tokens` shape that
+/// [`OpenAiCompatibleProvider`]'s usage extractor already normalises are opted
+/// in. Unknown / custom slugs (including local LM Studio endpoints, which do no
+/// server-side billing-grade caching) get the all-`false` default, so we never
+/// advertise caching a custom endpoint may not do. `explicit_cache_control`
+/// stays `false` for every OpenAI-compatible provider — the chat-completions
+/// API has no cache-control field — and `cache_key_grouping` is reserved for
+/// the OpenHuman backend's `thread_id` extension, declared on
+/// `OpenHumanBackendProvider` directly.
+pub(crate) fn prompt_cache_for_compatible_slug(
+    slug: &str,
+) -> super::traits::PromptCacheCapabilities {
+    // Compare on the leading slug segment so a user-renamed `openai-eu` or a
+    // `openai:gpt-5.1` style slug still resolves to the `openai` family.
+    let normalized = slug.trim().to_ascii_lowercase();
+    let family = normalized
+        .split(|c| c == ':' || c == '/' || c == '-')
+        .next()
+        .unwrap_or("")
+        .trim();
+
+    // Verified OpenAI-style implicit prefix cache + cached-token usage reporting.
+    let openai_style_cache = matches!(family, "openai" | "openrouter" | "gmi");
+
+    let caps = super::traits::PromptCacheCapabilities {
+        automatic_prefix_cache: openai_style_cache,
+        explicit_cache_control: false,
+        usage_reports_cached_input: openai_style_cache,
+        cache_key_grouping: false,
+    };
+
+    tracing::debug!(
+        domain = "llm_provider",
+        operation = "prompt_cache_capability",
+        provider = %family,
+        automatic_prefix_cache = caps.automatic_prefix_cache,
+        explicit_cache_control = caps.explicit_cache_control,
+        usage_reports_cached_input = caps.usage_reports_cached_input,
+        cache_key_grouping = caps.cache_key_grouping,
+        "[llm_provider] prompt-cache capability selected for compatible provider"
+    );
+
+    caps
+}
+
 #[cfg(test)]
 #[path = "compatible_tests.rs"]
 mod tests;

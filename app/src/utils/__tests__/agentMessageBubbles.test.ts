@@ -51,6 +51,29 @@ describe('splitAgentMessageIntoBubbles', () => {
     ]);
   });
 
+  it('does not absorb a following prose line whose pipes give a different column count', () => {
+    // The prose line satisfies looksLikeMarkdownTableRow (it contains pipes) but
+    // has 3 "cells" vs the table's 2; absorbing it makes parseMarkdownTable
+    // reject the block (null), suppressing the table renderer and merging the
+    // prose into the table bubble.
+    const content =
+      '| Plan | Cost |\n| --- | --- |\n| Basic | $10 |\nEither pick Basic | Pro, then run `ps aux | grep node`.';
+    expect(splitAgentMessageIntoBubbles(content)).toEqual([
+      '| Plan | Cost |\n| --- | --- |\n| Basic | $10 |',
+      'Either pick Basic | Pro, then run `ps aux | grep node`.',
+    ]);
+  });
+
+  it('keeps a table whose first data row carries a code-span pipe as one readable block', () => {
+    // splitMarkdownTableCells splits naively on "|", so a genuine first data row
+    // with a pipe inside a code span over-counts its cells (3 vs the header's 2).
+    // Dropping it would leave a header+separator-only block that renders as an
+    // empty-row table and detaches the real row; keeping the first data row makes
+    // parseMarkdownTable return null so the block falls back to readable markdown.
+    const content = '| Command | Use |\n| --- | --- |\n| `ps aux | grep node` | Find it |';
+    expect(splitAgentMessageIntoBubbles(content)).toEqual([content]);
+  });
+
   it('keeps double-newline paragraphs in the same bubble', () => {
     const content = 'First line\nSecond line\n\nThird paragraph\nFourth line';
     expect(splitAgentMessageIntoBubbles(content)).toEqual([

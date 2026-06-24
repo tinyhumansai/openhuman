@@ -154,6 +154,11 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         prompt_fn: super::researcher::prompt::build,
     },
     BuiltinAgent {
+        id: "context_scout",
+        toml: include_str!("context_scout/agent.toml"),
+        prompt_fn: super::context_scout::prompt::build,
+    },
+    BuiltinAgent {
         id: "critic",
         toml: include_str!("critic/agent.toml"),
         prompt_fn: super::critic::prompt::build,
@@ -167,6 +172,11 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         id: "archivist",
         toml: include_str!("archivist/agent.toml"),
         prompt_fn: super::archivist::prompt::build,
+    },
+    BuiltinAgent {
+        id: "goals_agent",
+        toml: include_str!("goals_agent/agent.toml"),
+        prompt_fn: super::goals_agent::prompt::build,
     },
     BuiltinAgent {
         id: "trigger_triage",
@@ -914,6 +924,79 @@ mod tests {
         // Help personalises from the cheap per-turn recall (memory_context on),
         // so it no longer pre-fetches the full memory agent before every turn.
         assert_eq!(def.trigger_memory_agent, TriggerMemoryAgent::Never);
+    }
+
+    #[test]
+    fn orchestrator_exposes_agent_prepare_context_planner_does_not() {
+        // The orchestrator owns the first-message context-scout pass.
+        let orch = find("orchestrator");
+        match &orch.tools {
+            ToolScope::Named(tools) => assert!(
+                tools.iter().any(|t| t == "agent_prepare_context"),
+                "orchestrator must allowlist `agent_prepare_context`"
+            ),
+            ToolScope::Wildcard => {}
+        }
+        // The planner must NOT: when invoked via delegate_plan it runs under
+        // the orchestrator's PARENT_CONTEXT, so a nested scout would render the
+        // wrong (orchestrator) visible catalog/session.
+        let planner = find("planner");
+        if let ToolScope::Named(tools) = &planner.tools {
+            assert!(
+                !tools.iter().any(|t| t == "agent_prepare_context"),
+                "planner must NOT allowlist `agent_prepare_context` (nested-context mismatch)"
+            );
+        }
+        // The scout itself must NOT see the tool (would be circular).
+        let scout = find("context_scout");
+        if let ToolScope::Named(tools) = &scout.tools {
+            assert!(!tools.iter().any(|t| t == "agent_prepare_context"));
+        }
+    }
+
+    #[test]
+    fn context_scout_is_read_only_worker_with_bounded_output() {
+        let def = find("context_scout");
+        assert_eq!(def.agent_tier, AgentTier::Worker);
+        assert_eq!(def.sandbox_mode, SandboxMode::ReadOnly);
+        // ~1000-token bundle cap — load-bearing for the parent's context budget.
+        assert_eq!(def.max_result_chars, Some(4000));
+        // Keeps goals/profile + long-term memory so it can ground the
+        // orchestrator in who the user is and what they want.
+        assert!(!def.omit_profile, "context_scout needs PROFILE.md (goals)");
+        assert!(!def.omit_memory_md, "context_scout needs MEMORY.md");
+        // Strictly read-only gathering surface — no writes / shell / delegation.
+        match &def.tools {
+            ToolScope::Named(tools) => {
+                for required in ["memory_recall", "web_search_tool", "web_fetch"] {
+                    assert!(
+                        tools.iter().any(|t| t == required),
+                        "context_scout needs read-only gathering tool `{required}`"
+                    );
+                }
+                for forbidden in [
+                    "shell",
+                    "file_write",
+                    "spawn_subagent",
+                    "spawn_async_subagent",
+                    "agent_prepare_context",
+                    // memory_tree bundles a write mode (ingest_document) under a
+                    // ReadOnly wrapper — must not be reachable by the auto-run scout.
+                    "memory_tree",
+                ] {
+                    assert!(
+                        !tools.iter().any(|t| t == forbidden),
+                        "context_scout must NOT have `{forbidden}` — it only gathers context"
+                    );
+                }
+            }
+            ToolScope::Wildcard => panic!("context_scout must have a Named tool scope"),
+        }
+        // Worker leaf: no onward delegation.
+        assert!(
+            def.subagents.is_empty(),
+            "context_scout is a leaf and must not list subagents"
+        );
     }
 
     #[test]

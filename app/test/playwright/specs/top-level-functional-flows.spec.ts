@@ -54,7 +54,10 @@ test.describe('Top-level functional flows', () => {
     const card = page.getByTestId(`workflow-card-${id}`);
     await card.getByTitle('More actions').click();
     await page.getByTestId(`workflow-uninstall-${id}`).click();
-    await expect(page.getByRole('dialog')).toBeVisible();
+    // Workflows/automations now render inside the Settings modal (also
+    // role="dialog"), so target the uninstall confirm control specifically
+    // rather than a generic getByRole('dialog') that would match both.
+    await expect(page.getByTestId('uninstall-skill-confirm')).toBeVisible();
     await page.getByTestId('uninstall-skill-confirm').click();
     await expect(page.getByText(name)).toHaveCount(0, { timeout: 15_000 });
   });

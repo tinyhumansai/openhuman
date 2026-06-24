@@ -30,9 +30,18 @@ pub(crate) const EXTENDED_MAX_TOOL_ITERATIONS: usize = 50;
 /// If the SAME `(tool, args)` call fails this many times, the agent is repeating a
 /// known-failed action verbatim — stop.
 pub(crate) const REPEAT_FAILURE_THRESHOLD: u32 = 3;
-/// If this many tool calls fail back-to-back with no success in between (even with
-/// varied args), the agent is making no progress — stop.
+/// Recoverable/transient failures (timeouts, connection resets, rate limits, ...)
+/// are still bounded, but need more room than deterministic terminal failures so
+/// the model can adapt (change timeout, narrow work, split a command, retry a
+/// flaky network call) before the breaker stops the turn.
+pub(crate) const RECOVERABLE_REPEAT_FAILURE_THRESHOLD: u32 = 8;
+/// If this many non-recoverable tool calls fail back-to-back with no success in
+/// between (even with varied args), the agent is making no progress — stop.
 pub(crate) const NO_PROGRESS_FAILURE_THRESHOLD: u32 = 6;
+/// Recoverable failures get a separate, larger no-progress headroom. The
+/// iteration cap and cost budget still bound the turn, while a handful of
+/// timeouts no longer stops an otherwise adaptable agent.
+pub(crate) const RECOVERABLE_NO_PROGRESS_FAILURE_THRESHOLD: u32 = 12;
 /// Hard policy rejections (a security block or a gate denial) are deterministic:
 /// the identical `(tool, args)` call provably cannot succeed. Halt on the FIRST
 /// verbatim repeat — i.e. the second identical attempt — rather than letting the
@@ -186,6 +195,41 @@ pub(crate) fn terminal_inference_failure_kind(result: &str) -> Option<TerminalIn
     }
 }
 
+/// Failures that are informative and plausibly recoverable by changing the next
+/// action (longer timeout, smaller batch, different network retry/fallback)
+/// rather than by immediately abandoning the turn.
+///
+/// Keep this deliberately marker-based and conservative: it only controls
+/// breaker headroom, never converts a failure into success. Hard policy rejects
+/// and permanent provider/account failures are classified before this function.
+pub(crate) fn is_recoverable_tool_failure(result: &str) -> bool {
+    let lower = result.to_ascii_lowercase();
+    [
+        "timed out",
+        "timeout",
+        "deadline exceeded",
+        "temporarily unavailable",
+        "temporary failure",
+        "connection reset",
+        "connection refused",
+        "connection closed",
+        "connection aborted",
+        "network is unreachable",
+        "host is unreachable",
+        "dns error",
+        "failed to lookup address",
+        "failed to resolve",
+        "rate limit",
+        "too many requests",
+        "retry after",
+        "503 service unavailable",
+        "502 bad gateway",
+        "504 gateway timeout",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+}
+
 /// Shared repeated-failure circuit breaker, used by BOTH agent loops
 /// (`run_tool_call_loop` here and `run_inner_loop` in `subagent_runner`) so they
 /// can't drift. Tracks per-`(tool,args)`-signature failure counts and a
@@ -195,6 +239,7 @@ pub(crate) fn terminal_inference_failure_kind(result: &str) -> Option<TerminalIn
 pub(crate) struct RepeatFailureGuard {
     sig_counts: std::collections::HashMap<String, u32>,
     consecutive: u32,
+    consecutive_recoverable: u32,
 }
 
 impl RepeatFailureGuard {
@@ -215,9 +260,9 @@ impl RepeatFailureGuard {
     ) -> Option<String> {
         if success {
             self.consecutive = 0;
+            self.consecutive_recoverable = 0;
             return None;
         }
-        self.consecutive += 1;
         let count = {
             let c = self
                 .sig_counts
@@ -257,11 +302,27 @@ impl RepeatFailureGuard {
                 ),
             });
         }
-        // Hard policy rejections trip on the first verbatim repeat; everything
-        // else uses the generic identical-retry threshold.
+        // Hard policy rejections trip on the first verbatim repeat; recoverable
+        // failures get extra headroom; everything else uses the generic
+        // identical-retry threshold.
         let hard = hard_reject_kind(result);
+        let recoverable = hard.is_none() && is_recoverable_tool_failure(result);
+        if recoverable {
+            self.consecutive_recoverable += 1;
+            tracing::debug!(
+                tool,
+                count,
+                consecutive_recoverable = self.consecutive_recoverable,
+                "[agent_loop] recoverable tool failure recorded with extended circuit-breaker headroom"
+            );
+        } else {
+            self.consecutive += 1;
+            self.consecutive_recoverable = 0;
+        }
         let repeat_threshold = if hard.is_some() {
             HARD_REJECT_REPEAT_THRESHOLD
+        } else if recoverable {
+            RECOVERABLE_REPEAT_FAILURE_THRESHOLD
         } else {
             REPEAT_FAILURE_THRESHOLD
         };
@@ -283,12 +344,31 @@ impl RepeatFailureGuard {
                 None => format!(
                     "Stopping: the `{tool}` call was retried {count} times with identical \
                      arguments and kept failing — repeating it will not help. Last error:\n{}\n\n\
-                     This looks unrecoverable in the current environment (e.g. a missing \
-                     tool/dependency that cannot be installed here). Report this back instead of \
-                     retrying.",
+                     {} Report this back instead of retrying.",
                     truncate_for_halt(result),
+                    if recoverable {
+                        "This looked recoverable at first, but the same call exhausted the \
+                         extended transient-failure headroom."
+                    } else {
+                        "This looks unrecoverable in the current environment (e.g. a missing \
+                         tool/dependency that cannot be installed here)."
+                    },
                 ),
             });
+        }
+        if recoverable {
+            if self.consecutive_recoverable >= RECOVERABLE_NO_PROGRESS_FAILURE_THRESHOLD {
+                return Some(format!(
+                    "Stopping: {} recoverable-looking tool failures happened in a row with no \
+                     successful progress. Last error (from `{tool}`):\n{}\n\nThe turn is still \
+                     bounded by the iteration/cost limits, but this many consecutive transient \
+                     failures means the goal is not currently reachable. Report this back instead \
+                     of retrying.",
+                    self.consecutive_recoverable,
+                    truncate_for_halt(result),
+                ));
+            }
+            return None;
         }
         if self.consecutive >= NO_PROGRESS_FAILURE_THRESHOLD {
             return Some(format!(

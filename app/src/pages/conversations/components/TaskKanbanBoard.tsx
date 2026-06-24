@@ -13,8 +13,9 @@ import {
   LuWrench,
   LuX,
 } from 'react-icons/lu';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
+import { settingsNavState } from '../../../components/settings/modal/settingsOverlay';
 import { useT } from '../../../lib/i18n/I18nContext';
 import type { TaskBoard, TaskBoardCard, TaskBoardCardStatus } from '../../../types/turnState';
 import {
@@ -592,6 +593,7 @@ function formatSyncNotice(outcomes: FetchOutcome[], t: (key: string) => string):
 function TaskSourceControls({ disabled, compact }: { disabled: boolean; compact: boolean }) {
   const { t } = useT();
   const navigate = useNavigate();
+  const location = useLocation();
   const [loading, setLoading] = useState(true);
   const [sources, setSources] = useState<TaskSource[]>([]);
   const [status, setStatus] = useState<TaskSourcesStatus | null>(null);
@@ -704,7 +706,7 @@ function TaskSourceControls({ disabled, compact }: { disabled: boolean; compact:
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => navigate('/settings/integrations')}
+            onClick={() => navigate('/settings/integrations', settingsNavState(location))}
             className="text-[11px] font-medium text-ocean-600 hover:text-ocean-700 dark:text-ocean-300 dark:hover:text-ocean-200">
             {t('conversations.taskKanban.sources.manage')}
           </button>

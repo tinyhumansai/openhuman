@@ -42,7 +42,13 @@ pub async fn load_config_with_timeout() -> Result<Config, String> {
             normalize_loaded_config(&mut config).await;
             Ok(config)
         }
-        Ok(Err(e)) => Err(e.to_string()),
+        // Surface the full anyhow chain (`{:#}`), not just the top `with_context`
+        // line, so the underlying io error kind (e.g. `(os error 5)` access-denied
+        // / `(os error 32)` sharing-lock) reaches Sentry. Without it the config
+        // classifier and triage only ever see "Failed to read config file: <path>"
+        // and cannot tell a user-environment denial from an app-side race
+        // (#3962 / TAURI-RUST-DME).
+        Ok(Err(e)) => Err(format!("{e:#}")),
         Err(_) => Err("Config loading timed out".to_string()),
     }
 }
@@ -64,7 +70,13 @@ pub async fn reload_config_snapshot_with_timeout(snapshot: &Config) -> Result<Co
             normalize_loaded_config(&mut config).await;
             Ok(config)
         }
-        Ok(Err(e)) => Err(e.to_string()),
+        // Surface the full anyhow chain (`{:#}`), not just the top `with_context`
+        // line, so the underlying io error kind (e.g. `(os error 5)` access-denied
+        // / `(os error 32)` sharing-lock) reaches Sentry. Without it the config
+        // classifier and triage only ever see "Failed to read config file: <path>"
+        // and cannot tell a user-environment denial from an app-side race
+        // (#3962 / TAURI-RUST-DME).
+        Ok(Err(e)) => Err(format!("{e:#}")),
         Err(_) => Err("Config loading timed out".to_string()),
     }
 }
@@ -577,4 +589,111 @@ pub async fn get_data_paths() -> Result<RpcOutcome<serde_json::Value>, String> {
             default_openhuman_dir.display()
         )],
     ))
+}
+
+#[cfg(test)]
+mod loader_io_chain_tests {
+    use super::*;
+
+    // A directory at the config path is corruption, not a transient/denied read:
+    // the read site fails it fast with distinct wording, and the observability
+    // classifier MUST keep paging it (never demote to ConfigReadIoFailure). This
+    // guards the Codex P2 hole where a Windows directory-at-config surfaces the
+    // same `os error 5` shape as a real ACL denial (#3962).
+    #[tokio::test]
+    async fn config_directory_pages_and_is_not_demoted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("config.toml");
+        std::fs::create_dir(&config_path).unwrap();
+
+        let snapshot = Config {
+            config_path: config_path.clone(),
+            workspace_dir: tmp.path().join("workspace"),
+            ..Default::default()
+        };
+
+        let err = reload_config_snapshot_with_timeout(&snapshot)
+            .await
+            .expect_err("a directory at the config path must fail");
+
+        assert!(
+            err.contains("is a directory") || err.contains("not a file"),
+            "directory-at-config must report a distinct, non-read error: {err}"
+        );
+        assert_ne!(
+            crate::core::observability::expected_error_kind(&err),
+            Some(crate::core::observability::ExpectedErrorKind::ConfigReadIoFailure),
+            "a directory at the config path is corruption — it must keep paging, not demote: {err}"
+        );
+    }
+
+    // load_config_with_timeout resolves the process-global OPENHUMAN_WORKSPACE,
+    // so serialize against the other env-mutating config tests. Exercises the
+    // load_or_init directory guard + the `Ok(Err) => format!("{e:#}")` arm.
+    #[tokio::test]
+    async fn load_config_with_timeout_rejects_directory_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("config.toml");
+        std::fs::create_dir(&config_path).unwrap();
+
+        let _g = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("OPENHUMAN_WORKSPACE").ok();
+        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path().to_str().unwrap());
+
+        let result = load_config_with_timeout().await;
+
+        match prev {
+            Some(v) => std::env::set_var("OPENHUMAN_WORKSPACE", v),
+            None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
+        }
+
+        let err = result.expect_err("a directory at the config path must fail");
+        assert!(
+            err.contains("is a directory") || err.contains("not a file"),
+            "directory-at-config must report a distinct, non-read error: {err}"
+        );
+    }
+
+    // The #3962 keystone: a genuine read failure on a regular file must surface
+    // the full anyhow chain (`{:#}`) — the read context PLUS the underlying io
+    // cause (`os error N`) — through the RPC String boundary, not just the top
+    // `with_context` line. Triggered portably with a 0o000 (unreadable) file;
+    // skipped under root, which ignores file permissions.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn load_surfaces_full_io_chain_on_unreadable_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("config.toml");
+        std::fs::write(&config_path, "default_temperature = 0.5\n").unwrap();
+        std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        // Root bypasses file-permission checks — the read would succeed and the
+        // assertion would be meaningless, so skip in that environment.
+        if std::fs::read_to_string(&config_path).is_ok() {
+            return;
+        }
+
+        let snapshot = Config {
+            config_path: config_path.clone(),
+            workspace_dir: tmp.path().join("workspace"),
+            ..Default::default()
+        };
+
+        let err = reload_config_snapshot_with_timeout(&snapshot)
+            .await
+            .expect_err("an unreadable config file must fail");
+
+        assert!(
+            err.contains("reading config.toml from"),
+            "error must carry the read context: {err}"
+        );
+        assert!(
+            err.contains("os error"),
+            "error must carry the underlying io cause via {{:#}} (#3962): {err}"
+        );
+    }
 }

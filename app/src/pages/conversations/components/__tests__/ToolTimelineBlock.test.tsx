@@ -90,7 +90,7 @@ describe('SubagentActivityBlock', () => {
     expect(calls[2].textContent).toContain('error');
   });
 
-  it('shows a live preview of streamed visible text (preferred over thinking)', () => {
+  it('renders every thought inline as a labeled "Thoughts" block (reasoning + narration)', () => {
     renderInStore(
       <SubagentActivityBlock
         subagent={{
@@ -104,26 +104,94 @@ describe('SubagentActivityBlock', () => {
         }}
       />
     );
-    const preview = screen.getByTestId('subagent-preview');
-    expect(preview.textContent).toContain('Here is what I found so far');
-    // Visible text takes precedence, so the thinking tail is not shown.
-    expect(preview.textContent).not.toContain('pondering');
+    const thoughts = screen.getAllByTestId('subagent-thought');
+    // Both reasoning and visible narration surface as their own Thoughts block.
+    expect(thoughts).toHaveLength(2);
+    expect(thoughts[0].textContent).toContain('Thoughts');
+    expect(thoughts[0].textContent).toContain('pondering the request');
+    expect(thoughts[1].textContent).toContain('Here is what I found so far');
   });
 
-  it('falls back to the thinking tail while only reasoning has streamed', () => {
+  it('renders thoughts and tool calls interleaved in transcript order', () => {
     renderInStore(
       <SubagentActivityBlock
         subagent={{
           taskId: 't',
           agentId: 'researcher',
           toolCalls: [],
-          transcript: [{ kind: 'thinking', iteration: 1, text: 'I should search the web first' }],
+          transcript: [
+            { kind: 'thinking', iteration: 1, text: 'I should search the web first' },
+            { kind: 'tool', iteration: 1, callId: 'c1', toolName: 'web_search', status: 'success' },
+            { kind: 'text', iteration: 1, text: 'Found three relevant results' },
+          ],
         }}
       />
     );
-    expect(screen.getByTestId('subagent-preview').textContent).toContain(
-      'I should search the web first'
+    const rows = screen.getByTestId('subagent-transcript').children;
+    // Order is preserved: thought → tool → thought.
+    expect(rows[0]).toHaveAttribute('data-testid', 'subagent-thought');
+    expect(rows[0].textContent).toContain('I should search the web first');
+    expect(rows[1]).toHaveAttribute('data-testid', 'subagent-tool-call');
+    expect(rows[1].textContent).toContain('Searching the web');
+    expect(rows[2]).toHaveAttribute('data-testid', 'subagent-thought');
+    expect(rows[2].textContent).toContain('Found three relevant results');
+  });
+
+  it('renders each thought as a collapsible details (open by default) with a thought icon', () => {
+    renderInStore(
+      <SubagentActivityBlock
+        subagent={{
+          taskId: 't',
+          agentId: 'researcher',
+          toolCalls: [],
+          transcript: [{ kind: 'thinking', iteration: 1, text: 'weighing the options' }],
+        }}
+      />
     );
+    const thought = screen.getByTestId('subagent-thought');
+    expect(thought.tagName).toBe('DETAILS');
+    expect(thought).toHaveAttribute('open');
+    // The thought-balloon icon sits in the clickable summary alongside the label.
+    expect(thought.querySelector('summary')?.textContent).toContain('💭');
+    expect(thought.querySelector('summary')?.textContent).toContain('Thoughts');
+  });
+
+  it('strips a leaked <tool_call> envelope from the thought text', () => {
+    renderInStore(
+      <SubagentActivityBlock
+        subagent={{
+          taskId: 't',
+          agentId: 'researcher',
+          toolCalls: [],
+          transcript: [
+            {
+              kind: 'text',
+              iteration: 1,
+              text: 'I\'ll search your Notion for that. <tool_call> {"name": "NOTION_SEARCH", "arguments": {"query": "audit"}} </tool_call>',
+            },
+          ],
+        }}
+      />
+    );
+    const thought = screen.getByTestId('subagent-thought');
+    expect(thought.textContent).toContain("I'll search your Notion for that.");
+    // The raw tool-call envelope must not leak into the displayed prose.
+    expect(thought.textContent).not.toContain('tool_call');
+    expect(thought.textContent).not.toContain('NOTION_SEARCH');
+  });
+
+  it('skips an all-whitespace thought delta', () => {
+    renderInStore(
+      <SubagentActivityBlock
+        subagent={{
+          taskId: 't',
+          agentId: 'researcher',
+          toolCalls: [],
+          transcript: [{ kind: 'thinking', iteration: 1, text: '   \n  ' }],
+        }}
+      />
+    );
+    expect(screen.queryByTestId('subagent-thought')).toBeNull();
   });
 
   it('renders the view-processing button only when onView is provided', async () => {
@@ -206,6 +274,44 @@ describe('ToolTimelineBlock — agentic task insights surface', () => {
   it('renders nothing for an empty timeline', () => {
     const { container } = renderInStore(<ToolTimelineBlock entries={[]} />);
     expect(container.querySelector('[data-testid="agent-task-insights"]')).toBeNull();
+  });
+
+  it('renders the parent live response inside the panel under a Response heading', () => {
+    const entries: ToolTimelineEntry[] = [
+      { id: 'r', name: 'web_search', round: 1, status: 'running', argsBuffer: '{"query":"f1"}' },
+    ];
+    renderInStore(
+      <ToolTimelineBlock
+        entries={entries}
+        liveResponse="Let me check your Notion for that audit file."
+      />
+    );
+    const resp = screen.getByTestId('agent-live-response');
+    expect(resp.textContent).toContain('Response');
+    expect(resp.textContent).toContain('Let me check your Notion for that audit file.');
+  });
+
+  it('omits the Response block when there is no live response', () => {
+    const entries: ToolTimelineEntry[] = [
+      { id: 'r', name: 'web_search', round: 1, status: 'running' },
+    ];
+    renderInStore(<ToolTimelineBlock entries={entries} />);
+    expect(screen.queryByTestId('agent-live-response')).toBeNull();
+  });
+
+  it('strips a leaked <tool_call> envelope from the live response', () => {
+    const entries: ToolTimelineEntry[] = [
+      { id: 'r', name: 'web_search', round: 1, status: 'running' },
+    ];
+    renderInStore(
+      <ToolTimelineBlock
+        entries={entries}
+        liveResponse={'Searching now. <tool_call> {"name":"X"} </tool_call>'}
+      />
+    );
+    const resp = screen.getByTestId('agent-live-response');
+    expect(resp.textContent).toContain('Searching now.');
+    expect(resp.textContent).not.toContain('tool_call');
   });
 });
 

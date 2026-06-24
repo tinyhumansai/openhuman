@@ -32,6 +32,7 @@ jobs:
     outputs:
       frontend: ${{ steps.filter.outputs.frontend }}
       i18n: ${{ steps.filter.outputs.i18n }}
+      docs: ${{ steps.filter.outputs.docs }}
       rust-core: ${{ steps.filter.outputs['rust-core'] }}
       rust-tauri: ${{ steps.filter.outputs['rust-tauri'] }}
       playwright: ${{ steps.filter.outputs.playwright }}
@@ -61,6 +62,13 @@ jobs:
             i18n:
               - '.github/workflows/pr-ci.yml'
               - 'app/src/**'
+            docs:
+              - '.github/workflows/pr-ci.yml'
+              - 'app/src/App.tsx'
+              - 'scripts/generate-architecture-docs.mjs'
+              - 'scripts/__tests__/generate-architecture-docs.test.mjs'
+              - 'gitbooks/developing/architecture/frontend.md'
+              - 'package.json'
             rust-core:
               - '.github/workflows/pr-ci.yml'
               - 'Cargo.toml'
@@ -176,6 +184,31 @@ jobs:
 
       - name: Verify i18n coverage (missing / extra / drifted keys across locales)
         run: pnpm i18n:check
+
+  docs-drift:
+    name: Docs Drift (generated architecture docs)
+    needs: [changes]
+    if: needs.changes.outputs.docs == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
+    steps:
+      - name: Checkout code
+        # Pinned to the v5 commit SHA for supply-chain hardening (CodeRabbit
+        # review on #3892). The other lanes still use the @v5 tag; migrating
+        # them is a separate repo-wide change.
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 1
+
+      # The generator + its tests use only Node built-ins (no workspace deps),
+      # so there is no `pnpm install` step — this lane stays fast.
+      - name: Generator unit tests
+        run: pnpm docs:test
+
+      - name: Verify generated architecture docs are not stale
+        run: pnpm docs:check
 
   rust-quality:
     name: Rust Quality (fmt, clippy)
@@ -808,6 +841,7 @@ jobs:
       - changes
       - frontend-quality
       - i18n-coverage
+      - docs-drift
       - rust-quality
       - build-playwright-e2e-artifact
       - frontend-coverage
@@ -827,6 +861,7 @@ jobs:
             ["Detect Changed Areas"]="${{ needs.changes.result }}"
             ["Frontend Quality"]="${{ needs['frontend-quality'].result }}"
             ["i18n Coverage"]="${{ needs['i18n-coverage'].result }}"
+            ["Docs Drift"]="${{ needs['docs-drift'].result }}"
             ["Rust Quality"]="${{ needs['rust-quality'].result }}"
             ["Build Playwright E2E Artifact"]="${{ needs['build-playwright-e2e-artifact'].result }}"
             ["Frontend Coverage"]="${{ needs['frontend-coverage'].result }}"

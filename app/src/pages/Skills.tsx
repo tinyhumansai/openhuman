@@ -462,6 +462,9 @@ export default function Skills() {
 
   const {
     toolkits: composioToolkits,
+    // Default to an empty map so the component is resilient when a test
+    // mock (or an older hook build) omits the dynamic-catalog field.
+    catalogByToolkit: composioCatalogByToolkit = new Map(),
     connectionByToolkit: composioConnectionByToolkit,
     connectionsByToolkit: composioConnectionsByToolkit,
     error: composioError,
@@ -538,21 +541,34 @@ export default function Skills() {
 
   const composioCatalogToolkits = useMemo(() => {
     const normalizedToolkits = composioToolkits.map(slug => canonicalizeComposioToolkitSlug(slug));
-    const missingKnownToolkits = KNOWN_COMPOSIO_TOOLKITS.filter(
-      slug => !normalizedToolkits.includes(slug)
-    );
-    if (IS_DEV && missingKnownToolkits.length > 0) {
-      console.debug('[skills][composio] filling gaps from KNOWN_COMPOSIO_TOOLKITS', {
+    // Prefer the live Composio catalog when the backend supplies it. The
+    // hardcoded KNOWN_COMPOSIO_TOOLKITS list only fills gaps for older
+    // cores that predate the dynamic catalog (see
+    // COMPOSIO_DYNAMIC_CATALOG_PLAN.md) so the grid is never empty.
+    const dynamicSlugs = Array.from(composioCatalogByToolkit.keys());
+    const hasDynamicCatalog = dynamicSlugs.length > 0;
+    const baseSlugs = hasDynamicCatalog ? dynamicSlugs : KNOWN_COMPOSIO_TOOLKITS;
+
+    if (IS_DEV) {
+      const missingKnownToolkits = KNOWN_COMPOSIO_TOOLKITS.filter(
+        slug => !normalizedToolkits.includes(slug)
+      );
+      console.debug('[skills][composio] building catalog', {
+        source: hasDynamicCatalog ? 'dynamic-backend' : 'hardcoded-fallback',
+        dynamicCount: dynamicSlugs.length,
         toolkitCount: composioToolkits.length,
         connectionCount: composioConnectionByToolkit.size,
         hasError: Boolean(composioError),
-        missingKnownToolkits,
+        missingKnownToolkits: hasDynamicCatalog ? [] : missingKnownToolkits,
       });
     }
-    return Array.from(new Set([...KNOWN_COMPOSIO_TOOLKITS, ...normalizedToolkits])).sort((a, b) =>
+
+    // Union base slugs with enabled slugs and any connected toolkit so a
+    // connection always renders even if it's missing from the catalog.
+    return Array.from(new Set([...baseSlugs, ...normalizedToolkits])).sort((a, b) =>
       a.localeCompare(b)
     );
-  }, [composioToolkits, composioConnectionByToolkit, composioError]);
+  }, [composioToolkits, composioCatalogByToolkit, composioConnectionByToolkit, composioError]);
 
   // Unified item list
   const allItems: SkillItem[] = useMemo(() => {
@@ -600,12 +616,14 @@ export default function Skills() {
       connection: ComposioConnection | undefined;
     }> = [];
     for (const slug of composioCatalogToolkits) {
-      const meta = composioToolkitMeta(slug);
+      const canonical = canonicalizeComposioToolkitSlug(slug);
+      const entry = composioCatalogByToolkit.get(canonical);
+      const meta = composioToolkitMeta(slug, entry);
       const connection = composioConnectionByToolkit.get(meta.slug);
       entries.push({ meta, connection });
     }
     return entries;
-  }, [composioCatalogToolkits, composioConnectionByToolkit]);
+  }, [composioCatalogToolkits, composioCatalogByToolkit, composioConnectionByToolkit]);
 
   const composioFilteredEntries = useMemo(() => {
     const q = searchQuery.toLowerCase();

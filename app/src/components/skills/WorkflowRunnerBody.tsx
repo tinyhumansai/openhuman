@@ -460,7 +460,8 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
     setSkillsLoading(true);
     setSkillsError(null);
     workflowsApi
-      .listWorkflows()
+      // Include `skills/`-root installs so registry-installed skills are runnable here.
+      .listWorkflows({ includeSkills: true })
       .then(list => {
         if (cancelled) return;
         // Hide the codegraph-smoke skill — internal smoke-test only.
@@ -1583,7 +1584,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
           onCreated={() => {
             setEditOpen(false);
             void workflowsApi
-              .listWorkflows()
+              .listWorkflows({ includeSkills: true })
               .then(list => setSkills(list.filter(s => s.id !== 'codegraph-smoke')))
               .catch(() => {});
             void workflowsApi

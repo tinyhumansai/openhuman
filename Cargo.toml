@@ -308,3 +308,21 @@ lto = false
 incremental = false
 strip = true
 debug = false
+
+# Faster local + CI iteration (#3877): compile third-party dependencies in the
+# dev/test profiles WITHOUT debuginfo. The dependency graph here is large (a
+# local checkout showed root `target/` ~12G and Tauri `target/` ~4.4G), and
+# DWARF generation + linking for every dependency is a dominant, repeated cost
+# across `cargo build`, `cargo test`, `cargo clippy`, and `cargo llvm-cov`.
+#
+# Scope is intentionally narrow and low-risk:
+#   * `package."*"` targets dependencies only — our own crates keep full
+#     debuginfo, so panics/backtraces in OpenHuman code still resolve to
+#     file:line and a debugger can still step through our code.
+#   * Only the unoptimised `dev`/`test` profiles change. `release` and `ci`
+#     (which already set `debug = false` / `line-tables-only`) are untouched.
+#   * No artifact paths, features, or runtime behaviour change — this only
+#     reduces how much DWARF is emitted for dependencies, which also shrinks
+#     `target/` substantially.
+[profile.dev.package."*"]
+debug = false

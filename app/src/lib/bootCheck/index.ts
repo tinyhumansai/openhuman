@@ -25,17 +25,33 @@ const logError = debug('boot-check:error');
 // Result types
 // ---------------------------------------------------------------------------
 
+/** A non-OpenHuman process holding the core RPC port, surfaced so the user can
+ * see what to free (and consent to force-quitting it). */
+export interface PortOwner {
+  pid: number;
+  name: string;
+}
+
 export type BootCheckResult =
   | { kind: 'match' }
   | { kind: 'daemonDetected' }
   | { kind: 'outdatedLocal' }
   | { kind: 'outdatedCloud' }
   | { kind: 'noVersionMethod' }
-  | { kind: 'unreachable'; reason: string; portConflict?: boolean };
+  | { kind: 'unreachable'; reason: string; portConflict?: boolean; foreignOwner?: PortOwner };
 
 // ---------------------------------------------------------------------------
 // Transport interface (injectable for tests)
 // ---------------------------------------------------------------------------
+
+// Mirrors the Rust `RecoveryOutcome` JSON: serde serializes `None` as explicit
+// `null`, so the optional fields are nullable, not just absent.
+export interface RecoveryOutcome {
+  success: boolean;
+  message: string;
+  new_port?: number | null;
+  foreign_owner?: PortOwner | null;
+}
 
 export interface BootCheckTransport {
   /** Call a JSON-RPC method on the active core endpoint. */
@@ -43,7 +59,10 @@ export interface BootCheckTransport {
   /** Invoke a Tauri command. */
   invokeCmd: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
   /** Attempt to auto-recover from a port conflict. Optional — only wired in desktop builds. */
-  recoverPortConflict?: () => Promise<{ success: boolean; message: string; new_port?: number }>;
+  recoverPortConflict?: () => Promise<RecoveryOutcome>;
+  /** Terminate the foreign process holding the port, after explicit user
+   * consent for that pid. Optional — only wired in desktop builds. */
+  forceQuitPortOwner?: (pid: number) => Promise<RecoveryOutcome>;
 }
 
 // The production transport lives in `app/src/services/bootCheckService.ts`
@@ -228,6 +247,7 @@ export async function runBootCheck(
             kind: 'unreachable',
             reason: `Failed to start local core — port conflict recovery failed: ${recovery.message}`,
             portConflict: true,
+            foreignOwner: recovery.foreign_owner ?? undefined,
           };
         }
         // Recovery succeeded — clear the URL cache so we pick up the new port.

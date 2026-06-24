@@ -17,14 +17,11 @@ pub use crate::openhuman::memory_store::tools::{
     MemoryStoreKindsTool, MemoryStoreRawChunksTool, MemoryStoreRawSearchTool,
 };
 
-// Re-export existing tools from memory::query
-pub use crate::openhuman::memory::query::smart_walk::run_smart_walk;
-pub use crate::openhuman::memory::query::walk::{
-    run_walk, WalkOptions, WalkOutcome, WalkStep, WalkStopReason,
-};
+// Re-export existing tools from memory::query. The former agentic `walk` /
+// `smart_walk` tools are gone — retrieval is now the deterministic
+// `fast_retrieve` exposed via the `memory_tree` tool's `walk`/`smart_walk`
+// modes (see `memory_tree::retrieval::fast`).
 pub use crate::openhuman::memory::query::{
-    MemoryQueryWalkTool, MemoryTreeDrillDownTool, MemoryTreeFetchLeavesTool,
-    MemoryTreeIngestDocumentTool, MemoryTreeQuerySourceTool, MemoryTreeSearchEntitiesTool,
-    MemoryTreeWalkTool, SmartMemoryWalkTool, SmartWalkOptions, SmartWalkOutcome, SmartWalkStep,
-    SmartWalkStopReason,
+    MemoryTreeDrillDownTool, MemoryTreeFetchLeavesTool, MemoryTreeIngestDocumentTool,
+    MemoryTreeQuerySourceTool, MemoryTreeSearchEntitiesTool,
 };

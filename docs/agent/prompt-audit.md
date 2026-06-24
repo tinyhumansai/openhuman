@@ -128,3 +128,38 @@ and dynamic build paths, plus an assertion in the narrow-renderer test.
 GGML_NATIVE=OFF cargo test --manifest-path Cargo.toml --lib agent::prompts::
 GGML_NATIVE=OFF cargo test --manifest-path Cargo.toml --lib agent_registry::agents
 ```
+
+---
+
+## Provider prompt-cache behaviour (#3939)
+
+The byte-stable prompt prefix above is what makes KV-cache reuse possible. How
+much of that reuse a user actually gets depends on the backend they route to.
+`Provider::prompt_cache_capabilities()` (`src/openhuman/inference/provider/traits.rs`,
+`PromptCacheCapabilities`) makes that contract explicit per provider:
+
+| Provider | automatic prefix cache | reports cached input tokens | explicit cache-control | thread/session grouping |
+|---|---|---|---|---|
+| OpenHuman backend | ✓ | ✓ | — | ✓ (`thread_id` extension) |
+| OpenAI / OpenRouter / GMI (OpenAI-compatible) | ✓ | ✓ | — | — (prefix identity) |
+| Other / custom / LM Studio compatible | conservative default — all `false` | | | |
+
+Notes:
+
+- **Conservative by default.** Unknown or custom OpenAI-compatible slugs report
+  no caching, so we never assume cache hits or send cache-only request fields a
+  provider may not honour. Opting a provider in is a one-line edit to
+  `prompt_cache_for_compatible_slug` (`compatible.rs`) once verified.
+- **Usage normalization is provider-agnostic.** `extract_usage` already folds the
+  OpenAI `usage.prompt_tokens_details.cached_tokens` shape and the
+  `openhuman.usage.cached_input_tokens` extension into
+  `UsageInfo.cached_input_tokens`, so cached-prefix cost accounting
+  (`src/openhuman/agent/cost.rs`) is exact wherever the provider reports it.
+- **No OpenHuman-only leakage.** `explicit_cache_control` stays `false` for every
+  OpenAI-compatible provider (the chat-completions API has no such field), and
+  `thread_id` grouping is declared only on `OpenHumanBackendProvider`.
+
+Follow-ups (not in this slice): explicit cache-control request shaping for
+providers that support it (e.g. Anthropic `cache_control`), a `ChatRequest`
+cache-boundary marker, and extending cached-token parsing to non-OpenAI usage
+shapes (e.g. DeepSeek `prompt_cache_hit_tokens`).

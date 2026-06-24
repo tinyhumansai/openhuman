@@ -1,12 +1,13 @@
 import createDebug from 'debug';
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import EmptyStateCard from '../components/EmptyStateCard';
 import PillTabBar from '../components/PillTabBar';
 import RewardsCommunityTab from '../components/rewards/RewardsCommunityTab';
 import RewardsRedeemTab from '../components/rewards/RewardsRedeemTab';
 import RewardsReferralsTab from '../components/rewards/RewardsReferralsTab';
+import { settingsNavState } from '../components/settings/modal/settingsOverlay';
 import { useT } from '../lib/i18n/I18nContext';
 import { useCoreState } from '../providers/CoreStateProvider';
 import { rewardsApi } from '../services/api/rewardsApi';
@@ -30,6 +31,7 @@ function errorMessage(err: unknown): string {
 const Rewards = () => {
   const { t } = useT();
   const navigate = useNavigate();
+  const location = useLocation();
   const { snapshot: coreSnapshot } = useCoreState();
   const isLocalSession = isLocalSessionToken(coreSnapshot.sessionToken);
   const [selectedTab, setSelectedTab] = useState<RewardsTab>('rewards');
@@ -124,7 +126,7 @@ const Rewards = () => {
             title={t('rewards.title')}
             description={t('rewards.localUnavailable')}
             actionLabel={t('rewards.localUnavailableCta')}
-            onAction={() => navigate('/settings/account')}
+            onAction={() => navigate('/settings/account', settingsNavState(location))}
           />
         </div>
       </div>

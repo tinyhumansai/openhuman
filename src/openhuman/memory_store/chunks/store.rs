@@ -190,6 +190,27 @@ CREATE INDEX IF NOT EXISTS idx_mem_tree_entity_index_node
 CREATE INDEX IF NOT EXISTS idx_mem_tree_entity_index_timestamp
     ON mem_tree_entity_index(timestamp_ms);
 
+-- E2GraphRAG: undirected weighted entity co-occurrence graph. One row per
+-- unordered entity pair that has been extracted together within the same
+-- chunk; `weight` accumulates co-occurrence frequency. Canonical ordering
+-- (`entity_a < entity_b`) keeps the pair unique without a second row, and
+-- the `entity_b` index makes neighbour lookups symmetric (a row matches a
+-- query entity whether it appears as `entity_a` or `entity_b`). Read at
+-- query time by `memory_tree::graph` for bounded-hop shortest-path filtering
+-- during deterministic (LLM-free) retrieval.
+CREATE TABLE IF NOT EXISTS mem_tree_entity_edges (
+    entity_a               TEXT NOT NULL,
+    entity_b               TEXT NOT NULL,
+    weight                 INTEGER NOT NULL DEFAULT 1,
+    updated_ms             INTEGER NOT NULL,
+    PRIMARY KEY (entity_a, entity_b)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mem_tree_entity_edges_a
+    ON mem_tree_entity_edges(entity_a);
+CREATE INDEX IF NOT EXISTS idx_mem_tree_entity_edges_b
+    ON mem_tree_entity_edges(entity_b);
+
 -- Phase 3a (#709): summary trees / bucket-seal.
 -- `mem_tree_trees` tracks one tree per scope (source/topic/global).
 CREATE TABLE IF NOT EXISTS mem_tree_trees (

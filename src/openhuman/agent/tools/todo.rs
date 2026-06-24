@@ -35,7 +35,17 @@ impl Tool for TodoTool {
     }
 
     fn description(&self) -> &str {
-        "Manage the agent's per-thread task board. Dispatch via the `op` field: \
+        "Maintain a visible plan for THIS conversation thread (the cards render \
+         above the user's composer and survive across turns). \
+         Use it for any request with 3+ steps or several distinct tasks: at the \
+         start, `add` one card per step up front; keep exactly ONE card \
+         `in_progress` at a time; mark a card `done` the moment it is finished \
+         (do not batch completions); if a step fails or is abandoned, set it \
+         `blocked` with a `blocker`, or revise it. `list` to re-read the current \
+         plan when resuming. Skip this tool for trivial single-step requests. \
+         The board is bound automatically to the current thread — do not pass a \
+         thread id. \
+         Dispatch via the `op` field: \
          `add` (content, status?, objective?, plan?, assignedAgent?, allowedTools?, \
          approvalMode?, acceptanceCriteria?, evidence?, notes?, blocker?), \
          `edit` (id, content?, status?, objective?, plan?, assignedAgent?, allowedTools?, \
@@ -45,7 +55,6 @@ impl Tool for TodoTool {
          `replace` (cards: full list — wholesale replace), \
          `clear`, or `list`. \
          `status` is one of `todo` / `in_progress` / `blocked` / `done`. \
-         At most one card may be `in_progress` at a time. \
          Returns the updated list as cards plus a markdown rendering."
     }
 
@@ -345,6 +354,26 @@ mod tests {
         let tool = TodoTool::new();
         let err = tool.execute(json!({ "op": "add" })).await.unwrap_err();
         assert!(err.to_string().contains("content"));
+    }
+
+    #[test]
+    fn description_carries_planning_guidance() {
+        // The `todo` tool steers the live orchestrator purely through its static
+        // (prompt-cache-stable) schema description — there is no per-thread prompt
+        // injection. Lock in the behavioural contract so the guidance can't be
+        // silently dropped: when-to-use, single-in_progress discipline, and the
+        // "bound to the current thread, don't pass a thread id" rule.
+        let tool = TodoTool::new();
+        let desc = tool.description();
+        assert!(desc.contains("3+ steps"), "missing when-to-use guidance");
+        assert!(
+            desc.contains("ONE card `in_progress`"),
+            "missing single-in_progress discipline"
+        );
+        assert!(
+            desc.contains("do not pass a thread id"),
+            "missing explicit 'do not pass a thread id' note"
+        );
     }
 
     #[tokio::test]

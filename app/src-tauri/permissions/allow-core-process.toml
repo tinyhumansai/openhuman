@@ -11,6 +11,11 @@ allow = [
     # =========================
     "core_rpc_url",
     "core_rpc_token",
+    # `relay_http_rpc` proxies a JSON-RPC POST through the Rust host so the
+    # secure webview can reach a self-hosted runtime on a cleartext LAN IP
+    # without tripping mixed-content/CORS (#3865). Without this allow entry the
+    # invoke is rejected with "Command not allowed by ACL".
+    "relay_http_rpc",
     # `start_core_process` is invoked by BootCheckGate after the user picks
     # Local mode, before redux-persist hydrates the rest of the app (#1316).
     # Without this allow entry the invoke is rejected with "Command not

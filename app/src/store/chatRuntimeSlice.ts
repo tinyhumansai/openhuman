@@ -133,6 +133,10 @@ export type SubagentTranscriptItem =
       status: ToolTimelineEntryStatus;
       elapsedMs?: number;
       outputChars?: number;
+      /** Arguments the child invoked the tool with (set on start). */
+      args?: unknown;
+      /** The tool's actual output text (set on completion). */
+      result?: string;
     };
 
 /** One child tool call performed by a running sub-agent. */
@@ -148,6 +152,10 @@ export interface SubagentToolCallEntry {
   elapsedMs?: number;
   /** Character length of the tool result (set on completion). */
   outputChars?: number;
+  /** Arguments the child invoked the tool with (set on start). */
+  args?: unknown;
+  /** The tool's actual output text (set on completion). */
+  result?: string;
 }
 
 export interface ToolTimelineEntry {
@@ -401,6 +409,42 @@ function toolTimelineFromPersisted(entry: PersistedToolTimelineEntry): ToolTimel
   };
 }
 
+/**
+ * Settle a rehydrated tool/subagent row that has no live event driver.
+ *
+ * A turn-state snapshot is a point-in-time mirror: a row left at the
+ * non-terminal `running` status was still in-flight when the snapshot was
+ * written. When the owning turn was *interrupted* (the core process that was
+ * driving it is gone — see `mark_all_interrupted`), no `subagent_done` /
+ * `chat_done` event will ever arrive to flip it terminal, so the row would
+ * pulse forever — the agent-name blink is driven by the row `status`
+ * (`agentNameTone(entry.status)`; `running` pulses, `cancelled` is muted &
+ * static). Settle the row to `cancelled` — terminal, muted, not pulsing —
+ * mirroring `markSubagentCancelled`.
+ *
+ * `running` is the only non-terminal value the persisted *row* status can carry
+ * (`PersistedToolStatus` is `running | success | error`), so that single guard
+ * catches every orphan.
+ *
+ * The nested `subagent.status` is a richer enum: a subagent that emitted
+ * `SubagentAwaitingUser` is persisted with the row `running` but
+ * `subagent.status = 'awaiting_user'`. Only settle a child that is *itself*
+ * still `running`; leaving `awaiting_user` (and any other non-running child)
+ * intact preserves the truthful "was waiting for the user" history — and the
+ * pulse is already stopped by the row-level `cancelled` above.
+ */
+function settleOrphanedTimelineEntry(entry: ToolTimelineEntry): ToolTimelineEntry {
+  if (entry.status !== 'running') return entry;
+  return {
+    ...entry,
+    status: 'cancelled',
+    subagent:
+      entry.subagent && entry.subagent.status === 'running'
+        ? { ...entry.subagent, status: 'cancelled' }
+        : entry.subagent,
+  };
+}
+
 function timelineStatusFromRun(status: AgentRun['status']): ToolTimelineEntryStatus {
   switch (status) {
     case 'completed':
@@ -408,8 +452,12 @@ function timelineStatusFromRun(status: AgentRun['status']): ToolTimelineEntrySta
     case 'cancelled':
       return 'cancelled';
     case 'failed':
-    case 'interrupted':
       return 'error';
+    case 'interrupted':
+      // Orphaned by a process exit (e.g. a detached subagent the core lost track
+      // of and settled on next boot) — terminal, but not a user-facing error.
+      // Render muted/static like `cancelled`, not alarming red.
+      return 'cancelled';
     case 'awaiting_user':
     case 'paused':
       return 'awaiting_user';
@@ -590,14 +638,15 @@ const chatRuntimeSlice = createSlice({
         callId: string;
         toolName: string;
         iteration?: number;
+        args?: unknown;
       }>
     ) => {
-      const { threadId, rowId, callId, toolName, iteration } = action.payload;
+      const { threadId, rowId, callId, toolName, iteration, args } = action.payload;
       const entry = state.toolTimelineByThread[threadId]?.find(e => e.id === rowId);
       if (!entry?.subagent) return;
       const transcript = (entry.subagent.transcript ??= []);
       if (transcript.some(i => i.kind === 'tool' && i.callId === callId)) return;
-      transcript.push({ kind: 'tool', iteration, callId, toolName, status: 'running' });
+      transcript.push({ kind: 'tool', iteration, callId, toolName, status: 'running', args });
     },
     /**
      * Flip a transcript `tool` item to its terminal status when the child
@@ -613,15 +662,17 @@ const chatRuntimeSlice = createSlice({
         success: boolean;
         elapsedMs?: number;
         outputChars?: number;
+        result?: string;
       }>
     ) => {
-      const { threadId, rowId, callId, success, elapsedMs, outputChars } = action.payload;
+      const { threadId, rowId, callId, success, elapsedMs, outputChars, result } = action.payload;
       const entry = state.toolTimelineByThread[threadId]?.find(e => e.id === rowId);
       const item = entry?.subagent?.transcript?.find(i => i.kind === 'tool' && i.callId === callId);
       if (!item || item.kind !== 'tool') return;
       item.status = success ? 'success' : 'error';
       if (elapsedMs != null) item.elapsedMs = elapsedMs;
       if (outputChars != null) item.outputChars = outputChars;
+      if (result != null) item.result = result;
     },
     setTaskBoardForThread: (
       state,
@@ -864,7 +915,11 @@ const chatRuntimeSlice = createSlice({
       if (snapshot.lifecycle === 'interrupted') {
         delete state.inferenceStatusByThread[threadId];
         delete state.streamingAssistantByThread[threadId];
-        state.toolTimelineByThread[threadId] = snapshot.toolTimeline.map(toolTimelineFromPersisted);
+        // No live driver remains for this turn — settle any in-flight rows so
+        // their agent names stop pulsing instead of blinking forever.
+        state.toolTimelineByThread[threadId] = snapshot.toolTimeline
+          .map(toolTimelineFromPersisted)
+          .map(settleOrphanedTimelineEntry);
         return;
       }
 

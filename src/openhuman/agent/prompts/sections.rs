@@ -274,6 +274,13 @@ impl PromptSection for IdentitySection {
             inject_workspace_file(&mut prompt, ctx.workspace_dir, file);
         }
 
+        // Seed MEMORY_GOALS.md to disk (header-only default) so the
+        // long-term goals list is discoverable in the workspace from first
+        // boot. Sync-only: the goals file is deliberately NOT injected into
+        // the system prompt — it is stored state managed by the memory_goals
+        // domain (RPC / tools / enrichment agent).
+        sync_workspace_file(ctx.workspace_dir, "MEMORY_GOALS.md");
+
         // PROFILE.md / MEMORY.md injection lives in the dedicated
         // `UserFilesSection` (below) so agents that strip the identity
         // preamble (`omit_identity = true`) — welcome, orchestrator, the

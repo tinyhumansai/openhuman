@@ -78,6 +78,23 @@ describe('WorkflowRunApprovalCard', () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
+  it('uses an opaque warning surface so thread text does not show through (#3783)', () => {
+    render(
+      <WorkflowRunApprovalCard
+        definition={def()}
+        reasons={['high_children']}
+        onApprove={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    );
+    const card = screen.getByTestId('workflow-approval-card');
+    expect(card).toHaveClass('bg-amber-50');
+    expect(card).toHaveClass('dark:bg-amber-950');
+    // No fractional-opacity background that would let thread text bleed through.
+    expect(card.className).not.toMatch(/\bbg-[^\s/]+\/\d+/);
+    expect(card.className).not.toMatch(/\bdark:bg-[^\s/]+\/\d+/);
+  });
+
   it('disables both buttons and shows the starting label while a start is in flight', () => {
     render(
       <WorkflowRunApprovalCard

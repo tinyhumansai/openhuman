@@ -9,7 +9,16 @@ import IntelligenceSubconsciousTab from '../IntelligenceSubconsciousTab';
 
 const mockNavigate = vi.fn();
 
-vi.mock('react-router-dom', () => ({ useNavigate: () => mockNavigate }));
+vi.mock('react-router-dom', () => ({
+  useNavigate: () => mockNavigate,
+  useLocation: () => ({
+    pathname: '/intelligence',
+    search: '',
+    hash: '',
+    state: null,
+    key: 'test',
+  }),
+}));
 
 function baseProps(): ComponentProps<typeof IntelligenceSubconsciousTab> {
   return {

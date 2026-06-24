@@ -356,6 +356,8 @@ fn handle_add(params: Map<String, Value>) -> ControllerFuture {
                     delivery,
                     delete_after_run,
                     agent_id,
+                    // RPC-created jobs default to enabled (current behaviour).
+                    true,
                 )
                 .map_err(|e| e.to_string())?
             }

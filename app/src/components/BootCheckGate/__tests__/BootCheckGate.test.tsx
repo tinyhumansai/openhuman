@@ -33,11 +33,13 @@ vi.mock('../../../lib/bootCheck', () => ({
 }));
 
 const mockRecoverPortConflict = vi.fn();
+const mockForceQuitPortOwner = vi.fn();
 vi.mock('../../../services/bootCheckService', async importOriginal => {
   const actual = await importOriginal<typeof import('../../../services/bootCheckService')>();
   return {
     ...actual,
     recoverPortConflict: (...args: unknown[]) => mockRecoverPortConflict(...args),
+    forceQuitPortOwner: (...args: unknown[]) => mockForceQuitPortOwner(...args),
   };
 });
 
@@ -716,6 +718,116 @@ describe('BootCheckGate — port conflict recovery', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Pick a Different Runtime' })).toBeInTheDocument();
     });
+  });
+});
+
+describe('BootCheckGate — foreign port owner', () => {
+  beforeEach(() => {
+    mockRecoverPortConflict.mockReset();
+    mockForceQuitPortOwner.mockReset();
+    mockRunBootCheck.mockReset();
+  });
+
+  const foreignResult = {
+    kind: 'unreachable' as const,
+    reason: 'port conflict',
+    portConflict: true,
+    foreignOwner: { pid: 4242, name: 'Skype.exe' },
+  };
+
+  it('names the foreign owner and offers force-quit instead of Fix Automatically', async () => {
+    mockRunBootCheck.mockResolvedValue(foreignResult);
+
+    renderGate();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('force-quit-owner-btn')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/Skype\.exe \(PID 4242\)/)).toBeInTheDocument();
+    expect(screen.getByTestId('force-quit-owner-btn').textContent).toContain('Skype.exe');
+    expect(screen.queryByTestId('fix-automatically-btn')).not.toBeInTheDocument();
+  });
+
+  it('force-quits the owner and re-runs the boot check on success', async () => {
+    mockRunBootCheck.mockResolvedValueOnce(foreignResult).mockResolvedValue({ kind: 'match' });
+    mockForceQuitPortOwner.mockResolvedValue({ success: true, message: 'ok', new_port: 7789 });
+
+    renderGate();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('force-quit-owner-btn')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('force-quit-owner-btn'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('app-content')).toBeInTheDocument();
+    });
+    expect(mockForceQuitPortOwner).toHaveBeenCalledWith(4242);
+    expect(mockRunBootCheck).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows the force-quit failed message when termination fails', async () => {
+    mockRunBootCheck.mockResolvedValue(foreignResult);
+    mockForceQuitPortOwner.mockResolvedValue({ success: false, message: 'access denied' });
+
+    renderGate();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('force-quit-owner-btn')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('force-quit-owner-btn'));
+
+    await waitFor(() => {
+      expect(screen.getByText(/You may need to close it manually/)).toBeInTheDocument();
+    });
+  });
+
+  it('upgrades to a force-quit button when Fix Automatically surfaces an owner', async () => {
+    mockRunBootCheck.mockResolvedValue({
+      kind: 'unreachable',
+      reason: 'port conflict',
+      portConflict: true,
+    });
+    mockRecoverPortConflict.mockResolvedValue({
+      success: false,
+      message: 'still busy',
+      foreign_owner: { pid: 99, name: 'node.exe' },
+    });
+
+    renderGate();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('fix-automatically-btn')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('fix-automatically-btn'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('force-quit-owner-btn')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/node\.exe \(PID 99\)/)).toBeInTheDocument();
+  });
+
+  it('renders cleanly when the owner name is unknown (empty)', async () => {
+    mockRunBootCheck.mockResolvedValue({
+      kind: 'unreachable',
+      reason: 'port conflict',
+      portConflict: true,
+      foreignOwner: { pid: 4242, name: '' },
+    });
+
+    renderGate();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('force-quit-owner-btn')).toBeInTheDocument();
+    });
+    // No leftover "{name}" / no duplicated PID; the pid still shows.
+    expect(screen.getByText(/\(PID 4242\) is using/)).toBeInTheDocument();
+    expect(screen.getByTestId('force-quit-owner-btn').textContent?.trim()).toBe('Force-quit');
   });
 });
 

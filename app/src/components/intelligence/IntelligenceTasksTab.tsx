@@ -24,7 +24,7 @@ import {
   LuSparkles,
   LuX,
 } from 'react-icons/lu';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { TaskKanbanBoard } from '../../pages/conversations/components/TaskKanbanBoard';
@@ -48,6 +48,7 @@ import {
 import type { ThreadMessage } from '../../types/thread';
 import type { TaskBoard, TaskBoardCard, TaskBoardCardStatus } from '../../types/turnState';
 import { chatThreadPath } from '../../utils/chatRoutes';
+import { settingsNavState } from '../settings/modal/settingsOverlay';
 import { UserTaskComposer } from './UserTaskComposer';
 
 const log = debug('intelligence:tasks');
@@ -779,6 +780,7 @@ function TaskSourceTaskList({
 }) {
   const { t } = useT();
   const navigate = useNavigate();
+  const location = useLocation();
   const sortedCards = useMemo(
     () => [...board.cards].sort((a, b) => a.order - b.order),
     [board.cards]
@@ -797,7 +799,7 @@ function TaskSourceTaskList({
         </div>
         <button
           type="button"
-          onClick={() => navigate('/settings/integrations')}
+          onClick={() => navigate('/settings/integrations', settingsNavState(location))}
           className="text-xs font-medium text-ocean-600 hover:text-ocean-700 dark:text-ocean-300 dark:hover:text-ocean-200">
           {t('conversations.taskKanban.sources.manage')}
         </button>

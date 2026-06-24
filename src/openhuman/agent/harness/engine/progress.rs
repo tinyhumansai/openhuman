@@ -40,7 +40,7 @@ pub(crate) trait ProgressReporter: Send + Sync {
         _call_id: &str,
         _tool_name: &str,
         _success: bool,
-        _output_chars: usize,
+        _output: &str,
         _elapsed_ms: u64,
         _iteration: u32,
     ) {
@@ -158,7 +158,7 @@ impl ProgressReporter for TurnProgress {
         call_id: &str,
         tool_name: &str,
         success: bool,
-        output_chars: usize,
+        output: &str,
         elapsed_ms: u64,
         iteration: u32,
     ) {
@@ -169,7 +169,7 @@ impl ProgressReporter for TurnProgress {
                     call_id: call_id.to_string(),
                     tool_name: tool_name.to_string(),
                     success,
-                    output_chars,
+                    output_chars: output.chars().count(),
                     elapsed_ms,
                     iteration,
                 },
@@ -217,7 +217,7 @@ impl ProgressReporter for SubagentProgress {
         &self,
         call_id: &str,
         tool_name: &str,
-        _arguments: &serde_json::Value,
+        arguments: &serde_json::Value,
         iteration: u32,
     ) {
         if let Some(ref sink) = self.sink {
@@ -228,6 +228,7 @@ impl ProgressReporter for SubagentProgress {
                     task_id: self.task_id.clone(),
                     call_id: call_id.to_string(),
                     tool_name: tool_name.to_string(),
+                    arguments: arguments.clone(),
                     iteration,
                 },
             );
@@ -239,7 +240,7 @@ impl ProgressReporter for SubagentProgress {
         call_id: &str,
         tool_name: &str,
         success: bool,
-        output_chars: usize,
+        output: &str,
         elapsed_ms: u64,
         iteration: u32,
     ) {
@@ -252,7 +253,8 @@ impl ProgressReporter for SubagentProgress {
                     call_id: call_id.to_string(),
                     tool_name: tool_name.to_string(),
                     success,
-                    output_chars,
+                    output_chars: output.chars().count(),
+                    output: output.to_string(),
                     elapsed_ms,
                     iteration,
                 },

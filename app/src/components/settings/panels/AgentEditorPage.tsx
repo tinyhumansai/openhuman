@@ -16,7 +16,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LuPlus, LuSearch, LuX } from 'react-icons/lu';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import {
@@ -34,6 +34,7 @@ import {
   SettingsTextArea,
   SettingsTextField,
 } from '../controls';
+import { settingsNavState } from '../modal/settingsOverlay';
 
 // Known model options — mirrors the Rust tier constants + route hints
 // (src/openhuman/config/schema/types.rs, inference/provider/router.rs).
@@ -71,8 +72,12 @@ function slugify(name: string): string {
 const AgentEditorPage = () => {
   const { t } = useT();
   const navigate = useNavigate();
+  const location = useLocation();
   const { id: routeId } = useParams<{ id: string }>();
-  const backToList = useCallback(() => navigate('/settings/agents'), [navigate]);
+  const backToList = useCallback(
+    () => navigate('/settings/agents', settingsNavState(location)),
+    [navigate, location]
+  );
   const isCreate = !routeId;
 
   const [loading, setLoading] = useState(!isCreate);

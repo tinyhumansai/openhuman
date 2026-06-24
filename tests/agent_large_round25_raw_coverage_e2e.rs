@@ -317,6 +317,7 @@ fn parent(workspace_dir: PathBuf, provider: Arc<ScriptedProvider>) -> ParentExec
         provider,
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(specs),
+        visible_tool_names: std::collections::HashSet::new(),
         model_name: "round25-parent-model".to_string(),
         temperature: 0.0,
         workspace_dir,

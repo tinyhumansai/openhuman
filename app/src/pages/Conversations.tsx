@@ -13,6 +13,7 @@ import ChatNewWindowHero from '../components/chat/ChatNewWindowHero';
 import ComposerTokenStats from '../components/chat/ComposerTokenStats';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import { SidebarContent } from '../components/layout/shell/SidebarSlot';
+import { settingsNavState } from '../components/settings/modal/settingsOverlay';
 import UpsellBanner from '../components/upsell/UpsellBanner';
 import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDismissState';
 import MicComposer from '../features/human/MicComposer';
@@ -65,7 +66,6 @@ import {
 } from '../store/threadSlice';
 import type { ConfirmationModal as ConfirmationModalType } from '../types/intelligence';
 import type { ThreadMessage } from '../types/thread';
-import type { TaskBoardCard, TaskBoardCardStatus } from '../types/turnState';
 import { splitAgentMessageIntoBubbles } from '../utils/agentMessageBubbles';
 import { chatThreadPath } from '../utils/chatRoutes';
 import { CHAT_ATTACHMENTS_ENABLED } from '../utils/config';
@@ -93,7 +93,7 @@ import {
 } from './conversations/components/BackgroundProcessesPanel';
 import { CitationChips, type MessageCitation } from './conversations/components/CitationChips';
 import { SubagentDrawer } from './conversations/components/SubagentDrawer';
-import { TaskKanbanBoard } from './conversations/components/TaskKanbanBoard';
+import { ThreadTodoStrip } from './conversations/components/ThreadTodoStrip';
 import { ToolTimelineBlock } from './conversations/components/ToolTimelineBlock';
 import {
   evaluateComposerSend,
@@ -303,6 +303,11 @@ const Conversations = ({
   const agentMessageViewMode = useAppSelector(
     state => state.theme?.agentMessageViewMode ?? 'bubbles'
   );
+  // When ON, the verbose per-agent "Agentic task insights" timeline is hidden
+  // from chat; a compact blinking "Processing" link (and the existing message
+  // bubble loading) stand in for it, with the full run one click away in the
+  // Agent Process Source side panel. See themeSlice.hideAgentInsights.
+  const hideAgentInsights = useAppSelector(state => state.theme?.hideAgentInsights ?? false);
   const inferenceTurnLifecycleByThread = useAppSelector(
     state => state.chatRuntime.inferenceTurnLifecycleByThread
   );
@@ -526,6 +531,24 @@ const Conversations = ({
         if (openThreadId) {
           debug('[chat][route] requested thread not found thread=%s; falling back', openThreadId);
           navigate('/chat', { replace: true });
+          return;
+        }
+        // Restore the thread the user last had open — persisted across reloads
+        // via redux-persist on the `thread` slice, and kept in-memory across
+        // in-app navigation — whenever it still exists server-side. This must
+        // run BEFORE the General-only default below: a non-General active
+        // session (task / worker / subconscious / meeting) is filtered out of
+        // `visibleThreads`, so without this branch, navigating away from the
+        // Chat tab and back would drop the active thread and either resume an
+        // unrelated General thread or spawn a fresh chat — losing the
+        // conversation the user was in (#chat-tab-active-thread).
+        const persistedThread = selectedThreadId
+          ? data.threads.find(t => t.id === selectedThreadId)
+          : undefined;
+        if (persistedThread) {
+          dispatch(setSelectedThread(persistedThread.id));
+          void dispatch(loadThreadMessages(persistedThread.id));
+          debug('[chat][route] restored active thread thread=%s', persistedThread.id);
           return;
         }
         // Default landing is a fresh "new window" (the merged Home surface) —
@@ -1406,60 +1429,6 @@ const Conversations = ({
   const shouldRenderTimelineBeforeLatestAgentMessage =
     selectedThreadToolTimeline.length > 0 && !isSending && Boolean(latestVisibleAgentMessage);
 
-  const handleMoveTaskCard = async (
-    card: TaskBoardCard,
-    nextStatus: TaskBoardCardStatus
-  ): Promise<void> => {
-    if (!selectedThreadId || !selectedTaskBoard) return;
-    const now = new Date().toISOString();
-    const nextBoard = {
-      ...selectedTaskBoard,
-      cards: selectedTaskBoard.cards.map(existing =>
-        existing.id === card.id ? { ...existing, status: nextStatus, updatedAt: now } : existing
-      ),
-      updatedAt: now,
-    };
-    dispatch(setTaskBoardForThread({ threadId: selectedThreadId, board: nextBoard }));
-    try {
-      const saved = await threadApi.putTaskBoard(selectedThreadId, nextBoard.cards);
-      if (!saved) {
-        throw new Error('Task board update returned no board');
-      }
-      dispatch(setTaskBoardForThread({ threadId: selectedThreadId, board: saved }));
-    } catch (error) {
-      debug('putTaskBoard failed: %o', error);
-      setSendAdvisory(t('conversations.taskKanban.updateFailed'));
-      dispatch(setTaskBoardForThread({ threadId: selectedThreadId, board: selectedTaskBoard }));
-    }
-  };
-
-  const handleUpdateTaskCard = async (
-    card: TaskBoardCard,
-    nextCard: TaskBoardCard
-  ): Promise<void> => {
-    if (!selectedThreadId || !selectedTaskBoard) return;
-    const now = new Date().toISOString();
-    const nextBoard = {
-      ...selectedTaskBoard,
-      cards: selectedTaskBoard.cards.map(existing =>
-        existing.id === card.id ? { ...nextCard, updatedAt: now } : existing
-      ),
-      updatedAt: now,
-    };
-    dispatch(setTaskBoardForThread({ threadId: selectedThreadId, board: nextBoard }));
-    try {
-      const saved = await threadApi.putTaskBoard(selectedThreadId, nextBoard.cards);
-      if (!saved) {
-        throw new Error('Task board update returned no board');
-      }
-      dispatch(setTaskBoardForThread({ threadId: selectedThreadId, board: saved }));
-    } catch (error) {
-      debug('putTaskBoard failed: %o', error);
-      setSendAdvisory(t('conversations.taskKanban.updateFailed'));
-      dispatch(setTaskBoardForThread({ threadId: selectedThreadId, board: selectedTaskBoard }));
-    }
-  };
-
   const filteredThreads = useMemo(() => {
     return threads.filter(t => isThreadVisibleInTab(t, selectedLabel));
   }, [threads, selectedLabel]);
@@ -1799,40 +1768,6 @@ const Conversations = ({
             className={`mx-auto w-full max-w-[48.75rem] space-y-3 px-5 pt-4 ${
               isSidebar ? 'pb-4' : 'pb-32'
             }`}>
-            {selectedTaskBoard && hasTaskBoard && (
-              <TaskKanbanBoard
-                board={selectedTaskBoard}
-                disabled={!selectedThreadId}
-                onMove={(card, status) => {
-                  void handleMoveTaskCard(card, status);
-                }}
-                onUpdateCard={(card, nextCard) => {
-                  void handleUpdateTaskCard(card, nextCard);
-                }}
-                onDecidePlan={(card, approve) => {
-                  void runDecidePlan({
-                    threadId: selectedThreadId,
-                    card,
-                    approve,
-                    dispatch,
-                    notify: setSendAdvisory,
-                    t,
-                  });
-                }}
-                onViewSession={card => {
-                  if (!card.sessionThreadId) return;
-                  // Navigation only — do NOT mark the thread active. activeThreadId
-                  // tracks a true in-flight turn (set on send, cleared on
-                  // done/error). A completed session never emits that lifecycle
-                  // event, so forcing it active would wedge the composer.
-                  dispatch(setSelectedThread(card.sessionThreadId));
-                  void dispatch(loadThreadMessages(card.sessionThreadId));
-                  if (shouldSyncChatRoute) {
-                    navigate(chatThreadPath(card.sessionThreadId));
-                  }
-                }}
-              />
-            )}
             {visibleMessages.map(msg => {
               const isAgentTextMode = msg.sender === 'agent' && agentMessageViewMode === 'text';
               // Parsed once per message: for current messages (extraMetadata
@@ -1852,30 +1787,109 @@ const Conversations = ({
                       }`}>
                       {msg.sender === 'agent' ? (
                         <div className="space-y-1">
-                          {agentMessageViewMode === 'text' ? (
-                            <AgentMessageText content={msg.content} />
-                          ) : (
-                            splitAgentMessageIntoBubbles(msg.content).map(
-                              (segment, index, parts) => {
-                                const position: AgentBubblePosition =
-                                  parts.length === 1
-                                    ? 'single'
-                                    : index === 0
-                                      ? 'first'
-                                      : index === parts.length - 1
-                                        ? 'last'
-                                        : 'middle';
+                          <div className="relative space-y-1">
+                            {agentMessageViewMode === 'text' ? (
+                              <AgentMessageText content={msg.content} />
+                            ) : (
+                              splitAgentMessageIntoBubbles(msg.content).map(
+                                (segment, index, parts) => {
+                                  const position: AgentBubblePosition =
+                                    parts.length === 1
+                                      ? 'single'
+                                      : index === 0
+                                        ? 'first'
+                                        : index === parts.length - 1
+                                          ? 'last'
+                                          : 'middle';
 
+                                  return (
+                                    <AgentMessageBubble
+                                      key={`${msg.id}:${index}`}
+                                      content={segment}
+                                      position={position}
+                                    />
+                                  );
+                                }
+                              )
+                            )}
+                            {/* Reaction affordance — the closed "+", the open picker,
+                                and the resulting reaction chips all live here, tucked
+                                onto the bubble's bottom-left corner so the control
+                                never jumps to a separate row below the timestamp. */}
+                            {latestVisibleMessage?.id === msg.id &&
+                              (() => {
+                                const myReactions =
+                                  (msg.extraMetadata?.myReactions as string[] | undefined) ?? [];
+                                const pickerOpen = reactionPickerMsgId === msg.id;
                                 return (
-                                  <AgentMessageBubble
-                                    key={`${msg.id}:${index}`}
-                                    content={segment}
-                                    position={position}
-                                  />
+                                  <div className="absolute -bottom-2 left-3 z-10 flex items-center gap-1">
+                                    {myReactions.map(emoji => (
+                                      <button
+                                        key={emoji}
+                                        type="button"
+                                        data-analytics-id="chat-message-reaction-remove"
+                                        onClick={() =>
+                                          selectedThreadId &&
+                                          void dispatch(
+                                            persistReaction({
+                                              threadId: selectedThreadId,
+                                              messageId: msg.id,
+                                              emoji,
+                                            })
+                                          )
+                                        }
+                                        className="flex items-center rounded-full border border-primary-200 bg-primary-100 px-1.5 text-xs leading-[1.5] shadow-sm transition-colors hover:bg-primary-200 dark:border-primary-400/40 dark:bg-primary-500/25"
+                                        title={t('chat.removeReaction').replace('{emoji}', emoji)}>
+                                        {emoji}
+                                      </button>
+                                    ))}
+                                    {pickerOpen ? (
+                                      <div className="flex items-center gap-0.5 rounded-full bg-white px-1 py-0.5 shadow-sm ring-1 ring-stone-200 dark:bg-neutral-900 dark:ring-neutral-700">
+                                        {['👍', '❤️', '😂', '🔥', '👀', '🎯'].map(emoji => (
+                                          <button
+                                            key={emoji}
+                                            type="button"
+                                            data-analytics-id="chat-message-reaction-pick"
+                                            onClick={() => {
+                                              if (selectedThreadId) {
+                                                void dispatch(
+                                                  persistReaction({
+                                                    threadId: selectedThreadId,
+                                                    messageId: msg.id,
+                                                    emoji,
+                                                  })
+                                                );
+                                              }
+                                              setReactionPickerMsgId(null);
+                                            }}
+                                            className="rounded px-0.5 text-sm transition-transform hover:scale-125"
+                                            title={emoji}>
+                                            {emoji}
+                                          </button>
+                                        ))}
+                                        <button
+                                          type="button"
+                                          data-analytics-id="chat-message-reaction-close"
+                                          onClick={() => setReactionPickerMsgId(null)}
+                                          className="ml-0.5 px-0.5 text-xs text-stone-600 hover:text-stone-400 dark:text-neutral-300 dark:hover:text-neutral-500">
+                                          ✕
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        data-analytics-id="chat-message-reaction-open"
+                                        onClick={() => setReactionPickerMsgId(msg.id)}
+                                        className="flex h-[18px] items-center rounded-full bg-white px-1.5 text-xs leading-none text-stone-500 opacity-0 shadow-sm ring-1 ring-stone-200 transition-opacity hover:bg-stone-100 hover:text-stone-700 group-hover/msg:opacity-100 dark:bg-neutral-900 dark:text-neutral-400 dark:ring-neutral-700 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
+                                        title={t('chat.addReaction')}
+                                        aria-label={t('chat.addReaction')}>
+                                        +
+                                      </button>
+                                    )}
+                                  </div>
                                 );
-                              }
-                            )
-                          )}
+                              })()}
+                          </div>
                           {(() => {
                             const raw = msg.extraMetadata?.citations;
                             if (!Array.isArray(raw)) return null;
@@ -2019,81 +2033,6 @@ const Conversations = ({
                           </svg>
                         )}
                       </button>
-                      {(() => {
-                        if (latestVisibleMessage?.id !== msg.id) return null;
-                        const myReactions =
-                          (msg.extraMetadata?.myReactions as string[] | undefined) ?? [];
-                        const hasReactions = myReactions.length > 0;
-                        // Show reaction row only for the most recent visible message.
-                        if (!hasReactions && msg.sender !== 'agent') return null;
-                        return (
-                          <div className="mt-1 flex items-center gap-1 flex-wrap min-h-[20px]">
-                            {myReactions.map(emoji => (
-                              <button
-                                key={emoji}
-                                type="button"
-                                data-analytics-id="chat-message-reaction-remove"
-                                onClick={() =>
-                                  selectedThreadId &&
-                                  void dispatch(
-                                    persistReaction({
-                                      threadId: selectedThreadId,
-                                      messageId: msg.id,
-                                      emoji,
-                                    })
-                                  )
-                                }
-                                className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-primary-100 border border-primary-200 text-xs transition-colors hover:bg-primary-200"
-                                title={t('chat.removeReaction').replace('{emoji}', emoji)}>
-                                {emoji}
-                              </button>
-                            ))}
-                            {msg.sender === 'agent' &&
-                              (reactionPickerMsgId === msg.id ? (
-                                <div className="flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-stone-100 dark:bg-neutral-800">
-                                  {['👍', '❤️', '😂', '🔥', '👀', '🎯'].map(emoji => (
-                                    <button
-                                      key={emoji}
-                                      type="button"
-                                      data-analytics-id="chat-message-reaction-pick"
-                                      onClick={() => {
-                                        if (selectedThreadId) {
-                                          void dispatch(
-                                            persistReaction({
-                                              threadId: selectedThreadId,
-                                              messageId: msg.id,
-                                              emoji,
-                                            })
-                                          );
-                                        }
-                                        setReactionPickerMsgId(null);
-                                      }}
-                                      className="px-0.5 rounded text-sm hover:scale-125 transition-transform"
-                                      title={emoji}>
-                                      {emoji}
-                                    </button>
-                                  ))}
-                                  <button
-                                    type="button"
-                                    data-analytics-id="chat-message-reaction-close"
-                                    onClick={() => setReactionPickerMsgId(null)}
-                                    className="ml-0.5 text-stone-600 dark:text-neutral-300 hover:text-stone-400 dark:hover:text-neutral-500 text-xs px-0.5">
-                                    ✕
-                                  </button>
-                                </div>
-                              ) : (
-                                <button
-                                  type="button"
-                                  data-analytics-id="chat-message-reaction-open"
-                                  onClick={() => setReactionPickerMsgId(msg.id)}
-                                  className="opacity-0 group-hover/msg:opacity-100 flex items-center px-1.5 py-0.5 rounded-full bg-stone-50 dark:bg-neutral-800/60 hover:bg-stone-200 dark:bg-neutral-800 dark:hover:bg-neutral-800 text-stone-500 dark:text-neutral-400 hover:text-stone-300 dark:hover:text-neutral-600 text-xs transition-all"
-                                  title={t('chat.addReaction')}>
-                                  +
-                                </button>
-                              ))}
-                          </div>
-                        );
-                      })()}
                     </div>
                   </div>
                 </div>
@@ -2123,8 +2062,9 @@ const Conversations = ({
                   avoid jitter from partially-parsed fences. The final bubble
                   replaces this via addInferenceResponse on chat_done. */}
             {selectedStreamingAssistant &&
-              (selectedStreamingAssistant.content.length > 0 ||
-                selectedStreamingAssistant.thinking.length > 0) && (
+              (selectedStreamingAssistant.thinking.length > 0 ||
+                (selectedStreamingAssistant.content.length > 0 &&
+                  (selectedThreadToolTimeline.length === 0 || hideAgentInsights))) && (
                 <div className="flex justify-start">
                   <div className="relative w-fit max-w-[75%]">
                     {selectedStreamingAssistant.thinking.length > 0 && (
@@ -2138,17 +2078,19 @@ const Conversations = ({
                         </pre>
                       </details>
                     )}
-                    {selectedStreamingAssistant.content.length > 0 && (
-                      <div className="rounded-2xl rounded-bl-md px-3 py-1.5 bg-stone-200/80 dark:bg-neutral-800 text-stone-900 dark:text-neutral-100">
-                        <p className="text-xs text-stone-700 dark:text-neutral-200 font-mono whitespace-pre-wrap break-words leading-snug">
-                          {selectedStreamingAssistant.content.length > STREAMING_PREVIEW_CHARS && (
-                            <span className="text-stone-400 dark:text-neutral-500">…</span>
-                          )}
-                          {selectedStreamingAssistant.content.slice(-STREAMING_PREVIEW_CHARS)}
-                          <span className="inline-block w-1 h-3 ml-0.5 align-middle bg-primary-400 animate-pulse" />
-                        </p>
-                      </div>
-                    )}
+                    {selectedStreamingAssistant.content.length > 0 &&
+                      (selectedThreadToolTimeline.length === 0 || hideAgentInsights) && (
+                        <div className="rounded-2xl rounded-bl-md px-3 py-1.5 bg-stone-200/80 dark:bg-neutral-800 text-stone-900 dark:text-neutral-100">
+                          <p className="text-xs text-stone-700 dark:text-neutral-200 font-mono whitespace-pre-wrap break-words leading-snug">
+                            {selectedStreamingAssistant.content.length >
+                              STREAMING_PREVIEW_CHARS && (
+                              <span className="text-stone-400 dark:text-neutral-500">…</span>
+                            )}
+                            {selectedStreamingAssistant.content.slice(-STREAMING_PREVIEW_CHARS)}
+                            <span className="inline-block w-1 h-3 ml-0.5 align-middle bg-primary-400 animate-pulse" />
+                          </p>
+                        </div>
+                      )}
                   </div>
                 </div>
               )}
@@ -2232,12 +2174,44 @@ const Conversations = ({
                 messages the turn produced — both for the settled/inline case
                 (shouldRenderTimelineBeforeLatestAgentMessage) and the live
                 in-flight fallback. */}
-            {selectedThreadToolTimeline.length > 0 && (
-              <ToolTimelineBlock
-                entries={selectedThreadToolTimeline}
-                onViewSubagent={sub => setOpenSubagentTaskId(sub.taskId)}
-              />
-            )}
+            {selectedThreadToolTimeline.length > 0 &&
+              (hideAgentInsights ? (
+                // "Hide agent thinking" is ON: suppress the verbose step rows.
+                // While the turn is still in flight, surface a single compact
+                // blinking "Processing" link that opens the full run in the
+                // Agent Process Source side panel. Once settled, the
+                // "View full agent process Source" button below takes over.
+                isSending ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowProcessSource(true)}
+                    data-testid="agent-processing-link"
+                    className="flex items-center gap-1.5 px-1 py-1 text-[11px] font-medium text-primary-600 hover:underline dark:text-primary-300">
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-primary-400 animate-pulse" />
+                    <span>{t('conversations.agentTaskInsights.processing')} →</span>
+                  </button>
+                ) : !shouldRenderTimelineBeforeLatestAgentMessage ? (
+                  // Settled, but the hoisted "View full agent process Source"
+                  // opener below won't render because no agent message exists
+                  // for this turn (e.g. a cancelled first turn — onError skips
+                  // the agent message for `error_type === 'cancelled'`). Without
+                  // this fallback the recorded steps would be unreachable while
+                  // hidden, so surface our own opener whenever entries remain.
+                  <button
+                    type="button"
+                    onClick={() => setShowProcessSource(true)}
+                    data-testid="agent-process-source-fallback"
+                    className="px-1 text-[11px] font-medium text-primary-600 hover:underline dark:text-primary-300">
+                    {t('conversations.agentTaskInsights.viewProcessSource')} →
+                  </button>
+                ) : null
+              ) : (
+                <ToolTimelineBlock
+                  entries={selectedThreadToolTimeline}
+                  onViewSubagent={sub => setOpenSubagentTaskId(sub.taskId)}
+                  liveResponse={selectedStreamingAssistant?.content}
+                />
+              ))}
             {/* "View full agent process" — only in the settled/inline state
                 (turn finished, an agent message exists). Hoisted out of the
                 per-message map alongside the panel above so it renders once
@@ -2431,7 +2405,7 @@ const Conversations = ({
                     // STT/TTS provider settings live on the Voice panel
                     // since PR 2; the legacy local-model route was for
                     // back when speech assets were lumped with Ollama.
-                    navigate('/settings/voice');
+                    navigate('/settings/voice', settingsNavState(location));
                   }}
                   className="text-xs text-primary-500 hover:text-primary-600 font-medium transition-colors">
                   {t('chat.setup')}
@@ -2488,6 +2462,38 @@ const Conversations = ({
             </div>
           );
         })()}
+
+        {/* Thread-scoped todo list the agent maintains as it works — read-only,
+            pinned above the composer. Distinct from the Intelligence-tab kanban
+            (global `user-tasks`). Renders nothing when the thread has no active
+            cards. */}
+        {selectedThreadId && (
+          <ThreadTodoStrip
+            board={selectedTaskBoard}
+            disabled={!selectedThreadId}
+            onDecidePlan={(card, approve) => {
+              void runDecidePlan({
+                threadId: selectedThreadId,
+                card,
+                approve,
+                dispatch,
+                notify: setSendAdvisory,
+                t,
+              });
+            }}
+            onViewSession={card => {
+              if (!card.sessionThreadId) return;
+              // Navigation only — do NOT mark the thread active. activeThreadId
+              // tracks a true in-flight turn; forcing a completed session active
+              // would wedge the composer.
+              dispatch(setSelectedThread(card.sessionThreadId));
+              void dispatch(loadThreadMessages(card.sessionThreadId));
+              if (shouldSyncChatRoute) {
+                navigate(chatThreadPath(card.sessionThreadId));
+              }
+            }}
+          />
+        )}
 
         {composer === 'mic-cloud' ? (
           <div className="flex flex-col items-center gap-3 py-1">

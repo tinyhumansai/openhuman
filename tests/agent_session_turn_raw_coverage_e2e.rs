@@ -900,6 +900,7 @@ async fn subagent_runner_parent_context_filters_tools_caps_output_and_reports_er
         provider: provider.clone(),
         all_tools: Arc::new(all_tools),
         all_tool_specs: Arc::new(all_specs),
+        visible_tool_names: std::collections::HashSet::new(),
         model_name: "parent-model".to_string(),
         temperature: 0.22,
         workspace_dir: workspace_path.clone(),

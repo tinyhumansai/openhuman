@@ -62,6 +62,13 @@ struct RunningSubagentEntry {
     status: watch::Receiver<SubagentStatus>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubagentResumeRef {
+    pub task_id: String,
+    pub agent_id: String,
+    pub subagent_session_id: Option<String>,
+}
+
 /// Soft cap on registry size. Terminal entries are only swept when the table
 /// grows past this, so the common case (a handful of live sub-agents) never
 /// evicts a still-uncollected terminal result out from under a `wait`/`steer`.
@@ -157,6 +164,22 @@ pub fn task_id_for_session(
         return Err(WaitError::NotOwned);
     }
     Err(WaitError::Unknown)
+}
+
+pub fn resume_ref_for_task(
+    task_id: &str,
+    parent_session: &str,
+) -> Result<SubagentResumeRef, WaitError> {
+    let map = registry().lock().expect("running_subagents mutex poisoned");
+    let entry = map.get(task_id).ok_or(WaitError::Unknown)?;
+    if entry.parent_session != parent_session {
+        return Err(WaitError::NotOwned);
+    }
+    Ok(SubagentResumeRef {
+        task_id: task_id.to_string(),
+        agent_id: entry.agent_id.clone(),
+        subagent_session_id: entry.subagent_session_id.clone(),
+    })
 }
 
 /// Why a steer could not be delivered.
@@ -523,6 +546,42 @@ mod tests {
             iterations: 1,
         });
         prune("task-session");
+    }
+
+    #[tokio::test]
+    async fn resume_ref_for_task_includes_resume_fields_and_enforces_ownership() {
+        let _guard = test_guard();
+        let (tx, rx) = status_channel();
+        register(
+            "task-resume".into(),
+            "researcher".into(),
+            "session-owner".into(),
+            Some("subsess-resume".into()),
+            std::env::temp_dir(),
+            Some("thread-1".into()),
+            RunQueue::new(),
+            dummy_abort(),
+            rx,
+        );
+
+        let reference =
+            resume_ref_for_task("task-resume", "session-owner").expect("resume reference");
+        assert_eq!(reference.task_id, "task-resume");
+        assert_eq!(reference.agent_id, "researcher");
+        assert_eq!(
+            reference.subagent_session_id.as_deref(),
+            Some("subsess-resume")
+        );
+        assert!(matches!(
+            resume_ref_for_task("task-resume", "session-other"),
+            Err(WaitError::NotOwned)
+        ));
+
+        let _ = tx.send(SubagentStatus::Completed {
+            output: "done".into(),
+            iterations: 1,
+        });
+        prune("task-resume");
     }
 
     #[tokio::test]

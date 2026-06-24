@@ -81,9 +81,20 @@ pub(crate) async fn fetch_release_metadata_from_base(
 pub fn select_distribution(
     release: &GithubRelease,
     minimum_version: &str,
+    maximum_version: &str,
 ) -> Result<PythonDistribution> {
     let Some(minimum) = parse_python_version(minimum_version) else {
         bail!("invalid runtime_python.minimum_version `{minimum_version}`");
+    };
+    // Empty string disables the upper bound. A non-empty but unparseable value
+    // is a config error worth surfacing rather than silently ignoring.
+    let maximum = if maximum_version.trim().is_empty() {
+        None
+    } else {
+        match parse_python_version(maximum_version) {
+            Some(v) => Some(v),
+            None => bail!("invalid runtime_python.maximum_version `{maximum_version}`"),
+        }
     };
     let target_suffix = host_asset_suffix()?;
 
@@ -93,12 +104,19 @@ pub fn select_distribution(
         .filter_map(|asset| parse_distribution_asset(asset, &release.tag_name))
         .filter(|dist| asset_matches_target(&dist.asset_name, target_suffix))
         .filter(|dist| dist.version >= minimum)
+        // Exclusive upper bound — keeps selection off newer pre-release series
+        // (e.g. 3.15.x betas, which parse as a bare `3.15.0`).
+        .filter(|dist| maximum.as_ref().map_or(true, |max| dist.version < *max))
         .collect::<Vec<_>>();
 
     if candidates.is_empty() {
         bail!(
-            "no managed python-build-standalone asset found for host suffix `{target_suffix}` with version >= {} in release {}",
+            "no managed python-build-standalone asset found for host suffix `{target_suffix}` with version >= {}{} in release {}",
             minimum.display(),
+            maximum
+                .as_ref()
+                .map(|m| format!(" and < {}", m.display()))
+                .unwrap_or_default(),
             release.tag_name
         );
     }

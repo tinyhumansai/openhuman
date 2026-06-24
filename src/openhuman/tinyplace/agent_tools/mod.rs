@@ -67,6 +67,7 @@ mod tests {
             "tinyplace_follow",
             "tinyplace_post_bounty",
             "tinyplace_submit_work",
+            "tinyplace_post",
             "tinyplace_job_apply",
             "tinyplace_graphql",
             "tinyplace_call",

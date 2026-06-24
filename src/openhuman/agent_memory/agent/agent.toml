@@ -20,8 +20,6 @@ hint = "chat"
 named = [
     "memory_recall",
     "memory_tree",
-    "memory_tree_walk",
-    "memory_smart_walk",
     "query_memory",
     "memory_doctor",
     "ask_user_clarification",

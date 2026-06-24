@@ -555,6 +555,7 @@ async fn drain_progress(
                 task_id,
                 call_id,
                 tool_name,
+                arguments: _,
                 iteration,
             } => {
                 eprintln!(
@@ -581,6 +582,7 @@ async fn drain_progress(
                 tool_name,
                 success,
                 output_chars,
+                output: _,
                 elapsed_ms,
                 iteration,
             } => {

@@ -7,6 +7,7 @@ import {
   type FontSize,
   setAgentMessageViewMode,
   setFontSize,
+  setHideAgentInsights,
   setTabBarLabels,
   setThemeMode,
   type TabBarLabels,
@@ -76,6 +77,7 @@ const AppearancePanel = () => {
   const agentMessageViewMode = useAppSelector(
     state => state.theme.agentMessageViewMode ?? 'bubbles'
   );
+  const hideAgentInsights = useAppSelector(state => state.theme.hideAgentInsights ?? false);
   const labelsAlwaysVisible = tabBarLabels === 'always';
   const assistantTextModeEnabled = agentMessageViewMode === 'text';
   const toggleTabBarLabels = () => {
@@ -85,6 +87,9 @@ const AppearancePanel = () => {
   const toggleAssistantTextMode = () => {
     const next: AgentMessageViewMode = assistantTextModeEnabled ? 'bubbles' : 'text';
     dispatch(setAgentMessageViewMode(next));
+  };
+  const toggleHideAgentInsights = () => {
+    dispatch(setHideAgentInsights(!hideAgentInsights));
   };
 
   // Build at render time so the labels follow the active locale; `t()` itself
@@ -306,6 +311,19 @@ const AppearancePanel = () => {
                 checked={assistantTextModeEnabled}
                 onCheckedChange={toggleAssistantTextMode}
                 aria-label={t('settings.appearance.assistantTextMode')}
+              />
+            }
+          />
+          <SettingsRow
+            htmlFor="switch-hide-agent-insights"
+            label={t('settings.appearance.hideAgentInsights')}
+            description={t('settings.appearance.hideAgentInsightsDesc')}
+            control={
+              <SettingsSwitch
+                id="switch-hide-agent-insights"
+                checked={hideAgentInsights}
+                onCheckedChange={toggleHideAgentInsights}
+                aria-label={t('settings.appearance.hideAgentInsights')}
               />
             }
           />

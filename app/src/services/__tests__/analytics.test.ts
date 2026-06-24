@@ -10,6 +10,7 @@ const hoisted = vi.hoisted(() => ({
   init: vi.fn(),
   // Integration stubs — these aren't introspected, just need to exist so
   // `Sentry.init()` accepts the integrations array without throwing.
+  inboundFiltersIntegration: vi.fn(() => ({ name: 'InboundFilters' })),
   functionToStringIntegration: vi.fn(() => ({})),
   linkedErrorsIntegration: vi.fn(() => ({})),
   dedupeIntegration: vi.fn(() => ({})),
@@ -29,6 +30,7 @@ vi.mock('@sentry/react', () => ({
   captureMessage: hoisted.captureMessage,
   flush: hoisted.flush,
   init: hoisted.init,
+  inboundFiltersIntegration: hoisted.inboundFiltersIntegration,
   functionToStringIntegration: hoisted.functionToStringIntegration,
   linkedErrorsIntegration: hoisted.linkedErrorsIntegration,
   dedupeIntegration: hoisted.dedupeIntegration,
@@ -71,6 +73,7 @@ vi.mock('../../utils/config', () => ({
   SENTRY_DSN: 'https://abc@example.ingest.sentry.io/1',
   SENTRY_RELEASE: 'openhuman@test+abc',
   SENTRY_SMOKE_TEST: false,
+  SUPPORT_URL: 'https://support.example/help',
   TAURI_CARGO_VERSION: '0.57.4',
   // analytics.ts now imports CoreRpcError from coreRpcClient, whose
   // dependency chain reads CORE_RPC_URL and CORE_RPC_TIMEOUT_MS. Provide
@@ -229,6 +232,30 @@ describe('initSentry beforeSend manual-staging bypass', () => {
     expect(result).not.toBeNull();
   });
 
+  test('seeds a support_url tag keyed on the event id (#3980)', async () => {
+    const beforeSend = await captureBeforeSend();
+    const result = beforeSend({
+      message: 'react-sentry-smoke-test', // bypasses consent gate
+      event_id: 'deadbeefcafe',
+      tags: {},
+      contexts: {},
+    }) as { tags: Record<string, string> } | null;
+    expect(result).not.toBeNull();
+    // Set as a TAG (extras are scrubbed); carries only the event's own id.
+    expect(result?.tags.support_url).toBe('https://support.example/help?ref=deadbeefcafe');
+    // Extras still dropped — the support link must not reintroduce a leak path.
+    expect(result).not.toHaveProperty('extra');
+  });
+
+  test('omits support_url when the event has no id', async () => {
+    const beforeSend = await captureBeforeSend();
+    const result = beforeSend({ message: 'react-sentry-smoke-test', tags: {}, contexts: {} }) as {
+      tags: Record<string, string>;
+    } | null;
+    expect(result).not.toBeNull();
+    expect(result?.tags).not.toHaveProperty('support_url');
+  });
+
   test('drops CoreRpcError with kind=timeout via the originalException hint', async () => {
     // Regression for OPENHUMAN-REACT-15/11/10/12/Z/Y: a missed `.catch()` at
     // any `await callCoreRpc(...)` chain in the team panels surfaced as an
@@ -306,6 +333,33 @@ describe('initSentry beforeSend manual-staging bypass', () => {
     expect(opts.replaysOnErrorSampleRate).toBe(0);
     const names = opts.integrations.map(i => i.name).filter(Boolean);
     expect(names).toContain('HttpContext');
+  });
+
+  test('registers inboundFiltersIntegration so ignoreErrors is not inert (#3963)', async () => {
+    // Regression for #3963: `defaultIntegrations: false` drops the integration
+    // that consumes the top-level `ignoreErrors` option. The curated list must
+    // re-include `inboundFiltersIntegration`, otherwise the intended
+    // `ResizeObserver loop` / network-noise filters silently leak to Sentry.
+    // Asserting both the integration AND the non-empty filter list guards the
+    // coupling — dropping either re-opens the flood.
+    hoisted.init.mockReset();
+    hoisted.inboundFiltersIntegration.mockClear();
+    const { initSentry } = await import('../analytics');
+    initSentry();
+
+    const opts = hoisted.init.mock.calls[0][0] as {
+      integrations: Array<{ name?: string }>;
+      ignoreErrors: string[];
+    };
+    expect(hoisted.inboundFiltersIntegration).toHaveBeenCalledTimes(1);
+    const names = opts.integrations.map(i => i.name).filter(Boolean);
+    expect(names).toContain('InboundFilters');
+    expect(opts.ignoreErrors).toEqual([
+      'ResizeObserver loop',
+      'Network request failed',
+      'Load failed',
+      'AbortError',
+    ]);
   });
 
   test('keeps os/browser/device contexts and forwards them through beforeSend (#1403)', async () => {

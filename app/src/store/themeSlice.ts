@@ -36,6 +36,15 @@ interface ThemeState {
    * is authoritative and is never relaxed by this toggle.
    */
   developerMode: boolean;
+  /**
+   * Hide the live "Agentic task insights" step-by-step timeline in chat
+   * (default OFF). When true, the verbose per-agent step rows are collapsed
+   * away: the chat shows only the existing message-bubble loading plus a
+   * compact blinking "Processing" link while a turn is in flight. The full
+   * timeline is still one click away via that link / the "View full agent
+   * process Source" affordance, which open the existing side panel.
+   */
+  hideAgentInsights: boolean;
 }
 
 const initialState: ThemeState = {
@@ -44,6 +53,7 @@ const initialState: ThemeState = {
   fontSize: 'medium',
   agentMessageViewMode: 'text',
   developerMode: false,
+  hideAgentInsights: false,
 };
 
 const themeSlice = createSlice({
@@ -65,6 +75,9 @@ const themeSlice = createSlice({
     setDeveloperMode(state, action: PayloadAction<boolean>) {
       state.developerMode = action.payload;
     },
+    setHideAgentInsights(state, action: PayloadAction<boolean>) {
+      state.hideAgentInsights = action.payload;
+    },
   },
 });
 
@@ -74,8 +87,17 @@ export const {
   setFontSize,
   setAgentMessageViewMode,
   setDeveloperMode,
+  setHideAgentInsights,
 } = themeSlice.actions;
 export default themeSlice.reducer;
+
+/**
+ * Selector for the persisted `hideAgentInsights` preference. Falls back to
+ * `false` so existing persisted state (written before this field existed)
+ * keeps the verbose timeline visible until the user opts out.
+ */
+export const selectHideAgentInsights = (state: { theme: ThemeState }): boolean =>
+  state.theme.hideAgentInsights ?? false;
 
 /**
  * Selector for the persisted `developerMode` preference.

@@ -23,6 +23,15 @@ impl Provider for OpenAiCompatibleProvider {
         }
     }
 
+    fn prompt_cache_capabilities(
+        &self,
+    ) -> crate::openhuman::inference::provider::traits::PromptCacheCapabilities {
+        // Derive from the configured slug — conservative for unknown / custom
+        // providers (#3939). The OpenHuman backend wraps this provider but
+        // declares its own grouping-aware caps on `OpenHumanBackendProvider`.
+        super::prompt_cache_for_compatible_slug(&self.name)
+    }
+
     async fn chat_with_system(
         &self,
         system_prompt: Option<&str>,

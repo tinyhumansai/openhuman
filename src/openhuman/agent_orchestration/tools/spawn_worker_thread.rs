@@ -387,6 +387,7 @@ mod tests {
             channel: "test".into(),
             all_tools: Arc::new(vec![]),
             all_tool_specs: Arc::new(vec![]),
+            visible_tool_names: std::collections::HashSet::new(),
             workflows: Arc::new(vec![]),
             memory_context: std::sync::Arc::new(None),
             connected_integrations: vec![],

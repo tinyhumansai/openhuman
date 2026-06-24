@@ -86,14 +86,7 @@ impl super::super::super::engine::ToolSource for SubagentToolSource<'_> {
                 available.join(", ")
             );
             progress
-                .tool_completed(
-                    progress_call_id,
-                    &call.name,
-                    false,
-                    text.chars().count(),
-                    0,
-                    iteration_u32,
-                )
+                .tool_completed(progress_call_id, &call.name, false, &text, 0, iteration_u32)
                 .await;
             return super::super::super::engine::ToolRunResult {
                 text,

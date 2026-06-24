@@ -37,6 +37,8 @@ named = [
     "tinyplace_create_group",
     "tinyplace_post_bounty",
     "tinyplace_submit_work",
+    # Publish a deliverable to your own feed → returns a shareable URL to submit.
+    "tinyplace_post",
     "tinyplace_submissions",
     "tinyplace_job_apply",
     # ── Batched read gateway + escape hatch + manual ──
@@ -45,6 +47,11 @@ named = [
     "tinyplace_help",
     # Confirmation gate for paid/irreversible tiny.place actions.
     "ask_user_clarification",
+    # Durable state across runs — lets a scheduled/autonomous run remember which
+    # bounties it already attempted (dedupe) and what worked.
+    "memory_store",
+    "memory_recall",
+    "memory_search",
     # Deterministic time grounding for job deadlines, status windows, and
     # recency phrasing in tiny.place messages or work listings.
     "resolve_time",

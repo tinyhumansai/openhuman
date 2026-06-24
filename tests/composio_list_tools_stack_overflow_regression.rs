@@ -343,6 +343,7 @@ async fn drive_subagent() {
         provider: provider.clone(),
         all_tools: Arc::new(vec![]),
         all_tool_specs: Arc::new(vec![]),
+        visible_tool_names: std::collections::HashSet::new(),
         model_name: "test-model".into(),
         temperature: 0.4,
         workspace_dir: std::env::temp_dir(),

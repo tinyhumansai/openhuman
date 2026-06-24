@@ -52,6 +52,16 @@ pub struct ParentExecutionContext {
     /// provider for prefix-cache reuse.
     pub all_tool_specs: Arc<Vec<ToolSpec>>,
 
+    /// Names of the tools the parent actually advertises and will execute
+    /// this turn (the visibility-filtered subset of `all_tools`, including
+    /// runtime-synthesised `delegate_*` tools). Tools call sites that need
+    /// to reason about what the parent can *actually* invoke — e.g.
+    /// `agent_prepare_context` recommending next tool calls — must consult
+    /// this, not `all_tool_specs` (which is the full registry, including
+    /// hidden direct-exec/spawn tools the parent never advertises). Empty
+    /// means "unknown" — callers should treat that as "no restriction".
+    pub visible_tool_names: std::collections::HashSet<String>,
+
     /// Model name the parent is currently using (after classification).
     pub model_name: String,
 

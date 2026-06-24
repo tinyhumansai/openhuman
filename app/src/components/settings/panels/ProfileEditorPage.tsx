@@ -13,7 +13,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LuX } from 'react-icons/lu';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { selectAgentProfiles, upsertAgentProfile } from '../../../store/agentProfileSlice';
@@ -29,6 +29,7 @@ import {
   SettingsTextArea,
   SettingsTextField,
 } from '../controls';
+import { settingsNavState } from '../modal/settingsOverlay';
 
 const MODEL_HINTS = ['hint:reasoning', 'hint:chat', 'hint:agentic', 'hint:coding'];
 
@@ -48,10 +49,14 @@ type Allowlist = string[] | null;
 const ProfileEditorPage = () => {
   const { t } = useT();
   const navigate = useNavigate();
+  const location = useLocation();
   const dispatch = useAppDispatch();
   const { id: routeId } = useParams<{ id: string }>();
   const profiles = useAppSelector(selectAgentProfiles);
-  const backToList = useCallback(() => navigate('/settings/profiles'), [navigate]);
+  const backToList = useCallback(
+    () => navigate('/settings/profiles', settingsNavState(location)),
+    [navigate, location]
+  );
   const isCreate = !routeId;
 
   const existing = useMemo(

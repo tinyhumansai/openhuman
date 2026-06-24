@@ -8,6 +8,7 @@ import Skills from '../Skills';
 let composioRefresh = vi.fn();
 let composioError: string | null = null;
 let composioToolkits: string[] = [];
+let composioCatalogByToolkit = new Map();
 let composioConnectionByToolkit = new Map();
 let composioConnectionsByToolkitOverride: Map<string, unknown[]> | null = null;
 let sessionToken = 'jwt-abc';
@@ -37,6 +38,7 @@ vi.mock('../../lib/skills/hooks', () => ({
 vi.mock('../../lib/composio/hooks', () => ({
   useComposioIntegrations: () => ({
     toolkits: composioToolkits,
+    catalogByToolkit: composioCatalogByToolkit,
     connectionByToolkit: composioConnectionByToolkit,
     connectionsByToolkit:
       composioConnectionsByToolkitOverride ??
@@ -71,6 +73,7 @@ describe('Skills page — Composio catalog fallback', () => {
     composioRefresh = vi.fn();
     composioError = null;
     composioToolkits = [];
+    composioCatalogByToolkit = new Map();
     composioConnectionByToolkit = new Map();
     composioConnectionsByToolkitOverride = null;
     sessionToken = 'jwt-abc';
@@ -105,6 +108,38 @@ describe('Skills page — Composio catalog fallback', () => {
     const integrationsSection = screen.getByTestId('composio-integrations-card');
     expect(within(integrationsSection as HTMLElement).getByText('Zoom')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Other' })).not.toBeInTheDocument();
+  });
+
+  it('renders integrations from the live dynamic catalog when the backend provides one', () => {
+    // When the backend ships the dynamic catalog, the grid is sourced from
+    // it (names/categories from the entry), not the hardcoded fallback list.
+    composioCatalogByToolkit = new Map([
+      [
+        'acme_crm',
+        { slug: 'acme_crm', name: 'Acme CRM Dynamic', categories: ['crm'], enabled: true },
+      ],
+      [
+        'gmail',
+        { slug: 'gmail', name: 'Gmail Dynamic', categories: ['productivity'], enabled: true },
+      ],
+    ]);
+
+    renderWithProviders(<Skills />, { initialEntries: ['/connections'] });
+    openAppsTab();
+
+    const integrationsSection = screen.getByTestId('composio-integrations-card');
+    // Names come from the dynamic catalog entry, overriding local metadata.
+    expect(
+      within(integrationsSection as HTMLElement).getByText('Acme CRM Dynamic')
+    ).toBeInTheDocument();
+    expect(
+      within(integrationsSection as HTMLElement).getByText('Gmail Dynamic')
+    ).toBeInTheDocument();
+    // A hardcoded-only toolkit absent from the dynamic catalog must NOT
+    // appear — proving the grid is driven by the backend, not KNOWN_*.
+    expect(
+      within(integrationsSection as HTMLElement).queryByText('Discord')
+    ).not.toBeInTheDocument();
   });
 
   it('shows a stale/error state instead of disconnected toolkits when composio loading fails', () => {

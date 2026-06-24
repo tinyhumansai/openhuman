@@ -14,7 +14,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { type BootCheckResult, runBootCheck } from '../../lib/bootCheck';
 import { useT } from '../../lib/i18n/I18nContext';
-import { bootCheckTransport, recoverPortConflict } from '../../services/bootCheckService';
+import {
+  bootCheckTransport,
+  forceQuitPortOwner,
+  recoverPortConflict,
+} from '../../services/bootCheckService';
 import {
   clearCoreRpcTokenCache,
   clearCoreRpcUrlCache,
@@ -417,6 +421,7 @@ interface ResultScreenProps {
   actionBusy: boolean;
   actionError: string | null;
   onAction: () => void;
+  onForceQuit: (pid: number) => void;
 }
 
 function ResultScreen({
@@ -427,12 +432,14 @@ function ResultScreen({
   actionBusy,
   actionError,
   onAction,
+  onForceQuit,
 }: ResultScreenProps) {
   const { t } = useT();
   if (result.kind === 'match') return null;
 
   if (result.kind === 'unreachable') {
     const isPortConflict = result.portConflict === true;
+    const foreignOwner = result.foreignOwner;
     return (
       <Panel>
         <h2 className="text-xl font-semibold text-stone-900 dark:text-neutral-100">
@@ -440,22 +447,48 @@ function ResultScreen({
         </h2>
         <p className="mt-2 text-sm text-stone-600 dark:text-neutral-300">
           {isPortConflict
-            ? t('bootCheck.portConflictBody')
+            ? foreignOwner
+              ? t('bootCheck.portConflictOwner')
+                  .replace('{name}', foreignOwner.name)
+                  .replace('{pid}', String(foreignOwner.pid))
+                  .trim()
+              : t('bootCheck.portConflictBody')
             : result.reason || t('bootCheck.cannotReachDesc')}
         </p>
+        {isPortConflict && foreignOwner && (
+          <p className="mt-2 text-xs text-stone-500 dark:text-neutral-400">
+            {t('bootCheck.portConflictGuidance')}
+          </p>
+        )}
         {actionError && <p className="mt-3 text-xs text-red-600 font-medium">{actionError}</p>}
         <div className="mt-5 flex gap-3 flex-wrap">
-          {isPortConflict && (
+          {isPortConflict && foreignOwner ? (
             <button
               type="button"
-              onClick={onAction}
+              onClick={() => onForceQuit(foreignOwner.pid)}
               disabled={actionBusy}
-              data-testid="fix-automatically-btn"
-              className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-60">
-              {actionBusy
-                ? t('bootCheck.portConflictFixing')
-                : t('bootCheck.portConflictFixButton')}
+              data-testid="force-quit-owner-btn"
+              className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-60">
+              {(actionBusy
+                ? t('bootCheck.portConflictForceQuitting')
+                : t('bootCheck.portConflictForceQuit')
+              )
+                .replace('{name}', foreignOwner.name)
+                .trim()}
             </button>
+          ) : (
+            isPortConflict && (
+              <button
+                type="button"
+                onClick={onAction}
+                disabled={actionBusy}
+                data-testid="fix-automatically-btn"
+                className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-60">
+                {actionBusy
+                  ? t('bootCheck.portConflictFixing')
+                  : t('bootCheck.portConflictFixButton')}
+              </button>
+            )
           )}
           <button
             type="button"
@@ -772,6 +805,11 @@ export default function BootCheckGate({ children }: BootCheckGateProps) {
           recovery.message
         );
         if (!recovery.success) {
+          // Reaping stale OpenHuman processes didn't free the port. If a foreign
+          // owner was identified, surface it so the user can consent-quit it.
+          if (recovery.foreign_owner) {
+            setResult({ ...result, foreignOwner: recovery.foreign_owner });
+          }
           setActionError(t('bootCheck.portConflictFixFailed'));
           return;
         }
@@ -790,6 +828,40 @@ export default function BootCheckGate({ children }: BootCheckGateProps) {
     // transport is stable shape
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [result, actionBusy, coreMode, runCheck]);
+
+  // ------------------------------------------------------------------
+  // Force-quit the foreign process holding the port (explicit user consent
+  // for the surfaced pid), then re-run the boot check.
+  // ------------------------------------------------------------------
+  const handleForceQuit = useCallback(
+    async (pid: number) => {
+      if (actionBusy) return;
+      setActionBusy(true);
+      setActionError(null);
+      try {
+        log('[boot-check-gate] force-quitting port owner pid=%d', pid);
+        const recovery = await forceQuitPortOwner(pid);
+        log(
+          '[boot-check-gate] force-quit result: success=%s message=%s',
+          recovery.success,
+          recovery.message
+        );
+        if (!recovery.success) {
+          setActionError(t('bootCheck.portConflictForceQuitFailed'));
+          return;
+        }
+        if (coreMode.kind !== 'unset') {
+          runCheck(coreMode);
+        }
+      } catch (err) {
+        logError('[boot-check] gate — force-quit error: %o', err);
+        setActionError(t('bootCheck.portConflictForceQuitFailed'));
+      } finally {
+        setActionBusy(false);
+      }
+    },
+    [actionBusy, coreMode, runCheck, t]
+  );
 
   // ------------------------------------------------------------------
   // Render
@@ -825,6 +897,7 @@ export default function BootCheckGate({ children }: BootCheckGateProps) {
         actionBusy={actionBusy}
         actionError={actionError}
         onAction={handleAction}
+        onForceQuit={handleForceQuit}
       />
     </>
   );

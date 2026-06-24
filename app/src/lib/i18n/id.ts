@@ -135,6 +135,20 @@ const messages: TranslationMap = {
   'brain.tabs.memory': 'Memori',
   'brain.tabs.subconscious': 'Alam Bawah Sadar',
   'brain.tabs.graph': 'Grafik',
+  'brain.tabs.goals': 'Tujuan',
+  'brain.goals.title': 'Tujuan jangka panjang',
+  'brain.goals.description':
+    'Tujuan tetap agen untuk bekerja dengan Anda. Edit di sini atau biarkan Refleksi memperbaruinya.',
+  'brain.goals.reflect': 'Refleksi',
+  'brain.goals.reflecting': 'Merefleksikan…',
+  'brain.goals.reflectDone': 'Tujuan diperbarui.',
+  'brain.goals.add': 'Tambah',
+  'brain.goals.addPlaceholder': 'Tambahkan tujuan jangka panjang…',
+  'brain.goals.empty':
+    'Belum ada tujuan. Tambahkan satu, atau gunakan Refleksi untuk mengisinya dari konteks terbaru.',
+  'brain.goals.editGoal': 'Edit tujuan',
+  'brain.goals.deleteGoal': 'Hapus tujuan',
+  'brain.goals.actionError': 'Terjadi kesalahan. Silakan coba lagi.',
   'brain.tabs.sources': 'Sumber',
   'brain.tabs.sync': 'Sinkronisasi',
   'brain.empty': 'Otak Anda masih kosong — hubungkan sumber untuk mulai membangun memori.',
@@ -2597,6 +2611,14 @@ const messages: TranslationMap = {
   'bootCheck.portConflictFixing': 'Memperbaiki…',
   'bootCheck.portConflictFixFailed':
     'Perbaikan otomatis tidak berhasil. Silakan restart komputer Anda dan coba lagi.',
+  'bootCheck.portConflictOwner':
+    '{name} (PID {pid}) sedang menggunakan port jaringan yang dibutuhkan OpenHuman.',
+  'bootCheck.portConflictGuidance':
+    'Tutup program tersebut untuk membebaskan port, atau paksa tutup di bawah, lalu coba lagi.',
+  'bootCheck.portConflictForceQuit': 'Paksa tutup {name}',
+  'bootCheck.portConflictForceQuitting': 'Menutup {name}…',
+  'bootCheck.portConflictForceQuitFailed':
+    'Tidak dapat menutup program tersebut. Anda mungkin perlu menutupnya secara manual, lalu coba lagi.',
   'notifications.justNow': 'baru saja',
   'notifications.minAgo': '{n}m lalu',
   'notifications.hrAgo': '{n}j lalu',
@@ -2706,6 +2728,11 @@ const messages: TranslationMap = {
   'app.connectionIndicator.offline': 'Tidak online',
   'app.connectionIndicator.reconnecting': 'Menyambung ulang…',
   'app.errorFallback.componentStack': 'Stack komponen',
+  'app.errorFallback.contactSupport': 'Hubungi dukungan',
+  'app.errorFallback.copyEventId': 'Salin',
+  'app.errorFallback.eventIdCopied': 'Tersalin',
+  'app.errorFallback.eventIdLabel': 'ID Kesalahan',
+  'app.errorFallback.revealLogs': 'Tampilkan log',
   'app.errorFallback.downloadLatest': 'Unduh terbaru',
   'app.errorFallback.heading': 'Judul',
   'app.errorFallback.hint': 'Petunjuk',
@@ -2983,6 +3010,7 @@ const messages: TranslationMap = {
   'conversations.taskKanban.moveLeft': 'Pindah ke kiri',
   'conversations.taskKanban.moveRight': 'Pindah ke kanan',
   'conversations.taskKanban.title': 'Tugas',
+  'conversations.threadTodo.title': 'Rencana',
   'conversations.taskKanban.approval.default': 'Default',
   'conversations.taskKanban.approval.notRequired': 'Tidak diperlukan',
   'conversations.taskKanban.approval.notRequiredBadge': 'tidak ada persetujuan',
@@ -3030,10 +3058,14 @@ const messages: TranslationMap = {
   'conversations.subagent.viewProcessing': 'Lihat proses lengkap',
   'conversations.subagent.parent': 'Induk',
   'conversations.subagent.thinking': 'Berpikir',
+  'conversations.subagent.thoughts': 'Pemikiran',
   'conversations.subagent.response': 'Respons',
   'conversations.subagent.toolCalls': 'Panggilan alat',
   'conversations.subagent.working': 'Bekerja…',
   'conversations.subagent.noOutputYet': 'Belum ada keluaran',
+  'conversations.subagent.input': 'Masukan',
+  'conversations.subagent.output': 'Keluaran',
+  'conversations.subagent.noOutput': 'Tidak ada keluaran',
   'conversations.subagent.close': 'Tutup',
   'conversations.subagent.cancel': 'Batalkan tugas',
   'conversations.subagent.cancelling': 'Membatalkan…',
@@ -3044,11 +3076,13 @@ const messages: TranslationMap = {
   'conversations.subagent.statusAwaitingUser': 'menunggu pengguna',
   'conversations.subagent.statusCancelled': 'dibatalkan',
   'conversations.agentTaskInsights.title': 'Wawasan tugas agen',
+  'conversations.agentTaskInsights.response': 'Respons',
   'conversations.agentTaskInsights.processSourceTitle': 'Sumber proses agen',
   'conversations.agentTaskInsights.stepsHeading': 'Langkah',
   'conversations.agentTaskInsights.sourcesHeading': 'Sumber',
   'conversations.agentTaskInsights.noSteps': 'Tidak ada langkah yang tercatat',
   'conversations.agentTaskInsights.viewProcessSource': 'Lihat sumber proses agen lengkap',
+  'conversations.agentTaskInsights.processing': 'Memproses',
   'daemon.serviceBlockingGate.body': 'Isi',
   'daemon.serviceBlockingGate.downloadHint': 'Petunjuk unduhan',
   'daemon.serviceBlockingGate.downloadLatest': 'Unduh Versi Terbaru',
@@ -3686,6 +3720,9 @@ const messages: TranslationMap = {
   'settings.ai.memoryWorkerPolls': 'Jajak pendapat pekerja memori',
   'settings.ai.defaultProviderName': 'OpenHuman',
   'settings.ai.routing.managed': 'Terkelola',
+  'settings.ai.routing.managedAlwaysOn': 'Always on',
+  'settings.ai.routing.managedHint':
+    'Managed is always available as a fallback. To use your own model, choose a routing mode below.',
   'settings.ai.routing.managedDesc':
     'OpenHuman akan menjalankan semua kesimpulan di awan, memilih model terbaik untuk tugas ini, mengoptimalkan biaya, dan menjaga standar routing teraman.',
   'settings.ai.routing.managedMsg':
@@ -4422,6 +4459,10 @@ const messages: TranslationMap = {
   'settings.agentAccess.requireTaskPlanApproval.label': 'Perlu persetujuan rencana tugas',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     'Jeda sebelum agen yang ditugaskan mengeksekusi suatu tugas singkat.',
+  'settings.agentAccess.tinyplaceAutopilot.title': 'Agen tiny.place otonom',
+  'settings.agentAccess.tinyplaceAutopilot.desc':
+    'Biarkan OpenHuman bertindak di tiny.place sendiri: secara terjadwal ia mencari pekerjaan yang berharga — bounty terbuka lebih dulu —, mengerjakan yang sesuai keahliannya, dan bertindak dari identitas Anda. Ia berjalan tanpa pengawasan dan dapat membelanjakan dana, jadi gunakan devnet saat menguji. Nonaktif secara bawaan.',
+  'settings.agentAccess.tinyplaceAutopilot.label': 'Jalankan otomatis',
   'settings.agentAccess.timeout.label': 'Batas waktu tindakan',
   'settings.agentAccess.timeout.desc':
     'Berapa lama satu alat atau tindakan boleh berjalan sebelum dibatalkan. Tingkatkan nilai ini jika model lokal besar terhenti sebelum selesai merespons.',
@@ -4593,6 +4634,9 @@ const messages: TranslationMap = {
     'Saat nonaktif, label hanya muncul saat diarahkan atau untuk tab yang aktif.',
   'settings.appearance.chatHeading': 'Chat',
   'settings.appearance.assistantTextMode': 'Respons asisten sebagai teks',
+  'settings.appearance.hideAgentInsights': 'Sembunyikan proses berpikir agen',
+  'settings.appearance.hideAgentInsightsDesc':
+    'Ciutkan lini masa langkah demi langkah agen secara langsung di obrolan. Tautan "Memproses" yang berkedip tetap memungkinkan Anda membuka proses lengkapnya.',
   'settings.appearance.assistantTextModeDesc':
     'Tampilkan balasan asisten sebagai teks tanpa bingkai, sementara pesan Anda tetap dalam gelembung.',
   'settings.mascot.active': 'Aktif',
@@ -5628,6 +5672,24 @@ const messages: TranslationMap = {
   'graphCohesion.title': 'Kohesi Graf',
   'memory.tab.cohesion': 'Cohesion',
 
+  'harnessInit.title': 'Menyiapkan semuanya',
+  'harnessInit.subtitle':
+    'OpenHuman sedang menyiapkan komponen yang dibutuhkan saat pertama kali dijalankan.',
+  'harnessInit.stepPython': 'Runtime Python',
+  'harnessInit.stepSpacy': 'Model bahasa',
+  'harnessInit.stepNode': 'Runtime Node.js',
+  'harnessInit.statePending': 'Menunggu',
+  'harnessInit.stateRunning': 'Memasang…',
+  'harnessInit.stateDone': 'Siap',
+  'harnessInit.stateSkipped': 'Dilewati',
+  'harnessInit.stateFailed': 'Gagal',
+  'harnessInit.failedMessage':
+    'Beberapa langkah penyiapan tidak selesai. Anda dapat mencoba lagi atau melanjutkan — OpenHuman akan menggunakan cadangan bawaan.',
+  'harnessInit.retry': 'Coba lagi',
+  'harnessInit.continueAnyway': 'Lanjutkan saja',
+  'harnessInit.runInBackground': 'Jalankan di latar belakang',
+  'harnessInit.backgroundHint': 'Anda dapat terus menggunakan OpenHuman saat proses ini selesai.',
+
   'keyring.consent.title': 'Penyimpanan aman tidak tersedia',
   'keyring.consent.description':
     'Keychain sistem operasi Anda tidak dapat diakses. OpenHuman memerlukan izin Anda untuk menyimpan rahasia menggunakan penyimpanan lokal terenkripsi.',
@@ -5962,6 +6024,19 @@ const messages: TranslationMap = {
   'agentworld.jobs.applyModal.submitting': 'Melamar…',
   'agentworld.messaging.missingSignalBundle':
     'Pengguna ini belum mengaktifkan pesan terenkripsi. Minta mereka membuka Agent World dan mengaktifkan DM aman sebelum Anda mengirim pesan.',
+
+  // User-actionable runtime errors (#3931)
+  'userErrors.title': 'Tindakan diperlukan',
+  'userErrors.dismiss': 'Tutup',
+  'userErrors.action.openBilling': 'Buka penagihan',
+  'userErrors.action.openProviderSettings': 'Pengaturan penyedia',
+  'userErrors.budgetExceeded.title': 'Anggaran terkelola habis',
+  'userErrors.budgetExceeded.body':
+    'Anggaran AI terkelola Anda sudah habis. Tambahkan anggaran atau ubah paket.',
+  'userErrors.insufficientCredits.title': 'Kredit penyedia diperlukan',
+  'userErrors.insufficientCredits.body':
+    'Penyedia AI Anda kehabisan kredit. Isi ulang atau perbarui kunci API-nya.',
+  'userErrors.scope.chat': 'Obrolan',
 };
 
 export default messages;

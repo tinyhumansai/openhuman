@@ -304,6 +304,41 @@ fn classify_inference_error_surfaces_provider_config_rejection_actionably() {
     }
 }
 
+#[test]
+fn classify_inference_error_chat_factory_empty_model_is_actionable_config() {
+    // TAURI-RUST-GKV — the factory's #2784 empty-model bail is a LOCAL
+    // string (no provider JSON body). Before the shared classifier learned
+    // its anchor it fell through to the generic `inference` catch-all:
+    // vague "something went wrong" copy AND retryable=true (a useless Retry
+    // button that re-fires the per-message Sentry flood). It must now route
+    // through the config-rejection arm to the actionable Settings → LLM
+    // copy, classified non-retryable so the FE hides Retry.
+    let raw = "[chat-factory] no model configured: role 'chat' resolved to an empty model id \
+               for slug 'nvidia'. Include a model in the provider string (e.g. \
+               'nvidia:<model-id>') or set default_model on the cloud_providers entry for \
+               slug 'nvidia'.";
+    let ClassifiedError {
+        error_type: category,
+        message,
+        source,
+        retryable,
+        ..
+    } = classify_inference_error(raw);
+    assert_eq!(
+        category, "model_unavailable",
+        "empty-model config rejection must classify as model_unavailable, not generic: {category}"
+    );
+    assert_eq!(source, "config", "must be sourced as user config: {source}");
+    assert!(
+        !retryable,
+        "empty-model config rejection must be non-retryable (hide Retry)"
+    );
+    assert!(
+        message.contains("Settings → LLM"),
+        "must give the actionable remediation copy: {message}"
+    );
+}
+
 // ── #2364: rate-limit classification + retry-after surfacing ────
 
 #[test]

@@ -6,6 +6,49 @@ use crate::openhuman::threads::turn_state::{TurnStateMirror, TurnStateStore};
 use super::event_bus::publish_web_channel_event;
 use super::types::ChatRequestMetadata;
 
+/// Current wall-clock time as Unix-epoch milliseconds, used to stamp tracing
+/// spans (issue #3886). Saturates to `0` if the clock is before the epoch.
+fn unix_epoch_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Upper bound on the sub-agent tool output forwarded to the drawer over
+/// Socket.IO. The `SubagentToolCallCompleted` event carries the *pre-handoff*
+/// tool result (the result-handoff path that stashes large toolkit payloads
+/// behind a short placeholder runs later, in `SubagentToolSource`), so a raw
+/// multi-MB integration result would otherwise ship in full to the socket /
+/// Redux / DOM. Cap it here on a UTF-8 boundary with a truncation marker so the
+/// drawer payload stays bounded while still showing what the tool returned.
+const MAX_WIRE_SUBAGENT_OUTPUT: usize = 256 * 1024;
+
+/// Bytes reserved within the cap for the truncation marker so the *final*
+/// payload (content + marker) never exceeds [`MAX_WIRE_SUBAGENT_OUTPUT`].
+/// Generous upper bound for `…[truncated <N> bytes of tool output]` at any
+/// plausible `N` (the "…" is 3 UTF-8 bytes).
+const TRUNCATION_MARKER_BUDGET: usize = 80;
+
+/// Truncate `output` so the returned string stays within
+/// [`MAX_WIRE_SUBAGENT_OUTPUT`] bytes, slicing on a char boundary and
+/// appending a marker (which is itself counted against the cap) when content
+/// was dropped. Returns the input unchanged when it's already within the cap.
+fn cap_wire_output(output: String) -> String {
+    if output.len() <= MAX_WIRE_SUBAGENT_OUTPUT {
+        return output;
+    }
+    let mut end = MAX_WIRE_SUBAGENT_OUTPUT.saturating_sub(TRUNCATION_MARKER_BUDGET);
+    while end > 0 && !output.is_char_boundary(end) {
+        end -= 1;
+    }
+    let omitted = output.len() - end;
+    format!(
+        "{}\n…[truncated {omitted} bytes of tool output]",
+        &output[..end]
+    )
+}
+
 pub(super) fn ledger_upsert_agent_run(
     config: &crate::openhuman::config::Config,
     upsert: crate::openhuman::session_db::run_ledger::AgentRunUpsert,
@@ -94,9 +137,30 @@ pub(crate) fn spawn_progress_bridge(
         let mut child_tool_counts: HashMap<String, u64> = HashMap::new();
         let mut turn_state =
             TurnStateMirror::new(turn_state_store, thread_id.clone(), request_id.clone());
+
+        // #3886: opt-in structured tracing export. When enabled, fold the same
+        // progress stream into OTel/Langfuse-style spans correlated by session
+        // id (falling back to the thread id for headless/autonomous runs) with
+        // the client id as user attribution. `None` (disabled) is zero-cost.
+        let mut span_collector = if config.observability.agent_tracing.enabled {
+            use crate::openhuman::agent::progress_tracing::{
+                trace_session_id, SpanCollector, TraceContext,
+            };
+            let session_id = trace_session_id(metadata.session_id, &thread_id);
+            Some(SpanCollector::new(TraceContext::new(
+                session_id,
+                Some(client_id.clone()),
+            )))
+        } else {
+            None
+        };
+
         while let Some(event) = rx.recv().await {
             events_seen += 1;
             turn_state.observe(&event);
+            if let Some(collector) = span_collector.as_mut() {
+                collector.record(&event, unix_epoch_ms());
+            }
             match &event {
                 AgentProgress::TextDelta { delta, iteration } => {
                     log::trace!(
@@ -659,6 +723,7 @@ pub(crate) fn spawn_progress_bridge(
                     task_id,
                     call_id,
                     tool_name,
+                    arguments,
                     iteration,
                 } => {
                     let count = child_tool_counts.entry(task_id.clone()).or_insert(0);
@@ -691,6 +756,14 @@ pub(crate) fn spawn_progress_bridge(
                         request_id: request_id.clone(),
                         tool_name: Some(tool_name),
                         skill_id: Some(task_id.clone()),
+                        // The child's tool arguments, so the UI can show what
+                        // the sub-agent actually did (issue: subagent drawer
+                        // detail). Skipped from the wire when `null`.
+                        args: if arguments.is_null() {
+                            None
+                        } else {
+                            Some(arguments)
+                        },
                         round: Some(round),
                         tool_call_id: Some(call_id),
                         subagent: Some(SubagentProgressDetail {
@@ -709,6 +782,7 @@ pub(crate) fn spawn_progress_bridge(
                     tool_name,
                     success,
                     output_chars,
+                    output,
                     elapsed_ms,
                     iteration,
                 } => {
@@ -738,10 +812,11 @@ pub(crate) fn spawn_progress_bridge(
                         success: Some(success),
                         round: Some(round),
                         tool_call_id: Some(call_id),
-                        output: Some(
-                            json!({"output_chars": output_chars, "elapsed_ms": elapsed_ms})
-                                .to_string(),
-                        ),
+                        // The child's actual tool output, so the drawer can show
+                        // *what came back* (not just a char count). Capped to a
+                        // bounded size for the wire (#4007); `output_chars` +
+                        // `elapsed_ms` still ride along in `subagent` below.
+                        output: Some(cap_wire_output(output)),
                         subagent: Some(SubagentProgressDetail {
                             child_iteration: Some(iteration),
                             agent_id: Some(agent_id),
@@ -971,6 +1046,17 @@ pub(crate) fn spawn_progress_bridge(
                 },
             );
         }
+        // #3886: seal any spans still open after the stream closed and hand the
+        // run's trace to the configured tracing sink. Best-effort and gated;
+        // never affects the turn outcome.
+        if let Some(mut collector) = span_collector.take() {
+            collector.finish(unix_epoch_ms());
+            crate::openhuman::agent::progress_tracing::export_spans(
+                &config.observability.agent_tracing,
+                collector.spans(),
+            );
+        }
+
         log::debug!(
             "[web_channel][bridge] exit client_id={} thread_id={} request_id={} round={} events_seen={}",
             client_id,
@@ -985,6 +1071,26 @@ pub(crate) fn spawn_progress_bridge(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cap_wire_output_passes_through_small_payloads() {
+        let s = "small tool result".to_string();
+        assert_eq!(cap_wire_output(s.clone()), s);
+    }
+
+    #[test]
+    fn cap_wire_output_truncates_large_payloads_on_char_boundary() {
+        // A multibyte payload past the cap: result stays valid UTF-8, is shorter
+        // than the input, and carries the truncation marker.
+        let big = "é".repeat(MAX_WIRE_SUBAGENT_OUTPUT); // 2 bytes each → well over cap
+        let capped = cap_wire_output(big.clone());
+        assert!(capped.len() < big.len());
+        assert!(capped.contains("[truncated"));
+        // Truncation landed on a char boundary (no replacement char / panic).
+        assert!(capped.starts_with('é'));
+        // The final payload (content + marker) must honor the wire cap.
+        assert!(capped.len() <= MAX_WIRE_SUBAGENT_OUTPUT);
+    }
 
     #[test]
     fn worktree_detail_collapses_empty_changed_files_to_none() {

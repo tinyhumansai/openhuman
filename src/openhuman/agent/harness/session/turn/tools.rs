@@ -120,6 +120,17 @@ impl Agent {
             provider: Arc::clone(&self.provider),
             all_tools: Arc::clone(&self.tools),
             all_tool_specs: Arc::clone(&self.tool_specs),
+            // Names of the tools the parent actually advertises this turn —
+            // taken from the *policy-filtered* `visible_tool_specs` (after
+            // ToolPolicySession drops tools above the channel's permission),
+            // not the raw `visible_tool_names` (pre-policy). This is the exact
+            // set the parent provider receives, so consumers like
+            // `agent_prepare_context` never surface a tool the parent can't call.
+            visible_tool_names: self
+                .visible_tool_specs
+                .iter()
+                .map(|spec| spec.name.clone())
+                .collect(),
             model_name: self.model_name.clone(),
             temperature: self.temperature,
             workspace_dir: self.workspace_dir.clone(),

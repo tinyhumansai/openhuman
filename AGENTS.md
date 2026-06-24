@@ -59,6 +59,10 @@ GGML_NATIVE=OFF cargo check --manifest-path Cargo.toml
 
 `pnpm core:stage` is a no-op (sidecar removed).
 
+**Build speed**: both `Cargo.toml` files set `[profile.dev.package."*"] debug = false` — dependencies compile without DWARF in `dev`/`test` (faster builds + smaller `target/`); our own crates keep full debuginfo so panics/backtraces still resolve to file:line. `release`/`ci` profiles are unchanged. Keep this stanza in sync across the root and `app/src-tauri/Cargo.toml` if you touch profiles.
+
+**CI build topology**: full-suite E2E is **build-once-then-fanout** on all three OSes — `build-{linux,macos,windows}-full` compile/bundle the app once and upload it as a per-run workflow artifact, and the shard jobs (`e2e-*-full`) `needs:` that job and download it instead of each shard rebuilding on a cold cache (`.github/workflows/e2e-reusable.yml`). Linux desktop packaging (`build-desktop.yml`) does a **single** `cargo tauri build`: libcef.so is resolved from the restored CEF cache (or a targeted `cargo build -p cef-dll-sys` prewarm on a cold cache) rather than a throwaway `--no-bundle` full build. The root core crate and the Tauri shell are still **separate Cargo worlds** (two `Cargo.lock`, two `target/`); converging them into one workspace is tracked as follow-up in #3877.
+
 **Tests**: `pnpm test` (Vitest) · `pnpm test:coverage` · `pnpm test:rust` (`scripts/test-rust-with-mock.sh`).
 **Quality**: ESLint + Prettier + Husky. Pre-push hook runs `pnpm rust:check`.
 
@@ -233,6 +237,7 @@ Each domain owns `bus.rs` with handlers. Convention: `<Purpose>Subscriber`, `nam
 - **i18n**: all UI text through `useT()` from `app/src/lib/i18n/I18nContext`. Add key to `en.ts` **and real translations to all locale files** (`ar`, `bn`, `de`, `es`, `fr`, `hi`, `id`, `it`, `ko`, `pl`, `pt`, `ru`, `zh-CN`). CI enforces parity (`pnpm i18n:check`) and detects English placeholders (`pnpm i18n:english:check`).
 - **Dual socket sync**: keep `socketService`/MCP transport aligned with core socket behavior.
 - **Tauri guard**: use `isTauri()` or wrap `invoke(...)` in try/catch — never check `window.__TAURI__` directly.
+- **Generated docs**: some architecture docs contain generated blocks marked `<!-- BEGIN/END GENERATED: … -->` sourced from code (today: the frontend provider chain in [`gitbooks/developing/architecture/frontend.md`](gitbooks/developing/architecture/frontend.md), from the `@generated-source:provider-chain` marker in `app/src/App.tsx`). Don't hand-edit between the markers — update the code source, then run `pnpm docs:generate`. CI (`pnpm docs:check`, the **Docs Drift** lane) fails on stale generated docs. Generator + tests: `scripts/generate-architecture-docs.mjs`.
 
 ---
 

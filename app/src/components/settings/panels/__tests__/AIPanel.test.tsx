@@ -279,11 +279,14 @@ describe('AIPanel', () => {
     await waitFor(() => expect(screen.getAllByText(/OpenHuman/i).length).toBeGreaterThan(0));
   });
 
-  it('renders the always-on Managed chip', async () => {
+  it('renders Managed as an always-on badge, not a switchable toggle (#3760)', async () => {
     renderWithProviders(<AIPanel />);
-    const managedSwitch = await screen.findByRole('switch', { name: /Disconnect Managed/i });
-    expect(managedSwitch).toBeDisabled();
-    expect(managedSwitch).toHaveAttribute('aria-checked', 'true');
+    // The Managed chip must show an "Always on" indicator...
+    expect(await screen.findByText(/Always on/i)).toBeInTheDocument();
+    // ...and must NOT render a toggle switch users would try (and fail) to flip.
+    expect(screen.queryByRole('switch', { name: /Managed/i })).toBeNull();
+    // A hint points users wanting a local model at the Routing card below.
+    expect(screen.getByText(/choose a routing mode below/i)).toBeInTheDocument();
   });
 
   it('renders Managed, Use Your Own Models, and Advanced routing controls', async () => {

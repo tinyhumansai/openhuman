@@ -495,6 +495,14 @@ impl Config {
                 _ => {}
             }
         }
+        if let Some(flag) = env.get("OPENHUMAN_LEARNING_GOALS_ENRICHMENT_ENABLED") {
+            let normalized = flag.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => self.learning.goals_enrichment_enabled = true,
+                "0" | "false" | "no" | "off" => self.learning.goals_enrichment_enabled = false,
+                _ => {}
+            }
+        }
         if let Some(source) = env.get("OPENHUMAN_LEARNING_REFLECTION_SOURCE") {
             let normalized = source.trim().to_ascii_lowercase();
             match normalized.as_str() {
@@ -682,6 +690,11 @@ impl Config {
         if let Some(raw) = env.get("OPENHUMAN_MEMORY_TREE_CLOUD_SUMMARIZATION") {
             if let Some(val) = parse_env_bool("OPENHUMAN_MEMORY_TREE_CLOUD_SUMMARIZATION", &raw) {
                 self.memory_tree.cloud_summarization_opt_in = val;
+            }
+        }
+        if let Some(raw) = env.get("OPENHUMAN_MEMORY_TREE_SPACY_ENABLED") {
+            if let Some(val) = parse_env_bool("OPENHUMAN_MEMORY_TREE_SPACY_ENABLED", &raw) {
+                self.memory_tree.spacy_enabled = val;
             }
         }
     }

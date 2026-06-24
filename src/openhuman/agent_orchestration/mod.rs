@@ -11,6 +11,7 @@ pub mod background_delivery;
 pub mod command_center;
 mod ops;
 pub(crate) mod parent_context;
+pub mod run_ledger_finalize;
 pub mod running_subagents;
 pub mod subagent_control;
 pub mod subagent_sessions;

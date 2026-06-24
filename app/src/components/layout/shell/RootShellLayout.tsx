@@ -9,6 +9,7 @@ import {
   setSidebarWidth,
   toggleSidebar,
 } from '../../../store/layoutSlice';
+import { Tooltip } from '../../ui';
 import CollapsedNavRail from './CollapsedNavRail';
 
 // `app-shell` (not the older `root-shell`) so the persisted geometry seeds
@@ -178,23 +179,24 @@ export default function RootShellLayout({ sidebar, children }: RootShellLayoutPr
           above the HTML layer — starts to its right and never covers it. */}
       {!isOpen && (
         <div className="flex w-9 flex-none flex-col items-center gap-0.5 border-r border-stone-200 bg-white pt-2 dark:border-neutral-800 dark:bg-neutral-900">
-          <button
-            type="button"
-            onClick={() => dispatch(setSidebarVisible({ id: LAYOUT_ID, visible: true }))}
-            data-testid="root-shell-reopen"
-            data-analytics-id="root-shell-reopen-sidebar"
-            aria-label={t('layout.showSidebar')}
-            title={t('layout.showSidebar')}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-stone-500 transition-colors hover:bg-stone-100 hover:text-stone-700 dark:text-neutral-400 dark:hover:bg-neutral-800/60 dark:hover:text-neutral-200">
-            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1.8}
-                d="M9 5l7 7-7 7"
-              />
-            </svg>
-          </button>
+          <Tooltip label={t('layout.showSidebar')}>
+            <button
+              type="button"
+              onClick={() => dispatch(setSidebarVisible({ id: LAYOUT_ID, visible: true }))}
+              data-testid="root-shell-reopen"
+              data-analytics-id="root-shell-reopen-sidebar"
+              aria-label={t('layout.showSidebar')}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-stone-500 transition-colors hover:bg-stone-100 hover:text-stone-700 dark:text-neutral-400 dark:hover:bg-neutral-800/60 dark:hover:text-neutral-200">
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.8}
+                  d="M9 5l7 7-7 7"
+                />
+              </svg>
+            </button>
+          </Tooltip>
           {/* Keep the primary nav reachable while collapsed: an icon-only rail. */}
           <div className="mt-1 w-full border-t border-stone-200/70 pt-1 dark:border-neutral-800/70">
             <CollapsedNavRail />

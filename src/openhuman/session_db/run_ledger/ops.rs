@@ -274,6 +274,41 @@ pub fn transition_agent_run_status(
     })
 }
 
+/// Settle non-terminal `agent_runs` rows left behind by a previous process.
+///
+/// A freshly-booted core has no in-flight subagents — any detached run task
+/// from a prior process is gone with that process. So a row still marked
+/// `running` (or `pending`) at startup is, by definition, orphaned: its driver
+/// died without firing a terminal `DomainEvent::Subagent{Completed,Failed}`, so
+/// the [`register_run_ledger_finalize_subscriber`] never settled it. Without
+/// this sweep those rows render as perpetual "running" timeline entries on every
+/// thread reopen.
+///
+/// We stamp them `interrupted` (outcome unknown — mirrors the turn-state
+/// `mark_all_interrupted` recovery) and set `completed_at`. `awaiting_user` /
+/// `paused` are intentionally left untouched: those are resumable states a user
+/// may still continue.
+///
+/// [`register_run_ledger_finalize_subscriber`]: crate::openhuman::agent_orchestration::run_ledger_finalize::register_run_ledger_finalize_subscriber
+pub fn interrupt_orphaned_agent_runs(config: &Config) -> Result<usize> {
+    let now = Utc::now();
+    crate::openhuman::session_db::store::with_connection(config, |conn| {
+        init_run_ledger_schema(conn)?;
+        let rows_affected = conn
+            .execute(
+                "UPDATE agent_runs
+                 SET status = ?1, completed_at = COALESCE(completed_at, ?2), updated_at = ?2
+                 WHERE status IN ('running', 'pending')",
+                params![AgentRunStatus::Interrupted.as_str(), now.to_rfc3339()],
+            )
+            .context("interrupt orphaned agent runs")?;
+        if rows_affected > 0 {
+            log::info!("{LOG_PREFIX} interrupted {rows_affected} orphaned agent run(s) on startup");
+        }
+        Ok(rows_affected)
+    })
+}
+
 pub fn list_agent_runs(
     config: &Config,
     request: &AgentRunListRequest,
@@ -1823,5 +1858,58 @@ mod tests {
 
         let teams = list_agent_teams(&config, &AgentTeamListRequest::default()).unwrap();
         assert_eq!(teams.count, 1);
+    }
+
+    fn seed_run(config: &Config, id: &str, status: AgentRunStatus) {
+        upsert_agent_run(
+            config,
+            AgentRunUpsert {
+                id: id.into(),
+                kind: super::super::types::AgentRunKind::Subagent,
+                parent_run_id: None,
+                parent_thread_id: Some("thread-1".into()),
+                agent_id: Some("tinyplace_agent".into()),
+                status,
+                prompt_ref: None,
+                worker_thread_id: None,
+                task_board_id: None,
+                task_card_id: None,
+                checkpoint_path: None,
+                checkpoint: None,
+                summary: None,
+                error: None,
+                metadata: json!({}),
+                started_at: None,
+                completed_at: None,
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn interrupt_orphaned_runs_settles_only_non_terminal_inflight_rows() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+
+        seed_run(&config, "run-running", AgentRunStatus::Running);
+        seed_run(&config, "run-pending", AgentRunStatus::Pending);
+        seed_run(&config, "run-completed", AgentRunStatus::Completed);
+        seed_run(&config, "run-awaiting", AgentRunStatus::AwaitingUser);
+
+        let settled = interrupt_orphaned_agent_runs(&config).unwrap();
+        assert_eq!(settled, 2, "only running + pending are orphaned at boot");
+
+        let get = |id: &str| get_agent_run(&config, id).unwrap().expect("run present");
+        // Orphaned in-flight rows become terminal `interrupted` with a completion time…
+        let running = get("run-running");
+        assert_eq!(running.status, AgentRunStatus::Interrupted);
+        assert!(running.completed_at.is_some());
+        assert_eq!(get("run-pending").status, AgentRunStatus::Interrupted);
+        // …already-terminal and resumable rows are untouched.
+        assert_eq!(get("run-completed").status, AgentRunStatus::Completed);
+        assert_eq!(get("run-awaiting").status, AgentRunStatus::AwaitingUser);
+
+        // Idempotent: a second sweep finds nothing left to settle.
+        assert_eq!(interrupt_orphaned_agent_runs(&config).unwrap(), 0);
     }
 }

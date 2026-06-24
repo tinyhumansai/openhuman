@@ -105,6 +105,102 @@ fn run_response_deserializes() {
 }
 
 #[test]
+fn run_actor_output_hides_internal_ids() {
+    let resp = ApifyRunResponse {
+        run_id: "run-123".to_string(),
+        actor_id: "apify/web-scraper".to_string(),
+        status: "SUCCEEDED".to_string(),
+        dataset_id: Some("dataset-123".to_string()),
+        items: Some(vec![json!({"url": "https://example.com"})]),
+        cost_usd: 0.3,
+    };
+
+    let output = format_run_actor_response(&resp, true);
+
+    assert!(output.contains("Apify run started for actor: apify/web-scraper"));
+    assert!(output.contains("Status: SUCCEEDED"));
+    assert!(!output.contains("Run ID:"));
+    assert!(!output.contains("Dataset ID:"));
+    assert!(!output.contains("run-123"));
+    assert!(!output.contains("dataset-123"));
+}
+
+#[test]
+fn run_actor_async_output_shows_polling_instruction() {
+    let resp = ApifyRunResponse {
+        run_id: "run-456".to_string(),
+        actor_id: "apify/crawler".to_string(),
+        status: "RUNNING".to_string(),
+        dataset_id: None,
+        items: None,
+        cost_usd: 0.05,
+    };
+
+    let output = format_run_actor_response(&resp, false);
+    let prose = output
+        .split("[apify_run_ref]")
+        .next()
+        .expect("prose before ref");
+
+    assert!(output.contains("This run is still in progress. Poll with apify_get_run_status."));
+    assert!(!prose.contains("run-456"));
+    assert!(output.contains("[apify_run_ref]"));
+    assert!(output.contains("\"run_id\":\"run-456\""));
+}
+
+#[test]
+fn run_actor_sync_without_items_shows_follow_up_ref() {
+    let resp = ApifyRunResponse {
+        run_id: "run-789".to_string(),
+        actor_id: "apify/crawler".to_string(),
+        status: "RUNNING".to_string(),
+        dataset_id: Some("dataset-789".to_string()),
+        items: None,
+        cost_usd: 0.05,
+    };
+
+    let output = format_run_actor_response(&resp, true);
+    let prose = output
+        .split("[apify_run_ref]")
+        .next()
+        .expect("prose before ref");
+
+    assert!(output.contains("Poll with apify_get_run_status"));
+    assert!(!prose.contains("run-789"));
+    assert!(output.contains("[apify_run_ref]"));
+    assert!(output.contains("\"run_id\":\"run-789\""));
+    assert!(output.contains("\"dataset_id\":\"dataset-789\""));
+}
+
+#[test]
+fn run_status_output_hides_internal_ids() {
+    let resp = ApifyRunResponse {
+        run_id: "run-123".to_string(),
+        actor_id: "apify/web-scraper".to_string(),
+        status: "RUNNING".to_string(),
+        dataset_id: Some("dataset-123".to_string()),
+        items: None,
+        cost_usd: 0.1,
+    };
+
+    let output = format_run_status_response(&resp);
+    let prose = output
+        .split("[apify_run_ref]")
+        .next()
+        .expect("prose before ref");
+
+    assert!(output.contains("Actor ID: apify/web-scraper"));
+    assert!(output.contains("Status: RUNNING"));
+    assert!(!prose.contains("Run ID:"));
+    assert!(!prose.contains("Dataset ID:"));
+    assert!(!prose.contains("run-123"));
+    assert!(!prose.contains("dataset-123"));
+    assert!(output.contains("[apify_run_ref]"));
+    assert!(output.contains("\"run_id\":\"run-123\""));
+    assert!(output.contains("\"dataset_id\":\"dataset-123\""));
+}
+
+#[test]
 fn results_response_deserializes() {
     let json = r#"{"items":[{"foo":"bar"}],"total":42}"#;
     let resp: ApifyGetRunResultsResponse = serde_json::from_str(json).unwrap();

@@ -24,7 +24,6 @@ use openhuman_core::openhuman::embeddings::NoopEmbedding;
 use openhuman_core::openhuman::memory::query::{
     MemoryQueryTool, MemoryTreeDrillDownTool, MemoryTreeFetchLeavesTool,
     MemoryTreeIngestDocumentTool, MemoryTreeQuerySourceTool, MemoryTreeSearchEntitiesTool,
-    MemoryTreeWalkTool,
 };
 use openhuman_core::openhuman::memory::tools::{
     MemoryForgetTool, MemoryRecallTool, MemoryStoreTool,
@@ -1060,7 +1059,6 @@ fn memory_schema_registries_and_query_tool_metadata_cover_public_surfaces() {
         &MemoryTreeDrillDownTool,
         &MemoryTreeFetchLeavesTool,
         &MemoryTreeIngestDocumentTool,
-        &MemoryTreeWalkTool,
     ] {
         assert!(!tool.name().is_empty());
         assert!(!tool.description().is_empty());
@@ -3181,6 +3179,7 @@ fn turn_state_mirror_persists_progress_edges_from_public_events() {
         task_id: "task-1".into(),
         call_id: "child-call".into(),
         tool_name: "memory.read".into(),
+        arguments: serde_json::Value::Null,
         iteration: 1,
     }));
     assert!(!mirror.observe(&AgentProgress::SubagentToolCallCompleted {
@@ -3190,6 +3189,7 @@ fn turn_state_mirror_persists_progress_edges_from_public_events() {
         tool_name: "memory.read".into(),
         success: true,
         output_chars: 44,
+        output: "child tool output".into(),
         elapsed_ms: 22,
         iteration: 1,
     }));
