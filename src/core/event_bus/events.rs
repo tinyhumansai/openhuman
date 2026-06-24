@@ -211,6 +211,26 @@ pub enum DomainEvent {
         message: String,
     },
 
+    /// A BYO (bring-your-own-key) chat provider rejected the configured API
+    /// key with `401` / `403` — the third-party key is invalid or revoked.
+    ///
+    /// Published by `inference::provider::ops::http_error::
+    /// log_byo_provider_auth_failure` (once per failure episode, via the
+    /// `auth_error_registry` latch — the underlying 401 repeats per retry).
+    /// The same rejection demotes the raw error from Sentry (it's
+    /// unactionable user-state), so this event is what keeps it visible to
+    /// the user: the notification bridge turns it into a core notification,
+    /// and the AI-settings panel reads the registry snapshot to render an
+    /// inline provider-error notice. The `message` field is a pre-formatted,
+    /// actionable string safe to show as-is.
+    ProviderApiKeyRejected {
+        /// Provider slug, e.g. `"openrouter"`.
+        provider: String,
+        /// Human-readable, actionable explanation (update the key in
+        /// Settings → AI). See `auth_error_registry::auth_error_message`.
+        message: String,
+    },
+
     /// A memory entry was stored.
     MemoryStored {
         key: String,
@@ -1234,7 +1254,7 @@ impl DomainEvent {
 
             Self::KeyringConsentRequired | Self::KeyringDecryptFailed { .. } => "keyring",
 
-            Self::SessionExpired { .. } => "auth",
+            Self::SessionExpired { .. } | Self::ProviderApiKeyRejected { .. } => "auth",
 
             Self::TaskSourceFetched { .. }
             | Self::TaskSourceTaskIngested { .. }
@@ -1387,6 +1407,7 @@ impl DomainEvent {
             Self::McpSetupSecretRequested { .. } => "McpSetupSecretRequested",
             Self::McpToolRejected { .. } => "McpToolRejected",
             Self::EmbeddingModelUnhealthy { .. } => "EmbeddingModelUnhealthy",
+            Self::ProviderApiKeyRejected { .. } => "ProviderApiKeyRejected",
             Self::TaskSourceFetched { .. } => "TaskSourceFetched",
             Self::TaskSourceTaskIngested { .. } => "TaskSourceTaskIngested",
             Self::TaskSourceFetchFailed { .. } => "TaskSourceFetchFailed",

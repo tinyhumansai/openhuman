@@ -495,6 +495,13 @@ fn all_variants_have_correct_domain() {
             },
             "auth",
         ),
+        (
+            DomainEvent::ProviderApiKeyRejected {
+                provider: "openrouter".into(),
+                message: "openrouter rejected the API key (HTTP 401).".into(),
+            },
+            "auth",
+        ),
         // Agent meetings (issue #3507 contract events)
         (
             DomainEvent::MeetingSessionCreated {
