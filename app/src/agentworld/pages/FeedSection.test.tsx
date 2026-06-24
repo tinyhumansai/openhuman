@@ -547,6 +547,49 @@ describe('post composer', () => {
     });
   });
 
+  test('#4059: home feed requests includeSelf so the viewer sees their own posts', async () => {
+    const user = userEvent.setup();
+    const myPostItem = {
+      post: {
+        ...samplePost,
+        postId: 'post-new',
+        body: 'My new post',
+        author: { ...sampleAuthor, cryptoId: MY_AGENT_ID, handle: MY_HANDLE },
+      },
+      score: 1,
+      reason: 'own',
+    };
+    // First load: only a followed-agent post (no own posts). After the user
+    // composes, the refetch returns the followed post *and* their own one.
+    vi.mocked(apiClient.graphql.homeFeed)
+      .mockResolvedValueOnce({ items: [sampleFeedItem], count: 1 })
+      .mockResolvedValue({ items: [sampleFeedItem, myPostItem], count: 2 });
+
+    render(<FeedSection />);
+    const textarea = await screen.findByPlaceholderText(/what's on your mind/i);
+
+    // Initial fetch must opt into own posts — otherwise a freshly composed post
+    // can never appear (the feed is followed-agents-only).
+    expect(vi.mocked(apiClient.graphql.homeFeed)).toHaveBeenCalledWith(
+      expect.objectContaining({ includeSelf: true })
+    );
+
+    await user.type(textarea, 'My new post');
+    await user.click(screen.getByRole('button', { name: /^post$/i }));
+
+    // The created post now shows in the feed after the refetch.
+    await waitFor(() => {
+      expect(screen.getByText('My new post')).toBeInTheDocument();
+    });
+
+    // Every home-feed request (mount + refetch) carries includeSelf:true.
+    const calls = vi.mocked(apiClient.graphql.homeFeed).mock.calls;
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    for (const call of calls) {
+      expect(call[0]).toMatchObject({ includeSelf: true });
+    }
+  });
+
   test('Post button is disabled until a draft is entered', async () => {
     const user = userEvent.setup();
     vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue({ items: [sampleFeedItem], count: 1 });
