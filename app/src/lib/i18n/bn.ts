@@ -466,6 +466,10 @@ const messages: TranslationMap = {
   'chat.typeMessage': 'আজ আমি আপনাকে কীভাবে সাহায্য করতে পারি?',
   'chat.send': 'বার্তা পাঠান',
   'chat.parallelBranchHint': 'সমান্তরাল শাখা টাইপ করুন — পাঠাতে ⌘/Ctrl+Enter',
+  'chat.followupHint':
+    'একটি ফলো-আপ সারিবদ্ধ করুন — এই উত্তরের পরে পাঠানো হবে · সমান্তরাল শাখার জন্য ⌘/Ctrl+Enter',
+  'chat.queuedFollowups.label': 'সারিবদ্ধ ফলো-আপ',
+  'chat.queuedFollowups.clear': 'সাফ করুন',
   'chat.parallelBranchLabel': 'সমান্তরাল শাখা',
   'chat.thinking': 'ভাবছে...',
   'chat.noMessages': 'এখনো কোনো বার্তা নেই',

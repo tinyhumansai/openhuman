@@ -480,6 +480,10 @@ const messages: TranslationMap = {
   'chat.typeMessage': 'Wie kann ich dir heute helfen?',
   'chat.send': 'Nachricht senden',
   'chat.parallelBranchHint': 'Parallelen Zweig eingeben — ⌘/Strg+Enter zum Senden',
+  'chat.followupHint':
+    'Folgenachricht einreihen — wird nach dieser Antwort gesendet · ⌘/Strg+Enter für parallelen Zweig',
+  'chat.queuedFollowups.label': 'Eingereihte Folgenachrichten',
+  'chat.queuedFollowups.clear': 'Löschen',
   'chat.parallelBranchLabel': 'Paralleler Zweig',
   'chat.thinking': 'Denken...',
   'chat.noMessages': 'Noch keine Nachrichten',

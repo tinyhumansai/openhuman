@@ -17,10 +17,11 @@ export interface ChatComposerProps {
   composerInteractionBlocked: boolean;
   isSending: boolean;
   /**
-   * When true, the selected thread has an in-flight turn but the user may still
-   * type and send a PARALLEL branch (Cmd/Ctrl+Enter). Keeps the textarea
-   * editable even though `composerInteractionBlocked` is set, and surfaces a
-   * hint. The normal Send button / plain Enter stay gated.
+   * When true, the selected thread has an in-flight turn but the composer stays
+   * usable: plain Enter / the Send button queue a follow-up (sent after the
+   * current turn), and Cmd/Ctrl+Enter forks a parallel branch. Keeps the
+   * textarea + send button editable even though `composerInteractionBlocked` is
+   * set, and surfaces a follow-up hint instead of showing the in-flight spinner.
    */
   allowParallelSend?: boolean;
   attachments: Attachment[];
@@ -68,10 +69,19 @@ export default function ChatComposer({
 }: ChatComposerProps) {
   const { t } = useT();
 
-  const hasContent = inputValue.trim().length > 0 || attachments.length > 0 || isSending;
-  // The textarea stays editable when a parallel branch is allowed even though
-  // the primary composer interaction is blocked by an in-flight turn.
-  const textareaDisabled = (composerInteractionBlocked && !allowParallelSend) || isSending;
+  // While a turn streams (`allowParallelSend`) the composer stays usable for a
+  // queued follow-up / parallel branch, so the in-flight `isSending` spinner
+  // and lock no longer apply — only real typed content gates the send button.
+  const hasContent =
+    inputValue.trim().length > 0 || attachments.length > 0 || (isSending && !allowParallelSend);
+  // The textarea (and send button) stay editable while a turn streams so the
+  // user can queue a follow-up or fork a parallel branch; otherwise an in-flight
+  // turn (`composerInteractionBlocked`/`isSending`) locks the composer.
+  const composerLocked = !allowParallelSend && (composerInteractionBlocked || isSending);
+  const textareaDisabled = composerLocked;
+  // Show the working spinner only for a normal in-flight send, not while the
+  // composer is intentionally open for follow-up/parallel queueing.
+  const showSendingSpinner = isSending && !allowParallelSend;
 
   // Auto-resize textarea: grow with content, cap at COMPOSER_MAX_HEIGHT, then scroll.
   useEffect(() => {
@@ -161,7 +171,7 @@ export default function ChatComposer({
               isComposingTextRef.current = false;
             }}
             onKeyDown={handleInputKeyDown}
-            placeholder={allowParallelSend ? t('chat.parallelBranchHint') : t('chat.typeMessage')}
+            placeholder={allowParallelSend ? t('chat.followupHint') : t('chat.typeMessage')}
             rows={1}
             disabled={textareaDisabled}
             className="relative z-10 w-full resize-none border-0 bg-transparent py-0.5 px-0.5 text-sm leading-5 whitespace-pre-wrap break-words font-sans text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 overflow-hidden disabled:opacity-50 disabled:cursor-not-allowed"
@@ -203,9 +213,9 @@ export default function ChatComposer({
           onClick={() => {
             void onSend();
           }}
-          disabled={!hasContent || composerInteractionBlocked || isSending}
+          disabled={!hasContent || composerLocked}
           className="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-primary-500 hover:bg-primary-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-          {isSending ? (
+          {showSendingSpinner ? (
             <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
               <circle
                 className="opacity-25"

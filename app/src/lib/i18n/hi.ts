@@ -465,6 +465,10 @@ const messages: TranslationMap = {
   'chat.typeMessage': 'आज मैं आपकी कैसे मदद कर सकता हूँ?',
   'chat.send': 'मैसेज भेजें',
   'chat.parallelBranchHint': 'समानांतर शाखा टाइप करें — भेजने के लिए ⌘/Ctrl+Enter',
+  'chat.followupHint':
+    'फ़ॉलो-अप कतार में लगाएँ — इस उत्तर के बाद भेजा जाएगा · समानांतर शाखा के लिए ⌘/Ctrl+Enter',
+  'chat.queuedFollowups.label': 'कतारबद्ध फ़ॉलो-अप',
+  'chat.queuedFollowups.clear': 'साफ़ करें',
   'chat.parallelBranchLabel': 'समानांतर शाखा',
   'chat.thinking': 'सोच रहा है...',
   'chat.noMessages': 'अभी कोई मैसेज नहीं',

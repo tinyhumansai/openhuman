@@ -479,6 +479,10 @@ const messages: TranslationMap = {
   'chat.typeMessage': '¿En qué puedo ayudarte hoy?',
   'chat.send': 'Enviar mensaje',
   'chat.parallelBranchHint': 'Escribe una rama paralela — ⌘/Ctrl+Enter para enviar',
+  'chat.followupHint':
+    'Pon en cola un seguimiento — se envía tras esta respuesta · ⌘/Ctrl+Enter para una rama paralela',
+  'chat.queuedFollowups.label': 'Seguimientos en cola',
+  'chat.queuedFollowups.clear': 'Borrar',
   'chat.parallelBranchLabel': 'Rama paralela',
   'chat.thinking': 'Pensando...',
   'chat.noMessages': 'Sin mensajes aún',

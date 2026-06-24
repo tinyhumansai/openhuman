@@ -471,6 +471,10 @@ const messages: TranslationMap = {
   'chat.typeMessage': 'Jak mogę ci dziś pomóc?',
   'chat.send': 'Wyślij wiadomość',
   'chat.parallelBranchHint': 'Wpisz równoległą gałąź — ⌘/Ctrl+Enter, aby wysłać',
+  'chat.followupHint':
+    'Dodaj wiadomość uzupełniającą do kolejki — wyślemy po tej odpowiedzi · ⌘/Ctrl+Enter dla równoległej gałęzi',
+  'chat.queuedFollowups.label': 'Wiadomości w kolejce',
+  'chat.queuedFollowups.clear': 'Wyczyść',
   'chat.parallelBranchLabel': 'Równoległa gałąź',
   'chat.thinking': 'Myślę...',
   'chat.noMessages': 'Brak wiadomości',

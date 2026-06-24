@@ -468,6 +468,10 @@ const messages: TranslationMap = {
   'chat.typeMessage': 'Apa yang bisa saya bantu hari ini?',
   'chat.send': 'Kirim pesan',
   'chat.parallelBranchHint': 'Ketik cabang paralel — ⌘/Ctrl+Enter untuk mengirim',
+  'chat.followupHint':
+    'Antrekan tindak lanjut — dikirim setelah balasan ini · ⌘/Ctrl+Enter untuk cabang paralel',
+  'chat.queuedFollowups.label': 'Tindak lanjut dalam antrean',
+  'chat.queuedFollowups.clear': 'Hapus',
   'chat.parallelBranchLabel': 'Cabang paralel',
   'chat.thinking': 'Berpikir...',
   'chat.noMessages': 'Belum ada pesan',
