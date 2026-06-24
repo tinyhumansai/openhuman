@@ -4,6 +4,7 @@
 //! `inference/provider/` so all inference concerns (local runtime, cloud
 //! providers, HTTP endpoint) share a single domain root.
 
+pub mod auth_error_registry;
 pub mod billing_error;
 pub mod claude_agent_sdk;
 pub mod claude_code;
