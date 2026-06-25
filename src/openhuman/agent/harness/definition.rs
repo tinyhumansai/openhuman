@@ -321,8 +321,7 @@ impl std::fmt::Display for AgentTier {
 /// Single source of truth for the spawn-hierarchy rule: is a `parent`-tier
 /// agent allowed to delegate to a `child`-tier agent?
 ///
-/// Returns `Ok(())` for the legal handoffs (`chat → reasoning`,
-/// `chat → worker`, `reasoning → worker`) and `Err(reason)` for the three
+/// Returns `Ok(())` for the legal handoffs and `Err(reason)` for the three
 /// forbidden shapes, where `reason` is a tier-only human-readable explanation
 /// (no agent ids — callers prepend their own context):
 ///
@@ -332,15 +331,20 @@ impl std::fmt::Display for AgentTier {
 /// - `Reasoning → Reasoning` — reasoning agents compose downward into workers,
 ///   not into each other (a depth-blowing recursion of slow models).
 ///
-/// Because every legal transition strictly descends `Chat → Reasoning →
-/// Worker` and `Worker` is a leaf, validating each hop with this function
-/// inherently bounds any execution chain to at most three hops — the tier gate
-/// *is* a depth gate. It is enforced both statically at boot (the loader walks
-/// declared `subagents` pairs — see
-/// [`crate::openhuman::agent_registry::agents::validate_tier_hierarchy`]) and
-/// at runtime at the universal spawn chokepoint (`run_subagent`) as
-/// defense-in-depth against dynamic / custom / model-chosen spawns the boot
-/// walk never saw.
+/// Note this forbids same-tier and worker-as-parent hops, **not** upward hops:
+/// `reasoning → chat` is a real, intentional builtin edge (the `subconscious`
+/// reasoner can hand a follow-up back to the `orchestrator` chat agent), so it
+/// must stay legal. The harness'es `MAX_SPAWN_DEPTH` cap bounds chain length
+/// independently of tier direction.
+///
+/// This is the static authoring rule the loader walks over declared `subagents`
+/// pairs at boot (see
+/// [`crate::openhuman::agent_registry::agents::validate_tier_hierarchy`]). The
+/// runtime spawn gate (`run_subagent`) reuses it as defense-in-depth, but
+/// deliberately exempts worker *parents* — at runtime a worker only reaches the
+/// spawn chokepoint via the documented collapsed `delegate_to_integrations_agent`
+/// path (→ `integrations_agent`, itself a worker), which the loader intentionally
+/// leaves untouched.
 pub fn validate_tier_transition(parent: AgentTier, child: AgentTier) -> Result<(), String> {
     match (parent, child) {
         (AgentTier::Worker, _) => Err(format!(
