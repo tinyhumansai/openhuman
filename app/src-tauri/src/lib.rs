@@ -3,6 +3,7 @@
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 compile_error!("src-tauri host supports desktop (Windows/macOS/Linux) only. Mobile lives in app/src-tauri-mobile.");
 
+mod app_update;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod artifact_commands;
 mod cdp;
@@ -535,33 +536,65 @@ async fn apply_app_update(
     log::debug!("[app-update] acquired core restart lock");
     state.inner().shutdown().await;
 
-    let progress_app = app.clone();
-    let install_app = app.clone();
-    let download_result = update
-        .download_and_install(
-            move |chunk_length, content_length| {
-                let payload = serde_json::json!({
-                    "chunk": chunk_length,
-                    "total": content_length,
-                });
-                let _ = progress_app.emit("app-update:progress", payload);
-            },
-            move || {
-                log::info!("[app-update] download complete — installing");
-                let _ = install_app.emit("app-update:status", "installing");
-            },
-        )
-        .await;
+    // Bounded retry on transient download failures (Sentry TAURI-RUST-4JR). The
+    // core stays shut down across attempts (the restart lock is held above); we
+    // only revive it on the terminal give-up. A `Reqwest` error is always
+    // download-phase — `download_and_install` verifies + installs strictly after
+    // a complete download — so retrying never re-runs a partial install.
+    let mut attempt: u32 = 1;
+    loop {
+        let progress_app = app.clone();
+        let install_app = app.clone();
+        let download_result = update
+            .download_and_install(
+                move |chunk_length, content_length| {
+                    let payload = serde_json::json!({
+                        "chunk": chunk_length,
+                        "total": content_length,
+                    });
+                    let _ = progress_app.emit("app-update:progress", payload);
+                },
+                move || {
+                    log::info!("[app-update] download complete — installing");
+                    let _ = install_app.emit("app-update:status", "installing");
+                },
+            )
+            .await;
 
-    if let Err(e) = download_result {
-        log::error!("[app-update] download/install failed: {e}");
-        // Same recovery as `install_app_update`: the .app wasn't swapped,
-        // so revive the in-process core we shut down above.
-        if let Err(start_err) = state.inner().ensure_running().await {
-            log::error!("[app-update] failed to restart core after apply error: {start_err}");
+        match download_result {
+            Ok(()) => break,
+            Err(e) => {
+                let transient = app_update::is_transient_updater_err(&e);
+                match app_update::classify(attempt, app_update::MAX_DOWNLOAD_ATTEMPTS, transient) {
+                    app_update::RetryDecision::Retry => {
+                        log::warn!(
+                            "[app-update] download/install attempt {}/{} failed (transient): {e} — retrying",
+                            attempt,
+                            app_update::MAX_DOWNLOAD_ATTEMPTS
+                        );
+                        tokio::time::sleep(app_update::backoff_for(attempt)).await;
+                        attempt += 1;
+                        // Keep core down; re-assert downloading status for the next pass.
+                        let _ = app.emit("app-update:status", "downloading");
+                    }
+                    app_update::RetryDecision::GiveUp => {
+                        log::error!(
+                            "[app-update] download/install failed after {} attempt(s): {e}",
+                            attempt
+                        );
+                        // Same recovery as `install_app_update`: the .app wasn't
+                        // swapped, so revive the in-process core we shut down above.
+                        if let Err(start_err) = state.inner().ensure_running().await {
+                            log::error!(
+                                "[app-update] failed to restart core after apply error: {start_err}"
+                            );
+                        }
+                        let _ = app.emit("app-update:status", "error");
+                        return Err(format!("download_and_install failed: {e}"));
+                    }
+                }
+            }
         }
-        let _ = app.emit("app-update:status", "error");
-        return Err(format!("download_and_install failed: {e}"));
     }
 
     log::info!("[app-update] install complete — relaunching");
@@ -649,28 +682,60 @@ async fn download_app_update(
     log::info!("[app-update] downloading {} (background)", new_version);
     let _ = app.emit("app-update:status", "downloading");
 
-    let progress_app = app.clone();
-    let download_result = update
-        .download(
-            move |chunk_length, content_length| {
-                let payload = serde_json::json!({
-                    "chunk": chunk_length,
-                    "total": content_length,
-                });
-                let _ = progress_app.emit("app-update:progress", payload);
-            },
-            || {
-                log::info!("[app-update] download complete — staging for install");
-            },
-        )
-        .await;
+    // Bounded retry: a single transient mid-stream HTTP failure on the large
+    // bundle download otherwise aborts the whole update (Sentry TAURI-RUST-4JR).
+    // Retry only the network class; surface fatal/exhausted errors as before.
+    let bytes = {
+        let mut attempt: u32 = 1;
+        loop {
+            let progress_app = app.clone();
+            let download_result = update
+                .download(
+                    move |chunk_length, content_length| {
+                        let payload = serde_json::json!({
+                            "chunk": chunk_length,
+                            "total": content_length,
+                        });
+                        let _ = progress_app.emit("app-update:progress", payload);
+                    },
+                    || {
+                        log::info!("[app-update] download complete — staging for install");
+                    },
+                )
+                .await;
 
-    let bytes = match download_result {
-        Ok(b) => b,
-        Err(e) => {
-            log::error!("[app-update] download failed: {e}");
-            let _ = app.emit("app-update:status", "error");
-            return Err(format!("download failed: {e}"));
+            match download_result {
+                Ok(b) => break b,
+                Err(e) => {
+                    let transient = app_update::is_transient_updater_err(&e);
+                    match app_update::classify(
+                        attempt,
+                        app_update::MAX_DOWNLOAD_ATTEMPTS,
+                        transient,
+                    ) {
+                        app_update::RetryDecision::Retry => {
+                            log::warn!(
+                                "[app-update] download attempt {}/{} failed (transient): {e} — retrying",
+                                attempt,
+                                app_update::MAX_DOWNLOAD_ATTEMPTS
+                            );
+                            tokio::time::sleep(app_update::backoff_for(attempt)).await;
+                            attempt += 1;
+                            // Re-assert status so a stale "error" never lingers; the
+                            // next attempt's progress callback resets the bar.
+                            let _ = app.emit("app-update:status", "downloading");
+                        }
+                        app_update::RetryDecision::GiveUp => {
+                            log::error!(
+                                "[app-update] download failed after {} attempt(s): {e}",
+                                attempt
+                            );
+                            let _ = app.emit("app-update:status", "error");
+                            return Err(format!("download failed: {e}"));
+                        }
+                    }
+                }
+            }
         }
     };
 
