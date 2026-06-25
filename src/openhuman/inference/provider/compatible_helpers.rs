@@ -53,147 +53,189 @@ impl OpenAiCompatibleProvider {
             })
             .unwrap_or(false);
 
-        let request = ResponsesRequest {
+        // TAURI-RUST-EWD: the Codex/ChatGPT OAuth Responses endpoint
+        // (`chatgpt.com/backend-api/codex/responses`) rejects `max_output_tokens`
+        // outright (400 `Unsupported parameter: max_output_tokens`), the same way
+        // it rejects `stream: false` (#3201). Omit the cap proactively for that
+        // endpoint; every other Responses backend keeps it (the cap still flows
+        // through for `responses_api_primary` on a real `/v1/responses`).
+        if is_codex_oauth_responses && max_output_tokens.is_some() {
+            log::debug!(
+                "[provider] {} omitting max_output_tokens={:?} for Codex OAuth responses endpoint (unsupported param)",
+                self.name,
+                max_output_tokens,
+            );
+        }
+        let mut request = ResponsesRequest {
             model: model.to_string(),
             input,
             instructions,
             stream: Some(is_codex_oauth_responses),
             store: Some(false),
-            max_output_tokens,
+            max_output_tokens: if is_codex_oauth_responses {
+                None
+            } else {
+                max_output_tokens
+            },
         };
 
         let url = self.responses_url();
+        let mut retried_without_cap = false;
 
-        let response = self
-            .apply_auth_header(self.http_client().post(&url).json(&request), credential)
-            .send()
-            .await?;
+        let (status, error) = loop {
+            let response = self
+                .apply_auth_header(self.http_client().post(&url).json(&request), credential)
+                .send()
+                .await?;
 
-        if !response.status().is_success() {
+            if response.status().is_success() {
+                let body = response.text().await?;
+                if is_codex_oauth_responses {
+                    return aggregate_responses_sse_body(&self.name, &body);
+                }
+                let responses = parse_responses_response_body(&self.name, &body)?;
+                return extract_responses_text(responses).ok_or_else(|| {
+                    anyhow::anyhow!("No response from {} Responses API", self.name)
+                });
+            }
+
             let status = response.status();
-            let status_str = status.as_u16().to_string();
             let error = response.text().await?;
-            let sanitized = super::super::sanitize_api_error(&error);
-            // Emit the status in the structured `(<status>)` position the retry
-            // classifier understands (`reliable::structured_http_4xx`). The bare
-            // `"… Responses API error: 404 Not Found"` form left the `404`
-            // unanchored, so a terminal 404 was misclassified as retryable and
-            // looped indefinitely (TAURI-RUST-FJZ, ~15k events).
-            let message = format!(
-                "{} Responses API error ({status_str}): {sanitized}",
-                self.name
-            );
-            // A 404 from the `/responses` route can mean this endpoint has no
-            // Responses API at all — disable the chat-completions-404 →
-            // `/responses` fallback for it so we stop issuing a guaranteed second
-            // 404. Guard against poisoning the process-global cache on a
-            // model/deployment-specific 404 (the route exists, the model
-            // doesn't), which would wrongly drop the fallback for every other
-            // model on a Responses-capable endpoint. Skip when Responses is the
-            // primary path (Codex OAuth): the fallback flag is never consulted
-            // and a 404 there is not evidence the route is missing.
-            if status == reqwest::StatusCode::NOT_FOUND
-                && !self.responses_api_primary
-                && Self::responses_404_indicates_missing_route(&error)
+
+            // Reactive defense-in-depth: a strict Responses backend may still
+            // reject `max_output_tokens` with a 400 (e.g. a future Codex endpoint
+            // variant we don't match above). Strip the field and retry once,
+            // mirroring the no-tools / frequency_penalty retries. Bounded to a
+            // single retry so a genuinely different 400 still surfaces.
+            if !retried_without_cap
+                && request.max_output_tokens.is_some()
+                && status == reqwest::StatusCode::BAD_REQUEST
+                && Self::err_indicates_max_output_tokens_unsupported(&error)
             {
-                super::mark_responses_api_unsupported(&self.base_url);
+                log::info!(
+                    "[provider] {} rejected max_output_tokens — retrying responses request without it",
+                    self.name,
+                );
+                request.max_output_tokens = None;
+                retried_without_cap = true;
+                continue;
             }
-            if super::super::is_budget_exhausted_http_400(status, &error) {
-                super::super::log_budget_exhausted_http_400(
-                    "responses_api",
-                    self.name.as_str(),
-                    Some(model),
-                    status,
-                );
-            } else if super::super::is_custom_openai_upstream_bad_request_http_400(
-                self.name.as_str(),
-                status,
-                &error,
-            ) {
-                super::super::log_custom_openai_upstream_bad_request_http_400(
-                    "responses_api",
-                    self.name.as_str(),
-                    Some(model),
-                    status,
-                );
-            } else if super::super::is_provider_access_policy_denied_http_403(status, &error) {
-                super::super::log_provider_access_policy_denied_http_403(
-                    "responses_api",
-                    self.name.as_str(),
-                    Some(model),
-                    status,
-                );
-            } else if super::super::is_provider_config_rejection_http(
-                status,
-                self.name.as_str(),
-                &error,
-            ) {
-                super::super::log_provider_config_rejection(
-                    "responses_api",
-                    self.name.as_str(),
-                    Some(model),
-                    status,
-                );
-            } else if super::super::is_byo_provider_auth_failure_http(
-                self.name.as_str(),
-                status,
-                &error,
-            ) {
-                super::super::log_byo_provider_auth_failure(
-                    "responses_api",
-                    self.name.as_str(),
-                    Some(model),
-                    status,
-                );
-            } else if super::super::is_openai_oauth_session_expired_http(
-                self.name.as_str(),
-                status,
-                &error,
-            ) {
-                super::super::log_openai_oauth_session_expired(
-                    "responses_api",
-                    self.name.as_str(),
-                    Some(model),
-                    status,
-                );
-            } else if super::super::is_provider_insufficient_credits_402(status, &error) {
-                // Insufficient-credits 402: the user's own BYO provider account
-                // is out of balance — a flat billing fact, not a reservation-
-                // window error, so there is NO local max_tokens lever to apply.
-                // Demote to info instead of paging on every retry; this is the
-                // complete classification for a genuinely-unpreventable
-                // BYO-balance condition
-                // (TAURI-RUST-4QF — DeepSeek "Insufficient Balance").
-                super::super::log_provider_insufficient_credits_402(
-                    "responses_api",
-                    self.name.as_str(),
-                    Some(model),
-                    status,
-                );
-            } else if super::super::should_report_provider_http_failure(status) {
-                crate::core::observability::report_error(
-                    message.as_str(),
-                    "llm_provider",
-                    "responses_api",
-                    &[
-                        ("provider", self.name.as_str()),
-                        ("model", model),
-                        ("status", status_str.as_str()),
-                        ("failure", "non_2xx"),
-                    ],
-                );
-            }
-            anyhow::bail!(message);
-        }
 
-        let body = response.text().await?;
-        if is_codex_oauth_responses {
-            return aggregate_responses_sse_body(&self.name, &body);
-        }
-        let responses = parse_responses_response_body(&self.name, &body)?;
+            break (status, error);
+        };
 
-        extract_responses_text(responses)
-            .ok_or_else(|| anyhow::anyhow!("No response from {} Responses API", self.name))
+        let status_str = status.as_u16().to_string();
+        let sanitized = super::super::sanitize_api_error(&error);
+        // Emit the status in the structured `(<status>)` position the retry
+        // classifier understands (`reliable::structured_http_4xx`). The bare
+        // `"… Responses API error: 404 Not Found"` form left the `404`
+        // unanchored, so a terminal 404 was misclassified as retryable and
+        // looped indefinitely (TAURI-RUST-FJZ, ~15k events).
+        let message = format!(
+            "{} Responses API error ({status_str}): {sanitized}",
+            self.name
+        );
+        // A 404 from the `/responses` route can mean this endpoint has no
+        // Responses API at all — disable the chat-completions-404 →
+        // `/responses` fallback for it so we stop issuing a guaranteed second
+        // 404. Guard against poisoning the process-global cache on a
+        // model/deployment-specific 404 (the route exists, the model
+        // doesn't), which would wrongly drop the fallback for every other
+        // model on a Responses-capable endpoint. Skip when Responses is the
+        // primary path (Codex OAuth): the fallback flag is never consulted
+        // and a 404 there is not evidence the route is missing.
+        if status == reqwest::StatusCode::NOT_FOUND
+            && !self.responses_api_primary
+            && Self::responses_404_indicates_missing_route(&error)
+        {
+            super::mark_responses_api_unsupported(&self.base_url);
+        }
+        if super::super::is_budget_exhausted_http_400(status, &error) {
+            super::super::log_budget_exhausted_http_400(
+                "responses_api",
+                self.name.as_str(),
+                Some(model),
+                status,
+            );
+        } else if super::super::is_custom_openai_upstream_bad_request_http_400(
+            self.name.as_str(),
+            status,
+            &error,
+        ) {
+            super::super::log_custom_openai_upstream_bad_request_http_400(
+                "responses_api",
+                self.name.as_str(),
+                Some(model),
+                status,
+            );
+        } else if super::super::is_provider_access_policy_denied_http_403(status, &error) {
+            super::super::log_provider_access_policy_denied_http_403(
+                "responses_api",
+                self.name.as_str(),
+                Some(model),
+                status,
+            );
+        } else if super::super::is_provider_config_rejection_http(
+            status,
+            self.name.as_str(),
+            &error,
+        ) {
+            super::super::log_provider_config_rejection(
+                "responses_api",
+                self.name.as_str(),
+                Some(model),
+                status,
+            );
+        } else if super::super::is_byo_provider_auth_failure_http(
+            self.name.as_str(),
+            status,
+            &error,
+        ) {
+            super::super::log_byo_provider_auth_failure(
+                "responses_api",
+                self.name.as_str(),
+                Some(model),
+                status,
+            );
+        } else if super::super::is_openai_oauth_session_expired_http(
+            self.name.as_str(),
+            status,
+            &error,
+        ) {
+            super::super::log_openai_oauth_session_expired(
+                "responses_api",
+                self.name.as_str(),
+                Some(model),
+                status,
+            );
+        } else if super::super::is_provider_insufficient_credits_402(status, &error) {
+            // Insufficient-credits 402: the user's own BYO provider account
+            // is out of balance — a flat billing fact, not a reservation-
+            // window error, so there is NO local max_tokens lever to apply.
+            // Demote to info instead of paging on every retry; this is the
+            // complete classification for a genuinely-unpreventable
+            // BYO-balance condition
+            // (TAURI-RUST-4QF — DeepSeek "Insufficient Balance").
+            super::super::log_provider_insufficient_credits_402(
+                "responses_api",
+                self.name.as_str(),
+                Some(model),
+                status,
+            );
+        } else if super::super::should_report_provider_http_failure(status) {
+            crate::core::observability::report_error(
+                message.as_str(),
+                "llm_provider",
+                "responses_api",
+                &[
+                    ("provider", self.name.as_str()),
+                    ("model", model),
+                    ("status", status_str.as_str()),
+                    ("failure", "non_2xx"),
+                ],
+            );
+        }
+        anyhow::bail!(message);
     }
 
     pub(super) fn convert_tool_specs(
@@ -622,6 +664,29 @@ impl OpenAiCompatibleProvider {
                 || lower.contains("does not support")
                 || lower.contains("invalid")
                 || lower.contains("unexpected"))
+    }
+
+    /// Detect a Responses backend rejecting the `max_output_tokens` field as an
+    /// *unrecognized parameter*. The Codex/ChatGPT OAuth endpoint 400s with
+    /// `Unsupported parameter: max_output_tokens` (TAURI-RUST-EWD); when this
+    /// fires the responses path retries once with the field omitted (mirrors the
+    /// no-tools and frequency_penalty retries). String-based because the
+    /// rejection surfaces as the API error body.
+    ///
+    /// Deliberately matches only *parameter-not-accepted* wording, **not**
+    /// invalid-value wording (e.g. "value above the allowed range"). Stripping
+    /// the cap turns a bounded request into an uncapped generation, so on a
+    /// value-range error we must surface the config error rather than silently
+    /// drop the credit-preflight / response-size protection `max_tokens` gives.
+    pub(super) fn err_indicates_max_output_tokens_unsupported(error: &str) -> bool {
+        let lower = error.to_lowercase();
+        lower.contains("max_output_tokens")
+            && (lower.contains("unsupported")
+                || lower.contains("unknown")
+                || lower.contains("unrecognized")
+                || lower.contains("not supported")
+                || lower.contains("does not support")
+                || lower.contains("unexpected parameter"))
     }
 
     /// Disambiguate a 404 from the `/responses` route: `true` when it signals the

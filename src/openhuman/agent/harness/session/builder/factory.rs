@@ -270,6 +270,12 @@ impl Agent {
             "model_council_readonly",
         );
         agent.set_agent_definition_name(format!("model_council_{safe_name}"));
+        // Council jurors are non-interactive, single-shot read-only model calls
+        // built from the orchestrator definition. The first-turn super-context
+        // pass (default-on) is an interactive convenience for the user-facing
+        // chat orchestrator — running it per juror would add an unexpected
+        // `context_scout` LLM call to each jury seat. Suppress it here.
+        agent.context.set_super_context_enabled(false);
         if let Some(model) = model_override
             .map(|m| m.trim().to_string())
             .filter(|m| !m.is_empty())

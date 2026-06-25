@@ -294,6 +294,12 @@ chat_onboarding_completed = true
 
 [secrets]
 encrypt = false
+
+[context]
+# These harness tests script the mock-LLM call sequence exactly; the default-on
+# first-turn "super context" pass (#4085) would spawn a context_scout and consume
+# a scripted response, desyncing the orchestrator turns. Disable it here.
+super_context_enabled = false
 "#
     );
     fn write_config_file(config_dir: &Path, cfg: &str) {
@@ -2387,7 +2393,14 @@ mod streaming_support {
             .event_context("stream-accum-session", "stream-accum-channel")
             .agent_definition_name("round17/orchestrator")
             .config(config)
-            .context_config(ContextConfig::default())
+            // These are deterministic scripted-mock orchestrator turns. The
+            // default-on first-turn "super context" pass (#4085) would spawn a
+            // context_scout and add an extra model call the scripts don't expect,
+            // breaking every orchestrator test here. Disable it for the harness.
+            .context_config(ContextConfig {
+                super_context_enabled: false,
+                ..ContextConfig::default()
+            })
             .auto_save(true)
             .explicit_preferences_enabled(false)
             .unified_compaction_enabled(false)

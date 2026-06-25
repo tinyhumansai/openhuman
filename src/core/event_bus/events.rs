@@ -305,6 +305,12 @@ pub enum DomainEvent {
         removed: usize,
         modified: usize,
     },
+    /// Read markers were committed for one or more sources, acknowledging
+    /// their current diffs as consumed.
+    MemoryDiffMarkedRead {
+        source_ids: Vec<String>,
+        snapshot_ids: Vec<String>,
+    },
 
     // ── Channels ────────────────────────────────────────────────────────
     /// An inbound channel message from the transport layer, ready for processing.
@@ -1032,6 +1038,17 @@ pub enum DomainEvent {
         reason: String,
     },
 
+    // ── Thread goals ──────────────────────────────────────────────────
+    /// A thread's goal was created, replaced, or transitioned state
+    /// (active/paused/budget_limited/complete). Drives the desktop goal chip.
+    ThreadGoalUpdated {
+        thread_id: String,
+        goal_id: String,
+        status: String,
+    },
+    /// A thread's goal was cleared (deleted).
+    ThreadGoalCleared { thread_id: String },
+
     // ── Backend Meet Bot ──────────────────────────────────────────────
     /// Backend gmeet bot successfully joined the meeting.
     BackendMeetJoined {
@@ -1181,7 +1198,8 @@ impl DomainEvent {
             | Self::MemoryIngestionCompleted { .. }
             | Self::DocumentCanonicalized { .. }
             | Self::MemoryDiffSnapshotTaken { .. }
-            | Self::MemoryDiffComputed { .. } => "memory",
+            | Self::MemoryDiffComputed { .. }
+            | Self::MemoryDiffMarkedRead { .. } => "memory",
 
             Self::CacheRebuilt { .. } => "learning",
 
@@ -1262,6 +1280,8 @@ impl DomainEvent {
 
             Self::TaskPlanAwaitingApproval { .. } | Self::TaskRunReclaimed { .. } => "agent",
 
+            Self::ThreadGoalUpdated { .. } | Self::ThreadGoalCleared { .. } => "agent",
+
             Self::SubconsciousTriggerProcessed { .. } => "subconscious",
 
             Self::Voice(_) => "voice",
@@ -1332,6 +1352,7 @@ impl DomainEvent {
             Self::DocumentCanonicalized { .. } => "DocumentCanonicalized",
             Self::MemoryDiffSnapshotTaken { .. } => "MemoryDiffSnapshotTaken",
             Self::MemoryDiffComputed { .. } => "MemoryDiffComputed",
+            Self::MemoryDiffMarkedRead { .. } => "MemoryDiffMarkedRead",
             Self::CacheRebuilt { .. } => "CacheRebuilt",
             Self::ChannelInboundMessage { .. } => "ChannelInboundMessage",
             Self::ChannelMessageReceived { .. } => "ChannelMessageReceived",
@@ -1413,6 +1434,8 @@ impl DomainEvent {
             Self::TaskSourceFetchFailed { .. } => "TaskSourceFetchFailed",
             Self::TaskPlanAwaitingApproval { .. } => "TaskPlanAwaitingApproval",
             Self::TaskRunReclaimed { .. } => "TaskRunReclaimed",
+            Self::ThreadGoalUpdated { .. } => "ThreadGoalUpdated",
+            Self::ThreadGoalCleared { .. } => "ThreadGoalCleared",
             Self::BackendMeetJoined { .. } => "BackendMeetJoined",
             Self::BackendMeetLeft { .. } => "BackendMeetLeft",
             Self::BackendMeetReply { .. } => "BackendMeetReply",

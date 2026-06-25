@@ -738,7 +738,7 @@ impl Provider for OpenAiCompatibleProvider {
             }
 
             let status_str = status.as_u16().to_string();
-            let message = self.enrich_404_message(
+            let mut message = self.enrich_404_message(
                 format!("{} API error ({status}): {sanitized}", self.name),
                 status,
             );
@@ -811,6 +811,21 @@ impl Provider for OpenAiCompatibleProvider {
                     Some(model),
                     status,
                 );
+            } else if super::super::is_ollama_cloud_internal_500(self.name.as_str(), status, &error)
+            {
+                // ollama.com hosted-inference 500: opaque `Internal Server Error
+                // (ref: <uuid>)` from the cloud backend for `*:cloud` models.
+                // Non-deterministic, byte-identical request succeeds when the
+                // cloud is healthy → no client lever; the reliable-provider layer
+                // retries + falls back. Demote to info and replace the ref body
+                // with actionable guidance (TAURI-RUST-5MV).
+                super::super::log_ollama_cloud_internal_500(
+                    "native_chat",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+                message = super::super::ollama_cloud_internal_500_user_message(Some(model), status);
             } else if super::super::should_report_provider_http_failure(status) {
                 crate::core::observability::report_error(
                     message.as_str(),

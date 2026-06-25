@@ -102,6 +102,12 @@ coding_provider = "e2e:e2e-mock-model"
 [update]
 enabled = false
 
+[context]
+# Deterministic e2e specs script the mock-LLM call sequence exactly; the
+# default-on first-turn "super context" scout adds an extra agentic call that
+# would perturb those sequences. No spec exercises super context, so disable it.
+super_context_enabled = false
+
 [[cloud_providers]]
 id = "p_e2e_mock"
 slug = "e2e"

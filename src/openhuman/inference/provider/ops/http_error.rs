@@ -284,6 +284,98 @@ pub fn log_provider_quota_exhausted(
     );
 }
 
+/// Stable anchor phrase for the actionable Ollama-Cloud-500 user message, shared
+/// by [`ollama_cloud_internal_500_user_message`] (which builds it) and
+/// [`is_ollama_cloud_internal_500_message`] (which matches the re-raised string
+/// at the RPC/agent boundary), so the two cannot drift.
+const OLLAMA_CLOUD_INTERNAL_500_USER_PREFIX: &str = "Ollama cloud is temporarily unavailable";
+
+/// Whether a provider non-2xx response is an Ollama **Cloud** hosted-inference
+/// internal error: `500` + a `{"error":"Internal Server Error (ref: <uuid>)"}`
+/// body.
+///
+/// ollama.com's hosted `*:cloud` models (minimax-m3 / qwen3.5 / gpt-oss …)
+/// intermittently `500` with this opaque, server-generated envelope. The `ref:`
+/// is a fresh UUID per event, the failure is non-deterministic, and the request
+/// that 500s is byte-identical to the one that succeeds when the cloud backend
+/// is healthy — so there is **no client lever** (nothing to validate,
+/// reshape, or reconfigure). The reliable-provider layer already retries and
+/// falls back across providers/models, so each per-attempt 500 is pure noise:
+/// TAURI-RUST-5MV, 3,062 events from 5 users in a single window. Demote from
+/// Sentry to an info log while the error still propagates so retry/fallback runs
+/// unchanged.
+///
+/// Anchored on the `internal server error (ref:` body shape, which is specific
+/// to ollama.com's hosted envelope — a **local** Ollama daemon 500 (a genuine
+/// model crash / OOM worth paging) does not carry a `ref:` UUID, so it still
+/// reaches Sentry. The phrase is covered by a verbatim-body test so a provider
+/// wording drift fails CI instead of silently leaking events.
+pub fn is_ollama_cloud_internal_500(
+    provider: &str,
+    status: reqwest::StatusCode,
+    body: &str,
+) -> bool {
+    provider == "ollama"
+        && status == reqwest::StatusCode::INTERNAL_SERVER_ERROR
+        && body
+            .to_ascii_lowercase()
+            .contains("internal server error (ref:")
+}
+
+/// Message-level half of [`is_ollama_cloud_internal_500`]: matches the actionable
+/// user message re-raised at the RPC/agent boundary
+/// (`core::observability::expected_error_kind`), so the higher-layer re-report is
+/// demoted too instead of leaking the event the emit-site already suppressed (the
+/// `domain=agent` half of TAURI-RUST-5MV). Mirrors the
+/// `is_provider_insufficient_credits_402` / `body_indicates_insufficient_credits`
+/// split. Keyed on the [`OLLAMA_CLOUD_INTERNAL_500_USER_PREFIX`] anchor, which we
+/// own, so it cannot collide with an unrelated provider body.
+pub fn is_ollama_cloud_internal_500_message(message: &str) -> bool {
+    let needle = OLLAMA_CLOUD_INTERNAL_500_USER_PREFIX.to_ascii_lowercase();
+    message.to_ascii_lowercase().contains(needle.as_str())
+}
+
+/// Build the actionable user-facing message for an Ollama-Cloud hosted-inference
+/// 500, replacing the opaque `Internal Server Error (ref: <uuid>)` body (which
+/// carries no signal the user can act on) with retry/switch guidance. The model
+/// is included when known (native/streaming chat); the `api_error` path has no
+/// model in scope and omits it.
+pub fn ollama_cloud_internal_500_user_message(
+    model: Option<&str>,
+    status: reqwest::StatusCode,
+) -> String {
+    let code = status.as_u16();
+    match model {
+        Some(model) => format!(
+            "{OLLAMA_CLOUD_INTERNAL_500_USER_PREFIX} for model `{model}` (Ollama returned HTTP \
+             {code}); the hosted model failed on Ollama's side — retry shortly or switch models."
+        ),
+        None => format!(
+            "{OLLAMA_CLOUD_INTERNAL_500_USER_PREFIX} (Ollama returned HTTP {code}); the hosted \
+             model failed on Ollama's side — retry shortly or switch models."
+        ),
+    }
+}
+
+pub fn log_ollama_cloud_internal_500(
+    operation: &str,
+    provider: &str,
+    model: Option<&str>,
+    status: reqwest::StatusCode,
+) {
+    tracing::info!(
+        domain = "llm_provider",
+        operation = operation,
+        provider = provider,
+        model = model.unwrap_or(""),
+        status = status.as_u16(),
+        failure = "non_2xx",
+        kind = "ollama_cloud_internal_500",
+        "[llm_provider] {operation} Ollama Cloud hosted-inference 500 — provider-internal \
+         (no client lever), not reporting to Sentry"
+    );
+}
+
 /// Whether a provider non-2xx response is a deterministic
 /// **configuration-rejection** user-state error (unknown model id,
 /// abstract tier leaked to a custom provider, model-specific temperature
@@ -833,6 +925,10 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
     // Balance"). This shared helper backs the two methods that delegate here
     // (chat_via_responses fallback and the non-streaming completion path).
     let is_insufficient_credits_402 = is_provider_insufficient_credits_402(status, &body);
+    // Ollama Cloud hosted-inference 500 (`Internal Server Error (ref: <uuid>)`):
+    // provider-internal, non-deterministic, no client lever. Demote from Sentry
+    // and replace the opaque ref body with actionable guidance (TAURI-RUST-5MV).
+    let is_ollama_cloud_internal_500 = is_ollama_cloud_internal_500(provider, status, &body);
 
     if is_auth_failure && is_backend {
         // Single source of truth for backend session-expiry handling (warn +
@@ -859,6 +955,8 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
         log_openai_oauth_session_expired("api_error", provider, None, status);
     } else if is_insufficient_credits_402 {
         log_provider_insufficient_credits_402("api_error", provider, None, status);
+    } else if is_ollama_cloud_internal_500 {
+        log_ollama_cloud_internal_500("api_error", provider, None, status);
     } else if should_report_provider_http_failure(status) {
         crate::core::observability::report_error(
             message.as_str(),
@@ -870,6 +968,12 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
                 ("failure", "non_2xx"),
             ],
         );
+    }
+    // Replace the opaque `Internal Server Error (ref: <uuid>)` body with
+    // actionable guidance; the prefix anchors the higher-layer re-report
+    // demotion (`is_ollama_cloud_internal_500_message`).
+    if is_ollama_cloud_internal_500 {
+        return anyhow::anyhow!(ollama_cloud_internal_500_user_message(None, status));
     }
     anyhow::anyhow!(message)
 }
@@ -1061,6 +1165,89 @@ mod tests {
             StatusCode::BAD_REQUEST,
             OAUTH_EXPIRED_8FQ_BODY
         ));
+    }
+
+    /// Verbatim TAURI-RUST-5MV provider body. The matcher keys on the
+    /// `Internal Server Error (ref:` envelope, so coupling the test to the exact
+    /// wire shape makes an Ollama-Cloud wording drift fail CI rather than
+    /// silently leak events back to Sentry.
+    const OLLAMA_CLOUD_500_BODY: &str =
+        "{\"error\":\"Internal Server Error (ref: df512dcb-d915-493b-8f2d-e8d3dfa640c1)\"}";
+
+    #[test]
+    fn ollama_cloud_internal_500_matches_verbatim_5mv_body() {
+        assert!(is_ollama_cloud_internal_500(
+            "ollama",
+            StatusCode::INTERNAL_SERVER_ERROR,
+            OLLAMA_CLOUD_500_BODY
+        ));
+    }
+
+    #[test]
+    fn ollama_cloud_internal_500_ignores_non_500_status() {
+        // Same body on a non-500 status is not this provider-internal flood —
+        // keep it reportable so a genuine bug elsewhere isn't masked.
+        assert!(!is_ollama_cloud_internal_500(
+            "ollama",
+            StatusCode::BAD_REQUEST,
+            OLLAMA_CLOUD_500_BODY
+        ));
+        assert!(!is_ollama_cloud_internal_500(
+            "ollama",
+            StatusCode::SERVICE_UNAVAILABLE,
+            OLLAMA_CLOUD_500_BODY
+        ));
+    }
+
+    #[test]
+    fn ollama_cloud_internal_500_ignores_other_providers() {
+        // A 500 with the same envelope from a non-ollama provider stays
+        // reportable — this gate is scoped to ollama.com hosted inference.
+        assert!(!is_ollama_cloud_internal_500(
+            "openai",
+            StatusCode::INTERNAL_SERVER_ERROR,
+            OLLAMA_CLOUD_500_BODY
+        ));
+    }
+
+    #[test]
+    fn ollama_cloud_internal_500_ignores_local_ollama_500_without_ref() {
+        // A local Ollama daemon 500 (genuine model crash / OOM, worth paging)
+        // does not carry the `ref:` UUID, so it must NOT be swallowed.
+        assert!(!is_ollama_cloud_internal_500(
+            "ollama",
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{\"error\":\"llama runner process has terminated: exit status 0xc0000409\"}"
+        ));
+    }
+
+    #[test]
+    fn ollama_cloud_internal_500_user_message_is_matched_by_message_matcher() {
+        // Couple the prose builder to the re-report matcher so the
+        // `expected_error_kind` / before_send demotion can't drift from the
+        // string the emit sites actually raise.
+        let with_model = ollama_cloud_internal_500_user_message(
+            Some("minimax-m3:cloud"),
+            StatusCode::INTERNAL_SERVER_ERROR,
+        );
+        assert!(with_model.contains("minimax-m3:cloud"));
+        assert!(!with_model.contains("ref:"));
+        assert!(is_ollama_cloud_internal_500_message(&with_model));
+
+        let without_model =
+            ollama_cloud_internal_500_user_message(None, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(is_ollama_cloud_internal_500_message(&without_model));
+    }
+
+    #[test]
+    fn log_ollama_cloud_internal_500_smoke() {
+        // The helper only emits a demotion info log; calling it covers that path.
+        log_ollama_cloud_internal_500(
+            "native_chat",
+            "ollama",
+            Some("minimax-m3:cloud"),
+            StatusCode::INTERNAL_SERVER_ERROR,
+        );
     }
 
     #[test]

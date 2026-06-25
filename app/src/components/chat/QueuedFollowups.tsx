@@ -22,7 +22,7 @@ export default function QueuedFollowups({ items, onClear }: QueuedFollowupsProps
   return (
     <div
       data-testid="queued-followups"
-      className="mb-2 rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-900/60 px-3 py-2">
+      className="mb-2 rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2">
       <div className="flex items-center justify-between gap-2 mb-1.5">
         <span className="text-xs font-medium text-stone-500 dark:text-neutral-400">
           {t('chat.queuedFollowups.label')} · {items.length}

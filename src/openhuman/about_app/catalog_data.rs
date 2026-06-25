@@ -379,6 +379,27 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         privacy: DERIVED_TO_BACKEND,
     },
     Capability {
+        id: "conversation.thread_goal",
+        name: "Thread Goal",
+        domain: "conversation",
+        category: CapabilityCategory::Conversation,
+        description: "A single, thread-scoped goal (Codex-style \"completion contract\") the \
+            assistant keeps pursuing across turns, interrupts, resumes, and budget boundaries — \
+            distinct from the long-term goals list and the per-thread task board. Stored locally \
+            (one goal per thread), with a lifecycle (active/paused/budget_limited/complete) and an \
+            optional token budget. The active goal is injected into context each turn; the context \
+            scout proposes a goal on a fresh thread (only if none is set) and the orchestrator can \
+            set/refine it. When enabled, idle threads can autonomously continue toward the goal.",
+        how_to: "Set/edit via the goal chip above the composer in Conversations, or the \
+            thread_goals.* RPC (get/set/complete/pause/resume/clear); the assistant manages it via \
+            the goal_set / goal_get / goal_complete tools. Autonomous continuation is opt-in via \
+            heartbeat.goal_continuation_enabled.",
+        status: CapabilityStatus::Beta,
+        // Goal CRUD/storage is local; autonomous continuation (opt-in) runs a
+        // cloud agentic model, so objective/context can leave the device then.
+        privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
         id: "intelligence.memory_tree_retrieval",
         name: "Memory Tree Retrieval (chat)",
         domain: "intelligence",

@@ -87,6 +87,19 @@ impl HeartbeatEngine {
 
             self.run_event_planner_tick_for_config(&config).await;
 
+            // Codex-style autonomous continuation of idle thread goals (opt-in
+            // via `heartbeat.goal_continuation_enabled`). Spawned detached, NOT
+            // awaited: a continuation runs a model-backed turn that can be slow
+            // or park on an approval, and must never stall the rest of the
+            // heartbeat tick. Its own process-wide Semaphore(1) prevents
+            // overlapping continuations across ticks.
+            {
+                let cfg = config.clone();
+                tokio::spawn(async move {
+                    crate::openhuman::thread_goals::continuation::run_continuation_tick(&cfg).await;
+                });
+            }
+
             if current.inference_enabled {
                 // Get the shared global engine (same instance as RPC handlers)
                 let lock = match get_or_init_engine().await {

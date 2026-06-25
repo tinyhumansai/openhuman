@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "OpenHuman"
-version = "0.57.55"
+version = "0.57.57"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5354,7 +5354,7 @@ dependencies = [
 
 [[package]]
 name = "openhuman"
-version = "0.57.55"
+version = "0.57.57"
 dependencies = [
  "aes-gcm",
  "aho-corasick",
@@ -5437,6 +5437,7 @@ dependencies = [
  "sha1",
  "sha2 0.10.9",
  "shellexpand",
+ "similar",
  "socketioxide",
  "starship-battery",
  "sysinfo",
@@ -7763,6 +7764,12 @@ name = "simd-adler32"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "703d5c7ef118737c72f1af64ad2f6f8c5e1921f818cdcb97b8fe6fc69bf66214"
+
+[[package]]
+name = "similar"
+version = "2.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
 name = "simplecss"

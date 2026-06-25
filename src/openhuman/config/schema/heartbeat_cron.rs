@@ -126,10 +126,25 @@ pub struct HeartbeatConfig {
     /// the always-on loop's spend ceiling.
     #[serde(default = "default_max_promotions_per_hour")]
     pub max_promotions_per_hour: u32,
+    /// Enable Codex-style autonomous continuation of thread goals: when a thread
+    /// with an `active` goal goes idle (no in-flight turn, no recent activity),
+    /// the heartbeat injects one continuation turn to keep working it. Opt-in
+    /// (default false) because it spends model/integration budget without a user
+    /// present — matching the project's stance on autonomous features.
+    #[serde(default)]
+    pub goal_continuation_enabled: bool,
+    /// Minutes a thread goal must be idle before a continuation turn may fire.
+    /// Clamped to at least 1.
+    #[serde(default = "default_goal_idle_minutes")]
+    pub goal_idle_minutes: u32,
 }
 
 fn default_max_promotions_per_hour() -> u32 {
     30
+}
+
+fn default_goal_idle_minutes() -> u32 {
+    10
 }
 
 fn default_context_budget() -> u32 {
@@ -179,6 +194,8 @@ impl Default for HeartbeatConfig {
             subconscious_mode: SubconsciousMode::Off,
             triggers_enabled: false,
             max_promotions_per_hour: default_max_promotions_per_hour(),
+            goal_continuation_enabled: false,
+            goal_idle_minutes: default_goal_idle_minutes(),
         }
     }
 }

@@ -205,6 +205,14 @@ impl ContextManager {
         self.super_context_enabled
     }
 
+    /// Force-disable the first-turn super-context pass for this session,
+    /// regardless of the config default. Used by non-interactive orchestrator
+    /// builds (e.g. read-only model-council jurors) where a scout pass would add
+    /// an unexpected LLM call and perturb deterministic call sequences.
+    pub fn set_super_context_enabled(&mut self, enabled: bool) {
+        self.super_context_enabled = enabled;
+    }
+
     // ─── Budget tracking ──────────────────────────────────────────
 
     /// Feed the latest provider [`UsageInfo`] into the guard + the

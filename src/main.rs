@@ -106,6 +106,15 @@ fn main() {
             if openhuman_core::core::observability::is_quota_exhausted_event(&event) {
                 return None;
             }
+            // Defense-in-depth for Ollama Cloud hosted-inference 500s. The
+            // native_chat / streaming_chat / api_error emit sites demote them and
+            // the agent re-report routes through `TransientUpstreamHttp`, but the
+            // compatible provider can report the same `Internal Server Error
+            // (ref: …)` body from other paths; this is the single net that
+            // catches every path (TAURI-RUST-5MV).
+            if openhuman_core::core::observability::is_ollama_cloud_internal_500_event(&event) {
+                return None;
+            }
             // Defense-in-depth: drop max-tool-iterations cap events that
             // slipped past the call-site filters in
             // `agent::harness::session::runtime::run_single`,

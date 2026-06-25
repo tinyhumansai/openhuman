@@ -2520,6 +2520,163 @@ async fn json_rpc_todos_crud_on_personal_board() {
 }
 
 #[tokio::test]
+async fn json_rpc_thread_goal_lifecycle() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_url_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _api_url_guard = EnvVarGuard::unset("OPENHUMAN_API_URL");
+
+    let (api_addr, api_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let api_origin = format!("http://{api_addr}");
+    write_min_config(openhuman_home.as_path(), &api_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    // `thread_goals_*` handlers never require the thread to exist (mirrors
+    // `todos_*`), so a synthetic thread id is fine.
+    let thread = "thread-goal-e2e";
+
+    // Pull the `{ goal }` payload out of either response shape: a bare
+    // `{ goal }` (get) or the `{ result: { goal }, logs }` CLI envelope
+    // (mutations).
+    fn goal_of<'a>(result: &'a Value) -> Option<&'a Value> {
+        let envelope = result.get("result").unwrap_or(result);
+        envelope.get("goal").filter(|g| !g.is_null())
+    }
+
+    // 1. No goal yet.
+    let got = post_json_rpc(
+        &rpc_base,
+        9201,
+        "openhuman.thread_goals_get",
+        json!({ "thread_id": thread }),
+    )
+    .await;
+    assert!(
+        goal_of(assert_no_jsonrpc_error(&got, "thread_goals_get")).is_none(),
+        "no goal initially"
+    );
+
+    // 2. Set with a token budget.
+    let set = post_json_rpc(
+        &rpc_base,
+        9202,
+        "openhuman.thread_goals_set",
+        json!({ "thread_id": thread, "objective": "Ship the release", "token_budget": 5000 }),
+    )
+    .await;
+    let goal = goal_of(assert_no_jsonrpc_error(&set, "thread_goals_set")).expect("goal after set");
+    let goal_id = goal
+        .get("goalId")
+        .and_then(Value::as_str)
+        .expect("goalId")
+        .to_string();
+    assert_eq!(
+        goal.get("objective").and_then(Value::as_str),
+        Some("Ship the release")
+    );
+    assert_eq!(goal.get("status").and_then(Value::as_str), Some("active"));
+    assert_eq!(goal.get("tokenBudget").and_then(Value::as_u64), Some(5000));
+
+    // 3. Get reflects the persisted goal (same goal id).
+    let got2 = post_json_rpc(
+        &rpc_base,
+        9203,
+        "openhuman.thread_goals_get",
+        json!({ "thread_id": thread }),
+    )
+    .await;
+    assert_eq!(
+        goal_of(assert_no_jsonrpc_error(&got2, "thread_goals_get#2"))
+            .and_then(|g| g.get("goalId"))
+            .and_then(Value::as_str),
+        Some(goal_id.as_str())
+    );
+
+    // 4. Pause then resume (system-driven lifecycle).
+    let paused = post_json_rpc(
+        &rpc_base,
+        9204,
+        "openhuman.thread_goals_pause",
+        json!({ "thread_id": thread }),
+    )
+    .await;
+    assert_eq!(
+        goal_of(assert_no_jsonrpc_error(&paused, "pause"))
+            .and_then(|g| g.get("status"))
+            .and_then(Value::as_str),
+        Some("paused")
+    );
+    let resumed = post_json_rpc(
+        &rpc_base,
+        9205,
+        "openhuman.thread_goals_resume",
+        json!({ "thread_id": thread }),
+    )
+    .await;
+    assert_eq!(
+        goal_of(assert_no_jsonrpc_error(&resumed, "resume"))
+            .and_then(|g| g.get("status"))
+            .and_then(Value::as_str),
+        Some("active")
+    );
+
+    // 5. Complete.
+    let done = post_json_rpc(
+        &rpc_base,
+        9206,
+        "openhuman.thread_goals_complete",
+        json!({ "thread_id": thread }),
+    )
+    .await;
+    assert_eq!(
+        goal_of(assert_no_jsonrpc_error(&done, "complete"))
+            .and_then(|g| g.get("status"))
+            .and_then(Value::as_str),
+        Some("complete")
+    );
+
+    // 6. Clear → removed; subsequent get is null.
+    let cleared = post_json_rpc(
+        &rpc_base,
+        9207,
+        "openhuman.thread_goals_clear",
+        json!({ "thread_id": thread }),
+    )
+    .await;
+    let cleared_result = assert_no_jsonrpc_error(&cleared, "clear");
+    assert_eq!(
+        cleared_result
+            .get("result")
+            .and_then(|r| r.get("removed"))
+            .and_then(Value::as_bool),
+        Some(true),
+        "clear reports removal"
+    );
+    let got3 = post_json_rpc(
+        &rpc_base,
+        9208,
+        "openhuman.thread_goals_get",
+        json!({ "thread_id": thread }),
+    )
+    .await;
+    assert!(
+        goal_of(assert_no_jsonrpc_error(&got3, "thread_goals_get#3")).is_none(),
+        "goal gone after clear"
+    );
+
+    api_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
 async fn json_rpc_thread_title_create_and_update() {
     let _env_lock = json_rpc_e2e_env_lock();
     let tmp = tempdir().expect("tempdir");
@@ -4067,6 +4224,235 @@ async fn json_rpc_memory_tree_end_to_end() {
     assert!(
         invalid_list.get("error").is_some(),
         "expected invalid source_kind JSON-RPC error: {invalid_list}"
+    );
+
+    rpc_join.abort();
+    let _ = rpc_join.await;
+    mock_join.abort();
+    let _ = mock_join.await;
+}
+
+/// `openhuman.memory_diff_*` full lifecycle over JSON-RPC.
+///
+/// Drives the snapshot-based change tracker end to end: register a folder
+/// source, ingest chunks under its `mem_src:<id>:%` prefix across several
+/// snapshots, then exercise take_snapshot, diff_since_last, the read-marker
+/// watermark (diff_since_read + commit → empty on re-read → only-new after a
+/// later snapshot), mark_read, and cross-source checkpoints. This is the
+/// turn-to-turn world-diff assertion. (Per-item add/remove/modify detection
+/// and text diffs are covered exhaustively by the ops unit tests.)
+#[tokio::test]
+async fn json_rpc_memory_diff_snapshot_diff_and_read_marker_lifecycle() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    // Fall back to the inert (zero-vector) embedder; CI has no local Ollama.
+    let _embed_strict_guard = EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_STRICT", "false");
+    let _embed_endpoint_guard = EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_ENDPOINT", "");
+    let _embed_model_guard = EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_MODEL", "");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // ── Register a folder memory source; capture its generated id ─────────
+    let add = post_json_rpc(
+        &rpc_base,
+        9001,
+        "openhuman.memory_sources_add",
+        json!({
+            "kind": "folder",
+            "label": "Diff E2E Docs",
+            "path": home.join("docs").to_string_lossy(),
+        }),
+    )
+    .await;
+    let add_result = assert_no_jsonrpc_error(&add, "memory_sources_add");
+    let add_result = add_result.get("result").unwrap_or(add_result);
+    let source_id = add_result
+        .pointer("/source/id")
+        .and_then(Value::as_str)
+        .expect("source id")
+        .to_string();
+
+    // Chunks belonging to a reader-backed source live under `mem_src:<id>:%`.
+    let ingest = |id: i64, item: &str, body: &str| {
+        let composite = format!("mem_src:{source_id}:{item}");
+        post_json_rpc(
+            &rpc_base,
+            id,
+            "openhuman.memory_tree_ingest",
+            json!({
+                "source_kind": "document",
+                "source_id": composite,
+                "owner": "alice@example.com",
+                "payload": {
+                    "provider": "folder",
+                    "title": item,
+                    "body": body,
+                    "modified_at": 1700000000000_i64,
+                    "source_ref": format!("file://{item}"),
+                }
+            }),
+        )
+    };
+
+    // ── Generation 1: one doc, then snapshot ──────────────────────────────
+    let g1 = ingest(9002, "doc1.md", "First version of the launch plan.").await;
+    assert_no_jsonrpc_error(&g1, "ingest g1");
+
+    let snap1 = post_json_rpc(
+        &rpc_base,
+        9003,
+        "openhuman.memory_diff_take_snapshot",
+        json!({ "source_id": source_id }),
+    )
+    .await;
+    let snap1 = assert_no_jsonrpc_error(&snap1, "take_snapshot 1");
+    let snap1 = snap1.get("result").unwrap_or(snap1);
+    assert_eq!(
+        snap1.pointer("/snapshot/item_count"),
+        Some(&json!(1)),
+        "first snapshot has one item: {snap1}"
+    );
+
+    // ── Generation 2: add doc2, then snapshot ─────────────────────────────
+    let g2b = ingest(9005, "doc2.md", "Rollout checklist and staging notes.").await;
+    assert_no_jsonrpc_error(&g2b, "ingest g2b");
+
+    let snap2 = post_json_rpc(
+        &rpc_base,
+        9006,
+        "openhuman.memory_diff_take_snapshot",
+        json!({ "source_id": source_id }),
+    )
+    .await;
+    let snap2 = assert_no_jsonrpc_error(&snap2, "take_snapshot 2");
+    let snap2 = snap2.get("result").unwrap_or(snap2);
+    assert_eq!(
+        snap2.pointer("/snapshot/item_count"),
+        Some(&json!(2)),
+        "second snapshot has two items: {snap2}"
+    );
+
+    // ── diff_since_last: doc2 added, doc1 unchanged ───────────────────────
+    let dsl = post_json_rpc(
+        &rpc_base,
+        9007,
+        "openhuman.memory_diff_diff_since_last",
+        json!({ "source_id": source_id, "include_text_diff": true }),
+    )
+    .await;
+    let dsl = assert_no_jsonrpc_error(&dsl, "diff_since_last");
+    let dsl = dsl.get("result").unwrap_or(dsl);
+    assert_eq!(dsl.pointer("/diff/summary/added"), Some(&json!(1)), "{dsl}");
+    assert_eq!(
+        dsl.pointer("/diff/summary/unchanged"),
+        Some(&json!(1)),
+        "{dsl}"
+    );
+
+    // ── diff_since_read (commit) then re-read → empty (marker advanced) ───
+    let read1 = post_json_rpc(
+        &rpc_base,
+        9008,
+        "openhuman.memory_diff_diff_since_read",
+        json!({ "source_id": source_id }),
+    )
+    .await;
+    let read1 = assert_no_jsonrpc_error(&read1, "diff_since_read 1");
+    let read1 = read1.get("result").unwrap_or(read1);
+    // First read with no prior marker reports everything as added.
+    assert_eq!(
+        read1.pointer("/diff/summary/added"),
+        Some(&json!(2)),
+        "{read1}"
+    );
+
+    let read2 = post_json_rpc(
+        &rpc_base,
+        9009,
+        "openhuman.memory_diff_diff_since_read",
+        json!({ "source_id": source_id }),
+    )
+    .await;
+    let read2 = assert_no_jsonrpc_error(&read2, "diff_since_read 2");
+    let read2 = read2.get("result").unwrap_or(read2);
+    assert_eq!(
+        read2.pointer("/diff/summary/added"),
+        Some(&json!(0)),
+        "{read2}"
+    );
+    assert_eq!(
+        read2.pointer("/diff/summary/modified"),
+        Some(&json!(0)),
+        "second read after commit is empty: {read2}"
+    );
+
+    // ── mark_read is idempotent on an already-acknowledged source ─────────
+    let mark = post_json_rpc(
+        &rpc_base,
+        9010,
+        "openhuman.memory_diff_mark_read",
+        json!({ "source_ids": [source_id] }),
+    )
+    .await;
+    let mark = assert_no_jsonrpc_error(&mark, "mark_read");
+    let mark = mark.get("result").unwrap_or(mark);
+    assert_eq!(mark.get("marked"), Some(&json!(1)), "{mark}");
+
+    // ── Checkpoint + cross-source diff after a further change ─────────────
+    let ckpt = post_json_rpc(
+        &rpc_base,
+        9011,
+        "openhuman.memory_diff_create_checkpoint",
+        json!({ "label": "baseline" }),
+    )
+    .await;
+    let ckpt = assert_no_jsonrpc_error(&ckpt, "create_checkpoint");
+    let ckpt = ckpt.get("result").unwrap_or(ckpt);
+    let checkpoint_id = ckpt
+        .pointer("/checkpoint/id")
+        .and_then(Value::as_str)
+        .expect("checkpoint id")
+        .to_string();
+
+    // Add doc3, snapshot, then diff since the checkpoint.
+    let g3 = ingest(9012, "doc3.md", "Post-launch retro and metrics.").await;
+    assert_no_jsonrpc_error(&g3, "ingest g3");
+    let snap3 = post_json_rpc(
+        &rpc_base,
+        9013,
+        "openhuman.memory_diff_take_snapshot",
+        json!({ "source_id": source_id }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&snap3, "take_snapshot 3");
+
+    let since_ckpt = post_json_rpc(
+        &rpc_base,
+        9014,
+        "openhuman.memory_diff_diff_since_checkpoint",
+        json!({ "checkpoint_id": checkpoint_id }),
+    )
+    .await;
+    let since_ckpt = assert_no_jsonrpc_error(&since_ckpt, "diff_since_checkpoint");
+    let since_ckpt = since_ckpt.get("result").unwrap_or(since_ckpt);
+    assert_eq!(
+        since_ckpt.pointer("/diff/summary/added"),
+        Some(&json!(1)),
+        "doc3 added since checkpoint: {since_ckpt}"
     );
 
     rpc_join.abort();

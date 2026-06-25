@@ -372,6 +372,183 @@ async fn streaming_chat_frequency_penalty_rejection_not_reported_to_sentry() {
     );
 }
 
+/// Verbatim TAURI-RUST-5MV body — ollama.com hosted-inference 500 envelope.
+const OLLAMA_CLOUD_500_WIRE_BODY: &str =
+    r#"{"error":"Internal Server Error (ref: df512dcb-d915-493b-8f2d-e8d3dfa640c1)"}"#;
+
+/// TAURI-RUST-5MV: ollama.com hosted-inference 500 on the non-streaming native
+/// path must be demoted (no Sentry event) and surface the actionable message,
+/// while still propagating as `Err` so reliable-provider retry/fallback runs.
+#[tokio::test]
+async fn native_chat_ollama_cloud_500_demoted_and_actionable() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(500).set_body_string(OLLAMA_CLOUD_500_WIRE_BODY))
+        .mount(&mock_server)
+        .await;
+
+    let transport = TestTransport::new();
+    let sentry_options = sentry::ClientOptions {
+        dsn: Some("https://public@sentry.invalid/1".parse().unwrap()),
+        transport: Some(Arc::new(transport.clone())),
+        ..Default::default()
+    };
+    let sentry_hub = Arc::new(sentry::Hub::new(
+        Some(Arc::new(sentry_options.into())),
+        Arc::new(Default::default()),
+    ));
+    let _sentry_guard = sentry::HubSwitchGuard::new(sentry_hub);
+
+    let provider =
+        OpenAiCompatibleProvider::new("ollama", &mock_server.uri(), None, AuthStyle::None);
+    let messages = vec![ChatMessage {
+        id: None,
+        role: "user".to_string(),
+        content: "hello".to_string(),
+        extra_metadata: None,
+    }];
+    let err = provider
+        .chat(
+            super::super::ChatRequest {
+                messages: &messages,
+                tools: None,
+                stream: None,
+                max_tokens: None,
+            },
+            "minimax-m3:cloud",
+            0.7,
+        )
+        .await
+        .expect_err("ollama cloud 500 must still propagate as Err to drive retry/fallback");
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Ollama cloud is temporarily unavailable") && msg.contains("minimax-m3:cloud"),
+        "expected actionable message, got: {msg}"
+    );
+    assert!(
+        !msg.contains("ref:"),
+        "opaque ref body must be replaced: {msg}"
+    );
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "ollama cloud 500 must be demoted, not reported to Sentry"
+    );
+}
+
+/// TAURI-RUST-5MV: same demotion on the streaming native path.
+#[tokio::test]
+async fn streaming_chat_ollama_cloud_500_demoted_and_actionable() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(500).set_body_string(OLLAMA_CLOUD_500_WIRE_BODY))
+        .mount(&mock_server)
+        .await;
+
+    let transport = TestTransport::new();
+    let sentry_options = sentry::ClientOptions {
+        dsn: Some("https://public@sentry.invalid/1".parse().unwrap()),
+        transport: Some(Arc::new(transport.clone())),
+        ..Default::default()
+    };
+    let sentry_hub = Arc::new(sentry::Hub::new(
+        Some(Arc::new(sentry_options.into())),
+        Arc::new(Default::default()),
+    ));
+    let _sentry_guard = sentry::HubSwitchGuard::new(sentry_hub);
+
+    let provider =
+        OpenAiCompatibleProvider::new("ollama", &mock_server.uri(), None, AuthStyle::None);
+    let request = NativeChatRequest {
+        model: "minimax-m3:cloud".to_string(),
+        messages: vec![NativeMessage {
+            role: "user".to_string(),
+            content: Some("hello".into()),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        temperature: Some(0.7),
+        stream: Some(true),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: Some(super::compatible_types::OpenAiStreamOptions {
+            include_usage: true,
+        }),
+        options: None,
+        frequency_penalty: None,
+        max_tokens: None,
+    };
+    let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(8);
+
+    let err = provider
+        .stream_native_chat(None, &request, &delta_tx, 0)
+        .await
+        .expect_err("ollama cloud 500 must still propagate as Err to drive retry/fallback");
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Ollama cloud is temporarily unavailable") && msg.contains("minimax-m3:cloud"),
+        "expected actionable message, got: {msg}"
+    );
+    assert!(
+        !msg.contains("ref:"),
+        "opaque ref body must be replaced: {msg}"
+    );
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "ollama cloud 500 must be demoted, not reported to Sentry"
+    );
+}
+
+/// TAURI-RUST-5MV: the shared `api_error` helper demotes the same body and
+/// returns the actionable message (covers `chat_with_system` / `chat_with_history`
+/// callers that funnel through it).
+#[tokio::test]
+async fn api_error_ollama_cloud_500_demoted_and_actionable() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(500).set_body_string(OLLAMA_CLOUD_500_WIRE_BODY))
+        .mount(&mock_server)
+        .await;
+
+    let transport = TestTransport::new();
+    let sentry_options = sentry::ClientOptions {
+        dsn: Some("https://public@sentry.invalid/1".parse().unwrap()),
+        transport: Some(Arc::new(transport.clone())),
+        ..Default::default()
+    };
+    let sentry_hub = Arc::new(sentry::Hub::new(
+        Some(Arc::new(sentry_options.into())),
+        Arc::new(Default::default()),
+    ));
+    let _sentry_guard = sentry::HubSwitchGuard::new(sentry_hub);
+
+    let response = reqwest::Client::new()
+        .post(mock_server.uri())
+        .send()
+        .await
+        .expect("mock request");
+    let err = super::super::api_error("ollama", response).await;
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Ollama cloud is temporarily unavailable"),
+        "expected actionable message, got: {msg}"
+    );
+    assert!(
+        !msg.contains("ref:"),
+        "opaque ref body must be replaced: {msg}"
+    );
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "ollama cloud 500 must be demoted, not reported to Sentry"
+    );
+}
+
 /// Streaming responses arrive without `usage` unless the request asks
 /// for `stream_options.include_usage = true` (OpenAI spec). Without it
 /// the OpenHuman backend's `openhuman.billing` block also never lands,
@@ -883,6 +1060,191 @@ async fn responses_api_primary_posts_directly_to_responses() {
         .unwrap();
 
     assert_eq!(text, "hello from responses");
+}
+
+/// TAURI-RUST-EWD: the Codex/ChatGPT OAuth Responses endpoint rejects
+/// `max_output_tokens` (400 `Unsupported parameter: max_output_tokens`). The
+/// memory-extraction cap (`ChatRequest::max_tokens`) must therefore be dropped
+/// on the wire for `/backend-api/codex/responses`. The exact `body_json`
+/// matcher omits the field, so a request that still carried it would fail to
+/// match the mock and the call would error — i.e. a match positively proves the
+/// omission.
+#[tokio::test]
+async fn codex_responses_omits_max_output_tokens() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/backend-api/codex/responses"))
+        .and(body_json(serde_json::json!({
+            "model": "gpt-5.5",
+            "input": [{
+                "role": "user",
+                "content": [{"type": "input_text", "text": "hello"}]
+            }],
+            "stream": true,
+            "store": false
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n\
+             data: {\"type\":\"response.completed\",\"response\":{\"output_text\":\"ok\"}}\n\n\
+             data: [DONE]\n\n",
+        ))
+        .mount(&server)
+        .await;
+
+    let provider = OpenAiCompatibleProvider::new(
+        "openai",
+        &format!("{}/backend-api/codex", server.uri()),
+        Some("oauth-access-token"),
+        AuthStyle::Bearer,
+    )
+    .with_responses_api_primary();
+
+    let messages = [ChatMessage::user("hello")];
+    let request = crate::openhuman::inference::provider::traits::ChatRequest {
+        messages: &messages,
+        tools: None,
+        stream: None,
+        // A bounded cap (memory extraction) that the Codex endpoint rejects.
+        max_tokens: Some(256),
+    };
+    let resp = provider.chat(request, "gpt-5.5", 0.0).await.unwrap();
+    assert_eq!(resp.text.as_deref(), Some("ok"));
+}
+
+/// A non-Codex Responses backend (`/v1/responses`) must still receive the cap —
+/// the omission is endpoint-specific, not a blanket drop (guards against
+/// silently uncapping memory extraction on real `/v1/responses`, TAURI-RUST-C62).
+#[tokio::test]
+async fn standard_responses_keeps_max_output_tokens() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .and(body_json(serde_json::json!({
+            "model": "gpt-5.4",
+            "input": [{
+                "role": "user",
+                "content": [{"type": "input_text", "text": "hello"}]
+            }],
+            "stream": false,
+            "store": false,
+            "max_output_tokens": 256
+        })))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(r#"{"output_text":"ok","output":[]}"#),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = OpenAiCompatibleProvider::new(
+        "openai",
+        &format!("{}/v1", server.uri()),
+        Some("sk-test"),
+        AuthStyle::Bearer,
+    )
+    .with_responses_api_primary();
+
+    let messages = [ChatMessage::user("hello")];
+    let request = crate::openhuman::inference::provider::traits::ChatRequest {
+        messages: &messages,
+        tools: None,
+        stream: None,
+        max_tokens: Some(256),
+    };
+    let resp = provider.chat(request, "gpt-5.4", 0.0).await.unwrap();
+    assert_eq!(resp.text.as_deref(), Some("ok"));
+}
+
+/// The reactive strip-and-retry defends Responses backends we don't match by
+/// URL: a 400 whose body flags `max_output_tokens` as unsupported triggers one
+/// retry with the field removed, which then succeeds. Exact-body matchers are
+/// mutually exclusive on `max_output_tokens`, so the result is deterministic
+/// regardless of mock precedence.
+#[tokio::test]
+async fn responses_strips_max_output_tokens_and_retries_on_400() {
+    let server = MockServer::start().await;
+    let input = serde_json::json!([{
+        "role": "user",
+        "content": [{"type": "input_text", "text": "hello"}]
+    }]);
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .and(body_json(serde_json::json!({
+            "model": "gpt-5.5",
+            "input": input.clone(),
+            "stream": false,
+            "store": false,
+            "max_output_tokens": 256
+        })))
+        .respond_with(
+            ResponseTemplate::new(400)
+                .set_body_string(r#"{"detail":"Unsupported parameter: max_output_tokens"}"#),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .and(body_json(serde_json::json!({
+            "model": "gpt-5.5",
+            "input": input.clone(),
+            "stream": false,
+            "store": false
+        })))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(r#"{"output_text":"recovered","output":[]}"#),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = OpenAiCompatibleProvider::new(
+        "strict-responses",
+        &format!("{}/v1", server.uri()),
+        Some("sk-test"),
+        AuthStyle::Bearer,
+    )
+    .with_responses_api_primary();
+
+    let messages = [ChatMessage::user("hello")];
+    let request = crate::openhuman::inference::provider::traits::ChatRequest {
+        messages: &messages,
+        tools: None,
+        stream: None,
+        max_tokens: Some(256),
+    };
+    let resp = provider.chat(request, "gpt-5.5", 0.0).await.unwrap();
+    assert_eq!(resp.text.as_deref(), Some("recovered"));
+}
+
+#[test]
+fn err_indicates_max_output_tokens_unsupported_matches_codex_body() {
+    assert!(
+        OpenAiCompatibleProvider::err_indicates_max_output_tokens_unsupported(
+            r#"{"detail":"Unsupported parameter: max_output_tokens"}"#
+        )
+    );
+    assert!(
+        !OpenAiCompatibleProvider::err_indicates_max_output_tokens_unsupported(
+            r#"{"detail":"rate limit exceeded"}"#
+        )
+    );
+    // A different unsupported parameter must not trip the max_output_tokens strip.
+    assert!(
+        !OpenAiCompatibleProvider::err_indicates_max_output_tokens_unsupported(
+            r#"{"detail":"Unsupported parameter: temperature"}"#
+        )
+    );
+    // An invalid-*value* error (cap out of the model's allowed range) must NOT
+    // strip the cap — that would silently uncap the request. Surface it instead.
+    assert!(
+        !OpenAiCompatibleProvider::err_indicates_max_output_tokens_unsupported(
+            r#"{"detail":"Invalid value for max_output_tokens: must be <= 4096"}"#
+        )
+    );
+    assert!(
+        !OpenAiCompatibleProvider::err_indicates_max_output_tokens_unsupported(
+            r#"{"detail":"max_output_tokens exceeds the maximum allowed for this model"}"#
+        )
+    );
 }
 
 #[test]

@@ -298,26 +298,38 @@ impl ApprovalGate {
         action_summary: &str,
         args_redacted: serde_json::Value,
     ) -> (GateOutcome, Option<String>) {
-        // "Always allow" allowlist shortcut — the user's persisted
-        // `autonomy.auto_approve` set. Read from the live policy first so a
-        // grant made earlier in this session (which writes config + reloads the
-        // live policy) takes effect on the very next tool call; fall back to the
-        // gate's boot-time config when no live policy is installed (e.g. a CLI
-        // invocation that never started a session runtime, or a unit test).
-        if self.tool_is_auto_approved(tool_name) {
-            tracing::debug!(
-                tool = tool_name,
-                "[approval::gate] auto_approve allowlist hit, skipping prompt"
-            );
-            return (GateOutcome::Allow, None);
-        }
-
         // Origin tells us who scheduled this turn. Entry points (web channel,
         // channel runtime, subconscious, cron, CLI) scope a typed
         // `AgentTurnOrigin` around `run_turn`. Unlabelled callers map to
         // `Unknown`, which is denied — the gate refuses to execute an
         // external_effect tool from an unlabelled call site.
         let origin = turn_origin::current().unwrap_or(AgentTurnOrigin::Unknown);
+
+        // An autonomous goal continuation runs with no user present, so an
+        // irreversible external action must never be auto-allowed — not even via
+        // the `autonomy.auto_approve` allowlist. Skip the shortcut for that
+        // origin and fall through to the parking flow below.
+        let is_goal_continuation = matches!(
+            &origin,
+            AgentTurnOrigin::TrustedAutomation {
+                source: TrustedAutomationSource::GoalContinuation,
+                ..
+            }
+        );
+
+        // "Always allow" allowlist shortcut — the user's persisted
+        // `autonomy.auto_approve` set. Read from the live policy first so a
+        // grant made earlier in this session (which writes config + reloads the
+        // live policy) takes effect on the very next tool call; fall back to the
+        // gate's boot-time config when no live policy is installed (e.g. a CLI
+        // invocation that never started a session runtime, or a unit test).
+        if !is_goal_continuation && self.tool_is_auto_approved(tool_name) {
+            tracing::debug!(
+                tool = tool_name,
+                "[approval::gate] auto_approve allowlist hit, skipping prompt"
+            );
+            return (GateOutcome::Allow, None);
+        }
 
         // Chat context (thread/client id) for routing the yes/no reply — set by
         // the web channel around the agent run; absent for non-chat callers.
@@ -406,6 +418,21 @@ impl ApprovalGate {
                     },
                     None,
                 );
+            }
+            AgentTurnOrigin::TrustedAutomation {
+                source: TrustedAutomationSource::GoalContinuation,
+                job_id,
+            } => {
+                tracing::debug!(
+                    tool = tool_name,
+                    job_id = %job_id,
+                    "[approval::gate] autonomous goal continuation — external_effect tool parks \
+                     (no present user to authorize); TTL-denies without a routable surface"
+                );
+                // Fall through to the parking flow: an autonomous continuation
+                // runs with no user present, so we must NOT auto-allow an
+                // irreversible external action. Read/compute tools (not gated
+                // here) still make progress on the goal.
             }
             AgentTurnOrigin::Cli => {
                 tracing::debug!(

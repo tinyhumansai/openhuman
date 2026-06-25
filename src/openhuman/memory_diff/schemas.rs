@@ -17,6 +17,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("list_snapshots"),
         schemas("diff"),
         schemas("diff_since_last"),
+        schemas("diff_since_read"),
+        schemas("mark_read"),
         schemas("create_checkpoint"),
         schemas("list_checkpoints"),
         schemas("diff_since_checkpoint"),
@@ -41,6 +43,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("diff_since_last"),
             handler: handle_diff_since_last,
+        },
+        RegisteredController {
+            schema: schemas("diff_since_read"),
+            handler: handle_diff_since_read,
+        },
+        RegisteredController {
+            schema: schemas("mark_read"),
+            handler: handle_mark_read,
         },
         RegisteredController {
             schema: schemas("create_checkpoint"),
@@ -163,6 +173,58 @@ fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "diff_since_read" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "diff_since_read",
+            description: "Diff a source's latest snapshot against the read marker — what \
+                          changed since the agent last read this source's diff. By default \
+                          commits the read marker so the next call returns only newer changes.",
+            inputs: vec![
+                FieldSchema {
+                    name: "source_id",
+                    ty: TypeSchema::String,
+                    comment: "Memory source id.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "include_text_diff",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
+                    comment: "Include line-level text diffs for modified items.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "commit",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
+                    comment: "Advance the read marker after diffing (default true). \
+                              Set false to preview without acknowledging.",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "diff",
+                ty: TypeSchema::Ref("DiffResult"),
+                comment: "Diff between the read marker and the latest snapshot.",
+                required: true,
+            }],
+        },
+        "mark_read" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "mark_read",
+            description: "Commit read markers, advancing each source to its current head \
+                          snapshot so prior changes are acknowledged as consumed.",
+            inputs: vec![FieldSchema {
+                name: "source_ids",
+                ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(TypeSchema::String)))),
+                comment: "Sources to mark read. Omit to mark all enabled sources with a snapshot.",
+                required: false,
+            }],
+            outputs: vec![FieldSchema {
+                name: "marked",
+                ty: TypeSchema::U64,
+                comment: "Number of read markers committed.",
+                required: true,
+            }],
+        },
         "create_checkpoint" => ControllerSchema {
             namespace: NAMESPACE,
             function: "create_checkpoint",
@@ -273,6 +335,20 @@ fn handle_diff_since_last(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let req = parse_value::<rpc::DiffSinceLastRequest>(Value::Object(params))?;
         to_json(rpc::diff_since_last_rpc(req).await?)
+    })
+}
+
+fn handle_diff_since_read(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let req = parse_value::<rpc::DiffSinceReadRequest>(Value::Object(params))?;
+        to_json(rpc::diff_since_read_rpc(req).await?)
+    })
+}
+
+fn handle_mark_read(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let req = parse_value::<rpc::MarkReadRequest>(Value::Object(params))?;
+        to_json(rpc::mark_read_rpc(req).await?)
     })
 }
 

@@ -576,6 +576,24 @@ pub fn all_tools_with_runtime(
         ));
     }
 
+    // Thread-level goal tools (Codex-style per-thread completion contract).
+    // Visible only to agents that allowlist them (orchestrator). The target
+    // thread is resolved from the ambient `thread_id`, so no thread arg is
+    // taken. `goal_get`/`goal_set`/`goal_complete` — pause/resume/budget are
+    // system-driven and have no model tool.
+    {
+        let goal_dir = root_config.workspace_dir.clone();
+        tools.push(Box::new(crate::openhuman::thread_goals::GoalGetTool::new(
+            goal_dir.clone(),
+        )));
+        tools.push(Box::new(crate::openhuman::thread_goals::GoalSetTool::new(
+            goal_dir.clone(),
+        )));
+        tools.push(Box::new(
+            crate::openhuman::thread_goals::GoalCompleteTool::new(goal_dir),
+        ));
+    }
+
     if browser_config.enabled {
         // Unified web-access allowlist (merge fetch + browser firewalls): the
         // browser tool shares the single `http_request.allowed_domains` host

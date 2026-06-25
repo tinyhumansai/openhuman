@@ -62,6 +62,34 @@ pub struct DiffSinceLastResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct DiffSinceReadRequest {
+    pub source_id: String,
+    #[serde(default)]
+    pub include_text_diff: Option<bool>,
+    /// Advance the read marker to the head snapshot after computing the diff.
+    /// Defaults to true so reading acknowledges the changes as consumed.
+    #[serde(default)]
+    pub commit: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DiffSinceReadResponse {
+    pub diff: DiffResult,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MarkReadRequest {
+    /// Sources to mark read. Omit to mark all enabled sources with a snapshot.
+    #[serde(default)]
+    pub source_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MarkReadResponse {
+    pub marked: u64,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct CreateCheckpointRequest {
     pub label: String,
 }
@@ -193,6 +221,44 @@ pub async fn diff_since_last_rpc(
         diff.summary.added, diff.summary.removed, diff.summary.modified
     );
     Ok(RpcOutcome::new(DiffSinceLastResponse { diff }, vec![]))
+}
+
+pub async fn diff_since_read_rpc(
+    req: DiffSinceReadRequest,
+) -> Result<RpcOutcome<DiffSinceReadResponse>, String> {
+    let commit = req.commit.unwrap_or(true);
+    debug!(
+        "[memory_diff][rpc] diff_since_read source_id={} commit={}",
+        req.source_id, commit
+    );
+    let config = config_rpc::load_config_with_timeout().await?;
+    let source = crate::openhuman::memory_sources::get_source(&req.source_id)
+        .await?
+        .ok_or_else(|| format!("source not found: {}", req.source_id))?;
+
+    let diff = ops::diff_since_read(
+        &source,
+        &config,
+        req.include_text_diff.unwrap_or(false),
+        commit,
+    )
+    .await?;
+    debug!(
+        "[memory_diff][rpc] diff_since_read done added={} removed={} modified={}",
+        diff.summary.added, diff.summary.removed, diff.summary.modified
+    );
+    Ok(RpcOutcome::new(DiffSinceReadResponse { diff }, vec![]))
+}
+
+pub async fn mark_read_rpc(req: MarkReadRequest) -> Result<RpcOutcome<MarkReadResponse>, String> {
+    debug!(
+        "[memory_diff][rpc] mark_read source_ids={:?}",
+        req.source_ids
+    );
+    let config = config_rpc::load_config_with_timeout().await?;
+    let marked = ops::mark_read(&config, req.source_ids).await?;
+    debug!("[memory_diff][rpc] mark_read done marked={}", marked);
+    Ok(RpcOutcome::new(MarkReadResponse { marked }, vec![]))
 }
 
 pub async fn create_checkpoint_rpc(

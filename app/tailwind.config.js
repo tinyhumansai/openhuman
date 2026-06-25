@@ -239,6 +239,10 @@ module.exports = {
         'float': 'float 3s ease-in-out infinite',
         'ticker': 'ticker 30s linear infinite',
         'wiggle': 'wiggle 0.5s ease-in-out',
+        // Gentle ping-pong scroll for overflowing single-line labels (e.g. a
+        // long thread-goal objective). Distance is supplied per-element via the
+        // `--goal-marquee-shift` CSS var; `alternate` returns it to the start.
+        'goal-marquee': 'goalMarquee 6s ease-in-out infinite alternate',
       },
 
       keyframes: {
@@ -282,6 +286,10 @@ module.exports = {
           '0%, 100%': { transform: 'rotate(0deg)' },
           '25%': { transform: 'rotate(-9deg)' },
           '75%': { transform: 'rotate(9deg)' },
+        },
+        goalMarquee: {
+          '0%, 18%': { transform: 'translateX(0)' },
+          '82%, 100%': { transform: 'translateX(var(--goal-marquee-shift, 0px))' },
         },
       },
 

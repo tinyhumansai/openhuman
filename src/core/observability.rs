@@ -420,6 +420,20 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if crate::openhuman::inference::provider::is_openai_oauth_session_expired_message(message) {
         return Some(ExpectedErrorKind::ProviderUserState);
     }
+    // TAURI-RUST-5MV — ollama.com hosted-inference 500 (`Internal Server Error
+    // (ref: <uuid>)`) for `*:cloud` models. The provider HTTP layer
+    // (`native_chat` / `streaming_chat` / `api_error`) already demotes its own
+    // per-attempt event and re-raises the actionable
+    // "Ollama cloud is temporarily unavailable …" string; this catches the
+    // re-report at the agent / RPC boundary (`provider_chat` →
+    // `report_error_or_expected`, the `domain=agent` half of the flood). Routed
+    // to `TransientUpstreamHttp` — it is an external upstream 5xx the
+    // reliable-provider layer retries + falls back over, with no client lever.
+    // Delegates to the single-source provider matcher so the phrasing can't
+    // drift. Distinct anchor from the matchers above, so it shadows nothing.
+    if crate::openhuman::inference::provider::is_ollama_cloud_internal_500_message(message) {
+        return Some(ExpectedErrorKind::TransientUpstreamHttp);
+    }
     if is_backend_user_error_message(&lower) {
         return Some(ExpectedErrorKind::BackendUserError);
     }
@@ -2627,6 +2641,50 @@ pub fn is_quota_exhausted_event(event: &sentry::protocol::Event<'_>) -> bool {
             .value
             .as_deref()
             .is_some_and(is_quota_exhausted_message)
+    })
+}
+
+/// Whether a raw error / message string is an Ollama **Cloud** hosted-inference
+/// `500` (`Internal Server Error (ref: <uuid>)`). Matches either the raw emit
+/// shape (`ollama API error (500 …): {"error":"Internal Server Error (ref: …)"}`)
+/// or the actionable re-raise the emit sites swap in
+/// (`is_ollama_cloud_internal_500_message`). The raw arm requires BOTH the
+/// `ollama` provider name and the `internal server error (ref:` envelope, so a
+/// generic 500 from another provider, or a local Ollama daemon crash (which
+/// carries no `ref:` UUID), still reaches Sentry.
+pub fn is_ollama_cloud_internal_500_message_any(text: &str) -> bool {
+    if crate::openhuman::inference::provider::is_ollama_cloud_internal_500_message(text) {
+        return true;
+    }
+    let lower = text.to_ascii_lowercase();
+    lower.contains("ollama") && lower.contains("internal server error (ref:")
+}
+
+/// Defense-in-depth `before_send` filter for **Ollama Cloud hosted-inference
+/// 500s** (TAURI-RUST-5MV): ollama.com's `*:cloud` models intermittently
+/// return an opaque `Internal Server Error (ref: <uuid>)` with no client lever
+/// (non-deterministic, byte-identical request succeeds when healthy), retried +
+/// fallen-back by the reliable-provider layer.
+///
+/// The primary demotion lives at the `native_chat` / `streaming_chat` /
+/// `api_error` emit sites, and the agent re-report is demoted via
+/// `expected_error_kind` → `TransientUpstreamHttp`. This is the single outermost
+/// net for any other compatible-provider path (`chat_with_system`,
+/// `chat_with_history`, the non-native cascades) that reports the same body,
+/// keyed on the message rather than tags so it matches regardless of emitter.
+pub fn is_ollama_cloud_internal_500_event(event: &sentry::protocol::Event<'_>) -> bool {
+    if event
+        .message
+        .as_deref()
+        .is_some_and(is_ollama_cloud_internal_500_message_any)
+    {
+        return true;
+    }
+    event.exception.values.iter().any(|exception| {
+        exception
+            .value
+            .as_deref()
+            .is_some_and(is_ollama_cloud_internal_500_message_any)
     })
 }
 
@@ -6086,6 +6144,51 @@ mod tests {
         assert!(is_insufficient_credits_event(&event_with_message(body)));
         assert!(is_insufficient_credits_event(&event_with_exception_value(
             body
+        )));
+    }
+
+    #[test]
+    fn ollama_cloud_internal_500_reraise_routes_through_expected_path() {
+        // TAURI-RUST-5MV — the actionable message the emit sites raise must
+        // demote to `TransientUpstreamHttp` when re-reported at the agent / RPC
+        // boundary (`provider_chat` → `report_error_or_expected`), so the
+        // `domain=agent` half of the flood is suppressed too.
+        let reraise = crate::openhuman::inference::provider::ollama_cloud_internal_500_user_message(
+            Some("minimax-m3:cloud"),
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+        );
+        assert_eq!(
+            expected_error_kind(&reraise),
+            Some(ExpectedErrorKind::TransientUpstreamHttp)
+        );
+    }
+
+    #[test]
+    fn ollama_cloud_internal_500_before_send_matches_raw_and_reraised_shapes() {
+        // The outermost net catches BOTH the raw emit body (any compatible
+        // path that bypassed the cascade) and the actionable re-raise.
+        let raw = "ollama API error (500 Internal Server Error): \
+            {\"error\":\"Internal Server Error (ref: df512dcb-d915-493b-8f2d-e8d3dfa640c1)\"}";
+        assert!(is_ollama_cloud_internal_500_event(&event_with_message(raw)));
+        assert!(is_ollama_cloud_internal_500_event(
+            &event_with_exception_value(raw)
+        ));
+
+        let reraise = crate::openhuman::inference::provider::ollama_cloud_internal_500_user_message(
+            None,
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+        );
+        assert!(is_ollama_cloud_internal_500_event(&event_with_message(
+            &reraise
+        )));
+
+        // A local Ollama 500 without the `ref:` envelope, and a non-ollama 500,
+        // both stay reportable.
+        assert!(!is_ollama_cloud_internal_500_event(&event_with_message(
+            "ollama API error (500 Internal Server Error): {\"error\":\"out of memory\"}"
+        )));
+        assert!(!is_ollama_cloud_internal_500_event(&event_with_message(
+            "openai API error (500): Internal Server Error (ref: abc)"
         )));
     }
 

@@ -368,6 +368,53 @@ impl Agent {
             }
         }
 
+        // ── Thread goal (Codex-style per-thread completion contract) ─────────
+        // Load this thread's durable goal once per turn and prepend a compact
+        // [active_goal] block so the objective + live status/budget steer the
+        // turn. Rides the per-turn context (NOT the cached system-prompt prefix)
+        // so edits take effect immediately. `active_goal` is reused below to arm
+        // the budget stop hook around the engine call.
+        // Capture the workspace path for the budget stop hook built after the
+        // `turn_body` coroutine (which borrows `&mut self`) is constructed.
+        let goal_workspace_dir = self.workspace_dir.clone();
+        let active_goal = {
+            let loaded = crate::openhuman::thread_goals::runtime::load_for_current_thread(
+                &self.workspace_dir,
+            )
+            .await;
+            // Thread-resume semantics: the user re-engaging a thread reactivates a
+            // paused goal (Codex's ThreadResumed). Best-effort; on failure keep
+            // the loaded (paused) goal so we still surface it.
+            match loaded {
+                Some(goal)
+                    if matches!(
+                        goal.status,
+                        crate::openhuman::thread_goals::ThreadGoalStatus::Paused
+                    ) =>
+                {
+                    crate::openhuman::thread_goals::runtime::resume_for_current_thread(
+                        &self.workspace_dir,
+                    )
+                    .await
+                    .unwrap_or(Some(goal))
+                }
+                other => other,
+            }
+        };
+        if let Some(ref goal) = active_goal {
+            if let Some(block) =
+                crate::openhuman::thread_goals::runtime::active_goal_context_block(goal)
+            {
+                log::info!(
+                    "[thread_goals] injecting active_goal block status={} budget={:?} ({} chars)",
+                    goal.status.as_str(),
+                    goal.token_budget,
+                    block.chars().count()
+                );
+                context.push_str(&block);
+            }
+        }
+
         let enriched = if context.is_empty() {
             log::info!("[agent] no memory context found — using raw user message");
             self.last_memory_context = None;
@@ -739,6 +786,17 @@ impl Agent {
 
             self.context.record_tool_calls(records.len());
 
+            // Account this turn's tokens (prompt + completion) and elapsed time
+            // against the thread's active goal, flipping it to budget_limited
+            // when the cap is crossed. Best-effort — never fails the turn.
+            crate::openhuman::thread_goals::runtime::account_turn_against_goal(
+                &self.workspace_dir,
+                cumulative_input,
+                cumulative_output,
+                turn_started.elapsed().as_secs(),
+            )
+            .await;
+
             // For a clean final response the observer already pushed the
             // assistant message + persisted. For a max-iteration checkpoint or
             // circuit-breaker halt the engine returned the text without pushing
@@ -799,7 +857,31 @@ impl Agent {
         // that any `spawn_subagent` tool call fired during the loop can
         // read the parent's provider, tools, model, and workspace via
         // the PARENT_CONTEXT task-local.
-        let result = harness::with_parent_context(parent_context, turn_body).await;
+        // Arm the thread-goal budget stop hook for this turn when an active,
+        // budgeted goal exists — it hard-stops the loop the moment running usage
+        // would exceed the cap (so an autonomous run can't blow past it between
+        // accounting points). Merge with any ambient stop hooks rather than
+        // clobbering them. No budgeted active goal → no extra hook, no wrap.
+        let mut turn_stop_hooks = crate::openhuman::agent::stop_hooks::current_stop_hooks();
+        if let Some(ref goal) = active_goal {
+            if let Some(hook) =
+                crate::openhuman::thread_goals::runtime::GoalBudgetStopHook::for_goal(
+                    &goal_workspace_dir,
+                    goal,
+                )
+            {
+                turn_stop_hooks.push(std::sync::Arc::new(hook));
+            }
+        }
+        let result = if turn_stop_hooks.is_empty() {
+            harness::with_parent_context(parent_context, turn_body).await
+        } else {
+            harness::with_parent_context(
+                parent_context,
+                crate::openhuman::agent::stop_hooks::with_stop_hooks(turn_stop_hooks, turn_body),
+            )
+            .await
+        };
 
         // Session transcript persistence lives INSIDE the turn body —
         // one write per provider response, fired right after the

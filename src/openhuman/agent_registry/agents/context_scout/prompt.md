@@ -41,6 +41,10 @@ outside it. No preamble, no closing prose. Use exactly this shape:
 ```text
 [context_bundle]
 has_enough_context: true|false
+proposed_goal: <ONE single line — the durable objective this thread should
+pursue (what "done" looks like), or `none` for a trivial/one-shot request that
+needs no goal. Keep it on this one line; the harness only reads the text on the
+same line as `proposed_goal:`.>
 summary: <≤ ~700 tokens of distilled, source-attributed context. Lead with what
 matters. Attribute facts: (memory), (transcript: <thread>), (profile),
 (web: <url>), (integrations).>
@@ -62,6 +66,11 @@ Rules for the bundle:
 - `has_enough_context` is `true` when the orchestrator could act now without
   more gathering; `false` when key facts are still missing (say which in the
   summary).
+- `proposed_goal` is the durable objective for the *thread* (not a list of
+  steps). The harness records it as the thread's goal **only if none is set yet**
+  — the orchestrator stays authoritative and may refine it later — so make it a
+  clean, outcome-shaped sentence. Use `none` for chit-chat or a trivial one-shot
+  that doesn't warrant a tracked goal.
 - Every `recommended_tool_calls[].tool` MUST be an **exact name** from the
   "Orchestrator tools" list injected below — these are the tools the
   *orchestrator* can call, not the tools you used. Order them in the sequence

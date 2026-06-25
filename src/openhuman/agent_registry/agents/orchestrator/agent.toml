@@ -223,6 +223,18 @@ named = [
     # downstream agents — the orchestrator coordinates, it doesn't
     # touch files itself.
     "todowrite",
+    # Thread-level goal (Codex-style per-thread completion contract). `goal_set`
+    # records the durable objective for THIS thread when a non-trivial request
+    # lands (the orchestrator is authoritative — it always creates or replaces);
+    # `goal_get` reads it back (status + token budget); `goal_complete` closes it
+    # out only when evidence confirms success. Distinct from `todowrite` (this
+    # thread's task board) and the long-term `goals_*` list (cross-thread). The
+    # harness injects the active goal into context each turn and can auto-continue
+    # it when the thread goes idle, so keeping the objective current here is what
+    # keeps that loop on-target.
+    "goal_set",
+    "goal_get",
+    "goal_complete",
     # `update_task` moves/updates a specific task card by id on a target board
     # (defaults to the proactive `task-sources` board) — so the orchestrator can
     # advance the task it's working: → in_progress when it starts, → done with
