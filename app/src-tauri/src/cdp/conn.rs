@@ -178,11 +178,16 @@ where
         loop {
             match rx.recv().await {
                 Ok(frame) => {
-                    // Session filter only — content filtering stays in the
-                    // caller's `on_event`, so the watchdog still observes
-                    // liveness traffic (e.g. gateway heartbeat WS frames) on
-                    // any session we're attached to.
-                    if !frame.session_id.is_empty() && frame.session_id != session_owned {
+                    // Liveness must reflect OUR page session only. Forward strictly
+                    // own-session frames; drop both other-session frames and
+                    // empty-session (browser/target-level) events. The latter is
+                    // critical: a dead page still sees empty-session transport
+                    // chatter (target lifecycle, crash/reload churn), and if those
+                    // reached the consumer they would reset the idle watchdog and a
+                    // crashed/reloaded session would never trip re-attach. Discord's
+                    // real traffic (`Network.*`, incl. ~41s gateway heartbeats) is
+                    // always page-session-tagged, so nothing useful is dropped.
+                    if frame.session_id != session_owned {
                         continue;
                     }
                     if tx.send(frame).is_err() {
@@ -299,14 +304,18 @@ mod resilient_pump_tests {
         assert_eq!(*got.borrow(), 200);
     }
 
-    /// Frames addressed to another session are dropped; the empty session id
-    /// (broadcast-to-all) and our own session id are delivered.
+    /// Only OWN-session frames are delivered. Other-session frames are dropped,
+    /// and — critically for the idle watchdog — so are empty-session
+    /// (browser/target-level) frames: a dead/reloaded page still emits
+    /// empty-session transport chatter, and delivering it would reset the idle
+    /// timer so a stale session would never trip re-attach. Regression guard for
+    /// the live renderer-crash smoke where the watchdog failed to fire.
     #[tokio::test(start_paused = true)]
-    async fn filters_by_session() {
+    async fn delivers_only_own_session_drops_empty_and_other() {
         let (tx, rx) = broadcast::channel::<EventFrame>(64);
         tx.send(frame("a", "sess")).unwrap();
-        tx.send(frame("b", "other")).unwrap();
-        tx.send(frame("c", "")).unwrap();
+        tx.send(frame("b", "other")).unwrap(); // other session → dropped
+        tx.send(frame("c", "")).unwrap(); // empty/browser-level → dropped (no false liveness)
         tx.send(frame("d", "sess")).unwrap();
         drop(tx);
         let got = Rc::new(RefCell::new(Vec::new()));
@@ -316,6 +325,6 @@ mod resilient_pump_tests {
         })
         .await;
         assert!(res.is_ok());
-        assert_eq!(*got.borrow(), vec!["a", "c", "d"]);
+        assert_eq!(*got.borrow(), vec!["a", "d"]);
     }
 }
