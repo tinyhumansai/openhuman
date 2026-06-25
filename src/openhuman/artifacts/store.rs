@@ -267,12 +267,14 @@ pub(crate) async fn save_artifact_args(
     let root = artifacts_root(workspace_dir).await?;
     let artifact_dir = root.join(artifact_id);
     assert_within_root(&root, &artifact_dir)?;
-    tokio::fs::create_dir_all(&artifact_dir).await.map_err(|e| {
-        format!(
-            "[artifacts] failed to create artifact dir {:?}: {e}",
-            artifact_dir
-        )
-    })?;
+    tokio::fs::create_dir_all(&artifact_dir)
+        .await
+        .map_err(|e| {
+            format!(
+                "[artifacts] failed to create artifact dir {:?}: {e}",
+                artifact_dir
+            )
+        })?;
     let args_path = artifact_dir.join(ARGS_FILENAME);
     let json = serde_json::to_string_pretty(args)
         .map_err(|e| format!("[artifacts] failed to serialize args for id={artifact_id}: {e}"))?;

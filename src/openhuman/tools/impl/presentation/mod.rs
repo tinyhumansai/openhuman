@@ -248,9 +248,12 @@ impl Tool for PresentationTool {
         // Retry can re-dispatch this exact spec deterministically (#3162).
         // Best-effort: a write failure only forfeits future regeneration,
         // it must not abort an otherwise-successful generation.
-        if let Err(err) =
-            crate::openhuman::artifacts::store::save_artifact_args(&self.workspace_dir, &meta.id, &args)
-                .await
+        if let Err(err) = crate::openhuman::artifacts::store::save_artifact_args(
+            &self.workspace_dir,
+            &meta.id,
+            &args,
+        )
+        .await
         {
             tracing::warn!(
                 target: "presentation",

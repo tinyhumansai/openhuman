@@ -356,14 +356,9 @@ async fn read_args_errors_when_absent() {
 #[tokio::test]
 async fn create_artifact_mints_fresh_id_without_scope() {
     let tmp = TempDir::new().unwrap();
-    let (meta, _path) = create_artifact(
-        tmp.path(),
-        ArtifactKind::Presentation,
-        "Q3 Deck",
-        "pptx",
-    )
-    .await
-    .unwrap();
+    let (meta, _path) = create_artifact(tmp.path(), ArtifactKind::Presentation, "Q3 Deck", "pptx")
+        .await
+        .unwrap();
     // A normal (non-regenerate) create mints a UUID, never an empty id.
     assert!(!meta.id.is_empty());
     assert_eq!(meta.status, ArtifactStatus::Pending);

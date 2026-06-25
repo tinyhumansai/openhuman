@@ -235,7 +235,9 @@ async fn regenerate_errors_when_args_missing() {
     let (meta, _) = create_artifact(tmp.path(), ArtifactKind::Presentation, "Old Deck", "pptx")
         .await
         .unwrap();
-    let err = ai_regenerate(&config, &meta.id, "t", "c").await.unwrap_err();
+    let err = ai_regenerate(&config, &meta.id, "t", "c")
+        .await
+        .unwrap_err();
     assert!(err.contains("not regenerable"), "unexpected error: {err}");
 }
 
