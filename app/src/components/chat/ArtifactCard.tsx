@@ -3,8 +3,8 @@ import { useState } from 'react';
 import { formatFileSize } from '../../lib/attachments';
 import { useT } from '../../lib/i18n/I18nContext';
 import {
-  downloadArtifact,
   revealArtifactInFileManager,
+  saveArtifactViaDialog,
 } from '../../services/artifactDownloadService';
 import type { ArtifactSnapshot } from '../../store/chatRuntimeSlice';
 
@@ -170,9 +170,12 @@ export default function ArtifactCard({ artifact, onRetry }: ArtifactCardProps) {
   const handleDownload = async () => {
     setDownload({ state: 'downloading' });
     const ext = extensionFor(artifact.kind, artifact.title);
-    const outcome = await downloadArtifact(artifact.artifactId, artifact.title, ext);
+    const outcome = await saveArtifactViaDialog(artifact.artifactId, artifact.title, ext);
     if (outcome.ok) {
       setDownload({ state: 'done', path: outcome.path });
+    } else if (outcome.code === 'CANCELLED') {
+      // User dismissed the Save-As dialog — quietly return to idle.
+      setDownload({ state: 'idle' });
     } else {
       setDownload({ state: 'error', error: outcome.error });
     }

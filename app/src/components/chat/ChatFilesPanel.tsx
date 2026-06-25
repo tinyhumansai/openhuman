@@ -63,6 +63,10 @@ function localizeErrorCode(
       return t('chat.files.error.download_failed');
     case 'DELETE_FAILED':
       return t('chat.files.error.delete_failed');
+    case 'CANCELLED':
+      // User-initiated dialog dismissal — not a real error. Callers treat
+      // it as a no-op; surface nothing (fall back to raw text if passed).
+      return fallback ?? '';
     default: {
       // Exhaustive guard: a new code added to ArtifactErrorCode without a
       // matching arm here will fail to type-check.
