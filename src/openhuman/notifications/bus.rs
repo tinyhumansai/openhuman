@@ -195,9 +195,12 @@ pub fn event_to_notification(event: &DomainEvent) -> Option<CoreNotificationEven
             // `message` is already a pre-formatted, actionable string from
             // `auth_error_registry::auth_error_message`.
             body: message.clone(),
-            // Land the user on the AI settings (Skills → LLM tab), where the
-            // inline provider-error notice + key editor live.
-            deep_link: Some("/skills".into()),
+            // Land the user on the AI-settings LLM tab, where the inline
+            // provider-error notice + key editor live. Must be the canonical
+            // `/connections?tab=llm` route: `/skills` is a back-compat
+            // redirect that drops the query and defaults to the Apps tab, so
+            // it would not surface the key editor.
+            deep_link: Some("/connections?tab=llm".into()),
             timestamp_ms: ts,
             actions: None,
         }),
@@ -296,7 +299,7 @@ mod tests {
         assert_eq!(n.title, "API key rejected");
         assert!(n.body.contains("openrouter"));
         assert!(n.body.contains("Settings"));
-        assert_eq!(n.deep_link.as_deref(), Some("/skills"));
+        assert_eq!(n.deep_link.as_deref(), Some("/connections?tab=llm"));
         assert!(n.id.starts_with("provider-key-rejected:openrouter:"));
     }
 
