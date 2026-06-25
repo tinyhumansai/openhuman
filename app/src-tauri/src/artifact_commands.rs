@@ -1,47 +1,76 @@
-//! Tauri command for downloading agent-generated artifacts (#2779).
+//! Tauri commands for exporting agent-generated artifacts (#2779, #3162).
 //!
-//! Contract: the frontend resolves the artifact's absolute source
-//! path via the existing `openhuman.ai_get_artifact` core RPC, then
-//! invokes [`download_artifact_to_downloads`] with that source path
-//! plus a filename hint. The command:
+//! Two export paths, both fed by the frontend resolving an artifact's
+//! absolute source path via the `openhuman.ai_get_artifact` core RPC:
 //!
-//! 1. Validates both inputs (no path traversal in the filename, source
-//!    must be absolute + on disk).
-//! 2. Resolves the user's Downloads directory via the `dirs` crate.
-//! 3. Picks a non-colliding destination filename — `name.pptx`,
-//!    `name (1).pptx`, `name (2).pptx`, …
-//! 4. Copies source → dest with `tokio::fs::copy`.
-//! 5. Returns the absolute dest path so the frontend can show a
-//!    "Saved to …" toast with a "Reveal in Finder" button (the
-//!    `opener:allow-reveal-item-in-dir` capability is already wired).
+//! 1. [`save_artifact_via_dialog`] (#3162) — opens a native Save-As
+//!    dialog (macOS / Windows / Linux) pre-filled with the artifact's
+//!    filename and copies the bytes to the user-chosen destination.
+//!    Returns `Ok(None)` when the user cancels. Backed by the `rfd`
+//!    crate, which talks to the OS dialog APIs directly and does NOT
+//!    pull `tauri-plugin-fs` (whose `schemars` version conflict was the
+//!    reason the original #2779 work shipped the Downloads fallback
+//!    below instead of a dialog).
+//! 2. [`download_artifact_to_downloads`] (#2779, macOS / Linux) — copies
+//!    the artifact into the user's Downloads directory with a
+//!    non-colliding name and returns the dest path so the UI can offer
+//!    "Reveal in Finder". Retained as the fallback the frontend uses
+//!    when the dialog is unavailable (e.g. no portal on headless Linux)
+//!    or the user cancels.
 //!
-//! Why Downloads instead of a native save-file dialog: the
-//! `tauri-plugin-dialog` crate pulls `tauri-plugin-fs` transitively,
-//! which currently breaks the openhuman build with a `schemars`
-//! version conflict. The Downloads + reveal pattern satisfies the
-//! "user-chosen destination" intent of issue #2779 AC#3 without
-//! widening the Tauri allow-list, and matches what most desktop chat
-//! apps do for downloaded attachments.
+//! Both validate the source (absolute + on disk) and sanitize the
+//! filename hint so a malicious `ai_get_artifact` response can never
+//! write outside the chosen directory.
 
 use std::path::{Path, PathBuf};
 
-/// Maximum number of `(N)` suffixes we'll append when picking a
-/// non-colliding filename. After 1000 we give up and append a UUID
-/// suffix instead so the download never silently overwrites.
-const MAX_COLLISION_SUFFIX: u32 = 1000;
-
+/// Open a native Save-As dialog pre-filled with `suggested_filename` and
+/// copy the artifact at `source_path` to the chosen destination (#3162).
+///
+/// Returns:
+/// - `Ok(Some(dest))` — the absolute path the user saved to.
+/// - `Ok(None)` — the user dismissed the dialog (not an error; the
+///   frontend simply stops).
+/// - `Err(_)` — bad inputs or a copy failure; the frontend falls back to
+///   [`download_artifact_to_downloads`] where available.
 #[tauri::command]
-pub async fn download_artifact_to_downloads(
+pub async fn save_artifact_via_dialog(
     source_path: String,
-    filename: String,
-) -> Result<String, String> {
+    suggested_filename: String,
+) -> Result<Option<String>, String> {
+    let source = validate_source(&source_path)?;
+    let sanitized = sanitize_filename(&suggested_filename)?;
+
+    // `rfd` drives the OS-native dialog. On Linux this is the xdg-desktop
+    // portal (no GTK link); on macOS/Windows the system panel. The await
+    // resolves when the user picks a path or cancels.
+    let handle = rfd::AsyncFileDialog::new()
+        .set_file_name(&sanitized)
+        .save_file()
+        .await;
+
+    let Some(file) = handle else {
+        log::info!("[artifact_commands] save_artifact_via_dialog cancelled by user");
+        return Ok(None);
+    };
+
+    let dest = file.path().to_path_buf();
+    let bytes = copy_to_path(&source, &dest).await?;
+    log::info!(
+        "[artifact_commands] save_artifact_via_dialog bytes={bytes} dest={}",
+        dest.display()
+    );
+    Ok(Some(dest.display().to_string()))
+}
+
+/// Validate a renderer-supplied source path: must be a non-empty,
+/// absolute path that exists on disk. The path always originates from
+/// the core `ai_get_artifact` RPC's `absolute_path`, never user text.
+fn validate_source(source_path: &str) -> Result<PathBuf, String> {
     if source_path.trim().is_empty() {
         return Err("source_path must not be empty".to_string());
     }
-    if filename.trim().is_empty() {
-        return Err("filename must not be empty".to_string());
-    }
-    let source = PathBuf::from(&source_path);
+    let source = PathBuf::from(source_path);
     if !source.is_absolute() {
         return Err(format!(
             "source_path must be absolute (came from ai_get_artifact): {source_path:?}"
@@ -51,6 +80,34 @@ pub async fn download_artifact_to_downloads(
         return Err(format!(
             "artifact source not present on disk: {source_path}"
         ));
+    }
+    Ok(source)
+}
+
+/// Copy `source` to `dest`, returning the byte count. Shared by the
+/// Save-As dialog flow; isolated so it is unit-testable without driving
+/// a real OS dialog.
+async fn copy_to_path(source: &Path, dest: &Path) -> Result<u64, String> {
+    tokio::fs::copy(source, dest)
+        .await
+        .map_err(|e| format!("failed to copy artifact to {:?}: {e}", dest))
+}
+
+/// Maximum number of `(N)` suffixes we'll append when picking a
+/// non-colliding filename. After 1000 we give up and append a UUID
+/// suffix instead so the download never silently overwrites.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+const MAX_COLLISION_SUFFIX: u32 = 1000;
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tauri::command]
+pub async fn download_artifact_to_downloads(
+    source_path: String,
+    filename: String,
+) -> Result<String, String> {
+    let source = validate_source(&source_path)?;
+    if filename.trim().is_empty() {
+        return Err("filename must not be empty".to_string());
     }
     let sanitized = sanitize_filename(&filename)?;
 
@@ -62,9 +119,7 @@ pub async fn download_artifact_to_downloads(
         .map_err(|e| format!("failed to ensure Downloads dir {:?}: {e}", downloads))?;
 
     let dest = pick_unique_path(&downloads, &sanitized);
-    let bytes = tokio::fs::copy(&source, &dest)
-        .await
-        .map_err(|e| format!("failed to copy artifact to {:?}: {e}", dest))?;
+    let bytes = copy_to_path(&source, &dest).await?;
 
     log::info!(
         "[artifact_commands] download_artifact_to_downloads bytes={bytes} dest={}",
@@ -76,7 +131,7 @@ pub async fn download_artifact_to_downloads(
 /// Strip path-traversal characters from a filename hint. The
 /// renderer is expected to pass something like `"My Deck.pptx"`;
 /// reject anything that contains a separator or null byte so a
-/// malicious `ai_get_artifact` response can never escape Downloads.
+/// malicious `ai_get_artifact` response can never escape the chosen dir.
 fn sanitize_filename(name: &str) -> Result<String, String> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -99,6 +154,7 @@ fn sanitize_filename(name: &str) -> Result<String, String> {
 /// Pick a destination path under `dir` that does not exist yet.
 /// Inserts ` (N)` between the stem and the extension. Falls back to
 /// a UUID suffix after [`MAX_COLLISION_SUFFIX`] tries.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn pick_unique_path(dir: &Path, filename: &str) -> PathBuf {
     let candidate = dir.join(filename);
     if !candidate.exists() {
@@ -132,6 +188,7 @@ fn pick_unique_path(dir: &Path, filename: &str) -> PathBuf {
     dir.join(with_uniq)
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn split_stem_ext(filename: &str) -> (String, String) {
     if let Some(idx) = filename.rfind('.') {
         // Reject leading-dot files (`.hidden`) — treat as having no extension.
@@ -167,6 +224,41 @@ mod tests {
     }
 
     #[test]
+    fn validate_source_rejects_relative_and_empty() {
+        assert!(validate_source("").is_err());
+        assert!(validate_source("relative/path.pptx").is_err());
+        assert!(validate_source("/definitely/not/here.pptx").is_err());
+    }
+
+    #[tokio::test]
+    async fn copy_to_path_copies_bytes() {
+        let temp = tempfile::tempdir().unwrap();
+        let src = temp.path().join("src.pptx");
+        let dst = temp.path().join("dst.pptx");
+        std::fs::write(&src, b"deck-bytes").unwrap();
+        let n = copy_to_path(&src, &dst).await.unwrap();
+        assert_eq!(n, b"deck-bytes".len() as u64);
+        assert_eq!(std::fs::read(&dst).unwrap(), b"deck-bytes");
+    }
+
+    #[tokio::test]
+    async fn save_via_dialog_rejects_bad_source() {
+        // Validation runs before any dialog is shown, so these resolve
+        // without user interaction.
+        assert!(
+            save_artifact_via_dialog(String::new(), "x.pptx".to_string())
+                .await
+                .is_err()
+        );
+        assert!(
+            save_artifact_via_dialog("relative".to_string(), "x.pptx".to_string())
+                .await
+                .is_err()
+        );
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
     fn split_stem_ext_pairs() {
         assert_eq!(
             split_stem_ext("file.pptx"),
@@ -190,6 +282,7 @@ mod tests {
         );
     }
 
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn pick_unique_inserts_collision_suffix() {
         let temp = tempfile::tempdir().unwrap();
@@ -206,6 +299,7 @@ mod tests {
         assert_eq!(third, dir.join("deck (2).pptx"));
     }
 
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn pick_unique_handles_no_extension() {
         let temp = tempfile::tempdir().unwrap();
@@ -217,6 +311,7 @@ mod tests {
         assert_eq!(second, dir.join("noext (1)"));
     }
 
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[tokio::test]
     async fn download_rejects_invalid_inputs() {
         assert!(
