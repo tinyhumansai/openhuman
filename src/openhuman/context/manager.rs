@@ -125,6 +125,11 @@ pub struct ContextManager {
     /// kill-switch lives here so every caller reads one source of truth.
     /// See [`ContextConfig::compaction_enabled`].
     compaction_enabled: bool,
+    /// When `true`, the harness runs a mandatory first-turn context
+    /// collection pass before the orchestrator LLM runs. Read once at
+    /// session construction so it only affects newly started threads.
+    /// See [`ContextConfig::super_context_enabled`].
+    super_context_enabled: bool,
 }
 
 impl ContextManager {
@@ -167,6 +172,7 @@ impl ContextManager {
             tool_result_budget_bytes: config.tool_result_budget_bytes,
             prefer_markdown_tool_output: config.prefer_markdown_tool_output,
             compaction_enabled: config.compaction_enabled,
+            super_context_enabled: config.super_context_enabled,
         }
     }
 
@@ -189,6 +195,14 @@ impl ContextManager {
     /// compress the result before the byte cap and before it enters history.
     pub fn compaction_enabled(&self) -> bool {
         self.compaction_enabled
+    }
+
+    /// Whether "super context" is enabled — i.e. whether the harness
+    /// should run a mandatory read-only context-collection pass on the
+    /// first turn of a new thread before the orchestrator LLM runs.
+    /// Read by `Agent::turn`. See [`ContextConfig::super_context_enabled`].
+    pub fn super_context_enabled(&self) -> bool {
+        self.super_context_enabled
     }
 
     // ─── Budget tracking ──────────────────────────────────────────

@@ -11,6 +11,13 @@ pub fn is_budget_exhausted_message(body: &str) -> bool {
         "budget exceeded",
         "add credits",
         "insufficient balance",
+        // abacus's out-of-credits 400 wording (TAURI-RUST-D6X): the managed
+        // route-llm account is exhausted. The full body is
+        // `"You have no remaining credits to use the LLM apis."`. Anchored on
+        // the "no remaining credits" fragment (not the broader "remaining
+        // credits", which a positive "you have N remaining credits" balance
+        // message could trip) to keep the list tight per the rule above.
+        "no remaining credits",
     ];
 
     let lower = body.to_ascii_lowercase();
@@ -43,12 +50,35 @@ mod tests {
         assert!(is_budget_exhausted_message("Insufficient BALANCE"));
     }
 
+    /// Verbatim abacus out-of-credits 400 body (Sentry TAURI-RUST-D6X). The
+    /// classifier feeds the native_chat demotion, the `expected_error_kind`
+    /// re-report demotion, the `is_budget_event` before_send net, AND the cron
+    /// scheduler's terminal billing-halt (`is_budget_exhausted_failure`), so
+    /// pinning the exact wire body makes an abacus phrasing drift fail CI
+    /// rather than silently re-flood Sentry / re-fire the retry loop.
+    #[test]
+    fn detects_abacus_no_remaining_credits_400_body() {
+        let body = "abacus API error (400 Bad Request): \
+            {\"success\": false, \"error\": \"You have no remaining credits to use the LLM apis.\"}";
+        assert!(
+            is_budget_exhausted_message(body),
+            "abacus no-remaining-credits 400 must classify as budget-exhausted user-state"
+        );
+        // Case-insensitive on the same phrase.
+        assert!(is_budget_exhausted_message(
+            "You have NO REMAINING CREDITS left"
+        ));
+    }
+
     #[test]
     fn ignores_non_budget_messages() {
         for body in [
             "Bad request: missing field",
             "Invalid request: model not found",
             "HTTP 400 Bad Request",
+            // A positive-balance message must NOT be demoted: we anchor on the
+            // "no remaining credits" fragment precisely so this doesn't trip.
+            "You have 100 remaining credits this month",
             "",
         ] {
             assert!(

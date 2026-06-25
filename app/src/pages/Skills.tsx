@@ -467,6 +467,7 @@ export default function Skills() {
     catalogByToolkit: composioCatalogByToolkit = new Map(),
     connectionByToolkit: composioConnectionByToolkit,
     connectionsByToolkit: composioConnectionsByToolkit,
+    loading: composioLoading,
     error: composioError,
     refresh: refreshComposio,
   } = useComposioIntegrations();
@@ -541,25 +542,42 @@ export default function Skills() {
 
   const composioCatalogToolkits = useMemo(() => {
     const normalizedToolkits = composioToolkits.map(slug => canonicalizeComposioToolkitSlug(slug));
-    // Prefer the live Composio catalog when the backend supplies it. The
-    // hardcoded KNOWN_COMPOSIO_TOOLKITS list only fills gaps for older
-    // cores that predate the dynamic catalog (see
-    // COMPOSIO_DYNAMIC_CATALOG_PLAN.md) so the grid is never empty.
+    // Base-list selection (see COMPOSIO_DYNAMIC_CATALOG_PLAN.md / #3933):
+    //  1. Dynamic catalog present → drive the grid straight off the backend.
+    //  2. Still fetching (no catalog yet) → render NOTHING from the hardcoded
+    //     list. The grid shows a loading skeleton instead. This is the fix for
+    //     the "flash of stale hardcoded toolkits" that appeared before the
+    //     backend catalog landed.
+    //  3. Fetch finished with no catalog (a genuine failure, or an older core
+    //     that predates the dynamic catalog) → fall back to the hardcoded
+    //     KNOWN_COMPOSIO_TOOLKITS so the grid is never empty.
     const dynamicSlugs = Array.from(composioCatalogByToolkit.keys());
     const hasDynamicCatalog = dynamicSlugs.length > 0;
-    const baseSlugs = hasDynamicCatalog ? dynamicSlugs : KNOWN_COMPOSIO_TOOLKITS;
+    let baseSlugs: readonly string[];
+    let source: 'dynamic-backend' | 'loading' | 'hardcoded-fallback';
+    if (hasDynamicCatalog) {
+      baseSlugs = dynamicSlugs;
+      source = 'dynamic-backend';
+    } else if (composioLoading) {
+      baseSlugs = [];
+      source = 'loading';
+    } else {
+      baseSlugs = KNOWN_COMPOSIO_TOOLKITS;
+      source = 'hardcoded-fallback';
+    }
 
     if (IS_DEV) {
       const missingKnownToolkits = KNOWN_COMPOSIO_TOOLKITS.filter(
         slug => !normalizedToolkits.includes(slug)
       );
       console.debug('[skills][composio] building catalog', {
-        source: hasDynamicCatalog ? 'dynamic-backend' : 'hardcoded-fallback',
+        source,
         dynamicCount: dynamicSlugs.length,
         toolkitCount: composioToolkits.length,
         connectionCount: composioConnectionByToolkit.size,
+        loading: composioLoading,
         hasError: Boolean(composioError),
-        missingKnownToolkits: hasDynamicCatalog ? [] : missingKnownToolkits,
+        missingKnownToolkits: source === 'hardcoded-fallback' ? missingKnownToolkits : [],
       });
     }
 
@@ -568,7 +586,13 @@ export default function Skills() {
     return Array.from(new Set([...baseSlugs, ...normalizedToolkits])).sort((a, b) =>
       a.localeCompare(b)
     );
-  }, [composioToolkits, composioCatalogByToolkit, composioConnectionByToolkit, composioError]);
+  }, [
+    composioToolkits,
+    composioCatalogByToolkit,
+    composioConnectionByToolkit,
+    composioLoading,
+    composioError,
+  ]);
 
   // Unified item list
   const allItems: SkillItem[] = useMemo(() => {
@@ -1077,7 +1101,33 @@ export default function Skills() {
                         </div>
                       )}
                       {!showLocalComposioApiKeyBanner &&
-                        (composioSortedEntries.length > 0 ? (
+                        // While the dynamic catalog is still being fetched and we
+                        // have nothing real to show yet, render a loading skeleton
+                        // instead of the hardcoded toolkit list. The hardcoded
+                        // KNOWN_COMPOSIO_TOOLKITS list is only used as a post-fetch
+                        // fallback (see composioCatalogToolkits), never during the
+                        // in-flight loading window (#3933).
+                        (composioLoading && composioSortedEntries.length === 0 ? (
+                          <div
+                            className="grid gap-2 sm:gap-3"
+                            data-testid="composio-integrations-loading"
+                            role="status"
+                            aria-label={t('skills.loadingIntegrations')}
+                            aria-busy="true"
+                            style={{
+                              gridTemplateColumns: 'repeat(auto-fill, minmax(5.5rem, 1fr))',
+                              gridAutoRows: '6.5rem',
+                            }}>
+                            {Array.from({ length: 12 }).map((_, i) => (
+                              <div
+                                key={i}
+                                data-testid="composio-skeleton-tile"
+                                aria-hidden="true"
+                                className="animate-pulse rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-100 dark:bg-neutral-800/60"
+                              />
+                            ))}
+                          </div>
+                        ) : composioSortedEntries.length > 0 ? (
                           <div
                             className="grid gap-2 sm:gap-3"
                             style={{

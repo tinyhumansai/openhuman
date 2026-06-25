@@ -453,7 +453,13 @@ jobs:
           #      never regress relative to the old double build.
           # macOS / Windows take the single-call path unchanged.
           find_cef_lib_dir() {
-            find "$HOME/.cache/tauri-cef" -name libcef.so -printf '%h\n' 2>/dev/null | head -1
+            # `-quit` stops find after the first match so the `| head -1` can't
+            # close the pipe early and SIGPIPE find. Under this step's
+            # `set -o pipefail` + `-e`, that SIGPIPE (exit 141) aborted the whole
+            # build before `cargo tauri build` ran whenever the warm cache held
+            # more than one libcef.so (multiple version/arch dirs). Trailing
+            # `|| true` also absorbs find's exit 1 when the cache dir is absent.
+            find "$HOME/.cache/tauri-cef" -name libcef.so -printf '%h\n' -quit 2>/dev/null | head -1 || true
           }
           if [ "${RUNNER_OS}" = "Linux" ]; then
             CEF_LIB_DIR="$(find_cef_lib_dir)"

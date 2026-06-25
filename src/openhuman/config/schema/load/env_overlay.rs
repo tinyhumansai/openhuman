@@ -845,6 +845,19 @@ impl Config {
                 self.context.summarizer_model = Some(model.to_string());
             }
         }
+        // "Super context" — harness-driven first-turn context collection.
+        // On by default; `OPENHUMAN_SUPER_CONTEXT=0` opts out. Accepts
+        // the canonical short name and the namespaced form.
+        if let Some(flag) = env
+            .get("OPENHUMAN_SUPER_CONTEXT")
+            .or_else(|| env.get("OPENHUMAN_CONTEXT_SUPER_CONTEXT_ENABLED"))
+        {
+            match flag.trim().to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => self.context.super_context_enabled = true,
+                "0" | "false" | "no" | "off" => self.context.super_context_enabled = false,
+                _ => {}
+            }
+        }
 
         let context_default = crate::openhuman::context::DEFAULT_TOOL_RESULT_BUDGET_BYTES;
         let context_env_set = env.contains("OPENHUMAN_CONTEXT_TOOL_RESULT_BUDGET_BYTES");

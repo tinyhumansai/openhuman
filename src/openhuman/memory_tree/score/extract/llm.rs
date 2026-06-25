@@ -346,6 +346,13 @@ fn permanent_failure_code(
         || lower.contains("payment required")
         || lower.contains("requires more credits")
         || lower.contains("insufficient")
+        // Monthly-quota exhaustion (e.g. Kiro `MONTHLY_REQUEST_COUNT`) — the
+        // budget-exhausted remediation ("out of budget; top up — retrying won't
+        // help") is the honest signal even when the proxy omits a 402 status
+        // (TAURI-RUST-C9A).
+        || lower.contains("monthly_request_count")
+        || lower.contains("monthly request")
+        || lower.contains("quota")
     {
         FailureCode::BudgetExhausted
     } else if lower.contains("401")

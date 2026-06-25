@@ -219,6 +219,41 @@ fn non_retryable_detects_common_patterns() {
     assert!(is_non_retryable(&anyhow::anyhow!(
         "SESSION_EXPIRED: backend session not active — sign in to resume LLM work"
     )));
+    // TAURI-RUST-FJZ: the Responses-path error now carries the status in the
+    // structured `(<status>)` position, so a terminal 404 from a provider that
+    // lacks the Responses API is classified non-retryable and the retry loop
+    // stops instead of hammering the permanent 404 (~15k events).
+    assert!(is_non_retryable(&anyhow::anyhow!(
+        "nous-portal Responses API error (404): Not Found"
+    )));
+    // The pre-fix form left `404` unanchored (preceded by `error: `), so it
+    // slipped past the structured-status regex and looped — guard the regression.
+    assert!(
+        !is_non_retryable(&anyhow::anyhow!(
+            "nous-portal Responses API error: 404 Not Found"
+        )),
+        "documents the pre-fix misclassification the structured `(404)` form fixes"
+    );
+}
+
+// TAURI-RUST-C9A: a monthly-quota refusal wrapped in a 500 envelope (so the
+// `structured_http_4xx` regex can't see the inner 402) must still be terminal —
+// retrying a spent plan quota only multiplies wasted calls + Sentry events.
+#[test]
+fn non_retryable_detects_monthly_quota_exhaustion() {
+    assert!(is_non_retryable(&anyhow::anyhow!(
+        "kiro API error (500 Internal Server Error): {{\"error\":{{\"message\":\
+         \"HTTP 402 from Kiro IDE: {{\\\"reason\\\":\\\"MONTHLY_REQUEST_COUNT\\\"}}\",\
+         \"type\":\"server_error\"}}}}"
+    )));
+    assert!(is_non_retryable(&anyhow::anyhow!(
+        "provider returned: you have reached the limit on your monthly requests"
+    )));
+    // A generic 500 outage stays retryable (transient) — the quota arm must not
+    // over-match.
+    assert!(!is_non_retryable(&anyhow::anyhow!(
+        "kiro API error (500 Internal Server Error): upstream connection reset"
+    )));
 }
 
 // C10: a 4xx-looking digit run that appears in *free text* (latency figures,

@@ -4,7 +4,7 @@ use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::profiles::AgentProfileStore;
 use crate::openhuman::threads::turn_state::TurnStateStore;
 
-use super::ops::{key_for, THREAD_SESSIONS};
+use super::ops::{key_for, BudgetCorrelation, THREAD_SESSIONS};
 use super::progress_bridge::spawn_progress_bridge;
 use super::session::{
     build_session_agent, build_session_fingerprint, normalize_model_override, pick_target_agent_id,
@@ -14,7 +14,7 @@ use super::types::SessionEntry;
 use super::types::{ChatRequestMetadata, WebChatTaskResult};
 use super::web_errors::{
     classify_inference_error, inference_budget_exceeded_user_message,
-    is_inference_budget_exceeded_error,
+    is_empty_provider_response_text, is_inference_budget_exceeded_error,
 };
 
 #[cfg(any(test, debug_assertions))]
@@ -232,6 +232,10 @@ pub(crate) async fn run_chat_task(
     .await
     {
         Ok(response) => {
+            // A successful turn proves the thread's balance is usable, so drop
+            // any stale budget-exhausted signal before it could mislabel a
+            // later genuine empty response. See #3386.
+            super::ops::clear_budget_signal(thread_id).await;
             let citations = agent.take_last_turn_citations();
             Ok(WebChatTaskResult {
                 full_response: response,
@@ -240,19 +244,51 @@ pub(crate) async fn run_chat_task(
         }
         Err(err) => {
             let err_message = err.to_string();
-            if is_inference_budget_exceeded_error(&err_message) {
-                log::warn!(
-                    "[web-channel] inference budget exhausted for client={} thread={} request_id={} error_category=budget_exhausted",
-                    client_id,
-                    thread_id,
-                    request_id
-                );
-                Ok(WebChatTaskResult {
-                    full_response: inference_budget_exceeded_user_message().to_string(),
-                    citations: Vec::new(),
-                })
+            let is_budget = is_inference_budget_exceeded_error(&err_message);
+            let is_empty = is_empty_provider_response_text(&err_message.to_lowercase());
+            // Only consult the cross-turn signal for an empty response that is
+            // not already a budget error — avoids taking the lock on every turn.
+            let has_fresh_signal = if !is_budget && is_empty {
+                super::ops::has_fresh_budget_signal(thread_id, &current_fp.provider_binding).await
             } else {
-                Err(err_message)
+                false
+            };
+            match super::ops::classify_budget_correlation(is_budget, is_empty, has_fresh_signal) {
+                BudgetCorrelation::BudgetExhausted => {
+                    // Remember the exhaustion (scoped to this provider binding)
+                    // so a follow-up empty 200 on this thread+provider (managed
+                    // route closes the SSE clean under credit exhaustion, no
+                    // inline marker) reclassifies as budget. #3386.
+                    super::ops::record_budget_signal(thread_id, &current_fp.provider_binding).await;
+                    log::warn!(
+                        "[web-channel] inference budget exhausted for client={} thread={} request_id={} error_category=budget_exhausted",
+                        client_id,
+                        thread_id,
+                        request_id
+                    );
+                    Ok(WebChatTaskResult {
+                        full_response: inference_budget_exceeded_user_message().to_string(),
+                        citations: Vec::new(),
+                    })
+                }
+                BudgetCorrelation::UpgradeEmptyToBudget => {
+                    // Empty provider response within the budget-signal window:
+                    // the turn most likely failed for the same out-of-credits
+                    // reason but arrived as a clean empty 200 with no budget
+                    // marker. Surface the actionable budget copy. #3386.
+                    log::warn!(
+                        "[web-channel] reclassifying empty provider response as budget-exhausted \
+                         from recent same-thread signal client={} thread={} request_id={} error_category=budget_exhausted_correlated",
+                        client_id,
+                        thread_id,
+                        request_id
+                    );
+                    Ok(WebChatTaskResult {
+                        full_response: inference_budget_exceeded_user_message().to_string(),
+                        citations: Vec::new(),
+                    })
+                }
+                BudgetCorrelation::PassThrough => Err(err_message),
             }
         }
     };

@@ -32,7 +32,7 @@ mod worker_thread;
 
 pub(crate) use dispatch::dispatch_subagent;
 
-pub use agent_prepare_context::AgentPrepareContextTool;
+pub use agent_prepare_context::{run_context_scout, AgentPrepareContextTool};
 pub use archetype_delegation::ArchetypeDelegationTool;
 pub use close_subagent::CloseSubagentTool;
 pub use continue_subagent::ContinueSubagentTool;

@@ -10,6 +10,8 @@ export const CORE_RPC_METHODS = {
   configGetMemorySyncSettings: 'openhuman.config_get_memory_sync_settings',
   configGetSandboxSettings: 'openhuman.config_get_sandbox_settings',
   configGetSearchSettings: 'openhuman.config_get_search_settings',
+  configGetSuperContextEnabled: 'openhuman.config_get_super_context_enabled',
+  configSetSuperContextEnabled: 'openhuman.config_set_super_context_enabled',
   configUpdateSearchSettings: 'openhuman.config_update_search_settings',
   configSetBrowserAllowAll: 'openhuman.config_set_browser_allow_all',
   configUpdateAgentPaths: 'openhuman.config_update_agent_paths',

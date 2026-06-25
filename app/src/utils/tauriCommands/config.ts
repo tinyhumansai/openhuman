@@ -564,6 +564,40 @@ export async function openhumanUpdateAutonomySettings(
   });
 }
 
+// ── "Super context" toggle ───────────────────────────────────────────────────
+
+/**
+ * Reads the "super context" flag (`context.super_context_enabled`). When on,
+ * the harness runs a read-only context-collection pass on the first turn of a
+ * new thread — before the orchestrator LLM runs — and folds the result into the
+ * user message. Surfaced as the toggle below the chat composer.
+ */
+export async function openhumanGetSuperContextEnabled(): Promise<CommandResponse<boolean>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<boolean>>({
+    method: CORE_RPC_METHODS.configGetSuperContextEnabled,
+  });
+}
+
+/**
+ * Enables or disables "super context". Takes effect for threads started after
+ * the change (the value is baked into the frozen turn-1 prefix), so toggling it
+ * mid-conversation only affects the next new thread.
+ */
+export async function openhumanSetSuperContextEnabled(
+  value: boolean
+): Promise<CommandResponse<boolean>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<boolean>>({
+    method: CORE_RPC_METHODS.configSetSuperContextEnabled,
+    params: { value },
+  });
+}
+
 // ── Sandbox execution backend settings ───────────────────────────────────────
 
 export type SandboxBackendId = 'auto' | 'docker' | 'landlock' | 'firejail' | 'bubblewrap' | 'none';

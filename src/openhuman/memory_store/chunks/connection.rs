@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use chrono::Utc;
 use parking_lot::Mutex as PMutex;
 use rusqlite::Connection;
 use std::collections::HashMap;
@@ -597,6 +598,131 @@ pub fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result
     f(&guard)
 }
 
+/// Append `suffix` to the *file name* of `path` (so `chunks.db` + `-wal`
+/// = `chunks.db-wal`, and `chunks.db` + `.corrupt-…` = `chunks.db.corrupt-…`).
+/// SQLite names its side-files this way (not as a new extension), and the
+/// quarantine keeps the corrupt image alongside the original for inspection.
+fn with_name_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut p = path.to_path_buf();
+    let name = p
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    p.set_file_name(format!("{name}{suffix}"));
+    p
+}
+
+/// Run `PRAGMA quick_check(1)` against `db_path` on a fresh, short-lived
+/// connection. Returns `Ok(true)` when the structural scan reports `"ok"`,
+/// `Ok(false)` when it reports any corruption, and `Err` when the check itself
+/// can't run (file unopenable / header unreadable — itself a corruption signal
+/// the caller treats as malformed).
+fn quick_check_ok(db_path: &Path) -> Result<bool> {
+    let conn = Connection::open(db_path)
+        .with_context(|| format!("open for quick_check: {}", db_path.display()))?;
+    let _ = conn.busy_timeout(SQLITE_BUSY_TIMEOUT);
+    let result: String = conn
+        .query_row("PRAGMA quick_check(1)", [], |row| row.get(0))
+        .context("running PRAGMA quick_check")?;
+    Ok(result.eq_ignore_ascii_case("ok"))
+}
+
+/// Recover from a `SQLITE_CORRUPT` (malformed image) on the memory_tree DB.
+///
+/// Unlike the transient/contention/disk-full classes, a malformed on-disk
+/// image never heals on its own — every query fails forever and the worker
+/// re-pages Sentry on each poll (Sentry TAURI-RUST-E93: ~1.6k events in ~17 min
+/// from a single host). This is the recovery lever the sibling suppressors
+/// lack: it quarantines the damaged file (and its WAL/SHM side-files) to a
+/// timestamped `.corrupt-<ts>` copy — **preserved, not deleted**, so the bytes
+/// can still be inspected or salvaged — then rebuilds an empty schema so the
+/// memory-tree queue resumes instead of wedging indefinitely.
+///
+/// Returns `Ok(true)` when a quarantine + rebuild happened, `Ok(false)` when a
+/// fresh `PRAGMA quick_check` now passes (the earlier failure was transient and
+/// quarantining would have destroyed good data), and `Err` when the quarantine
+/// rename or the schema rebuild failed (caller backs off and retries).
+pub(crate) fn recover_corrupt_db(config: &Config) -> Result<bool> {
+    let db_path = db_path_for(config);
+
+    // 1. Drop any cached (corrupt) connection + breaker so the OS file handle
+    //    is closed before we rename, and the next open re-inits cleanly.
+    conn_cache().connections.lock().remove(&db_path);
+    conn_cache().breakers.lock().remove(&db_path);
+
+    // 2. Re-confirm corruption against the on-disk file. `quick_check` is the
+    //    cheap structural scan; if it now reports "ok" the image is actually
+    //    healthy (e.g. the original error was a transient mmap fault) and we
+    //    must NOT destroy good data — bail out without quarantining.
+    if db_path.exists() {
+        match quick_check_ok(&db_path) {
+            Ok(true) => {
+                log::info!(
+                    "[memory_tree] quick_check passed for {} — no quarantine needed",
+                    db_path.display()
+                );
+                return Ok(false);
+            }
+            Ok(false) => {
+                log::warn!(
+                    "[memory_tree] quick_check confirms corruption for {}, quarantining",
+                    db_path.display()
+                );
+            }
+            Err(e) => {
+                // The check couldn't even run (unopenable / unreadable header).
+                // That is itself a malformed-image signal — treat as corrupt.
+                log::warn!(
+                    "[memory_tree] quick_check could not run for {} ({e:#}); treating as corrupt",
+                    db_path.display()
+                );
+            }
+        }
+    } else {
+        log::warn!(
+            "[memory_tree] corrupt-recovery: {} is missing; rebuilding fresh schema",
+            db_path.display()
+        );
+    }
+
+    // 3. Quarantine the main DB + WAL/SHM side-files to `<name>.corrupt-<ts>`.
+    let ts = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    let mut quarantined = 0usize;
+    for suffix in &["", "-wal", "-shm"] {
+        let src = with_name_suffix(&db_path, suffix);
+        if !src.exists() {
+            continue;
+        }
+        let dst = with_name_suffix(&src, &format!(".corrupt-{ts}"));
+        std::fs::rename(&src, &dst).with_context(|| {
+            format!(
+                "failed to quarantine corrupt memory_tree file {} -> {}",
+                src.display(),
+                dst.display()
+            )
+        })?;
+        log::warn!(
+            "[memory_tree] quarantined {} -> {}",
+            src.display(),
+            dst.display()
+        );
+        quarantined += 1;
+    }
+
+    // 4. Rebuild an empty schema by forcing a fresh open. The damaged rows are
+    //    not silently dropped — they live on in the `.corrupt-<ts>` copy.
+    get_or_init_connection(config)
+        .context("failed to rebuild memory_tree schema after quarantining corrupt DB")?;
+
+    log::warn!(
+        "[memory_tree] corruption recovery complete: quarantined {quarantined} file(s), \
+         rebuilt empty schema at {}",
+        db_path.display()
+    );
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -633,5 +759,80 @@ mod tests {
         assert!(cb.mark_startup_emitted());
         assert!(!cb.mark_startup_emitted());
         assert!(!cb.mark_startup_emitted());
+    }
+
+    // ── recover_corrupt_db tests (TAURI-RUST-E93 / #4048) ────────────────────
+
+    fn corrupt_test_config() -> (tempfile::TempDir, Config) {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut cfg = Config::default();
+        cfg.workspace_dir = tmp.path().to_path_buf();
+        (tmp, cfg)
+    }
+
+    /// A malformed on-disk image must be quarantined (not deleted) and replaced
+    /// by a fresh, queryable schema so the memory-tree queue resumes.
+    #[test]
+    fn recover_corrupt_db_quarantines_and_rebuilds() {
+        clear_connection_cache();
+        let (_tmp, cfg) = corrupt_test_config();
+        let db_path = db_path_for(&cfg);
+        std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+        // Garbage bytes → not a valid SQLite header → corrupt image.
+        std::fs::write(&db_path, b"this is not a sqlite database, it is garbage").unwrap();
+
+        let recovered = recover_corrupt_db(&cfg).expect("recovery should succeed");
+        assert!(recovered, "garbage image must be quarantined + rebuilt");
+
+        // The corrupt bytes are preserved alongside, not silently dropped.
+        let quarantined: Vec<_> = std::fs::read_dir(db_path.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .contains("chunks.db.corrupt-")
+            })
+            .collect();
+        assert_eq!(
+            quarantined.len(),
+            1,
+            "exactly one quarantined copy should exist"
+        );
+
+        // The rebuilt DB is healthy and the jobs table is queryable + empty.
+        clear_connection_cache();
+        let count: i64 = with_connection(&cfg, |conn| {
+            conn.query_row("SELECT COUNT(*) FROM mem_tree_jobs", [], |r| r.get(0))
+                .context("count jobs")
+        })
+        .expect("rebuilt DB must be queryable");
+        assert_eq!(count, 0, "rebuilt jobs table starts empty");
+    }
+
+    /// A healthy DB must NOT be quarantined — `quick_check` passes, so good data
+    /// is preserved and recovery is a no-op returning `Ok(false)`.
+    #[test]
+    fn recover_corrupt_db_is_noop_on_healthy_db() {
+        clear_connection_cache();
+        let (_tmp, cfg) = corrupt_test_config();
+        // Force a healthy DB into existence.
+        with_connection(&cfg, |conn| {
+            conn.query_row("SELECT COUNT(*) FROM mem_tree_jobs", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .context("seed healthy db")
+        })
+        .unwrap();
+
+        let recovered = recover_corrupt_db(&cfg).expect("recovery should succeed");
+        assert!(!recovered, "healthy DB must not be quarantined");
+
+        let db_path = db_path_for(&cfg);
+        let quarantined = std::fs::read_dir(db_path.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .any(|e| e.file_name().to_string_lossy().contains(".corrupt-"));
+        assert!(!quarantined, "no quarantine file should be created");
     }
 }

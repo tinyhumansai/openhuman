@@ -183,6 +183,15 @@ fn match_home_prefix(s: &str) -> Option<usize> {
 /// the user knows *what* the agent wants to do without exposing the
 /// content.
 pub fn summarize_action(tool_name: &str, args: &Value) -> String {
+    // Friendly, human-readable summaries for tools whose approval card reads
+    // better as a sentence than a `key=value` dump (#3993). `entry_id` is a
+    // public catalog slug, not PII, so it is safe to surface verbatim.
+    if tool_name == "skill_registry_install" {
+        if let Some(id) = args.get("entry_id").and_then(|v| v.as_str()) {
+            return format!("Install the \"{id}\" skill to complete your task");
+        }
+    }
+
     let safe_fields: &[&str] = &[
         "action",
         "tool_slug",
@@ -442,6 +451,38 @@ mod tests {
         let args = json!({});
         let summary = summarize_action("pushover", &args);
         assert!(summary.contains("pushover"));
+        assert!(summary.contains("bytes"));
+    }
+
+    #[test]
+    fn summarize_action_skill_install_is_human_readable() {
+        let args = json!({ "entry_id": "notion" });
+        let summary = summarize_action("skill_registry_install", &args);
+        // Friendly sentence, not a key=value/byte dump (#3993).
+        assert_eq!(
+            summary,
+            "Install the \"notion\" skill to complete your task"
+        );
+        assert!(!summary.contains("bytes"));
+    }
+
+    #[test]
+    fn redact_preserves_toolkit_slug_for_connect_card() {
+        // The inline connect card (#3993) reads `toolkit` out of the redacted
+        // args to drive the OAuth handoff, so a non-sensitive slug must survive
+        // redaction verbatim while real PII alongside it is still scrubbed.
+        let args = json!({ "toolkit": "gmail", "body": "secret message" });
+        let redacted = redact_args(&args);
+        assert_eq!(redacted["toolkit"], json!("gmail"));
+        assert_ne!(redacted["body"], json!("secret message"));
+    }
+
+    #[test]
+    fn summarize_action_skill_install_without_entry_id_falls_back() {
+        let args = json!({});
+        let summary = summarize_action("skill_registry_install", &args);
+        // Missing slug → generic fallback so we never panic or mislabel.
+        assert!(summary.contains("skill_registry_install"));
         assert!(summary.contains("bytes"));
     }
 }

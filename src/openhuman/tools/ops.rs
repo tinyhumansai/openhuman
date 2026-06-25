@@ -363,6 +363,9 @@ pub fn all_tools_with_runtime(
         Box::new(ThreadUpdateTitleTool),
         Box::new(ThreadUpdateLabelsTool),
         Box::new(ThreadMessageListTool),
+        // Read-only cross-thread transcript search (trigram index). Lets the
+        // context scout and other agents recall what was said in earlier chats.
+        Box::new(ThreadTranscriptSearchTool),
         Box::new(ThreadMessageAppendTool),
         Box::new(ThreadMessageUpdateTool),
         Box::new(ThreadTitleGenerateTool),

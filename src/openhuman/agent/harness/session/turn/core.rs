@@ -24,6 +24,41 @@ use anyhow::Result;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+/// Decide whether the harness-driven "super context" collection pass should
+/// run this turn.
+///
+/// It runs only on the first turn of a **genuinely new** thread driven by the
+/// **user-facing orchestrator**:
+/// - `is_orchestrator` — the turn belongs to the `orchestrator` agent (the
+///   interactive chat path surfaced by the composer toggle). `Agent::turn` is
+///   shared with `run_single()` background/automated flows (goals enrichment,
+///   cron/task agents, specialist sub-agents); without this gate those first
+///   turns would spawn `context_scout` and prepend a prepared-context block,
+///   adding unexpected LLM/tool work and changing automated outputs; AND
+/// - `first_turn` — the agent's `history` is empty at turn start; AND
+/// - `!has_prior_conversation` — the seeded `cached_transcript_messages`
+///   prefix contains no prior **assistant** reply. A thread resumed cold
+///   (web-chat task rebuilt for an existing conversation, or a transcript
+///   loaded from disk) also has an empty `history`, so the seeded prefix is
+///   what distinguishes a *new* thread from a *resumed* one. We key on a prior
+///   assistant message rather than "any cached prefix" because an
+///   attachment-first new thread can seed a single just-persisted *user* row
+///   (the expanded `[IMAGE:…]`/`[FILE:…]` send payload doesn't exact-match the
+///   persisted `content`, so `seed_resume_from_messages` can't drop it) — that
+///   is still a brand-new conversation and should get super context; AND
+/// - `enabled` — the `context.super_context_enabled` config flag is on.
+///
+/// Pulled out as a pure function so the gate (in particular the resume and
+/// orchestrator guards) is unit-testable without a full agent turn harness.
+fn should_run_super_context(
+    is_orchestrator: bool,
+    first_turn: bool,
+    has_prior_conversation: bool,
+    enabled: bool,
+) -> bool {
+    is_orchestrator && first_turn && !has_prior_conversation && enabled
+}
+
 impl Agent {
     /// Executes a single interaction "turn" with the agent.
     ///
@@ -47,6 +82,10 @@ impl Agent {
     ///    extraction asynchronously.
     pub async fn turn(&mut self, user_message: &str) -> Result<String> {
         let turn_started = std::time::Instant::now();
+        // Capture before any system-prompt push mutates `history`: this is the
+        // signal that gates first-turn-only work (system prompt build, and the
+        // "super context" harness-driven context-collection pass below).
+        let first_turn = self.history.is_empty();
         self.emit_progress(AgentProgress::TurnStarted).await;
         log::info!("[agent] turn started — awaiting user message processing");
         log::info!(
@@ -427,6 +466,89 @@ impl Agent {
         let enriched = self
             .inject_triggered_memory_agent_context(user_message, enriched, &parent_context)
             .await;
+
+        // ── "Super context": harness-driven first-turn context collection ──
+        // When enabled (config `context.super_context_enabled`, surfaced as the
+        // composer toggle), run the read-only `context_scout` BEFORE the
+        // orchestrator LLM gets the turn, and fold its bounded
+        // `[context_bundle]` into the user message. This is the harness driving
+        // the collection deterministically — unlike the `agent_prepare_context`
+        // tool, which the model chooses to call. The tool stays exposed so the
+        // model can still scout again mid-turn.
+        //
+        // Gate on the **first turn of a genuinely new thread**: `first_turn`
+        // (empty `history`) is necessary but NOT sufficient, because a thread
+        // resumed cold (e.g. a web-chat task rebuilt for an existing
+        // conversation after an app restart) seeds prior messages into
+        // `cached_transcript_messages` via `seed_resume_from_messages` /
+        // `try_load_session_transcript` WITHOUT populating `history`. Without
+        // the `cached_transcript_messages.is_none()` guard, super context would
+        // re-fire on every cold-started existing conversation, surprising the
+        // user with extra scout/tool calls and a stray prepared-context block.
+        //
+        // Runs inside the parent-context scope because `run_context_scout`
+        // reads the parent's visible tool catalogue and runs the scout against
+        // the parent's provider via the PARENT_CONTEXT task-local. Best-effort:
+        // any failure (scout error, no bundle) leaves the turn to proceed with
+        // the un-augmented message rather than blocking the user.
+        // A genuinely new thread has no prior assistant reply in its seeded
+        // transcript prefix; a cold-resumed thread does. (An attachment-first
+        // new thread may seed a lone user row — see `should_run_super_context`.)
+        let has_prior_conversation = self
+            .cached_transcript_messages
+            .as_ref()
+            .is_some_and(|msgs| msgs.iter().any(|m| m.role == "assistant"));
+        let enriched = if should_run_super_context(
+            self.agent_definition_id == "orchestrator",
+            first_turn,
+            has_prior_conversation,
+            self.context.super_context_enabled(),
+        ) {
+            log::info!(
+                "[agent_loop] super_context enabled — running harness-driven context collection (new thread, first turn)"
+            );
+            let scout = harness::with_parent_context(parent_context.clone(), {
+                let user_message = user_message.to_string();
+                async move {
+                    crate::openhuman::agent_orchestration::tools::run_context_scout(
+                        &user_message,
+                        None,
+                    )
+                    .await
+                }
+            })
+            .await;
+            match scout {
+                Ok(result) if !result.is_error => {
+                    let bundle = result.output();
+                    log::info!(
+                        "[agent_loop] super_context bundle collected bundle_chars={}",
+                        bundle.chars().count()
+                    );
+                    format!(
+                        "## Prepared context (super context)\n\nThe following context was \
+                         collected up-front by a read-only context scout before this turn. \
+                         Use it to ground your response; you may still gather more if needed.\n\n\
+                         {bundle}\n\n---\n\n{enriched}"
+                    )
+                }
+                Ok(result) => {
+                    log::warn!(
+                        "[agent_loop] super_context scout returned an error — proceeding without bundle: {}",
+                        result.output()
+                    );
+                    enriched
+                }
+                Err(err) => {
+                    log::warn!(
+                        "[agent_loop] super_context collection failed — proceeding without bundle: {err}"
+                    );
+                    enriched
+                }
+            }
+        } else {
+            enriched
+        };
 
         // #3602: stamp every turn's user message with the live local time
         // so time-relative phrasing (greetings, "today"/"tonight") is
@@ -867,5 +989,54 @@ impl Agent {
                 enriched
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod super_context_gate_tests {
+    use super::should_run_super_context;
+
+    #[test]
+    fn runs_only_on_first_turn_of_a_new_orchestrator_thread_when_enabled() {
+        // Orchestrator, new thread, first turn, flag on → run.
+        assert!(should_run_super_context(true, true, false, true));
+    }
+
+    #[test]
+    fn skips_when_flag_disabled() {
+        assert!(!should_run_super_context(true, true, false, false));
+    }
+
+    #[test]
+    fn skips_on_later_turns() {
+        // history non-empty → not the first turn.
+        assert!(!should_run_super_context(true, false, false, true));
+    }
+
+    #[test]
+    fn skips_on_cold_resumed_thread_even_on_first_turn() {
+        // Regression: a thread resumed cold has an empty `history` (so
+        // `first_turn` is true) but a seeded prefix that includes a prior
+        // assistant reply. Super context must NOT re-fire on these existing
+        // conversations.
+        assert!(!should_run_super_context(true, true, true, true));
+    }
+
+    #[test]
+    fn runs_for_attachment_first_new_thread_with_lone_seeded_user_row() {
+        // Regression: an attachment-first new thread can seed a single just-
+        // persisted *user* row (no assistant reply), so `has_prior_conversation`
+        // is false. That is still a brand-new conversation — super context
+        // should run.
+        assert!(should_run_super_context(true, true, false, true));
+    }
+
+    #[test]
+    fn skips_for_non_orchestrator_agents() {
+        // Regression: `Agent::turn` is shared with background/automated
+        // `run_single()` flows (goals enrichment, cron/task agents,
+        // specialist sub-agents). Even on a fresh first turn with the flag on,
+        // super context must only run for the user-facing orchestrator.
+        assert!(!should_run_super_context(false, true, false, true));
     }
 }

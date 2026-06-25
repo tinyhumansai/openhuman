@@ -113,6 +113,13 @@ export default function SidebarAppRail() {
   const selectedId = activeAccountId ?? AGENT_ID;
   const isAgentSelected = selectedId === AGENT_ID;
 
+  // New-user affordance: when no provider apps are connected yet, the lone
+  // dashed "+" tile reads as ambiguous. Expand it into a labelled "Add apps"
+  // pill so first-run users understand they can connect more apps; once at
+  // least one app is connected, collapse back to the compact icon to reclaim
+  // horizontal space in the rail.
+  const showAddLabel = accounts.length === 0;
+
   // The chat page hides its active provider webview while a rail overlay is
   // open (the native CEF view composites above HTML, so React overlays would be
   // painted over). Mirror local overlay state into Redux for it to read.
@@ -253,12 +260,17 @@ export default function SidebarAppRail() {
           }}
           data-analytics-id="sidebar-app-rail-add-account"
           data-testid="accounts-add-button"
-          className="group relative flex h-9 w-9 flex-none items-center justify-center rounded-xl border border-dashed border-stone-300 text-stone-400 hover:bg-stone-50 hover:text-stone-600 dark:border-neutral-700 dark:text-neutral-500 dark:hover:bg-neutral-800/60 dark:hover:text-neutral-300"
-          aria-label={t('accounts.addAccount')}
-          title={t('accounts.addAccount')}>
-          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          className={`group relative flex h-9 flex-none items-center justify-center gap-1.5 rounded-xl border border-dashed border-stone-300 text-stone-400 transition-colors hover:bg-stone-50 hover:text-stone-600 dark:border-neutral-700 dark:text-neutral-500 dark:hover:bg-neutral-800/60 dark:hover:text-neutral-300 ${
+            showAddLabel ? 'w-auto px-2.5' : 'w-9'
+          }`}
+          aria-label={t('accounts.addApps')}
+          title={t('accounts.addApps')}>
+          <svg className="h-4 w-4 flex-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
           </svg>
+          {showAddLabel && (
+            <span className="whitespace-nowrap text-xs font-medium">{t('accounts.addApps')}</span>
+          )}
         </button>
       </div>
 

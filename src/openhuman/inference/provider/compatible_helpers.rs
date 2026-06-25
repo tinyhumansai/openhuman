@@ -74,7 +74,30 @@ impl OpenAiCompatibleProvider {
             let status_str = status.as_u16().to_string();
             let error = response.text().await?;
             let sanitized = super::super::sanitize_api_error(&error);
-            let message = format!("{} Responses API error: {sanitized}", self.name);
+            // Emit the status in the structured `(<status>)` position the retry
+            // classifier understands (`reliable::structured_http_4xx`). The bare
+            // `"… Responses API error: 404 Not Found"` form left the `404`
+            // unanchored, so a terminal 404 was misclassified as retryable and
+            // looped indefinitely (TAURI-RUST-FJZ, ~15k events).
+            let message = format!(
+                "{} Responses API error ({status_str}): {sanitized}",
+                self.name
+            );
+            // A 404 from the `/responses` route can mean this endpoint has no
+            // Responses API at all — disable the chat-completions-404 →
+            // `/responses` fallback for it so we stop issuing a guaranteed second
+            // 404. Guard against poisoning the process-global cache on a
+            // model/deployment-specific 404 (the route exists, the model
+            // doesn't), which would wrongly drop the fallback for every other
+            // model on a Responses-capable endpoint. Skip when Responses is the
+            // primary path (Codex OAuth): the fallback flag is never consulted
+            // and a 404 there is not evidence the route is missing.
+            if status == reqwest::StatusCode::NOT_FOUND
+                && !self.responses_api_primary
+                && Self::responses_404_indicates_missing_route(&error)
+            {
+                super::mark_responses_api_unsupported(&self.base_url);
+            }
             if super::super::is_budget_exhausted_http_400(status, &error) {
                 super::super::log_budget_exhausted_http_400(
                     "responses_api",
@@ -128,6 +151,20 @@ impl OpenAiCompatibleProvider {
                 &error,
             ) {
                 super::super::log_openai_oauth_session_expired(
+                    "responses_api",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+            } else if super::super::is_provider_insufficient_credits_402(status, &error) {
+                // Insufficient-credits 402: the user's own BYO provider account
+                // is out of balance — a flat billing fact, not a reservation-
+                // window error, so there is NO local max_tokens lever to apply.
+                // Demote to info instead of paging on every retry; this is the
+                // complete classification for a genuinely-unpreventable
+                // BYO-balance condition
+                // (TAURI-RUST-4QF — DeepSeek "Insufficient Balance").
+                super::super::log_provider_insufficient_credits_402(
                     "responses_api",
                     self.name.as_str(),
                     Some(model),
@@ -585,6 +622,20 @@ impl OpenAiCompatibleProvider {
                 || lower.contains("does not support")
                 || lower.contains("invalid")
                 || lower.contains("unexpected"))
+    }
+
+    /// Disambiguate a 404 from the `/responses` route: `true` when it signals the
+    /// *route itself* is absent (this endpoint has no Responses API), `false` when
+    /// it looks model/deployment-specific (the route exists, that model doesn't).
+    ///
+    /// Only a missing-route 404 should disable the fallback for the whole endpoint
+    /// (TAURI-RUST-FJZ). A bad-model 404 must NOT poison the process-global cache,
+    /// or a single bad model would drop the `/responses` fallback for every other
+    /// model on a Responses-capable endpoint. Conservative: any mention of a
+    /// model/deployment keeps the fallback enabled.
+    pub(super) fn responses_404_indicates_missing_route(error: &str) -> bool {
+        let lower = error.to_lowercase();
+        !(lower.contains("model") || lower.contains("deployment"))
     }
 
     /// Detect a 404 whose body says the model is completion-only. See issue #3193.

@@ -30,6 +30,8 @@ const en: TranslationMap = {
     'Tiny.Place is a social network for AI agents. Use OpenHuman to interact, find and post jobs, trade, and grow together.',
   'agentWorld.world': 'World',
   'agentWorld.world.booting': 'Booting renderer...',
+  'agentWorld.world.initError': 'Could not start the world renderer.',
+  'agentWorld.world.retry': 'Retry',
   'agentWorld.world.title': 'Tiny Place',
   'agentWorld.world.description':
     'Join tiny.place so your agent can coordinate with other agents — find and post jobs, trade, message, and team up on bounties.',
@@ -71,6 +73,39 @@ const en: TranslationMap = {
   'explore.noBounties': 'No open bounties',
   'explore.noAgents': 'No agents registered',
   'agentWorld.jobs.deadlineFuture': 'Proposal deadline must be in the future',
+  // Agent World — Identity trading (confirm-before-spend + balance gate)
+  'agentWorld.trading.amountLabel': 'Amount',
+  'agentWorld.trading.networkLabel': 'Network',
+  'agentWorld.trading.balanceLabel': 'Your balance',
+  'agentWorld.trading.walletLabel': 'Wallet',
+  'agentWorld.trading.balanceUnknown': 'Unknown',
+  'agentWorld.trading.cancel': 'Cancel',
+  'agentWorld.trading.addFunds': 'Add funds',
+  'agentWorld.trading.confirmPay': 'Confirm & Pay',
+  'agentWorld.trading.confirmCommit': 'Confirm',
+  'agentWorld.trading.continue': 'Continue',
+  'agentWorld.trading.submitting': 'Submitting…',
+  'agentWorld.trading.placeBid': 'Place bid',
+  'agentWorld.trading.submitOffer': 'Submit offer',
+  // Commit-dialog title PREFIXES — composed with the listing name in code
+  // (`t(...) + ' ' + name`) because `t(key, fallback)` has no interpolation.
+  'agentWorld.trading.bidTitlePrefix': 'Bid on',
+  'agentWorld.trading.offerTitlePrefix': 'Offer for',
+  'agentWorld.trading.bidReviewTitlePrefix': 'Confirm bid on',
+  'agentWorld.trading.offerReviewTitlePrefix': 'Confirm offer for',
+  'agentWorld.trading.spendInsufficient':
+    'Insufficient balance to complete this payment. Add funds to your wallet to continue.',
+  'agentWorld.trading.spendBroadcastNote': 'Your wallet will sign and broadcast this payment on',
+  'agentWorld.trading.commitInsufficientWarning':
+    'Your balance may not cover this if the commitment is accepted. You can still submit it — funds only move on acceptance.',
+  'agentWorld.trading.commitSettleNote':
+    'This is a signed commitment — funds only move if it is accepted.',
+  'agentWorld.trading.commitReviewSubtitle': 'Review your commitment before submitting.',
+  'agentWorld.trading.balanceUnverified':
+    "We couldn't verify your wallet balance. You can still continue — the payment is checked when it is submitted.",
+  'agentWorld.trading.amountTooManyDecimals': 'This amount has too many decimal places.',
+  'agentWorld.trading.amountMustBePositive': 'Enter an amount greater than zero.',
+  'agentWorld.trading.amountInvalid': 'Enter a valid amount.',
   // Agent World — Settings section UI
   'nav.avatarMenu.account': 'Account',
   'nav.avatarMenu.billing': 'Billing',
@@ -489,6 +524,11 @@ const en: TranslationMap = {
   'chat.typeMessage': 'How can I help you today?',
   'chat.send': 'Send message',
   'chat.parallelBranchHint': 'Type a parallel branch — ⌘/Ctrl+Enter to send',
+  'chat.followupHint':
+    'Queue a follow-up — sent after this reply · ⌘/Ctrl+Enter for a parallel branch',
+  'chat.queuedFollowups.label': 'Queued follow-ups',
+  'chat.queuedFollowups.clear': 'Clear',
+  'chat.queuedFollowups.clearFailed': "Couldn't clear the queue — try again.",
   'chat.parallelBranchLabel': 'Parallel branch',
   'chat.thinking': 'Thinking...',
   'chat.noMessages': 'No messages yet',
@@ -505,6 +545,7 @@ const en: TranslationMap = {
   'skills.title': 'Connections',
   'skills.search': 'Search connections...',
   'skills.noResults': 'No connections found',
+  'skills.loadingIntegrations': 'Loading integrations…',
   'skills.connect': 'Connect',
   'skills.disconnect': 'Disconnect',
   'skills.configure': 'Manage',
@@ -1192,6 +1233,7 @@ const en: TranslationMap = {
 
   // Accounts
   'accounts.addAccount': 'Add Account',
+  'accounts.addApps': 'Add apps',
   'accounts.manageAccounts': 'Manage Accounts',
   'accounts.noAccounts': 'No accounts connected',
   'accounts.connectAccount': 'Connect an account to get started',
@@ -2548,6 +2590,9 @@ const en: TranslationMap = {
   'chat.left': 'left',
   'chat.setup': 'Set up',
   'chat.switchToText': 'Switch to text',
+  'chat.superContext.label': 'Super Context',
+  'chat.superContext.hint':
+    'Super Context allows OpenHuman to gather and prepare context from all the data it has access to so that it can deliver a highly relevant answer. Super Context is in early beta.',
   'chat.transcribing': 'Transcribing...',
   'chat.stopAndSend': 'Stop and send',
   'chat.startTalking': 'Start talking',
@@ -3524,6 +3569,9 @@ const en: TranslationMap = {
   'composio.connect.wabaIdHint':
     'Find it via GET /me/businesses then GET /{business_id}/owned_whatsapp_business_accounts using your Meta access token.',
   'composio.connect.wabaIdLabel': 'WhatsApp Business Account ID (WABA ID)',
+  'composio.connect.atlassianSubdomainPlaceholder': 'your-subdomain',
+  'composio.connect.dynamicsOrgNamePlaceholder': 'myorg',
+  'composio.connect.wabaIdPlaceholder': 'e.g. 123456789012345',
   'composio.connect.wabaIdRequired':
     'Please enter your WhatsApp Business Account ID (WABA ID) to continue.',
   'composio.connect.waitingFor': 'Waiting for',
@@ -3613,6 +3661,37 @@ const en: TranslationMap = {
   'conversations.backgroundTasks.steps': '{count} steps',
   'conversations.backgroundTasks.viewDetails': 'View details →',
   'conversations.backgroundTasks.close': 'Close',
+  // Section headers for the broader background-activity panel.
+  'conversations.backgroundTasks.sectionThisChat': 'In this chat',
+  'conversations.backgroundTasks.sectionScheduled': 'Scheduled jobs',
+  'conversations.backgroundTasks.sectionSubconscious': 'Subconscious thinking',
+  'conversations.backgroundTasks.sectionMemory': 'Memory syncing',
+  // Scheduled (cron) jobs.
+  'conversations.backgroundTasks.cronEmpty': 'No scheduled jobs.',
+  'conversations.backgroundTasks.cronUnnamed': 'Untitled job',
+  'conversations.backgroundTasks.cronPaused': 'Paused',
+  'conversations.backgroundTasks.cronNext': 'Next {time}',
+  'conversations.backgroundTasks.cronLast': 'Last run {time}',
+  'conversations.backgroundTasks.cronNever': 'Hasn’t run yet',
+  'conversations.backgroundTasks.cronSchedCron': 'Cron {expr}',
+  'conversations.backgroundTasks.cronSchedEvery': 'Every {duration}',
+  'conversations.backgroundTasks.cronSchedAt': 'Once',
+  // Subconscious / heartbeat loop.
+  'conversations.backgroundTasks.subOff': 'Off',
+  'conversations.backgroundTasks.subWorking': 'Working…',
+  'conversations.backgroundTasks.subIdle': 'Idle',
+  'conversations.backgroundTasks.subLastRan': 'Last ran {time}',
+  'conversations.backgroundTasks.subNeverRan': 'Hasn’t run yet',
+  'conversations.backgroundTasks.subTicks': '{count} runs',
+  'conversations.backgroundTasks.subQueued': '{count} queued',
+  // Memory syncing / ingestion.
+  'conversations.backgroundTasks.memUpToDate': 'All memories up to date',
+  'conversations.backgroundTasks.memIngesting': 'Indexing {title}',
+  'conversations.backgroundTasks.memIngestingUntitled': 'Indexing memories',
+  'conversations.backgroundTasks.memQueued': '{count} queued',
+  'conversations.backgroundTasks.memProviderActive': 'Syncing now',
+  'conversations.backgroundTasks.memProviderRecent': 'Synced recently',
+  'conversations.backgroundTasks.memProviderIdle': 'Idle',
   'conversations.subagent.statusRunning': 'running',
   'conversations.subagent.statusCompleted': 'completed',
   'conversations.subagent.statusFailed': 'failed',

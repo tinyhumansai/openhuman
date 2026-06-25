@@ -214,6 +214,76 @@ pub fn log_provider_insufficient_credits_402(
     );
 }
 
+/// Whether a provider non-2xx response is a deterministic **monthly-quota /
+/// usage-limit exhausted** user-state error — the user's third-party plan has
+/// spent its allotment for the period and no request will succeed until it
+/// resets (a billing/plan state OpenHuman has no lever over).
+///
+/// Distinct from [`is_provider_insufficient_credits_402`] in two ways:
+/// 1. The signal is a *usage-quota cap* ("you have reached the limit",
+///    `MONTHLY_REQUEST_COUNT`), not an account balance.
+/// 2. The upstream proxy may wrap its own 402 inside a **500** envelope, e.g.
+///    Kiro IDE: `kiro API error (500 Internal Server Error): {"error":\
+///    {"message":"HTTP 402 from Kiro IDE: {\"reason\":\"MONTHLY_REQUEST_COUNT\"}"…}}`.
+///    So this is **status-agnostic** — matched against the body like
+///    [`is_context_window_exceeded_message`] — because gating on a 402
+///    transport status (as the credits matcher does) would let the 500-wrapped
+///    flood straight through to [`should_report_provider_http_failure`]
+///    (TAURI-RUST-C9A: 9k events from a single quota-capped user, retried per
+///    memory-extraction attempt).
+///
+/// Keyed on quota-specific wording only, so a generic 500 outage (or a 429
+/// rate-limit, which has its own transient handling) is not swallowed. Covered
+/// by a verbatim-body test so a provider wording drift fails CI.
+pub fn is_provider_quota_exhausted(body: &str) -> bool {
+    body_indicates_quota_exhausted(body)
+}
+
+/// Phrase-level matcher for a provider monthly-quota / usage-limit exhausted
+/// body. Single source of truth for the quota-phrase set, shared by the
+/// emit-site guard [`is_provider_quota_exhausted`] and the `before_send`
+/// defense-in-depth filter
+/// [`crate::core::observability::is_quota_exhausted_event`] (which matches the
+/// formatted `<provider> API error (…): <body>` message so the demotion reaches
+/// every compatible-provider HTTP path, not just `Provider::chat()`'s
+/// `native_chat` cascade). TAURI-RUST-C9A.
+pub fn body_indicates_quota_exhausted(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    lower.contains("monthly_request_count")
+        || lower.contains("monthly request")
+        || lower.contains("monthly limit")
+        || lower.contains("monthly quota")
+        || lower.contains("quota exceeded")
+        || lower.contains("usage limit exceeded")
+        // "reached the limit" alone is ambiguous (rate-limit, token-limit), so
+        // require a quota/plan/request/monthly co-marker to keep the blast
+        // radius on plan-quota exhaustion only.
+        || (lower.contains("reached the limit")
+            && (lower.contains("request")
+                || lower.contains("quota")
+                || lower.contains("monthly")
+                || lower.contains("plan")))
+}
+
+pub fn log_provider_quota_exhausted(
+    operation: &str,
+    provider: &str,
+    model: Option<&str>,
+    status: reqwest::StatusCode,
+) {
+    tracing::info!(
+        domain = "llm_provider",
+        operation = operation,
+        provider = provider,
+        model = model.unwrap_or(""),
+        status = status.as_u16(),
+        failure = "non_2xx",
+        kind = "quota_exhausted",
+        "[llm_provider] {operation} provider monthly-quota exhausted — third-party plan limit \
+         reached (no local lever), not reporting to Sentry"
+    );
+}
+
 /// Whether a provider non-2xx response is a deterministic
 /// **configuration-rejection** user-state error (unknown model id,
 /// abstract tier leaked to a custom provider, model-specific temperature
@@ -736,6 +806,11 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
     // custom gateways mis-report it as 500 — TAURI-RUST-501 — so a status
     // gate would let those through to `should_report_provider_http_failure`).
     let is_context_window_exceeded = is_context_window_exceeded_message(&body);
+    // Monthly-quota exhaustion is likewise status-agnostic: the Kiro IDE proxy
+    // wraps its 402 inside a 500 envelope (TAURI-RUST-C9A), so match the body
+    // directly rather than gating on a 402 status (which the credits matcher
+    // below does). The user's third-party plan quota is spent — no local lever.
+    let is_quota_exhausted = is_provider_quota_exhausted(&body);
     // F4/F2: any managed-backend response carrying a stable `errorCode` is
     // backend-owned — it already paged or is expected user-state — so the FE
     // must not double-report. The one exception (malformed `BAD_REQUEST`) is
@@ -750,6 +825,14 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
     // from Sentry (TAURI-RUST-8FQ flood).
     let is_openai_oauth_session_expired =
         is_openai_oauth_session_expired_http(provider, status, &body);
+    // Insufficient-credits 402: the user's own BYO provider account is out of
+    // balance — a flat billing fact, not a reservation-window error, so there is
+    // NO local max_tokens lever to apply. Demote from Sentry like the per-method
+    // compatible-provider arms; the complete classification for a genuinely-
+    // unpreventable BYO-balance condition (TAURI-RUST-4QF DeepSeek "Insufficient
+    // Balance"). This shared helper backs the two methods that delegate here
+    // (chat_via_responses fallback and the non-streaming completion path).
+    let is_insufficient_credits_402 = is_provider_insufficient_credits_402(status, &body);
 
     if is_auth_failure && is_backend {
         // Single source of truth for backend session-expiry handling (warn +
@@ -766,12 +849,16 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
         log_provider_config_rejection("api_error", provider, None, status);
     } else if is_context_window_exceeded {
         log_context_window_exceeded("api_error", provider, None, status);
+    } else if is_quota_exhausted {
+        log_provider_quota_exhausted("api_error", provider, None, status);
     } else if is_backend_error_code_owned {
         log_backend_error_code_owned("api_error", provider, None, status, &body);
     } else if is_byo_auth_failure {
         log_byo_provider_auth_failure("api_error", provider, None, status);
     } else if is_openai_oauth_session_expired {
         log_openai_oauth_session_expired("api_error", provider, None, status);
+    } else if is_insufficient_credits_402 {
+        log_provider_insufficient_credits_402("api_error", provider, None, status);
     } else if should_report_provider_http_failure(status) {
         crate::core::observability::report_error(
             message.as_str(),
@@ -845,6 +932,70 @@ mod tests {
             StatusCode::PAYMENT_REQUIRED,
             "{\"error\":{\"message\":\"some unrelated condition\"}}"
         ));
+    }
+
+    /// Verbatim TAURI-RUST-C9A provider body — the Kiro IDE proxy wraps its own
+    /// 402 monthly-quota refusal inside a 500 envelope. The matcher keys on this
+    /// prose, so coupling the test to the exact string makes a provider wording
+    /// drift fail CI rather than silently leak events back to Sentry.
+    const C9A_BODY: &str = "kiro API error (500 Internal Server Error): \
+        {\"error\":{\"message\":\"HTTP 402 from Kiro IDE: {\\\"message\\\":\\\"You have \
+        reached the limit.\\\",\\\"reason\\\":\\\"MONTHLY_REQUEST_COUNT\\\"}\",\
+        \"type\":\"server_error\"}}";
+
+    #[test]
+    fn quota_exhausted_matches_verbatim_c9a_body() {
+        // Status-agnostic: the verbatim 500-wrapped body must match even though
+        // the transport status is 500, not 402.
+        assert!(is_provider_quota_exhausted(C9A_BODY));
+        assert!(body_indicates_quota_exhausted(C9A_BODY));
+    }
+
+    #[test]
+    fn quota_exhausted_matches_common_phrasings() {
+        for body in [
+            "{\"reason\":\"MONTHLY_REQUEST_COUNT\"}",
+            "You have reached the limit on your monthly requests",
+            "monthly request quota reached",
+            "monthly limit reached",
+            "plan quota exceeded",
+            "usage limit exceeded for this period",
+        ] {
+            assert!(is_provider_quota_exhausted(body), "should match: {body:?}");
+        }
+    }
+
+    #[test]
+    fn quota_exhausted_ignores_unrelated_500_and_rate_limit() {
+        // A generic 500 outage and a 429 rate-limit are NOT plan-quota
+        // exhaustion and must stay reportable / retryable respectively — the
+        // quota guard must not swallow them.
+        for body in [
+            "kiro API error (500 Internal Server Error): {\"error\":\
+             {\"message\":\"upstream connection reset\",\"type\":\"server_error\"}}",
+            "rate_limit_exceeded: too many requests, retry after 12s",
+            "429 Too Many Requests",
+            "context length exceeded: reduce the number of tokens",
+        ] {
+            assert!(
+                !is_provider_quota_exhausted(body),
+                "should NOT match: {body:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn quota_and_credits_matchers_do_not_overlap_on_c9a() {
+        // The 402-gated credits matcher must keep ignoring the 500-wrapped
+        // quota body (it is status-anchored) — the quota matcher is the one
+        // that catches it. Proves the locked-in
+        // `insufficient_credits_402_ignores_non_402_status` invariant holds and
+        // the two classifiers cover distinct shapes.
+        assert!(!is_provider_insufficient_credits_402(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            C9A_BODY
+        ));
+        assert!(is_provider_quota_exhausted(C9A_BODY));
     }
 
     /// Verbatim TAURI-RUST-8FQ Responses-API body. The matcher keys on this

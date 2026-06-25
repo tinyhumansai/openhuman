@@ -125,6 +125,7 @@ fn all_composio_tools_are_in_skill_category() {
         Box::new(ComposioListToolkitsTool::new(config.clone())),
         Box::new(ComposioListConnectionsTool::new(config.clone())),
         Box::new(ComposioAuthorizeTool::new(config.clone())),
+        Box::new(ComposioConnectTool::new(config.clone())),
         Box::new(ComposioListToolsTool::new(config.clone())),
         Box::new(ComposioExecuteTool::new(config)),
     ];
@@ -144,6 +145,7 @@ fn all_composio_tools_are_in_skill_category() {
     assert!(names.contains(&"composio_list_toolkits"));
     assert!(names.contains(&"composio_list_connections"));
     assert!(names.contains(&"composio_authorize"));
+    assert!(names.contains(&"composio_connect"));
     assert!(names.contains(&"composio_list_tools"));
     assert!(names.contains(&"composio_execute"));
 }
@@ -215,6 +217,119 @@ async fn authorize_tool_execute_rejects_whitespace_toolkit() {
         .await
         .unwrap();
     assert!(result.is_error);
+}
+
+// ── composio_connect (inline approval card, #3993) ──────────────────
+
+fn tool_result_text(result: &crate::openhuman::tools::traits::ToolResult) -> String {
+    result
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            crate::openhuman::tools::traits::ToolContent::Text { text } => Some(text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[test]
+fn connect_tool_metadata_requires_toolkit_and_is_not_auto_gated() {
+    let t = ComposioConnectTool::new(fake_config_arc());
+    assert_eq!(t.name(), "composio_connect");
+    // Gating is done manually inside execute (so it can skip the card when
+    // already connected) — the engine must NOT auto-gate it.
+    assert!(!t.external_effect());
+    let schema = t.parameters_schema();
+    let required: Vec<String> = schema["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(required, vec!["toolkit"]);
+}
+
+#[tokio::test]
+async fn connect_tool_execute_rejects_missing_toolkit() {
+    let t = ComposioConnectTool::new(fake_config_arc());
+    let result = t.execute(serde_json::json!({})).await.unwrap();
+    assert!(result.is_error);
+    assert!(tool_result_text(&result).contains("'toolkit' is required"));
+}
+
+#[tokio::test]
+async fn connect_tool_refuses_without_interactive_chat_context() {
+    // No `APPROVAL_CHAT_CONTEXT` in scope → background/cron turn. There is no
+    // surface for the Connect card, so the tool must fail closed (it returns
+    // before touching the network).
+    let t = ComposioConnectTool::new(fake_config_arc());
+    let result = t
+        .execute(serde_json::json!({ "toolkit": "gmail" }))
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    assert!(tool_result_text(&result).contains("[policy-denied]"));
+}
+
+#[test]
+fn canonicalize_toolkit_slug_maps_known_aliases_and_passes_through() {
+    // Mirrors the FE `canonicalizeComposioToolkitSlug` map (#3993).
+    assert_eq!(
+        super::canonicalize_toolkit_slug("google_drive"),
+        "googledrive"
+    );
+    assert_eq!(
+        super::canonicalize_toolkit_slug("Google_Calendar"),
+        "googlecalendar"
+    );
+    assert_eq!(
+        super::canonicalize_toolkit_slug("google_sheets"),
+        "googlesheets"
+    );
+    assert_eq!(super::canonicalize_toolkit_slug("feishu"), "larksuite");
+    assert_eq!(super::canonicalize_toolkit_slug("lark"), "larksuite");
+    // Unknown slugs are trimmed + lowercased, not rewritten.
+    assert_eq!(super::canonicalize_toolkit_slug("  Notion "), "notion");
+    assert_eq!(super::canonicalize_toolkit_slug("gmail"), "gmail");
+}
+
+#[tokio::test]
+async fn connect_tool_validates_before_gating_in_chat_context() {
+    use crate::openhuman::approval::{ApprovalChatContext, APPROVAL_CHAT_CONTEXT};
+    // With a chat context the interactive guard passes; with no composio
+    // credentials the client factory errors — so execute canonicalizes the
+    // slug, reloads config, checks connected state, and returns a clean error
+    // at the client-resolution step, exercising the pre-gate body with no
+    // network (#3993).
+    let tool = ComposioConnectTool::new(fake_config_arc());
+    let ctx = ApprovalChatContext {
+        thread_id: "t-test".into(),
+        client_id: "c-test".into(),
+    };
+    let result = APPROVAL_CHAT_CONTEXT
+        .scope(
+            ctx,
+            tool.execute(serde_json::json!({ "toolkit": "google_drive" })),
+        )
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    // Backend mode without creds → "Composio is unavailable" (not the
+    // non-interactive policy refusal, which the chat context bypassed).
+    let txt = tool_result_text(&result).to_lowercase();
+    assert!(txt.contains("composio"), "{txt}");
+    assert!(!txt.contains("[policy-denied]"), "{txt}");
+}
+
+#[tokio::test]
+async fn connection_is_active_errs_without_a_client() {
+    // Liveness re-check (#3993): with no composio client (no creds) we cannot
+    // confirm a connection. This must surface as `Err` (state unverifiable) —
+    // NOT `Ok(false)` — so the caller fails closed without fabricating an
+    // "OAuth incomplete" reason that blames the user (#4062, coderabbit).
+    let cfg = crate::openhuman::config::Config::default();
+    assert!(super::connection_is_active(&cfg, "gmail").await.is_err());
 }
 
 #[test]
@@ -302,10 +417,10 @@ fn agent_tools_register_when_backend_signed_in() {
     let tools = all_composio_agent_tools(&config);
     assert_eq!(
         tools.len(),
-        5,
-        "backend session present → all 5 generic composio agent tools should register \
-         (list_toolkits, list_connections, authorize, list_tools, execute). Scope \
-         elevation is intentionally NOT exposed as an agent tool — the user must \
+        6,
+        "backend session present → all 6 generic composio agent tools should register \
+         (list_toolkits, list_connections, authorize, connect, list_tools, execute). \
+         Scope elevation is intentionally NOT exposed as an agent tool — the user must \
          flip scopes themselves in the Connections UI."
     );
 }
@@ -329,9 +444,9 @@ fn agent_tools_register_when_direct_mode_with_stored_key_and_no_backend_session(
     let tools = all_composio_agent_tools(&config);
     assert_eq!(
         tools.len(),
-        5,
+        6,
         "direct mode with stored API key (no backend session) must still register \
-         all 5 generic composio agent tools — the pre-Option-C bug returned 0 here"
+         all 6 generic composio agent tools — the pre-Option-C bug returned 0 here"
     );
 }
 

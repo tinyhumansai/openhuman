@@ -174,4 +174,17 @@ describe('BackgroundProcessesPanel', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(onClose).toHaveBeenCalled();
   });
+
+  it('renders the broader activity sections (cron + memory) alongside sub-agents', () => {
+    // Outside Tauri the activity hook is a no-op, so these sections fall back to
+    // their empty states — which is exactly what we assert here.
+    render(
+      <BackgroundProcessesPanel open processes={procs} onClose={vi.fn()} onOpenProcess={vi.fn()} />
+    );
+    expect(screen.getByText('In this chat')).toBeInTheDocument();
+    expect(screen.getByText('Scheduled jobs')).toBeInTheDocument();
+    expect(screen.getByText('No scheduled jobs.')).toBeInTheDocument();
+    expect(screen.getByText('Memory syncing')).toBeInTheDocument();
+    expect(screen.getByText('All memories up to date')).toBeInTheDocument();
+  });
 });

@@ -118,7 +118,7 @@ const RESOURCE_CATALOG: &[PromptResource] = &[
     PromptResource {
         uri: "openhuman://prompts/agents/context_scout",
         name: "context_scout",
-        description: "Read-only pre-flight worker that gathers context (memory, goals, integrations, web) and returns a bounded context bundle.",
+        description: "Read-only pre-flight worker that gathers context (memory, transcripts, goals, skills, integrations, web) and returns a bounded context bundle.",
         content: include_str!("../agent_registry/agents/context_scout/prompt.md"),
     },
     PromptResource {

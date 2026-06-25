@@ -171,12 +171,14 @@ hint = "chat"
 # Direct tools — things the orchestrator calls itself rather than
 # delegating.
 #
-# `composio_list_connections` is the orchestrator's only composio_*
-# tool: it exists so the agent can detect newly-authorised integrations
-# mid-session (the session-start fetch froze the Delegation Guide's
-# connected list). Authorisation, toolkit discovery, action listing,
-# and action execution all live downstream in `integrations_agent` —
-# the orchestrator never calls composio_authorize / composio_list_tools
+# `composio_list_connections` lets the agent detect newly-authorised
+# integrations mid-session (the session-start fetch froze the Delegation
+# Guide's connected list). `composio_connect` lets it raise an inline
+# connect card for ANY toolkit the user asks to connect — including ones
+# not yet connected (#3993); the tool validates the slug against the
+# backend allowlist and the OAuth handoff itself runs inside the card.
+# Toolkit *action* listing and execution still live downstream in
+# `integrations_agent` — the orchestrator never calls composio_list_tools
 # / composio_execute directly.
 named = [
     "read_workspace_state",
@@ -190,6 +192,11 @@ named = [
     "spawn_async_subagent",
     "spawn_parallel_agents",
     "composio_list_connections",
+    # Inline OAuth connect card (#3993). Free-form `toolkit` slug — the
+    # orchestrator calls this directly to connect a service the user names,
+    # whether or not it is already connected. Validates against the backend
+    # allowlist and raises the in-chat Connect card.
+    "composio_connect",
     # Lightweight MCP discovery — the orchestrator's only `mcp_registry_*`
     # tool, mirroring `composio_list_connections`. Lists the user's installed
     # MCP servers and their live connection state + tool counts so the agent

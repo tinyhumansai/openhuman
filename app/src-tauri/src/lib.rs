@@ -2313,6 +2313,21 @@ pub fn run() {
                 );
                 return None;
             }
+            // Drop provider monthly-quota exhausted events — the user's
+            // third-party plan has spent its allotment (e.g. Kiro
+            // `MONTHLY_REQUEST_COUNT`, sometimes wrapped in a 500 envelope so
+            // the 402-gated credits filter above misses it). No local lever;
+            // mirrors the core binary's main.rs before_send chain
+            // (TAURI-RUST-C9A: 9k events from a single quota-capped user).
+            if openhuman_core::core::observability::is_quota_exhausted_event(&event) {
+                // Metadata-only log shape — `event.message` carries the raw
+                // provider body which CLAUDE.md forbids from local logs.
+                log::debug!(
+                    "[sentry-quota-exhausted-filter] dropping monthly-quota event_id={:?}",
+                    event.event_id
+                );
+                return None;
+            }
             // Strip server_name (hostname) to avoid leaking machine identity.
             event.server_name = None;
             // Attach the cached account uid so Sentry can count unique users

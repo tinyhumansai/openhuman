@@ -562,7 +562,8 @@ describe('Registry tab', () => {
           seller: 'seller-one',
           updatedAt: '2026-02-03T00:00:00Z',
           status: 'active',
-          price: { amount: '100', asset: 'USDC' },
+          // Marketplace prices are BASE units (USDC = 6 decimals); 100 USDC = 100_000_000.
+          price: { amount: '100000000', asset: 'USDC' },
         },
         // no seller, no price → em-dash fallbacks; non-active status branch
         { listingId: 'listing-2', name: '@beta', updatedAt: 'not-a-date', status: 'pending' },
@@ -655,7 +656,7 @@ describe('Trading tab — floor prices', () => {
   test('shows a price when a floor card resolves with a price', async () => {
     vi.mocked(apiClient.marketplace.identityFloor).mockImplementation((length?: number) => {
       if (length === 3)
-        return Promise.resolve({ length: 3, price: { amount: '250', asset: 'USDC' } });
+        return Promise.resolve({ length: 3, price: { amount: '250000000', asset: 'USDC' } });
       return Promise.resolve({ length, price: undefined });
     });
     render(<IdentitiesSection />);
@@ -679,14 +680,14 @@ describe('Trading tab — floor prices', () => {
             {
               listingId: 'sold-floor',
               name: '@soldfloor',
-              price: { amount: '50', asset: 'USDC' },
+              price: { amount: '50000000', asset: 'USDC' },
               status: 'sold',
               updatedAt: '2026-02-03T00:00:00Z',
             },
             {
               listingId: 'active-floor',
               name: '@activefloor',
-              price: { amount: '250', asset: 'USDC' },
+              price: { amount: '250000000', asset: 'USDC' },
               status: 'active',
               updatedAt: '2026-02-03T00:00:00Z',
             },
@@ -710,7 +711,7 @@ describe('Trading tab — floor prices', () => {
           identities: Array.from({ length: 20 }, (_, index) => ({
             listingId: `sold-floor-${index}`,
             name: `@soldfloor${index}`,
-            price: { amount: '50', asset: 'USDC' },
+            price: { amount: '50000000', asset: 'USDC' },
             status: 'sold',
             updatedAt: '2026-02-03T00:00:00Z',
           })),
@@ -721,7 +722,7 @@ describe('Trading tab — floor prices', () => {
           {
             listingId: 'active-floor-page-2',
             name: '@activefloorpage2',
-            price: { amount: '250', asset: 'USDC' },
+            price: { amount: '250000000', asset: 'USDC' },
             status: 'active',
             updatedAt: '2026-02-03T00:00:00Z',
           },
@@ -785,7 +786,7 @@ describe('Trading tab — listed for sale', () => {
           {
             listingId: 'sale-1',
             name: '@forsale',
-            price: { amount: '42', asset: 'USDC' },
+            price: { amount: '42000000', asset: 'USDC' },
             listingType: 'auction',
             seller: 'seller-x',
             updatedAt: '2026-02-03T00:00:00Z',
@@ -793,7 +794,7 @@ describe('Trading tab — listed for sale', () => {
           {
             listingId: 'sale-2',
             name: '@fixedone',
-            price: { amount: '7', asset: 'USDC' },
+            price: { amount: '7000000', asset: 'USDC' },
             listingType: 'fixed',
             updatedAt: '2026-02-03T00:00:00Z',
           },
@@ -928,7 +929,7 @@ describe('Trading tab — recent sales', () => {
         {
           saleId: 'sale-a',
           name: '@solddomain',
-          price: { amount: '999', asset: 'USDC' },
+          price: { amount: '999000000', asset: 'USDC' },
           buyer: 'buyer0123456789abcdef',
           createdAt: '2026-03-15T12:00:00Z',
         },
@@ -955,7 +956,7 @@ describe('Trading tab — recent sales', () => {
   test('renders all three Trading sub-views together when populated', async () => {
     vi.mocked(apiClient.marketplace.identityFloor).mockImplementation((length?: number) =>
       length === 3
-        ? Promise.resolve({ length: 3, price: { amount: '250', asset: 'USDC' } })
+        ? Promise.resolve({ length: 3, price: { amount: '250000000', asset: 'USDC' } })
         : Promise.resolve({ length, price: undefined })
     );
     vi.mocked(apiClient.marketplace.listIdentities).mockResolvedValue({
@@ -963,7 +964,7 @@ describe('Trading tab — recent sales', () => {
         {
           listingId: 'sale-1',
           name: '@listed',
-          price: { amount: '42', asset: 'USDC' },
+          price: { amount: '42000000', asset: 'USDC' },
           listingType: 'fixed',
           updatedAt: '2026-02-03T00:00:00Z',
         },
@@ -974,7 +975,7 @@ describe('Trading tab — recent sales', () => {
         {
           saleId: 'sale-a',
           name: '@sold',
-          price: { amount: '999', asset: 'USDC' },
+          price: { amount: '999000000', asset: 'USDC' },
           buyer: 'buyerabcdef0123456789',
           createdAt: '2026-03-15T12:00:00Z',
         },
@@ -1081,7 +1082,14 @@ const auctionListing = {
 };
 
 describe('Trading tab — bid / offer commitments', () => {
-  test('Bid opens the amount dialog and submits a commitment', async () => {
+  // Helper: enter a human amount and advance past the amount dialog into the
+  // confirm-before-spend review step (the new second phase).
+  async function enterAmountAndReview(human: string) {
+    await userEvent.type(screen.getByTestId('commit-amount-input'), human);
+    await userEvent.click(screen.getByTestId('commit-submit')); // "Continue" → review
+  }
+
+  test('Bid is two-phase: review appears BEFORE the RPC fires, then commits', async () => {
     vi.mocked(apiClient.marketplace.listIdentities).mockResolvedValue({
       identities: [auctionListing],
     });
@@ -1089,10 +1097,17 @@ describe('Trading tab — bid / offer commitments', () => {
     await gotoTab('Trading');
     await userEvent.click(await screen.findByRole('button', { name: 'Bid' }));
 
-    await userEvent.type(screen.getByTestId('commit-amount-input'), '35000000');
-    await userEvent.click(screen.getByTestId('commit-submit'));
+    // Phase 1 — amount (human decimal). Continuing must NOT fire the RPC yet.
+    await enterAmountAndReview('35');
+    expect(apiClient.marketplace.bid).not.toHaveBeenCalled();
+
+    // Phase 2 — review step (confirm-before-spend parity with Buy).
+    const confirm = await screen.findByTestId('x402-confirm');
+    expect(apiClient.marketplace.bid).not.toHaveBeenCalled();
+    await userEvent.click(confirm);
 
     await screen.findByTestId('commit-success');
+    // Human "35" USDC → 35_000_000 base units (decimals = 6).
     expect(apiClient.marketplace.bid).toHaveBeenCalledWith('auc-1', {
       amount: '35000000',
       asset: 'USDC',
@@ -1100,7 +1115,7 @@ describe('Trading tab — bid / offer commitments', () => {
     });
   });
 
-  test('Offer submits a commitment for the handle', async () => {
+  test('Offer submits a commitment for the handle after review', async () => {
     vi.mocked(apiClient.marketplace.listIdentities).mockResolvedValue({
       identities: [auctionListing],
     });
@@ -1108,8 +1123,9 @@ describe('Trading tab — bid / offer commitments', () => {
     await gotoTab('Trading');
     await userEvent.click(await screen.findByRole('button', { name: 'Offer' }));
 
-    await userEvent.type(screen.getByTestId('commit-amount-input'), '25000000');
-    await userEvent.click(screen.getByTestId('commit-submit'));
+    await enterAmountAndReview('25');
+    expect(apiClient.marketplace.offer).not.toHaveBeenCalled();
+    await userEvent.click(await screen.findByTestId('x402-confirm'));
 
     await screen.findByTestId('commit-success');
     expect(apiClient.marketplace.offer).toHaveBeenCalledWith('@auction', {
@@ -1117,6 +1133,20 @@ describe('Trading tab — bid / offer commitments', () => {
       asset: 'USDC',
       network: 'solana-devnet',
     });
+  });
+
+  test('the review step surfaces the "couldn\'t verify balance" note', async () => {
+    // Bid/offer have no balance probe, so the review renders an unknown balance:
+    // the dialog must say so (and still allow confirm), not pretend it's enough.
+    vi.mocked(apiClient.marketplace.listIdentities).mockResolvedValue({
+      identities: [auctionListing],
+    });
+    render(<IdentitiesSection />);
+    await gotoTab('Trading');
+    await userEvent.click(await screen.findByRole('button', { name: 'Bid' }));
+    await enterAmountAndReview('5');
+    expect(await screen.findByTestId('x402-balance-unverified')).toBeInTheDocument();
+    expect(screen.getByTestId('x402-confirm')).toBeEnabled();
   });
 
   test('a failed commitment surfaces an error banner', async () => {
@@ -1127,13 +1157,13 @@ describe('Trading tab — bid / offer commitments', () => {
     render(<IdentitiesSection />);
     await gotoTab('Trading');
     await userEvent.click(await screen.findByRole('button', { name: 'Bid' }));
-    await userEvent.type(screen.getByTestId('commit-amount-input'), '1');
-    await userEvent.click(screen.getByTestId('commit-submit'));
+    await enterAmountAndReview('1');
+    await userEvent.click(await screen.findByTestId('x402-confirm'));
 
     expect(await screen.findByTestId('commit-error')).toHaveTextContent('bid-rejected');
   });
 
-  test('Cancel closes the commitment dialog without calling the API', async () => {
+  test('Cancel on the amount dialog closes without calling the API', async () => {
     vi.mocked(apiClient.marketplace.listIdentities).mockResolvedValue({
       identities: [auctionListing],
     });

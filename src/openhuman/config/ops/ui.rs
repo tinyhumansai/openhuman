@@ -505,6 +505,35 @@ pub async fn set_onboarding_completed(value: bool) -> Result<RpcOutcome<bool>, S
     ))
 }
 
+/// Reads the "super context" toggle (`context.super_context_enabled`).
+///
+/// When on, the agent harness runs a mandatory read-only context-collection
+/// pass on the first turn of a new thread before the orchestrator LLM runs.
+/// Surfaced as the toggle below the chat composer.
+pub async fn get_super_context_enabled() -> Result<RpcOutcome<bool>, String> {
+    let config = load_config_with_timeout().await?;
+    Ok(RpcOutcome::single_log(
+        config.context.super_context_enabled,
+        "super_context_enabled read from config",
+    ))
+}
+
+/// Updates and persists the "super context" toggle.
+///
+/// Read at thread/session construction, so the new value only takes effect
+/// for threads started after the change (matches the frozen turn-1 prefix
+/// contract).
+pub async fn set_super_context_enabled(value: bool) -> Result<RpcOutcome<bool>, String> {
+    tracing::debug!(value, "[super_context] set_super_context_enabled called");
+    let mut config = load_config_with_timeout().await?;
+    config.context.super_context_enabled = value;
+    config.save().await.map_err(|e| e.to_string())?;
+    Ok(RpcOutcome::single_log(
+        config.context.super_context_enabled,
+        "super_context_enabled saved to config",
+    ))
+}
+
 /// Returns the current dictation settings as a JSON object.
 pub async fn get_dictation_settings() -> Result<RpcOutcome<serde_json::Value>, String> {
     let config = load_config_with_timeout().await?;

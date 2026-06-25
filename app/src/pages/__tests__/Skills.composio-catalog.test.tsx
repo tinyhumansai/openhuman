@@ -7,6 +7,7 @@ import Skills from '../Skills';
 
 let composioRefresh = vi.fn();
 let composioError: string | null = null;
+let composioLoading = false;
 let composioToolkits: string[] = [];
 let composioCatalogByToolkit = new Map();
 let composioConnectionByToolkit = new Map();
@@ -44,7 +45,7 @@ vi.mock('../../lib/composio/hooks', () => ({
       composioConnectionsByToolkitOverride ??
       new Map(Array.from(composioConnectionByToolkit.entries()).map(([k, v]) => [k, [v]])),
     refresh: composioRefresh,
-    loading: false,
+    loading: composioLoading,
     error: composioError,
   }),
   // Issue #2283 / CodeRabbit on #2361: Skills.tsx consumes
@@ -72,6 +73,7 @@ describe('Skills page — Composio catalog fallback', () => {
   beforeEach(() => {
     composioRefresh = vi.fn();
     composioError = null;
+    composioLoading = false;
     composioToolkits = [];
     composioCatalogByToolkit = new Map();
     composioConnectionByToolkit = new Map();
@@ -137,6 +139,78 @@ describe('Skills page — Composio catalog fallback', () => {
     ).toBeInTheDocument();
     // A hardcoded-only toolkit absent from the dynamic catalog must NOT
     // appear — proving the grid is driven by the backend, not KNOWN_*.
+    expect(
+      within(integrationsSection as HTMLElement).queryByText('Discord')
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows a loading skeleton (not the hardcoded list) while the catalog is still being fetched', () => {
+    // #3933: during the in-flight fetch we must NOT flash the hardcoded
+    // KNOWN_COMPOSIO_TOOLKITS list. Until the backend catalog lands the grid
+    // renders a loading skeleton instead.
+    composioLoading = true;
+    composioCatalogByToolkit = new Map();
+    composioToolkits = [];
+
+    renderWithProviders(<Skills />, { initialEntries: ['/connections'] });
+    openAppsTab();
+
+    const integrationsSection = screen.getByTestId('composio-integrations-card');
+    // Loading skeleton is shown…
+    expect(
+      within(integrationsSection as HTMLElement).getByTestId('composio-integrations-loading')
+    ).toBeInTheDocument();
+    expect(
+      within(integrationsSection as HTMLElement).queryAllByTestId('composio-skeleton-tile').length
+    ).toBeGreaterThan(0);
+    // …and none of the hardcoded fallback toolkits are rendered yet.
+    expect(
+      within(integrationsSection as HTMLElement).queryByText('Discord')
+    ).not.toBeInTheDocument();
+    expect(within(integrationsSection as HTMLElement).queryByText('Gmail')).not.toBeInTheDocument();
+    expect(within(integrationsSection as HTMLElement).queryByText('Slack')).not.toBeInTheDocument();
+  });
+
+  it('falls back to the hardcoded list once the fetch finishes without a dynamic catalog', () => {
+    // The hardcoded list is a *post-fetch* fallback: when loading completes and
+    // the backend supplied no catalog (a failure or an older core), the grid
+    // must still render so it is never empty.
+    composioLoading = false;
+    composioCatalogByToolkit = new Map();
+
+    renderWithProviders(<Skills />, { initialEntries: ['/connections'] });
+    openAppsTab();
+
+    const integrationsSection = screen.getByTestId('composio-integrations-card');
+    expect(
+      within(integrationsSection as HTMLElement).queryByTestId('composio-integrations-loading')
+    ).not.toBeInTheDocument();
+    expect(within(integrationsSection as HTMLElement).getByText('Discord')).toBeInTheDocument();
+    expect(within(integrationsSection as HTMLElement).getByText('Gmail')).toBeInTheDocument();
+  });
+
+  it('shows the dynamic catalog (not the skeleton) even if a fetch is still in flight once entries exist', () => {
+    // Defensive: if catalog entries are already present we render them rather
+    // than the skeleton, even should `loading` still be true for a poll cycle.
+    composioLoading = true;
+    composioCatalogByToolkit = new Map([
+      [
+        'gmail',
+        { slug: 'gmail', name: 'Gmail Dynamic', categories: ['productivity'], enabled: true },
+      ],
+    ]);
+
+    renderWithProviders(<Skills />, { initialEntries: ['/connections'] });
+    openAppsTab();
+
+    const integrationsSection = screen.getByTestId('composio-integrations-card');
+    expect(
+      within(integrationsSection as HTMLElement).queryByTestId('composio-integrations-loading')
+    ).not.toBeInTheDocument();
+    expect(
+      within(integrationsSection as HTMLElement).getByText('Gmail Dynamic')
+    ).toBeInTheDocument();
+    // Hardcoded-only toolkit absent from the dynamic catalog stays hidden.
     expect(
       within(integrationsSection as HTMLElement).queryByText('Discord')
     ).not.toBeInTheDocument();

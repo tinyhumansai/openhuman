@@ -26,7 +26,10 @@ Commands:
         Run live harness turns over JSON-RPC and summarize transcript token/cache deltas.
   agent-prepare-context-audit [options]
         Live-audit the agent_prepare_context tool: force it per query, print the
-        returned context bundle, scout thoughts, and tokens/cache/cost.
+        returned context bundle (incl. recommended_skills), scout thoughts,
+        gathering tools used, and tokens/cache/cost. Seeds a prior-chat thread
+        with a canary fact and adds a transcript-recall case to prove the scout
+        searches past chats (--no-seed-transcript to skip).
   goals-live [options]
         Live-test the memory_goals flow (list/add/edit/delete + reflect enrichment),
         printing the goals_agent's thoughts, tool calls, token usage and cost.

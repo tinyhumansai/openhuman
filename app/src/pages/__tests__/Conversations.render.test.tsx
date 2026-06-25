@@ -8,14 +8,14 @@
  * previously-blocked lines that are now always rendered.
  */
 import { combineReducers, configureStore } from '@reduxjs/toolkit';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SidebarSlotOutlet, SidebarSlotProvider } from '../../components/layout/shell/SidebarSlot';
 import { threadApi } from '../../services/api/threadApi';
-import { chatSend } from '../../services/chatService';
+import { chatClearQueue, chatSend } from '../../services/chatService';
 import { CoreRpcError } from '../../services/coreRpcClient';
 import agentProfileReducer from '../../store/agentProfileSlice';
 import chatRuntimeReducer, {
@@ -60,6 +60,7 @@ const mockUseOpenRouterFreeModels = vi.hoisted(() => vi.fn());
 
 vi.mock('../../services/chatService', () => ({
   chatCancel: vi.fn(),
+  chatClearQueue: vi.fn().mockResolvedValue(0),
   chatSend: vi.fn().mockResolvedValue(undefined),
   subscribeChatEvents: vi.fn(() => () => {}),
   useRustChat: vi.fn(() => true),
@@ -1197,16 +1198,16 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       // Advance another 80s (total elapsed 160s, well past the 120s
       // window). The tool-timeline dispatch should have re-armed the
       // timer at the 80s mark, so the silence timer is now at 80s of
-      // its fresh 120s budget and has NOT fired. The pending guard
-      // therefore still holds and Send stays disabled — proof the
-      // rearm effect ran on a toolTimelineByThread change.
+      // its fresh 120s budget and has NOT fired — the thread therefore
+      // stays marked active. (The safety timeout would have dispatched
+      // `clearThreadInferenceActive`, dropping it from `activeThreadIds`.)
+      // We assert the active flag directly rather than the Send button:
+      // a streaming thread now keeps the composer open for follow-up
+      // queueing, so Send is intentionally enabled here.
       await act(async () => {
         await vi.advanceTimersByTimeAsync(80_000);
       });
-      await act(async () => {
-        fireEvent.change(textarea, { target: { value: 'still typing while sub-agent runs' } });
-      });
-      expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+      expect(store!.getState().thread.activeThreadIds[thread.id]).toBe(true);
     } finally {
       vi.useRealTimers();
     }
@@ -2120,5 +2121,134 @@ describe('Conversations — active-thread restore across in-app navigation', () 
     await waitFor(() => {
       expect(threadApi.createNewThread).toHaveBeenCalled();
     });
+  });
+});
+
+describe('Conversations — queued follow-ups while a turn streams', () => {
+  // Reset shared mock call history + defaults per test so `toHaveBeenCalledWith`
+  // assertions reflect only the current case (not bleed from an earlier one).
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetThreads.mockResolvedValue({ threads: [], count: 0 });
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+    vi.mocked(chatSend).mockResolvedValue(undefined);
+    vi.mocked(chatClearQueue).mockResolvedValue(0);
+  });
+
+  // A selected thread that is actively streaming (`activeThreadIds`) keeps the
+  // composer open for follow-up queueing — the placeholder flips to the
+  // follow-up hint and a plain-Enter / Send submission queues a follow-up.
+  async function renderStreamingConversation() {
+    const thread = makeThread({ id: 'fup-thread', title: 'FUP Thread' });
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+    let store: ReturnType<typeof buildStore> | undefined;
+    await act(async () => {
+      store = await renderConversations({
+        thread: { ...selectedThreadState(thread), activeThreadIds: { [thread.id]: true } },
+        socket: socketState('connected'),
+      });
+    });
+    const textarea = await screen.findByPlaceholderText(/Queue a follow-up/i);
+    return { store, textarea, thread };
+  }
+
+  it('queues a plain-Enter submission as a follow-up and lists it in the strip', async () => {
+    const { textarea } = await renderStreamingConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'and the pricing?' } });
+    });
+    await act(async () => {
+      fireEvent.keyDown(textarea, { key: 'Enter' });
+    });
+
+    await waitFor(() => {
+      expect(chatSend).toHaveBeenCalledWith(expect.objectContaining({ queueMode: 'followup' }));
+    });
+    expect(await screen.findByText('and the pricing?')).toBeInTheDocument();
+  });
+
+  it('queues via the Send button while a turn streams', async () => {
+    const { textarea } = await renderStreamingConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'one more thing' } });
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    });
+
+    await waitFor(() => {
+      expect(chatSend).toHaveBeenCalledWith(expect.objectContaining({ queueMode: 'followup' }));
+    });
+    expect(await screen.findByText('one more thing')).toBeInTheDocument();
+  });
+
+  it('clears the queued follow-ups and the backend queue on Clear', async () => {
+    const { textarea } = await renderStreamingConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'dismiss me' } });
+    });
+    await act(async () => {
+      fireEvent.keyDown(textarea, { key: 'Enter' });
+    });
+
+    const strip = await screen.findByTestId('queued-followups');
+    expect(within(strip).getByText('dismiss me')).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(within(strip).getByText('Clear'));
+    });
+
+    await waitFor(() => expect(chatClearQueue).toHaveBeenCalledWith('fup-thread'));
+    await waitFor(() => expect(screen.queryByTestId('queued-followups')).not.toBeInTheDocument());
+  });
+
+  it('keeps the queued pills when the backend clear fails', async () => {
+    vi.mocked(chatClearQueue).mockResolvedValueOnce(null);
+    const { textarea } = await renderStreamingConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'still queued' } });
+    });
+    await act(async () => {
+      fireEvent.keyDown(textarea, { key: 'Enter' });
+    });
+
+    const strip = await screen.findByTestId('queued-followups');
+    await act(async () => {
+      fireEvent.click(within(strip).getByText('Clear'));
+    });
+
+    await waitFor(() => expect(chatClearQueue).toHaveBeenCalledWith('fup-thread'));
+    // Clear failed (null) → the backend will still dispatch them, so the pills
+    // stay put instead of falsely showing the queue emptied.
+    expect(screen.getByTestId('queued-followups')).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('queued-followups')).getByText('still queued')
+    ).toBeInTheDocument();
+  });
+
+  it('keeps the draft intact when the follow-up send fails', async () => {
+    vi.mocked(chatSend).mockRejectedValueOnce(new Error('send boom'));
+    const { textarea } = await renderStreamingConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'keep me on failure' } });
+    });
+    await act(async () => {
+      fireEvent.keyDown(textarea, { key: 'Enter' });
+    });
+
+    // Send rejected → no pill queued and the composer keeps the user's text so
+    // they can retry instead of silently losing it.
+    await waitFor(() => expect(chatSend).toHaveBeenCalled());
+    expect(screen.queryByTestId('queued-followups')).not.toBeInTheDocument();
+    expect(textarea).toHaveValue('keep me on failure');
   });
 });

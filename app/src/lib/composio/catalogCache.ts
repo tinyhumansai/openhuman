@@ -85,7 +85,14 @@ function isFresh(entry: CachedCatalog | null): boolean {
  * - Stale-but-present + fetch fail → stale value served (graceful degrade).
  * - Cold + fetch fail              → error propagates to the caller.
  */
-export async function getToolkitCatalog(): Promise<ComposioToolkitsResponse> {
+export async function getToolkitCatalog(options?: {
+  /**
+   * Forwarded to `listToolkits` on a cold/stale fetch. The Connections-page
+   * hook passes `COMPOSIO_FETCH_TIMEOUT_MS` to bound its loading skeleton;
+   * omit it to inherit the global RPC default.
+   */
+  timeoutMs?: number;
+}): Promise<ComposioToolkitsResponse> {
   const cached = readPersisted();
   if (cached && isFresh(cached)) return cached.response;
 
@@ -93,7 +100,7 @@ export async function getToolkitCatalog(): Promise<ComposioToolkitsResponse> {
   // Snapshot the generation so a mid-flight invalidation makes this fetch's
   // result non-authoritative (see `generation`).
   const startGeneration = generation;
-  const fetchPromise = listToolkits()
+  const fetchPromise = listToolkits(options)
     .then(response => {
       // Only cache the response if no invalidation happened while it was in
       // flight; otherwise it belongs to a stale tenant. Still return it to

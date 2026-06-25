@@ -1236,6 +1236,41 @@ async fn api_error_byo_auth_failure_returns_message_via_demoted_branch() {
     );
 }
 
+/// End-to-end through `api_error`: a 500-wrapped monthly-quota refusal (the
+/// Kiro IDE proxy nests its 402 / `MONTHLY_REQUEST_COUNT` inside a 500
+/// envelope, TAURI-RUST-C9A) returns the sanitized provider error to the UI
+/// while routing through the quota-exhausted demote branch — *before* the
+/// `should_report_provider_http_failure(500)` status gate that would otherwise
+/// page once per memory-extraction retry.
+#[tokio::test]
+async fn api_error_monthly_quota_returns_message_via_demoted_branch() {
+    let body = "{\"error\":{\"message\":\"HTTP 402 from Kiro IDE: \
+        {\\\"message\\\":\\\"You have reached the limit.\\\",\
+        \\\"reason\\\":\\\"MONTHLY_REQUEST_COUNT\\\"}\",\"type\":\"server_error\"}}";
+    let http_response = axum::http::Response::builder()
+        .status(StatusCode::INTERNAL_SERVER_ERROR)
+        .body(body.to_string())
+        .expect("build 500 response");
+    let response = reqwest::Response::from(http_response);
+
+    let err = api_error("kiro", response).await;
+    let msg = err.to_string();
+    assert!(
+        msg.contains("kiro API error (500"),
+        "error must still carry the provider/status prefix for the UI: {msg}"
+    );
+    assert!(
+        msg.contains("MONTHLY_REQUEST_COUNT"),
+        "sanitized upstream quota body must propagate to the caller: {msg}"
+    );
+    // The body must classify as quota-exhausted so the demote branch — not the
+    // 500 status gate — handles it.
+    assert!(is_provider_quota_exhausted(body));
+    assert!(should_report_provider_http_failure(
+        StatusCode::INTERNAL_SERVER_ERROR
+    ));
+}
+
 /// `publish_backend_session_expired` must emit a `SessionExpired` event on
 /// the `auth` domain with the canonical source and a sanitized reason, so
 /// the credentials subscriber can drive reauth.

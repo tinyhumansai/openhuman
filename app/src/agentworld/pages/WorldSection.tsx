@@ -9,6 +9,11 @@ const debug = debugFactory('agentworld:world');
 const WORLD_ROOM_KEY = 'outside';
 const WORLD_POPULATION = 100;
 const ROOM_POPULATION = 8;
+// Defense-in-depth backstop: even though GameWorld.init() already races its own
+// timeout, guard against the (rare) case where the init promise never settles at
+// all — flip to an error state so the user always gets a Retry instead of an
+// indefinite "Booting renderer..." overlay.
+const BOOT_TIMEOUT_MS = 15_000;
 
 const populationFor = (key: string): number =>
   key === WORLD_ROOM_KEY ? WORLD_POPULATION : ROOM_POPULATION;
@@ -25,7 +30,10 @@ export default function WorldSection() {
   const containerRef = useRef<HTMLDivElement>(null);
   const worldRef = useRef<GameWorld | null>(null);
   const [ready, setReady] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [roomKey, setRoomKey] = useState(WORLD_ROOM_KEY);
+  // Bumped by the Retry button to re-run the init effect from scratch.
+  const [retryNonce, setRetryNonce] = useState(0);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -34,14 +42,35 @@ export default function WorldSection() {
       return;
     }
 
-    debug('mounting pixi world');
+    debug('mounting pixi world attempt=%d', retryNonce);
+    // Reset visible state for this (possibly retried) boot attempt.
+    setReady(false);
+    setError(null);
     const world = new GameWorld();
     worldRef.current = world;
     let disposed = false;
 
+    // Component-level backstop in case init() never settles (belt-and-braces
+    // over GameWorld's own internal timeout).
+    let bootTimer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
+      if (disposed) {
+        return;
+      }
+      debug('renderer boot backstop fired after %dms', BOOT_TIMEOUT_MS);
+      setError(t('agentWorld.world.initError', 'Could not start the world renderer.'));
+    }, BOOT_TIMEOUT_MS);
+
+    const clearBootTimer = (): void => {
+      if (bootTimer !== undefined) {
+        clearTimeout(bootTimer);
+        bootTimer = undefined;
+      }
+    };
+
     void world
       .init(container)
       .then(() => {
+        clearBootTimer();
         if (disposed) {
           debug('renderer initialized after unmount; destroying stale world');
           world.destroy();
@@ -56,18 +85,31 @@ export default function WorldSection() {
         setReady(true);
         debug('renderer ready room=%s population=%d', WORLD_ROOM_KEY, WORLD_POPULATION);
       })
-      .catch((error: unknown) => {
-        debug('renderer init failed: %s', String(error));
+      .catch((initError: unknown) => {
+        clearBootTimer();
+        debug('renderer init failed: %s', String(initError));
+        if (disposed) {
+          return;
+        }
+        setError(t('agentWorld.world.initError', 'Could not start the world renderer.'));
       });
 
     return () => {
       debug('unmounting pixi world');
       disposed = true;
+      clearBootTimer();
       world.setChangeListener(null);
       world.destroy();
       worldRef.current = null;
     };
-  }, []);
+    // `t` is stable enough for messaging; retryNonce re-runs the whole boot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [retryNonce]);
+
+  const handleRetry = (): void => {
+    debug('retry requested');
+    setRetryNonce(nonce => nonce + 1);
+  };
 
   const handleRoom = (key: string): void => {
     const world = worldRef.current;
@@ -88,7 +130,17 @@ export default function WorldSection() {
   return (
     <div className="relative h-full w-full overflow-hidden bg-black">
       <div ref={containerRef} className="absolute inset-0" />
-      {ready ? null : (
+      {error ? (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 px-6 text-center">
+          <p className="max-w-sm text-sm text-neutral-200">{error}</p>
+          <button
+            type="button"
+            className="rounded-lg border border-primary-500 bg-primary-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-primary-600 dark:border-primary-500 dark:bg-primary-600"
+            onClick={handleRetry}>
+            {t('agentWorld.world.retry', 'Retry')}
+          </button>
+        </div>
+      ) : ready ? null : (
         <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-300">
           {t('agentWorld.world.booting', 'Booting renderer...')}
         </div>

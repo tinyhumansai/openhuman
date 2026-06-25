@@ -666,6 +666,277 @@ impl Tool for ComposioAuthorizeTool {
     }
 }
 
+// ── composio_connect (inline approval card, #3993) ──────────────────
+
+/// Canonicalize an agent/user-supplied toolkit slug to the form Composio's
+/// backend expects. Mirrors `canonicalizeComposioToolkitSlug` on the FE
+/// (`app/src/lib/composio/toolkitSlug.ts`) — **keep the alias maps in sync**.
+/// The agent frequently guesses `google_drive` where Composio uses
+/// `googledrive` (#3993); without this the OAuth handoff fails with an opaque
+/// error.
+fn canonicalize_toolkit_slug(slug: &str) -> String {
+    let key = slug.trim().to_ascii_lowercase();
+    match key.as_str() {
+        "feishu" | "lark" => "larksuite".to_string(),
+        "google_calendar" => "googlecalendar".to_string(),
+        "google_drive" => "googledrive".to_string(),
+        "google_sheets" => "googlesheets".to_string(),
+        _ => key,
+    }
+}
+
+/// Fresh (uncached) liveness check for `toolkit`.
+///
+/// Tri-state via `Result`:
+/// - `Ok(true)`  — a connection is verified ACTIVE.
+/// - `Ok(false)` — the read succeeded but no ACTIVE connection exists.
+/// - `Err(_)`    — the state could **not** be verified (client construction or
+///   the list call failed).
+///
+/// Used to confirm liveness after the approval gate resolves `Allow`. The
+/// card-driven path only approves once it has polled the connection ACTIVE,
+/// but other approval surfaces (a typed `yes`, Telegram's approval prompt, or
+/// an existing auto-approve entry) resolve `Allow` with no OAuth poll — so
+/// `Allow` alone must NOT be treated as "connected" (#3993, codex review).
+///
+/// Distinguishing `Err` from `Ok(false)` lets the caller fail closed on a
+/// transient backend/auth failure **without** fabricating an "OAuth not
+/// complete" reason that wrongly blames the user (#4062, coderabbit review).
+async fn connection_is_active(config: &Config, toolkit: &str) -> anyhow::Result<bool> {
+    let active_match = |connections: &[super::types::ComposioConnection]| {
+        connections
+            .iter()
+            .any(|c| c.is_active() && c.normalized_toolkit().eq_ignore_ascii_case(toolkit))
+    };
+    match create_composio_client(config)? {
+        ComposioClientKind::Backend(client) => {
+            Ok(active_match(&client.list_connections().await?.connections))
+        }
+        ComposioClientKind::Direct(direct) => Ok(active_match(
+            &direct_list_connections(&direct).await?.connections,
+        )),
+    }
+}
+
+/// Connect a Composio integration **inline in the chat** instead of
+/// sending the user off to Settings → Connections.
+///
+/// Unlike [`ComposioAuthorizeTool`] (which hands the agent a raw
+/// `connectUrl` it is not allowed to paste), this tool raises an
+/// approval card via the process-global `ApprovalGate`. The frontend
+/// recognises `tool_name == "composio_connect"` and renders a **Connect**
+/// button: clicking it runs the existing `composio_authorize` RPC, opens
+/// the OAuth handoff, and polls `composio_list_connections` until the
+/// toolkit is ACTIVE — at which point it resolves the gate. The agent
+/// then resumes the original task in the same turn.
+pub struct ComposioConnectTool {
+    config: Arc<Config>,
+}
+
+impl ComposioConnectTool {
+    pub fn new(config: Arc<Config>) -> Self {
+        Self { config }
+    }
+}
+
+#[async_trait]
+impl Tool for ComposioConnectTool {
+    fn name(&self) -> &str {
+        "composio_connect"
+    }
+    fn description(&self) -> &str {
+        "Connect a Composio integration (OAuth) for the user **inline in the chat**. \
+         Raises an approval card with a Connect button — the user authorizes in one \
+         click without leaving the conversation, and this tool returns once the \
+         connection is active (or the user declines). ALWAYS prefer this over telling \
+         the user to open Settings → Connections. Returns {toolkit, connected}."
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "toolkit": {
+                    "type": "string",
+                    "description": "Toolkit slug to connect, e.g. 'gmail' or 'notion'."
+                }
+            },
+            "required": ["toolkit"],
+            "additionalProperties": false
+        })
+    }
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Write
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Workflow
+    }
+    // NOTE: `external_effect` deliberately stays `false`. Gating happens
+    // *inside* `execute` via a manual `ApprovalGate` intercept so we can
+    // (a) skip the card when the toolkit is already connected and (b) carry
+    // the toolkit slug into the card for the inline Connect button. The
+    // engine's auto-gate is unconditional and would double-prompt.
+    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        let raw_toolkit = args
+            .get("toolkit")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        if raw_toolkit.is_empty() {
+            return Ok(ToolResult::error("composio_connect: 'toolkit' is required"));
+        }
+        // Canonicalize before any backend call — the agent often guesses
+        // `google_drive` where Composio expects `googledrive` (#3993).
+        let toolkit = canonicalize_toolkit_slug(raw_toolkit);
+        tracing::debug!(raw = %raw_toolkit, toolkit = %toolkit, "[composio] tool connect.execute");
+
+        // The inline connect card only has a surface on an interactive chat
+        // turn (the web-chat path installs `APPROVAL_CHAT_CONTEXT`). On
+        // background / cron turns there is no UI to click Connect, so fail
+        // closed with a clear message rather than parking forever — mirrors
+        // the `install_tool` guard (#3993).
+        if crate::openhuman::approval::APPROVAL_CHAT_CONTEXT
+            .try_with(|_| ())
+            .is_err()
+        {
+            return Ok(ToolResult::error(format!(
+                "[policy-denied] composio_connect needs an interactive chat turn. \
+                 Ask the user to connect '{toolkit}' in Settings → Connections."
+            )));
+        }
+
+        // Reload config per call so a mid-session `composio.mode` toggle is
+        // honoured (#1710), then skip the card entirely if the toolkit is
+        // already connected — avoids a flash of a Connect card that would
+        // immediately resolve.
+        let live_config =
+            match config_rpc::reload_config_snapshot_with_timeout(self.config.as_ref()).await {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(error = %e, "[composio] connect.execute: load_config failed");
+                    self.config.as_ref().clone()
+                }
+            };
+        let already_connected = super::fetch_connected_integrations(&live_config)
+            .await
+            .into_iter()
+            .any(|ci| ci.connected && ci.toolkit.eq_ignore_ascii_case(&toolkit));
+        if already_connected {
+            tracing::debug!(toolkit = %toolkit, "[composio] connect.execute: already connected");
+            return Ok(ToolResult::success(serde_json::to_string(&json!({
+                "toolkit": toolkit,
+                "connected": true,
+                "already_connected": true,
+            }))?));
+        }
+
+        // Validate the toolkit against the *connectable* catalog before raising
+        // a card. The orchestrator only knows which toolkits are already
+        // connected — it must NOT confabulate "unsupported" from that list
+        // (#3993). This grounds the answer: a backend-allowlisted toolkit gets
+        // a card; a genuinely unsupported one gets a clear, listed refusal
+        // instead of a card that would fail on Connect.
+        match create_composio_client(&live_config) {
+            Ok(ComposioClientKind::Backend(client)) => {
+                if let Ok(resp) = client.list_toolkits().await {
+                    // Empty allowlist = backend predates the catalog / unknown;
+                    // don't block — let the OAuth handoff report support.
+                    if !resp.toolkits.is_empty()
+                        && !resp
+                            .toolkits
+                            .iter()
+                            .any(|s| s.eq_ignore_ascii_case(&toolkit))
+                    {
+                        let available = resp.toolkits.join(", ");
+                        tracing::info!(toolkit = %toolkit, "[composio] connect.execute: toolkit not in allowlist");
+                        return Ok(ToolResult::error(format!(
+                            "composio_connect: '{toolkit}' is not an available integration. \
+                             Connectable toolkits: {available}"
+                        )));
+                    }
+                }
+            }
+            Ok(ComposioClientKind::Direct(_)) => {
+                // Personal-tenant (direct) mode performs OAuth at app.composio.dev,
+                // not via the backend handoff the card drives — so an inline card
+                // can't complete it. Point the user to Settings instead.
+                return Ok(ToolResult::error(format!(
+                    "composio_connect: direct Composio mode is active — connect '{toolkit}' \
+                     in Settings → Connections (your personal Composio account)."
+                )));
+            }
+            Err(e) => {
+                return Ok(ToolResult::error(format!(
+                    "composio_connect: Composio is unavailable: {e}"
+                )));
+            }
+        }
+
+        // Raise the inline connect card via the approval gate. The frontend
+        // resolves it with `approve_once` once it polls the connection ACTIVE;
+        // an explicit decline or the 10-minute TTL resolves it as denied.
+        let gate = match crate::openhuman::approval::ApprovalGate::try_global() {
+            Some(g) => g,
+            None => {
+                return Ok(ToolResult::error(
+                    "composio_connect: approval gate unavailable in this environment",
+                ));
+            }
+        };
+        let summary = format!("Connect {toolkit} to complete your task");
+        let (outcome, _request_id) = gate
+            .intercept_audited("composio_connect", &summary, json!({ "toolkit": toolkit }))
+            .await;
+        match outcome {
+            crate::openhuman::approval::GateOutcome::Allow => {
+                // `Allow` only means the prompt was approved — re-check liveness
+                // with a fresh read, because non-card approval surfaces (typed
+                // "yes", Telegram, auto-approve) resolve Allow without running
+                // the OAuth poll (#3993, codex review).
+                match connection_is_active(&live_config, &toolkit).await {
+                    Ok(true) => {
+                        tracing::debug!(toolkit = %toolkit, "[composio] connect.execute: connection active");
+                        Ok(ToolResult::success(serde_json::to_string(&json!({
+                            "toolkit": toolkit,
+                            "connected": true,
+                        }))?))
+                    }
+                    Ok(false) => {
+                        tracing::info!(toolkit = %toolkit, "[composio] connect.execute: approved but not yet active");
+                        Ok(ToolResult::success(serde_json::to_string(&json!({
+                            "toolkit": toolkit,
+                            "connected": false,
+                            "reason": "Approved, but the connection is not active yet — the user still needs to complete the OAuth flow.",
+                        }))?))
+                    }
+                    Err(e) => {
+                        // Couldn't verify liveness — a transient backend/auth
+                        // failure, NOT proof the user skipped OAuth. Fail closed
+                        // (connected:false) but report a verification error
+                        // rather than fabricating an "OAuth incomplete" reason
+                        // that blames the user and can drive the agent into
+                        // reconnect loops (#4062, coderabbit review).
+                        tracing::warn!(toolkit = %toolkit, error = %e, "[composio] connect.execute: liveness check failed");
+                        Ok(ToolResult::success(serde_json::to_string(&json!({
+                            "toolkit": toolkit,
+                            "connected": false,
+                            "reason": "Approved, but the connection state could not be verified right now (a temporary problem reaching Composio). Please try connecting again in a moment.",
+                        }))?))
+                    }
+                }
+            }
+            crate::openhuman::approval::GateOutcome::Deny { reason } => {
+                tracing::info!(toolkit = %toolkit, reason = %reason, "[composio] connect.execute: declined");
+                Ok(ToolResult::success(serde_json::to_string(&json!({
+                    "toolkit": toolkit,
+                    "connected": false,
+                    "declined": true,
+                    "reason": reason,
+                }))?))
+            }
+        }
+    }
+}
+
 // ── composio_list_tools ─────────────────────────────────────────────
 
 pub struct ComposioListToolsTool {
@@ -1255,6 +1526,9 @@ pub fn all_composio_agent_tools(config: &crate::openhuman::config::Config) -> Ve
         Box::new(ComposioListToolkitsTool::new(config_arc.clone())),
         Box::new(ComposioListConnectionsTool::new(config_arc.clone())),
         Box::new(ComposioAuthorizeTool::new(config_arc.clone())),
+        // Inline-in-chat OAuth connect card (#3993). Raises an approval card
+        // with a Connect button instead of handing the agent a raw URL.
+        Box::new(ComposioConnectTool::new(config_arc.clone())),
         Box::new(ComposioListToolsTool::new(config_arc.clone())),
         Box::new(ComposioExecuteTool::new(config_arc)),
         // Pref-elevation is intentionally NOT an agent-callable tool;

@@ -153,6 +153,25 @@ mod tests {
         assert!(body.contains("recommended_tool_calls"));
     }
 
+    #[test]
+    fn body_instructs_transcript_and_skill_gathering() {
+        // The enrichment is only real if the role prompt actually tells the
+        // scout to search past chats and recommend skills — lock that wiring.
+        let body = build(&test_ctx()).unwrap();
+        assert!(
+            body.contains("transcript_search"),
+            "scout prompt must instruct searching past conversations"
+        );
+        assert!(
+            body.contains("recommended_skills"),
+            "scout prompt must define the recommended_skills output block"
+        );
+        assert!(
+            body.contains("list_workflows"),
+            "scout prompt must point at skill discovery"
+        );
+    }
+
     fn integration(toolkit: &str, connected: bool) -> ConnectedIntegration {
         ConnectedIntegration {
             toolkit: toolkit.to_string(),

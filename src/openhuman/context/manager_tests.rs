@@ -391,6 +391,29 @@ fn new_exposes_tool_budget_and_markdown_preference_from_config() {
 }
 
 #[test]
+fn super_context_enabled_reflects_config() {
+    // Default config: on.
+    let on = ContextManager::new(
+        &ContextConfig::default(),
+        MockSummarizer::ok(),
+        "m".into(),
+        SystemPromptBuilder::with_defaults(),
+    );
+    assert!(on.super_context_enabled());
+
+    // Explicitly disabled in config → getter reports off.
+    let mut config = ContextConfig::default();
+    config.super_context_enabled = false;
+    let off = ContextManager::new(
+        &config,
+        MockSummarizer::ok(),
+        "m".into(),
+        SystemPromptBuilder::with_defaults(),
+    );
+    assert!(!off.super_context_enabled());
+}
+
+#[test]
 fn session_memory_lifecycle_changes_should_extract_state() {
     let summarizer = MockSummarizer::ok();
     let mut manager = manager_with(summarizer);

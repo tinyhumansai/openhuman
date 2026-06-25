@@ -8,6 +8,7 @@ import { threadApi } from '../../services/api/threadApi';
 import { store } from '../../store';
 import {
   clearAllChatRuntime,
+  enqueueFollowup,
   registerParallelRequest,
   resetSessionTokenUsage,
 } from '../../store/chatRuntimeSlice';
@@ -388,6 +389,45 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
 
       // Snapshot refetch fired exactly once on the first chat_done — issue #924.
       await waitFor(() => expect(mockRefetchSnapshot).toHaveBeenCalledTimes(1));
+    });
+
+    it('flushes queued follow-ups into the transcript when a turn ends', async () => {
+      const listeners = renderProvider();
+      store.dispatch(
+        enqueueFollowup({
+          threadId: 't-fup',
+          message: {
+            id: 'f1',
+            content: 'queued follow-up text',
+            type: 'text',
+            extraMetadata: {},
+            sender: 'user',
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+          label: 'queued follow-up text',
+        })
+      );
+
+      await act(async () => {
+        listeners.onDone?.({
+          thread_id: 't-fup',
+          request_id: 'r-fup',
+          full_response: 'assistant reply',
+          rounds_used: 1,
+          total_input_tokens: 1,
+          total_output_tokens: 1,
+        });
+      });
+
+      // The queued prompt is persisted as a real user message (survives reload,
+      // appended AFTER the assistant reply) and the pills are cleared.
+      await waitFor(() =>
+        expect(threadApi.appendMessage).toHaveBeenCalledWith(
+          't-fup',
+          expect.objectContaining({ content: 'queued follow-up text', sender: 'user' })
+        )
+      );
+      expect(store.getState().chatRuntime.queuedFollowupsByThread['t-fup']).toBeUndefined();
     });
 
     it('processes tool_call for different rounds as distinct events', () => {

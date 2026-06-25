@@ -4,7 +4,7 @@ import { isLocalSessionToken } from '../../utils/localSession';
 import { openhumanComposioGetMode } from '../../utils/tauriCommands';
 import { getCoreStateSnapshot } from '../coreState/store';
 import { getToolkitCatalog, invalidateToolkitCatalogCache } from './catalogCache';
-import { listAgentReadyToolkits, listConnections } from './composioApi';
+import { COMPOSIO_FETCH_TIMEOUT_MS, listAgentReadyToolkits, listConnections } from './composioApi';
 import { canonicalizeComposioToolkitSlug } from './toolkitSlug';
 import type { ComposioConnection, ComposioToolkitCatalogEntry } from './types';
 
@@ -99,9 +99,12 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
 
     let nextError: string | null = null;
     try {
+      // Bound both fetches so the loading skeleton can't pin past ~8s on a
+      // cold cache / down backend. This is the only path that opts into the
+      // shorter budget — see COMPOSIO_FETCH_TIMEOUT_MS.
       const [toolkitsResult, connectionsResult] = await Promise.allSettled([
-        getToolkitCatalog(),
-        listConnections(),
+        getToolkitCatalog({ timeoutMs: COMPOSIO_FETCH_TIMEOUT_MS }),
+        listConnections({ timeoutMs: COMPOSIO_FETCH_TIMEOUT_MS }),
       ]);
       if (!mountedRef.current) return;
 
@@ -139,7 +142,7 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
     void refresh();
     if (pollIntervalMs <= 0 || fetchEnabled !== true) return;
     const id = window.setInterval(() => {
-      void listConnections()
+      void listConnections({ timeoutMs: COMPOSIO_FETCH_TIMEOUT_MS })
         .then(resp => {
           if (!mountedRef.current) return;
           setConnections(resp.connections ?? []);

@@ -428,6 +428,114 @@ async fn query_supporting_relations_contain_entity_types() {
     }
 }
 
+/// `recall_namespace_memories` builds one shared `RelationMatch` view for all
+/// documents (hoisted out of the per-document loop). This pins that the shared
+/// input is still filtered per-document: with two documents each carrying their
+/// own graph relation, neither hit may surface the other's relation. A naive
+/// hoist that leaked the wrong relations across documents would fail here, where
+/// the single-document recall tests above cannot.
+#[tokio::test]
+async fn recall_supporting_relations_stay_scoped_per_document() {
+    let tmp = TempDir::new().unwrap();
+    let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+    let alpha_id = memory
+        .upsert_document(NamespaceDocumentInput {
+            namespace: "team".to_string(),
+            key: "alpha-doc".to_string(),
+            title: "Alpha".to_string(),
+            content: "Alice leads the Atlas project.".to_string(),
+            source_type: "doc".to_string(),
+            priority: "high".to_string(),
+            tags: vec!["project".to_string()],
+            metadata: json!({}),
+            category: "core".to_string(),
+            session_id: None,
+            document_id: None,
+            taint: crate::openhuman::memory::MemoryTaint::Internal,
+        })
+        .await
+        .unwrap();
+    let beta_id = memory
+        .upsert_document(NamespaceDocumentInput {
+            namespace: "team".to_string(),
+            key: "beta-doc".to_string(),
+            title: "Beta".to_string(),
+            content: "Bob manages the Borealis launch.".to_string(),
+            source_type: "doc".to_string(),
+            priority: "high".to_string(),
+            tags: vec!["project".to_string()],
+            metadata: json!({}),
+            category: "core".to_string(),
+            session_id: None,
+            document_id: None,
+            taint: crate::openhuman::memory::MemoryTaint::Internal,
+        })
+        .await
+        .unwrap();
+
+    memory
+        .graph_upsert_namespace(
+            "team",
+            "Alice",
+            "OWNS",
+            "Atlas",
+            &json!({ "document_id": alpha_id }),
+        )
+        .await
+        .unwrap();
+    memory
+        .graph_upsert_namespace(
+            "team",
+            "Bob",
+            "OWNS",
+            "Borealis",
+            &json!({ "document_id": beta_id }),
+        )
+        .await
+        .unwrap();
+
+    let hits = memory.recall_namespace_memories("team", 10).await.unwrap();
+    let alpha = hits
+        .iter()
+        .find(|hit| hit.key == "alpha-doc")
+        .expect("recall should return alpha-doc");
+    let beta = hits
+        .iter()
+        .find(|hit| hit.key == "beta-doc")
+        .expect("recall should return beta-doc");
+
+    let objects = |hit: &crate::openhuman::memory_store::NamespaceMemoryHit| {
+        hit.supporting_relations
+            .iter()
+            .map(|relation| relation.object.to_uppercase())
+            .collect::<Vec<_>>()
+    };
+    let alpha_objects = objects(alpha);
+    let beta_objects = objects(beta);
+
+    assert!(
+        alpha_objects.iter().any(|object| object.contains("ATLAS")),
+        "alpha-doc should keep its own relation, got {alpha_objects:?}"
+    );
+    assert!(
+        !alpha_objects
+            .iter()
+            .any(|object| object.contains("BOREALIS")),
+        "alpha-doc must not surface beta-doc's relation, got {alpha_objects:?}"
+    );
+    assert!(
+        beta_objects
+            .iter()
+            .any(|object| object.contains("BOREALIS")),
+        "beta-doc should keep its own relation, got {beta_objects:?}"
+    );
+    assert!(
+        !beta_objects.iter().any(|object| object.contains("ATLAS")),
+        "beta-doc must not surface alpha-doc's relation, got {beta_objects:?}"
+    );
+}
+
 #[tokio::test]
 async fn format_context_text_includes_entity_types() {
     let tmp = TempDir::new().unwrap();

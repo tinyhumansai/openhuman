@@ -73,9 +73,14 @@ export default function SidebarNav() {
             onClick={() => handleClick(tab, active)}
             title={tab.label}
             aria-current={active ? 'page' : undefined}
+            // Light theme: the previous `bg-white` active state matched the
+            // white sidebar background, so the selected tab was nearly
+            // invisible. Use the ocean-brand accent (tinted fill + blue text +
+            // subtle ring) so the current tab clearly stands out. Dark theme
+            // already had enough contrast via `neutral-800`, so it's unchanged.
             className={`group flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] transition-colors cursor-pointer ${
               active
-                ? 'bg-white dark:bg-neutral-800 text-stone-900 dark:text-neutral-100 font-semibold shadow-sm'
+                ? 'bg-primary-50 text-primary-700 ring-1 ring-primary-200 dark:bg-neutral-800 dark:text-neutral-100 dark:ring-0 font-semibold shadow-sm'
                 : 'text-stone-500 dark:text-neutral-400 hover:bg-stone-200/70 dark:hover:bg-neutral-800/60 hover:text-stone-700 dark:hover:text-neutral-200'
             }`}>
             <span className="relative inline-flex flex-shrink-0">

@@ -12,8 +12,8 @@ use super::helpers::{
     MeetSettingsUpdate, MemorySettingsUpdate, MemorySyncSettingsUpdate, ModelSettingsUpdate,
     OnboardingCompletedSetParams, RuntimeSettingsUpdate, SandboxSettingsUpdate,
     ScreenIntelligenceSettingsUpdate, SearchSettingsUpdate, SetBrowserAllowAllParams,
-    VoiceServerSettingsUpdate, WorkspaceOnboardingFlagParams, WorkspaceOnboardingFlagSetParams,
-    DEFAULT_ONBOARDING_FLAG_NAME,
+    SuperContextSetParams, VoiceServerSettingsUpdate, WorkspaceOnboardingFlagParams,
+    WorkspaceOnboardingFlagSetParams, DEFAULT_ONBOARDING_FLAG_NAME,
 };
 use super::schema_defs::schemas;
 
@@ -44,6 +44,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("update_agent_paths"),
         schemas("get_onboarding_completed"),
         schemas("set_onboarding_completed"),
+        schemas("get_super_context_enabled"),
+        schemas("set_super_context_enabled"),
         schemas("get_dictation_settings"),
         schemas("update_dictation_settings"),
         schemas("get_voice_server_settings"),
@@ -166,6 +168,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("set_onboarding_completed"),
             handler: handle_set_onboarding_completed,
+        },
+        RegisteredController {
+            schema: schemas("get_super_context_enabled"),
+            handler: handle_get_super_context_enabled,
+        },
+        RegisteredController {
+            schema: schemas("set_super_context_enabled"),
+            handler: handle_set_super_context_enabled,
         },
         RegisteredController {
             schema: schemas("get_dictation_settings"),
@@ -829,6 +839,17 @@ fn handle_set_onboarding_completed(params: Map<String, Value>) -> ControllerFutu
     Box::pin(async move {
         let payload = deserialize_params::<OnboardingCompletedSetParams>(params)?;
         to_json(config_rpc::set_onboarding_completed(payload.value).await?)
+    })
+}
+
+fn handle_get_super_context_enabled(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async { to_json(config_rpc::get_super_context_enabled().await?) })
+}
+
+fn handle_set_super_context_enabled(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let payload = deserialize_params::<SuperContextSetParams>(params)?;
+        to_json(config_rpc::set_super_context_enabled(payload.value).await?)
     })
 }
 

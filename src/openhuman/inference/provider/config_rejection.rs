@@ -251,6 +251,18 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         // harmless (`.any()` short-circuits) and kept so each Sentry
         // family stays self-documenting.
         "does not support tools",
+        // TAURI-RUST-ADC (~5.9k events / 10 users) — OpenRouter's
+        // *router-level* phrasing of the same tool-capability user-state.
+        // When the picked model has no provider endpoint that supports tool
+        // calling, OpenRouter returns a 404 with `{"error":{"message":"No
+        // endpoints found that support tool use. Try disabling \"<tool>\".
+        // ..."}}`. The wording differs from the direct-provider `does not
+        // support tools` body above ("tool use" vs "tools", prefixed with
+        // "No endpoints found"), so it needs its own anchor. Same user-state
+        // class: pick a tool-capable model. Surfaced most often by the
+        // autonomous Subconscious loop, which additionally halts on this via
+        // its own capability breaker (`subconscious/engine.rs`).
+        "no endpoints found that support tool use",
         // TAURI-RUST-4P6 (~36.6k events / 2 users) — user picked an
         // *embedding* model (Ollama `bge-m3:latest`, OpenHuman's default
         // memory-tree embed model) as their chat model. Ollama rejects every
@@ -366,6 +378,13 @@ mod tests {
             (
                 "J4",
                 r#"custom_openai streaming API error (404 Not Found): {"error":{"message":"model 'llama3.3' not found","type":"not_found_error","param":null,"code":null}}"#,
+            ),
+            // TAURI-RUST-ADC — OpenRouter router-level "no tool-use endpoint"
+            // 404, surfaced by the autonomous Subconscious loop on a
+            // content-safety model that supports no tools.
+            (
+                "ADC",
+                r#"openrouter API error (404 Not Found): {"error":{"message":"No endpoints found that support tool use. Try disabling \"spawn_async_subagent\". To learn more about provider routing, visit: https://openrouter.ai/docs/guides/routing/provider-selection"}}"#,
             ),
             // TAURI-RUST-4NM — nvidia-nim (and compatible providers) return
             // this body when the request body has an empty `"model":""`.

@@ -21,6 +21,13 @@ pub struct OpenAiEmbedding {
     /// LocalAI/Ollama — keep working unchanged. Set via
     /// [`Self::with_send_dimensions`] for the OpenAI / custom-OpenAI paths.
     send_dimensions: bool,
+    /// When true, this provider points at a hosted cloud endpoint that always
+    /// requires a bearer token (genuine OpenAI `api.openai.com`, Voyage), so an
+    /// empty `api_key` must fail fast instead of POSTing an unauthenticated
+    /// request. Off by default so the OpenAI-compatible provider keeps serving
+    /// keyless local/custom endpoints (LocalAI, Ollama-via-OpenAI). Set via
+    /// [`Self::with_required_api_key`]. See the guard in [`Self::embed`].
+    requires_api_key: bool,
 }
 
 impl OpenAiEmbedding {
@@ -32,6 +39,7 @@ impl OpenAiEmbedding {
             model: model.to_string(),
             dims,
             send_dimensions: false,
+            requires_api_key: false,
         }
     }
 
@@ -42,6 +50,17 @@ impl OpenAiEmbedding {
     /// see [`Self::send_dimensions`]. Returns `self` for builder chaining.
     pub fn with_send_dimensions(mut self, send: bool) -> Self {
         self.send_dimensions = send;
+        self
+    }
+
+    /// Mark this provider as a keyed cloud endpoint that must have an API key.
+    /// When set, [`Self::embed`] fails fast (before any HTTP round-trip) if the
+    /// resolved `api_key` is empty, instead of silently omitting the
+    /// `Authorization` header. Use for genuine OpenAI (`api.openai.com`) and
+    /// Voyage; leave off for keyless local/custom OpenAI-compatible endpoints.
+    /// Returns `self` for builder chaining.
+    pub fn with_required_api_key(mut self, required: bool) -> Self {
+        self.requires_api_key = required;
         self
     }
 
@@ -143,6 +162,37 @@ impl EmbeddingProvider for OpenAiEmbedding {
             );
         }
 
+        // Fast-fail when this is a keyed cloud provider (OpenAI / Voyage) but the
+        // resolved key is empty. The key collapses to "" when the stored BYO
+        // credential can't be read — the OS-keychain consent is `none`/declined
+        // (`cached_consent=none`) or the cred fails to decrypt — because
+        // `resolve_api_key` swallows every such failure into "". Without this
+        // guard the request goes out with NO `Authorization` header at all and
+        // OpenAI 401s "You didn't provide an API key" on every embed; the memory
+        // pipeline re-embeds per document and floods Sentry (TAURI-RUST-4TZ:
+        // 3.9k events). Bailing here skips the wasted request, and the "API key
+        // not set" wording is demoted by the `ApiKeyMissing` classifier in
+        // `core::observability` to a single low-cardinality breadcrumb. The
+        // remediation surfaces the keychain-consent / re-enter-key path so the
+        // stored key can actually be read. Scoped via `requires_api_key`: the
+        // OpenAI-compatible provider legitimately supports keyless local/custom
+        // endpoints (LocalAI, Ollama-via-OpenAI), which keep omitting the header
+        // rather than bailing — mirroring the Cohere guard (TAURI-RUST-52S).
+        if self.requires_api_key && self.api_key.trim().is_empty() {
+            let message = format!(
+                "Embedding API key not set (model={}) — re-enter your key or grant \
+                 keychain access in Settings → Memory",
+                self.model,
+            );
+            crate::core::observability::report_error_or_expected(
+                message.as_str(),
+                "embeddings",
+                "openai_embed",
+                &[("model", self.model.as_str()), ("failure", "missing_key")],
+            );
+            anyhow::bail!(message);
+        }
+
         let url = self.embeddings_url();
 
         tracing::debug!(
@@ -242,6 +292,25 @@ impl EmbeddingProvider for OpenAiEmbedding {
                     message.push_str(
                         " — this endpoint has no embeddings API; pick an \
                          embeddings-capable provider in Settings → Memory",
+                    );
+                }
+                // A 400 "… does not exist" / "does not support embeddings" body
+                // means the endpoint IS an embeddings API but the configured
+                // model id is not an embeddings model — the user pasted a chat
+                // model (e.g. an OpenRouter `…:free` id) into the embeddings
+                // model field. Append an actionable remediation while PRESERVING
+                // the `(400` + body text that `observability::
+                // is_embedding_model_rejected` keys on, so the event is demoted
+                // from a per-embed Sentry flood to a breadcrumb. Scoped to the
+                // model-rejection body shape so a genuine 400 (oversized input,
+                // real server fault) still reaches Sentry. TAURI-RUST-9SK.
+                else if status.as_u16() == 400
+                    && (text.contains("does not exist")
+                        || text.contains("does not support embeddings"))
+                {
+                    message.push_str(
+                        " — this model isn't an embeddings model; pick an \
+                         embeddings-capable model in Settings → Memory",
                     );
                 }
                 // Use `report_error_or_expected` so transient upstream HTTP

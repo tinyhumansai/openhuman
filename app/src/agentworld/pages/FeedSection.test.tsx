@@ -254,6 +254,42 @@ describe('Feed list', () => {
     });
   });
 
+  test('does NOT call homeFeed when no wallet is configured (prevention at source)', async () => {
+    // wallet_status resolves with no Solana account → no wallet configured.
+    vi.mocked(fetchWalletStatus).mockResolvedValue({ accounts: [] } as any);
+    vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue({ items: [sampleFeedItem], count: 1 });
+    render(<FeedSection />);
+    await waitFor(() => {
+      expect(screen.getByText(/set up your wallet to view your feed/i)).toBeInTheDocument();
+    });
+    // The wallet-requiring RPC must never be invoked for a wallet-less user.
+    expect(vi.mocked(apiClient.graphql.homeFeed)).not.toHaveBeenCalled();
+  });
+
+  test('still calls homeFeed when wallet IS configured', async () => {
+    vi.mocked(fetchWalletStatus).mockResolvedValue({
+      accounts: [{ chain: 'solana', address: MY_AGENT_ID }],
+    } as any);
+    vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue({ items: [sampleFeedItem], count: 1 });
+    render(<FeedSection />);
+    await waitFor(() => {
+      expect(screen.getByText('Hello from the network')).toBeInTheDocument();
+    });
+    expect(vi.mocked(apiClient.graphql.homeFeed)).toHaveBeenCalled();
+  });
+
+  test('falls through to homeFeed when wallet status fetch fails (unknown)', async () => {
+    // A transport/RPC failure is "unknown", not "unconfigured": proceed and let
+    // the backend boundary classifier handle any wallet-locked error.
+    vi.mocked(fetchWalletStatus).mockRejectedValue(new Error('core rpc unavailable'));
+    vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue({ items: [sampleFeedItem], count: 1 });
+    render(<FeedSection />);
+    await waitFor(() => {
+      expect(screen.getByText('Hello from the network')).toBeInTheDocument();
+    });
+    expect(vi.mocked(apiClient.graphql.homeFeed)).toHaveBeenCalled();
+  });
+
   test('tolerates response missing items field and shows empty state', async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue({} as any);
@@ -545,6 +581,49 @@ describe('post composer', () => {
       // homeFeed called once on mount + once after create
       expect(vi.mocked(apiClient.graphql.homeFeed)).toHaveBeenCalledTimes(2);
     });
+  });
+
+  test('#4059: home feed requests includeSelf so the viewer sees their own posts', async () => {
+    const user = userEvent.setup();
+    const myPostItem = {
+      post: {
+        ...samplePost,
+        postId: 'post-new',
+        body: 'My new post',
+        author: { ...sampleAuthor, cryptoId: MY_AGENT_ID, handle: MY_HANDLE },
+      },
+      score: 1,
+      reason: 'own',
+    };
+    // First load: only a followed-agent post (no own posts). After the user
+    // composes, the refetch returns the followed post *and* their own one.
+    vi.mocked(apiClient.graphql.homeFeed)
+      .mockResolvedValueOnce({ items: [sampleFeedItem], count: 1 })
+      .mockResolvedValue({ items: [sampleFeedItem, myPostItem], count: 2 });
+
+    render(<FeedSection />);
+    const textarea = await screen.findByPlaceholderText(/what's on your mind/i);
+
+    // Initial fetch must opt into own posts — otherwise a freshly composed post
+    // can never appear (the feed is followed-agents-only).
+    expect(vi.mocked(apiClient.graphql.homeFeed)).toHaveBeenCalledWith(
+      expect.objectContaining({ includeSelf: true })
+    );
+
+    await user.type(textarea, 'My new post');
+    await user.click(screen.getByRole('button', { name: /^post$/i }));
+
+    // The created post now shows in the feed after the refetch.
+    await waitFor(() => {
+      expect(screen.getByText('My new post')).toBeInTheDocument();
+    });
+
+    // Every home-feed request (mount + refetch) carries includeSelf:true.
+    const calls = vi.mocked(apiClient.graphql.homeFeed).mock.calls;
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    for (const call of calls) {
+      expect(call[0]).toMatchObject({ includeSelf: true });
+    }
   });
 
   test('Post button is disabled until a draft is entered', async () => {

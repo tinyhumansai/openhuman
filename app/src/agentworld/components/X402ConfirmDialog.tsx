@@ -1,19 +1,37 @@
 /**
  * X402ConfirmDialog — confirm-before-spend dialog for Agent World x402 flows.
  *
- * Reused by every write flow that moves funds (register / buy / bid / offer):
- * it shows the payment amount, the asset, the wallet's balance and address, and
- * gates the "Confirm & Pay" button on having enough balance. The parent owns the
- * actual payment call — this component only renders the confirmation and reports
- * the user's decision via `onConfirm` / `onCancel`.
+ * Reused by every write flow that involves funds (register / buy / bid / offer)
+ * across two modes:
  *
- * Money only moves after the user clicks Confirm (which the parent wires to the
- * `confirmed: true` RPC) — this dialog never calls the backend itself.
+ * - `mode="spend"` (register / buy): an IMMEDIATE on-chain spend. A provably
+ *   insufficient balance HARD-gates the Pay button (we replace it with an
+ *   "Add funds" redirect) so we never broadcast a payment that must fail.
+ * - `mode="commit"` (bid / offer): a SIGNED COMMITMENT that only settles if the
+ *   counterparty accepts it later — there is no transfer at submit time. A low
+ *   balance is therefore a SOFT warning, not a block: we surface it but still
+ *   allow Confirm.
+ *
+ * In BOTH modes an UNKNOWN balance (couldn't be fetched) is never treated as
+ * "sufficient" — we show an explicit "couldn't verify balance" note and allow
+ * Confirm (the backend remains the authoritative gate), instead of silently
+ * pretending the wallet can cover the amount.
+ *
+ * The parent owns the actual payment / commitment call — this component only
+ * renders the confirmation and reports the user's decision via `onConfirm` /
+ * `onCancel`. Money only moves after the user clicks Confirm.
  */
 import Button from '../../components/ui/Button';
 import { ModalShell } from '../../components/ui/ModalShell';
+import { useT } from '../../lib/i18n/I18nContext';
 import { openUrl } from '../../utils/openUrl';
-import { decimalsForAsset, resolveAssetSymbol } from '../assets';
+import { decimalsForAsset, formatUnits, resolveAssetSymbol } from '../assets';
+
+// Re-exported from `../assets` so existing importers (LedgerSection, BountiesSection,
+// ExploreSection, tests) keep importing `formatUnits` from this module unchanged.
+// The implementation lives in `assets.ts` because the marketplace price formatter
+// needs it too, and `assets.ts` cannot import from here without a cycle.
+export { formatUnits };
 
 /** tiny.place hosted funding page — handles deposits / on-ramp for the wallet. */
 const FUND_PAGE_URL = 'https://tiny.place/fund';
@@ -39,11 +57,25 @@ export interface X402WalletBalance {
   assetSymbol: string;
 }
 
+/**
+ * Which kind of x402 write this dialog is confirming:
+ * - `spend`  — immediate on-chain payment (register / buy). Insufficient balance
+ *   HARD-blocks (Pay → "Add funds").
+ * - `commit` — signed bid/offer commitment. Insufficient balance SOFT-warns but
+ *   still allows Confirm (funds move only on acceptance).
+ */
+export type X402ConfirmMode = 'spend' | 'commit';
+
 export interface X402ConfirmDialogProps {
   /** Title shown in the modal header (e.g. "Register @handle"). */
   title: string;
   /** Optional subtitle / context line. */
   subtitle?: string;
+  /**
+   * Confirmation mode. Defaults to `spend` (the original immediate-payment
+   * behaviour) so existing register/buy call sites are unchanged.
+   */
+  mode?: X402ConfirmMode;
   /** Payment amount in raw base units (from the x402 challenge). */
   amount: string;
   /** Asset symbol, e.g. "USDC". */
@@ -58,29 +90,42 @@ export interface X402ConfirmDialogProps {
   busy?: boolean;
   /** Label shown on the confirm button while `busy` (e.g. "Broadcasting…"). */
   busyLabel?: string;
+  /** Override the confirm-button label (e.g. "Confirm bid" in commit mode). */
+  confirmLabel?: string;
   onConfirm: () => void;
   onCancel: () => void;
 }
 
-/** Format a raw base-unit integer string to a decimal string with `decimals`. */
-export function formatUnits(raw: string, decimals: number): string {
-  if (decimals <= 0) return raw;
-  const negative = raw.startsWith('-');
-  const digits = (negative ? raw.slice(1) : raw).padStart(decimals + 1, '0');
-  const whole = digits.slice(0, digits.length - decimals);
-  const frac = digits.slice(digits.length - decimals).replace(/0+$/, '');
-  const body = frac ? `${whole}.${frac}` : whole;
-  return negative ? `-${body}` : body;
+/**
+ * Three-way balance assessment against an amount:
+ * - `unknown`      — balance is null/unparseable (couldn't verify). NEVER treated
+ *                    as sufficient; the dialog surfaces this distinctly.
+ * - `insufficient` — balance is provably below `amount`.
+ * - `sufficient`   — balance provably covers `amount`.
+ *
+ * This replaces the old boolean-only check whose `null → false` collapsed the
+ * "unknown" case into "sufficient", silently bypassing the gate. Callers that
+ * only need the provable-shortfall signal can use `isInsufficient` below.
+ */
+export type BalanceStatus = 'unknown' | 'insufficient' | 'sufficient';
+
+export function balanceStatus(balance: X402WalletBalance | null, amount: string): BalanceStatus {
+  if (!balance) return 'unknown';
+  try {
+    return BigInt(balance.raw) < BigInt(amount) ? 'insufficient' : 'sufficient';
+  } catch {
+    // A balance row we can't parse is not a verified balance.
+    return 'unknown';
+  }
 }
 
-/** True when the wallet provably cannot cover `amount`. Unknown balance → false. */
+/**
+ * True ONLY when the wallet provably cannot cover `amount`. Unknown balance →
+ * false (the shortfall is not proven). Retained for callers that want just the
+ * hard-block signal; prefer `balanceStatus` when the unknown case matters.
+ */
 export function isInsufficient(balance: X402WalletBalance | null, amount: string): boolean {
-  if (!balance) return false;
-  try {
-    return BigInt(balance.raw) < BigInt(amount);
-  } catch {
-    return false;
-  }
+  return balanceStatus(balance, amount) === 'insufficient';
 }
 
 function truncateAddress(addr: string): string {
@@ -106,6 +151,7 @@ export function friendlyNetwork(network?: string): string {
 export default function X402ConfirmDialog({
   title,
   subtitle,
+  mode = 'spend',
   amount,
   asset,
   network,
@@ -113,16 +159,41 @@ export default function X402ConfirmDialog({
   walletAddress,
   busy = false,
   busyLabel = 'Processing…',
+  confirmLabel,
   onConfirm,
   onCancel,
 }: X402ConfirmDialogProps) {
+  const { t } = useT();
   // `asset` may arrive as a mint address; resolve to a display symbol + decimals
   // (preferring the wallet's own resolution when present).
   const assetSymbol = resolveAssetSymbol(asset, balance?.assetSymbol);
   const decimals = decimalsForAsset(asset, balance?.decimals);
   const amountDisplay = formatUnits(amount, decimals);
-  const insufficient = isInsufficient(balance, amount);
-  const confirmDisabled = busy || insufficient;
+  const status = balanceStatus(balance, amount);
+  const insufficient = status === 'insufficient';
+  const unknownBalance = status === 'unknown';
+
+  // HARD block (replace Pay with Add-funds) applies ONLY to immediate spends with
+  // a PROVEN shortfall. Commitments never hard-block; unknown balance never
+  // hard-blocks (we couldn't prove a shortfall — surface a note instead).
+  const hardBlock = mode === 'spend' && insufficient;
+  // SOFT warning: a proven shortfall on a commitment (allowed, but flagged).
+  const softWarn = mode === 'commit' && insufficient;
+  const confirmDisabled = busy || hardBlock;
+
+  console.debug('[agentworld:x402-confirm] render', {
+    mode,
+    status,
+    hardBlock,
+    softWarn,
+    unknownBalance,
+    busy,
+  });
+
+  const defaultConfirmLabel =
+    mode === 'commit'
+      ? t('agentWorld.trading.confirmCommit', 'Confirm')
+      : t('agentWorld.trading.confirmPay', 'Confirm & Pay');
 
   return (
     <ModalShell
@@ -133,52 +204,86 @@ export default function X402ConfirmDialog({
       maxWidthClassName="max-w-sm">
       <div className="space-y-4">
         <div className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-900/50 p-4 space-y-3">
-          <Row label="Amount">
+          <Row label={t('agentWorld.trading.amountLabel', 'Amount')}>
             <span
               className="font-semibold text-stone-900 dark:text-neutral-100"
               data-testid="x402-amount">
               {amountDisplay} {assetSymbol}
             </span>
           </Row>
-          <Row label="Network">
+          <Row label={t('agentWorld.trading.networkLabel', 'Network')}>
             <span className="text-xs text-stone-500 dark:text-neutral-400">
               {friendlyNetwork(network)}
             </span>
           </Row>
-          <Row label="Your balance">
+          <Row label={t('agentWorld.trading.balanceLabel', 'Your balance')}>
             <span
               className={`font-medium ${
                 insufficient ? 'text-coral-500' : 'text-stone-700 dark:text-neutral-200'
               }`}
               data-testid="x402-balance">
-              {balance ? `${balance.formatted} ${balance.assetSymbol}` : 'Unknown'}
+              {balance
+                ? `${balance.formatted} ${balance.assetSymbol}`
+                : t('agentWorld.trading.balanceUnknown', 'Unknown')}
             </span>
           </Row>
-          <Row label="Wallet">
+          <Row label={t('agentWorld.trading.walletLabel', 'Wallet')}>
             <span className="font-mono text-xs text-stone-500 dark:text-neutral-400">
               {truncateAddress(walletAddress)}
             </span>
           </Row>
         </div>
 
-        {insufficient ? (
+        {hardBlock ? (
           <p className="text-xs text-coral-500" data-testid="x402-insufficient">
-            Insufficient {assetSymbol} balance to complete this payment. Add funds to your wallet to
-            continue.
+            {t(
+              'agentWorld.trading.spendInsufficient',
+              `Insufficient ${assetSymbol} balance to complete this payment. Add funds to your wallet to continue.`
+            )}
+          </p>
+        ) : softWarn ? (
+          // Commitment with a proven shortfall — allowed, but flag it so the user
+          // knows the wallet may not cover it if the commitment is accepted.
+          <p className="text-xs text-amber-500" data-testid="x402-commit-warning">
+            {t(
+              'agentWorld.trading.commitInsufficientWarning',
+              `Your ${assetSymbol} balance may not cover this if the commitment is accepted. You can still submit it — funds only move on acceptance.`
+            )}
+          </p>
+        ) : unknownBalance ? (
+          // Balance couldn't be verified. Do NOT pretend it's sufficient — say so,
+          // and let the user proceed (the backend is the authoritative gate).
+          <p className="text-xs text-amber-500" data-testid="x402-balance-unverified">
+            {t(
+              'agentWorld.trading.balanceUnverified',
+              "We couldn't verify your wallet balance. You can still continue — the payment is checked when it is submitted."
+            )}
+          </p>
+        ) : mode === 'commit' ? (
+          <p className="text-xs text-stone-400 dark:text-neutral-500">
+            {t(
+              'agentWorld.trading.commitSettleNote',
+              'This is a signed commitment — funds only move if it is accepted.'
+            )}
           </p>
         ) : (
           <p className="text-xs text-stone-400 dark:text-neutral-500">
-            Your wallet will sign and broadcast this payment on {friendlyNetwork(network)}.
+            {t(
+              'agentWorld.trading.spendBroadcastNote',
+              'Your wallet will sign and broadcast this payment on'
+            )}{' '}
+            {friendlyNetwork(network)}.
           </p>
         )}
 
         <div className="flex justify-end gap-2">
           <Button variant="secondary" size="sm" onClick={onCancel} disabled={busy}>
-            Cancel
+            {t('agentWorld.trading.cancel', 'Cancel')}
           </Button>
-          {insufficient ? (
-            // Not enough balance — send the user to the tiny.place fund page for
-            // the exact wallet + asset instead of a dead, disabled Pay button.
+          {hardBlock ? (
+            // Not enough balance for an immediate spend — send the user to the
+            // tiny.place fund page for the exact wallet + asset instead of a dead,
+            // disabled Pay button.
             <Button
               variant="primary"
               size="sm"
@@ -186,7 +291,7 @@ export default function X402ConfirmDialog({
                 void openUrl(fundingUrl(walletAddress, assetSymbol));
               }}
               data-testid="x402-add-funds">
-              Add funds
+              {t('agentWorld.trading.addFunds', 'Add funds')}
             </Button>
           ) : (
             <Button
@@ -195,7 +300,7 @@ export default function X402ConfirmDialog({
               onClick={onConfirm}
               disabled={confirmDisabled}
               data-testid="x402-confirm">
-              {busy ? busyLabel : 'Confirm & Pay'}
+              {busy ? busyLabel : (confirmLabel ?? defaultConfirmLabel)}
             </Button>
           )}
         </div>

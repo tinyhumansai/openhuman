@@ -295,6 +295,41 @@ async fn embed_skips_auth_header_when_key_empty() {
     p.embed(&["test"]).await.unwrap();
 }
 
+/// A keyed cloud provider (`with_required_api_key(true)` — genuine OpenAI /
+/// Voyage) with an empty key must bail BEFORE any HTTP request rather than
+/// POSTing with no `Authorization` header and 401-ing on every embed
+/// (TAURI-RUST-4TZ). The base URL points at an address nothing is listening on,
+/// so asserting the error is the key-guard message — not a connection error —
+/// proves no request was attempted. The "API key not set" wording is what the
+/// `ApiKeyMissing` classifier keys on to demote the flood out of Sentry.
+#[tokio::test]
+async fn embed_required_key_empty_bails_without_request() {
+    for key in ["", "   "] {
+        let p = OpenAiEmbedding::new("http://127.0.0.1:1", key, "text-embedding-3-small", 1)
+            .with_required_api_key(true);
+        let err = p.embed(&["hello"]).await.unwrap_err().to_string();
+        assert!(
+            err.contains("API key not set"),
+            "expected key-guard message for key {key:?}, got: {err}"
+        );
+    }
+}
+
+/// The keyless local/custom path is unaffected: without
+/// `with_required_api_key`, an empty key still omits the header and sends the
+/// request (LocalAI / Ollama-via-OpenAI legitimately need no bearer).
+#[tokio::test]
+async fn embed_empty_key_without_requirement_still_sends() {
+    let app = Router::new().route(
+        "/v1/embeddings",
+        post(|| async { Json(serde_json::json!({ "data": [{ "embedding": [1.0] }] })) }),
+    );
+    let url = start_mock(app).await;
+    let p = OpenAiEmbedding::new(&url, "", "m", 1); // no with_required_api_key
+    let result = p.embed(&["test"]).await.unwrap();
+    assert_eq!(result.len(), 1);
+}
+
 // ── embed — error paths ─────────────────────────────────
 
 #[tokio::test]

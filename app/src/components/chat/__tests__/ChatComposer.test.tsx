@@ -139,4 +139,51 @@ describe('ChatComposer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'composer.voiceMode' }));
     expect(onSwitchToMicCloud).toHaveBeenCalledTimes(1);
   });
+
+  describe('follow-up / parallel mode (allowParallelSend during a streaming turn)', () => {
+    it('keeps the textarea editable even while an in-flight turn is sending', () => {
+      renderComposer({
+        allowParallelSend: true,
+        composerInteractionBlocked: true,
+        isSending: true,
+        inputValue: 'a follow-up',
+      });
+      expect(screen.getByRole('textbox')).not.toBeDisabled();
+    });
+
+    it('enables the send button so a follow-up can be queued mid-stream', () => {
+      renderComposer({
+        allowParallelSend: true,
+        composerInteractionBlocked: true,
+        isSending: true,
+        inputValue: 'a follow-up',
+      });
+      expect(screen.getByTestId('send-message-button')).not.toBeDisabled();
+    });
+
+    it('shows the send arrow (not the in-flight spinner) while queueing', () => {
+      const { container } = renderComposer({
+        allowParallelSend: true,
+        composerInteractionBlocked: true,
+        isSending: true,
+        inputValue: 'a follow-up',
+      });
+      expect(container.querySelector('.animate-spin')).toBeNull();
+    });
+
+    it('still disables the send button with no typed content mid-stream', () => {
+      renderComposer({
+        allowParallelSend: true,
+        composerInteractionBlocked: true,
+        isSending: true,
+        inputValue: '',
+      });
+      expect(screen.getByTestId('send-message-button')).toBeDisabled();
+    });
+
+    it('surfaces the follow-up hint as the placeholder', () => {
+      renderComposer({ allowParallelSend: true, composerInteractionBlocked: true });
+      expect(screen.getByRole('textbox')).toHaveAttribute('placeholder', 'chat.followupHint');
+    });
+  });
 });

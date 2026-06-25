@@ -1414,6 +1414,7 @@ fn ms_to_utc(ms: i64) -> rusqlite::Result<DateTime<Utc>> {
 
 #[path = "connection.rs"]
 mod connection;
+pub(crate) use connection::recover_corrupt_db;
 pub use connection::with_connection;
 #[cfg(test)]
 #[allow(unused_imports)]

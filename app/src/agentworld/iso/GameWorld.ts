@@ -8,6 +8,7 @@
  * container that is scaled to fill its parent, so the world stays crisp pixel
  * art at any size.
  */
+import debugFactory from 'debug';
 import {
   Application,
   BitmapFont,
@@ -34,6 +35,26 @@ import {
 import { ROOM_REGISTRY, type RoomEntry } from './rooms';
 import { TextureFactory } from './textures';
 import { type AgentState, type ChatMessage, TileCode, type WalkNode } from './types';
+
+const debug = debugFactory('agentworld:gameworld');
+
+// The CEF/Chromium renderer used by the desktop shell does not reliably expose a
+// WebGPU adapter — `Application.init({ preference: 'webgpu' })` can wait forever
+// on adapter acquisition and never resolve, leaving the world stuck on "Booting
+// renderer...". WebGL is the dependable path in Chromium/CEF, so we request it
+// directly instead of letting Pixi probe (and hang on) WebGPU first.
+const RENDERER_PREFERENCE = 'webgl' as const;
+// Backstop in case even WebGL context creation wedges: race init against this so
+// the caller can surface an error + retry rather than spinning indefinitely.
+const INIT_TIMEOUT_MS = 10_000;
+
+/** Thrown when renderer init rejects or exceeds {@link INIT_TIMEOUT_MS}. */
+export class RendererInitError extends Error {
+  public constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'RendererInitError';
+  }
+}
 
 const NAMEPLATE_FONT = 'iso-body';
 const BUBBLE_FONT = 'iso-bubble';
@@ -217,22 +238,36 @@ export class GameWorld {
 
   public async init(parent: HTMLElement): Promise<void> {
     if (this.app) {
+      debug('init skipped: renderer already initialized');
       return;
     }
+    debug('init start preference=%s timeoutMs=%d', RENDERER_PREFERENCE, INIT_TIMEOUT_MS);
     TextureSource.defaultOptions.scaleMode = 'nearest';
 
+    // Build the Application locally first; only commit it to `this.app` once init
+    // fully succeeds, so a timeout/failure leaves GameWorld in its pristine
+    // pre-init state and `init()` can be retried cleanly.
     const app = new Application();
-    await app.init({
-      width: NATIVE_RESOLUTION,
-      height: NATIVE_RESOLUTION,
-      antialias: true,
-      preference: 'webgpu',
-      powerPreference: 'high-performance',
-      resolution: globalThis.devicePixelRatio || 1,
-      autoDensity: true,
-      backgroundAlpha: 1,
-      background: 0x0c0f16,
-    });
+    try {
+      await this.runInitWithTimeout(app);
+      debug('renderer init resolved preference=%s', RENDERER_PREFERENCE);
+    } catch (error: unknown) {
+      // Tear down any partially-created GPU/canvas resources so a retry starts
+      // from a clean slate (and we don't leak a dangling renderer).
+      try {
+        app.destroy?.(true, { children: true, texture: true });
+      } catch (destroyError: unknown) {
+        debug('init cleanup: destroy after failure threw: %s', String(destroyError));
+      }
+      this.app = null;
+      this.factory = null;
+      const message = error instanceof Error ? error.message : String(error);
+      debug('renderer init failed: %s', message);
+      throw error instanceof RendererInitError
+        ? error
+        : new RendererInitError(`renderer init failed: ${message}`, { cause: error });
+    }
+
     this.app = app;
     this.factory = new TextureFactory(app.renderer);
 
@@ -256,6 +291,41 @@ export class GameWorld {
     this.observeResize(parent);
     this.setRoom(this.roomKey);
     app.ticker.add(this.tick);
+  }
+
+  /**
+   * Race `Application.init` against {@link INIT_TIMEOUT_MS}. Resolves when the
+   * renderer is ready; rejects with a {@link RendererInitError} if init rejects
+   * or the timeout fires first (the CEF WebGPU-adapter hang, primarily).
+   */
+  private async runInitWithTimeout(app: Application): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        debug('renderer init timed out after %dms', INIT_TIMEOUT_MS);
+        reject(new RendererInitError(`renderer init timed out after ${INIT_TIMEOUT_MS}ms`));
+      }, INIT_TIMEOUT_MS);
+    });
+
+    const initialize = app.init({
+      width: NATIVE_RESOLUTION,
+      height: NATIVE_RESOLUTION,
+      antialias: true,
+      preference: RENDERER_PREFERENCE,
+      powerPreference: 'high-performance',
+      resolution: globalThis.devicePixelRatio || 1,
+      autoDensity: true,
+      backgroundAlpha: 1,
+      background: 0x0c0f16,
+    });
+
+    try {
+      await Promise.race([initialize, timeout]);
+    } finally {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+    }
   }
 
   private installFonts(): void {

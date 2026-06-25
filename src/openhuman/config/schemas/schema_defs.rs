@@ -772,6 +772,38 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "get_super_context_enabled" => ControllerSchema {
+            namespace: "config",
+            function: "get_super_context_enabled",
+            description: "Read whether \"super context\" is enabled (harness runs a \
+                          read-only context-collection pass on the first turn of a new \
+                          thread before the orchestrator LLM runs).",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "enabled",
+                ty: TypeSchema::Bool,
+                comment: "True when super context is enabled.",
+                required: true,
+            }],
+        },
+        "set_super_context_enabled" => ControllerSchema {
+            namespace: "config",
+            function: "set_super_context_enabled",
+            description: "Enable or disable \"super context\". Takes effect for threads \
+                          started after the change.",
+            inputs: vec![FieldSchema {
+                name: "value",
+                ty: TypeSchema::Bool,
+                comment: "True to enable super context, false to disable.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "enabled",
+                ty: TypeSchema::Bool,
+                comment: "Updated super-context enabled state.",
+                required: true,
+            }],
+        },
         "update_composio_trigger_settings" => ControllerSchema {
             namespace: "config",
             function: "update_composio_trigger_settings",

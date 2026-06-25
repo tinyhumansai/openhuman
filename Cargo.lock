@@ -5130,7 +5130,7 @@ dependencies = [
 
 [[package]]
 name = "openhuman"
-version = "0.57.54"
+version = "0.57.55"
 dependencies = [
  "aes-gcm",
  "aho-corasick",

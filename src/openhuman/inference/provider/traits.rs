@@ -142,6 +142,25 @@ pub enum ProviderDelta {
     ToolCallArgsDelta { call_id: String, delta: String },
 }
 
+/// Upper bound on output tokens requested for an agent chat turn.
+///
+/// The agent loop used to leave `ChatRequest::max_tokens` `None` ("open-ended
+/// generation"), but an unset cap makes reservation-pricing providers (e.g.
+/// OpenRouter) reserve credit against the model's *entire* output window
+/// (64k+) during their pre-flight balance check — so a modest-balance BYO user
+/// can hit a `402` purely from the oversized reservation, a **preventable**
+/// condition. Capping every agent turn at a realistic ceiling prices the
+/// pre-flight against a budget the user can actually afford; a residual `402`
+/// is then the genuine flat-balance case the insufficient-credits demote arm
+/// is meant for (TAURI-RUST-C62; mirrors [`EXTRACTION_MAX_OUTPUT_TOKENS`] in
+/// `memory_tree::score::extract::llm`).
+///
+/// `16384` sits comfortably above any realistic single agent turn — `max_tokens`
+/// is an upper bound, not a forced length, so the model still stops at its
+/// natural end well below the cap on normal turns — while cutting the
+/// reservation 4× versus a 64k window.
+pub const AGENT_TURN_MAX_OUTPUT_TOKENS: u32 = 16384;
+
 /// Request payload for provider chat calls.
 ///
 /// The system prompt is built once at session start and frozen for the
@@ -161,16 +180,16 @@ pub struct ChatRequest<'a> {
     /// Optional upper bound on output tokens to request from the provider
     /// (`max_tokens` on the OpenAI-compatible wire).
     ///
-    /// Left `None` for open-ended generation (orchestrator, agent turns)
-    /// where the model should use its full budget. Set to a small concrete
-    /// value by callers whose output is bounded by construction — notably
-    /// memory extraction, whose response is a tiny structured-JSON object.
+    /// Left `None` only for the orchestrator's open-ended generation. Agent
+    /// turns cap at [`AGENT_TURN_MAX_OUTPUT_TOKENS`] and callers whose output
+    /// is bounded by construction set a small concrete value — notably memory
+    /// extraction, whose response is a tiny structured-JSON object.
     /// Beyond capping wasted generation, this stops credit-metered providers
     /// (e.g. OpenRouter) from reserving the model's *entire* output window
     /// during their pre-flight balance check: an unset `max_tokens` makes
     /// OpenRouter price the request against the full 64k+ window and 402 a
     /// low-balance BYO user who could easily afford the few thousand tokens
-    /// an extraction actually needs (TAURI-RUST-C62).
+    /// the turn actually needs (TAURI-RUST-C62).
     pub max_tokens: Option<u32>,
 }
 
@@ -479,9 +498,11 @@ pub trait Provider: Send + Sync {
     /// OpenAI-compatible provider, which threads it onto the wire for
     /// credit-metered backends — TAURI-RUST-C62) override `chat()` directly.
     /// The drop is logged below rather than silently swallowed; it is not a
-    /// hard error because no production caller both sets `max_tokens` and
-    /// routes through a default-`chat()` provider (agent turns pass `None`;
-    /// memory extraction uses the compatible provider).
+    /// hard error because the production callers that set `max_tokens` (agent
+    /// turns at [`AGENT_TURN_MAX_OUTPUT_TOKENS`], memory extraction) route to
+    /// the compatible provider, which overrides `chat()` and honors the cap.
+    /// A provider on this default path simply forgoes the cap — harmless for
+    /// the non-reservation backends that don't override `chat()`.
     async fn chat(
         &self,
         request: ChatRequest<'_>,

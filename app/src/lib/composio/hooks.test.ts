@@ -8,8 +8,9 @@ const mockOpenhumanComposioGetMode = vi.fn();
 let sessionToken = 'jwt-abc';
 
 vi.mock('./composioApi', () => ({
-  listToolkits: () => mockListToolkits(),
-  listConnections: () => mockListConnections(),
+  COMPOSIO_FETCH_TIMEOUT_MS: 8_000,
+  listToolkits: (options?: { timeoutMs?: number }) => mockListToolkits(options),
+  listConnections: (options?: { timeoutMs?: number }) => mockListConnections(options),
   listAgentReadyToolkits: () => mockListAgentReadyToolkits(),
 }));
 

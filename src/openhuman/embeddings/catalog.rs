@@ -172,6 +172,32 @@ pub fn default_model_for(provider_slug: &str) -> Option<&'static EmbeddingModelP
     find_provider(provider_slug).and_then(|p| p.models.first())
 }
 
+/// Returns `Some(reason)` when `model` is unmistakably **not** an embeddings
+/// model and must be rejected before it is persisted as the embeddings model.
+///
+/// Conservative by design (zero false positives on real embedding ids): the
+/// only hard signal is the OpenRouter `:free` chat/reasoning tier suffix — no
+/// embeddings model is served under it, and a chat model id pasted into the
+/// free-text custom-model field is exactly how TAURI-RUST-9SK happened
+/// (`nvidia/nemotron-3-super-120b-a12b:free` saved as the embeddings model,
+/// then 400 "does not exist" on every memory re-embed — 2205 events).
+///
+/// This is a source-gate for the persist paths that have **no** live verify
+/// probe (`config::ops::model::apply_memory_settings`); the Custom-provider
+/// setup flow already runs a save-time test embed (`embeddings::rpc::
+/// update_settings`), and the broad long tail of chat ids is caught at runtime
+/// by the 400 "does not exist" classifier in `core::observability`. Kept
+/// deliberately tight: a false positive blocks a user's valid embeddings model.
+pub fn non_embedding_model_reason(model: &str) -> Option<&'static str> {
+    if model.trim().to_ascii_lowercase().ends_with(":free") {
+        return Some(
+            "`:free` denotes an OpenRouter chat/reasoning tier, not an embeddings model — \
+             pick an embeddings-capable model in Settings → Memory",
+        );
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,6 +261,41 @@ mod tests {
                     model.allowed_dimensions
                 );
             }
+        }
+    }
+
+    #[test]
+    fn non_embedding_model_reason_rejects_openrouter_free_tier() {
+        // TAURI-RUST-9SK — the exact incident id and case/whitespace variants.
+        for id in [
+            "nvidia/nemotron-3-super-120b-a12b:free",
+            "meta-llama/llama-3-70b-instruct:FREE",
+            "  some-chat-model:free  ",
+        ] {
+            assert!(
+                non_embedding_model_reason(id).is_some(),
+                "{id:?} (`:free` chat tier) must be rejected as an embeddings model"
+            );
+        }
+    }
+
+    #[test]
+    fn non_embedding_model_reason_accepts_real_embedding_ids() {
+        // Must NOT false-positive on genuine embedding model ids across providers.
+        for id in [
+            "text-embedding-3-small",
+            "text-embedding-3-large",
+            "voyage-3-large",
+            "embed-english-v3.0",
+            "nomic-embed-text:latest",
+            "bge-m3",
+            "mxbai-embed-large",
+            "",
+        ] {
+            assert!(
+                non_embedding_model_reason(id).is_none(),
+                "{id:?} is a valid embeddings model and must not be rejected"
+            );
         }
     }
 

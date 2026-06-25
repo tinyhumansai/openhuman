@@ -395,6 +395,14 @@ impl UnifiedMemory {
         let now = Self::now_ts();
         let mut hits = Vec::new();
 
+        // Loop-invariant: every document sees the same graph relations, so build
+        // the RelationMatch view once instead of cloning all rows per document.
+        let relation_matches = graph_relations
+            .iter()
+            .cloned()
+            .map(|relation| RelationMatch { relation, hop: 1 })
+            .collect::<Vec<_>>();
+
         for doc in docs {
             let freshness = Self::recency_score(doc.updated_at, now);
             let priority = Self::document_priority_signal(
@@ -432,11 +440,7 @@ impl UnifiedMemory {
                 supporting_relations: self.supporting_relations_for_document(
                     &doc.document_id,
                     &doc.content,
-                    &graph_relations
-                        .iter()
-                        .cloned()
-                        .map(|relation| RelationMatch { relation, hop: 1 })
-                        .collect::<Vec<_>>(),
+                    &relation_matches,
                 ),
                 taint: doc.taint,
             });

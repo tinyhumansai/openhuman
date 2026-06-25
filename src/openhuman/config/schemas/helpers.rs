@@ -180,6 +180,11 @@ pub(super) struct OnboardingCompletedSetParams {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct SuperContextSetParams {
+    pub(super) value: bool,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct DictationSettingsUpdate {
     pub(super) enabled: Option<bool>,
     pub(super) hotkey: Option<String>,

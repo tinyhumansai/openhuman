@@ -308,7 +308,8 @@ async fn round18_composio_ops_and_agent_tools_cover_backend_errors_and_metadata(
         .contains("not in the curated whitelist"));
 
     let registered_tools = all_composio_agent_tools(&harness.config);
-    assert_eq!(registered_tools.len(), 5);
+    // 6 generic composio agent tools incl. the inline-connect card tool (#3993).
+    assert_eq!(registered_tools.len(), 6);
 
     *state.scenario.lock().expect("scenario") = Scenario::ToolkitsFail;
     let toolkits_error = composio_list_toolkits(&harness.config)

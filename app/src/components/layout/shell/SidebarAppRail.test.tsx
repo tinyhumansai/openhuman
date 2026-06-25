@@ -7,22 +7,35 @@ import SidebarAppRail from './SidebarAppRail';
 const mockNavigate = vi.fn();
 const mockDispatch = vi.fn();
 
-const mockState = {
+const whatsappAccount = {
+  id: 'acct-whatsapp',
+  provider: 'whatsapp',
+  label: 'WhatsApp',
+  createdAt: '2026-01-01T00:00:00.000Z',
+  status: 'open',
+};
+
+const accountsWith: Record<string, typeof whatsappAccount> = { 'acct-whatsapp': whatsappAccount };
+
+let mockState = {
   accounts: {
-    accounts: {
-      'acct-whatsapp': {
-        id: 'acct-whatsapp',
-        provider: 'whatsapp',
-        label: 'WhatsApp',
-        createdAt: '2026-01-01T00:00:00.000Z',
-        status: 'open',
-      },
-    },
+    accounts: accountsWith,
     order: ['acct-whatsapp'],
-    activeAccountId: null,
-    unread: {},
+    activeAccountId: null as string | null,
+    unread: {} as Record<string, number>,
   },
 };
+
+function setAccounts(order: string[]) {
+  mockState = {
+    accounts: {
+      accounts: order.length ? accountsWith : {},
+      order,
+      activeAccountId: null,
+      unread: {},
+    },
+  };
+}
 
 vi.mock('react-router-dom', async importOriginal => {
   const actual = await importOriginal<typeof import('react-router-dom')>();
@@ -40,6 +53,7 @@ vi.mock('../../../store/hooks', () => ({
 describe('SidebarAppRail', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setAccounts(['acct-whatsapp']);
   });
 
   it('selects a provider webview without mutating the current route', () => {
@@ -64,6 +78,23 @@ describe('SidebarAppRail', () => {
       type: 'accounts/setActiveAccount',
       payload: '__agent__',
     });
+  });
+
+  it('shows the "Add apps" label when no provider apps are connected', () => {
+    setAccounts([]);
+    renderRail('/chat');
+
+    const addButton = screen.getByTestId('accounts-add-button');
+    expect(addButton).toHaveTextContent('accounts.addApps');
+  });
+
+  it('collapses the add button to an icon once an app is connected', () => {
+    setAccounts(['acct-whatsapp']);
+    renderRail('/chat');
+
+    const addButton = screen.getByTestId('accounts-add-button');
+    expect(addButton).not.toHaveTextContent('accounts.addApps');
+    expect(addButton).toHaveAttribute('aria-label', 'accounts.addApps');
   });
 });
 

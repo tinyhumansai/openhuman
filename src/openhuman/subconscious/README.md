@@ -6,7 +6,7 @@ The subconscious is OpenHuman's background-awareness layer: a SQLite-backed loop
 
 - Maintain a list of `SubconsciousTask`s (system-seeded + user-added) in SQLite; seed three default system tasks on init.
 - Run a tick: load due tasks → log them `in_progress` → build a situation report → call the configured LLM → execute `act` tasks, create escalations for `escalate`/`UnapprovedWrite`, mark `noop` otherwise → update log entries in place.
-- Route the per-tick evaluation and task execution to a local Ollama/LM Studio model or the OpenHuman cloud, based on config (`workload_local_model("subconscious")` / `subconscious_provider`).
+- Route the per-tick evaluation and task execution to a local Ollama/LM Studio model or the OpenHuman cloud, based on config (`workload_local_model("subconscious")` / `subconscious_provider`). The tick builds its agent through the **`subconscious`** workload role — `run_agent` sets `default_model = "hint:subconscious"` so the session builder resolves `subconscious_provider` (not the `chat` role); on the managed backend that pins the lightweight `chat-v1` tier.
 - Classify task write-intent via keyword heuristics (`needs_tools` / `needs_agent`); run read-only tasks analysis-only and escalate any recommended write action for approval.
 - Emit, cap (`MAX_REFLECTIONS_PER_TICK = 5`), hydrate, and persist proactive reflections; resolve each reflection's `source_refs` into frozen `SourceChunk` snapshots at tick time.
 - Manage escalation lifecycle (pending → approved/dismissed); approving executes the task at full permissions.

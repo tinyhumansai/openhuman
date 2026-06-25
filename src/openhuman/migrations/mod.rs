@@ -25,6 +25,7 @@ use crate::openhuman::config::Config;
 
 mod expand_autonomy_defaults;
 mod migrate_legacy_embedding_provider;
+mod normalize_default_model_tier;
 mod phase_out_profile_md;
 mod reconcile_orphaned_providers;
 mod remove_write_auto_approve;
@@ -33,7 +34,7 @@ mod retire_chat_v1_model;
 mod unify_ai_provider_settings;
 
 /// Current target schema version. Bumped alongside every new migration.
-pub const CURRENT_SCHEMA_VERSION: u32 = 7;
+pub const CURRENT_SCHEMA_VERSION: u32 = 8;
 
 /// Run any migrations whose `schema_version` gate hasn't yet been
 /// crossed for this workspace.
@@ -376,6 +377,49 @@ pub async fn run_pending(config: &mut Config) {
             Err(err) => {
                 log::warn!(
                     "[migrations] migrate_legacy_embedding_provider failed: {err:#} — \
+                     will retry on next launch"
+                );
+            }
+        }
+    }
+
+    // 7 -> 8: retire the two stale OpenHuman reasoning-tier `default_model`
+    // defaults to `chat-v1`. `reasoning-v1` (a former DEFAULT_MODEL) and the
+    // deprecated `reasoning-quick-v1` alias were the persisted default for older
+    // builds and drive the implicit managed turns (triage, the subconscious tick,
+    // escalation base, chat-fallback) onto a stale tier, since app updates never
+    // refresh `default_model`. Only those two values are rewritten — `default_model`
+    // round-trips arbitrary custom/BYOK ids (config-mutation contract), so anything
+    // else (including `chat-v1` and `None`) is left untouched. Guard on `== 7` so
+    // an earlier failed step doesn't get skipped.
+    if config.schema_version == 7 {
+        let previous_default_model = config.default_model.clone();
+        match normalize_default_model_tier::run(config) {
+            Ok(stats) => {
+                let previous_version = config.schema_version;
+                config.schema_version = 8;
+                if let Err(err) = config.save().await {
+                    // Roll back BOTH the version and the mutated `default_model`
+                    // so a failed save doesn't leave `load_or_init` returning a
+                    // half-migrated in-memory config; next launch retries.
+                    config.default_model = previous_default_model;
+                    config.schema_version = previous_version;
+                    log::warn!(
+                        "[migrations] normalize_default_model_tier ran but config.save failed: \
+                         {err:#} — rolled in-memory schema_version back to {previous_version}, \
+                         will retry on next launch"
+                    );
+                    return;
+                }
+                log::info!(
+                    "[migrations] schema_version bumped to 8 (normalize_default_model_tier \
+                     default_model_normalized={})",
+                    stats.default_model_normalized,
+                );
+            }
+            Err(err) => {
+                log::warn!(
+                    "[migrations] normalize_default_model_tier failed: {err:#} — \
                      will retry on next launch"
                 );
             }

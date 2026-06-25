@@ -12,6 +12,7 @@ import { describe, expect, test, vi } from 'vitest';
 
 import { openUrl } from '../../utils/openUrl';
 import X402ConfirmDialog, {
+  balanceStatus,
   formatUnits,
   fundingUrl,
   isInsufficient,
@@ -61,6 +62,17 @@ describe('isInsufficient', () => {
     expect(isInsufficient(null, '60000000')).toBe(false);
     // Unparseable raw → not blocked.
     expect(isInsufficient({ ...BALANCE, raw: 'nope' }, '1')).toBe(false);
+  });
+});
+
+describe('balanceStatus', () => {
+  test('classifies sufficient / insufficient / unknown', () => {
+    expect(balanceStatus(BALANCE, '10000000')).toBe('sufficient');
+    expect(balanceStatus(BALANCE, '60000000')).toBe('insufficient');
+    // Null balance is UNKNOWN — never collapsed into "sufficient".
+    expect(balanceStatus(null, '60000000')).toBe('unknown');
+    // Unparseable raw is also unknown (not a verified balance).
+    expect(balanceStatus({ ...BALANCE, raw: 'nope' }, '1')).toBe('unknown');
   });
 });
 
@@ -118,10 +130,36 @@ describe('X402ConfirmDialog', () => {
     );
   });
 
-  test('shows "Unknown" balance and still allows confirm when balance is null', () => {
+  test('null balance shows a "couldn\'t verify" note and still allows confirm (spend)', () => {
     render(<X402ConfirmDialog {...baseProps()} balance={null} />);
     expect(screen.getByTestId('x402-balance')).toHaveTextContent('Unknown');
+    // The unknown balance is NOT treated as sufficient: surface a distinct note,
+    // and never hard-block (no add-funds redirect, confirm stays enabled).
+    expect(screen.getByTestId('x402-balance-unverified')).toBeInTheDocument();
+    expect(screen.queryByTestId('x402-add-funds')).not.toBeInTheDocument();
     expect(screen.getByTestId('x402-confirm')).toBeEnabled();
+  });
+
+  test('commit mode: insufficient balance SOFT-warns but still allows confirm', () => {
+    render(<X402ConfirmDialog {...baseProps()} mode="commit" amount="60000000" />);
+    // No hard block: the Pay→Add-funds swap does not happen for commitments.
+    expect(screen.queryByTestId('x402-add-funds')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('x402-insufficient')).not.toBeInTheDocument();
+    expect(screen.getByTestId('x402-commit-warning')).toBeInTheDocument();
+    expect(screen.getByTestId('x402-confirm')).toBeEnabled();
+  });
+
+  test('commit mode: null balance shows the unverified note and allows confirm', () => {
+    render(<X402ConfirmDialog {...baseProps()} mode="commit" balance={null} amount="60000000" />);
+    expect(screen.getByTestId('x402-balance-unverified')).toBeInTheDocument();
+    expect(screen.queryByTestId('x402-commit-warning')).not.toBeInTheDocument();
+    expect(screen.getByTestId('x402-confirm')).toBeEnabled();
+  });
+
+  test('spend mode (default): proven shortfall HARD-blocks with add-funds', () => {
+    render(<X402ConfirmDialog {...baseProps()} amount="60000000" />);
+    expect(screen.queryByTestId('x402-confirm')).not.toBeInTheDocument();
+    expect(screen.getByTestId('x402-add-funds')).toBeInTheDocument();
   });
 
   test('busy state shows the busy label and disables both actions', () => {

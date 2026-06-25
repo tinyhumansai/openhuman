@@ -28,7 +28,8 @@ impl VoyageEmbedding {
         let dims = if dims == 0 { VOYAGE_DEFAULT_DIMS } else { dims };
 
         Self {
-            inner: OpenAiEmbedding::new(VOYAGE_API_BASE, api_key, model, dims),
+            inner: OpenAiEmbedding::new(VOYAGE_API_BASE, api_key, model, dims)
+                .with_required_api_key(true),
         }
     }
 

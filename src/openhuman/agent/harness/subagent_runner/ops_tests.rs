@@ -1283,16 +1283,21 @@ fn resolve_subagent_provider_hint_with_config_routes_via_factory() {
     // We don't assert the *resulting* provider identity here (the
     // factory may return a fresh OpenHuman backend or whatever
     // primary_cloud resolves to), but we DO assert the resolved model
-    // matches the workload's configured exact id — not the legacy
-    // `{workload}-v1` synthesis.
+    // is the workload's canonical managed tier — NOT `default_model`,
+    // and NOT the parent's model.
+    //
+    // Regression (#hint-routing): the managed backend used to ignore the
+    // workload role and return `default_model`, so `hint = "agentic"`
+    // silently ran on whatever `default_model` was (here `chat-v1`).
+    // `make_openhuman_backend` now pins specialised roles to their tier,
+    // so `agentic` resolves to `agentic-v1` regardless of `default_model`.
     use crate::openhuman::config::Config;
     let mut config = Config::default();
-    // Route `agentic` to OpenHuman backend explicitly. The backend returns
-    // the configured default_model. Use `coding-v1` — a recognized tier
-    // that the factory validation accepts and that differs from the old
-    // `agentic-v1` synthesis, making the assertion meaningful.
+    // Route `agentic` to the OpenHuman backend explicitly, and set a
+    // distinct `default_model` so the assertion proves the role — not the
+    // global default — drives the resolved tier.
     config.agentic_provider = Some("openhuman".to_string());
-    config.default_model = Some("coding-v1".to_string());
+    config.default_model = Some("chat-v1".to_string());
 
     let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
     let (_resolved_provider, resolved_model) = super::resolve_subagent_provider(
@@ -1305,9 +1310,9 @@ fn resolve_subagent_provider_hint_with_config_routes_via_factory() {
         None,
     );
     assert_eq!(
-        resolved_model, "coding-v1",
-        "Hint must use the factory-resolved exact model, not synthesise `agentic-v1` \
-         and not fall back to parent's model"
+        resolved_model, "agentic-v1",
+        "Hint must resolve to the workload's managed tier (agentic-v1), not \
+         fall back to default_model (chat-v1) or the parent's model"
     );
 }
 

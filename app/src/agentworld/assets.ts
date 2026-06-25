@@ -46,3 +46,54 @@ export function decimalsForAsset(asset: string | undefined, walletDecimals?: num
   if (typeof walletDecimals === 'number') return walletDecimals;
   return decimalsForSymbol(resolveAssetSymbol(asset));
 }
+
+/**
+ * Format a raw base-unit integer string to a decimal string with `decimals`.
+ *
+ * e.g. `formatUnits("30000000", 6)` → `"30"`, `formatUnits("10500000", 6)` →
+ * `"10.5"`. Pure string math (no float) so large amounts never lose precision.
+ *
+ * Lives here (not in X402ConfirmDialog) because both the confirm dialog AND the
+ * marketplace price/reward formatters need it; X402ConfirmDialog re-exports it so
+ * its existing public API is unchanged.
+ */
+export function formatUnits(raw: string, decimals: number): string {
+  if (decimals <= 0) return raw;
+  const negative = raw.startsWith('-');
+  const digits = (negative ? raw.slice(1) : raw).padStart(decimals + 1, '0');
+  const whole = digits.slice(0, digits.length - decimals);
+  const frac = digits.slice(digits.length - decimals).replace(/0+$/, '');
+  const body = frac ? `${whole}.${frac}` : whole;
+  return negative ? `-${body}` : body;
+}
+
+/** Group the integer part of a numeric amount with thousands separators. */
+function groupThousands(amount: string): string {
+  if (!Number.isFinite(Number(amount))) return amount;
+  const negative = amount.startsWith('-');
+  const body = negative ? amount.slice(1) : amount;
+  const [intPart, fracPart] = body.split('.');
+  const grouped = Number(intPart).toLocaleString('en-US');
+  const out = fracPart != null ? `${grouped}.${fracPart}` : grouped;
+  return negative ? `-${out}` : out;
+}
+
+/**
+ * Format a marketplace / x402 amount that is stored in the asset's smallest BASE
+ * units (e.g. a 30 USDC price is stored as `"30000000"`) into a human-readable
+ * string like `"30 USDC"`.
+ *
+ * The asset's decimals are resolved from its symbol/mint via {@link decimalsForAsset}
+ * (USDC → 6) because marketplace price objects carry no `decimals` field — we
+ * assume the conventional decimals for the known symbol and default to 0 for
+ * unknown assets (rendered verbatim, since we can't safely humanize them).
+ *
+ * Display unit MUST match the human-decimal INPUT unit used by AmountCommitDialog
+ * — both go through the same decimals, so a price shown as "30 USDC" is the value
+ * a user types when bidding/offering.
+ */
+export function formatAssetAmount(amount: string, asset: string): string {
+  const decimals = decimalsForAsset(asset);
+  const display = decimals > 0 ? formatUnits(amount, decimals) : amount;
+  return `${groupThousands(display)} ${resolveAssetSymbol(asset)}`;
+}

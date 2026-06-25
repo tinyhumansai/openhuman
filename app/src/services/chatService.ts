@@ -1060,6 +1060,26 @@ export async function chatCancel(threadId: string): Promise<boolean> {
   }
 }
 
+/**
+ * Clear the run-queue (steer/followup/collect lanes) for a thread via core RPC.
+ * Used when the user dismisses queued follow-ups so the backend drops them
+ * instead of dispatching them after the current turn. Returns the number of
+ * dropped messages on success, or `null` when the RPC fails — the caller must
+ * distinguish these: on failure the backend queue is still intact and WILL
+ * dispatch the follow-ups, so the UI must keep the pills rather than hide them.
+ */
+export async function chatClearQueue(threadId: string): Promise<number | null> {
+  try {
+    const res = await callCoreRpc<{ dropped?: number }>({
+      method: 'openhuman.channel_web_queue_clear',
+      params: { thread_id: threadId },
+    });
+    return res?.dropped ?? 0;
+  } catch {
+    return null;
+  }
+}
+
 export function useRustChat(): boolean {
   // Legacy name kept for compatibility with existing call sites.
   return true;

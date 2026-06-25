@@ -781,6 +781,7 @@ async fn composio_agent_tools_cover_backend_discovery_markdown_and_execution_pat
             "composio_list_toolkits",
             "composio_list_connections",
             "composio_authorize",
+            "composio_connect",
             "composio_list_tools",
             "composio_execute",
         ]

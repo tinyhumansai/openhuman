@@ -14,7 +14,7 @@ use crate::openhuman::memory::{
 };
 use crate::openhuman::memory_conversations::{
     self as conversations, ConversationMessage, ConversationMessagePatch, ConversationStore,
-    ConversationThread, CreateConversationThread,
+    ConversationThread, CreateConversationThread, CrossThreadHit,
 };
 use crate::openhuman::threads::title::{
     build_title_prompt, is_auto_generated_thread_title, sanitize_generated_title,
@@ -229,6 +229,34 @@ pub async fn messages_list(
         Some(counts([("num_messages", count)])),
         None,
     ))
+}
+
+/// Search messages across **every** thread in the workspace for a query,
+/// returning up to `limit` of the most-recent matches (newest first). Backed
+/// by the trigram/CJK-bigram inverted index in `memory_conversations` — the
+/// same cross-chat reader the durable-context pipeline uses (issue #1505).
+///
+/// Read-only and workspace-scoped. `exclude_thread_id` lets a caller drop the
+/// active chat from the results when it already has that context in hand.
+pub async fn transcript_search(
+    query: &str,
+    limit: usize,
+    exclude_thread_id: Option<&str>,
+) -> Result<Vec<CrossThreadHit>, String> {
+    let dir = workspace_dir().await?;
+    log::debug!(
+        "[threads][transcript_search] query_chars={} limit={} exclude={:?}",
+        query.chars().count(),
+        limit,
+        exclude_thread_id
+    );
+    let hits = ConversationStore::new(dir).search_cross_thread_messages(
+        query,
+        limit,
+        exclude_thread_id,
+    )?;
+    log::debug!("[threads][transcript_search] hits={}", hits.len());
+    Ok(hits)
 }
 
 /// Appends a message to a conversation thread.

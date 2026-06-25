@@ -8,6 +8,7 @@
 //! worker itself just calls `wait_for_capacity()`; non-LLM jobs
 //! (`AppendBuffer`, `FlushStale`) run without acquiring a permit.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -45,6 +46,14 @@ const POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 static WORKER_NOTIFY: OnceLock<Arc<Notify>> = OnceLock::new();
 static STARTED: std::sync::Once = std::sync::Once::new();
+
+/// Process-wide latch so a `SQLITE_CORRUPT` flood is reported to Sentry **once**,
+/// not on every poll from every worker. Set on the first malformed-image
+/// detection; cleared after a recovery attempt settles (quarantine+rebuild or a
+/// quick_check that now passes) so a genuinely-new, later corruption can still
+/// page once. Without this, 4 workers polling a wedged DB re-page ~1/sec
+/// (Sentry TAURI-RUST-E93: 1,633 events in ~17 min from one host).
+static CORRUPT_REPORTED: AtomicBool = AtomicBool::new(false);
 
 /// Notify any idle workers so they re-poll immediately instead of waiting
 /// out [`POLL_INTERVAL`]. Cheap no-op before [`start`] has run.
@@ -158,6 +167,22 @@ pub fn start(config: Config) {
                                     "[memory::jobs] worker {idx} hit SQLITE_FULL (disk full), \
                                      backing off 300s without reporting: {err:#}"
                                 );
+                                tokio::time::sleep(Duration::from_secs(300)).await;
+                            } else if is_sqlite_corrupt(&err) {
+                                // SQLITE_CORRUPT (code 11): the on-disk mem_tree
+                                // image is malformed. Unlike busy/io-transient/
+                                // disk-full, this NEVER clears on its own — the
+                                // claim UPDATE fails forever, so re-polling every
+                                // second and paging Sentry each time turns one
+                                // unrecoverable file into a flood (TAURI-RUST-E93:
+                                // 1,633 events in ~17 min, one host). Report once,
+                                // drive quarantine+rebuild recovery (factored into
+                                // `recover_corrupt_db_once` so it is unit-testable
+                                // without spinning the live loop), then back off
+                                // long so a failed recovery never re-floods.
+                                // `notify` still wakes us on new enqueues once the
+                                // rebuild succeeds.
+                                recover_corrupt_db_once(idx, &err, &cfg);
                                 tokio::time::sleep(Duration::from_secs(300)).await;
                             } else {
                                 crate::core::observability::report_error(
@@ -409,6 +434,83 @@ fn is_sqlite_disk_full(err: &anyhow::Error) -> bool {
     let msg = format!("{err:#}").to_ascii_lowercase();
     msg.contains("database or disk is full")
         || msg.contains("insertion failed because database is full")
+}
+
+/// Classify whether an error from `claim_next` is a `SQLITE_CORRUPT` malformed-
+/// image condition (primary code `DatabaseCorrupt`, code 11) or the closely-
+/// related `NotADatabase` (code 26 — the header itself is unreadable).
+///
+/// Unlike `SQLITE_BUSY`/`LOCKED`, the transient I/O family, or `SQLITE_FULL`,
+/// a malformed image is **persistent on-disk damage**: the claim `UPDATE` can
+/// never succeed, so re-polling every second and paging Sentry on each failure
+/// turns one corrupt file into an infinite flood (Sentry TAURI-RUST-E93:
+/// ~1.6k events in ~17 min from a single host). The worker reports once, drives
+/// a quarantine+rebuild recovery (`recover_corrupt_db`), and backs off long.
+///
+/// Matching on the error code is rusqlite-version-stable. The text fallback
+/// covers the case where the rusqlite error was flattened to a plain `anyhow!`
+/// string across `.context()` layers — SQLite renders these as "database disk
+/// image is malformed" (code 11) and "file is not a database" (code 26).
+fn is_sqlite_corrupt(err: &anyhow::Error) -> bool {
+    if let Some(rusqlite::Error::SqliteFailure(sqlite_err, _)) =
+        err.downcast_ref::<rusqlite::Error>()
+    {
+        if matches!(
+            sqlite_err.code,
+            rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase
+        ) {
+            return true;
+        }
+    }
+    let msg = format!("{err:#}").to_ascii_lowercase();
+    msg.contains("database disk image is malformed") || msg.contains("file is not a database")
+}
+
+/// Handle a confirmed `SQLITE_CORRUPT` failure from the worker loop: report it
+/// to Sentry **once** (process-wide [`CORRUPT_REPORTED`] latch, not per-poll
+/// across the workers) and drive the quarantine+rebuild recovery in
+/// [`recover_corrupt_db`](crate::openhuman::memory_store::chunks::store::recover_corrupt_db).
+///
+/// Factored out of [`start`]'s error arm so the report-once + recovery decision
+/// logic is unit-testable without spinning the live worker loop. The caller
+/// applies the long backoff after this returns.
+fn recover_corrupt_db_once(idx: usize, err: &anyhow::Error, config: &Config) {
+    if !CORRUPT_REPORTED.swap(true, Ordering::Relaxed) {
+        crate::core::observability::report_error(
+            err,
+            "memory",
+            "tree_jobs_worker_corrupt",
+            &[("worker_idx", &idx.to_string())],
+        );
+    }
+    log::error!(
+        "[memory::jobs] worker {idx} hit SQLITE_CORRUPT (malformed DB image), \
+         attempting quarantine + rebuild recovery: {err:#}"
+    );
+    match crate::openhuman::memory_store::chunks::store::recover_corrupt_db(config) {
+        Ok(true) => {
+            log::warn!(
+                "[memory::jobs] worker {idx} quarantined corrupt mem_tree DB and rebuilt \
+                 empty schema; queue will resume"
+            );
+            // Recovery settled — allow a future, genuinely-new corruption to
+            // page once.
+            CORRUPT_REPORTED.store(false, Ordering::Relaxed);
+        }
+        Ok(false) => {
+            log::info!(
+                "[memory::jobs] worker {idx} corruption recovery: quick_check now passes, \
+                 no quarantine needed"
+            );
+            CORRUPT_REPORTED.store(false, Ordering::Relaxed);
+        }
+        Err(rec_err) => {
+            log::error!(
+                "[memory::jobs] worker {idx} corruption recovery FAILED, retrying after \
+                 backoff: {rec_err:#}"
+            );
+        }
+    }
 }
 
 #[cfg(test)]
@@ -664,6 +766,138 @@ mod tests {
         assert!(!is_sqlite_disk_full(&anyhow::anyhow!(
             "upstream returned 500: internal server error"
         )));
+    }
+
+    // ── is_sqlite_corrupt tests (#4048 / Sentry TAURI-RUST-E93) ──────────────
+
+    /// `SQLITE_CORRUPT` (primary code `DatabaseCorrupt`, code 11) is the
+    /// malformed-image signal from `claim_next`; it must classify so the worker
+    /// quarantines + rebuilds instead of paging Sentry every second.
+    #[test]
+    fn is_sqlite_corrupt_matches_database_corrupt_code() {
+        let raw = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::DatabaseCorrupt,
+                extended_code: 11,
+            },
+            Some("database disk image is malformed".into()),
+        );
+        assert!(is_sqlite_corrupt(&anyhow::Error::from(raw)));
+    }
+
+    /// `SQLITE_NOTADB` (code `NotADatabase`, 26 — header unreadable) is the
+    /// same broad on-disk-damage class and must classify too.
+    #[test]
+    fn is_sqlite_corrupt_matches_not_a_database_code() {
+        let raw = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::NotADatabase,
+                extended_code: 26,
+            },
+            Some("file is not a database".into()),
+        );
+        assert!(is_sqlite_corrupt(&anyhow::Error::from(raw)));
+    }
+
+    /// The rusqlite error sits a few `.context()` layers deep when it bubbles
+    /// out of `claim_next` → `with_connection`; the downcast must still find
+    /// the `DatabaseCorrupt` code.
+    #[test]
+    fn is_sqlite_corrupt_matches_through_context_layers() {
+        let raw = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::DatabaseCorrupt,
+                extended_code: 11,
+            },
+            Some("database disk image is malformed".into()),
+        );
+        let wrapped = anyhow::Error::from(raw)
+            .context("Failed to claim next mem_tree_jobs row")
+            .context("with_connection closure failed");
+        assert!(is_sqlite_corrupt(&wrapped));
+    }
+
+    /// Text fallback: the exact flattened Sentry string (TAURI-RUST-E93) must
+    /// classify even when no rusqlite error is available to downcast.
+    #[test]
+    fn is_sqlite_corrupt_text_fallback() {
+        let err = anyhow::anyhow!(
+            "Failed to claim next mem_tree_jobs row: database disk image is malformed: \
+             Error code 11: The database disk image is malformed"
+        );
+        assert!(is_sqlite_corrupt(&err));
+    }
+
+    /// Busy/locked, disk-full, constraint violations, and unrelated errors must
+    /// NOT be swallowed as corruption — quarantining on those would destroy a
+    /// perfectly good DB.
+    #[test]
+    fn is_sqlite_corrupt_does_not_match_other_errors() {
+        let busy = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::DatabaseBusy,
+                extended_code: 5,
+            },
+            Some("database is locked".into()),
+        );
+        assert!(!is_sqlite_corrupt(&anyhow::Error::from(busy)));
+
+        let disk_full = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::DiskFull,
+                extended_code: 13,
+            },
+            Some("database or disk is full".into()),
+        );
+        assert!(!is_sqlite_corrupt(&anyhow::Error::from(disk_full)));
+
+        let constraint = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::ConstraintViolation,
+                extended_code: 19,
+            },
+            Some("UNIQUE constraint failed: mem_tree_jobs.dedupe_key".into()),
+        );
+        assert!(!is_sqlite_corrupt(&anyhow::Error::from(constraint)));
+
+        assert!(!is_sqlite_corrupt(&anyhow::anyhow!(
+            "upstream returned 500: internal server error"
+        )));
+    }
+
+    /// The worker's corruption arm must quarantine a malformed image and rebuild
+    /// an empty, queryable schema so the queue resumes — exercising the
+    /// report-once + recover path the live loop runs.
+    #[tokio::test]
+    async fn recover_corrupt_db_once_quarantines_and_rebuilds() {
+        let (_tmp, cfg) = test_config();
+        // Lay down a malformed `chunks.db` (garbage header) at the canonical path.
+        let db_path = cfg.workspace_dir.join("memory_tree").join("chunks.db");
+        std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+        std::fs::write(&db_path, b"not a sqlite database, just garbage bytes").unwrap();
+
+        let err = anyhow::anyhow!(
+            "Failed to claim next mem_tree_jobs row: database disk image is malformed"
+        );
+        recover_corrupt_db_once(0, &err, &cfg);
+
+        // Corrupt bytes are preserved alongside (never silently dropped) ...
+        let quarantined = std::fs::read_dir(db_path.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .any(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .contains("chunks.db.corrupt-")
+            });
+        assert!(
+            quarantined,
+            "corrupt image must be quarantined, not deleted"
+        );
+
+        // ... and the rebuilt queue DB is healthy and empty.
+        let processed = run_once(&cfg).await.unwrap();
+        assert!(!processed, "rebuilt queue starts empty");
     }
 
     #[tokio::test]

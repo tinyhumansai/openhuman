@@ -29,7 +29,8 @@ import {
   type RegistryWalletBalance,
 } from '../../lib/agentworld/invokeApiClient';
 import { apiClient } from '../AgentWorldShell';
-import AmountCommitDialog from '../components/AmountCommitDialog';
+import { decimalsForAsset, formatAssetAmount } from '../assets';
+import CommitFlow from '../components/CommitFlow';
 import X402ConfirmDialog from '../components/X402ConfirmDialog';
 import { explorerTxUrl as buyExplorerTxUrl, useX402Buy } from '../hooks/useX402Buy';
 
@@ -266,9 +267,17 @@ function ErrorBanner({ message }: { message: string }) {
   );
 }
 
-// Formats price amount + asset for display
+// Formats a marketplace price for display. Listing/floor/sale `price.amount`
+// strings are in the asset's smallest BASE units (same convention as the x402
+// buy challenge `amount` and bounty `reward.amount`) — a 30 USDC price arrives as
+// "30000000". We humanize here via the shared {@link formatAssetAmount} so the
+// DISPLAYED price ("30 USDC") matches the human-decimal value the user types in
+// AmountCommitDialog when bidding/offering (which then scales ×10^decimals to base
+// units). Rendering the raw base-unit string verbatim previously invited a
+// catastrophic over-spend (user reads "30000000 USDC", types it, signs 30000000 ×
+// 10^6 base units).
 function formatPrice(amount: string, asset: string): string {
-  return `${amount} ${asset}`;
+  return formatAssetAmount(amount, asset);
 }
 
 // ── Register tab ──────────────────────────────────────────────────────────────
@@ -716,12 +725,15 @@ function TradingTab() {
     setBuying(null);
   }
 
-  // x402 commitment flow (bid / offer) — no immediate spend.
+  // x402 commitment flow (bid / offer). Now two-phase (amount → review → submit)
+  // for confirm-before-spend parity with Buy — the CommitFlow component owns the
+  // amount/review state; here we only track which listing is in flight + the
+  // success/error banner state.
   const [commit, setCommit] = useState<{ kind: 'bid' | 'offer'; listing: IdentityListing } | null>(
     null
   );
   const [commitState, setCommitState] = useState<{
-    phase: 'idle' | 'busy' | 'success' | 'error';
+    phase: 'idle' | 'success' | 'error';
     message?: string;
   }>({ phase: 'idle' });
 
@@ -730,23 +742,28 @@ function TradingTab() {
     setCommitState({ phase: 'idle' });
   }
 
-  function submitCommit(amount: string) {
-    if (!commit) return;
+  // Perform the actual commitment RPC. `amount` is in BASE units (CommitFlow has
+  // already converted the human decimal input). Returns a promise so CommitFlow
+  // can show its busy/review state and route the outcome back to the banners.
+  function performCommit(amount: string): Promise<void> {
+    if (!commit) return Promise.resolve();
     const { kind, listing } = commit;
     const price = { amount, asset: listing.price.asset, network: listing.price.network ?? '' };
-    setCommitState({ phase: 'busy' });
     const call =
       kind === 'bid'
         ? apiClient.marketplace.bid(listing.listingId, price)
         : apiClient.marketplace.offer(listing.name, price);
-    void call
-      .then(() => {
-        setCommit(null);
-        setCommitState({ phase: 'success' });
-      })
-      .catch((err: unknown) => {
-        setCommitState({ phase: 'error', message: String(err) });
-      });
+    return call.then(() => undefined);
+  }
+
+  function handleCommitSuccess() {
+    setCommit(null);
+    setCommitState({ phase: 'success' });
+  }
+
+  function handleCommitError(message: string) {
+    setCommit(null);
+    setCommitState({ phase: 'error', message });
   }
 
   return (
@@ -855,20 +872,18 @@ function TradingTab() {
           </div>
         )}
 
-        {/* Bid / offer amount dialog. */}
+        {/* Bid / offer commitment flow (amount → review → submit). */}
         {commit && (
-          <AmountCommitDialog
-            title={
-              commit.kind === 'bid'
-                ? `Bid on ${commit.listing.name}`
-                : `Offer for ${commit.listing.name}`
-            }
-            subtitle="A signed commitment — funds move only if it is accepted."
+          <CommitFlow
+            kind={commit.kind}
+            name={commit.listing.name}
             asset={commit.listing.price.asset}
-            submitLabel={commit.kind === 'bid' ? 'Place bid' : 'Submit offer'}
-            busy={commitState.phase === 'busy'}
-            onCancel={closeCommit}
-            onSubmit={submitCommit}
+            decimals={decimalsForAsset(commit.listing.price.asset)}
+            network={commit.listing.price.network}
+            submit={performCommit}
+            onSuccess={handleCommitSuccess}
+            onError={handleCommitError}
+            onClose={closeCommit}
           />
         )}
 

@@ -22,6 +22,11 @@ named = [
     "composio_list_tools",
     "file_read",
     "composio_execute",
+    # Inline-in-chat OAuth connect card (#3993). When the bound toolkit is not
+    # connected — or an action fails with a true auth/connection error — raise
+    # the connect card with this tool and await the result, instead of bubbling
+    # up "Connection error" and sending the user to Settings → Connections.
+    "composio_connect",
     # Deterministic time resolver. Composio actions take time-window args
     # (Slack/Gmail/Calendar `oldest`/`latest`/`since`/`after`) as raw
     # timestamps; the model must NEVER hand-compute epoch seconds (a real

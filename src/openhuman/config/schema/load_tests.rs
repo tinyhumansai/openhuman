@@ -1060,6 +1060,31 @@ fn env_overlay_compaction_default_on_and_kill_switch() {
 }
 
 #[test]
+fn env_overlay_super_context_default_on_and_toggle() {
+    // Default is on.
+    assert!(Config::default().context.super_context_enabled);
+
+    // `OPENHUMAN_SUPER_CONTEXT=0` opts out.
+    let mut cfg = Config::default();
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_SUPER_CONTEXT", "0"));
+    assert!(!cfg.context.super_context_enabled);
+
+    // The namespaced alias works and `on` re-enables it.
+    let mut cfg = Config::default();
+    cfg.context.super_context_enabled = false;
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new().with("OPENHUMAN_CONTEXT_SUPER_CONTEXT_ENABLED", "on"),
+    );
+    assert!(cfg.context.super_context_enabled);
+
+    // Garbage is ignored (leaves the prior value untouched).
+    let mut cfg = Config::default();
+    cfg.context.super_context_enabled = false;
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_SUPER_CONTEXT", "maybe"));
+    assert!(!cfg.context.super_context_enabled);
+}
+
+#[test]
 fn env_overlay_context_tool_result_budget_legacy_migration_when_env_absent() {
     // Env absent, context at default, agent customised → agent value copies forward.
     let default_budget = crate::openhuman::context::DEFAULT_TOOL_RESULT_BUDGET_BYTES;
