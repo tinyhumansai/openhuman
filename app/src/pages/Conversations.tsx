@@ -36,7 +36,13 @@ import { trackEvent } from '../services/analytics';
 import { applyOpenRouterFreeModels } from '../services/api/openrouterFreeModels';
 import { subagentApi } from '../services/api/subagentApi';
 import { threadApi } from '../services/api/threadApi';
-import { chatCancel, chatClearQueue, chatSend, useRustChat } from '../services/chatService';
+import {
+  aiRegenerate,
+  chatCancel,
+  chatClearQueue,
+  chatSend,
+  useRustChat,
+} from '../services/chatService';
 import { callCoreRpc } from '../services/coreRpcClient';
 import {
   loadAgentProfiles,
@@ -2658,12 +2664,11 @@ const Conversations = ({
           // chat scroll area isn't permanently occupied — restored decks
           // are listable from the chip on demand.
           //
-          // NOTE: `onRetry` is intentionally omitted on `ArtifactCard`
-          // below — real retry (either `removeArtifact(thread, id)` to
-          // let the user re-prompt, or full re-dispatch of the producing
-          // tool call) is tracked in follow-up issue #3162. The
-          // failed-card UI still surfaces the truncated error reason;
-          // the button just stays hidden until #3162 lands.
+          // The failed-card Retry button re-dispatches the producing tool
+          // via `ai_regenerate` (#3162): the core reloads the persisted
+          // creation args and re-runs generation under the original
+          // artifact id, so the card swaps back to a spinner in place and
+          // then to ready/failed via the socket events.
           const artifactThreadId = selectedThreadId ?? firstActiveThreadId;
           const all = artifactThreadId ? (artifactsByThread[artifactThreadId] ?? []) : [];
           const live = all.filter(a => a.status !== 'ready');
@@ -2671,7 +2676,19 @@ const Conversations = ({
           return (
             <div className="mb-2 flex flex-col gap-2">
               {live.map(artifact => (
-                <ArtifactCard key={artifact.artifactId} artifact={artifact} />
+                <ArtifactCard
+                  key={artifact.artifactId}
+                  artifact={artifact}
+                  onRetry={
+                    artifactThreadId
+                      ? id => {
+                          void aiRegenerate(id, artifactThreadId).catch(err => {
+                            console.warn('[artifact] regenerate failed:', err);
+                          });
+                        }
+                      : undefined
+                  }
+                />
               ))}
             </div>
           );
