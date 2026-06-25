@@ -11,7 +11,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::openhuman::agent::harness::definition::{
-    AgentDefinition, IterationPolicy, PromptSource,
+    validate_tier_transition, AgentDefinition, AgentDefinitionRegistry, IterationPolicy,
+    PromptSource,
 };
 use crate::openhuman::agent::harness::fork_context::{current_parent, ParentExecutionContext};
 use crate::openhuman::agent::harness::subagent_runner::extract_tool::ExtractFromResultTool;
@@ -36,6 +37,36 @@ use super::prompt::{append_subagent_role_contract, dedup_tool_specs_by_name};
 use super::provider::{
     resolve_subagent_provider, user_is_signed_in_to_composio, LazyToolkitResolver,
 };
+
+/// Runtime spawn-hierarchy gate decision for one delegation hop.
+///
+/// `parent_def` is the resolved parent agent definition (looked up from the
+/// global registry by its definition id) or `None` when the parent can't be
+/// resolved — e.g. a custom agent absent from the registry, or any context
+/// where the registry isn't initialised. A `None` parent yields `Ok(())`: we
+/// skip rather than mask, the same defensive posture the loader takes for
+/// unknown child ids. When the parent *is* known, the hop is checked against
+/// [`validate_tier_transition`] (the single source of truth shared with the
+/// boot-time loader walk) and a forbidden hop becomes a
+/// [`SubagentRunError::TierViolation`].
+///
+/// Split out as a pure, side-effect-free fn so the gate's decision table is
+/// unit-testable without standing up a global registry or a live spawn (#4098).
+pub(crate) fn tier_gate_decision(
+    parent_def: Option<&AgentDefinition>,
+    child: &AgentDefinition,
+) -> Result<(), SubagentRunError> {
+    let Some(parent_def) = parent_def else {
+        return Ok(());
+    };
+    validate_tier_transition(parent_def.agent_tier, child.agent_tier).map_err(|reason| {
+        SubagentRunError::TierViolation {
+            parent_tier: parent_def.agent_tier,
+            child_tier: child.agent_tier,
+            reason,
+        }
+    })
+}
 
 /// Run a sub-agent based on its definition and a task prompt.
 ///
@@ -88,6 +119,34 @@ pub async fn run_subagent(
                 attempted_depth,
                 max_depth: MAX_SPAWN_DEPTH,
             });
+        }
+
+        // Runtime spawn-hierarchy (tier) gate — defense-in-depth alongside the
+        // depth gate above. The loader validates *declared* `subagents` pairs
+        // statically at boot (`validate_tier_hierarchy`), but dynamic, custom,
+        // or model-chosen spawns reach this chokepoint without ever passing
+        // through that walk. Resolve the parent's tier from the registry by its
+        // definition id and reject any hop the spawn hierarchy forbids.
+        let parent_def =
+            AgentDefinitionRegistry::global().and_then(|reg| reg.get(&parent.agent_definition_id));
+        if let Err(err) = tier_gate_decision(parent_def, definition) {
+            // `err` is always `TierViolation` here; destructure for the log.
+            if let SubagentRunError::TierViolation {
+                parent_tier,
+                child_tier,
+                ref reason,
+            } = err
+            {
+                tracing::warn!(
+                    parent_agent = %parent.agent_definition_id,
+                    %parent_tier,
+                    child_agent = %definition.id,
+                    %child_tier,
+                    task_id = %task_id,
+                    "[subagent_runner] blocked tier-violating delegation: {reason}"
+                );
+            }
+            return Err(err);
         }
 
         tracing::info!(
