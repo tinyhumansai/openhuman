@@ -35,7 +35,8 @@
 //! collision.
 
 use crate::openhuman::agent::harness::definition::{
-    AgentDefinition, AgentTier, DefinitionSource, PromptBuilder, PromptSource, SubagentEntry,
+    validate_tier_transition, AgentDefinition, AgentTier, DefinitionSource, PromptBuilder,
+    PromptSource, SubagentEntry,
 };
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -305,22 +306,18 @@ pub fn validate_tier_hierarchy(defs: &[AgentDefinition]) -> Result<()> {
             // Same-tier delegation is forbidden for chat and reasoning.
             // (Chat→Chat would defeat the whole point of the fast tier;
             // Reasoning→Reasoning produces a depth-blowing recursion of
-            // slow models.)
-            match (def.agent_tier, child_tier) {
-                (AgentTier::Chat, AgentTier::Chat) => anyhow::bail!(
-                    "agent `{parent}` (chat) lists `{child}` (chat) in subagents — the chat tier \
-                     is a leaf in its own dimension. Hand off to a `reasoning` or `worker` agent \
-                     instead.",
+            // slow models.) The pair-rule lives in `validate_tier_transition`
+            // (the single source of truth shared with the runtime spawn gate
+            // in `run_subagent`); here we wrap its reason with the offending
+            // agent ids + tiers for a boot-time-friendly diagnostic.
+            if let Err(reason) = validate_tier_transition(def.agent_tier, child_tier) {
+                anyhow::bail!(
+                    "agent `{parent}` ({ptier}) lists `{child}` ({ctier}) in subagents — {reason}",
                     parent = def.id,
+                    ptier = def.agent_tier.as_str(),
                     child = child_id,
-                ),
-                (AgentTier::Reasoning, AgentTier::Reasoning) => anyhow::bail!(
-                    "agent `{parent}` (reasoning) lists `{child}` (reasoning) in subagents — \
-                     reasoning agents compose downward into workers, not into each other.",
-                    parent = def.id,
-                    child = child_id,
-                ),
-                _ => {}
+                    ctier = child_tier.as_str(),
+                );
             }
         }
     }
