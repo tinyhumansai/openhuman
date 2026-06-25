@@ -281,3 +281,53 @@ max_iterations = 1
     assert_eq!(def.iteration_policy, IterationPolicy::Strict);
     assert_eq!(def.effective_max_iterations(), 1);
 }
+
+// ── Spawn-hierarchy tier rule (validate_tier_transition) ────────────────────
+// Single source of truth shared by the boot loader walk and the runtime
+// spawn gate in `run_subagent` (issue #4098).
+
+#[test]
+fn tier_transition_allows_legal_descending_handoffs() {
+    // chat → reasoning, chat → worker, reasoning → worker are the only
+    // legal hops; each strictly descends the hierarchy.
+    assert!(validate_tier_transition(AgentTier::Chat, AgentTier::Reasoning).is_ok());
+    assert!(validate_tier_transition(AgentTier::Chat, AgentTier::Worker).is_ok());
+    assert!(validate_tier_transition(AgentTier::Reasoning, AgentTier::Worker).is_ok());
+}
+
+#[test]
+fn tier_transition_rejects_chat_to_chat() {
+    let err = validate_tier_transition(AgentTier::Chat, AgentTier::Chat)
+        .expect_err("chat→chat must be rejected");
+    // Wording must carry the substrings the loader diagnostics rely on.
+    assert!(err.contains("chat") && err.contains("leaf"), "got: {err}");
+}
+
+#[test]
+fn tier_transition_rejects_reasoning_to_reasoning() {
+    let err = validate_tier_transition(AgentTier::Reasoning, AgentTier::Reasoning)
+        .expect_err("reasoning→reasoning must be rejected");
+    assert!(err.contains("reasoning"), "got: {err}");
+}
+
+#[test]
+fn tier_transition_rejects_worker_as_parent() {
+    // A worker is a leaf executor — it may not spawn any tier, including
+    // another worker.
+    for child in [AgentTier::Chat, AgentTier::Reasoning, AgentTier::Worker] {
+        let err = validate_tier_transition(AgentTier::Worker, child)
+            .expect_err("worker must not spawn any tier");
+        assert!(
+            err.contains("worker") && err.contains("leaf"),
+            "worker→{} reason should call out the worker-leaf rule, got: {err}",
+            child.as_str()
+        );
+    }
+}
+
+#[test]
+fn tier_display_matches_as_str() {
+    assert_eq!(AgentTier::Chat.to_string(), "chat");
+    assert_eq!(AgentTier::Reasoning.to_string(), "reasoning");
+    assert_eq!(AgentTier::Worker.to_string(), "worker");
+}

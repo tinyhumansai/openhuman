@@ -312,6 +312,53 @@ impl AgentTier {
     }
 }
 
+impl std::fmt::Display for AgentTier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Single source of truth for the spawn-hierarchy rule: is a `parent`-tier
+/// agent allowed to delegate to a `child`-tier agent?
+///
+/// Returns `Ok(())` for the legal handoffs (`chat → reasoning`,
+/// `chat → worker`, `reasoning → worker`) and `Err(reason)` for the three
+/// forbidden shapes, where `reason` is a tier-only human-readable explanation
+/// (no agent ids — callers prepend their own context):
+///
+/// - `Worker → *` — workers are leaf executors and must not spawn anything.
+/// - `Chat → Chat` — the chat tier is a leaf in its own dimension; cloning it
+///   defeats the fast-path and risks unbounded `chat → chat → …` chains.
+/// - `Reasoning → Reasoning` — reasoning agents compose downward into workers,
+///   not into each other (a depth-blowing recursion of slow models).
+///
+/// Because every legal transition strictly descends `Chat → Reasoning →
+/// Worker` and `Worker` is a leaf, validating each hop with this function
+/// inherently bounds any execution chain to at most three hops — the tier gate
+/// *is* a depth gate. It is enforced both statically at boot (the loader walks
+/// declared `subagents` pairs — see
+/// [`crate::openhuman::agent_registry::agents::validate_tier_hierarchy`]) and
+/// at runtime at the universal spawn chokepoint (`run_subagent`) as
+/// defense-in-depth against dynamic / custom / model-chosen spawns the boot
+/// walk never saw.
+pub fn validate_tier_transition(parent: AgentTier, child: AgentTier) -> Result<(), String> {
+    match (parent, child) {
+        (AgentTier::Worker, _) => Err(format!(
+            "a `worker` tier agent must not spawn `{}` — workers are leaf executors",
+            child.as_str()
+        )),
+        (AgentTier::Chat, AgentTier::Chat) => Err(
+            "the chat tier is a leaf in its own dimension — hand off to a `reasoning` or \
+             `worker` agent instead"
+                .to_string(),
+        ),
+        (AgentTier::Reasoning, AgentTier::Reasoning) => {
+            Err("reasoning agents compose downward into workers, not into each other".to_string())
+        }
+        _ => Ok(()),
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Subagent delegation entries
 // ─────────────────────────────────────────────────────────────────────────────
