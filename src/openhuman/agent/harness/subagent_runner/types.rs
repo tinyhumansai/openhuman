@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use thiserror::Error;
 
+use crate::openhuman::agent::harness::definition::AgentTier;
 use crate::openhuman::inference::provider::ChatMessage;
 
 /// Per-spawn options that override or augment what the
@@ -176,6 +177,16 @@ pub enum SubagentRunError {
     SpawnDepthExceeded {
         attempted_depth: usize,
         max_depth: usize,
+    },
+
+    #[error(
+        "delegation blocked by the spawn-hierarchy gate: a `{parent_tier}` agent may not \
+         delegate to a `{child_tier}` agent — {reason}"
+    )]
+    TierViolation {
+        parent_tier: AgentTier,
+        child_tier: AgentTier,
+        reason: String,
     },
 
     #[error("sub-agent exceeded maximum iterations ({0})")]
