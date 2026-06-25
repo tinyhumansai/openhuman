@@ -1,0 +1,11 @@
+[[permission]]
+identifier = "allow-artifact-save"
+description = "Allow exporting an agent-generated artifact to a user-chosen path via the native Save-As dialog (#3162)"
+
+[permission.commands]
+
+allow = [
+    "save_artifact_via_dialog",
+]
+
+deny = []

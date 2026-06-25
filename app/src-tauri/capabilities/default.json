@@ -32,6 +32,7 @@
     "allow-core-process",
     "allow-workspace-files",
     "allow-artifact-download",
+    "allow-artifact-save",
     "allow-app-update",
     "allow-loopback-oauth"
   ]
