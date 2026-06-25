@@ -40,6 +40,12 @@ mod dom_snapshot;
 /// or the page target disappears (e.g. Discord refresh, navigation).
 const RECONNECT_BACKOFF: Duration = Duration::from_secs(3);
 const MAX_CHANNEL_MESSAGES: usize = 400;
+/// Idle window after which the event pump assumes the attached page target is
+/// stale/destroyed (reload, renderer crash, hard navigation) and returns so
+/// the outer loop re-attaches. Chosen at >2x Discord's ~41s gateway heartbeat:
+/// a live session always emits gateway WS frames within this window, so a
+/// longer silence means the session is dead, not merely quiet.
+const PUMP_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct DiscordPersistMessage {
@@ -316,8 +322,10 @@ pub fn spawn_scanner<R: Runtime>(
 }
 
 /// Run one CDP attach → enable → stream-events lifecycle. Returns when the
-/// underlying WebSocket closes, the page target disappears, or any
-/// dispatch hits an unrecoverable error. Caller loops.
+/// in-process transport closes (webview torn down) or when the pump's idle
+/// watchdog trips after `PUMP_IDLE_TIMEOUT` of no frames — i.e. the attached
+/// page target went stale (Discord reload, renderer crash, hard navigation).
+/// The caller's outer loop then re-attaches.
 async fn run_mitm_session<R: Runtime>(
     app: &AppHandle<R>,
     account_id: &str,
@@ -350,13 +358,17 @@ async fn run_mitm_session<R: Runtime>(
         session_id
     );
 
-    // Drop into the event read loop until the in-process channel signals
-    // closure. V1 doesn't issue any in-stream calls (responses table from
-    // the previous TCP impl is gone — re-introduce a request/response API
-    // here when V1.5 backfills `Network.getResponseBody`).
+    // Drop into the event read loop. It returns when the in-process transport
+    // closes (webview gone) OR when the idle watchdog fires after
+    // `PUMP_IDLE_TIMEOUT` of no frames (stale/destroyed page target) — either
+    // way the outer loop re-attaches. The resilient pump also buffers bursts
+    // into an unbounded queue so a flood that overflows the broadcast ring
+    // isn't silently dropped. V1 doesn't issue any in-stream calls (responses
+    // table from the previous TCP impl is gone — re-introduce a
+    // request/response API here when V1.5 backfills `Network.getResponseBody`).
     log::info!("[discord][{}] event pump started", account_id);
     let mut ingest_state = DiscordIngestState::default();
-    cdp.pump_events(&session_id, |method, params| {
+    cdp.pump_events_resilient(&session_id, PUMP_IDLE_TIMEOUT, |method, params| {
         dispatch_event(app, account_id, method, params, &mut ingest_state);
     })
     .await
