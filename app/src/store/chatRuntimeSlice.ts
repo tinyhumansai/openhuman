@@ -904,6 +904,20 @@ const chatRuntimeSlice = createSlice({
       }>
     ) => {
       const { threadId, artifactId, kind, title } = action.payload;
+      // No-downgrade guard: a late `artifact_pending` (re-delivery, or a
+      // socket race) must never regress an artifact that already reached
+      // `ready` / `failed` back to a spinner. Only the regenerate flow
+      // (#3162) legitimately re-enters `in_progress`, and that reuses the
+      // id via a fresh pending event AFTER the failed state — which is
+      // allowed because the previous terminal state was `failed`, and a
+      // retry SHOULD show the spinner again. So: block downgrade only from
+      // `ready`; allow `failed -> in_progress` (an explicit retry).
+      const existing = (state.artifactsByThread[threadId] ?? []).find(
+        entry => entry.artifactId === artifactId
+      );
+      if (existing && existing.status === 'ready') {
+        return;
+      }
       const snapshot: ArtifactSnapshot = {
         artifactId,
         kind,

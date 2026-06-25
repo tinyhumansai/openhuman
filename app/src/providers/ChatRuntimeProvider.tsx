@@ -48,6 +48,7 @@ import {
   type ToolTimelineEntry,
   type ToolTimelineEntryStatus,
   upsertArtifactFailedForThread,
+  upsertArtifactInProgressForThread,
   upsertArtifactReadyForThread,
 } from '../store/chatRuntimeSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
@@ -963,6 +964,21 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
             });
           }
         });
+      },
+      onArtifactPending: event => {
+        rtLog('artifact_pending', {
+          thread: event.thread_id,
+          artifact_id: event.artifact_id,
+          kind: event.kind,
+        });
+        dispatch(
+          upsertArtifactInProgressForThread({
+            threadId: event.thread_id,
+            artifactId: event.artifact_id,
+            kind: event.kind,
+            title: event.title,
+          })
+        );
       },
       onArtifactReady: event => {
         rtLog('artifact_ready', {
