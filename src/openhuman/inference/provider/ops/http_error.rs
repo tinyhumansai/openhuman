@@ -633,19 +633,23 @@ pub fn is_byo_provider_auth_failure_http(
         "no api key supplied",
         "incorrect api key",
         "invalid authentication",
+    ];
+    let matched = AUTH_ERROR_MARKERS
+        .iter()
+        .any(|marker| lower.contains(marker))
         // OpenRouter's wording for a key that resolves to no account
         // (revoked / deleted user): `401 {"error":{"message":"User not
         // found.","code":401}}`. Same invalid-BYO-key user-state as the
         // markers above — OpenHuman has no lever to make the user's
-        // third-party account exist. Without this anchor the 401 leaks to
-        // Sentry once per memory-summarization retry (TAURI-RUST-4RC:
-        // ~9k events / 6 users). A verbatim-body test couples it to this
-        // payload so a wording drift fails CI instead of silently leaking.
-        "user not found",
-    ];
-    let matched = AUTH_ERROR_MARKERS
-        .iter()
-        .any(|marker| lower.contains(marker));
+        // third-party account exist. Kept OpenRouter-gated (not a global
+        // marker): `"user not found"` is generic prose another provider
+        // could emit for an unrelated 401/403, and demoting that would
+        // suppress a real error and show the wrong remediation. Without this
+        // anchor the 401 leaks to Sentry once per memory-summarization retry
+        // (TAURI-RUST-4RC: ~9k events / 6 users). A verbatim-body test
+        // couples it to this payload so a wording drift fails CI instead of
+        // silently leaking.
+        || (provider == "openrouter" && lower.contains("user not found"));
     // Body content is intentionally omitted from the log — it can carry the
     // raw (sanitized-or-not) provider payload; only the match outcome is logged.
     tracing::debug!(
@@ -1303,6 +1307,26 @@ mod tests {
             openhuman_backend::PROVIDER_LABEL,
             StatusCode::UNAUTHORIZED,
             OPENROUTER_USER_NOT_FOUND_4RC_BODY
+        ));
+    }
+
+    #[test]
+    fn byo_auth_failure_user_not_found_is_openrouter_gated() {
+        // `"user not found"` is OpenRouter-specific prose, NOT a global auth
+        // marker. A different BYO provider returning a 401 whose body happens
+        // to contain that phrase must keep its original (reported) error path
+        // — demoting it would suppress a real failure and surface the wrong
+        // "update your key" remediation. Only OpenRouter's wording is anchored.
+        assert!(!is_byo_provider_auth_failure_http(
+            "anthropic",
+            StatusCode::UNAUTHORIZED,
+            OPENROUTER_USER_NOT_FOUND_4RC_BODY
+        ));
+        // The canonical auth markers still match regardless of provider.
+        assert!(is_byo_provider_auth_failure_http(
+            "anthropic",
+            StatusCode::UNAUTHORIZED,
+            "{\"error\":{\"type\":\"authentication_error\"}}"
         ));
     }
 }
