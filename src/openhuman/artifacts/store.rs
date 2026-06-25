@@ -4,6 +4,22 @@ use super::types::{ArtifactMeta, ArtifactStatus};
 
 const ARTIFACTS_SUBDIR: &str = "artifacts";
 const META_FILENAME: &str = "meta.json";
+/// Sidecar file holding the verbatim producer-tool arguments that
+/// generated the artifact, persisted next to `meta.json` so a failed
+/// card's Retry button can re-dispatch the exact same generation
+/// deterministically without round-tripping the args back through the
+/// LLM (#3162). Written by the producing tool right after
+/// [`create_artifact`]; read by `ops::ai_regenerate`.
+const ARGS_FILENAME: &str = "args.json";
+
+tokio::task_local! {
+    /// When set (by `ops::ai_regenerate`), [`create_artifact`] reuses
+    /// this id + its existing directory instead of minting a fresh
+    /// UUID — so a Retry swaps the failed card in place rather than
+    /// appending a second card (#3162). Unset for all normal
+    /// generation paths, in which case a fresh UUID is minted.
+    pub static REGENERATE_TARGET_ID: String;
+}
 
 /// Returns the artifacts root directory, creating it if it doesn't exist.
 ///
@@ -231,6 +247,65 @@ pub(crate) async fn get_artifact(
     Ok(meta)
 }
 
+/// Persist the verbatim producer-tool arguments alongside an artifact's
+/// `meta.json` as `<workspace>/artifacts/<id>/args.json` (#3162).
+///
+/// Stored so a later [`ops::ai_regenerate`](super::ops::ai_regenerate)
+/// can reload the exact spec and re-run generation deterministically —
+/// the Retry affordance on a failed card re-dispatches the *same*
+/// request rather than asking the LLM to reconstruct it. Best-effort
+/// from the producer's perspective: a write failure here does not fail
+/// the generation, it only forfeits the ability to regenerate that
+/// artifact.
+pub(crate) async fn save_artifact_args(
+    workspace_dir: &Path,
+    artifact_id: &str,
+    args: &serde_json::Value,
+) -> Result<(), String> {
+    log::debug!("[artifacts] save_artifact_args: id={artifact_id}");
+    validate_artifact_id(artifact_id)?;
+    let root = artifacts_root(workspace_dir).await?;
+    let artifact_dir = root.join(artifact_id);
+    assert_within_root(&root, &artifact_dir)?;
+    tokio::fs::create_dir_all(&artifact_dir).await.map_err(|e| {
+        format!(
+            "[artifacts] failed to create artifact dir {:?}: {e}",
+            artifact_dir
+        )
+    })?;
+    let args_path = artifact_dir.join(ARGS_FILENAME);
+    let json = serde_json::to_string_pretty(args)
+        .map_err(|e| format!("[artifacts] failed to serialize args for id={artifact_id}: {e}"))?;
+    tokio::fs::write(&args_path, json)
+        .await
+        .map_err(|e| format!("[artifacts] failed to write args.json for id={artifact_id}: {e}"))?;
+    log::debug!("[artifacts] saved args.json for id={artifact_id}");
+    Ok(())
+}
+
+/// Load the persisted producer-tool arguments for an artifact (#3162).
+///
+/// Returns an `Err` when no `args.json` exists — the common case for
+/// artifacts created before this sidecar was introduced, or by a
+/// producer that never persisted args — so the caller can surface a
+/// "cannot regenerate" message instead of silently doing nothing.
+pub(crate) async fn read_artifact_args(
+    workspace_dir: &Path,
+    artifact_id: &str,
+) -> Result<serde_json::Value, String> {
+    log::debug!("[artifacts] read_artifact_args: id={artifact_id}");
+    validate_artifact_id(artifact_id)?;
+    let root = artifacts_root(workspace_dir).await?;
+    let artifact_dir = root.join(artifact_id);
+    assert_within_root(&root, &artifact_dir)?;
+    let args_path = artifact_dir.join(ARGS_FILENAME);
+    let contents = tokio::fs::read_to_string(&args_path).await.map_err(|e| {
+        format!("[artifacts] no persisted args for id={artifact_id} (not regenerable): {e}")
+    })?;
+    serde_json::from_str(&contents)
+        .map_err(|e| format!("[artifacts] corrupt args.json for id={artifact_id}: {e}"))
+}
+
 /// Read the raw bytes of a finalized artifact's output file.
 ///
 /// Single source of truth for resolving an artifact id → on-disk bytes:
@@ -369,7 +444,17 @@ pub async fn create_artifact(
         ));
     }
 
-    let id = uuid::Uuid::new_v4().to_string();
+    // Normal path mints a fresh UUID. A regenerate (#3162) runs inside
+    // `REGENERATE_TARGET_ID.scope(...)` and reuses the original id so the
+    // Pending/Ready/Failed events that follow carry the same artifact_id
+    // and the card swaps in place. The reused dir already exists; the
+    // `create_dir_all` below is idempotent and the meta/file are
+    // overwritten with the fresh generation.
+    let id = REGENERATE_TARGET_ID
+        .try_with(|target| target.clone())
+        .ok()
+        .filter(|target| !target.trim().is_empty())
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let filename = format!("{}.{trimmed_ext}", sanitize_filename_stem(trimmed_title));
     let relative_path = format!("{id}/{filename}");
 
