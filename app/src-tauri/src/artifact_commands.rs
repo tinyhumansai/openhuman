@@ -11,15 +11,17 @@
 //!    pull `tauri-plugin-fs` (whose `schemars` version conflict was the
 //!    reason the original #2779 work shipped the Downloads fallback
 //!    below instead of a dialog).
-//! 2. [`download_artifact_to_downloads`] (#2779, macOS / Linux) — copies
-//!    the artifact into the user's Downloads directory with a
-//!    non-colliding name and returns the dest path so the UI can offer
-//!    "Reveal in Finder". Retained as the fallback the frontend uses
-//!    when the dialog is unavailable (e.g. no portal on headless Linux)
-//!    or the user cancels.
+//! 2. [`download_artifact_to_downloads`] (#2779) — copies the artifact
+//!    into the user's Downloads directory with a non-colliding name and
+//!    returns the dest path so the UI can offer "Reveal in Finder".
+//!    Retained as the fallback the frontend uses when the dialog is
+//!    unavailable (e.g. no portal on headless Linux) or the user cancels.
+//!    Cross-platform — previously macOS/Linux-only, un-gated so the
+//!    Save-As fallback works on Windows too.
 //!
-//! Both validate the source (absolute + on disk) and sanitize the
-//! filename hint so a malicious `ai_get_artifact` response can never
+//! Both validate that the source is an existing file inside the
+//! OpenHuman data dir's `artifacts/` tree, and sanitize the filename
+//! hint, so the renderer can never copy an arbitrary local file out nor
 //! write outside the chosen directory.
 
 use std::path::{Path, PathBuf};
@@ -64,8 +66,13 @@ pub async fn save_artifact_via_dialog(
 }
 
 /// Validate a renderer-supplied source path: must be a non-empty,
-/// absolute path that exists on disk. The path always originates from
-/// the core `ai_get_artifact` RPC's `absolute_path`, never user text.
+/// absolute path that exists on disk AND resolve inside the OpenHuman
+/// data directory's `artifacts/` tree. The path always originates from
+/// the core `ai_get_artifact` RPC's `absolute_path`, but the command is
+/// reachable by the renderer directly, so we re-validate the trust
+/// boundary here — without the artifacts-root check a compromised
+/// renderer could copy any readable local file out through the Save-As
+/// dialog under an artifact-looking name (Codex P2).
 fn validate_source(source_path: &str) -> Result<PathBuf, String> {
     if source_path.trim().is_empty() {
         return Err("source_path must not be empty".to_string());
@@ -81,7 +88,31 @@ fn validate_source(source_path: &str) -> Result<PathBuf, String> {
             "artifact source not present on disk: {source_path}"
         ));
     }
+    let root = crate::cef_profile::default_root_openhuman_dir()?;
+    assert_artifact_source(&source, &root)?;
     Ok(source)
+}
+
+/// Confirm `source` resolves inside `root` (the OpenHuman data dir) and
+/// carries an `artifacts` path component — i.e. it is a workspace
+/// artifact, not an arbitrary local file. Canonicalizes both sides so
+/// symlink trickery can't escape the root. Isolated for unit testing
+/// without touching the real home directory.
+fn assert_artifact_source(source: &Path, root: &Path) -> Result<(), String> {
+    let canon_source = source
+        .canonicalize()
+        .map_err(|e| format!("cannot resolve source path: {e}"))?;
+    let canon_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    if !canon_source.starts_with(&canon_root) {
+        return Err("source must be inside the OpenHuman data directory".to_string());
+    }
+    if !canon_source
+        .components()
+        .any(|c| c.as_os_str() == "artifacts")
+    {
+        return Err("source must be a workspace artifact file".to_string());
+    }
+    Ok(())
 }
 
 /// Copy `source` to `dest`, returning the byte count. Shared by the
@@ -96,10 +127,8 @@ async fn copy_to_path(source: &Path, dest: &Path) -> Result<u64, String> {
 /// Maximum number of `(N)` suffixes we'll append when picking a
 /// non-colliding filename. After 1000 we give up and append a UUID
 /// suffix instead so the download never silently overwrites.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
 const MAX_COLLISION_SUFFIX: u32 = 1000;
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[tauri::command]
 pub async fn download_artifact_to_downloads(
     source_path: String,
@@ -154,7 +183,6 @@ fn sanitize_filename(name: &str) -> Result<String, String> {
 /// Pick a destination path under `dir` that does not exist yet.
 /// Inserts ` (N)` between the stem and the extension. Falls back to
 /// a UUID suffix after [`MAX_COLLISION_SUFFIX`] tries.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn pick_unique_path(dir: &Path, filename: &str) -> PathBuf {
     let candidate = dir.join(filename);
     if !candidate.exists() {
@@ -188,7 +216,6 @@ fn pick_unique_path(dir: &Path, filename: &str) -> PathBuf {
     dir.join(with_uniq)
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn split_stem_ext(filename: &str) -> (String, String) {
     if let Some(idx) = filename.rfind('.') {
         // Reject leading-dot files (`.hidden`) — treat as having no extension.
@@ -230,6 +257,40 @@ mod tests {
         assert!(validate_source("/definitely/not/here.pptx").is_err());
     }
 
+    #[test]
+    fn assert_artifact_source_accepts_file_under_artifacts_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let art = root.join("users/u1/workspace/artifacts/a-1");
+        std::fs::create_dir_all(&art).unwrap();
+        let file = art.join("deck.pptx");
+        std::fs::write(&file, b"x").unwrap();
+        assert!(assert_artifact_source(&file, root).is_ok());
+    }
+
+    #[test]
+    fn assert_artifact_source_rejects_file_without_artifacts_component() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let other = root.join("users/u1/secrets");
+        std::fs::create_dir_all(&other).unwrap();
+        let file = other.join("token.txt");
+        std::fs::write(&file, b"x").unwrap();
+        assert!(assert_artifact_source(&file, root).is_err());
+    }
+
+    #[test]
+    fn assert_artifact_source_rejects_file_outside_root() {
+        let root_dir = tempfile::tempdir().unwrap();
+        let outside_dir = tempfile::tempdir().unwrap();
+        // Even with an `artifacts` segment, a path outside the root is denied.
+        let art = outside_dir.path().join("artifacts");
+        std::fs::create_dir_all(&art).unwrap();
+        let file = art.join("evil.pptx");
+        std::fs::write(&file, b"x").unwrap();
+        assert!(assert_artifact_source(&file, root_dir.path()).is_err());
+    }
+
     #[tokio::test]
     async fn copy_to_path_copies_bytes() {
         let temp = tempfile::tempdir().unwrap();
@@ -257,7 +318,6 @@ mod tests {
         );
     }
 
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn split_stem_ext_pairs() {
         assert_eq!(
@@ -282,7 +342,6 @@ mod tests {
         );
     }
 
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn pick_unique_inserts_collision_suffix() {
         let temp = tempfile::tempdir().unwrap();
@@ -299,7 +358,6 @@ mod tests {
         assert_eq!(third, dir.join("deck (2).pptx"));
     }
 
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn pick_unique_handles_no_extension() {
         let temp = tempfile::tempdir().unwrap();
@@ -311,7 +369,6 @@ mod tests {
         assert_eq!(second, dir.join("noext (1)"));
     }
 
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[tokio::test]
     async fn download_rejects_invalid_inputs() {
         assert!(

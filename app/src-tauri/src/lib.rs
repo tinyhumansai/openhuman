@@ -4,9 +4,8 @@
 compile_error!("src-tauri host supports desktop (Windows/macOS/Linux) only. Mobile lives in app/src-tauri-mobile.");
 
 mod app_update;
-// Artifact export commands. `save_artifact_via_dialog` (#3162) is
-// cross-platform (rfd); `download_artifact_to_downloads` (#2779) stays
-// macOS/Linux-only and is gated inside the module + the handler list.
+// Artifact export commands (#2779, #3162) — both cross-platform
+// (macOS/Windows/Linux): native Save-As dialog (rfd) + Downloads copy.
 mod artifact_commands;
 mod cdp;
 // macOS/Linux only: depends on the `nix` crate (a `cfg(unix)` dependency) and
@@ -3613,13 +3612,11 @@ pub fn run() {
             core_rpc::relay_http_rpc,
             overlay_parent_rpc_url,
             process_diagnostics_list_owned,
-            // Save-As dialog is cross-platform (#3162).
+            // Artifact export commands — both cross-platform (#3162). The
+            // Downloads command was previously macOS/Linux-gated, but the
+            // `directories` + `tokio::fs::copy` flow compiles on Windows too,
+            // and the Save-As fallback needs it there (CodeRabbit on #4127).
             artifact_commands::save_artifact_via_dialog,
-            // `download_artifact_to_downloads` is `#[cfg(any(macos, linux))]`
-            // (Downloads-dir + `tokio::fs::copy` flow is non-Windows-only today).
-            // The handler entry MUST carry the same gate or Windows builds fail
-            // with "function not found in scope" (CR #3328947313 on PR #3026).
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
             artifact_commands::download_artifact_to_downloads,
             check_core_update,
             apply_core_update,
