@@ -1021,6 +1021,25 @@ mod tests {
     }
 
     #[test]
+    fn chatty_sub_agents_have_bounded_output() {
+        // critic + archivist results flow up to the orchestrator verbatim
+        // (delegate_critic / delegate_archivist). Without a cap their output
+        // is unbounded and bloats the orchestrator's context (#4099). Both
+        // must carry the normal sub-agent cap so a long diff review or a
+        // verbose memory-write confirmation can't leak unbounded text.
+        assert_eq!(
+            find("critic").max_result_chars,
+            Some(8000),
+            "critic output must be bounded so reviews don't leak unbounded text up"
+        );
+        assert_eq!(
+            find("archivist").max_result_chars,
+            Some(8000),
+            "archivist output must be bounded so memory summaries stay concise"
+        );
+    }
+
+    #[test]
     fn researcher_has_curl_for_artifact_downloads() {
         let def = find("researcher");
         match &def.tools {
