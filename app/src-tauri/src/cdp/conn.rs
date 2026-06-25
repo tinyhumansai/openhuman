@@ -120,13 +120,15 @@ impl CdpConn {
     ///    crash, hard navigation) — the plain pump would await it forever.
     ///    Returning lets the caller's outer loop re-attach. `idle_timeout`
     ///    MUST be larger than the consumer's heartbeat cadence.
-    ///  * **Non-lossy delivery** — a background task drains frames off the
-    ///    fixed-capacity broadcast ring into an unbounded queue, so a burst
-    ///    that overflows `EVENT_CHANNEL_CAP` is buffered instead of silently
-    ///    dropped (the slow per-frame work runs on the consumer side, not on
-    ///    the broadcast receiver).
+    ///  * **Loss-aware delivery** — a background task drains frames off the
+    ///    fixed-capacity broadcast ring into an unbounded queue, so the slow
+    ///    per-frame `on_event` work can't back up the ring and a burst is
+    ///    absorbed instead of dropped. If the ring still overflows before the
+    ///    drain can pull (extreme burst), the pump returns `Err` so the caller
+    ///    re-attaches and restarts capture rather than feeding a partial stream.
     ///
-    /// Like `pump_events`, returns `Ok(())` when the transport closes.
+    /// Returns `Ok(())` when the transport closes or the idle watchdog trips,
+    /// and `Err` on an unrecoverable broadcast lag.
     pub async fn pump_events_resilient<F>(
         &mut self,
         session_id: &str,
@@ -171,7 +173,9 @@ async fn pump_resilient_core<F>(
 where
     F: FnMut(&str, &Value),
 {
-    let (tx, mut rx_u) = mpsc::unbounded_channel::<EventFrame>();
+    // Channel item is a Result so the drain can signal an unrecoverable lag to
+    // the consumer instead of silently swallowing it (see the Lagged arm).
+    let (tx, mut rx_u) = mpsc::unbounded_channel::<Result<EventFrame, String>>();
     let session_owned = session_id.to_string();
     let drain_label = label.to_string();
     let drain = tokio::spawn(async move {
@@ -190,20 +194,24 @@ where
                     if frame.session_id != session_owned {
                         continue;
                     }
-                    if tx.send(frame).is_err() {
+                    if tx.send(Ok(frame)).is_err() {
                         break; // consumer dropped — nothing left to drain into
                     }
                 }
                 Err(RecvError::Lagged(skipped)) => {
-                    // The drain does ~zero work per frame, so it practically
-                    // never falls behind; log if it ever does.
-                    log::warn!(
-                        "[cdp][{}] drain lagged skipped={} session_id={}",
-                        drain_label,
-                        skipped,
-                        session_owned
+                    // The broadcast ring overflowed before the drain could pull —
+                    // frames are already gone. Continuing would feed a partial
+                    // stream downstream (missed Discord messages, no re-sync), so
+                    // surface it and let the consumer force a re-attach, which
+                    // restarts capture cleanly. The drain does ~zero work per
+                    // frame, so this only trips under an extreme burst.
+                    let msg = format!(
+                        "[cdp][{}] drain lagged skipped={} session_id={} — forcing re-attach",
+                        drain_label, skipped, session_owned
                     );
-                    continue;
+                    log::warn!("{msg}");
+                    let _ = tx.send(Err(msg));
+                    break;
                 }
                 Err(RecvError::Closed) => break,
             }
@@ -212,8 +220,9 @@ where
 
     let result = loop {
         match tokio::time::timeout(idle_timeout, rx_u.recv()).await {
-            Ok(Some(frame)) => on_event(&frame.method, &frame.params),
-            Ok(None) => break Ok(()), // transport closed / webview forgotten
+            Ok(Some(Ok(frame))) => on_event(&frame.method, &frame.params),
+            Ok(Some(Err(e))) => break Err(e), // lag → re-attach (outer loop reconnects)
+            Ok(None) => break Ok(()),         // transport closed / webview forgotten
             Err(_elapsed) => {
                 log::info!(
                     "[cdp][{}] event pump idle for {:?}, forcing re-attach session_id={}",
@@ -326,5 +335,30 @@ mod resilient_pump_tests {
         .await;
         assert!(res.is_ok());
         assert_eq!(*got.borrow(), vec!["a", "d"]);
+    }
+
+    /// When the ring overflows before the drain can pull (burst with no yields),
+    /// the lag must surface as an error so the outer loop re-attaches and
+    /// re-syncs — never a silent partial stream. Regression guard for the
+    /// non-lossy contract (CodeRabbit review on #3693).
+    #[tokio::test(start_paused = true)]
+    async fn lag_surfaces_error_to_force_reattach() {
+        let (tx, rx) = broadcast::channel::<EventFrame>(4);
+        // Flood far past the 4-slot ring with no yields: the drain task hasn't
+        // run yet, so the oldest frames are evicted → first recv is Lagged.
+        for i in 0..200 {
+            let _ = tx.send(frame(&format!("m{i}"), "sess"));
+        }
+        let got = Rc::new(RefCell::new(0usize));
+        let g = got.clone();
+        let res = pump_resilient_core(rx, "sess", Duration::from_secs(3600), "test", |_m, _p| {
+            *g.borrow_mut() += 1;
+        })
+        .await;
+        assert!(
+            res.is_err(),
+            "lag must surface as Err so the session re-attaches"
+        );
+        drop(tx); // sender kept alive across the run
     }
 }
