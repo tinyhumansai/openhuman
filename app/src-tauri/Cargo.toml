@@ -63,6 +63,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
 directories = "5"
+# Native Save-As file dialog for artifact export (#3162). default-features
+# off + xdg-portal keeps Linux off GTK (the Downloads-copy fallback covers
+# headless CI where no portal is available); tokio drives the async backend.
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
 # Used by gmail/cdp_fetch for decoding binary IO.read chunks. Base64 is
 # only emitted by CDP IO.read when the stream contains non-UTF-8 bytes,
 # but we opt into the feature to stay robust against unexpected responses.
