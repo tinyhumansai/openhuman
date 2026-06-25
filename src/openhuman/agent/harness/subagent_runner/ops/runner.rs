@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::openhuman::agent::harness::definition::{
-    validate_tier_transition, AgentDefinition, AgentDefinitionRegistry, IterationPolicy,
+    validate_tier_transition, AgentDefinition, AgentDefinitionRegistry, AgentTier, IterationPolicy,
     PromptSource,
 };
 use crate::openhuman::agent::harness::fork_context::{current_parent, ParentExecutionContext};
@@ -42,30 +42,52 @@ use super::provider::{
 ///
 /// `parent_def` is the resolved parent agent definition (looked up from the
 /// global registry by its definition id) or `None` when the parent can't be
-/// resolved — e.g. a custom agent absent from the registry, or any context
-/// where the registry isn't initialised. A `None` parent yields `Ok(())`: we
-/// skip rather than mask, the same defensive posture the loader takes for
-/// unknown child ids. When the parent *is* known, the hop is checked against
-/// [`validate_tier_transition`] (the single source of truth shared with the
-/// boot-time loader walk) and a forbidden hop becomes a
-/// [`SubagentRunError::TierViolation`].
+/// resolved — e.g. a dynamically-named agent (model-council juror) or a custom
+/// agent absent from the registry, or any context where the registry isn't
+/// initialised. A `None` parent yields `Ok(())`: we skip rather than mask, the
+/// same defensive posture the loader takes for unknown child ids.
 ///
-/// Split out as a pure, side-effect-free fn so the gate's decision table is
-/// unit-testable without standing up a global registry or a live spawn (#4098).
+/// A **worker** parent is also exempted. At runtime a worker only reaches the
+/// spawn chokepoint via the documented collapsed `delegate_to_integrations_agent`
+/// path (→ `integrations_agent`, itself a worker) — a shape the loader
+/// intentionally leaves untouched. Re-denying it here would turn valid custom
+/// worker agents that use `{ skills = "*" }` into runtime failures. The
+/// worker-leaf authoring rule stays enforced statically at boot, and the
+/// per-parent allowlist gate blocks any other worker spawn.
+///
+/// For chat / reasoning parents the hop is checked against
+/// [`validate_tier_transition`] (the single source of truth shared with the
+/// boot loader walk); a forbidden hop is logged and becomes a
+/// [`SubagentRunError::TierViolation`]. Logging lives here (rather than at the
+/// call site) so the deny path is exercised by this fn's unit tests.
 pub(crate) fn tier_gate_decision(
     parent_def: Option<&AgentDefinition>,
     child: &AgentDefinition,
+    parent_agent_id: &str,
+    task_id: &str,
 ) -> Result<(), SubagentRunError> {
     let Some(parent_def) = parent_def else {
         return Ok(());
     };
-    validate_tier_transition(parent_def.agent_tier, child.agent_tier).map_err(|reason| {
-        SubagentRunError::TierViolation {
+    if parent_def.agent_tier == AgentTier::Worker {
+        return Ok(());
+    }
+    if let Err(reason) = validate_tier_transition(parent_def.agent_tier, child.agent_tier) {
+        tracing::warn!(
+            parent_agent = %parent_agent_id,
+            parent_tier = %parent_def.agent_tier,
+            child_agent = %child.id,
+            child_tier = %child.agent_tier,
+            task_id = %task_id,
+            "[subagent_runner] blocked tier-violating delegation: {reason}"
+        );
+        return Err(SubagentRunError::TierViolation {
             parent_tier: parent_def.agent_tier,
             child_tier: child.agent_tier,
             reason,
-        }
-    })
+        });
+    }
+    Ok(())
 }
 
 /// Run a sub-agent based on its definition and a task prompt.
@@ -126,28 +148,11 @@ pub async fn run_subagent(
         // statically at boot (`validate_tier_hierarchy`), but dynamic, custom,
         // or model-chosen spawns reach this chokepoint without ever passing
         // through that walk. Resolve the parent's tier from the registry by its
-        // definition id and reject any hop the spawn hierarchy forbids.
+        // definition id; `tier_gate_decision` rejects (and logs) any forbidden
+        // chat/reasoning hop while exempting unresolved + worker parents.
         let parent_def =
             AgentDefinitionRegistry::global().and_then(|reg| reg.get(&parent.agent_definition_id));
-        if let Err(err) = tier_gate_decision(parent_def, definition) {
-            // `err` is always `TierViolation` here; destructure for the log.
-            if let SubagentRunError::TierViolation {
-                parent_tier,
-                child_tier,
-                ref reason,
-            } = err
-            {
-                tracing::warn!(
-                    parent_agent = %parent.agent_definition_id,
-                    %parent_tier,
-                    child_agent = %definition.id,
-                    %child_tier,
-                    task_id = %task_id,
-                    "[subagent_runner] blocked tier-violating delegation: {reason}"
-                );
-            }
-            return Err(err);
-        }
+        tier_gate_decision(parent_def, definition, &parent.agent_definition_id, &task_id)?;
 
         tracing::info!(
             agent_id = %definition.id,

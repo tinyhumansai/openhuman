@@ -1548,15 +1548,21 @@ fn prefix_tier_refuses_ambiguous_and_short_slugs() {
 // applies to each delegation hop. Tested directly so the deny/allow/skip
 // table is covered without standing up a global registry or a live spawn.
 
+// Thin wrapper to call the gate with throwaway log-context ids.
+fn gate(parent: Option<&AgentDefinition>, child: &AgentDefinition) -> Result<(), SubagentRunError> {
+    super::runner::tier_gate_decision(parent, child, "parent-agent", "task-1")
+}
+
 #[test]
 fn tier_gate_skips_when_parent_unresolved() {
     use crate::openhuman::agent::harness::definition::AgentTier;
-    // No resolvable parent definition (e.g. registry uninitialised or a custom
-    // agent absent from it) → skip rather than mask. Even a would-be-illegal
-    // child tier passes, because we have no parent tier to judge against.
+    // No resolvable parent definition (e.g. registry uninitialised, or a
+    // dynamically-named model-council juror / custom agent absent from it) →
+    // skip rather than mask. Even a would-be-illegal child tier passes, because
+    // we have no parent tier to judge against.
     let mut child = make_def_named_tools(&[]);
     child.agent_tier = AgentTier::Chat;
-    assert!(super::runner::tier_gate_decision(None, &child).is_ok());
+    assert!(gate(None, &child).is_ok());
 }
 
 #[test]
@@ -1568,16 +1574,30 @@ fn tier_gate_allows_legal_descending_hops() {
     // chat → worker
     parent.agent_tier = AgentTier::Chat;
     child.agent_tier = AgentTier::Worker;
-    assert!(super::runner::tier_gate_decision(Some(&parent), &child).is_ok());
+    assert!(gate(Some(&parent), &child).is_ok());
 
     // chat → reasoning
     child.agent_tier = AgentTier::Reasoning;
-    assert!(super::runner::tier_gate_decision(Some(&parent), &child).is_ok());
+    assert!(gate(Some(&parent), &child).is_ok());
 
     // reasoning → worker
     parent.agent_tier = AgentTier::Reasoning;
     child.agent_tier = AgentTier::Worker;
-    assert!(super::runner::tier_gate_decision(Some(&parent), &child).is_ok());
+    assert!(gate(Some(&parent), &child).is_ok());
+}
+
+#[test]
+fn tier_gate_allows_worker_parent_for_collapsed_integration() {
+    use crate::openhuman::agent::harness::definition::AgentTier;
+    // A worker only reaches the runtime spawn chokepoint via the documented
+    // collapsed `delegate_to_integrations_agent` path (→ `integrations_agent`,
+    // itself a worker). The gate must NOT re-deny that — the worker-leaf rule
+    // is a static boot-time authoring constraint, not a runtime one. Regression
+    // for the wildcard-integration case (CodeRabbit P2 on PR #4102).
+    let mut parent = make_def_named_tools(&[]);
+    let child = make_def_named_tools(&[]); // worker by default
+    parent.agent_tier = AgentTier::Worker;
+    assert!(gate(Some(&parent), &child).is_ok());
 }
 
 #[test]
@@ -1588,8 +1608,8 @@ fn tier_gate_denies_chat_to_chat() {
     parent.agent_tier = AgentTier::Chat;
     child.agent_tier = AgentTier::Chat;
 
-    let err = super::runner::tier_gate_decision(Some(&parent), &child)
-        .expect_err("chat→chat must be denied at the runtime gate");
+    let err =
+        gate(Some(&parent), &child).expect_err("chat→chat must be denied at the runtime gate");
     match err {
         SubagentRunError::TierViolation {
             parent_tier,
@@ -1608,16 +1628,13 @@ fn tier_gate_denies_chat_to_chat() {
 }
 
 #[test]
-fn tier_gate_denies_worker_as_parent() {
+fn tier_gate_allows_upward_reasoning_to_chat() {
     use crate::openhuman::agent::harness::definition::AgentTier;
+    // Upward delegation is intentionally legal (subconscious reasoner →
+    // orchestrator chat). The gate must not deny it.
     let mut parent = make_def_named_tools(&[]);
-    let child = make_def_named_tools(&[]); // worker by default
-    parent.agent_tier = AgentTier::Worker;
-
-    let err = super::runner::tier_gate_decision(Some(&parent), &child)
-        .expect_err("a worker must not spawn anything at runtime");
-    assert!(matches!(
-        err,
-        SubagentRunError::TierViolation { parent_tier, .. } if parent_tier == AgentTier::Worker
-    ));
+    let mut child = make_def_named_tools(&[]);
+    parent.agent_tier = AgentTier::Reasoning;
+    child.agent_tier = AgentTier::Chat;
+    assert!(gate(Some(&parent), &child).is_ok());
 }
