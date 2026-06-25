@@ -2943,6 +2943,12 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
       })
       .catch(() => {
         // Best-effort surface — a fetch failure must not break the panel.
+        // Drop any prior notice too: a key save/remove already cleared the
+        // entry core-side, so keeping a stale banner would misreport a
+        // rejection the user has resolved.
+        if (!cancelled) {
+          setProviderAuthErrors([]);
+        }
       });
     return () => {
       cancelled = true;
