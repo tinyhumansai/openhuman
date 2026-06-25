@@ -2,14 +2,14 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  downloadArtifact,
   revealArtifactInFileManager,
+  saveArtifactViaDialog,
 } from '../../../services/artifactDownloadService';
 import type { ArtifactSnapshot } from '../../../store/chatRuntimeSlice';
 import ArtifactCard from '../ArtifactCard';
 
 vi.mock('../../../services/artifactDownloadService', () => ({
-  downloadArtifact: vi.fn(),
+  saveArtifactViaDialog: vi.fn(),
   revealArtifactInFileManager: vi.fn(),
 }));
 
@@ -75,15 +75,15 @@ describe('ArtifactCard', () => {
     expect(screen.getByRole('button', { name: 'Download' })).toBeInTheDocument();
   });
 
-  it('on Download click → calls downloadArtifact with title-derived extension on success', async () => {
-    vi.mocked(downloadArtifact).mockResolvedValueOnce({
+  it('on Download click → calls saveArtifactViaDialog with title-derived extension on success', async () => {
+    vi.mocked(saveArtifactViaDialog).mockResolvedValueOnce({
       ok: true,
       path: '/Users/me/Downloads/Climate Deck.pptx',
     });
     render(<ArtifactCard artifact={ready({ title: 'climate-deck.pptx' })} />);
     fireEvent.click(screen.getByRole('button', { name: 'Download' }));
     await waitFor(() => {
-      expect(downloadArtifact).toHaveBeenCalledWith('art-1', 'climate-deck.pptx', 'pptx');
+      expect(saveArtifactViaDialog).toHaveBeenCalledWith('art-1', 'climate-deck.pptx', 'pptx');
     });
     // Saved-to label appears with the resolved path
     await waitFor(() => {
@@ -95,7 +95,7 @@ describe('ArtifactCard', () => {
   });
 
   it('on Reveal click → calls revealArtifactInFileManager with the saved path', async () => {
-    vi.mocked(downloadArtifact).mockResolvedValueOnce({
+    vi.mocked(saveArtifactViaDialog).mockResolvedValueOnce({
       ok: true,
       path: '/Users/me/Downloads/Climate Deck.pptx',
     });
@@ -113,7 +113,7 @@ describe('ArtifactCard', () => {
   });
 
   it('on Download failure → surfaces the error reason and leaves the Download button in place', async () => {
-    vi.mocked(downloadArtifact).mockResolvedValueOnce({
+    vi.mocked(saveArtifactViaDialog).mockResolvedValueOnce({
       ok: false,
       code: 'NOT_DESKTOP',
       error: 'Downloads are only available in the desktop app',
@@ -137,27 +137,27 @@ describe('ArtifactCard', () => {
   ])(
     'falls back to per-kind extension when title lacks one (kind=%s → ext=%s)',
     async (kind, expectedExt) => {
-      vi.mocked(downloadArtifact).mockResolvedValueOnce({ ok: true, path: '/d/x' });
+      vi.mocked(saveArtifactViaDialog).mockResolvedValueOnce({ ok: true, path: '/d/x' });
       render(<ArtifactCard artifact={ready({ kind, title: 'no-extension' })} />);
       fireEvent.click(screen.getByRole('button', { name: 'Download' }));
       await waitFor(() => {
-        expect(downloadArtifact).toHaveBeenCalledWith('art-1', 'no-extension', expectedExt);
+        expect(saveArtifactViaDialog).toHaveBeenCalledWith('art-1', 'no-extension', expectedExt);
       });
     }
   );
 
   it('treats a trailing-dot title as having no extension (falls through to kind default)', async () => {
-    vi.mocked(downloadArtifact).mockResolvedValueOnce({ ok: true, path: '/d/x' });
+    vi.mocked(saveArtifactViaDialog).mockResolvedValueOnce({ ok: true, path: '/d/x' });
     render(<ArtifactCard artifact={ready({ kind: 'presentation', title: 'trailing.' })} />);
     fireEvent.click(screen.getByRole('button', { name: 'Download' }));
     await waitFor(() => {
-      expect(downloadArtifact).toHaveBeenCalledWith('art-1', 'trailing.', 'pptx');
+      expect(saveArtifactViaDialog).toHaveBeenCalledWith('art-1', 'trailing.', 'pptx');
     });
   });
 
   it('Download button is disabled while a download is in flight', async () => {
     let resolveDownload: (v: { ok: true; path: string }) => void = () => {};
-    vi.mocked(downloadArtifact).mockImplementationOnce(
+    vi.mocked(saveArtifactViaDialog).mockImplementationOnce(
       () =>
         new Promise(r => {
           resolveDownload = r;

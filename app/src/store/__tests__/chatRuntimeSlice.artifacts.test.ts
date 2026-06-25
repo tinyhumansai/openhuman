@@ -234,3 +234,62 @@ describe('chatRuntimeSlice — artifact lifecycle (#2779)', () => {
     expect(list[0].error).toBeUndefined();
   });
 });
+
+describe('chatRuntimeSlice — in_progress no-downgrade guard (#3162)', () => {
+  it('does NOT regress a ready artifact back to in_progress', () => {
+    let state = reducer(
+      undefined,
+      upsertArtifactReadyForThread({
+        threadId: 't-1',
+        artifactId: 'a-1',
+        kind: 'presentation',
+        title: 'Deck',
+        path: 'a-1/deck.pptx',
+        sizeBytes: 4096,
+      })
+    );
+
+    // A late / duplicate artifact_pending must not wipe the ready state.
+    state = reducer(
+      state,
+      upsertArtifactInProgressForThread({
+        threadId: 't-1',
+        artifactId: 'a-1',
+        kind: 'presentation',
+        title: 'Deck',
+      })
+    );
+
+    const list = state.artifactsByThread['t-1'];
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ status: 'ready', sizeBytes: 4096 });
+  });
+
+  it('allows failed -> in_progress (an explicit retry re-shows the spinner)', () => {
+    let state = reducer(
+      undefined,
+      upsertArtifactFailedForThread({
+        threadId: 't-1',
+        artifactId: 'a-1',
+        kind: 'presentation',
+        title: 'Deck',
+        error: 'boom',
+      })
+    );
+
+    state = reducer(
+      state,
+      upsertArtifactInProgressForThread({
+        threadId: 't-1',
+        artifactId: 'a-1',
+        kind: 'presentation',
+        title: 'Deck',
+      })
+    );
+
+    const list = state.artifactsByThread['t-1'];
+    expect(list).toHaveLength(1);
+    expect(list[0].status).toBe('in_progress');
+    expect(list[0].error).toBeUndefined();
+  });
+});
