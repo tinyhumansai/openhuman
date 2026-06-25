@@ -378,31 +378,18 @@ async fn run_mitm_session<R: Runtime>(
     // request/response API here when V1.5 backfills `Network.getResponseBody`).
     log::info!("[discord][{}] event pump started", account_id);
     let mut ingest_state = DiscordIngestState::default();
-    cdp.pump_events_resilient(&session_id, PUMP_IDLE_TIMEOUT, |method, params| {
-        dispatch_event(app, account_id, method, params, &mut ingest_state);
-    })
-    .await
+    let pump_result = cdp
+        .pump_events_resilient(&session_id, PUMP_IDLE_TIMEOUT, |method, params| {
+            dispatch_event(app, account_id, method, params, &mut ingest_state);
+        })
+        .await;
+    // Detach the now-stale session before the outer loop re-attaches, so idle /
+    // lag-forced reconnects don't accumulate orphaned CDP sessions on the
+    // transport (mirrors the DOM-scan cleanup).
+    crate::cdp::detach_session(&mut cdp, &session_id).await;
+    pump_result
 }
 
-/// Resolve this account's page target, attach, and return the live
-/// [`CdpConn`](crate::cdp::CdpConn) plus session id.
-///
-/// Discord's web client `replaceState`s to its canonical `/channels/...` URL
-/// on boot, stripping the `#openhuman-account-<id>` fragment the webview was
-/// opened with — so a strict `ends_with(fragment)` match only holds for the
-/// first instant after navigation and fails forever after (the 4s settle delay
-/// alone guarantees we attach *after* the strip). Mirrors the Slack scanner's
-/// resolution hierarchy (`slack_scanner::scan_once`):
-///
-///   1. **Pinned target id** — once a strict match locked the id, prefer it.
-///      Survives the fragment strip and keeps multi-account sessions from
-///      cross-wiring scanner A onto scanner B's tab.
-///   2. **Strict fragment match** (`url_prefix` + `#openhuman-account-<id>`).
-///      On hit, persist the id into `pinned_target_id`.
-///   3. **Relaxed prefix-only match** — last resort. Per-account
-///      `data_directory` isolation makes this safe for single-account setups;
-///      never persisted into the pin (only a strict match proves the target is
-///      really ours).
 /// Pure pin → strict → relaxed target-selection core of
 /// [`attach_account_target`]. Returns the chosen page target and whether it was
 /// a strict fragment match (the caller pins only on `true`). Split out so the
@@ -414,8 +401,13 @@ fn resolve_page_target<'a>(
     pinned_target_id: Option<&str>,
 ) -> Option<(&'a crate::cdp::target::CdpTarget, bool)> {
     // 1. Pinned id (locked on a prior strict match) — survives the hash strip.
+    //    Still require the prefix: a pinned tab can navigate off Discord while
+    //    keeping its target id, and we must not keep scanning an off-prefix page.
     if let Some(pid) = pinned_target_id {
-        if let Some(t) = targets.iter().find(|t| t.id == pid && t.kind == "page") {
+        if let Some(t) = targets
+            .iter()
+            .find(|t| t.id == pid && t.kind == "page" && t.url.starts_with(url_prefix))
+        {
             return Some((t, false));
         }
     }
@@ -432,6 +424,24 @@ fn resolve_page_target<'a>(
         .map(|t| (t, false))
 }
 
+/// Resolve this account's page target, attach, and return the live
+/// [`CdpConn`](crate::cdp::CdpConn) plus session id.
+///
+/// Discord's web client `replaceState`s to its canonical `/channels/...` URL
+/// on boot, stripping the `#openhuman-account-<id>` fragment the webview was
+/// opened with — so a strict `ends_with(fragment)` match only holds for the
+/// first instant after navigation and fails forever after (the 4s settle delay
+/// alone guarantees we attach *after* the strip). Mirrors the Slack scanner's
+/// resolution hierarchy (`slack_scanner::scan_once`) via [`resolve_page_target`]:
+///
+///   1. **Pinned target id** — once a strict match locked the id, prefer it
+///      (still constrained to `url_prefix`). Survives the fragment strip and
+///      keeps multi-account sessions from cross-wiring scanner A onto B's tab.
+///   2. **Strict fragment match** (`url_prefix` + `#openhuman-account-<id>`).
+///      On hit, (re)pin the id into `pinned_target_id`.
+///   3. **Relaxed prefix-only match** — last resort. Per-account
+///      `data_directory` isolation makes this safe for single-account setups;
+///      never persisted into the pin (only a strict match proves ownership).
 async fn attach_account_target<R: Runtime>(
     app: &AppHandle<R>,
     account_id: &str,
@@ -451,9 +461,12 @@ async fn attach_account_target<R: Runtime>(
     )
     .ok_or_else(|| format!("no page target matching {url_prefix} fragment={url_fragment}"))?;
 
-    // Persist the id only on a live strict-fragment match — the one signal that
-    // proves this target is *this* account's. Relaxed matches never feed the pin.
-    if pinned_target_id.is_none() && is_strict {
+    // (Re)pin on every live strict-fragment match — the one signal that proves
+    // this target is *this* account's. Refreshing (not just setting-once) lets a
+    // stale pin recover: after a renderer swap gives a new target id, the next
+    // strict match re-pins instead of being stuck on relaxed forever. Relaxed
+    // matches never feed the pin.
+    if is_strict && pinned_target_id.as_deref() != Some(page_target.id.as_str()) {
         log::info!(
             "[discord][{}] pinned to target_id={} (strict fragment match)",
             account_id,

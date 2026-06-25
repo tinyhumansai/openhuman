@@ -417,3 +417,17 @@ fn resolve_none_when_no_prefix_target() {
         "no page-kind target under the prefix → None (non-page kinds excluded)"
     );
 }
+
+#[test]
+fn resolve_rejects_pinned_target_that_navigated_off_prefix() {
+    // A pinned tab can keep its target id while navigating away from Discord.
+    // The pin branch must still honor url_prefix, so an off-prefix pinned page is
+    // rejected and resolution falls through to the real Discord page.
+    let targets = vec![
+        page("t-1", "https://example.com/somewhere-else"), // pinned id, off-prefix
+        page("t-2", "https://discord.com/channels/@me/9"), // real discord page
+    ];
+    let (t, strict) = super::resolve_page_target(&targets, PFX, FRAG, Some("t-1")).unwrap();
+    assert_eq!(t.id, "t-2");
+    assert!(!strict);
+}
