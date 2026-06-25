@@ -380,3 +380,31 @@ async fn create_artifact_reuses_id_inside_regenerate_scope() {
     let got = get_artifact(tmp.path(), "reused-id").await.unwrap();
     assert_eq!(got.id, "reused-id");
 }
+
+#[tokio::test]
+async fn regenerate_preserves_original_created_at() {
+    let tmp = TempDir::new().unwrap();
+    let workspace = tmp.path().to_path_buf();
+
+    // First create stamps `created_at = now`.
+    let (first, _) = create_artifact(tmp.path(), ArtifactKind::Presentation, "Deck", "pptx")
+        .await
+        .unwrap();
+    let original_created = first.created_at;
+
+    // Regenerate reuses the id; created_at must NOT be bumped, otherwise the
+    // artifact jumps to the top of the created_at-sorted list (#3162).
+    let id = first.id.clone();
+    let ws = workspace.clone();
+    let (second, _) = REGENERATE_TARGET_ID
+        .scope(id.clone(), async move {
+            create_artifact(&ws, ArtifactKind::Presentation, "Deck", "pptx").await
+        })
+        .await
+        .unwrap();
+    assert_eq!(second.id, id);
+    assert_eq!(
+        second.created_at, original_created,
+        "regenerate must preserve created_at, not bump it"
+    );
+}

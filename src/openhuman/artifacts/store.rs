@@ -452,11 +452,12 @@ pub async fn create_artifact(
     // and the card swaps in place. The reused dir already exists; the
     // `create_dir_all` below is idempotent and the meta/file are
     // overwritten with the fresh generation.
-    let id = REGENERATE_TARGET_ID
+    let reused_id = REGENERATE_TARGET_ID
         .try_with(|target| target.clone())
         .ok()
-        .filter(|target| !target.trim().is_empty())
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        .filter(|target| !target.trim().is_empty());
+    let is_regenerate = reused_id.is_some();
+    let id = reused_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let filename = format!("{}.{trimmed_ext}", sanitize_filename_stem(trimmed_title));
     let relative_path = format!("{id}/{filename}");
 
@@ -480,6 +481,19 @@ pub async fn create_artifact(
     // routing target survives a process restart.
     let (thread_id, _) = current_chat_context();
 
+    // On a regenerate the id is reused in place, so preserve the original
+    // `created_at` — bumping it to now would reorder the artifact to the
+    // top of the `created_at`-sorted list/panel even though it is the same
+    // logical artifact (#3162, CodeRabbit). New artifacts always stamp now.
+    let created_at = if is_regenerate {
+        match get_artifact(workspace_dir, &id).await {
+            Ok(prev) => prev.created_at,
+            Err(_) => chrono::Utc::now(),
+        }
+    } else {
+        chrono::Utc::now()
+    };
+
     let meta = ArtifactMeta {
         id: id.clone(),
         kind,
@@ -487,7 +501,7 @@ pub async fn create_artifact(
         path: relative_path,
         size_bytes: 0,
         status: ArtifactStatus::Pending,
-        created_at: chrono::Utc::now(),
+        created_at,
         error: None,
         thread_id,
     };
