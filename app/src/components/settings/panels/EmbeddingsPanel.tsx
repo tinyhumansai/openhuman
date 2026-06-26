@@ -319,7 +319,6 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
       if (
         result.error === 'EMBEDDINGS_ENDPOINT_NO_API' ||
         result.error === 'EMBEDDINGS_NO_MODEL_LOADED' ||
-        result.error === 'EMBEDDINGS_DIMENSION_UNSUPPORTED' ||
         result.error === 'EMBEDDINGS_VERIFICATION_FAILED'
       ) {
         // `result.message`/`result.detail` are backend-emitted (already

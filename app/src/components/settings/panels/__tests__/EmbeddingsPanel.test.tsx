@@ -553,38 +553,6 @@ describe('EmbeddingsPanel', () => {
     expect(screen.getByPlaceholderText(/https:\/\/your-endpoint/i)).toBeInTheDocument();
   });
 
-  it('surfaces the dimension-unsupported message and keeps the popup open when the model returns an incompatible vector size (#4056)', async () => {
-    // The endpoint can embed, but its native dimension isn't the one the memory
-    // tree requires — the backend rejects the save with a clear, actionable
-    // message instead of accepting it and breaking ingest later.
-    const settings = makeSettings({
-      providers: [
-        makeProvider('managed', { requires_api_key: false }),
-        makeProvider('custom', { requires_api_key: false, requires_endpoint: true }),
-      ],
-    });
-    vi.mocked(loadEmbeddingsSettings).mockResolvedValue(settings);
-    vi.mocked(updateEmbeddingsSettings).mockResolvedValue({
-      error: 'EMBEDDINGS_DIMENSION_UNSUPPORTED',
-      message:
-        '`nomic-embed-text` returns 768-dimensional embeddings, but OpenHuman’s memory requires 1024.',
-    });
-
-    renderWithProviders(<EmbeddingsPanel />);
-    await screen.findByText('Custom');
-
-    fireEvent.click(screen.getByRole('radio', { name: /custom/i }));
-    await screen.findByPlaceholderText(/https:\/\/your-endpoint/i);
-    fireEvent.change(screen.getByPlaceholderText(/https:\/\/your-endpoint/i), {
-      target: { value: 'https://api.example.com/v1' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: /save.*switch/i }));
-
-    // The dimension-specific message is shown and the setup popup stays open.
-    await screen.findByText(/768-dimensional/i);
-    expect(screen.getByPlaceholderText(/https:\/\/your-endpoint/i)).toBeInTheDocument();
-  });
-
   // ─── Confirm wipe dialog ──────────────────────────────────────────────────
 
   it('shows confirm-wipe dialog when updateEmbeddingsSettings returns DIMENSION_CHANGE error', async () => {
