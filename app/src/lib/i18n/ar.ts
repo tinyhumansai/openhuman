@@ -1755,6 +1755,8 @@ const messages: TranslationMap = {
   'team.teamName': 'اسم الفريق',
   'team.creating': 'جارٍ الإنشاء...',
   'team.joinExistingTeam': 'الانضمام إلى فريق موجود',
+  'team.personalAutoCreatedNote':
+    'يتم إنشاء فريقك الشخصي تلقائيًا. للتعاون، انضم إلى فريق موجود باستخدام رمز دعوة أدناه.',
   'team.inviteCode': 'رمز الدعوة',
   'team.joining': 'جارٍ الانضمام...',
   'team.join': 'انضمام',

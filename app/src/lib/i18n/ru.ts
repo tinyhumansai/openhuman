@@ -1806,6 +1806,8 @@ const messages: TranslationMap = {
   'team.teamName': 'Название команды',
   'team.creating': 'Создание...',
   'team.joinExistingTeam': 'Вступить в существующую команду',
+  'team.personalAutoCreatedNote':
+    'Ваша личная команда создаётся автоматически. Чтобы работать вместе, присоединитесь к существующей команде по коду приглашения ниже.',
   'team.inviteCode': 'Код приглашения',
   'team.joining': 'Вход...',
   'team.join': 'Вступить',

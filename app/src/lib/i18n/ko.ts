@@ -1775,6 +1775,8 @@ const messages: TranslationMap = {
   'team.teamName': '팀 이름',
   'team.creating': '생성 중...',
   'team.joinExistingTeam': '기존 팀 참가',
+  'team.personalAutoCreatedNote':
+    '개인 팀은 자동으로 생성됩니다. 협업하려면 아래 초대 코드로 기존 팀에 참여하세요.',
   'team.inviteCode': '초대 코드',
   'team.joining': '참가 중...',
   'team.join': '참가',

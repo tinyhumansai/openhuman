@@ -2157,6 +2157,8 @@ const en: TranslationMap = {
   'team.teamName': 'Team name',
   'team.creating': 'Creating...',
   'team.joinExistingTeam': 'Join Existing Team',
+  'team.personalAutoCreatedNote':
+    'Your personal team is created automatically. To collaborate, join an existing team with an invite code below.',
   'team.inviteCode': 'Invite code',
   'team.joining': 'Joining...',
   'team.join': 'Join',

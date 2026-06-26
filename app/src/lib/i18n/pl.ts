@@ -1812,6 +1812,8 @@ const messages: TranslationMap = {
   'team.teamName': 'Nazwa zespołu',
   'team.creating': 'Tworzenie...',
   'team.joinExistingTeam': 'Dołącz do istniejącego zespołu',
+  'team.personalAutoCreatedNote':
+    'Twój zespół osobisty jest tworzony automatycznie. Aby współpracować, dołącz do istniejącego zespołu, używając kodu zaproszenia poniżej.',
   'team.inviteCode': 'Kod zaproszenia',
   'team.joining': 'Dołączanie...',
   'team.join': 'Dołącz',

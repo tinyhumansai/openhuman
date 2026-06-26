@@ -1697,6 +1697,8 @@ const messages: TranslationMap = {
   'team.teamName': '团队名称',
   'team.creating': '创建中...',
   'team.joinExistingTeam': '加入已有团队',
+  'team.personalAutoCreatedNote':
+    '您的个人团队会自动创建。如需协作，请使用下方的邀请码加入现有团队。',
   'team.inviteCode': '邀请码',
   'team.joining': '加入中...',
   'team.join': '加入',

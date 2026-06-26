@@ -1823,6 +1823,8 @@ const messages: TranslationMap = {
   'team.teamName': 'Nome team',
   'team.creating': 'Creazione...',
   'team.joinExistingTeam': 'Unisciti a un team esistente',
+  'team.personalAutoCreatedNote':
+    'Il tuo team personale viene creato automaticamente. Per collaborare, unisciti a un team esistente con un codice di invito qui sotto.',
   'team.inviteCode': 'Codice invito',
   'team.joining': 'Adesione...',
   'team.join': 'Unisciti',

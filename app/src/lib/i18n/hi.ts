@@ -1789,6 +1789,8 @@ const messages: TranslationMap = {
   'team.teamName': 'टीम का नाम',
   'team.creating': 'बन रही है...',
   'team.joinExistingTeam': 'मौजूदा टीम जॉइन करें',
+  'team.personalAutoCreatedNote':
+    'आपकी व्यक्तिगत टीम स्वतः बन जाती है। सहयोग के लिए, नीचे आमंत्रण कोड के साथ किसी मौजूदा टीम में शामिल हों।',
   'team.inviteCode': 'इनवाइट कोड',
   'team.joining': 'जॉइन हो रहे हैं...',
   'team.join': 'जॉइन करें',
