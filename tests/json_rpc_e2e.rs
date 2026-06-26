@@ -13388,3 +13388,55 @@ async fn json_rpc_threads_token_usage_reads_persisted_thread_totals() {
 
     rpc_join.abort();
 }
+    let complete_r = assert_no_jsonrpc_error(&complete, "live_captions_complete_transcript");
+    let complete_body = complete_r.get("result").unwrap_or(complete_r);
+    assert_eq!(
+        complete_body.get("ok"),
+        Some(&json!(true)),
+        "complete should succeed: {complete_body}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+// ---------------------------------------------------------------------------
+// Voice actions — register + recognize over RPC
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn voice_actions_lifecycle_over_rpc() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // 1. Recognize intent (returns match or no-match — both are valid responses).
+    let rec = post_json_rpc(
+        &rpc_base,
+        500,
+        "openhuman.voice_actions_recognize",
+        json!({ "utterance": "open settings please" }),
+    )
+    .await;
+    let rec_r = assert_no_jsonrpc_error(&rec, "voice_actions_recognize");
+    let rec_body = rec_r.get("result").unwrap_or(rec_r);
+    assert!(
+        rec_body.get("ok").is_some(),
+        "recognize should return ok field: {rec_body}"
+    );
+
+    // 2. List action mappings.
