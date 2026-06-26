@@ -13388,3 +13388,135 @@ async fn json_rpc_threads_token_usage_reads_persisted_thread_totals() {
 
     rpc_join.abort();
 }
+    .await;
+    let draft_r = assert_no_jsonrpc_error(&draft, "operator_inbox_generate_draft");
+    let draft_body = draft_r.get("result").unwrap_or(draft_r);
+    assert_eq!(
+        draft_body.get("ok"),
+        Some(&json!(true)),
+        "draft should succeed: {draft_body}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+// ---------------------------------------------------------------------------
+// Chat with data — dataset + query over RPC
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn chat_with_data_lifecycle_over_rpc() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // 1. Register a dataset.
+    let reg = post_json_rpc(
+        &rpc_base,
+        700,
+        "openhuman.chat_with_data_register_dataset",
+        json!({
+            "name": "sales_q4",
+            "source": "csv",
+            "columns": ["date", "amount", "region"],
+            "row_count": 1000
+        }),
+    )
+    .await;
+    let reg_r = assert_no_jsonrpc_error(&reg, "chat_with_data_register_dataset");
+    let reg_body = reg_r.get("result").unwrap_or(reg_r);
+    assert_eq!(
+        reg_body.get("ok"),
+        Some(&json!(true)),
+        "register should succeed: {reg_body}"
+    );
+    let dataset_id = reg_body
+        .get("dataset_id")
+        .and_then(Value::as_str)
+        .expect("dataset_id");
+
+    // 2. Query the dataset.
+    let query = post_json_rpc(
+        &rpc_base,
+        701,
+        "openhuman.chat_with_data_query",
+        json!({ "dataset_id": dataset_id, "question": "What were total sales?" }),
+    )
+    .await;
+    let query_r = assert_no_jsonrpc_error(&query, "chat_with_data_query");
+    let query_body = query_r.get("result").unwrap_or(query_r);
+    assert_eq!(
+        query_body.get("ok"),
+        Some(&json!(true)),
+        "query should succeed: {query_body}"
+    );
+
+    // 3. List datasets.
+    let list = post_json_rpc(
+        &rpc_base,
+        702,
+        "openhuman.chat_with_data_list_datasets",
+        json!({}),
+    )
+    .await;
+    let list_r = assert_no_jsonrpc_error(&list, "chat_with_data_list_datasets");
+    let list_body = list_r.get("result").unwrap_or(list_r);
+    assert_eq!(
+        list_body.get("ok"),
+        Some(&json!(true)),
+        "list should succeed: {list_body}"
+    );
+
+    // 4. Generate insight for the dataset.
+    let insight = post_json_rpc(
+        &rpc_base,
+        703,
+        "openhuman.chat_with_data_generate_insight",
+        json!({ "dataset_id": dataset_id }),
+    )
+    .await;
+    let insight_r = assert_no_jsonrpc_error(&insight, "chat_with_data_generate_insight");
+    let insight_body = insight_r.get("result").unwrap_or(insight_r);
+    assert_eq!(
+        insight_body.get("ok"),
+        Some(&json!(true)),
+        "generate_insight should succeed: {insight_body}"
+    );
+
+    // 5. Scan all datasets for anomalies.
+    let scan = post_json_rpc(
+        &rpc_base,
+        704,
+        "openhuman.chat_with_data_scan_anomalies",
+        json!({}),
+    )
+    .await;
+    let scan_r = assert_no_jsonrpc_error(&scan, "chat_with_data_scan_anomalies");
+    let scan_body = scan_r.get("result").unwrap_or(scan_r);
+    assert_eq!(
+        scan_body.get("ok"),
+        Some(&json!(true)),
+        "scan_anomalies should succeed: {scan_body}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+/// Full lifecycle over JSON-RPC for the `workflows` namespace:
+/// create → list → read → phase → uninstall. Workflows are scaffolded under
