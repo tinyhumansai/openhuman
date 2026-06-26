@@ -7,9 +7,50 @@ use crate::openhuman::credentials::AuthService;
 use crate::rpc::RpcOutcome;
 
 use super::catalog;
-use super::factory::create_embedding_provider_with_credentials;
+use super::factory::{create_embedding_provider_with_credentials, model_supports_dimensions};
 
 const LOG_PREFIX: &str = "[embeddings::rpc]";
+
+/// Dimension to run a Custom (OpenAI-compatible) verification probe at.
+///
+/// The user-entered `dimensions` field is a guess: for any model outside the
+/// `text-embedding-3-*` family we never send the OpenAI `dimensions` request
+/// param (see [`model_supports_dimensions`]), so the endpoint returns its own
+/// native vector length. Forcing the probe to enforce the guessed length makes
+/// every reachable, valid embedding endpoint fail verification whenever the
+/// guess (default 1024) differs from the native size — the root cause of
+/// issue #4056.
+///
+/// So we probe a `text-embedding-3-*` model at the configured size (the server
+/// honours the param and returns exactly that), but probe every other model at
+/// `0`, which disables both the request param and the post-response length
+/// guard in `OpenAiEmbedding::embed` — the probe then only has to prove the
+/// endpoint can embed, and we learn the real dimension from the returned
+/// vector (see [`final_probe_dims`]).
+fn probe_dims_for(model: &str, configured: usize) -> usize {
+    if model_supports_dimensions(model) {
+        configured
+    } else {
+        0
+    }
+}
+
+/// Dimension to persist after a successful Custom verification probe.
+///
+/// For a `text-embedding-3-*` model the endpoint honoured the requested size,
+/// so keep the user's `configured` value (Matryoshka). For every other model we
+/// probed dimension-agnostically, so adopt the endpoint's actual returned
+/// length (`actual`) — the user can't be expected to know it, and storing the
+/// real size is what lets the live embed path's length guard pass afterwards.
+/// Falls back to `configured` if the probe somehow reported a zero-length
+/// vector (defensive — `classify_embed_probe` already rejects empty vectors).
+fn final_probe_dims(model: &str, configured: usize, actual: usize) -> usize {
+    if model_supports_dimensions(model) || actual == 0 {
+        configured
+    } else {
+        actual
+    }
+}
 
 /// Returns the current embedding settings plus the provider catalog.
 pub async fn get_settings(config: &Config) -> Result<RpcOutcome<serde_json::Value>, String> {
@@ -102,12 +143,15 @@ pub async fn update_settings(
     let new_model = model
         .clone()
         .unwrap_or_else(|| config.memory.embedding_model.clone());
-    let new_dims = dimensions.unwrap_or(config.memory.embedding_dimensions);
-    let new_sig = format_embedding_signature(&new_provider, &new_model, new_dims);
+    // `new_dims`/`new_sig`/`dims_changed` are recomputed after the Custom
+    // verification probe auto-detects the endpoint's real vector length
+    // (issue #4056), so they must be mutable.
+    let mut new_dims = dimensions.unwrap_or(config.memory.embedding_dimensions);
+    let mut new_sig = format_embedding_signature(&new_provider, &new_model, new_dims);
 
     let old_dims = config.memory.embedding_dimensions;
-    let dims_changed = new_dims != old_dims;
-    let sig_changed = new_sig != old_sig;
+    let mut dims_changed = new_dims != old_dims;
+    let mut sig_changed = new_sig != old_sig;
 
     // Setup-time verification gate (TAURI-RUST-5JR / 4P4): a Custom
     // (OpenAI-compatible) embeddings endpoint — e.g. LM Studio — must prove it
@@ -131,11 +175,16 @@ pub async fn update_settings(
         _ => new_provider.clone(),
     };
     if effective_provider.starts_with("custom:") {
-        match build_embedder(&config, &effective_provider, &new_model, new_dims) {
+        // Probe dimension-agnostically for non-`text-embedding-3-*` models so the
+        // user's guessed `dimensions` can't fail an otherwise-valid endpoint; the
+        // real length is detected from the returned vector below (issue #4056).
+        let probe_dims = probe_dims_for(&new_model, new_dims);
+        match build_embedder(&config, &effective_provider, &new_model, probe_dims) {
             Ok(embedder) => {
                 // Time-box the probe so a black-hole host can't hang the RPC.
                 tracing::debug!(
                     provider = effective_provider.as_str(),
+                    probe_dims,
                     "{LOG_PREFIX} update_settings verifying embeddings endpoint with a test embed"
                 );
                 let probe = tokio::time::timeout(
@@ -149,6 +198,12 @@ pub async fn update_settings(
                     Ok(Ok(vectors)) => EmbedProbe::Returned(vectors),
                     Ok(Err(e)) => EmbedProbe::Failed(e.to_string()),
                     Err(_elapsed) => EmbedProbe::TimedOut,
+                };
+                // Peek the actual vector length before the policy consumes the
+                // outcome — on a pass this is the endpoint's real dimension.
+                let probe_actual_dims = match &outcome {
+                    EmbedProbe::Returned(vectors) => vectors.first().map(|v| v.len()).unwrap_or(0),
+                    _ => 0,
                 };
                 if let Some(reject) = classify_embed_probe(outcome) {
                     tracing::warn!(
@@ -207,8 +262,28 @@ pub async fn update_settings(
                     }
                     return Ok(reject);
                 }
+                // Passed. Adopt the endpoint's real vector length for every model
+                // we probed dimension-agnostically — the user can't be expected to
+                // know it, and storing the actual size is what keeps the live embed
+                // path's length guard from rejecting future embeds (issue #4056).
+                // `text-embedding-3-*` keeps the requested size (server honoured it).
+                let detected_dims = final_probe_dims(&new_model, new_dims, probe_actual_dims);
+                if detected_dims != new_dims {
+                    tracing::info!(
+                        provider = effective_provider.as_str(),
+                        model = new_model.as_str(),
+                        requested = new_dims,
+                        detected = detected_dims,
+                        "{LOG_PREFIX} update_settings auto-detected custom embedding dimension from probe"
+                    );
+                    new_dims = detected_dims;
+                    new_sig = format_embedding_signature(&new_provider, &new_model, new_dims);
+                    dims_changed = new_dims != old_dims;
+                    sig_changed = new_sig != old_sig;
+                }
                 tracing::debug!(
                     provider = effective_provider.as_str(),
+                    new_dims,
                     "{LOG_PREFIX} update_settings test embed passed — accepting config"
                 );
             }
@@ -262,9 +337,11 @@ pub async fn update_settings(
     if let Some(m) = &model {
         config.memory.embedding_model = m.clone();
     }
-    if let Some(d) = dimensions {
-        config.memory.embedding_dimensions = d;
-    }
+    // Persist `new_dims`, not the raw `dimensions` arg: the Custom verification
+    // probe may have auto-detected the endpoint's real length (issue #4056), and
+    // `new_dims` already defaults to the stored value when neither a new arg nor
+    // detection changed it — so this is a no-op for the unchanged case.
+    config.memory.embedding_dimensions = new_dims;
     if let Some(rl) = rate_limit_per_min {
         config.memory.embedding_rate_limit_per_min = rl;
     }
@@ -443,10 +520,21 @@ pub async fn test_connection(
         slug
     };
 
+    // Probe a Custom endpoint dimension-agnostically (issue #4056): the user's
+    // `dims` is a guess, so enforcing it here would make a valid endpoint fail
+    // the Test-connection button whenever the guess differs from the native
+    // size. Catalog providers keep their fixed `dims`. We still report the
+    // requested vs actual dimensions in the payload below.
+    let probe_dims = if provider_tag == "custom" {
+        probe_dims_for(model, dims)
+    } else {
+        dims
+    };
+
     let embedder = create_embedding_provider_with_credentials(
         provider_tag,
         model,
-        dims,
+        probe_dims,
         &api_key,
         custom_endpoint.as_deref(),
     )
@@ -456,6 +544,7 @@ pub async fn test_connection(
         provider = provider_tag,
         model,
         dims,
+        probe_dims,
         "{LOG_PREFIX} test_connection starting"
     );
 
@@ -788,6 +877,39 @@ mod tests {
             resolve_api_key(&config, "custom:http://localhost:1234"),
             "sk-custom-test"
         );
+    }
+
+    /// Issue #4056: a Custom endpoint is probed dimension-agnostically for any
+    /// model that doesn't honour the OpenAI `dimensions` request param, so the
+    /// user's guessed size can't fail an otherwise-valid endpoint. Only the
+    /// `text-embedding-3-*` family (which honours the param) is probed at the
+    /// requested size.
+    #[test]
+    fn probe_dims_for_zeroes_non_matryoshka_models() {
+        // text-embedding-3-* honours the param → probe at the requested size.
+        assert_eq!(probe_dims_for("text-embedding-3-large", 1024), 1024);
+        assert_eq!(probe_dims_for("text-embedding-3-small", 512), 512);
+        // Everything else → 0 (no param sent, no length guard).
+        assert_eq!(probe_dims_for("bge-m3", 1024), 0);
+        assert_eq!(probe_dims_for("nomic-embed-text", 768), 0);
+        assert_eq!(probe_dims_for("gpt-5-mini", 1024), 0);
+    }
+
+    /// Issue #4056: after a successful probe we adopt the endpoint's real
+    /// returned length for auto-detected models, but keep the requested size for
+    /// `text-embedding-3-*` (the server returned exactly that). A zero actual
+    /// (defensive — empty vectors are already rejected upstream) falls back to
+    /// the configured value.
+    #[test]
+    fn final_probe_dims_adopts_actual_for_auto_detected_models() {
+        // Auto-detected model → adopt the real length, ignoring the guess.
+        assert_eq!(final_probe_dims("bge-m3", 1024, 1024), 1024);
+        assert_eq!(final_probe_dims("bge-m3", 1024, 768), 768);
+        assert_eq!(final_probe_dims("nomic-embed-text", 1024, 768), 768);
+        // text-embedding-3-* → keep the requested size (param was honoured).
+        assert_eq!(final_probe_dims("text-embedding-3-large", 1024, 3072), 1024);
+        // Defensive: zero actual falls back to the configured value.
+        assert_eq!(final_probe_dims("bge-m3", 1024, 0), 1024);
     }
 
     #[test]
