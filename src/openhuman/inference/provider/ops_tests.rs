@@ -1017,15 +1017,22 @@ fn parse_models_response_rejects_null_data_on_error_envelope() {
     // descriptive malformed/error-envelope error, which surfaces `object`.
     for field in ["data", "models"] {
         let body = serde_json::json!({ "object": "error", field: serde_json::Value::Null });
-        let err = parse_models_response(&body)
-            .expect_err("null `{field}` on an error envelope must fail, not return empty");
+        let err = match parse_models_response(&body) {
+            Ok(models) => panic!(
+                "null `{field}` on an error envelope must fail, not return empty (got {models:?})"
+            ),
+            Err(err) => err,
+        };
         assert!(
             !err.contains("missing"),
             "error-envelope null `{field}` must not say `missing`: {err}"
         );
+        // Tighten on the surfaced `object` value, not the literal "error
+        // envelope" prose, so the assertion proves the provider error is
+        // actually carried through to triage.
         assert!(
-            err.contains("error"),
-            "error-envelope null `{field}` must surface `object` = error: {err}"
+            err.contains(r#""object" = "error""#),
+            "error-envelope null `{field}` must surface `\"object\" = \"error\"`: {err}"
         );
     }
 }
