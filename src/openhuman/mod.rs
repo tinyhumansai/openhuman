@@ -86,6 +86,7 @@ pub mod migrations;
 pub mod model_council;
 pub mod monitor;
 pub mod notifications;
+pub mod operator_inbox;
 pub mod overlay;
 pub mod people;
 pub mod plan_review;
