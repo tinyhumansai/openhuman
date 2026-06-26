@@ -101,6 +101,61 @@ async fn push_cron_alert_deduplicates_repeated_morning_briefing_failures() {
     assert_eq!(items[0].body, MORNING_BRIEFING_FAILURE_NOTIFICATION);
 }
 
+// TAURI-RUST-HCK — a failed cron job with NO delivery configured (the default
+// `mode = "none"`) must still surface in /notifications. Before the hoist,
+// `push_cron_alert` fired only inside the proactive / announce arms, so a
+// keyless agent job ("API key not set") failed silently in the alerts tab —
+// the user had no active signal that their cron was broken.
+#[tokio::test]
+async fn deliver_if_configured_alerts_no_delivery_failure() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let mut job = test_job("");
+    job.job_type = JobType::Agent;
+    job.name = Some("hermes".into());
+    assert_eq!(job.delivery.mode, "none", "exercise the no-delivery arm");
+
+    let failure =
+        "openrouter API key not set. Configure via the web UI or set the appropriate env var.";
+    deliver_if_configured(&config, &job, failure, false)
+        .await
+        .unwrap();
+
+    let items =
+        crate::openhuman::notifications::store::list(&config, 10, 0, Some("cron"), None).unwrap();
+    assert_eq!(
+        items.len(),
+        1,
+        "a no-delivery cron FAILURE must still alert /notifications"
+    );
+    assert!(
+        items[0].body.contains("API key not set"),
+        "alert body must carry the actionable missing-key wording"
+    );
+}
+
+// Negative guard: a successful no-delivery run with no output must NOT alert —
+// the hoist only surfaces failures + non-empty results, never quiet successes.
+#[tokio::test]
+async fn deliver_if_configured_does_not_alert_successful_empty_no_delivery() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let mut job = test_job("");
+    job.job_type = JobType::Agent;
+    job.name = Some("hermes".into());
+
+    deliver_if_configured(&config, &job, "", true)
+        .await
+        .unwrap();
+
+    let items =
+        crate::openhuman::notifications::store::list(&config, 10, 0, Some("cron"), None).unwrap();
+    assert!(
+        items.is_empty(),
+        "a successful empty run must not spam the alerts tab"
+    );
+}
+
 #[test]
 fn agent_session_target_tag_matches_expected_values() {
     assert_eq!(agent_session_target_tag(&SessionTarget::Main), "main");
@@ -505,6 +560,67 @@ fn is_budget_exhausted_failure_does_not_halt_shell_jobs() {
         Some(wire),
         wire
     ));
+}
+
+// TAURI-RUST-HCK — a cron agent job pinned to a provider with no configured
+// API key fails at the credential guard with "<provider> API key not set …",
+// before any HTTP, and leaks through `last_agent_error`.
+// `is_api_key_unset_failure` must consult the shared matcher so the retry loop
+// halts on the first occurrence (a permanent user-config state) instead of
+// retrying N times and reporting `failure=retries_exhausted` to Sentry (3428
+// events / 1 user) — the bare cron `report_error` bypasses the `ApiKeyMissing`
+// `expected_error_kind` demotion.
+#[test]
+fn is_api_key_unset_failure_matches_verbatim_in_agent_error() {
+    let wire =
+        "openrouter API key not set. Configure via the web UI or set the appropriate env var.";
+    assert!(
+        is_api_key_unset_failure(&JobType::Agent, Some(wire), AGENT_JOB_USER_FAILURE_MESSAGE),
+        "raw agent error carrying the verbatim 'API key not set' wording must trip the halt"
+    );
+}
+
+// Defense-in-depth: classify even if a future path surfaces the raw error in
+// `last_output` rather than `last_agent_error`.
+#[test]
+fn is_api_key_unset_failure_matches_when_only_output_carries_signal() {
+    let wire = "cohere API key not set. Configure via the web UI or set the appropriate env var.";
+    assert!(is_api_key_unset_failure(&JobType::Agent, None, wire));
+}
+
+// Negative guard: the canned user-facing message carries no key signal; an
+// ordinary provider error must NOT halt; and — critically — a *rejected* key
+// (provider 401 "Invalid API key", a present-but-wrong key) is actionable and
+// must keep reaching Sentry. This matcher is for an *absent* key only.
+#[test]
+fn is_api_key_unset_failure_does_not_match_canned_rejected_or_ordinary_errors() {
+    assert!(!is_api_key_unset_failure(
+        &JobType::Agent,
+        Some(AGENT_JOB_USER_FAILURE_MESSAGE),
+        AGENT_JOB_USER_FAILURE_MESSAGE,
+    ));
+    let server_err =
+        r#"OpenHuman API error (500 Internal Server Error): {"error":"Internal server error"}"#;
+    assert!(!is_api_key_unset_failure(
+        &JobType::Agent,
+        Some(server_err),
+        ""
+    ));
+    let rejected_key = r#"OpenAI API error (401 Unauthorized): {"error":{"message":"Invalid API key","type":"invalid_request_error"}}"#;
+    assert!(
+        !is_api_key_unset_failure(&JobType::Agent, Some(rejected_key), ""),
+        "a present-but-rejected key (401 Invalid API key) is actionable — must NOT classify as an unset key"
+    );
+}
+
+// Scope guard: shell jobs that echo an "API key not set" string keep their
+// retry semantics — only agent jobs route through the inference credential guard.
+#[test]
+fn is_api_key_unset_failure_does_not_halt_shell_jobs() {
+    let wire =
+        "openrouter API key not set. Configure via the web UI or set the appropriate env var.";
+    assert!(!is_api_key_unset_failure(&JobType::Shell, None, wire));
+    assert!(!is_api_key_unset_failure(&JobType::Shell, Some(wire), wire));
 }
 
 #[tokio::test]
