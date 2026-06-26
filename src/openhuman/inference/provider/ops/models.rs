@@ -256,12 +256,16 @@ pub async fn list_configured_models_from_config(
 /// 1. **Missing `data`/`models` field** — endpoint isn't `/models`-compatible
 ///    (user typo'd the base URL, pointed at a vector-DB host, etc.).
 /// 2. **`data`/`models` field present but wrong type** — provider returned
-///    `{"object":"error","data":{…}}`, `{"data":null}`, or similar
-///    non-array. The error names the actual JSON type so triage knows what
-///    the provider sent.
+///    `{"object":"error","data":{…}}` or similar non-array. The error names
+///    the actual JSON type so triage knows what the provider sent.
 /// 3. **Non-object top-level body** — provider returned a bare array,
 ///    string, etc. Caught explicitly so the parser doesn't silently
 ///    drop into the missing-data arm with a `<non-object>` keys list.
+///
+/// A **null** `data`/`models` field is NOT an error — Ollama's
+/// OpenAI-compatible `/v1/models` null-encodes the catalog
+/// (`{"object":"list","data":null}`) when no models are pulled, so it is
+/// treated as an empty model list (TAURI-RUST-874 / TAURI-RUST-875).
 ///
 /// Per-entry parsing ignores entries that don't have a usable string id/slug
 /// (lax on purpose — many OpenAI-compatible servers include malformed rows for
@@ -285,6 +289,20 @@ pub fn parse_models_response(body: &serde_json::Value) -> Result<Vec<ModelInfo>,
             keys
         )
     })?;
+
+    // A null `data`/`models` field is a valid empty catalog, not a malformed
+    // envelope: Ollama's OpenAI-compatible `/v1/models` returns
+    // `{"object":"list","data":null}` when no models are pulled. Treat it as an
+    // empty model list so a healthy-but-empty local runtime doesn't manufacture
+    // a hard error (TAURI-RUST-874 / TAURI-RUST-875). Other non-array kinds
+    // (object/string/number/bool) fall through to the descriptive error below —
+    // those still signal a genuinely malformed/error envelope.
+    if data_value.is_null() {
+        log::info!(
+            "[providers][list_models] `{field_name}` is null — provider returned an empty catalog (no models)"
+        );
+        return Ok(Vec::new());
+    }
 
     let data = data_value.as_array().ok_or_else(|| {
         // Include the sibling `object` field if present — OpenAI-shaped
