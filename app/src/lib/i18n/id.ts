@@ -1293,6 +1293,8 @@ const messages: TranslationMap = {
   'settings.embeddings.testing': 'Menguji…',
   'settings.embeddings.testSuccess': 'Terhubung — {dims} dimensi',
   'settings.embeddings.connectionTestFailed': 'Pengujian gagal',
+  'settings.embeddings.verifyFallback':
+    'Tidak dapat memverifikasi endpoint embeddings. Pastikan endpoint berjalan dan menyediakan model embedding, lalu simpan lagi.',
   'settings.embeddings.testFailed': 'Gagal: {error}',
   'settings.embeddings.saving': 'Menyimpan…',
   'settings.embeddings.saved': 'Tersimpan.',

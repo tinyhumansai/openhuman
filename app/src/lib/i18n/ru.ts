@@ -1301,6 +1301,8 @@ const messages: TranslationMap = {
   'settings.embeddings.testing': 'Проверка…',
   'settings.embeddings.testSuccess': 'Подключено — {dims} измерений',
   'settings.embeddings.connectionTestFailed': 'Проверка не удалась',
+  'settings.embeddings.verifyFallback':
+    'Не удалось проверить конечную точку эмбеддингов. Убедитесь, что она запущена и предоставляет модель эмбеддингов, затем сохраните снова.',
   'settings.embeddings.testFailed': 'Ошибка: {error}',
   'settings.embeddings.saving': 'Сохранение…',
   'settings.embeddings.saved': 'Сохранено.',

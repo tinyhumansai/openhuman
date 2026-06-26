@@ -1320,6 +1320,8 @@ const messages: TranslationMap = {
   'settings.embeddings.testing': 'Test en cours…',
   'settings.embeddings.testSuccess': 'Connecté — {dims} dimensions',
   'settings.embeddings.connectionTestFailed': 'Test échoué',
+  'settings.embeddings.verifyFallback':
+    "Impossible de vérifier le point de terminaison d'embeddings. Vérifiez qu'il fonctionne et qu'il propose un modèle d'embedding, puis enregistrez à nouveau.",
   'settings.embeddings.testFailed': 'Échec : {error}',
   'settings.embeddings.saving': 'Enregistrement…',
   'settings.embeddings.saved': 'Enregistré.',

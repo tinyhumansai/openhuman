@@ -1281,6 +1281,8 @@ const messages: TranslationMap = {
   'settings.embeddings.testing': '테스트 중…',
   'settings.embeddings.testSuccess': '연결됨 — {dims} 차원',
   'settings.embeddings.connectionTestFailed': '테스트 실패',
+  'settings.embeddings.verifyFallback':
+    '임베딩 엔드포인트를 확인할 수 없습니다. 엔드포인트가 실행 중이고 임베딩 모델을 제공하는지 확인한 후 다시 저장하세요.',
   'settings.embeddings.testFailed': '실패: {error}',
   'settings.embeddings.saving': '저장 중…',
   'settings.embeddings.saved': '저장됨.',

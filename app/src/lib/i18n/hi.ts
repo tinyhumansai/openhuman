@@ -1284,6 +1284,8 @@ const messages: TranslationMap = {
   'settings.embeddings.testing': 'परीक्षण हो रहा है…',
   'settings.embeddings.testSuccess': 'कनेक्ट — {dims} आयाम',
   'settings.embeddings.connectionTestFailed': 'परीक्षण विफल',
+  'settings.embeddings.verifyFallback':
+    'एम्बेडिंग एंडपॉइंट सत्यापित नहीं किया जा सका। सुनिश्चित करें कि यह चल रहा है और एक एम्बेडिंग मॉडल प्रदान कर रहा है, फिर दोबारा सहेजें।',
   'settings.embeddings.testFailed': 'विफल: {error}',
   'settings.embeddings.saving': 'सहेजा जा रहा है…',
   'settings.embeddings.saved': 'सहेजा गया।',

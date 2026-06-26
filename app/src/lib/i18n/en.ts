@@ -1638,6 +1638,8 @@ const en: TranslationMap = {
   'settings.embeddings.testing': 'Testing…',
   'settings.embeddings.testSuccess': 'Connected — {dims} dimensions',
   'settings.embeddings.connectionTestFailed': 'Test failed',
+  'settings.embeddings.verifyFallback':
+    "Couldn't verify the embeddings endpoint. Make sure it's running and serving an embedding model, then save again.",
   'settings.embeddings.testFailed': 'Failed: {error}',
   'settings.embeddings.saving': 'Saving…',
   'settings.embeddings.saved': 'Saved.',

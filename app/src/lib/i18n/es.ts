@@ -1313,6 +1313,8 @@ const messages: TranslationMap = {
   'settings.embeddings.testing': 'Probando…',
   'settings.embeddings.testSuccess': 'Conectado — {dims} dimensiones',
   'settings.embeddings.connectionTestFailed': 'La prueba falló',
+  'settings.embeddings.verifyFallback':
+    'No se pudo verificar el endpoint de embeddings. Asegúrate de que esté en ejecución y sirviendo un modelo de embeddings, luego guarda de nuevo.',
   'settings.embeddings.testFailed': 'Fallido: {error}',
   'settings.embeddings.saving': 'Guardando…',
   'settings.embeddings.saved': 'Guardado.',

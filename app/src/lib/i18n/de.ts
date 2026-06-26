@@ -1320,6 +1320,8 @@ const messages: TranslationMap = {
   'settings.embeddings.testing': 'Wird getestet…',
   'settings.embeddings.testSuccess': 'Verbunden — {dims} Dimensionen',
   'settings.embeddings.connectionTestFailed': 'Test fehlgeschlagen',
+  'settings.embeddings.verifyFallback':
+    'Der Embeddings-Endpunkt konnte nicht überprüft werden. Stelle sicher, dass er läuft und ein Embedding-Modell bereitstellt, und speichere erneut.',
   'settings.embeddings.testFailed': 'Fehlgeschlagen: {error}',
   'settings.embeddings.saving': 'Wird gespeichert…',
   'settings.embeddings.saved': 'Gespeichert.',

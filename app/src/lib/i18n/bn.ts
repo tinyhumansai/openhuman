@@ -1285,6 +1285,8 @@ const messages: TranslationMap = {
   'settings.embeddings.testing': 'পরীক্ষা হচ্ছে…',
   'settings.embeddings.testSuccess': 'সংযুক্ত — {dims} মাত্রা',
   'settings.embeddings.connectionTestFailed': 'পরীক্ষা ব্যর্থ হয়েছে',
+  'settings.embeddings.verifyFallback':
+    'এমবেডিংস এন্ডপয়েন্ট যাচাই করা যায়নি। নিশ্চিত করুন এটি চলছে এবং একটি এমবেডিং মডেল পরিবেশন করছে, তারপর আবার সংরক্ষণ করুন।',
   'settings.embeddings.testFailed': 'ব্যর্থ: {error}',
   'settings.embeddings.saving': 'সংরক্ষণ হচ্ছে…',
   'settings.embeddings.saved': 'সংরক্ষিত।',

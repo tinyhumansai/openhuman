@@ -1303,6 +1303,8 @@ const messages: TranslationMap = {
   'settings.embeddings.testing': 'Testowanie…',
   'settings.embeddings.testSuccess': 'Połączono — wymiarów: {dims}',
   'settings.embeddings.connectionTestFailed': 'Test nie powiódł się',
+  'settings.embeddings.verifyFallback':
+    'Nie można zweryfikować punktu końcowego osadzeń. Upewnij się, że działa i udostępnia model osadzeń, a następnie zapisz ponownie.',
   'settings.embeddings.testFailed': 'Niepowodzenie: {error}',
   'settings.embeddings.saving': 'Zapisywanie…',
   'settings.embeddings.saved': 'Zapisano.',

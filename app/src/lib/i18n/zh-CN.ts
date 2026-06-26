@@ -1224,6 +1224,8 @@ const messages: TranslationMap = {
   'settings.embeddings.testing': '测试中…',
   'settings.embeddings.testSuccess': '已连接 — {dims} 维度',
   'settings.embeddings.connectionTestFailed': '测试失败',
+  'settings.embeddings.verifyFallback':
+    '无法验证嵌入端点。请确认其正在运行并提供嵌入模型，然后重新保存。',
   'settings.embeddings.testFailed': '失败：{error}',
   'settings.embeddings.saving': '保存中…',
   'settings.embeddings.saved': '已保存。',

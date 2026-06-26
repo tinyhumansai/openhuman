@@ -1264,6 +1264,8 @@ const messages: TranslationMap = {
   'settings.embeddings.testing': 'جارٍ الاختبار…',
   'settings.embeddings.testSuccess': 'متصل — {dims} بُعد',
   'settings.embeddings.connectionTestFailed': 'فشل الاختبار',
+  'settings.embeddings.verifyFallback':
+    'تعذّر التحقق من نقطة نهاية التضمين. تأكد من أنها قيد التشغيل وتوفّر نموذج تضمين، ثم احفظ مرة أخرى.',
   'settings.embeddings.testFailed': 'فشل: {error}',
   'settings.embeddings.saving': 'جارٍ الحفظ…',
   'settings.embeddings.saved': 'تم الحفظ.',
