@@ -13388,3 +13388,87 @@ async fn json_rpc_threads_token_usage_reads_persisted_thread_totals() {
 
     rpc_join.abort();
 }
+// ---------------------------------------------------------------------------
+// Live captions — transcript lifecycle over RPC
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn live_captions_lifecycle_over_rpc() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // 1. Start transcript.
+    let start = post_json_rpc(
+        &rpc_base,
+        400,
+        "openhuman.live_captions_start_transcript",
+        json!({ "source": "microphone" }),
+    )
+    .await;
+    let start_r = assert_no_jsonrpc_error(&start, "live_captions_start_transcript");
+    let start_body = start_r.get("result").unwrap_or(start_r);
+    assert_eq!(
+        start_body.get("ok"),
+        Some(&json!(true)),
+        "start should succeed: {start_body}"
+    );
+    let transcript_id = start_body
+        .get("transcript_id")
+        .and_then(Value::as_str)
+        .expect("transcript_id");
+
+    // 2. Append segment.
+    let append = post_json_rpc(
+        &rpc_base,
+        401,
+        "openhuman.live_captions_append_segment",
+        json!({
+            "transcript_id": transcript_id,
+            "text": "Hello world",
+            "start_ms": 0,
+            "end_ms": 1000
+        }),
+    )
+    .await;
+    let append_r = assert_no_jsonrpc_error(&append, "live_captions_append_segment");
+    let append_body = append_r.get("result").unwrap_or(append_r);
+    assert_eq!(
+        append_body.get("ok"),
+        Some(&json!(true)),
+        "append should succeed: {append_body}"
+    );
+
+    // 3. Complete transcript.
+    let complete = post_json_rpc(
+        &rpc_base,
+        402,
+        "openhuman.live_captions_complete_transcript",
+        json!({ "transcript_id": transcript_id }),
+    )
+    .await;
+    let complete_r = assert_no_jsonrpc_error(&complete, "live_captions_complete_transcript");
+    let complete_body = complete_r.get("result").unwrap_or(complete_r);
+    assert_eq!(
+        complete_body.get("ok"),
+        Some(&json!(true)),
+        "complete should succeed: {complete_body}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}

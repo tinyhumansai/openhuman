@@ -61,6 +61,7 @@ pub mod javascript;
 pub mod keyring;
 pub mod keyring_consent;
 pub mod learning;
+pub mod live_captions;
 pub mod mcp_audit;
 pub mod mcp_client;
 pub mod mcp_registry;
