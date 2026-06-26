@@ -1680,3 +1680,60 @@ async fn deliver_if_configured_empty_success_skips_chat_and_alert() {
     assert!(deliver_if_configured(&config, &job, "", true).await.is_ok());
     assert_eq!(cron_alerts(&config).await, 0);
 }
+
+/// Receive the next `user_error` broadcast on `rx` carrying `kind`, skipping any
+/// unrelated events. The web-channel bus is a process-global broadcast, so a
+/// sibling test running concurrently may interleave its own `user_error` (a
+/// different kind) onto the same channel — filtering on `kind` keeps each test
+/// deterministic regardless of ordering. Panics if the bus drains first.
+fn next_user_error(
+    rx: &mut tokio::sync::broadcast::Receiver<crate::core::socketio::WebChannelEvent>,
+    kind: &str,
+) -> crate::core::socketio::WebChannelEvent {
+    loop {
+        match rx.try_recv() {
+            Ok(ev) if ev.event == "user_error" && ev.error_type.as_deref() == Some(kind) => {
+                break ev
+            }
+            Ok(_) => continue,
+            Err(e) => panic!("expected a user_error broadcast for kind={kind}, bus said: {e:?}"),
+        }
+    }
+}
+
+#[test]
+fn publish_cron_user_error_broadcasts_metadata_only_kind_token() {
+    use crate::openhuman::channels::providers::web::subscribe_web_channel_events;
+
+    // Subscribe BEFORE publishing so the broadcast is captured.
+    let mut rx = subscribe_web_channel_events();
+    publish_cron_user_error("api_key_missing");
+
+    let ev = next_user_error(&mut rx, "api_key_missing");
+    // Broadcast to the "system" room every connected socket auto-joins.
+    assert_eq!(ev.client_id, "system");
+    // Stable kind token mirrors the frontend `UserErrorKind` discriminator.
+    assert_eq!(ev.error_type.as_deref(), Some("api_key_missing"));
+    assert_eq!(ev.error_source.as_deref(), Some("cron"));
+    // Metadata-only: a `user_error` NEVER carries the raw provider body
+    // (CLAUDE.md) and is thread-less (no chat context).
+    assert!(ev.message.is_none(), "user_error must not carry a raw body");
+    assert!(ev.full_response.is_none());
+    assert!(ev.thread_id.is_empty(), "cron user_error is thread-less");
+    assert!(ev.request_id.is_empty());
+}
+
+#[test]
+fn publish_cron_user_error_maps_each_permanent_halt_kind() {
+    use crate::openhuman::channels::providers::web::subscribe_web_channel_events;
+
+    // Each permanent-halt reason maps to the matching frontend kind token. The
+    // three tokens are exactly the `UserErrorKind` values classify.ts accepts.
+    for kind in ["insufficient_credits", "budget_exceeded", "api_key_missing"] {
+        let mut rx = subscribe_web_channel_events();
+        publish_cron_user_error(kind);
+        let ev = next_user_error(&mut rx, kind);
+        assert_eq!(ev.error_type.as_deref(), Some(kind));
+        assert_eq!(ev.error_source.as_deref(), Some("cron"));
+    }
+}

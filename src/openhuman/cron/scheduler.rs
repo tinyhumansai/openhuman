@@ -579,12 +579,12 @@ async fn execute_job_with_retry(
         // Suppressed the retries-exhausted Sentry report for a permanent
         // user-config / billing state. Metadata-only breadcrumb so the
         // suppression is diagnosable in production without the raw provider body.
-        let reason = if credits_exhausted {
-            "insufficient_credits_402"
+        let (reason, user_error_kind) = if credits_exhausted {
+            ("insufficient_credits_402", "insufficient_credits")
         } else if budget_exhausted {
-            "budget_exhausted_400"
+            ("budget_exhausted_400", "budget_exceeded")
         } else {
-            "api_key_unset"
+            ("api_key_unset", "api_key_missing")
         };
         log::debug!(
             "[cron] action=suppress_retries_exhausted_report reason={reason} job_id={} retries={}",
@@ -598,6 +598,11 @@ async fn execute_job_with_retry(
         // surfaced here — only the `&'static str` constants from
         // `permanent_halt_message`.
         last_output = permanent_halt_message(credits_exhausted, budget_exhausted).to_string();
+        // Also surface the actionable state to the UserErrorCenter so the user
+        // can fix it (add an API key / top up credits / raise the budget) even
+        // with no chat thread open. Broadcast-only + metadata-only — see
+        // `publish_cron_user_error` (#4165 / TAURI-RUST-HCK follow-up).
+        publish_cron_user_error(user_error_kind);
     }
 
     (false, last_output)
@@ -616,6 +621,33 @@ fn permanent_halt_message(credits_exhausted: bool, budget_exhausted: bool) -> &'
     } else {
         CRON_HALT_API_KEY_UNSET_MESSAGE
     }
+}
+
+/// Surface a permanent cron user-config / billing halt to every connected
+/// client's UserErrorCenter.
+///
+/// Broadcasts a metadata-only `user_error` web-channel event to the `"system"`
+/// room (which every socket auto-joins). The payload carries only the stable
+/// `kind` token in `error_type` — one of `api_key_missing` / `insufficient_credits`
+/// / `budget_exceeded`, mirroring the frontend `UserErrorKind` discriminator —
+/// plus `error_source = "cron"`. It NEVER carries the raw provider body (see the
+/// metadata-only rule in CLAUDE.md), so no secrets / PII leave the core.
+///
+/// The frontend `socketService` listens for `user_error` and routes it through
+/// the same classifier the chat runtime uses, so a background (no-delivery) job
+/// failure is no longer silent — it lands in the shell's UserErrorCenter with a
+/// deep-link action even though no chat thread is active.
+fn publish_cron_user_error(kind: &str) {
+    log::debug!("[cron] action=surface_user_error kind={kind}");
+    crate::openhuman::channels::providers::web::publish_web_channel_event(
+        crate::core::socketio::WebChannelEvent {
+            event: "user_error".to_string(),
+            client_id: "system".to_string(),
+            error_type: Some(kind.to_string()),
+            error_source: Some("cron".to_string()),
+            ..Default::default()
+        },
+    );
 }
 
 async fn process_due_jobs(config: &Config, security: &Arc<SecurityPolicy>, jobs: Vec<CronJob>) {
