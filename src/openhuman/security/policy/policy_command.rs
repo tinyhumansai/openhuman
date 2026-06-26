@@ -779,12 +779,24 @@ pub(super) fn classify_segment(base: &str, args: &[String], joined: &str) -> Com
     if is_command_executor(base) {
         return CommandClass::Write;
     }
-    // `find` is read-only unless it executes commands or deletes files.
+    // `find` is read-only unless it executes commands, deletes, or writes
+    // files. -fprintf / -fprint / -fprint0 / -fls write their output to a
+    // named file rather than stdout — an arbitrary-path write that side-steps
+    // the gated file-write tools (and their workspace confinement), so they
+    // must be classified Write (approval-gated) alongside -delete.
     if base == "find" {
         if args.iter().any(|a| {
             matches!(
                 a.as_str(),
-                "-exec" | "-execdir" | "-ok" | "-okdir" | "-delete"
+                "-exec"
+                    | "-execdir"
+                    | "-ok"
+                    | "-okdir"
+                    | "-delete"
+                    | "-fprintf"
+                    | "-fprint"
+                    | "-fprint0"
+                    | "-fls"
             )
         }) {
             return CommandClass::Write;
