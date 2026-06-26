@@ -948,13 +948,14 @@ fn parse_models_response_distinguishes_missing_data_field_from_wrong_type() {
     // shape (`object` + `data` keys both present, but `data` isn't an
     // array). The error MUST NOT say "missing" — it must surface the
     // actual JSON type so triage knows what shape the provider sent.
+    // `null` is deliberately excluded here — it is a valid empty catalog,
+    // not a wrong type (see `parse_models_response_treats_null_data_as_empty_list`).
     for (label, value) in [
         (
             "object",
             serde_json::json!({"object":"error","message":"boom"}),
         ),
         ("string", serde_json::json!("models go here")),
-        ("null", serde_json::Value::Null),
         ("bool", serde_json::json!(true)),
         ("number", serde_json::json!(42)),
     ] {
@@ -969,6 +970,31 @@ fn parse_models_response_distinguishes_missing_data_field_from_wrong_type() {
             "wrong-type error must name the actual JSON kind ({label}): {err}"
         );
     }
+}
+
+#[test]
+fn parse_models_response_treats_null_data_as_empty_list() {
+    // TAURI-RUST-874 / TAURI-RUST-875: Ollama's OpenAI-compatible
+    // `/v1/models` null-encodes the catalog (`{"object":"list","data":null}`)
+    // when no models are pulled. A null `data`/`models` field is a valid empty
+    // model list, not a malformed envelope — it MUST parse to an empty Vec
+    // instead of manufacturing a hard error that floods Sentry.
+    let data_null = serde_json::json!({ "object": "list", "data": serde_json::Value::Null });
+    let models = parse_models_response(&data_null)
+        .expect("null `data` must parse as an empty catalog, not an error");
+    assert!(
+        models.is_empty(),
+        "null `data` must yield an empty model list, got {models:?}"
+    );
+
+    // The sibling `models` key (Codex-shaped envelope) gets the same treatment.
+    let models_null = serde_json::json!({ "object": "list", "models": serde_json::Value::Null });
+    let models = parse_models_response(&models_null)
+        .expect("null `models` must parse as an empty catalog, not an error");
+    assert!(
+        models.is_empty(),
+        "null `models` must yield an empty model list, got {models:?}"
+    );
 }
 
 #[test]
