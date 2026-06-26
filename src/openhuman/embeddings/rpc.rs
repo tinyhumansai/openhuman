@@ -52,6 +52,36 @@ fn final_probe_dims(model: &str, configured: usize, actual: usize) -> usize {
     }
 }
 
+/// Detect a custom embedding config that would pass the raw embed probe but then
+/// break the memory tree.
+///
+/// The memory-tree embedder (`memory_tree::score::embed::OpenAiCompatEmbedder`)
+/// is pinned to a fixed on-disk dimension
+/// ([`EMBEDDING_DIM`](crate::openhuman::memory_tree::score::embed::EMBEDDING_DIM),
+/// 1024) and hard-rejects any vector of a different length. A custom model whose
+/// native output isn't that length therefore verifies fine here (it *can* embed)
+/// but later fails tree ingest/seal with `expected 1024, got N` — a confusing,
+/// deferred failure. So once we know the probe's real returned length we reject
+/// the save up front with an actionable message (Codex review on #4056).
+///
+/// `text-embedding-3-*` is always compatible: it honours the OpenAI `dimensions`
+/// param, and the tree adapter requests exactly [`EMBEDDING_DIM`], so the server
+/// returns 1024 regardless of the probed/configured size. A zero `actual`
+/// (defensive — empty vectors are already rejected upstream) is treated as no
+/// conflict. Returns `Some(message)` when incompatible, `None` when fine.
+fn tree_dimension_conflict(model: &str, actual_dims: usize) -> Option<String> {
+    const REQUIRED: usize = crate::openhuman::memory_tree::score::embed::EMBEDDING_DIM;
+    if model_supports_dimensions(model) || actual_dims == 0 || actual_dims == REQUIRED {
+        return None;
+    }
+    Some(format!(
+        "`{model}` returns {actual_dims}-dimensional embeddings, but OpenHuman's memory \
+         requires {REQUIRED}. Choose a model that outputs {REQUIRED} dimensions — an OpenAI \
+         `text-embedding-3-*` model, or a {REQUIRED}-dim model such as `mxbai-embed-large` or \
+         `bge-large` — then save again."
+    ))
+}
+
 /// Returns the current embedding settings plus the provider catalog.
 pub async fn get_settings(config: &Config) -> Result<RpcOutcome<serde_json::Value>, String> {
     let provider = &config.memory.embedding_provider;
@@ -261,6 +291,31 @@ pub async fn update_settings(
                         }
                     }
                     return Ok(reject);
+                }
+                // The endpoint can embed — but the memory tree is pinned to a
+                // fixed dimension. If this model's native length isn't that, the
+                // save would succeed only to fail tree ingest/seal later, so
+                // reject it here with an actionable message (Codex review #4056).
+                if let Some(message) = tree_dimension_conflict(&new_model, probe_actual_dims) {
+                    tracing::warn!(
+                        provider = effective_provider.as_str(),
+                        model = new_model.as_str(),
+                        returned = probe_actual_dims,
+                        required = crate::openhuman::memory_tree::score::embed::EMBEDDING_DIM,
+                        "{LOG_PREFIX} update_settings rejected — endpoint dimension incompatible with memory tree"
+                    );
+                    let payload = serde_json::json!({
+                        "error": "EMBEDDINGS_DIMENSION_UNSUPPORTED",
+                        "message": message,
+                        "requested_model": new_model,
+                        "returned_dimensions": probe_actual_dims,
+                        "required_dimensions":
+                            crate::openhuman::memory_tree::score::embed::EMBEDDING_DIM,
+                    });
+                    return Ok(RpcOutcome::new(
+                        payload,
+                        vec!["embedding dimension unsupported by memory tree — not saved".into()],
+                    ));
                 }
                 // Passed. Adopt the endpoint's real vector length for every model
                 // we probed dimension-agnostically — the user can't be expected to
@@ -551,6 +606,23 @@ pub async fn test_connection(
     match embedder.embed(&["connection test"]).await {
         Ok(vectors) => {
             let actual_dims = vectors.first().map(|v| v.len()).unwrap_or(0);
+            // The endpoint embeds, but report a failure if its native dimension
+            // is one the memory tree can't store (#4056) — otherwise the user
+            // sees "Connected" here then a rejected save.
+            if let Some(message) = tree_dimension_conflict(model, actual_dims) {
+                let payload = serde_json::json!({
+                    "success": false,
+                    "provider": provider_tag,
+                    "model": model,
+                    "requested_dimensions": dims,
+                    "actual_dimensions": actual_dims,
+                    "error": message,
+                });
+                return Ok(RpcOutcome::new(
+                    payload,
+                    vec!["connection test failed: incompatible embedding dimension".into()],
+                ));
+            }
             let payload = serde_json::json!({
                 "success": true,
                 "provider": provider_tag,
@@ -910,6 +982,27 @@ mod tests {
         assert_eq!(final_probe_dims("text-embedding-3-large", 1024, 3072), 1024);
         // Defensive: zero actual falls back to the configured value.
         assert_eq!(final_probe_dims("bge-m3", 1024, 0), 1024);
+    }
+
+    /// Codex review on #4056: the memory tree is pinned to `EMBEDDING_DIM`
+    /// (1024), so a custom model whose native length differs must be rejected at
+    /// save — not accepted then broken at tree ingest. `text-embedding-3-*`
+    /// (reducible) and an exact-1024 model are always compatible.
+    #[test]
+    fn tree_dimension_conflict_gates_non_matching_native_dims() {
+        let required = crate::openhuman::memory_tree::score::embed::EMBEDDING_DIM;
+        // Native length == required → compatible.
+        assert!(tree_dimension_conflict("bge-large", required).is_none());
+        // text-embedding-3-* is reducible (tree sends the dims param) → always ok.
+        assert!(tree_dimension_conflict("text-embedding-3-large", 3072).is_none());
+        assert!(tree_dimension_conflict("text-embedding-3-small", 768).is_none());
+        // Defensive: a zero actual is not treated as a conflict.
+        assert!(tree_dimension_conflict("bge-m3", 0).is_none());
+        // Native length != required → rejected, message names both numbers.
+        let msg =
+            tree_dimension_conflict("nomic-embed-text", 768).expect("768 != 1024 must conflict");
+        assert!(msg.contains("768") && msg.contains(&required.to_string()));
+        assert!(msg.contains("nomic-embed-text"));
     }
 
     #[test]
