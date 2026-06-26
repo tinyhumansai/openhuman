@@ -380,11 +380,7 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     // guard now fast-fails before issuing that request, but this arm demotes
     // any residual 401 of that shape — older clients, or a present-but-rejected
     // key — so the flood (TAURI-RUST-52S) stays out of Sentry either way.
-    if lower.contains("api key not set")
-        || lower.contains("missing api key")
-        || lower.contains("no api key is configured")
-        || lower.contains("no api key supplied")
-    {
+    if is_api_key_unset_message(&lower) {
         return Some(ExpectedErrorKind::ApiKeyMissing);
     }
     // Check `ChannelSupervisorRestart` BEFORE `is_loopback_unavailable` and
@@ -964,6 +960,30 @@ pub fn is_session_expired_message(msg: &str) -> bool {
 /// [`ExpectedErrorKind::McpServerNeedsAuth`].
 fn is_mcp_server_needs_auth_message(lower: &str) -> bool {
     lower.contains("mcp unauthorized for ") && lower.contains("(http 401")
+}
+
+/// Detect the "a configured provider has no API key" user-config state.
+///
+/// Single source of truth for the `ApiKeyMissing` wording so the
+/// `expected_error_kind` demotion arm and the cron scheduler's halt-on-first
+/// classifier (`is_api_key_unset_failure`, TAURI-RUST-HCK) can never drift
+/// apart. The phrasing is emitted deterministically, before any HTTP, by the
+/// credential guards:
+///   - `inference/provider/compatible_request.rs::credential_for_request`
+///     ("<provider> API key not set. Configure via the web UI …")
+///   - the embeddings credential guards (cohere/openai) + the composio
+///     direct-mode factory bail ("no api key is configured" / "no api key
+///     supplied").
+///
+/// Distinct from a *rejected* key (a provider 401 "Invalid API key"): that is a
+/// present-but-wrong key and stays actionable in Sentry — this matcher is for
+/// the **absent** key only, which has no Sentry remediation path.
+pub fn is_api_key_unset_message(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("api key not set")
+        || lower.contains("missing api key")
+        || lower.contains("no api key is configured")
+        || lower.contains("no api key supplied")
 }
 
 /// Detect the in-process-core boot-window shape: a sibling component
@@ -3067,6 +3087,28 @@ mod tests {
             ),
             Some(ExpectedErrorKind::ApiKeyMissing)
         );
+    }
+
+    /// TAURI-RUST-HCK — the single-source `is_api_key_unset_message` matcher
+    /// (consumed by the cron scheduler's halt-on-first classifier) must match
+    /// the VERBATIM wording emitted by the inference credential guard
+    /// (`credential_for_request`), so a wording drift fails CI instead of
+    /// silently re-opening the cron flood. It must NOT match a present-but-
+    /// rejected key (401 "Invalid API key") nor an ordinary provider error.
+    #[test]
+    fn is_api_key_unset_message_matches_verbatim_credential_guard_wording() {
+        assert!(is_api_key_unset_message(
+            "openrouter API key not set. Configure via the web UI or set the appropriate env var."
+        ));
+        assert!(is_api_key_unset_message(
+            "Cohere embed API error (401 Unauthorized): {\"message\":\"no api key supplied\"}"
+        ));
+        assert!(!is_api_key_unset_message(
+            "OpenAI API error (401 Unauthorized): invalid_api_key"
+        ));
+        assert!(!is_api_key_unset_message(
+            "OpenHuman API error (500 Internal Server Error): {\"error\":\"Internal server error\"}"
+        ));
     }
 
     /// Guard against over-suppression: a genuine BYO-key auth failure
