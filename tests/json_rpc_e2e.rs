@@ -13388,3 +13388,100 @@ async fn json_rpc_threads_token_usage_reads_persisted_thread_totals() {
 
     rpc_join.abort();
 }
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn guided_flows_lifecycle_over_rpc() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // 1. List flows — should include the builtin onboarding flow.
+    let list = post_json_rpc(
+        &rpc_base,
+        200,
+        "openhuman.guided_flows_list_flows",
+        json!({}),
+    )
+    .await;
+    let list_r = assert_no_jsonrpc_error(&list, "guided_flows_list_flows");
+    let result = list_r.get("result").unwrap_or(list_r);
+    let flows = result
+        .get("flows")
+        .and_then(Value::as_array)
+        .expect("flows array");
+    assert!(!flows.is_empty(), "should have at least one flow: {result}");
+
+    // 2. Start the onboarding flow.
+    let start = post_json_rpc(
+        &rpc_base,
+        201,
+        "openhuman.guided_flows_start_flow",
+        json!({ "flow_id": "onboarding_setup" }),
+    )
+    .await;
+    let start_r = assert_no_jsonrpc_error(&start, "guided_flows_start_flow");
+    let start_body = start_r.get("result").unwrap_or(start_r);
+    assert_eq!(
+        start_body.get("ok"),
+        Some(&json!(true)),
+        "start should succeed: {start_body}"
+    );
+    let session_id = start_body
+        .get("session_id")
+        .and_then(Value::as_str)
+        .expect("session_id");
+
+    // 3. Submit answer to first step.
+    let answer = post_json_rpc(
+        &rpc_base,
+        202,
+        "openhuman.guided_flows_submit_answer",
+        json!({
+            "session_id": session_id,
+            "step_id": "use_case",
+            "value": "Personal productivity"
+        }),
+    )
+    .await;
+    let answer_r = assert_no_jsonrpc_error(&answer, "guided_flows_submit_answer");
+    let answer_body = answer_r.get("result").unwrap_or(answer_r);
+    assert_eq!(
+        answer_body.get("ok"),
+        Some(&json!(true)),
+        "answer should succeed: {answer_body}"
+    );
+
+    // 4. Get session state.
+    let state = post_json_rpc(
+        &rpc_base,
+        203,
+        "openhuman.guided_flows_get_session",
+        json!({ "session_id": session_id }),
+    )
+    .await;
+    let state_r = assert_no_jsonrpc_error(&state, "guided_flows_get_session");
+    let state_body = state_r.get("result").unwrap_or(state_r);
+    assert_eq!(
+        state_body.get("ok"),
+        Some(&json!(true)),
+        "get_session should succeed: {state_body}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}

@@ -50,6 +50,7 @@ pub mod doctor;
 pub mod embeddings;
 pub mod encryption;
 pub mod file_state;
+pub mod guided_flows;
 pub mod harness_init;
 pub mod health;
 pub mod heartbeat;
