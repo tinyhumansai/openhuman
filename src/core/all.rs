@@ -305,6 +305,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(
         crate::openhuman::desktop_companion::all_desktop_companion_registered_controllers(),
     );
+    // Standalone voice assistant: local STT/TTS conversational loop.
+    controllers
+        .extend(crate::openhuman::voice_assistant::all_voice_assistant_registered_controllers());
     // Structured WhatsApp Web data — agent-facing read-only controllers (list/search).
     // The write-path ingest controller is registered separately in build_internal_only_controllers.
     controllers.extend(crate::openhuman::whatsapp_data::all_whatsapp_data_registered_controllers());
@@ -467,6 +470,8 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::whatsapp_data::all_whatsapp_data_controller_schemas());
     // Mobile device pairing and management
     schemas.extend(crate::openhuman::devices::all_devices_controller_schemas());
+    // Standalone voice assistant
+    schemas.extend(crate::openhuman::voice_assistant::all_voice_assistant_controller_schemas());
     // Durable agent session database
     schemas.extend(crate::openhuman::session_db::all_session_db_controller_schemas());
     // Background agent command center
@@ -647,6 +652,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         ),
         "tinyplace" => Some(
             "tiny.place A2A social-network integration: directory, explorer, and search over the agent network.",
+        ),
+        "voice_assistant" => Some(
+            "Standalone voice assistant — local STT/TTS conversational loop with wake-word detection.",
         ),
         _ => None,
     }

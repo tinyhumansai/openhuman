@@ -13388,3 +13388,82 @@ async fn json_rpc_threads_token_usage_reads_persisted_thread_totals() {
 
     rpc_join.abort();
 }
+// ---------------------------------------------------------------------------
+// Voice assistant — session start/stop over RPC
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn voice_assistant_session_over_rpc() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // 1. Start session.
+    let start = post_json_rpc(
+        &rpc_base,
+        300,
+        "openhuman.voice_assistant_start_session",
+        json!({ "stt_provider": "whisper", "tts_provider": "piper" }),
+    )
+    .await;
+    let start_r = assert_no_jsonrpc_error(&start, "voice_assistant_start_session");
+    let start_body = start_r.get("result").unwrap_or(start_r);
+    assert_eq!(
+        start_body.get("ok"),
+        Some(&json!(true)),
+        "start should succeed: {start_body}"
+    );
+    let session_id = start_body
+        .get("session_id")
+        .and_then(Value::as_str)
+        .expect("session_id");
+
+    // 2. Get status.
+    let status = post_json_rpc(
+        &rpc_base,
+        301,
+        "openhuman.voice_assistant_get_status",
+        json!({ "session_id": session_id }),
+    )
+    .await;
+    let status_r = assert_no_jsonrpc_error(&status, "voice_assistant_get_status");
+    let status_body = status_r.get("result").unwrap_or(status_r);
+    assert_eq!(
+        status_body.get("ok"),
+        Some(&json!(true)),
+        "status should succeed: {status_body}"
+    );
+
+    // 3. Stop session.
+    let stop = post_json_rpc(
+        &rpc_base,
+        302,
+        "openhuman.voice_assistant_stop_session",
+        json!({ "session_id": session_id }),
+    )
+    .await;
+    let stop_r = assert_no_jsonrpc_error(&stop, "voice_assistant_stop_session");
+    let stop_body = stop_r.get("result").unwrap_or(stop_r);
+    assert_eq!(
+        stop_body.get("ok"),
+        Some(&json!(true)),
+        "stop should succeed: {stop_body}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}

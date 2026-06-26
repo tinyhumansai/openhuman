@@ -128,6 +128,7 @@ pub mod tools;
 pub mod update;
 pub mod util;
 pub mod voice;
+pub mod voice_assistant;
 pub mod wallet;
 pub mod web3;
 pub mod webhooks;
