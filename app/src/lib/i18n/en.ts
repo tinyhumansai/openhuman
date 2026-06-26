@@ -6555,7 +6555,11 @@ const en: TranslationMap = {
   'userErrors.insufficientCredits.title': 'Provider credits required',
   'userErrors.insufficientCredits.body':
     'Your AI provider is out of credits. Top it up or update its API key to continue.',
+  'userErrors.apiKeyMissing.title': 'API key required',
+  'userErrors.apiKeyMissing.body':
+    'Your AI provider has no API key set. Add one in provider settings to continue.',
   'userErrors.scope.chat': 'Chat',
+  'userErrors.scope.cron': 'Scheduled job',
 };
 
 export default en;

@@ -6249,7 +6249,11 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.title': 'প্রদানকারীর ক্রেডিট প্রয়োজন',
   'userErrors.insufficientCredits.body':
     'AI প্রদানকারীর ক্রেডিট শেষ। রিচার্জ করুন বা API কী বদলান।',
+  'userErrors.apiKeyMissing.title': 'API কী প্রয়োজন',
+  'userErrors.apiKeyMissing.body':
+    'আপনার AI প্রদানকারীর কোনো API কী সেট নেই। চালিয়ে যেতে প্রদানকারী সেটিংসে একটি যোগ করুন।',
   'userErrors.scope.chat': 'চ্যাট',
+  'userErrors.scope.cron': 'নির্ধারিত কাজ',
   // Agent World — Identity trading (confirm-before-spend + balance gate)
   'agentWorld.trading.amountLabel': 'পরিমাণ',
   'agentWorld.trading.networkLabel': 'নেটওয়ার্ক',

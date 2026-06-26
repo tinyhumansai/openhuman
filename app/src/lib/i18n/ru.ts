@@ -6316,7 +6316,11 @@ const messages: TranslationMap = {
   'userErrors.budgetExceeded.body': 'Управляемый бюджет ИИ исчерпан. Измените план.',
   'userErrors.insufficientCredits.title': 'Требуются кредиты провайдера',
   'userErrors.insufficientCredits.body': 'У провайдера закончились кредиты. Пополните их.',
+  'userErrors.apiKeyMissing.title': 'Требуется ключ API',
+  'userErrors.apiKeyMissing.body':
+    'У провайдера ИИ не задан ключ API. Добавьте его в настройках провайдера.',
   'userErrors.scope.chat': 'Чат',
+  'userErrors.scope.cron': 'Запланированная задача',
   // Agent World — Identity trading (confirm-before-spend + balance gate)
   'agentWorld.trading.amountLabel': 'Сумма',
   'agentWorld.trading.networkLabel': 'Сеть',

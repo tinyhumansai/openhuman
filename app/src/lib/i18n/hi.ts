@@ -6253,7 +6253,11 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.title': 'प्रदाता क्रेडिट आवश्यक',
   'userErrors.insufficientCredits.body':
     'AI प्रदाता के क्रेडिट समाप्त। रिचार्ज करें या API कुंजी बदलें।',
+  'userErrors.apiKeyMissing.title': 'API कुंजी आवश्यक',
+  'userErrors.apiKeyMissing.body':
+    'आपके AI प्रदाता के लिए कोई API कुंजी सेट नहीं है। जारी रखने के लिए प्रदाता सेटिंग्स में एक जोड़ें।',
   'userErrors.scope.chat': 'चैट',
+  'userErrors.scope.cron': 'निर्धारित कार्य',
   // Agent World — Identity trading (confirm-before-spend + balance gate)
   'agentWorld.trading.amountLabel': 'राशि',
   'agentWorld.trading.networkLabel': 'नेटवर्क',

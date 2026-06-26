@@ -6189,7 +6189,11 @@ const messages: TranslationMap = {
   'userErrors.budgetExceeded.body': '관리형 AI 예산이 모두 소진되었습니다.',
   'userErrors.insufficientCredits.title': '제공업체 크레딧 필요',
   'userErrors.insufficientCredits.body': 'AI 제공업체 크레딧이 소진되었습니다.',
+  'userErrors.apiKeyMissing.title': 'API 키 필요',
+  'userErrors.apiKeyMissing.body':
+    'AI 제공업체에 API 키가 설정되지 않았습니다. 제공업체 설정에서 추가하세요.',
   'userErrors.scope.chat': '채팅',
+  'userErrors.scope.cron': '예약된 작업',
   // Agent World — Identity trading (confirm-before-spend + balance gate)
   'agentWorld.trading.amountLabel': '금액',
   'agentWorld.trading.networkLabel': '네트워크',

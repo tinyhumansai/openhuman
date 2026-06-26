@@ -6368,7 +6368,11 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.title': 'Crediti del provider necessari',
   'userErrors.insufficientCredits.body':
     'Il tuo provider IA ha esaurito i crediti. Ricaricalo o aggiorna la chiave API.',
+  'userErrors.apiKeyMissing.title': 'Chiave API richiesta',
+  'userErrors.apiKeyMissing.body':
+    'Il tuo provider IA non ha una chiave API impostata. Aggiungine una nelle impostazioni del provider per continuare.',
   'userErrors.scope.chat': 'Chat',
+  'userErrors.scope.cron': 'Attività pianificata',
   // Agent World — Identity trading (confirm-before-spend + balance gate)
   'agentWorld.trading.amountLabel': 'Importo',
   'agentWorld.trading.networkLabel': 'Rete',

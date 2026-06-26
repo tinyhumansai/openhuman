@@ -6343,7 +6343,11 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.title': 'Wymagane środki u dostawcy',
   'userErrors.insufficientCredits.body':
     'Twój dostawca AI nie ma już środków. Doładuj je lub zaktualizuj klucz API.',
+  'userErrors.apiKeyMissing.title': 'Wymagany klucz API',
+  'userErrors.apiKeyMissing.body':
+    'Twój dostawca AI nie ma ustawionego klucza API. Dodaj go w ustawieniach dostawcy, aby kontynuować.',
   'userErrors.scope.chat': 'Czat',
+  'userErrors.scope.cron': 'Zaplanowane zadanie',
   // Agent World — Identity trading (confirm-before-spend + balance gate)
   'agentWorld.trading.amountLabel': 'Kwota',
   'agentWorld.trading.networkLabel': 'Sieć',
