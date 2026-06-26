@@ -156,6 +156,8 @@ pub enum PrivacyDataKind {
     Diagnostics,
     /// Non-sensitive metadata (capability ids, feature flags, settings shape).
     Metadata,
+    /// User-generated content (audio, text, queries) sent to cloud LLM for inference.
+    UserContent,
 }
 
 #[cfg(test)]

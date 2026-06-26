@@ -649,3 +649,21 @@ pub fn is_transient_fs_error(err: &anyhow::Error) -> bool {
     }
     false
 }
+
+// ---------------------------------------------------------------------------
+// Shared helpers for domain modules (voice_assistant, live_captions, etc.)
+// ---------------------------------------------------------------------------
+
+/// Generate a UUID v4 string.
+pub fn uuid_v4() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
+/// Current Unix epoch in seconds.
+pub fn now_epoch() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}

@@ -222,16 +222,6 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         privacy: None,
     },
     Capability {
-        id: "conversation.plan_review",
-        name: "Plan Review",
-        domain: "conversation",
-        category: CapabilityCategory::Conversation,
-        description: "Pause an interactive turn for review whenever the assistant proposes a thread-scoped plan (a multi-step to-do list with its objective). Review the whole plan once above the composer, then Approve to run it, Reject to discard it, or send feedback to have the assistant revise and re-propose — nothing executes until you approve. Background and scheduled runs are never gated.",
-        how_to: "Conversations > review the plan card above the composer when the assistant lays out a multi-step plan",
-        status: CapabilityStatus::Beta,
-        privacy: None,
-    },
-    Capability {
         id: "conversation.background_monitors",
         name: "Background Monitors",
         domain: "conversation",
@@ -369,45 +359,6 @@ pub(super) const CAPABILITIES: &[Capability] = &[
             memory.tool_rule_put / memory.tool_rule_list / memory.tool_rule_delete (RPC).",
         status: CapabilityStatus::Beta,
         privacy: LOCAL_RAW,
-    },
-    Capability {
-        id: "intelligence.long_term_goals",
-        name: "Long-term Goals",
-        domain: "intelligence",
-        category: CapabilityCategory::Intelligence,
-        description: "An editable list of the assistant's durable long-term goals for working with \
-            you, stored locally in MEMORY_GOALS.md (capped ~500 tokens). A background goals agent \
-            keeps the list fresh: it runs when the conversation context is summarized, and on first \
-            run populates initial goals from context. Items can be added/edited/deleted explicitly \
-            via RPC or agent tools.",
-        how_to: "Automatic — refreshed on context summarization. Manage via \
-            memory_goals.list / memory_goals.add / memory_goals.edit / memory_goals.delete / \
-            memory_goals.reflect (RPC), or the goals_* agent tools.",
-        status: CapabilityStatus::Beta,
-        // Enrichment runs a cloud agentic model, so goal/context text can leave
-        // the device during a reflect pass (CRUD/storage stays local).
-        privacy: DERIVED_TO_BACKEND,
-    },
-    Capability {
-        id: "conversation.thread_goal",
-        name: "Thread Goal",
-        domain: "conversation",
-        category: CapabilityCategory::Conversation,
-        description: "A single, thread-scoped goal (Codex-style \"completion contract\") the \
-            assistant keeps pursuing across turns, interrupts, resumes, and budget boundaries — \
-            distinct from the long-term goals list and the per-thread task board. Stored locally \
-            (one goal per thread), with a lifecycle (active/paused/budget_limited/complete) and an \
-            optional token budget. The active goal is injected into context each turn; the context \
-            scout proposes a goal on a fresh thread (only if none is set) and the orchestrator can \
-            set/refine it. When enabled, idle threads can autonomously continue toward the goal.",
-        how_to: "Set/edit via the goal chip above the composer in Conversations, or the \
-            thread_goals.* RPC (get/set/complete/pause/resume/clear); the assistant manages it via \
-            the goal_set / goal_get / goal_complete tools. Autonomous continuation is opt-in via \
-            heartbeat.goal_continuation_enabled.",
-        status: CapabilityStatus::Beta,
-        // Goal CRUD/storage is local; autonomous continuation (opt-in) runs a
-        // cloud agentic model, so objective/context can leave the device then.
-        privacy: DERIVED_TO_BACKEND,
     },
     Capability {
         id: "intelligence.memory_tree_retrieval",
@@ -1497,6 +1448,93 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         how_to: "Automatic — invoked by the orchestrator when a crypto wallet or market action is requested. Connect a wallet via Settings > Recovery Phrase first.",
         status: CapabilityStatus::Beta,
         privacy: LOCAL_CREDENTIALS,
+    },
+    // ── Boost VC capability foundations ─────────────────────────────────────
+    Capability {
+        id: "voice_assistant.session",
+        name: "Voice Assistant Sessions",
+        domain: "voice_assistant",
+        category: CapabilityCategory::Automation,
+        description: "Core/RPC voice session foundation with open STT/TTS adapters, transcript \
+                      handoff, and session status controls.",
+        how_to: "Start a voice session via RPC: openhuman.voice_assistant_start_session.",
+        status: CapabilityStatus::Beta,
+        privacy: Some(CapabilityPrivacy {
+            leaves_device: true,
+            data_kind: PrivacyDataKind::UserContent,
+            destinations: &["OpenHuman backend", "TinyHumans Neocortex"],
+        }),
+    },
+    Capability {
+        id: "guided_flows.recommendation",
+        name: "Guided Recommendation Flows",
+        domain: "guided_flows",
+        category: CapabilityCategory::Automation,
+        description: "Core/RPC quiz and recommendation flow engine with structured answers, \
+                      reusable flow definitions, and recommendation output.",
+        how_to: "Start a flow via RPC: openhuman.guided_flows_start_flow with flow_id.",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
+        id: "live_captions.transcript",
+        name: "Live Caption Transcripts",
+        domain: "live_captions",
+        category: CapabilityCategory::Automation,
+        description: "Core/RPC transcript pipeline for caption segments, saved transcripts, \
+                      summaries, and meeting-note handoff.",
+        how_to: "Start via RPC: openhuman.live_captions_start_transcript with source.",
+        status: CapabilityStatus::Beta,
+        privacy: Some(CapabilityPrivacy {
+            leaves_device: true,
+            data_kind: PrivacyDataKind::UserContent,
+            destinations: &["OpenHuman backend", "TinyHumans Neocortex"],
+        }),
+    },
+    Capability {
+        id: "voice_actions.intent",
+        name: "Voice Action Recognition",
+        domain: "voice_actions",
+        category: CapabilityCategory::Automation,
+        description: "Core/RPC voice-command recognizer that maps utterances to controller-backed \
+                      or skill-backed actions with visible status metadata for app callers.",
+        how_to: "Recognize via RPC: openhuman.voice_actions_recognize with utterance.",
+        status: CapabilityStatus::Beta,
+        privacy: Some(CapabilityPrivacy {
+            leaves_device: true,
+            data_kind: PrivacyDataKind::UserContent,
+            destinations: &["OpenHuman backend", "TinyHumans Neocortex"],
+        }),
+    },
+    Capability {
+        id: "operator_inbox.triage",
+        name: "Operator Inbox Triage",
+        domain: "operator_inbox",
+        category: CapabilityCategory::Automation,
+        description: "Core/RPC operator inbox foundation with IMAP fetching, SMTP reply sending, \
+                      message triage, contextual draft replies, and follow-up scheduling.",
+        how_to: "Triage via RPC: openhuman.operator_inbox_triage_message with sender/subject/body; fetch via openhuman.operator_inbox_fetch_inbox.",
+        status: CapabilityStatus::Beta,
+        privacy: Some(CapabilityPrivacy {
+            leaves_device: true,
+            data_kind: PrivacyDataKind::UserContent,
+            destinations: &["OpenHuman backend", "TinyHumans Neocortex"],
+        }),
+    },
+    Capability {
+        id: "chat_with_data.query",
+        name: "Chat-with-Data Analytics",
+        domain: "chat_with_data",
+        category: CapabilityCategory::Automation,
+        description: "Core/RPC natural-language analytics over registered datasets with \
+                      SQL validation, anomaly detection, trend analysis, and summaries.",
+        how_to: "Query via RPC: openhuman.chat_with_data_query with dataset_id and question.",
+        status: CapabilityStatus::Beta,
+        privacy: Some(CapabilityPrivacy {
+            leaves_device: true,
+            data_kind: PrivacyDataKind::UserContent,
+            destinations: &["OpenHuman backend", "TinyHumans Neocortex"],
+        }),
     },
     // ── Update ──────────────────────────────────────────────────────────────
     // ── Meet ────────────────────────────────────────────────────────────────
