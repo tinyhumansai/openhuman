@@ -525,6 +525,28 @@ async fn embed_dimension_mismatch() {
     assert!(err.to_string().contains("dimension mismatch"));
 }
 
+/// Issue #4056: a `dims == 0` provider is the dimension-agnostic verification
+/// probe — it must NOT enforce any length, so an endpoint returning its own
+/// native size passes instead of being rejected. This is what lets a Custom
+/// endpoint verify when the user's guessed `dimensions` differs from the
+/// model's native output; the caller then adopts the returned length.
+#[tokio::test]
+async fn embed_dims_zero_skips_dimension_guard() {
+    let app = Router::new().route(
+        "/v1/embeddings",
+        post(|| async {
+            Json(serde_json::json!({
+                "data": [{ "embedding": [1.0, 2.0, 3.0, 4.0, 5.0] }]
+            }))
+        }),
+    );
+    let url = start_mock(app).await;
+    let p = OpenAiEmbedding::new(&url, "k", "m", 0);
+
+    let result = p.embed(&["hi"]).await.unwrap();
+    assert_eq!(result[0].len(), 5, "dims=0 must accept the native length");
+}
+
 #[tokio::test]
 async fn embed_malformed_json() {
     let app = Router::new().route(
