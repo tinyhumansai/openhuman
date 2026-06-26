@@ -995,6 +995,39 @@ fn parse_models_response_treats_null_data_as_empty_list() {
         models.is_empty(),
         "null `models` must yield an empty model list, got {models:?}"
     );
+
+    // A bare success envelope with no `object` field still null-encodes an
+    // empty catalog (treated as success — `object` absent ⇒ not an error).
+    let object_absent = serde_json::json!({ "data": serde_json::Value::Null });
+    let models = parse_models_response(&object_absent)
+        .expect("null `data` with no `object` field must parse as an empty catalog");
+    assert!(
+        models.is_empty(),
+        "null `data` (object absent) must yield an empty model list, got {models:?}"
+    );
+}
+
+#[test]
+fn parse_models_response_rejects_null_data_on_error_envelope() {
+    // Codex P2 (PR #4157): an HTTP-200 error body such as
+    // `{"object":"error","data":null}` ALSO null-encodes `data`. The
+    // null-as-empty short-circuit MUST NOT swallow it as a successful empty
+    // catalog — that would hide provider/endpoint failures from the UI and
+    // Sentry. A non-"list" `object` with null `data` falls through to the
+    // descriptive malformed/error-envelope error, which surfaces `object`.
+    for field in ["data", "models"] {
+        let body = serde_json::json!({ "object": "error", field: serde_json::Value::Null });
+        let err = parse_models_response(&body)
+            .expect_err("null `{field}` on an error envelope must fail, not return empty");
+        assert!(
+            !err.contains("missing"),
+            "error-envelope null `{field}` must not say `missing`: {err}"
+        );
+        assert!(
+            err.contains("error"),
+            "error-envelope null `{field}` must surface `object` = error: {err}"
+        );
+    }
 }
 
 #[test]
