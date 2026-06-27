@@ -153,13 +153,23 @@ export async function listArtifactsForThread(
     return { ok: false, artifacts: [], error: 'thread id missing' };
   }
   try {
-    const raw = await callCoreRpc<AiListArtifactsData>({
-      method: 'openhuman.ai_list_artifacts',
-      params: { thread_id: trimmedThreadId, offset: 0, limit: 200 },
-    });
-    const artifacts = (raw?.artifacts ?? [])
-      .map(readyListedArtifact)
-      .filter((artifact): artifact is ListedThreadArtifact => artifact !== null);
+    const limit = 200;
+    const artifacts: ListedThreadArtifact[] = [];
+
+    for (let offset = 0; ; offset += limit) {
+      const raw = await callCoreRpc<AiListArtifactsData>({
+        method: 'openhuman.ai_list_artifacts',
+        params: { thread_id: trimmedThreadId, offset, limit },
+      });
+      const page = raw?.artifacts ?? [];
+      artifacts.push(
+        ...page
+          .map(readyListedArtifact)
+          .filter((artifact): artifact is ListedThreadArtifact => artifact !== null)
+      );
+      if (page.length < limit) break;
+    }
+
     return { ok: true, artifacts };
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);

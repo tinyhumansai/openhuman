@@ -99,6 +99,69 @@ describe('listArtifactsForThread', () => {
     });
   });
 
+  it('fetches subsequent artifact pages before returning mapped artifacts', async () => {
+    const firstPage = Array.from({ length: 200 }, (_, idx) => ({
+      id: `pending-${idx}`,
+      kind: 'document',
+      title: `Pending ${idx}`,
+      path: `artifacts/pending-${idx}/pending.pdf`,
+      size_bytes: idx + 1,
+      status: 'pending',
+    }));
+    firstPage[0] = {
+      id: 'art-page-1',
+      kind: 'document',
+      title: 'First Page Report',
+      path: 'artifacts/art-page-1/report.pdf',
+      size_bytes: 100,
+      status: 'ready',
+    };
+    vi.mocked(callCoreRpc)
+      .mockResolvedValueOnce({ artifacts: firstPage })
+      .mockResolvedValueOnce({
+        artifacts: [
+          {
+            id: 'art-page-2',
+            kind: 'image',
+            title: 'Second Page Image',
+            path: 'artifacts/art-page-2/image.png',
+            size_bytes: 200,
+            status: 'ready',
+          },
+        ],
+      });
+
+    const outcome = await listArtifactsForThread('thread-1');
+
+    expect(callCoreRpc).toHaveBeenNthCalledWith(1, {
+      method: 'openhuman.ai_list_artifacts',
+      params: { thread_id: 'thread-1', offset: 0, limit: 200 },
+    });
+    expect(callCoreRpc).toHaveBeenNthCalledWith(2, {
+      method: 'openhuman.ai_list_artifacts',
+      params: { thread_id: 'thread-1', offset: 200, limit: 200 },
+    });
+    expect(outcome).toEqual({
+      ok: true,
+      artifacts: [
+        {
+          artifactId: 'art-page-1',
+          kind: 'document',
+          title: 'First Page Report',
+          path: 'artifacts/art-page-1/report.pdf',
+          sizeBytes: 100,
+        },
+        {
+          artifactId: 'art-page-2',
+          kind: 'image',
+          title: 'Second Page Image',
+          path: 'artifacts/art-page-2/image.png',
+          sizeBytes: 200,
+        },
+      ],
+    });
+  });
+
   it('returns an empty list for nullish core payloads', async () => {
     vi.mocked(callCoreRpc).mockResolvedValueOnce(null);
     const outcome = await listArtifactsForThread('thread-1');

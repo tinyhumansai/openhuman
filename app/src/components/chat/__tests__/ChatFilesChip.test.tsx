@@ -90,6 +90,36 @@ describe('ChatFilesChip', () => {
     ]);
   });
 
+  it('uses the normalized thread id for hydration and redux lookup', async () => {
+    vi.mocked(listArtifactsForThread).mockResolvedValueOnce({
+      ok: true,
+      artifacts: [
+        {
+          artifactId: 'art-trimmed',
+          kind: 'document',
+          title: 'Trimmed Thread Report',
+          path: 'artifacts/art-trimmed/report.pdf',
+          sizeBytes: 4096,
+        },
+      ],
+    });
+    const store = mkStore();
+    render(
+      <Provider store={store}>
+        <ChatFilesChip threadId={` ${THREAD} `} />
+      </Provider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('chat-files-chip-count')).toHaveTextContent('1');
+    });
+    expect(listArtifactsForThread).toHaveBeenCalledWith(THREAD);
+    expect(store.getState().chatRuntime.artifactsByThread[THREAD]).toMatchObject([
+      { artifactId: 'art-trimmed', status: 'ready', path: 'artifacts/art-trimmed/report.pdf' },
+    ]);
+    expect(store.getState().chatRuntime.artifactsByThread[` ${THREAD} `]).toBeUndefined();
+  });
+
   it('keeps the chip hidden when disk hydration fails', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.mocked(listArtifactsForThread).mockResolvedValueOnce({

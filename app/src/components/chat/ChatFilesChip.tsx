@@ -26,36 +26,37 @@ export default function ChatFilesChip({ threadId }: ChatFilesChipProps) {
   const { t } = useT();
   const dispatch = useAppDispatch();
   const [open, setOpen] = useState(false);
+  const normalizedThreadId = threadId.trim();
   const artifactsByThread = useAppSelector(state => state.chatRuntime.artifactsByThread);
   // Only ready artifacts are listable — in_progress / failed live above the
   // composer until they resolve.
   const readyArtifacts = useMemo(
-    () => (artifactsByThread[threadId] ?? []).filter(a => a.status === 'ready'),
-    [artifactsByThread, threadId]
+    () => (artifactsByThread[normalizedThreadId] ?? []).filter(a => a.status === 'ready'),
+    [artifactsByThread, normalizedThreadId]
   );
   const count = readyArtifacts.length;
 
   useEffect(() => {
-    if (!threadId.trim()) return;
+    if (!normalizedThreadId) return;
     let cancelled = false;
-    void listArtifactsForThread(threadId).then(outcome => {
+    void listArtifactsForThread(normalizedThreadId).then(outcome => {
       if (cancelled) return;
       if (!outcome.ok) {
         console.warn('[artifact] ChatFilesChip failed to hydrate thread artifacts', {
-          threadId,
+          threadId: normalizedThreadId,
           error: outcome.error,
         });
         return;
       }
       if (outcome.artifacts.length === 0) return;
       console.debug('[artifact] ChatFilesChip hydrating thread artifacts', {
-        threadId,
+        threadId: normalizedThreadId,
         count: outcome.artifacts.length,
       });
       for (const artifact of outcome.artifacts) {
         dispatch(
           upsertArtifactReadyForThread({
-            threadId,
+            threadId: normalizedThreadId,
             artifactId: artifact.artifactId,
             kind: artifact.kind,
             title: artifact.title,
@@ -68,7 +69,7 @@ export default function ChatFilesChip({ threadId }: ChatFilesChipProps) {
     return () => {
       cancelled = true;
     };
-  }, [dispatch, threadId]);
+  }, [dispatch, normalizedThreadId]);
 
   if (count === 0) return null;
 
@@ -104,7 +105,7 @@ export default function ChatFilesChip({ threadId }: ChatFilesChipProps) {
       </button>
       {open && (
         <ChatFilesPanel
-          threadId={threadId}
+          threadId={normalizedThreadId}
           artifacts={readyArtifacts}
           onClose={() => setOpen(false)}
         />
