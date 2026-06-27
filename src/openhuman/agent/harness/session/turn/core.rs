@@ -813,6 +813,8 @@ impl Agent {
                     user_message,
                 );
             let (outcome_result, subagent_usage_entries) =
+                crate::openhuman::tokenjuice::savings::with_turn_model(
+                    effective_model.clone(),
                 super::super::super::turn_subagent_usage::with_turn_collector(
                 super::super::super::turn_attachments_context::with_current_turn_image_placeholders(
                     turn_image_placeholders,
@@ -840,6 +842,7 @@ impl Agent {
                         )),
                     ),
                 ),
+                )
                 )
                 .await;
             let outcome = outcome_result?;

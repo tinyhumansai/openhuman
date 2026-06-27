@@ -196,28 +196,31 @@ pub(super) async fn run_inner_loop(
     // `nested_subagent_dispatch_runs_on_a_constrained_worker_stack`;
     // the deep end-to-end catcher is the `chat-harness-subagent`
     // Playwright spec.
-    let outcome = super::super::super::model_vision_context::with_current_model_vision(
-        model_vision,
-        Box::pin(super::super::super::engine::run_turn_engine(
-            provider,
-            history,
-            &mut tool_source,
-            &progress,
-            &mut observer,
-            &checkpoint,
-            &parser,
-            "subagent",
-            model,
-            temperature,
-            true, // silent — sub-agents never echo to stdout
-            &crate::openhuman::config::MultimodalConfig::default(),
-            &crate::openhuman::config::MultimodalFileConfig::default(),
-            max_iterations,
-            None, // sub-agents don't stream a draft
-            &["ask_user_clarification"],
-            run_queue, // steering channel for `steer_subagent` (None = non-steerable)
-            autocompact.as_ref(),
-        )),
+    let outcome = crate::openhuman::tokenjuice::savings::with_turn_model(
+        model.to_string(),
+        super::super::super::model_vision_context::with_current_model_vision(
+            model_vision,
+            Box::pin(super::super::super::engine::run_turn_engine(
+                provider,
+                history,
+                &mut tool_source,
+                &progress,
+                &mut observer,
+                &checkpoint,
+                &parser,
+                "subagent",
+                model,
+                temperature,
+                true, // silent — sub-agents never echo to stdout
+                &crate::openhuman::config::MultimodalConfig::default(),
+                &crate::openhuman::config::MultimodalFileConfig::default(),
+                max_iterations,
+                None, // sub-agents don't stream a draft
+                &["ask_user_clarification"],
+                run_queue, // steering channel for `steer_subagent` (None = non-steerable)
+                autocompact.as_ref(),
+            )),
+        ),
     )
     .await?;
 
