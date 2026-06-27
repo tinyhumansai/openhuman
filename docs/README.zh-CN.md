@@ -23,10 +23,9 @@
  <strong>OpenHuman 是你的个人 AI 超级智能：本地记忆，按需托管服务，简洁而强大。</strong>
 </p>
 
-
 <p align="center">
  <a href="https://discord.tinyhumans.ai/">Discord</a> •
- <a href="https://www.reddit.com/r/tinyhumansai/">Reddit</a> •
+ <a href="https://github.com/tinyhumansai/openhuman/discussions">Discussions</a> •
  <a href="https://x.com/intent/follow?screen_name=tinyhumansai">X/Twitter</a> •
  <a href="https://tinyhumans.gitbook.io/openhuman/">文档</a> •
  <a href="https://x.com/intent/follow?screen_name=senamakel">关注 @senamakel（作者）</a>
@@ -61,9 +60,11 @@ irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/instal
 ```
 
 <!-- TODO: translate (zh-CN) — English source mirrored from README.md so non-EN readers get the same install caveats. Please translate. -->
+
 > **Linux:** the AppImage can crash on launch under Wayland (and on Arch-based distros with `sharun: Interpreter not found!`) — see [#2463](https://github.com/tinyhumansai/openhuman/issues/2463) for the cause and env-var workarounds.
-Arch Linux package maintainers can use the [`openhuman-bin` AUR recipe](../packages/arch/openhuman-bin/);
-once published, Arch users can install it with `yay -S openhuman-bin`.
+> Arch Linux package maintainers can use the [`openhuman-bin` AUR recipe](../packages/arch/openhuman-bin/);
+> once published, Arch users can install it with `yay -S openhuman-bin`.
+
 <!-- /TODO -->
 
 # 什么是 OpenHuman？
@@ -78,7 +79,7 @@ OpenHuman 是一个开源智能助手，旨在融入你的日常生活。以下�
 
 - **[记忆树](https://tinyhumans.gitbook.io/openhuman/features/memory-tree) + [Obsidian Wiki](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki)**：一个基于你的数据和活动构建的本地优先知识库。你连接的所有内容都被规范化为不超过 3k token 的 Markdown 片段，经过评分后折叠成层级化的摘要树，存储在**你本机的 SQLite** 中。同样的片段以 `.md` 文件形式落地到兼容 Obsidian 的仓库中，你可以打开、浏览和编辑，灵感来源于 Karpathy 的 [obsidian-wiki 工作流](https://x.com/karpathy/status/2039805659525644595)。
 
-- **开箱即用**：默认内置网络搜索、网页抓取[爬虫](https://tinyhumans.gitbook.io/openhuman/features/native-tools)、完整的编码工具集（文件系统、git、lint、test、grep）以及[原生语音](https://tinyhumans.gitbook.io/openhuman/features/voice)（STT 输入、ElevenLabs TTS 输出、吉祥物口型同步、实时 Google Meet 智能体）。默认情况下，[模型路由](https://tinyhumans.gitbook.io/openhuman/features/model-routing)使用 OpenHuman 后端来选择和代理每个工作负载的合适 LLM（推理型、快速型或视觉型）。一个订阅包含所有模型。没有"安装插件才能读文件"的摩擦。[可选通过 Ollama 使用本地 AI](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai) 处理端侧工作负载。
+- **开箱即用**：默认内置网络搜索、网页抓取[爬虫](https://tinyhumans.gitbook.io/openhuman/features/native-tools)、完整的编码工具集（文件系统、git、lint、test、grep）以及[原生语音](https://tinyhumans.gitbook.io/openhuman/features/native-tools/voice)（STT 输入、ElevenLabs TTS 输出、吉祥物口型同步、实时 Google Meet 智能体）。默认情况下，[模型路由](https://tinyhumans.gitbook.io/openhuman/features/model-routing)使用 OpenHuman 后端来选择和代理每个工作负载的合适 LLM（推理型、快速型或视觉型）。一个订阅包含所有模型。没有"安装插件才能读文件"的摩擦。[可选通过 Ollama 使用本地 AI](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai) 处理端侧工作负载。
 
 - **[智能 Token 压缩（TokenJuice）](https://tinyhumans.gitbook.io/openhuman/features/token-compression)**：每个工具调用、抓取结果、邮件正文和搜索载荷在触达任何 LLM 模型之前都会经过 token 压缩层处理。HTML 被转换为 Markdown，长 URL 被缩短，冗长的工具输出会通过可配置的规则层去重并摘要等等。中文、emoji 等多字节字符按字形（grapheme）完整保留，绝不丢弃。你获得相同的信息，但 token 消耗仅为原来的几分之一。最多可降低 80% 的成本和延迟。
 
@@ -114,24 +115,24 @@ OpenHuman 跳过了等待期。连接你的账户，让[自动拉取](https://ti
 
 高层次对比（产品持续演进，请以各厂商最新情况为准）。OpenHuman 的设计目标是**减少供应商碎片化**、将**工作流知识保留在设备上**、为智能体提供对你数据的**持久记忆**，而不仅仅是对话。
 
-|                     | Claude Cowork     | OpenClaw          | Hermes Agent      | OpenHuman                          |
-| ------------------- | ----------------- | ----------------- | ----------------- | ---------------------------------- |
-| **开源**            | 🚫 闭源           | ✅ MIT            | ✅ MIT            | ✅ GNU                             |
-| **易上手**          | ✅ 桌面 + CLI     | ⚠️ 终端优先       | ⚠️ 终端优先       | ✅ 清爽 UI，几分钟上手             |
-| **成本**            | ⚠️ 订阅 + 附加项  | ⚠️ 自带模型       | ⚠️ 自带模型       | ✅ 单一订阅 + TokenJuice           |
-| **记忆**            | ✅ 对话范围       | ⚠️ 依赖插件       | ✅ 自学习         | 🚀 记忆树 + Obsidian 仓库，可选 [agentmemory](https://github.com/rohitg00/agentmemory) 后端 |
-| **集成**            | ⚠️ 少量连接器     | ⚠️ 自行接入       | ⚠️ 自行接入       | 🚀 118+ 通过 OAuth                 |
-| **自动拉取**        | 🚫 无             | 🚫 无             | 🚫 无             | ✅ 20 分钟同步到记忆               |
-| **API 碎片化**      | 🚫 额外密钥       | 🚫 自带密钥       | 🚫 多供应商       | ✅ 一个账户                        |
-| **模型路由**        | 🚫 单一模型       | ⚠️ 手动           | ⚠️ 手动           | ✅ 内置                            |
-| **原生工具**        | ✅ 仅代码         | ✅ 仅代码         | ✅ 仅代码         | ✅ 代码 + 搜索 + 抓取 + 语音       |
+|                | Claude Cowork    | OpenClaw    | Hermes Agent | OpenHuman                                                                                   |
+| -------------- | ---------------- | ----------- | ------------ | ------------------------------------------------------------------------------------------- |
+| **开源**       | 🚫 闭源          | ✅ MIT      | ✅ MIT       | ✅ GNU                                                                                      |
+| **易上手**     | ✅ 桌面 + CLI    | ⚠️ 终端优先 | ⚠️ 终端优先  | ✅ 清爽 UI，几分钟上手                                                                      |
+| **成本**       | ⚠️ 订阅 + 附加项 | ⚠️ 自带模型 | ⚠️ 自带模型  | ✅ 单一订阅 + TokenJuice                                                                    |
+| **记忆**       | ✅ 对话范围      | ⚠️ 依赖插件 | ✅ 自学习    | 🚀 记忆树 + Obsidian 仓库，可选 [agentmemory](https://github.com/rohitg00/agentmemory) 后端 |
+| **集成**       | ⚠️ 少量连接器    | ⚠️ 自行接入 | ⚠️ 自行接入  | 🚀 118+ 通过 OAuth                                                                          |
+| **自动拉取**   | 🚫 无            | 🚫 无       | 🚫 无        | ✅ 20 分钟同步到记忆                                                                        |
+| **API 碎片化** | 🚫 额外密钥      | 🚫 自带密钥 | 🚫 多供应商  | ✅ 一个账户                                                                                 |
+| **模型路由**   | 🚫 单一模型      | ⚠️ 手动     | ⚠️ 手动      | ✅ 内置                                                                                     |
+| **原生工具**   | ✅ 仅代码        | ✅ 仅代码   | ✅ 仅代码    | ✅ 代码 + 搜索 + 抓取 + 语音                                                                |
 
 # 在 GitHub 上为我们加星
 
 _致力于 AGI 和人工意识？为仓库加星，帮助更多人找到这条路。_
 
 <p align="center">
- <a href="https://www.star-history.com/#tinyhumansai/openhuman&type=date&legend=top-left">
+ <a href="https://www.star-history.com">
  <picture>
  <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&theme=dark&legend=top-left" />
  <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left" />

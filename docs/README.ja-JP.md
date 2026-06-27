@@ -19,10 +19,9 @@
  <strong>OpenHuman はあなたのパーソナル AI スーパーインテリジェンスです：ローカルメモリ、必要に応じてマネージドサービス、シンプルで強力。</strong>
 </p>
 
-
 <p align="center">
  <a href="https://discord.tinyhumans.ai/">Discord</a> •
- <a href="https://www.reddit.com/r/tinyhumansai/">Reddit</a> •
+ <a href="https://github.com/tinyhumansai/openhuman/discussions">Discussions</a> •
  <a href="https://x.com/intent/follow?screen_name=tinyhumansai">X/Twitter</a> •
  <a href="https://tinyhumans.gitbook.io/openhuman/">ドキュメント</a> •
  <a href="https://x.com/intent/follow?screen_name=senamakel">@senamakel（作者）をフォロー</a>
@@ -31,8 +30,6 @@
 <p align="center">
   🇺🇸 <a href="../README.md">English</a> | 🇨🇳 <a href="./README.zh-CN.md">简体中文</a> | 🇯🇵 <a href="./README.ja-JP.md">日本語</a> | 🇰🇷 <a href="./README.ko.md">한국어</a> | 🇩🇪 <a href="./README.de.md">Deutsch</a> | 🇵🇰 <a href="./README.ur-pk.md">اردو</a>
 </p>
-
-
 
 <p align="center">
  <img src="https://img.shields.io/badge/status-early%20beta-orange" alt="Early Beta" />
@@ -63,9 +60,11 @@ irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/instal
 ```
 
 <!-- TODO: translate (ja-JP) — English source mirrored from README.md so non-EN readers get the same install caveats. Please translate. -->
+
 > **Linux:** the AppImage can crash on launch under Wayland (and on Arch-based distros with `sharun: Interpreter not found!`) — see [#2463](https://github.com/tinyhumansai/openhuman/issues/2463) for the cause and env-var workarounds.
-Arch Linux package maintainers can use the [`openhuman-bin` AUR recipe](../packages/arch/openhuman-bin/);
-once published, Arch users can install it with `yay -S openhuman-bin`.
+> Arch Linux package maintainers can use the [`openhuman-bin` AUR recipe](../packages/arch/openhuman-bin/);
+> once published, Arch users can install it with `yay -S openhuman-bin`.
+
 <!-- /TODO -->
 
 # OpenHuman とは?
@@ -80,7 +79,7 @@ OpenHuman は、あなたの日常生活に統合されるよう設計された�
 
 - **[Memory Tree](https://tinyhumans.gitbook.io/openhuman/features/memory-tree) + [Obsidian Wiki](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki)**: あなたのデータとアクティビティから構築されるローカルファーストのナレッジベースです。接続したすべての情報は ≤3k トークンの Markdown チャンクへ正規化され、スコアリングされ、階層的なサマリーツリーに畳み込まれて **あなたのマシン上の SQLite** に保存されます。同じチャンクは Obsidian 互換のボルトに `.md` ファイルとして配置され、開いて閲覧・編集できます。Karpathy 氏の [obsidian-wiki ワークフロー](https://x.com/karpathy/status/2039805659525644595)にインスパイアされています。
 
-- **電池同梱(Batteries included)**: ウェブ検索、ウェブフェッチ用[スクレイパー](https://tinyhumans.gitbook.io/openhuman/features/native-tools)、フルコーダーツールセット(ファイルシステム、git、lint、test、grep)、そして[ネイティブ音声](https://tinyhumans.gitbook.io/openhuman/features/voice)(STT 入力、ElevenLabs TTS 出力、マスコットのリップシンク、ライブ Google Meet エージェント)がデフォルトで組み込まれています。デフォルトで、[モデルルーティング](https://tinyhumans.gitbook.io/openhuman/features/model-routing)は OpenHuman バックエンドを使用して各ワークロードに適切な LLM(reasoning、fast、または vision)を選択およびプロキシします。一つのサブスクリプションですべてのモデルが含まれます。「ファイル読み込みのためにプラグインをインストール」という煩わしさはありません。デバイス上のワークロード向けに [Ollama によるオプショナルなローカル AI](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai) も利用できます。
+- **電池同梱(Batteries included)**: ウェブ検索、ウェブフェッチ用[スクレイパー](https://tinyhumans.gitbook.io/openhuman/features/native-tools)、フルコーダーツールセット(ファイルシステム、git、lint、test、grep)、そして[ネイティブ音声](https://tinyhumans.gitbook.io/openhuman/features/native-tools/voice)(STT 入力、ElevenLabs TTS 出力、マスコットのリップシンク、ライブ Google Meet エージェント)がデフォルトで組み込まれています。デフォルトで、[モデルルーティング](https://tinyhumans.gitbook.io/openhuman/features/model-routing)は OpenHuman バックエンドを使用して各ワークロードに適切な LLM(reasoning、fast、または vision)を選択およびプロキシします。一つのサブスクリプションですべてのモデルが含まれます。「ファイル読み込みのためにプラグインをインストール」という煩わしさはありません。デバイス上のワークロード向けに [Ollama によるオプショナルなローカル AI](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai) も利用できます。
 
 - **[スマートトークン圧縮 (TokenJuice)](https://tinyhumans.gitbook.io/openhuman/features/token-compression)**: すべてのツール呼び出し、スクレイプ結果、メール本文、検索ペイロードは、LLM モデルに渡される前にトークン圧縮レイヤーを通過します。HTML は Markdown に変換され、長い URL は短縮され、冗長なツール出力は設定可能なルールレイヤーで重複排除と要約が行われるなど…。CJK、絵文字などのマルチバイト文字は書記素(grapheme)単位で完全に保持され、除去されることはありません。同じ情報をわずかなトークン数で得られます。コストとレイテンシを最大 80% 削減します。
 
@@ -116,24 +115,24 @@ OpenHuman はその待ち時間をスキップします。アカウントを接�
 
 ハイレベルな比較です(製品は進化するため、各ベンダーで確認してください)。OpenHuman は **ベンダーの乱立を最小限に抑え**、**ワークフロー知識をデバイス上に保ち**、チャットだけでなくあなたのデータに対する **永続的なメモリ** をエージェントに与えるよう構築されています。
 
-|                      | Claude Cowork       | OpenClaw            | Hermes Agent        | OpenHuman                                          |
-| -------------------- | ------------------- | ------------------- | ------------------- | -------------------------------------------------- |
-| **オープンソース**   | 🚫 プロプライエタリ | ✅ MIT              | ✅ MIT              | ✅ GNU                                             |
-| **開始が簡単**       | ✅ デスクトップ + CLI | ⚠️ ターミナル中心   | ⚠️ ターミナル中心   | ✅ クリーンな UI、数分                             |
-| **コスト**           | ⚠️ サブスク + アドオン | ⚠️ モデル持ち込み   | ⚠️ モデル持ち込み   | ✅ 1 つのサブスク + TokenJuice                     |
-| **メモリ**           | ✅ チャット範囲のみ | ⚠️ プラグイン依存   | ✅ 自己学習         | 🚀 Memory Tree + Obsidian ボルト、オプションの [agentmemory](https://github.com/rohitg00/agentmemory) バックエンド |
-| **統合**             | ⚠️ 少数のコネクター | ⚠️ 持ち込み         | ⚠️ 持ち込み         | 🚀 OAuth 経由で 118+                               |
-| **自動取得**         | 🚫 なし             | 🚫 なし             | 🚫 なし             | ✅ 20 分同期でメモリに取り込み                     |
-| **API の乱立**       | 🚫 追加キー         | 🚫 BYOK             | 🚫 マルチベンダー   | ✅ 1 アカウント                                    |
-| **モデルルーティング** | 🚫 単一モデル       | ⚠️ 手動             | ⚠️ 手動             | ✅ ビルトイン                                      |
-| **ネイティブツール** | ✅ コードのみ       | ✅ コードのみ       | ✅ コードのみ       | ✅ コード + 検索 + スクレイパー + 音声             |
+|                        | Claude Cowork          | OpenClaw          | Hermes Agent      | OpenHuman                                                                                                          |
+| ---------------------- | ---------------------- | ----------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------ |
+| **オープンソース**     | 🚫 プロプライエタリ    | ✅ MIT            | ✅ MIT            | ✅ GNU                                                                                                             |
+| **開始が簡単**         | ✅ デスクトップ + CLI  | ⚠️ ターミナル中心 | ⚠️ ターミナル中心 | ✅ クリーンな UI、数分                                                                                             |
+| **コスト**             | ⚠️ サブスク + アドオン | ⚠️ モデル持ち込み | ⚠️ モデル持ち込み | ✅ 1 つのサブスク + TokenJuice                                                                                     |
+| **メモリ**             | ✅ チャット範囲のみ    | ⚠️ プラグイン依存 | ✅ 自己学習       | 🚀 Memory Tree + Obsidian ボルト、オプションの [agentmemory](https://github.com/rohitg00/agentmemory) バックエンド |
+| **統合**               | ⚠️ 少数のコネクター    | ⚠️ 持ち込み       | ⚠️ 持ち込み       | 🚀 OAuth 経由で 118+                                                                                               |
+| **自動取得**           | 🚫 なし                | 🚫 なし           | 🚫 なし           | ✅ 20 分同期でメモリに取り込み                                                                                     |
+| **API の乱立**         | 🚫 追加キー            | 🚫 BYOK           | 🚫 マルチベンダー | ✅ 1 アカウント                                                                                                    |
+| **モデルルーティング** | 🚫 単一モデル          | ⚠️ 手動           | ⚠️ 手動           | ✅ ビルトイン                                                                                                      |
+| **ネイティブツール**   | ✅ コードのみ          | ✅ コードのみ     | ✅ コードのみ     | ✅ コード + 検索 + スクレイパー + 音声                                                                             |
 
 # GitHub でスターをお願いします
 
 _AGI と人工意識への道を進んでいますか? リポジトリにスターをつけて、他の人にも道筋を見つけてもらいましょう。_
 
 <p align="center">
- <a href="https://www.star-history.com/#tinyhumansai/openhuman&type=date&legend=top-left">
+ <a href="https://www.star-history.com">
  <picture>
  <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&theme=dark&legend=top-left" />
  <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left" />
