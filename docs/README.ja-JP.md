@@ -19,6 +19,7 @@
  <strong>OpenHuman はあなたのパーソナル AI スーパーインテリジェンスです：ローカルメモリ、必要に応じてマネージドサービス、シンプルで強力。</strong>
 </p>
 
+
 <p align="center">
  <a href="https://discord.tinyhumans.ai/">Discord</a> •
  <a href="https://github.com/tinyhumansai/openhuman/discussions">Discussions</a> •
@@ -30,6 +31,8 @@
 <p align="center">
   🇺🇸 <a href="../README.md">English</a> | 🇨🇳 <a href="./README.zh-CN.md">简体中文</a> | 🇯🇵 <a href="./README.ja-JP.md">日本語</a> | 🇰🇷 <a href="./README.ko.md">한국어</a> | 🇩🇪 <a href="./README.de.md">Deutsch</a> | 🇵🇰 <a href="./README.ur-pk.md">اردو</a>
 </p>
+
+
 
 <p align="center">
  <img src="https://img.shields.io/badge/status-early%20beta-orange" alt="Early Beta" />
@@ -60,11 +63,9 @@ irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/instal
 ```
 
 <!-- TODO: translate (ja-JP) — English source mirrored from README.md so non-EN readers get the same install caveats. Please translate. -->
-
 > **Linux:** the AppImage can crash on launch under Wayland (and on Arch-based distros with `sharun: Interpreter not found!`) — see [#2463](https://github.com/tinyhumansai/openhuman/issues/2463) for the cause and env-var workarounds.
-> Arch Linux package maintainers can use the [`openhuman-bin` AUR recipe](../packages/arch/openhuman-bin/);
-> once published, Arch users can install it with `yay -S openhuman-bin`.
-
+Arch Linux package maintainers can use the [`openhuman-bin` AUR recipe](../packages/arch/openhuman-bin/);
+once published, Arch users can install it with `yay -S openhuman-bin`.
 <!-- /TODO -->
 
 # OpenHuman とは?
@@ -115,17 +116,17 @@ OpenHuman はその待ち時間をスキップします。アカウントを接�
 
 ハイレベルな比較です(製品は進化するため、各ベンダーで確認してください)。OpenHuman は **ベンダーの乱立を最小限に抑え**、**ワークフロー知識をデバイス上に保ち**、チャットだけでなくあなたのデータに対する **永続的なメモリ** をエージェントに与えるよう構築されています。
 
-|                        | Claude Cowork          | OpenClaw          | Hermes Agent      | OpenHuman                                                                                                          |
-| ---------------------- | ---------------------- | ----------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------ |
-| **オープンソース**     | 🚫 プロプライエタリ    | ✅ MIT            | ✅ MIT            | ✅ GNU                                                                                                             |
-| **開始が簡単**         | ✅ デスクトップ + CLI  | ⚠️ ターミナル中心 | ⚠️ ターミナル中心 | ✅ クリーンな UI、数分                                                                                             |
-| **コスト**             | ⚠️ サブスク + アドオン | ⚠️ モデル持ち込み | ⚠️ モデル持ち込み | ✅ 1 つのサブスク + TokenJuice                                                                                     |
-| **メモリ**             | ✅ チャット範囲のみ    | ⚠️ プラグイン依存 | ✅ 自己学習       | 🚀 Memory Tree + Obsidian ボルト、オプションの [agentmemory](https://github.com/rohitg00/agentmemory) バックエンド |
-| **統合**               | ⚠️ 少数のコネクター    | ⚠️ 持ち込み       | ⚠️ 持ち込み       | 🚀 OAuth 経由で 118+                                                                                               |
-| **自動取得**           | 🚫 なし                | 🚫 なし           | 🚫 なし           | ✅ 20 分同期でメモリに取り込み                                                                                     |
-| **API の乱立**         | 🚫 追加キー            | 🚫 BYOK           | 🚫 マルチベンダー | ✅ 1 アカウント                                                                                                    |
-| **モデルルーティング** | 🚫 単一モデル          | ⚠️ 手動           | ⚠️ 手動           | ✅ ビルトイン                                                                                                      |
-| **ネイティブツール**   | ✅ コードのみ          | ✅ コードのみ     | ✅ コードのみ     | ✅ コード + 検索 + スクレイパー + 音声                                                                             |
+|                      | Claude Cowork       | OpenClaw            | Hermes Agent        | OpenHuman                                          |
+| -------------------- | ------------------- | ------------------- | ------------------- | -------------------------------------------------- |
+| **オープンソース**   | 🚫 プロプライエタリ | ✅ MIT              | ✅ MIT              | ✅ GNU                                             |
+| **開始が簡単**       | ✅ デスクトップ + CLI | ⚠️ ターミナル中心   | ⚠️ ターミナル中心   | ✅ クリーンな UI、数分                             |
+| **コスト**           | ⚠️ サブスク + アドオン | ⚠️ モデル持ち込み   | ⚠️ モデル持ち込み   | ✅ 1 つのサブスク + TokenJuice                     |
+| **メモリ**           | ✅ チャット範囲のみ | ⚠️ プラグイン依存   | ✅ 自己学習         | 🚀 Memory Tree + Obsidian ボルト、オプションの [agentmemory](https://github.com/rohitg00/agentmemory) バックエンド |
+| **統合**             | ⚠️ 少数のコネクター | ⚠️ 持ち込み         | ⚠️ 持ち込み         | 🚀 OAuth 経由で 118+                               |
+| **自動取得**         | 🚫 なし             | 🚫 なし             | 🚫 なし             | ✅ 20 分同期でメモリに取り込み                     |
+| **API の乱立**       | 🚫 追加キー         | 🚫 BYOK             | 🚫 マルチベンダー   | ✅ 1 アカウント                                    |
+| **モデルルーティング** | 🚫 単一モデル       | ⚠️ 手動             | ⚠️ 手動             | ✅ ビルトイン                                      |
+| **ネイティブツール** | ✅ コードのみ       | ✅ コードのみ       | ✅ コードのみ       | ✅ コード + 検索 + スクレイパー + 音声             |
 
 # GitHub でスターをお願いします
 

@@ -19,6 +19,7 @@
  <strong>OpenHuman은 당신의 개인용 AI 슈퍼 지능입니다: 로컬 메모리, 필요한 경우 관리형 서비스, 단순하고 강력합니다.</strong>
 </p>
 
+
 <p align="center">
  <a href="https://discord.tinyhumans.ai/">Discord</a> •
  <a href="https://github.com/tinyhumansai/openhuman/discussions">Discussions</a> •
@@ -30,6 +31,8 @@
 <p align="center">
   🇺🇸 <a href="../README.md">English</a> | 🇨🇳 <a href="./README.zh-CN.md">简体中文</a> | 🇯🇵 <a href="./README.ja-JP.md">日本語</a> | 🇰🇷 <a href="./README.ko.md">한국어</a> | 🇩🇪 <a href="./README.de.md">Deutsch</a> | 🇵🇰 <a href="./README.ur-pk.md">اردو</a>
 </p>
+
+
 
 <p align="center">
  <img src="https://img.shields.io/badge/status-early%20beta-orange" alt="얼리 베타" />
@@ -61,11 +64,9 @@ irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/instal
 ```
 
 <!-- TODO: translate (ko) — English source mirrored from README.md so non-EN readers get the same install caveats. Please translate. -->
-
 > **Linux:** the AppImage can crash on launch under Wayland (and on Arch-based distros with `sharun: Interpreter not found!`) — see [#2463](https://github.com/tinyhumansai/openhuman/issues/2463) for the cause and env-var workarounds.
-> Arch Linux package maintainers can use the [`openhuman-bin` AUR recipe](../packages/arch/openhuman-bin/);
-> once published, Arch users can install it with `yay -S openhuman-bin`.
-
+Arch Linux package maintainers can use the [`openhuman-bin` AUR recipe](../packages/arch/openhuman-bin/);
+once published, Arch users can install it with `yay -S openhuman-bin`.
 <!-- /TODO -->
 
 # OpenHuman이란 무엇인가요?
@@ -114,17 +115,17 @@ OpenHuman은 기다림을 생략합니다. 계정을 연결하고, [자동 가�
 
 상위 수준 비교(제품은 진화하므로 각 벤더에 확인하세요). OpenHuman은 **벤더 분산화(sprawl)를 최소화**하고, **워크플로우 지식을 기기에 유지**하며, 채팅뿐만 아니라 당신의 데이터에 대한 **지속적인 기억**을 에이전트에게 제공하도록 구축되었습니다.
 
-|                   | Claude Cowork     | OpenClaw          | Hermes Agent      | OpenHuman                                                                                            |
-| ----------------- | ----------------- | ----------------- | ----------------- | ---------------------------------------------------------------------------------------------------- |
-| **오픈 소스**     | 🚫 독점 소스      | ✅ MIT            | ✅ MIT            | ✅ GNU                                                                                               |
-| **시작하기 쉬움** | ✅ 데스크톱 + CLI | ⚠️ 터미널 우선    | ⚠️ 터미널 우선    | ✅ 깔끔한 UI, 단 몇 분                                                                               |
-| **비용**          | ⚠️ 구독 + 애드온  | ⚠️ 모델 직접 제공 | ⚠️ 모델 직접 제공 | ✅ 단일 구독 + TokenJuice                                                                            |
-| **메모리**        | ✅ 채팅 범위 한정 | ⚠️ 플러그인 의존  | ✅ 자기 학습      | 🚀 메모리 트리 + Obsidian 볼트, 선택적 [agentmemory](https://github.com/rohitg00/agentmemory) 백엔드 |
-| **통합**          | ⚠️ 적은 커넥터    | ⚠️ 직접 구축      | ⚠️ 직접 구축      | 🚀 OAuth를 통한 118개 이상                                                                           |
-| **자동 가져오기** | 🚫 없음           | 🚫 없음           | 🚫 없음           | ✅ 20분마다 메모리로 동기화                                                                          |
-| **API 분산화**    | 🚫 추가 키 필요   | 🚫 BYOK           | 🚫 멀티 벤더      | ✅ 단일 계정                                                                                         |
-| **모델 라우팅**   | 🚫 단일 모델      | ⚠️ 수동           | ⚠️ 수동           | ✅ 내장됨                                                                                            |
-| **네이티브 도구** | ✅ 코드 전용      | ✅ 코드 전용      | ✅ 코드 전용      | ✅ 코드 + 검색 + 스크레이퍼 + 음성                                                                   |
+|                     | Claude Cowork     | OpenClaw          | Hermes Agent      | OpenHuman                          |
+| ------------------- | ----------------- | ----------------- | ----------------- | ---------------------------------- |
+| **오픈 소스**       | 🚫 독점 소스      | ✅ MIT            | ✅ MIT            | ✅ GNU                             |
+| **시작하기 쉬움**   | ✅ 데스크톱 + CLI | ⚠️ 터미널 우선    | ⚠️ 터미널 우선    | ✅ 깔끔한 UI, 단 몇 분             |
+| **비용**            | ⚠️ 구독 + 애드온  | ⚠️ 모델 직접 제공 | ⚠️ 모델 직접 제공 | ✅ 단일 구독 + TokenJuice          |
+| **메모리**          | ✅ 채팅 범위 한정 | ⚠️ 플러그인 의존  | ✅ 자기 학습      | 🚀 메모리 트리 + Obsidian 볼트, 선택적 [agentmemory](https://github.com/rohitg00/agentmemory) 백엔드 |
+| **통합**            | ⚠️ 적은 커넥터    | ⚠️ 직접 구축      | ⚠️ 직접 구축      | 🚀 OAuth를 통한 118개 이상         |
+| **자동 가져오기**   | 🚫 없음           | 🚫 없음           | 🚫 없음           | ✅ 20분마다 메모리로 동기화        |
+| **API 분산화**      | 🚫 추가 키 필요   | 🚫 BYOK           | 🚫 멀티 벤더      | ✅ 단일 계정                       |
+| **모델 라우팅**     | 🚫 단일 모델      | ⚠️ 수동           | ⚠️ 수동           | ✅ 내장됨                          |
+| **네이티브 도구**   | ✅ 코드 전용      | ✅ 코드 전용      | ✅ 코드 전용      | ✅ 코드 + 검색 + 스크레이퍼 + 음성 |
 
 # GitHub에서 스타를 눌러주세요
 

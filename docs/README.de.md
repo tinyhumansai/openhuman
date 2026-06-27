@@ -2,6 +2,7 @@
   🇺🇸 <a href="../README.md">English</a> | 🇨🇳 <a href="./README.zh-CN.md">简体中文</a> | 🇯🇵 <a href="./README.ja-JP.md">日本語</a> | 🇰🇷 <a href="./README.ko.md">한국어</a> | 🇩🇪 <a href="./README.de.md">Deutsch</a> | 🇵🇰 <a href="./README.ur-pk.md">اردو</a>
 </p>
 
+
 <h1 align="center">OpenHuman</h1>
 
 <p align="center">
@@ -22,6 +23,7 @@
 <p align="center">
  <strong>OpenHuman ist deine persönliche KI-Superintelligenz: Lokaler Speicher, verwaltete Dienste wo nötig, schlicht und mächtig.</strong>
 </p>
+
 
 <p align="center">
  <a href="https://discord.tinyhumans.ai/">Discord</a> •
@@ -61,11 +63,9 @@ irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/instal
 ```
 
 <!-- TODO: translate (de) — English source mirrored from README.md so non-EN readers get the same install caveats. Please translate. -->
-
 > **Linux:** the AppImage can crash on launch under Wayland (and on Arch-based distros with `sharun: Interpreter not found!`) — see [#2463](https://github.com/tinyhumansai/openhuman/issues/2463) for the cause and env-var workarounds.
-> Arch Linux package maintainers can use the [`openhuman-bin` AUR recipe](../packages/arch/openhuman-bin/);
-> once published, Arch users can install it with `yay -S openhuman-bin`.
-
+Arch Linux package maintainers can use the [`openhuman-bin` AUR recipe](../packages/arch/openhuman-bin/);
+once published, Arch users can install it with `yay -S openhuman-bin`.
 <!-- /TODO -->
 
 # Was ist OpenHuman?
@@ -116,17 +116,17 @@ Du hostest [agentmemory](https://github.com/rohitg00/agentmemory) bereits selbst
 
 Übersichtsvergleich (Produkte entwickeln sich weiter — bitte beim jeweiligen Anbieter verifizieren). OpenHuman ist darauf ausgelegt, **Vendor-Wildwuchs zu reduzieren**, **Workflow-Wissen auf dem Gerät zu halten** und dem Agenten eine **persistente Erinnerung** an deine Daten zu geben — nicht nur an den Chat.
 
-|                        | Claude Cowork         | OpenClaw           | Hermes Agent       | OpenHuman                                                                                                |
-| ---------------------- | --------------------- | ------------------ | ------------------ | -------------------------------------------------------------------------------------------------------- |
-| **Quelloffen**         | 🚫 Proprietär         | ✅ MIT             | ✅ MIT             | ✅ GNU                                                                                                   |
-| **Einfacher Einstieg** | ✅ Desktop + CLI      | ⚠️ Terminal zuerst | ⚠️ Terminal zuerst | ✅ Aufgeräumte UI, in Minuten                                                                            |
-| **Kosten**             | ⚠️ Abo + Zusatzkosten | ⚠️ BYO-Modelle     | ⚠️ BYO-Modelle     | ✅ Ein Abo + TokenJuice                                                                                  |
-| **Memory**             | ✅ chat-gebunden      | ⚠️ plugin-abhängig | ✅ selbstlernend   | 🚀 Memory Tree + Obsidian-Vault, optional [agentmemory](https://github.com/rohitg00/agentmemory)-Backend |
-| **Integrationen**      | ⚠️ wenige Konnektoren | ⚠️ BYO             | ⚠️ BYO             | 🚀 118+ über OAuth                                                                                       |
-| **Auto-Fetch**         | 🚫 keiner             | 🚫 keiner          | 🚫 keiner          | ✅ 20-Min.-Sync ins Memory                                                                               |
-| **API-Wildwuchs**      | 🚫 zusätzliche Keys   | 🚫 BYOK            | 🚫 Multi-Vendor    | ✅ ein Account                                                                                           |
-| **Model-Routing**      | 🚫 nur ein Modell     | ⚠️ manuell         | ⚠️ manuell         | ✅ eingebaut                                                                                             |
-| **Native Tools**       | ✅ nur Code           | ✅ nur Code        | ✅ nur Code        | ✅ Code + Suche + Scraper + Sprache                                                                      |
+|                     | Claude Cowork     | OpenClaw          | Hermes Agent      | OpenHuman                          |
+| ------------------- | ----------------- | ----------------- | ----------------- | ---------------------------------- |
+| **Quelloffen**      | 🚫 Proprietär     | ✅ MIT            | ✅ MIT            | ✅ GNU                             |
+| **Einfacher Einstieg** | ✅ Desktop + CLI | ⚠️ Terminal zuerst | ⚠️ Terminal zuerst | ✅ Aufgeräumte UI, in Minuten   |
+| **Kosten**          | ⚠️ Abo + Zusatzkosten | ⚠️ BYO-Modelle | ⚠️ BYO-Modelle | ✅ Ein Abo + TokenJuice            |
+| **Memory**          | ✅ chat-gebunden  | ⚠️ plugin-abhängig | ✅ selbstlernend | 🚀 Memory Tree + Obsidian-Vault, optional [agentmemory](https://github.com/rohitg00/agentmemory)-Backend |
+| **Integrationen**   | ⚠️ wenige Konnektoren | ⚠️ BYO          | ⚠️ BYO            | 🚀 118+ über OAuth                 |
+| **Auto-Fetch**      | 🚫 keiner         | 🚫 keiner         | 🚫 keiner         | ✅ 20-Min.-Sync ins Memory         |
+| **API-Wildwuchs**   | 🚫 zusätzliche Keys | 🚫 BYOK         | 🚫 Multi-Vendor   | ✅ ein Account                     |
+| **Model-Routing**   | 🚫 nur ein Modell | ⚠️ manuell        | ⚠️ manuell        | ✅ eingebaut                       |
+| **Native Tools**    | ✅ nur Code       | ✅ nur Code       | ✅ nur Code       | ✅ Code + Suche + Scraper + Sprache |
 
 # Gib uns einen Stern auf GitHub
 

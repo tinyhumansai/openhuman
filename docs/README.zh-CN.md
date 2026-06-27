@@ -23,6 +23,7 @@
  <strong>OpenHuman 是你的个人 AI 超级智能：本地记忆，按需托管服务，简洁而强大。</strong>
 </p>
 
+
 <p align="center">
  <a href="https://discord.tinyhumans.ai/">Discord</a> •
  <a href="https://github.com/tinyhumansai/openhuman/discussions">Discussions</a> •
@@ -60,11 +61,9 @@ irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/instal
 ```
 
 <!-- TODO: translate (zh-CN) — English source mirrored from README.md so non-EN readers get the same install caveats. Please translate. -->
-
 > **Linux:** the AppImage can crash on launch under Wayland (and on Arch-based distros with `sharun: Interpreter not found!`) — see [#2463](https://github.com/tinyhumansai/openhuman/issues/2463) for the cause and env-var workarounds.
-> Arch Linux package maintainers can use the [`openhuman-bin` AUR recipe](../packages/arch/openhuman-bin/);
-> once published, Arch users can install it with `yay -S openhuman-bin`.
-
+Arch Linux package maintainers can use the [`openhuman-bin` AUR recipe](../packages/arch/openhuman-bin/);
+once published, Arch users can install it with `yay -S openhuman-bin`.
 <!-- /TODO -->
 
 # 什么是 OpenHuman？
@@ -115,17 +114,17 @@ OpenHuman 跳过了等待期。连接你的账户，让[自动拉取](https://ti
 
 高层次对比（产品持续演进，请以各厂商最新情况为准）。OpenHuman 的设计目标是**减少供应商碎片化**、将**工作流知识保留在设备上**、为智能体提供对你数据的**持久记忆**，而不仅仅是对话。
 
-|                | Claude Cowork    | OpenClaw    | Hermes Agent | OpenHuman                                                                                   |
-| -------------- | ---------------- | ----------- | ------------ | ------------------------------------------------------------------------------------------- |
-| **开源**       | 🚫 闭源          | ✅ MIT      | ✅ MIT       | ✅ GNU                                                                                      |
-| **易上手**     | ✅ 桌面 + CLI    | ⚠️ 终端优先 | ⚠️ 终端优先  | ✅ 清爽 UI，几分钟上手                                                                      |
-| **成本**       | ⚠️ 订阅 + 附加项 | ⚠️ 自带模型 | ⚠️ 自带模型  | ✅ 单一订阅 + TokenJuice                                                                    |
-| **记忆**       | ✅ 对话范围      | ⚠️ 依赖插件 | ✅ 自学习    | 🚀 记忆树 + Obsidian 仓库，可选 [agentmemory](https://github.com/rohitg00/agentmemory) 后端 |
-| **集成**       | ⚠️ 少量连接器    | ⚠️ 自行接入 | ⚠️ 自行接入  | 🚀 118+ 通过 OAuth                                                                          |
-| **自动拉取**   | 🚫 无            | 🚫 无       | 🚫 无        | ✅ 20 分钟同步到记忆                                                                        |
-| **API 碎片化** | 🚫 额外密钥      | 🚫 自带密钥 | 🚫 多供应商  | ✅ 一个账户                                                                                 |
-| **模型路由**   | 🚫 单一模型      | ⚠️ 手动     | ⚠️ 手动      | ✅ 内置                                                                                     |
-| **原生工具**   | ✅ 仅代码        | ✅ 仅代码   | ✅ 仅代码    | ✅ 代码 + 搜索 + 抓取 + 语音                                                                |
+|                     | Claude Cowork     | OpenClaw          | Hermes Agent      | OpenHuman                          |
+| ------------------- | ----------------- | ----------------- | ----------------- | ---------------------------------- |
+| **开源**            | 🚫 闭源           | ✅ MIT            | ✅ MIT            | ✅ GNU                             |
+| **易上手**          | ✅ 桌面 + CLI     | ⚠️ 终端优先       | ⚠️ 终端优先       | ✅ 清爽 UI，几分钟上手             |
+| **成本**            | ⚠️ 订阅 + 附加项  | ⚠️ 自带模型       | ⚠️ 自带模型       | ✅ 单一订阅 + TokenJuice           |
+| **记忆**            | ✅ 对话范围       | ⚠️ 依赖插件       | ✅ 自学习         | 🚀 记忆树 + Obsidian 仓库，可选 [agentmemory](https://github.com/rohitg00/agentmemory) 后端 |
+| **集成**            | ⚠️ 少量连接器     | ⚠️ 自行接入       | ⚠️ 自行接入       | 🚀 118+ 通过 OAuth                 |
+| **自动拉取**        | 🚫 无             | 🚫 无             | 🚫 无             | ✅ 20 分钟同步到记忆               |
+| **API 碎片化**      | 🚫 额外密钥       | 🚫 自带密钥       | 🚫 多供应商       | ✅ 一个账户                        |
+| **模型路由**        | 🚫 单一模型       | ⚠️ 手动           | ⚠️ 手动           | ✅ 内置                            |
+| **原生工具**        | ✅ 仅代码         | ✅ 仅代码         | ✅ 仅代码         | ✅ 代码 + 搜索 + 抓取 + 语音       |
 
 # 在 GitHub 上为我们加星
 
