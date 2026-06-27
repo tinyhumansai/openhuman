@@ -398,12 +398,8 @@ impl<'de> Deserialize<'de> for ResponseMessage {
                             reasoning_content = map.next_value::<Option<String>>()?
                         }
                         "reasoning" => reasoning = map.next_value::<Option<String>>()?,
-                        "tool_calls" => {
-                            tool_calls = map.next_value::<Option<Vec<ToolCall>>>()?
-                        }
-                        "function_call" => {
-                            function_call = map.next_value::<Option<Function>>()?
-                        }
+                        "tool_calls" => tool_calls = map.next_value::<Option<Vec<ToolCall>>>()?,
+                        "function_call" => function_call = map.next_value::<Option<Function>>()?,
                         _ => {
                             map.next_value::<IgnoredAny>()?;
                         }

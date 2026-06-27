@@ -3242,8 +3242,8 @@ fn duplicate_reasoning_content_in_stream_delta_does_not_error() {
 #[test]
 fn duplicate_reasoning_content_still_beats_reasoning_alias() {
     let json = r#"{"choices":[{"message":{"reasoning":"alias cot","reasoning_content":"first","reasoning_content":"second"}}]}"#;
-    let resp: ApiChatResponse = serde_json::from_str(json)
-        .expect("doubled canonical key plus an alias must parse cleanly");
+    let resp: ApiChatResponse =
+        serde_json::from_str(json).expect("doubled canonical key plus an alias must parse cleanly");
     assert_eq!(
         resp.choices[0].message.reasoning_content.as_deref(),
         Some("second"),
