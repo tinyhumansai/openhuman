@@ -296,13 +296,23 @@ impl LocalAiService {
             format!("ollama tags body read failed: {e}")
         })?;
 
+        // Defense-in-depth (TAURI-RUST-560): a 2xx status is not a guarantee of
+        // an Ollama JSON body. A different local server, a proxy, or a captive
+        // portal listening on the configured Ollama port can answer `/api/tags`
+        // with HTTP 200 and an HTML/text page, which fails to parse. The
+        // diagnostics caller already degrades gracefully (empty models +
+        // surfaces this to the UI as `tags_error`), so — mirroring the
+        // non-success branch above (TAURI-RUST-A3T) — log at `warn!`
+        // (breadcrumb) instead of `error!` to avoid flooding Sentry on every
+        // diagnostics poll. `OllamaTagsResponse` defaults `models`, so a parse
+        // only fails when the body isn't a JSON object at all.
         let payload: OllamaTagsResponse = serde_json::from_str(&body).map_err(|e| {
-            tracing::error!(
+            tracing::warn!(
                 target: "local_ai::ollama_admin",
                 %url,
                 body = %body,
                 error = %e,
-                "[local_ai:ollama_admin] list_models: JSON parse failed"
+                "[local_ai:ollama_admin] list_models: JSON parse failed (non-JSON 2xx body)"
             );
             format!("ollama tags parse failed: {e}")
         })?;

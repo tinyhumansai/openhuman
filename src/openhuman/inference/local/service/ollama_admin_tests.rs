@@ -659,6 +659,39 @@ async fn list_models_errors_on_non_success() {
     }
 }
 
+/// Regression for Sentry TAURI-RUST-560: a misconfigured port can answer the
+/// `/api/tags` probe with HTTP **200** and a non-JSON body (a different local
+/// server, a proxy, or a captive portal serving an HTML page). The parse fails,
+/// but the diagnostics caller already degrades gracefully (empty models +
+/// `tags_error`), so this must surface as a recoverable `Err` (now logged at
+/// `warn!`, not an `error!`-level Sentry flood — mirroring the non-success
+/// branch / TAURI-RUST-A3T).
+#[tokio::test]
+async fn list_models_errors_on_2xx_non_json_body() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+
+    let app = Router::new().route(
+        "/api/tags",
+        // 200 OK with a non-JSON (HTML) page instead of Ollama's JSON catalog.
+        get(|| async { "<!doctype html><html><body>captive portal</body></html>" }),
+    );
+    let base = spawn_mock(app).await;
+    unsafe {
+        std::env::set_var("OPENHUMAN_OLLAMA_BASE_URL", &base);
+    }
+
+    let config = Config::default();
+    let service = LocalAiService::new(&config);
+    let err = service.list_models_at(&base).await.unwrap_err();
+    assert!(
+        err.contains("parse failed"),
+        "a 2xx non-JSON body must surface as a recoverable parse error, got: {err}"
+    );
+    unsafe {
+        std::env::remove_var("OPENHUMAN_OLLAMA_BASE_URL");
+    }
+}
+
 #[tokio::test]
 async fn lm_studio_list_models_returns_loaded_models() {
     let _guard = crate::openhuman::inference::inference_test_guard();
