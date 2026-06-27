@@ -3204,6 +3204,53 @@ fn reasoning_and_reasoning_content_both_present_in_stream_delta_does_not_error()
     );
 }
 
+/// Regression for Sentry TAURI-RUST-85R: NVIDIA's `integrate.api.nvidia.com`
+/// OpenAI-compat endpoint returns the SAME key `reasoning_content` twice in one
+/// `message` object for some thinking models. A derived struct deserializer
+/// strict-rejects the repeat with `duplicate field \`reasoning_content\`` and
+/// drops the whole completion. The hand-folded `Visitor` must accept it, with
+/// the last value winning (standard JSON object semantics).
+#[test]
+fn duplicate_reasoning_content_in_response_message_does_not_error() {
+    let json = r#"{"choices":[{"message":{"content":null,"reasoning_content":"first cot","reasoning_content":"second cot"}}]}"#;
+    let resp: ApiChatResponse = serde_json::from_str(json)
+        .expect("a doubled reasoning_content key must parse without a duplicate-field error");
+    assert_eq!(
+        resp.choices[0].message.reasoning_content.as_deref(),
+        Some("second cot"),
+        "the last reasoning_content value wins on a repeated key"
+    );
+}
+
+/// Same TAURI-RUST-85R regression on the streaming delta path
+/// (`compatible_stream_native.rs`), which shares the doubled-key quirk.
+#[test]
+fn duplicate_reasoning_content_in_stream_delta_does_not_error() {
+    let json = r#"{"choices":[{"delta":{"reasoning_content":"first cot","reasoning_content":"second cot"},"finish_reason":null}]}"#;
+    let chunk: StreamChunkResponse = serde_json::from_str(json)
+        .expect("a doubled reasoning_content key must parse without a duplicate-field error");
+    assert_eq!(
+        chunk.choices[0].delta.reasoning_content.as_deref(),
+        Some("second cot"),
+        "the last reasoning_content value wins on a repeated key"
+    );
+}
+
+/// A doubled `reasoning_content` must still lose to nothing and win over the
+/// `reasoning` alias: canonical-wins (#3547) and last-value-wins (TAURI-RUST-85R)
+/// compose — the final canonical value is taken even when the alias is also set.
+#[test]
+fn duplicate_reasoning_content_still_beats_reasoning_alias() {
+    let json = r#"{"choices":[{"message":{"reasoning":"alias cot","reasoning_content":"first","reasoning_content":"second"}}]}"#;
+    let resp: ApiChatResponse = serde_json::from_str(json)
+        .expect("doubled canonical key plus an alias must parse cleanly");
+    assert_eq!(
+        resp.choices[0].message.reasoning_content.as_deref(),
+        Some("second"),
+        "last canonical reasoning_content wins over both the earlier one and the alias"
+    );
+}
+
 /// End-to-end: a tool-call turn whose reasoning arrived under the `reasoning`
 /// alias must still be surfaced by `parse_native_response` so the agent loop
 /// can replay it on the follow-up request (the issue #3094 failure path).

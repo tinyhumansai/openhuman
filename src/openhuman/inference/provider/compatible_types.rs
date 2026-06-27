@@ -350,34 +350,78 @@ pub(crate) struct ResponseMessage {
 // A serde `alias` maps both names onto one field slot, which makes a provider
 // that emits BOTH keys in the same object (some OpenRouter / vLLM-SGLang
 // proxies do) fail with `duplicate field \`reasoning_content\``, dropping the
-// entire response. Deserializing them as separate optional fields tolerates
-// any combination; the canonical `reasoning_content` wins when both are present.
+// entire response (#3547). Folding them tolerates any combination; the
+// canonical `reasoning_content` wins when both names are present.
+//
+// We fold the map entries by hand in a `Visitor` rather than via a derived
+// `Shadow` struct, because a derived deserializer ALSO strict-rejects a key
+// that is REPEATED under the same name. NVIDIA's `integrate.api.nvidia.com`
+// OpenAI-compat endpoint returns `reasoning_content` *twice* in one `message`
+// object for certain thinking models (e.g. `stepfun-ai/step-3.7-flash`), which
+// tripped the same `duplicate field \`reasoning_content\`` error and dropped the
+// completion (TAURI-RUST-85R). Consuming entries manually accepts repeated keys
+// (last value wins, standard JSON object semantics) for every field.
 impl<'de> Deserialize<'de> for ResponseMessage {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        #[derive(Deserialize)]
-        struct Shadow {
-            #[serde(default)]
-            content: Option<String>,
-            #[serde(default)]
-            reasoning_content: Option<String>,
-            #[serde(default)]
-            reasoning: Option<String>,
-            #[serde(default)]
-            tool_calls: Option<Vec<ToolCall>>,
-            #[serde(default)]
-            function_call: Option<Function>,
+        use serde::de::{IgnoredAny, MapAccess, Visitor};
+        use std::fmt;
+
+        struct ResponseMessageVisitor;
+
+        impl<'de> Visitor<'de> for ResponseMessageVisitor {
+            type Value = ResponseMessage;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("an OpenAI-compatible chat completion message object")
+            }
+
+            fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+            where
+                M: MapAccess<'de>,
+            {
+                let mut content: Option<String> = None;
+                let mut reasoning_content: Option<String> = None;
+                let mut reasoning: Option<String> = None;
+                let mut tool_calls: Option<Vec<ToolCall>> = None;
+                let mut function_call: Option<Function> = None;
+
+                // Last value wins for any repeated key (e.g. a doubled
+                // `reasoning_content` — TAURI-RUST-85R), so a quirky-but-valid
+                // provider object parses instead of being rejected wholesale.
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "content" => content = map.next_value::<Option<String>>()?,
+                        "reasoning_content" => {
+                            reasoning_content = map.next_value::<Option<String>>()?
+                        }
+                        "reasoning" => reasoning = map.next_value::<Option<String>>()?,
+                        "tool_calls" => {
+                            tool_calls = map.next_value::<Option<Vec<ToolCall>>>()?
+                        }
+                        "function_call" => {
+                            function_call = map.next_value::<Option<Function>>()?
+                        }
+                        _ => {
+                            map.next_value::<IgnoredAny>()?;
+                        }
+                    }
+                }
+
+                Ok(ResponseMessage {
+                    content,
+                    // Canonical `reasoning_content` wins; `reasoning` is the
+                    // fallback alias when only it is present (#3547 behaviour).
+                    reasoning_content: reasoning_content.or(reasoning),
+                    tool_calls,
+                    function_call,
+                })
+            }
         }
 
-        let shadow = Shadow::deserialize(deserializer)?;
-        Ok(ResponseMessage {
-            content: shadow.content,
-            reasoning_content: shadow.reasoning_content.or(shadow.reasoning),
-            tool_calls: shadow.tool_calls,
-            function_call: shadow.function_call,
-        })
+        deserializer.deserialize_map(ResponseMessageVisitor)
     }
 }
 
@@ -500,33 +544,66 @@ pub(crate) struct StreamDelta {
     pub(crate) tool_calls: Option<Vec<StreamToolCallDelta>>,
 }
 
-// Manual `Deserialize` for the same reason as `ResponseMessage`: a streaming
-// delta that carries both `reasoning` and `reasoning_content` must not fail
-// with `duplicate field`. They deserialize as distinct keys and fold into the
-// canonical `reasoning_content` (canonical wins when both are present).
+// Manual `Deserialize` for the same reasons as `ResponseMessage`: a streaming
+// delta that carries both `reasoning` and `reasoning_content` (distinct keys,
+// #3547) — OR a doubled `reasoning_content` from NVIDIA's compat endpoint
+// (TAURI-RUST-85R) — must not fail with `duplicate field`. Folding the entries
+// by hand accepts repeated keys (last value wins) and keeps the canonical
+// `reasoning_content` winning over the `reasoning` alias.
 impl<'de> Deserialize<'de> for StreamDelta {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        #[derive(Deserialize)]
-        struct Shadow {
-            #[serde(default)]
-            content: Option<String>,
-            #[serde(default)]
-            reasoning_content: Option<String>,
-            #[serde(default)]
-            reasoning: Option<String>,
-            #[serde(default)]
-            tool_calls: Option<Vec<StreamToolCallDelta>>,
+        use serde::de::{IgnoredAny, MapAccess, Visitor};
+        use std::fmt;
+
+        struct StreamDeltaVisitor;
+
+        impl<'de> Visitor<'de> for StreamDeltaVisitor {
+            type Value = StreamDelta;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("an OpenAI-compatible streaming delta object")
+            }
+
+            fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+            where
+                M: MapAccess<'de>,
+            {
+                let mut content: Option<String> = None;
+                let mut reasoning_content: Option<String> = None;
+                let mut reasoning: Option<String> = None;
+                let mut tool_calls: Option<Vec<StreamToolCallDelta>> = None;
+
+                // Last value wins for any repeated key (doubled
+                // `reasoning_content` — TAURI-RUST-85R), tolerating the SSE
+                // counterpart of the buffered-path quirk.
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "content" => content = map.next_value::<Option<String>>()?,
+                        "reasoning_content" => {
+                            reasoning_content = map.next_value::<Option<String>>()?
+                        }
+                        "reasoning" => reasoning = map.next_value::<Option<String>>()?,
+                        "tool_calls" => {
+                            tool_calls = map.next_value::<Option<Vec<StreamToolCallDelta>>>()?
+                        }
+                        _ => {
+                            map.next_value::<IgnoredAny>()?;
+                        }
+                    }
+                }
+
+                Ok(StreamDelta {
+                    content,
+                    reasoning_content: reasoning_content.or(reasoning),
+                    tool_calls,
+                })
+            }
         }
 
-        let shadow = Shadow::deserialize(deserializer)?;
-        Ok(StreamDelta {
-            content: shadow.content,
-            reasoning_content: shadow.reasoning_content.or(shadow.reasoning),
-            tool_calls: shadow.tool_calls,
-        })
+        deserializer.deserialize_map(StreamDeltaVisitor)
     }
 }
 
