@@ -6036,6 +6036,19 @@ mod tests {
     }
 
     #[test]
+    fn quota_exhausted_filter_matches_openai_responses_usage_limit_reached() {
+        // TAURI-RUST-AFE: ChatGPT/Codex OAuth Responses returns a 400 body with
+        // a machine-readable usage-limit type and "has been reached" wording.
+        // This is the same user plan-cap state as C9A, just through /responses.
+        let body = "openai Responses API error: {\"error\":{\"type\":\
+            \"usage_limit_reached\",\"message\":\"The usage limit has been reached\",\
+            \"plan_type\":\"plus\"}}";
+        assert!(is_quota_exhausted_event(&event_with_message(body)));
+        assert!(is_quota_exhausted_event(&event_with_exception_value(body)));
+        assert!(is_quota_exhausted_message(body));
+    }
+
+    #[test]
     fn quota_exhausted_filter_ignores_generic_500_and_rate_limit() {
         // A generic 500 outage and a 429 rate-limit are not plan-quota
         // exhaustion — they must keep reaching Sentry / their own handling.

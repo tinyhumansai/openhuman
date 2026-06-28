@@ -4137,6 +4137,7 @@ async fn effective_context_window_lmstudio_falls_back_when_native_unavailable() 
 /// pinning the exact wire shape makes a provider wording drift fail CI rather
 /// than silently re-flood Sentry (23,970 events from 17 BYO users).
 const DEEPSEEK_4QF_402_BODY: &str = r#"{"error":{"message":"Insufficient Balance","type":"unknown_error","param":null,"code":"invalid_request_error"}}"#;
+const OPENAI_AFE_USAGE_LIMIT_BODY: &str = r#"{"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"plus","resets_at":1919452800}}"#;
 
 /// Build a Sentry hub backed by a `TestTransport` and install it for the
 /// current scope, returning the transport so the test can assert no events
@@ -4298,6 +4299,40 @@ async fn responses_api_insufficient_balance_402_not_reported_to_sentry() {
     assert!(
         transport.fetch_and_clear_events().is_empty(),
         "an exhausted BYO balance 402 (responses_api path) must not be reported to Sentry"
+    );
+}
+
+#[tokio::test]
+async fn responses_api_usage_limit_reached_400_not_reported_to_sentry() {
+    // TAURI-RUST-AFE: OpenAI/ChatGPT OAuth Responses returns a deterministic
+    // user plan-cap 400 (`usage_limit_reached`). The call must still return an
+    // error, but Sentry should not receive one event per background retry.
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(OPENAI_AFE_USAGE_LIMIT_BODY))
+        .mount(&mock_server)
+        .await;
+
+    let (transport, _guard) = install_test_sentry_hub();
+
+    let provider = OpenAiCompatibleProvider::new(
+        "openai",
+        &mock_server.uri(),
+        Some("chatgpt-oauth-token"),
+        AuthStyle::Bearer,
+    )
+    .with_responses_api_primary();
+    let err = provider
+        .chat_with_history(&[ChatMessage::user("hello")], "gpt-5-codex", 0.0)
+        .await
+        .expect_err("a Responses API usage cap must still propagate as Err");
+    assert!(
+        err.to_string().contains("usage_limit_reached"),
+        "err: {err}"
+    );
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "a usage_limit_reached Responses 400 must not be reported to Sentry"
     );
 }
 

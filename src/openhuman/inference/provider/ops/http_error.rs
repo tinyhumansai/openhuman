@@ -254,6 +254,8 @@ pub fn body_indicates_quota_exhausted(body: &str) -> bool {
         || lower.contains("monthly limit")
         || lower.contains("monthly quota")
         || lower.contains("quota exceeded")
+        || lower.contains("usage_limit_reached")
+        || lower.contains("usage limit has been reached")
         || lower.contains("usage limit exceeded")
         // "reached the limit" alone is ambiguous (rate-limit, token-limit), so
         // require a quota/plan/request/monthly co-marker to keep the blast
@@ -1050,6 +1052,9 @@ mod tests {
         {\"error\":{\"message\":\"HTTP 402 from Kiro IDE: {\\\"message\\\":\\\"You have \
         reached the limit.\\\",\\\"reason\\\":\\\"MONTHLY_REQUEST_COUNT\\\"}\",\
         \"type\":\"server_error\"}}";
+    const AFE_BODY: &str = "openai Responses API error: \
+        {\"error\":{\"type\":\"usage_limit_reached\",\"message\":\"The usage limit \
+        has been reached\",\"plan_type\":\"plus\",\"resets_at\":1919452800}}";
 
     #[test]
     fn quota_exhausted_matches_verbatim_c9a_body() {
@@ -1057,6 +1062,12 @@ mod tests {
         // the transport status is 500, not 402.
         assert!(is_provider_quota_exhausted(C9A_BODY));
         assert!(body_indicates_quota_exhausted(C9A_BODY));
+    }
+
+    #[test]
+    fn quota_exhausted_matches_openai_responses_usage_limit_reached() {
+        assert!(is_provider_quota_exhausted(AFE_BODY));
+        assert!(body_indicates_quota_exhausted(AFE_BODY));
     }
 
     #[test]
