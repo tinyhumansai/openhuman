@@ -155,6 +155,45 @@ pub fn log_provider_access_policy_denied_http_403(
     );
 }
 
+/// Whether a provider non-2xx response is an external moderation/proxy
+/// rejection, not an OpenHuman product error.
+///
+/// Canonical example (TAURI-RUST-ECR):
+/// `{"error":"Message rejected by Ombudsman","score":80}`. The response is a
+/// deterministic provider policy/user-state refusal; callers should still see
+/// and retry/fallback the provider error, but Sentry should not receive one
+/// event per retry.
+pub fn is_provider_moderation_rejection_http_400(status: reqwest::StatusCode, body: &str) -> bool {
+    status == reqwest::StatusCode::BAD_REQUEST && is_provider_moderation_rejection_message(body)
+}
+
+/// Message-level half of [`is_provider_moderation_rejection_http_400`], shared
+/// with the higher-layer `report_error_or_expected` classifier so a re-raised
+/// provider error stays demoted outside the provider emit site too.
+pub fn is_provider_moderation_rejection_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("message rejected by ombudsman")
+        || (lower.contains("message rejected") && lower.contains("ombudsman"))
+}
+
+pub fn log_provider_moderation_rejection_http_400(
+    operation: &str,
+    provider: &str,
+    model: Option<&str>,
+    status: reqwest::StatusCode,
+) {
+    tracing::info!(
+        domain = "llm_provider",
+        operation = operation,
+        provider = provider,
+        model = model.unwrap_or(""),
+        status = status.as_u16(),
+        failure = "non_2xx",
+        kind = "provider_moderation_rejection",
+        "[llm_provider] {operation} external moderation rejection 400 — not reporting to Sentry"
+    );
+}
+
 /// Whether a provider non-2xx response is a deterministic
 /// **insufficient-credits** user-state error — the BYO provider account
 /// (e.g. OpenRouter) lacks the balance to satisfy the request.
@@ -993,6 +1032,30 @@ mod tests {
     const C62_BODY: &str = "myopenrouter API error (402 Payment Required): \
         {\"error\":{\"message\":\"This request requires more credits, or fewer max_tokens. \
         You requested up to 65536 tokens, but can only afford 49732.\"}}";
+    const ECR_BODY: &str = r#"{"error":"Message rejected by Ombudsman","score":80}"#;
+
+    #[test]
+    fn moderation_rejection_400_matches_verbatim_ecr_body() {
+        assert!(is_provider_moderation_rejection_http_400(
+            StatusCode::BAD_REQUEST,
+            ECR_BODY,
+        ));
+        assert!(is_provider_moderation_rejection_message(
+            "ollama API error (400 Bad Request): {\"error\":\"Message rejected by Ombudsman\"}"
+        ));
+    }
+
+    #[test]
+    fn moderation_rejection_requires_400_and_ombudsman_signal() {
+        assert!(!is_provider_moderation_rejection_http_400(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ECR_BODY,
+        ));
+        assert!(!is_provider_moderation_rejection_http_400(
+            StatusCode::BAD_REQUEST,
+            r#"{"error":"message rejected: invalid JSON schema"}"#,
+        ));
+    }
 
     #[test]
     fn insufficient_credits_402_matches_verbatim_c62_body() {

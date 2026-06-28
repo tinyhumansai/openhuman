@@ -376,6 +376,57 @@ async fn streaming_chat_frequency_penalty_rejection_not_reported_to_sentry() {
 const OLLAMA_CLOUD_500_WIRE_BODY: &str =
     r#"{"error":"Internal Server Error (ref: df512dcb-d915-493b-8f2d-e8d3dfa640c1)"}"#;
 
+/// Verbatim TAURI-RUST-ECR body — external moderation proxy rejects the prompt.
+const OLLAMA_OMBUDSMAN_400_WIRE_BODY: &str =
+    r#"{"error":"Message rejected by Ombudsman","score":80}"#;
+
+/// TAURI-RUST-ECR: an external moderation proxy rejected the request. This is a
+/// deterministic provider/user-state refusal, not an OpenHuman product error;
+/// keep propagating the provider error but do not report every retry to Sentry.
+#[tokio::test]
+async fn native_chat_ombudsman_400_demoted_from_sentry() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(OLLAMA_OMBUDSMAN_400_WIRE_BODY))
+        .mount(&mock_server)
+        .await;
+
+    let (transport, _sentry_guard) = install_test_sentry_hub();
+
+    let provider =
+        OpenAiCompatibleProvider::new("ollama", &mock_server.uri(), None, AuthStyle::None);
+    let messages = vec![ChatMessage {
+        id: None,
+        role: "user".to_string(),
+        content: "hello".to_string(),
+        extra_metadata: None,
+    }];
+    let err = provider
+        .chat(
+            super::super::ChatRequest {
+                messages: &messages,
+                tools: None,
+                stream: None,
+                max_tokens: None,
+            },
+            "gemma3:1b-it-qat",
+            0.7,
+        )
+        .await
+        .expect_err("moderation rejection must still propagate as Err to drive retry/fallback");
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Message rejected by Ombudsman") && msg.contains("\"score\":80"),
+        "provider rejection detail must remain visible to the caller, got: {msg}"
+    );
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "external moderation 400 must be demoted, not reported to Sentry"
+    );
+}
+
 /// TAURI-RUST-5MV: ollama.com hosted-inference 500 on the non-streaming native
 /// path must be demoted (no Sentry event) and surface the actionable message,
 /// while still propagating as `Err` so reliable-provider retry/fallback runs.

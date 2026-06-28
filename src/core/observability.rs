@@ -420,6 +420,13 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if crate::openhuman::inference::provider::is_openai_oauth_session_expired_message(message) {
         return Some(ExpectedErrorKind::ProviderUserState);
     }
+    // TAURI-RUST-ECR — an external moderation proxy rejected the prompt
+    // (`Message rejected by Ombudsman`). The provider HTTP layer demotes its
+    // own native_chat event; this catches the same provider error if it is
+    // re-reported at the agent / RPC boundary after being flattened to text.
+    if crate::openhuman::inference::provider::is_provider_moderation_rejection_message(message) {
+        return Some(ExpectedErrorKind::ProviderUserState);
+    }
     // TAURI-RUST-5MV — ollama.com hosted-inference 500 (`Internal Server Error
     // (ref: <uuid>)`) for `*:cloud` models. The provider HTTP layer
     // (`native_chat` / `streaming_chat` / `api_error`) already demotes its own
@@ -6145,6 +6152,24 @@ mod tests {
         assert!(is_insufficient_credits_event(&event_with_exception_value(
             body
         )));
+    }
+
+    #[test]
+    fn provider_moderation_rejection_reraise_routes_through_expected_path() {
+        // TAURI-RUST-ECR — same text returned from native_chat can be
+        // re-reported by a higher layer after the provider emit-site demotes
+        // its own event.
+        assert_eq!(
+            expected_error_kind(
+                "agent.run_single failed: ollama API error (400 Bad Request): \
+                 {\"error\":\"Message rejected by Ombudsman\",\"score\":80}"
+            ),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+        assert_eq!(
+            expected_error_kind("ollama API error (400): message rejected: invalid JSON schema"),
+            None
+        );
     }
 
     #[test]

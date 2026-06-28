@@ -760,6 +760,16 @@ impl Provider for OpenAiCompatibleProvider {
                     Some(model),
                     status,
                 );
+            } else if super::super::is_provider_moderation_rejection_http_400(status, &error) {
+                // External moderation proxy refusal (TAURI-RUST-ECR): the
+                // provider rejected the prompt deterministically. Keep the
+                // exact provider error visible, but do not page on each retry.
+                super::super::log_provider_moderation_rejection_http_400(
+                    "native_chat",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
             } else if super::super::is_provider_access_policy_denied_http_403(status, &error) {
                 super::super::log_provider_access_policy_denied_http_403(
                     "native_chat",
