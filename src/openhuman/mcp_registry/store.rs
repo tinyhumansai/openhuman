@@ -90,26 +90,65 @@ fn init_schema(conn: &Connection) -> Result<()> {
     // across launches; old `'stdio'`-implicit rows pick up the new
     // `transport` column with the default value.
     let existing_cols = mcp_servers_columns(conn)?;
-    if !existing_cols.iter().any(|c| c == "transport") {
-        conn.execute(
-            "ALTER TABLE mcp_servers ADD COLUMN transport TEXT NOT NULL DEFAULT 'stdio'",
-            [],
-        )
-        .context("Failed to add transport column to mcp_servers")?;
-    }
-    if !existing_cols.iter().any(|c| c == "deployment_url") {
-        conn.execute("ALTER TABLE mcp_servers ADD COLUMN deployment_url TEXT", [])
-            .context("Failed to add deployment_url column to mcp_servers")?;
-    }
-    if !existing_cols.iter().any(|c| c == "enabled") {
-        conn.execute(
-            "ALTER TABLE mcp_servers ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1",
-            [],
-        )
-        .context("Failed to add enabled column to mcp_servers")?;
-    }
+    add_mcp_servers_column_if_missing(
+        conn,
+        &existing_cols,
+        "transport",
+        "ALTER TABLE mcp_servers ADD COLUMN transport TEXT NOT NULL DEFAULT 'stdio'",
+        "Failed to add transport column to mcp_servers",
+    )?;
+    add_mcp_servers_column_if_missing(
+        conn,
+        &existing_cols,
+        "deployment_url",
+        "ALTER TABLE mcp_servers ADD COLUMN deployment_url TEXT",
+        "Failed to add deployment_url column to mcp_servers",
+    )?;
+    add_mcp_servers_column_if_missing(
+        conn,
+        &existing_cols,
+        "enabled",
+        "ALTER TABLE mcp_servers ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1",
+        "Failed to add enabled column to mcp_servers",
+    )?;
 
     Ok(())
+}
+
+fn add_mcp_servers_column_if_missing(
+    conn: &Connection,
+    existing_cols: &[String],
+    column: &str,
+    alter_sql: &str,
+    context: &'static str,
+) -> Result<()> {
+    if existing_cols.iter().any(|c| c == column) {
+        tracing::trace!("[mcp-registry] schema column already present column={column}");
+        return Ok(());
+    }
+
+    tracing::debug!("[mcp-registry] schema add column start column={column}");
+    match conn.execute(alter_sql, []) {
+        Ok(_) => {
+            tracing::debug!("[mcp-registry] schema add column complete column={column}");
+            Ok(())
+        }
+        Err(err) => match mcp_servers_columns(conn) {
+            Ok(cols) if cols.iter().any(|c| c == column) => {
+                tracing::debug!(
+                    "[mcp-registry] schema add column observed existing after failure column={column}"
+                );
+                Ok(())
+            }
+            Ok(_) => Err(err).context(context),
+            Err(read_err) => {
+                tracing::warn!(
+                    "[mcp-registry] schema add column refresh failed column={column} error={read_err}"
+                );
+                Err(err).context(context)
+            }
+        },
+    }
 }
 
 /// Snapshot of the column names on `mcp_servers`. Used by the additive
@@ -663,6 +702,35 @@ mod tests {
 
         let loaded = get_server_conn(&conn, "legacy-en").unwrap();
         assert!(loaded.enabled, "legacy rows default enabled=true");
+    }
+
+    #[test]
+    fn additive_column_migration_tolerates_duplicate_column_from_stale_snapshot() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let conn = rusqlite::Connection::open(tmp.path()).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE mcp_servers (
+                server_id           TEXT PRIMARY KEY,
+                deployment_url      TEXT
+            );",
+        )
+        .unwrap();
+
+        // Simulates another connection adding the column after this
+        // connection took its PRAGMA table_info snapshot but before this
+        // connection runs ALTER TABLE ADD COLUMN.
+        let stale_cols = vec!["server_id".to_string()];
+        add_mcp_servers_column_if_missing(
+            &conn,
+            &stale_cols,
+            "deployment_url",
+            "ALTER TABLE mcp_servers ADD COLUMN deployment_url TEXT",
+            "Failed to add deployment_url column to mcp_servers",
+        )
+        .unwrap();
+
+        let cols = mcp_servers_columns(&conn).unwrap();
+        assert!(cols.iter().any(|c| c == "deployment_url"));
     }
 
     /// Simulates the pre-migration state by dropping the `transport` and
