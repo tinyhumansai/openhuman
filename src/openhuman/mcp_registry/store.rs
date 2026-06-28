@@ -115,6 +115,9 @@ fn init_schema(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Adds one post-initial-schema `mcp_servers` column, tolerating a stale
+/// `PRAGMA table_info` snapshot when another connection has already added the
+/// same column.
 fn add_mcp_servers_column_if_missing(
     conn: &Connection,
     existing_cols: &[String],
