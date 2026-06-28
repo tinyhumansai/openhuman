@@ -239,18 +239,37 @@ pub fn builtin_cloud_supports_responses_api(slug: &str) -> bool {
 /// `/responses` guarantees a second 404 on every fresh process.
 pub fn cloud_endpoint_supports_responses_api(slug: &str, endpoint: &str) -> bool {
     if is_builtin_cloud_slug(slug) {
-        return builtin_cloud_supports_responses_api(slug);
+        let supports = builtin_cloud_supports_responses_api(slug);
+        log::debug!(
+            "[config][cloud_providers] responses capability builtin slug={} supports={}",
+            slug,
+            supports
+        );
+        return supports;
     }
 
     let Some(host) = endpoint_host(endpoint) else {
+        log::debug!(
+            "[config][cloud_providers] responses capability custom slug={} endpoint_host_parse=false supports=true",
+            slug
+        );
         return true;
     };
 
-    !BUILTIN_CLOUD_PROVIDERS
+    let matched_builtin_chat_only_host = BUILTIN_CLOUD_PROVIDERS
         .iter()
         .filter(|provider| !builtin_cloud_supports_responses_api(provider.slug))
         .filter_map(|provider| endpoint_host(provider.endpoint))
-        .any(|builtin_chat_only_host| builtin_chat_only_host == host)
+        .any(|builtin_chat_only_host| builtin_chat_only_host == host);
+    let supports = !matched_builtin_chat_only_host;
+    log::debug!(
+        "[config][cloud_providers] responses capability custom slug={} endpoint_host={} matched_builtin_chat_only_host={} supports={}",
+        slug,
+        host,
+        matched_builtin_chat_only_host,
+        supports
+    );
+    supports
 }
 
 fn endpoint_host(endpoint: &str) -> Option<String> {
