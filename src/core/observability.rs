@@ -400,6 +400,18 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if lower.contains("binary not found") {
         return Some(ExpectedErrorKind::LocalAiBinaryMissing);
     }
+    // TAURI-RUST-CGP (#4174): remote MCP servers return HTTP 401 when the
+    // user must complete OAuth/sign-in. `mcp_registry::connections` already
+    // stores this as `needs_auth` for the UI; the RPC boundary can still
+    // re-raise the typed `McpUnauthorizedError` display string. Demote that
+    // canonical envelope so Sentry does not page on expected user-state.
+    if lower.contains("mcp unauthorized for") && lower.contains("http 401") {
+        log::debug!(
+            "[observability] expected_error_kind matched MCP unauthorized HTTP 401; \
+             classifying as ProviderUserState"
+        );
+        return Some(ExpectedErrorKind::ProviderUserState);
+    }
     // Check `is_provider_user_state_message` BEFORE `is_backend_user_error_message`:
     // composio's "Toolkit X is not enabled" lands as a 4xx that both would
     // match, and the more specific `ProviderUserState` bucket is the right
@@ -4878,6 +4890,38 @@ mod tests {
             expected_error_kind(msg),
             None,
             "composio-direct 500 with no auth body must NOT demote — it is a real bug shape"
+        );
+    }
+
+    // ── TAURI-RUST-CGP (#4174): remote MCP server needs OAuth sign-in ───
+
+    #[test]
+    fn classifies_mcp_unauthorized_401_as_provider_user_state() {
+        // Canonical `McpUnauthorizedError` Display shape from
+        // `mcp_client::client`: the remote MCP server returned 401 and the
+        // connect path already stores `needs_auth` for the UI. The RPC
+        // re-report must demote to expected user-state rather than page
+        // Sentry for a sign-in requirement.
+        for msg in [
+            "MCP unauthorized for `https://youtube.run.tools` (HTTP 401)",
+            "MCP unauthorized for `https://youtube.run.tools` (HTTP 401; \
+             resource metadata: https://youtube.run.tools/.well-known/oauth-protected-resource)",
+        ] {
+            assert_eq!(
+                expected_error_kind(msg),
+                Some(ExpectedErrorKind::ProviderUserState),
+                "MCP 401 auth-required state must demote: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_401_as_mcp_user_state() {
+        let unrelated = "GitHub API error: HTTP 401: Bad credentials";
+        assert_ne!(
+            expected_error_kind(unrelated),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "generic 401s without the MCP unauthorized envelope must stay reportable"
         );
     }
 
