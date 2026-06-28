@@ -229,6 +229,40 @@ pub fn builtin_cloud_supports_responses_api(slug: &str) -> bool {
     matches!(slug, "openai")
 }
 
+/// Whether a cloud provider endpoint should use the OpenAI **Responses API**
+/// fallback.
+///
+/// Built-in slugs keep the explicit built-in capability table. Custom slugs stay
+/// permissive unless their endpoint host matches one of our known built-in
+/// chat-completions-only hosts. This catches user-defined aliases such as
+/// `nvidia-nim` pointed at `integrate.api.nvidia.com`, where falling back to
+/// `/responses` guarantees a second 404 on every fresh process.
+pub fn cloud_endpoint_supports_responses_api(slug: &str, endpoint: &str) -> bool {
+    if is_builtin_cloud_slug(slug) {
+        return builtin_cloud_supports_responses_api(slug);
+    }
+
+    let Some(host) = endpoint_host(endpoint) else {
+        return true;
+    };
+
+    !BUILTIN_CLOUD_PROVIDERS
+        .iter()
+        .filter(|provider| !builtin_cloud_supports_responses_api(provider.slug))
+        .filter_map(|provider| endpoint_host(provider.endpoint))
+        .any(|builtin_chat_only_host| builtin_chat_only_host == host)
+}
+
+fn endpoint_host(endpoint: &str) -> Option<String> {
+    url::Url::parse(endpoint.trim())
+        .ok()
+        .and_then(|url| url.host_str().map(normalize_host))
+}
+
+fn normalize_host(host: &str) -> String {
+    host.trim_end_matches('.').to_ascii_lowercase()
+}
+
 /// Authentication header style for a cloud provider.
 ///
 /// Wire format is lowercase (e.g. `"bearer"`). Determines which HTTP headers
@@ -504,8 +538,9 @@ impl CloudProviderType {
 #[cfg(test)]
 mod tests {
     use super::{
-        builtin_cloud_supports_responses_api, is_builtin_cloud_slug, is_slug_reserved,
-        migrate_legacy_fields, AuthStyle, CloudProviderCreds, BUILTIN_CLOUD_PROVIDERS,
+        builtin_cloud_supports_responses_api, cloud_endpoint_supports_responses_api,
+        is_builtin_cloud_slug, is_slug_reserved, migrate_legacy_fields, AuthStyle,
+        CloudProviderCreds, BUILTIN_CLOUD_PROVIDERS,
     };
 
     #[test]
@@ -615,6 +650,32 @@ mod tests {
                 "{slug} is chat-completions-only and must not advertise the Responses API"
             );
         }
+    }
+
+    #[test]
+    fn custom_slug_on_builtin_chat_only_host_does_not_expose_responses_api() {
+        for endpoint in [
+            "https://integrate.api.nvidia.com/v1",
+            "https://api.deepseek.com/v1",
+            "https://api.groq.com/openai/v1",
+        ] {
+            assert!(
+                !cloud_endpoint_supports_responses_api("my-custom-slug", endpoint),
+                "custom slug at known chat-only endpoint {endpoint} must not advertise Responses API"
+            );
+        }
+
+        assert!(
+            cloud_endpoint_supports_responses_api(
+                "my-openai-proxy",
+                "https://proxy.example.com/v1"
+            ),
+            "unknown custom proxy remains permissive because it may serve /responses"
+        );
+        assert!(
+            cloud_endpoint_supports_responses_api("my-openai", "https://api.openai.com/v1"),
+            "custom slug pointed at OpenAI's first-party host keeps Responses API support"
+        );
     }
 
     /// Drift guard (TAURI-RUST-5EN): couple the capability helper to the

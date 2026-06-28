@@ -144,10 +144,10 @@ impl OpenAiCompatibleProvider {
         // model on a Responses-capable endpoint. Skip when Responses is the
         // primary path (Codex OAuth): the fallback flag is never consulted
         // and a 404 there is not evidence the route is missing.
-        if status == reqwest::StatusCode::NOT_FOUND
+        let responses_route_missing_404 = status == reqwest::StatusCode::NOT_FOUND
             && !self.responses_api_primary
-            && Self::responses_404_indicates_missing_route(&error)
-        {
+            && Self::responses_404_indicates_missing_route(&error);
+        if responses_route_missing_404 {
             super::mark_responses_api_unsupported(&self.base_url);
         }
         if super::super::is_budget_exhausted_http_400(status, &error) {
@@ -221,6 +221,14 @@ impl OpenAiCompatibleProvider {
                 self.name.as_str(),
                 Some(model),
                 status,
+            );
+        } else if responses_route_missing_404 {
+            log::info!(
+                "[provider] {} /responses route missing for endpoint {} model={} status={} - disabling fallback and skipping Sentry report",
+                self.name,
+                super::super::factory::redact_endpoint(&self.base_url),
+                model,
+                status_str,
             );
         } else if super::super::should_report_provider_http_failure(status) {
             crate::core::observability::report_error(

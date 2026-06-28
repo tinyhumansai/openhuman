@@ -4302,6 +4302,50 @@ async fn responses_api_insufficient_balance_402_not_reported_to_sentry() {
 }
 
 #[tokio::test]
+async fn missing_responses_route_404_marks_unsupported_without_sentry_event() {
+    // TAURI-RUST-5A1 residual: a custom slug can still point at a
+    // chat-completions-only endpoint. The first `/responses` 404 should teach
+    // the process that the endpoint is unsupported, but it must not page
+    // Sentry because this is deterministic endpoint capability, not an app bug.
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(404).set_body_string("model route absent"))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(ResponseTemplate::new(404).set_body_string("404 page not found"))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let (transport, _guard) = install_test_sentry_hub();
+    let base_url = format!("{}/v1", mock_server.uri());
+    let provider = make_provider("nvidia", &base_url, Some("byo-key"));
+
+    let err = provider
+        .chat_with_history(&[ChatMessage::user("hello")], "nvidia/test-model", 0.0)
+        .await
+        .expect_err("chat-only endpoint must still propagate the terminal 404");
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("responses fallback failed") && msg.contains("Responses API error (404)"),
+        "err: {msg}"
+    );
+    assert!(
+        super::responses_api_known_unsupported(&base_url),
+        "route-missing /responses 404 must cache the endpoint as unsupported"
+    );
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "route-missing /responses 404 must be demoted instead of reported to Sentry"
+    );
+}
+
+#[tokio::test]
 async fn stream_chat_with_system_insufficient_balance_402_propagates_error() {
     // Exercises the `stream_chat_with_system` (operation=stream_chat) 402
     // insufficient-balance demote arm. The streaming work runs in a detached
