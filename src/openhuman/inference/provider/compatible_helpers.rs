@@ -173,7 +173,7 @@ impl OpenAiCompatibleProvider {
             super::super::log_budget_exhausted_http_400(
                 "responses_api",
                 self.name.as_str(),
-                Some(request_model),
+                Some(model),
                 status,
             );
         } else if super::super::is_custom_openai_upstream_bad_request_http_400(
@@ -184,14 +184,14 @@ impl OpenAiCompatibleProvider {
             super::super::log_custom_openai_upstream_bad_request_http_400(
                 "responses_api",
                 self.name.as_str(),
-                Some(request_model),
+                Some(model),
                 status,
             );
         } else if super::super::is_provider_access_policy_denied_http_403(status, &error) {
             super::super::log_provider_access_policy_denied_http_403(
                 "responses_api",
                 self.name.as_str(),
-                Some(request_model),
+                Some(model),
                 status,
             );
         } else if super::super::is_provider_config_rejection_http(
@@ -202,7 +202,7 @@ impl OpenAiCompatibleProvider {
             super::super::log_provider_config_rejection(
                 "responses_api",
                 self.name.as_str(),
-                Some(request_model),
+                Some(model),
                 status,
             );
         } else if super::super::is_byo_provider_auth_failure_http(
@@ -213,7 +213,7 @@ impl OpenAiCompatibleProvider {
             super::super::log_byo_provider_auth_failure(
                 "responses_api",
                 self.name.as_str(),
-                Some(request_model),
+                Some(model),
                 status,
             );
         } else if super::super::is_openai_oauth_session_expired_http(
@@ -224,7 +224,7 @@ impl OpenAiCompatibleProvider {
             super::super::log_openai_oauth_session_expired(
                 "responses_api",
                 self.name.as_str(),
-                Some(request_model),
+                Some(model),
                 status,
             );
         } else if super::super::is_provider_insufficient_credits_402(status, &error) {
@@ -238,7 +238,7 @@ impl OpenAiCompatibleProvider {
             super::super::log_provider_insufficient_credits_402(
                 "responses_api",
                 self.name.as_str(),
-                Some(request_model),
+                Some(model),
                 status,
             );
         } else if super::super::should_report_provider_http_failure(status) {
@@ -248,7 +248,7 @@ impl OpenAiCompatibleProvider {
                 "responses_api",
                 &[
                     ("provider", self.name.as_str()),
-                    ("model", request_model),
+                    ("model", model),
                     ("status", status_str.as_str()),
                     ("failure", "non_2xx"),
                 ],
