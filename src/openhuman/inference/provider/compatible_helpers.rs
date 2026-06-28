@@ -175,6 +175,13 @@ impl OpenAiCompatibleProvider {
                 Some(model),
                 status,
             );
+        } else if super::super::is_provider_moderation_rejection_http_400(status, &error) {
+            super::super::log_provider_moderation_rejection_http_400(
+                "responses_api",
+                self.name.as_str(),
+                Some(model),
+                status,
+            );
         } else if super::super::is_provider_config_rejection_http(
             status,
             self.name.as_str(),

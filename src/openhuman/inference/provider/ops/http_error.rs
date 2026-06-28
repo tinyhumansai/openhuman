@@ -936,6 +936,7 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
     let is_custom_openai_upstream_bad_request =
         is_custom_openai_upstream_bad_request_http_400(provider, status, &body);
     let is_provider_access_policy_denied = is_provider_access_policy_denied_http_403(status, &body);
+    let is_provider_moderation_rejection = is_provider_moderation_rejection_http_400(status, &body);
     let is_provider_config_rejection = is_provider_config_rejection_http(status, provider, &body);
     // Context-overflow is status-agnostic: match the body directly (some
     // custom gateways mis-report it as 500 — TAURI-RUST-501 — so a status
@@ -984,6 +985,8 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
         log_custom_openai_upstream_bad_request_http_400("api_error", provider, None, status);
     } else if is_provider_access_policy_denied {
         log_provider_access_policy_denied_http_403("api_error", provider, None, status);
+    } else if is_provider_moderation_rejection {
+        log_provider_moderation_rejection_http_400("api_error", provider, None, status);
     } else if is_provider_config_rejection {
         log_provider_config_rejection("api_error", provider, None, status);
     } else if is_context_window_exceeded {

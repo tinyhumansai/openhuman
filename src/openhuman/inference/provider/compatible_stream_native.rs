@@ -93,6 +93,13 @@ impl OpenAiCompatibleProvider {
                     Some(native_request.model.as_str()),
                     status,
                 );
+            } else if super::super::is_provider_moderation_rejection_http_400(status, &body) {
+                super::super::log_provider_moderation_rejection_http_400(
+                    "streaming_chat",
+                    self.name.as_str(),
+                    Some(native_request.model.as_str()),
+                    status,
+                );
             } else if Self::is_native_tool_schema_unsupported(status, &body) {
                 log::info!(
                     "[stream] {} model rejected tool schema (status={}) — caller will retry without tools",

@@ -174,6 +174,13 @@ impl Provider for OpenAiCompatibleProvider {
                     Some(model),
                     status,
                 );
+            } else if super::super::is_provider_moderation_rejection_http_400(status, &error) {
+                super::super::log_provider_moderation_rejection_http_400(
+                    "chat_completions",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
             } else if super::super::is_provider_access_policy_denied_http_403(status, &error) {
                 super::super::log_provider_access_policy_denied_http_403(
                     "chat_completions",
@@ -1030,6 +1037,16 @@ impl Provider for OpenAiCompatibleProvider {
                         Some(model_owned.as_str()),
                         status,
                     );
+                } else if crate::openhuman::inference::provider::is_provider_moderation_rejection_http_400(
+                    status,
+                    &raw_error,
+                ) {
+                    crate::openhuman::inference::provider::log_provider_moderation_rejection_http_400(
+                        "stream_chat",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
                 } else if crate::openhuman::inference::provider::is_backend_error_code_owned(
                     provider_name.as_str(),
                     &raw_error,
@@ -1259,6 +1276,16 @@ impl Provider for OpenAiCompatibleProvider {
                     &raw_error,
                 ) {
                     crate::openhuman::inference::provider::log_provider_config_rejection(
+                        "stream_chat_history",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
+                } else if crate::openhuman::inference::provider::is_provider_moderation_rejection_http_400(
+                    status,
+                    &raw_error,
+                ) {
+                    crate::openhuman::inference::provider::log_provider_moderation_rejection_http_400(
                         "stream_chat_history",
                         provider_name.as_str(),
                         Some(model_owned.as_str()),

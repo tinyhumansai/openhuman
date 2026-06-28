@@ -427,6 +427,145 @@ async fn native_chat_ombudsman_400_demoted_from_sentry() {
     );
 }
 
+#[tokio::test]
+async fn chat_with_system_ombudsman_400_demoted_from_sentry() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(OLLAMA_OMBUDSMAN_400_WIRE_BODY))
+        .mount(&mock_server)
+        .await;
+
+    let (transport, _sentry_guard) = install_test_sentry_hub();
+    let provider =
+        OpenAiCompatibleProvider::new("ollama", &mock_server.uri(), None, AuthStyle::None);
+
+    let err = provider
+        .chat_with_system(None, "hello", "gemma3:1b-it-qat", 0.7)
+        .await
+        .expect_err("moderation rejection must still propagate");
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Message rejected by Ombudsman") && msg.contains("\"score\":80"),
+        "provider rejection detail must remain visible, got: {msg}"
+    );
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "chat_completions moderation 400 must not be reported to Sentry"
+    );
+}
+
+#[tokio::test]
+async fn chat_with_history_ombudsman_400_demoted_via_api_error() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(OLLAMA_OMBUDSMAN_400_WIRE_BODY))
+        .mount(&mock_server)
+        .await;
+
+    let (transport, _sentry_guard) = install_test_sentry_hub();
+    let provider =
+        OpenAiCompatibleProvider::new("ollama", &mock_server.uri(), None, AuthStyle::None);
+
+    let err = provider
+        .chat_with_history(&[ChatMessage::user("hello")], "gemma3:1b-it-qat", 0.7)
+        .await
+        .expect_err("moderation rejection must still propagate");
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Message rejected by Ombudsman") && msg.contains("\"score\":80"),
+        "provider rejection detail must remain visible, got: {msg}"
+    );
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "api_error moderation 400 must not be reported to Sentry"
+    );
+}
+
+#[tokio::test]
+async fn streaming_chat_ombudsman_400_demoted_from_sentry() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(OLLAMA_OMBUDSMAN_400_WIRE_BODY))
+        .mount(&mock_server)
+        .await;
+
+    let (transport, _sentry_guard) = install_test_sentry_hub();
+    let provider =
+        OpenAiCompatibleProvider::new("ollama", &mock_server.uri(), None, AuthStyle::None);
+    let request = NativeChatRequest {
+        model: "gemma3:1b-it-qat".to_string(),
+        messages: vec![NativeMessage {
+            role: "user".to_string(),
+            content: Some("hello".into()),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        temperature: Some(0.7),
+        stream: Some(true),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: Some(super::compatible_types::OpenAiStreamOptions {
+            include_usage: true,
+        }),
+        options: None,
+        frequency_penalty: None,
+        max_tokens: None,
+    };
+    let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(8);
+
+    let err = provider
+        .stream_native_chat(None, &request, &delta_tx, 0)
+        .await
+        .expect_err("streaming moderation rejection must still propagate");
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Message rejected by Ombudsman") && msg.contains("\"score\":80"),
+        "provider rejection detail must remain visible, got: {msg}"
+    );
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "streaming moderation 400 must not be reported to Sentry"
+    );
+}
+
+#[tokio::test]
+async fn responses_api_ombudsman_400_demoted_from_sentry() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(OLLAMA_OMBUDSMAN_400_WIRE_BODY))
+        .mount(&mock_server)
+        .await;
+
+    let (transport, _sentry_guard) = install_test_sentry_hub();
+    let provider =
+        OpenAiCompatibleProvider::new("ollama", &mock_server.uri(), None, AuthStyle::None)
+            .with_responses_api_primary();
+
+    let err = provider
+        .chat_with_history(&[ChatMessage::user("hello")], "gemma3:1b-it-qat", 0.7)
+        .await
+        .expect_err("responses moderation rejection must still propagate");
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Message rejected by Ombudsman") && msg.contains("\"score\":80"),
+        "provider rejection detail must remain visible, got: {msg}"
+    );
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "responses moderation 400 must not be reported to Sentry"
+    );
+}
+
 /// TAURI-RUST-5MV: ollama.com hosted-inference 500 on the non-streaming native
 /// path must be demoted (no Sentry event) and surface the actionable message,
 /// while still propagating as `Err` so reliable-provider retry/fallback runs.
@@ -4396,6 +4535,44 @@ async fn stream_chat_with_system_insufficient_balance_402_propagates_error() {
 }
 
 #[tokio::test]
+async fn stream_chat_with_system_ombudsman_400_propagates_error() {
+    // The streaming work runs in a detached tokio task whose Sentry hub is not
+    // the test hub. Assert the terminal Provider chunk still carries the
+    // provider body; inline Sentry suppression is covered by the awaited
+    // native/chat/api/responses tests above.
+    use crate::openhuman::inference::provider::traits::{StreamError, StreamOptions};
+    use futures_util::StreamExt;
+
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(OLLAMA_OMBUDSMAN_400_WIRE_BODY))
+        .mount(&mock_server)
+        .await;
+
+    let provider =
+        OpenAiCompatibleProvider::new("ollama", &mock_server.uri(), None, AuthStyle::None);
+    let mut stream = provider.stream_chat_with_system(
+        None,
+        "hello",
+        "gemma3:1b-it-qat",
+        0.7,
+        StreamOptions::new(true),
+    );
+    let mut terminal: Option<String> = None;
+    while let Some(item) = stream.next().await {
+        if let Err(StreamError::Provider(msg)) = item {
+            terminal = Some(msg);
+        }
+    }
+    let msg = terminal.expect("a 400 must yield a terminal Provider error chunk");
+    assert!(
+        msg.contains("400") && msg.contains("Message rejected by Ombudsman"),
+        "msg: {msg}"
+    );
+}
+
+#[tokio::test]
 async fn stream_chat_with_history_insufficient_balance_402_propagates_error() {
     // Sibling of the above for `stream_chat_with_history`
     // (operation=stream_chat_history). Same detached-task caveat — asserts the
@@ -4427,6 +4604,41 @@ async fn stream_chat_with_history_insufficient_balance_402_propagates_error() {
     let msg = terminal.expect("a 402 must yield a terminal Provider error chunk");
     assert!(
         msg.contains("402") && msg.contains("Insufficient Balance"),
+        "msg: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn stream_chat_with_history_ombudsman_400_propagates_error() {
+    // Sibling of the above for `stream_chat_with_history`
+    // (operation=stream_chat_history).
+    use crate::openhuman::inference::provider::traits::{StreamError, StreamOptions};
+    use futures_util::StreamExt;
+
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(OLLAMA_OMBUDSMAN_400_WIRE_BODY))
+        .mount(&mock_server)
+        .await;
+
+    let provider =
+        OpenAiCompatibleProvider::new("ollama", &mock_server.uri(), None, AuthStyle::None);
+    let mut stream = provider.stream_chat_with_history(
+        &[ChatMessage::user("hello")],
+        "gemma3:1b-it-qat",
+        0.7,
+        StreamOptions::new(true),
+    );
+    let mut terminal: Option<String> = None;
+    while let Some(item) = stream.next().await {
+        if let Err(StreamError::Provider(msg)) = item {
+            terminal = Some(msg);
+        }
+    }
+    let msg = terminal.expect("a 400 must yield a terminal Provider error chunk");
+    assert!(
+        msg.contains("400") && msg.contains("Message rejected by Ombudsman"),
         "msg: {msg}"
     );
 }
