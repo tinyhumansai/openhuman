@@ -122,6 +122,10 @@ pub async fn install_workflow_from_url(
     install_workflow_from_url_with_home(workspace_dir, params, home.as_deref()).await
 }
 
+pub(crate) fn should_report_install_fetch_status(status: reqwest::StatusCode) -> bool {
+    !status.is_success() && !status.is_client_error()
+}
+
 pub(crate) async fn install_workflow_from_url_with_home(
     workspace_dir: &Path,
     params: InstallWorkflowFromUrlParams,
@@ -205,16 +209,24 @@ pub(crate) async fn install_workflow_from_url_with_home(
             "fetch failed: {redacted_fetch_url} returned status {}",
             status.as_u16()
         );
-        crate::core::observability::report_error(
-            report_msg.as_str(),
-            "skills",
-            "install_fetch",
-            &[
-                ("url", redacted_fetch_url.as_str()),
-                ("status", status_str.as_str()),
-                ("failure", "non_2xx"),
-            ],
-        );
+        if should_report_install_fetch_status(status) {
+            crate::core::observability::report_error(
+                report_msg.as_str(),
+                "skills",
+                "install_fetch",
+                &[
+                    ("url", redacted_fetch_url.as_str()),
+                    ("status", status_str.as_str()),
+                    ("failure", "non_2xx"),
+                ],
+            );
+        } else {
+            tracing::debug!(
+                fetch_url = %redacted_fetch_url,
+                status = status.as_u16(),
+                "[skills] install_workflow_from_url: skipped Sentry report for user/catalog fetch status"
+            );
+        }
         return Err(msg);
     }
 
