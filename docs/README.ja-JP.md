@@ -22,7 +22,7 @@
 
 <p align="center">
  <a href="https://discord.tinyhumans.ai/">Discord</a> •
- <a href="https://www.reddit.com/r/tinyhumansai/">Reddit</a> •
+ Reddit •
  <a href="https://x.com/intent/follow?screen_name=tinyhumansai">X/Twitter</a> •
  <a href="https://tinyhumans.gitbook.io/openhuman/">ドキュメント</a> •
  <a href="https://x.com/intent/follow?screen_name=senamakel">@senamakel（作者）をフォロー</a>
@@ -80,7 +80,7 @@ OpenHuman は、あなたの日常生活に統合されるよう設計された�
 
 - **[Memory Tree](https://tinyhumans.gitbook.io/openhuman/features/memory-tree) + [Obsidian Wiki](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki)**: あなたのデータとアクティビティから構築されるローカルファーストのナレッジベースです。接続したすべての情報は ≤3k トークンの Markdown チャンクへ正規化され、スコアリングされ、階層的なサマリーツリーに畳み込まれて **あなたのマシン上の SQLite** に保存されます。同じチャンクは Obsidian 互換のボルトに `.md` ファイルとして配置され、開いて閲覧・編集できます。Karpathy 氏の [obsidian-wiki ワークフロー](https://x.com/karpathy/status/2039805659525644595)にインスパイアされています。
 
-- **電池同梱(Batteries included)**: ウェブ検索、ウェブフェッチ用[スクレイパー](https://tinyhumans.gitbook.io/openhuman/features/native-tools)、フルコーダーツールセット(ファイルシステム、git、lint、test、grep)、そして[ネイティブ音声](https://tinyhumans.gitbook.io/openhuman/features/voice)(STT 入力、ElevenLabs TTS 出力、マスコットのリップシンク、ライブ Google Meet エージェント)がデフォルトで組み込まれています。デフォルトで、[モデルルーティング](https://tinyhumans.gitbook.io/openhuman/features/model-routing)は OpenHuman バックエンドを使用して各ワークロードに適切な LLM(reasoning、fast、または vision)を選択およびプロキシします。一つのサブスクリプションですべてのモデルが含まれます。「ファイル読み込みのためにプラグインをインストール」という煩わしさはありません。デバイス上のワークロード向けに [Ollama によるオプショナルなローカル AI](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai) も利用できます。
+- **電池同梱(Batteries included)**: ウェブ検索、ウェブフェッチ用[スクレイパー](https://tinyhumans.gitbook.io/openhuman/features/native-tools)、フルコーダーツールセット(ファイルシステム、git、lint、test、grep)、そして[ネイティブ音声](https://tinyhumans.gitbook.io/openhuman/features/native-tools/voice)(STT 入力、ElevenLabs TTS 出力、マスコットのリップシンク、ライブ Google Meet エージェント)がデフォルトで組み込まれています。デフォルトで、[モデルルーティング](https://tinyhumans.gitbook.io/openhuman/features/model-routing)は OpenHuman バックエンドを使用して各ワークロードに適切な LLM(reasoning、fast、または vision)を選択およびプロキシします。一つのサブスクリプションですべてのモデルが含まれます。「ファイル読み込みのためにプラグインをインストール」という煩わしさはありません。デバイス上のワークロード向けに [Ollama によるオプショナルなローカル AI](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai) も利用できます。
 
 - **[スマートトークン圧縮 (TokenJuice)](https://tinyhumans.gitbook.io/openhuman/features/token-compression)**: すべてのツール呼び出し、スクレイプ結果、メール本文、検索ペイロードは、LLM モデルに渡される前にトークン圧縮レイヤーを通過します。HTML は Markdown に変換され、長い URL は短縮され、冗長なツール出力は設定可能なルールレイヤーで重複排除と要約が行われるなど…。CJK、絵文字などのマルチバイト文字は書記素(grapheme)単位で完全に保持され、除去されることはありません。同じ情報をわずかなトークン数で得られます。コストとレイテンシを最大 80% 削減します。
 
@@ -133,7 +133,7 @@ OpenHuman はその待ち時間をスキップします。アカウントを接�
 _AGI と人工意識への道を進んでいますか? リポジトリにスターをつけて、他の人にも道筋を見つけてもらいましょう。_
 
 <p align="center">
- <a href="https://www.star-history.com/#tinyhumansai/openhuman&type=date&legend=top-left">
+ <a href="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left">
  <picture>
  <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&theme=dark&legend=top-left" />
  <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left" />
