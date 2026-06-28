@@ -8,7 +8,9 @@ use anyhow::anyhow;
 use crate::rpc::RpcOutcome;
 
 use super::gate::{try_boot_state, ApprovalGate, ApprovalGateBootState};
-use super::types::{ApprovalAuditEntry, ApprovalDecision, PendingApproval};
+use super::types::{
+    ApprovalAuditEntry, ApprovalDecision, ApprovalDecisionOutcome, PendingApproval,
+};
 
 /// Read the host-aware approval-gate boot decision so the UI banner can
 /// render the right state on first paint (rather than waiting for a
@@ -105,8 +107,8 @@ pub async fn approval_decide(
         );
         anyhow!("approval gate is not installed; supervised mode disabled")
     })?;
-    let decided = match gate.decide(request_id, decision) {
-        Ok(row) => row,
+    let outcome = match gate.decide_with_status(request_id, decision) {
+        Ok(outcome) => outcome,
         Err(err) => {
             tracing::error!(
                 request_id = request_id,
@@ -116,13 +118,34 @@ pub async fn approval_decide(
             return Err(err);
         }
     };
-    let row = decided.ok_or_else(|| {
-        tracing::warn!(
-            request_id = request_id,
-            "[rpc:approval_decide] no pending approval found"
-        );
-        anyhow!("no pending approval found for request_id '{request_id}'")
-    })?;
+    let row = match outcome {
+        ApprovalDecisionOutcome::Decided(row) => row,
+        ApprovalDecisionOutcome::AlreadyTerminal {
+            decision: persisted_decision,
+        } => {
+            tracing::warn!(
+                request_id = request_id,
+                persisted_decision = persisted_decision.as_str(),
+                attempted_decision = decision.as_str(),
+                "[rpc:approval_decide] no pending approval found; request already terminal"
+            );
+            return Err(anyhow!(
+                "no pending approval found for request_id '{request_id}' \
+                 (already decided as '{}')",
+                persisted_decision.as_str()
+            ));
+        }
+        ApprovalDecisionOutcome::NotFound => {
+            tracing::error!(
+                request_id = request_id,
+                attempted_decision = decision.as_str(),
+                "[rpc:approval_decide] approval request not found"
+            );
+            return Err(anyhow!(
+                "approval request not found for request_id '{request_id}'"
+            ));
+        }
+    };
 
     let mut logs = vec![format!(
         "[approval] decided request_id={} tool={} decision={}",

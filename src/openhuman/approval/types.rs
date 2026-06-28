@@ -108,6 +108,18 @@ impl ApprovalDecision {
     }
 }
 
+/// Result of attempting to decide an approval request.
+#[derive(Debug, Clone)]
+pub enum ApprovalDecisionOutcome {
+    /// This call transitioned a pending row to a terminal decision.
+    Decided(PendingApproval),
+    /// The row exists but was already terminal, either because another
+    /// caller decided it first or because expiry lazily denied it.
+    AlreadyTerminal { decision: ApprovalDecision },
+    /// No persisted row exists for this request id.
+    NotFound,
+}
+
 /// Outcome of routing a tool call through `ApprovalGate::intercept`.
 #[derive(Debug, Clone)]
 pub enum GateOutcome {

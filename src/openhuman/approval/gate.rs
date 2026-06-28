@@ -43,7 +43,9 @@ use crate::openhuman::config::Config;
 use crate::openhuman::security::POLICY_DENIED_MARKER;
 
 use super::store;
-use super::types::{ApprovalDecision, ExecutionOutcome, GateOutcome, PendingApproval};
+use super::types::{
+    ApprovalDecision, ApprovalDecisionOutcome, ExecutionOutcome, GateOutcome, PendingApproval,
+};
 
 /// How long the gate will park a future before timing out and
 /// returning `Deny`. 10 minutes matches the default `expires_at`
@@ -693,15 +695,15 @@ impl ApprovalGate {
         }
     }
 
-    /// Apply a user decision. Returns the now-decided
-    /// [`PendingApproval`] row when one was found.
-    pub fn decide(
+    /// Apply a user decision and classify whether the request was pending,
+    /// already terminal, or never persisted.
+    pub fn decide_with_status(
         &self,
         request_id: &str,
         decision: ApprovalDecision,
-    ) -> anyhow::Result<Option<PendingApproval>> {
-        let decided = store::decide(&self.config, request_id, decision)?;
-        if let Some(row) = &decided {
+    ) -> anyhow::Result<ApprovalDecisionOutcome> {
+        let outcome = store::decide_with_status(&self.config, request_id, decision)?;
+        if let ApprovalDecisionOutcome::Decided(row) = &outcome {
             // `ApproveAlwaysForTool` persistence (append to `autonomy.auto_approve`
             // + reload the live policy) is handled by the `approval_decide` RPC
             // handler, which is async and owns the config save+reload path. The
@@ -714,8 +716,44 @@ impl ApprovalGate {
                 tool_name: row.tool_name.clone(),
                 decision: decision.as_str().to_string(),
             });
+        } else {
+            match &outcome {
+                ApprovalDecisionOutcome::AlreadyTerminal {
+                    decision: persisted_decision,
+                } => {
+                    tracing::debug!(
+                        request_id = %request_id,
+                        persisted_decision = persisted_decision.as_str(),
+                        attempted_decision = decision.as_str(),
+                        "[approval::gate] decision ignored for already-terminal request"
+                    );
+                }
+                ApprovalDecisionOutcome::NotFound => {
+                    tracing::warn!(
+                        request_id = %request_id,
+                        attempted_decision = decision.as_str(),
+                        "[approval::gate] decision ignored for unknown request"
+                    );
+                }
+                ApprovalDecisionOutcome::Decided(_) => {}
+            }
         }
-        Ok(decided)
+        Ok(outcome)
+    }
+
+    /// Apply a user decision. Returns the now-decided
+    /// [`PendingApproval`] row when one was found.
+    pub fn decide(
+        &self,
+        request_id: &str,
+        decision: ApprovalDecision,
+    ) -> anyhow::Result<Option<PendingApproval>> {
+        match self.decide_with_status(request_id, decision)? {
+            ApprovalDecisionOutcome::Decided(row) => Ok(Some(row)),
+            ApprovalDecisionOutcome::AlreadyTerminal { .. } | ApprovalDecisionOutcome::NotFound => {
+                Ok(None)
+            }
+        }
     }
 
     /// List all undecided rows, including orphans from prior launches.

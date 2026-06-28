@@ -109,6 +109,12 @@ pub enum ExpectedErrorKind {
     LocalAiCapabilityUnavailable,
     BudgetExhausted,
     SessionExpired,
+    /// Approval decision replay/race: a second operator, double click, or
+    /// expiry tried to decide a request that is already terminal. The request
+    /// existed and the security outcome is already fail-closed or decided, so
+    /// Sentry has no product-actionable signal. A truly unknown request id uses
+    /// a different message and remains reportable.
+    ApprovalAlreadyResolved,
     /// Boot-window failure where the in-process core HTTP listener
     /// (`127.0.0.1:<port>`) is not yet accepting connections, so a sibling
     /// component (frontend RPC relay, agent-integrations client) sees a TCP
@@ -336,6 +342,9 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if lower.contains("codex cli auth") || lower.contains(".codex/auth.json") {
         return Some(ExpectedErrorKind::CodexCliAuthUnavailable);
     }
+    if is_approval_already_resolved_message(&lower) {
+        return Some(ExpectedErrorKind::ApprovalAlreadyResolved);
+    }
     if lower.contains("local ai is disabled") {
         return Some(ExpectedErrorKind::LocalAiDisabled);
     }
@@ -543,6 +552,10 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
         return Some(ExpectedErrorKind::FilesystemUserPathInvalid);
     }
     None
+}
+
+fn is_approval_already_resolved_message(lower: &str) -> bool {
+    lower.contains("no pending approval found for request_id")
 }
 
 /// Detect filesystem-out-of-space errors that bubble up from any syscall
@@ -1764,6 +1777,19 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 "[observability] {domain}.{operation} skipped expected session-expired error: {message}"
             );
         }
+        ExpectedErrorKind::ApprovalAlreadyResolved => {
+            // Approval UI/Telegram callbacks can race: duplicate taps, two
+            // operators, or expiry can arrive after the request is already
+            // terminal. The decision store now distinguishes those benign
+            // replays from unknown ids; only this replay string is demoted.
+            tracing::info!(
+                domain = domain,
+                operation = operation,
+                kind = "approval_already_resolved",
+                error = %message,
+                "[observability] {domain}.{operation} skipped expected already-resolved approval error: {message}"
+            );
+        }
         ExpectedErrorKind::LoopbackUnavailable => {
             // In-process-core boot-window condition: a sibling component
             // tried to reach `127.0.0.1:<port>` before the embedded core's
@@ -2789,6 +2815,21 @@ mod tests {
         assert_eq!(
             expected_error_kind("ollama embed failed with status 500"),
             None
+        );
+    }
+
+    #[test]
+    fn classifies_resolved_approval_decide_race_as_expected() {
+        assert_eq!(
+            expected_error_kind(
+                "no pending approval found for request_id 'req-1' (already decided as 'deny')"
+            ),
+            Some(ExpectedErrorKind::ApprovalAlreadyResolved)
+        );
+        assert_eq!(
+            expected_error_kind("approval request not found for request_id 'req-2'"),
+            None,
+            "a request id that never existed should remain observable"
         );
     }
 

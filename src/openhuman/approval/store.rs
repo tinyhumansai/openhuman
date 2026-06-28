@@ -30,7 +30,10 @@ use rusqlite::{params, types::Type, Connection};
 use crate::openhuman::config::Config;
 use crate::openhuman::memory_store::safety::sanitize_text;
 
-use super::types::{ApprovalAuditEntry, ApprovalDecision, ExecutionOutcome, PendingApproval};
+use super::types::{
+    ApprovalAuditEntry, ApprovalDecision, ApprovalDecisionOutcome, ExecutionOutcome,
+    PendingApproval,
+};
 
 /// SQL schema applied on every `with_connection` call.
 ///
@@ -246,41 +249,59 @@ pub fn list_pending(config: &Config) -> Result<Vec<PendingApproval>> {
     })
 }
 
+fn terminal_decision(conn: &Connection, request_id: &str) -> Result<Option<ApprovalDecision>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT decision FROM pending_approvals
+             WHERE request_id = ?1 AND decided_at IS NOT NULL",
+        )
+        .context("[approval::store] prepare get_decision")?;
+    let mut rows = stmt
+        .query(params![request_id])
+        .context("[approval::store] query get_decision")?;
+    if let Some(row) = rows.next().context("[approval::store] get_decision next")? {
+        let raw: String = row
+            .get(0)
+            .context("[approval::store] get_decision decode")?;
+        Ok(ApprovalDecision::from_str(&raw))
+    } else {
+        Ok(None)
+    }
+}
+
+fn decided_row(conn: &Connection, request_id: &str) -> Result<Option<PendingApproval>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT request_id, tool_name, action_summary, args_redacted,
+                    session_id, created_at, expires_at
+             FROM pending_approvals WHERE request_id = ?1",
+        )
+        .context("[approval::store] prepare select decided")?;
+    let mut rows = stmt
+        .query(params![request_id])
+        .context("[approval::store] query decided row")?;
+    if let Some(row) = rows.next().context("[approval::store] decided row next")? {
+        Ok(Some(row_to_pending(row)?))
+    } else {
+        Ok(None)
+    }
+}
+
 /// Look up the persisted decision for a request_id without mutating
 /// state. Returns `Ok(None)` when the row doesn't exist or hasn't
 /// been decided yet. Used to resolve gate-timeout vs decide races
 /// where the TTL elapses concurrently with a committed approval
 /// (CodeRabbit review on PR #2367).
 pub fn get_decision(config: &Config, request_id: &str) -> Result<Option<ApprovalDecision>> {
-    with_connection(config, |conn| {
-        let mut stmt = conn
-            .prepare(
-                "SELECT decision FROM pending_approvals
-                 WHERE request_id = ?1 AND decided_at IS NOT NULL",
-            )
-            .context("[approval::store] prepare get_decision")?;
-        let mut rows = stmt
-            .query(params![request_id])
-            .context("[approval::store] query get_decision")?;
-        if let Some(row) = rows.next().context("[approval::store] get_decision next")? {
-            let raw: String = row
-                .get(0)
-                .context("[approval::store] get_decision decode")?;
-            Ok(ApprovalDecision::from_str(&raw))
-        } else {
-            Ok(None)
-        }
-    })
+    with_connection(config, |conn| terminal_decision(conn, request_id))
 }
 
-/// Mark a pending row as decided and return the now-decided row.
-/// Returns `Ok(None)` if no row matched (already decided, expired, or
-/// unknown id).
-pub fn decide(
+/// Mark a pending row as decided and return a classified outcome.
+pub fn decide_with_status(
     config: &Config,
     request_id: &str,
     decision: ApprovalDecision,
-) -> Result<Option<PendingApproval>> {
+) -> Result<ApprovalDecisionOutcome> {
     with_connection(config, |conn| {
         expire_stale_with_now(conn, Utc::now())?;
 
@@ -295,24 +316,31 @@ pub fn decide(
             )
             .context("[approval::store] update decided")?;
         if updated == 0 {
-            return Ok(None);
+            return match terminal_decision(conn, request_id)? {
+                Some(decision) => Ok(ApprovalDecisionOutcome::AlreadyTerminal { decision }),
+                None => Ok(ApprovalDecisionOutcome::NotFound),
+            };
         }
-        let mut stmt = conn
-            .prepare(
-                "SELECT request_id, tool_name, action_summary, args_redacted,
-                        session_id, created_at, expires_at
-                 FROM pending_approvals WHERE request_id = ?1",
-            )
-            .context("[approval::store] prepare select decided")?;
-        let mut rows = stmt
-            .query(params![request_id])
-            .context("[approval::store] query decided row")?;
-        if let Some(row) = rows.next().context("[approval::store] decided row next")? {
-            Ok(Some(row_to_pending(row)?))
-        } else {
+        decided_row(conn, request_id)?.map_or(Ok(ApprovalDecisionOutcome::NotFound), |row| {
+            Ok(ApprovalDecisionOutcome::Decided(row))
+        })
+    })
+}
+
+/// Mark a pending row as decided and return the now-decided row.
+/// Returns `Ok(None)` if no row matched (already decided, expired, or
+/// unknown id).
+pub fn decide(
+    config: &Config,
+    request_id: &str,
+    decision: ApprovalDecision,
+) -> Result<Option<PendingApproval>> {
+    match decide_with_status(config, request_id, decision)? {
+        ApprovalDecisionOutcome::Decided(row) => Ok(Some(row)),
+        ApprovalDecisionOutcome::AlreadyTerminal { .. } | ApprovalDecisionOutcome::NotFound => {
             Ok(None)
         }
-    })
+    }
 }
 
 /// Persist the terminal status of a tool call the gate previously
@@ -507,7 +535,9 @@ fn parse_rfc3339(input: &str) -> DateTime<Utc> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::approval::types::{ApprovalDecision, PendingApproval};
+    use crate::openhuman::approval::types::{
+        ApprovalDecision, ApprovalDecisionOutcome, PendingApproval,
+    };
     use chrono::Duration;
     use serde_json::json;
     use tempfile::TempDir;
@@ -620,6 +650,40 @@ mod tests {
         let (config, _dir) = test_config();
         let res = decide(&config, "never-existed", ApprovalDecision::Deny).unwrap();
         assert!(res.is_none());
+    }
+
+    #[test]
+    fn decide_with_status_distinguishes_terminal_expired_and_missing_rows() {
+        let (config, _dir) = test_config();
+
+        insert_pending(&config, &sample("dupe", "sess-A"), "sess-A").unwrap();
+        let first = decide_with_status(&config, "dupe", ApprovalDecision::Deny).unwrap();
+        assert!(matches!(first, ApprovalDecisionOutcome::Decided(_)));
+        let duplicate = decide_with_status(&config, "dupe", ApprovalDecision::ApproveOnce).unwrap();
+        assert!(matches!(
+            duplicate,
+            ApprovalDecisionOutcome::AlreadyTerminal {
+                decision: ApprovalDecision::Deny
+            }
+        ));
+
+        insert_pending(
+            &config,
+            &sample_with_expiry("expired", "sess-A", Some(Utc::now() - Duration::minutes(1))),
+            "sess-A",
+        )
+        .unwrap();
+        let expired =
+            decide_with_status(&config, "expired", ApprovalDecision::ApproveOnce).unwrap();
+        assert!(matches!(
+            expired,
+            ApprovalDecisionOutcome::AlreadyTerminal {
+                decision: ApprovalDecision::Deny
+            }
+        ));
+
+        let missing = decide_with_status(&config, "never-existed", ApprovalDecision::Deny).unwrap();
+        assert!(matches!(missing, ApprovalDecisionOutcome::NotFound));
     }
 
     #[test]

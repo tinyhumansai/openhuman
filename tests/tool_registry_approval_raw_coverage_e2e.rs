@@ -1292,9 +1292,23 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
     .await;
     assert!(error_message(&duplicate_decide, "duplicate decide").contains("no pending approval"));
 
-    let recent = rpc(
+    let missing_decide = rpc(
         &harness.rpc_base,
         24,
+        "openhuman.approval_decide",
+        json!({ "request_id": "never-persisted-approval", "decision": "deny" }),
+    )
+    .await;
+    let missing_message = error_message(&missing_decide, "missing decide");
+    assert!(missing_message.contains("approval request not found"));
+    assert!(
+        !missing_message.contains("no pending approval"),
+        "unknown request ids must stay distinct from benign duplicate decides"
+    );
+
+    let recent = rpc(
+        &harness.rpc_base,
+        25,
         "openhuman.approval_list_recent_decisions",
         json!({ "limit": 1 }),
     )
