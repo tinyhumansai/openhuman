@@ -721,14 +721,18 @@ impl ApprovalGate {
                 ApprovalDecisionOutcome::AlreadyTerminal {
                     decision: persisted_decision,
                 } => {
+                    if let Some(tx) = self.take_waiter(request_id) {
+                        let _ = tx.send(*persisted_decision);
+                    }
                     tracing::debug!(
                         request_id = %request_id,
                         persisted_decision = persisted_decision.as_str(),
                         attempted_decision = decision.as_str(),
-                        "[approval::gate] decision ignored for already-terminal request"
+                        "[approval::gate] released waiter for already-terminal request"
                     );
                 }
                 ApprovalDecisionOutcome::NotFound => {
+                    drop(self.take_waiter(request_id));
                     tracing::warn!(
                         request_id = %request_id,
                         attempted_decision = decision.as_str(),
@@ -1119,6 +1123,54 @@ mod tests {
             .decide("does-not-exist", ApprovalDecision::ApproveOnce)
             .unwrap();
         assert!(decided.is_none());
+    }
+
+    #[tokio::test]
+    async fn decide_with_status_releases_waiter_for_already_terminal_row() {
+        let (gate, _dir) = test_gate();
+        let config = gate.config.clone();
+        let gate = Arc::new(gate);
+
+        let g = gate.clone();
+        let handle = tokio::spawn(async move {
+            turn_origin::with_origin(
+                web_origin(),
+                APPROVAL_CHAT_CONTEXT.scope(
+                    chat_ctx(),
+                    g.intercept("composio", "send slack", serde_json::json!({})),
+                ),
+            )
+            .await
+        });
+
+        let mut tries = 0;
+        let pending = loop {
+            let list = gate.list_pending().unwrap();
+            if let Some(p) = list.into_iter().next() {
+                break p;
+            }
+            tries += 1;
+            assert!(tries < 50, "pending row never appeared");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+
+        store::decide(&config, &pending.request_id, ApprovalDecision::Deny).unwrap();
+        let outcome = gate
+            .decide_with_status(&pending.request_id, ApprovalDecision::ApproveOnce)
+            .unwrap();
+        assert!(matches!(
+            outcome,
+            ApprovalDecisionOutcome::AlreadyTerminal {
+                decision: ApprovalDecision::Deny
+            }
+        ));
+
+        let parked = tokio::time::timeout(Duration::from_millis(100), handle)
+            .await
+            .expect("already-terminal replay should release the parked waiter")
+            .expect("intercept task");
+        assert!(matches!(parked, GateOutcome::Deny { .. }));
+        assert!(gate.pending_for_thread("t-test").is_none());
     }
 
     #[tokio::test]

@@ -556,6 +556,7 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
 
 fn is_approval_already_resolved_message(lower: &str) -> bool {
     lower.contains("no pending approval found for request_id")
+        && lower.contains("already decided as")
 }
 
 /// Detect filesystem-out-of-space errors that bubble up from any syscall
@@ -2830,6 +2831,11 @@ mod tests {
             expected_error_kind("approval request not found for request_id 'req-2'"),
             None,
             "a request id that never existed should remain observable"
+        );
+        assert_eq!(
+            expected_error_kind("no pending approval found for request_id 'req-3'"),
+            None,
+            "prefix-only messages should not be classified as replay races"
         );
     }
 
