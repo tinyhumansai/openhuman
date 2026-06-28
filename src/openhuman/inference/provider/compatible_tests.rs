@@ -1068,10 +1068,14 @@ async fn responses_api_primary_posts_directly_to_responses() {
 #[tokio::test]
 async fn codex_responses_remaps_auto_model_before_posting() {
     let server = MockServer::start().await;
+    let expected_model = super::super::openai_codex::OPENAI_CODEX_MODEL_HINTS
+        .first()
+        .copied()
+        .unwrap_or("gpt-5.5");
     Mock::given(method("POST"))
         .and(path("/backend-api/codex/responses"))
         .and(body_json(serde_json::json!({
-            "model": "gpt-5.5",
+            "model": expected_model,
             "input": [{
                 "role": "user",
                 "content": [{"type": "input_text", "text": "hello"}]
@@ -1101,6 +1105,56 @@ async fn codex_responses_remaps_auto_model_before_posting() {
         .unwrap();
 
     assert_eq!(text, "ok");
+}
+
+#[tokio::test]
+async fn codex_responses_reports_remapped_auto_model_on_error() {
+    let server = MockServer::start().await;
+    let expected_model = super::super::openai_codex::OPENAI_CODEX_MODEL_HINTS
+        .first()
+        .copied()
+        .unwrap_or("gpt-5.5");
+    Mock::given(method("POST"))
+        .and(path("/backend-api/codex/responses"))
+        .and(body_json(serde_json::json!({
+            "model": expected_model,
+            "input": [{
+                "role": "user",
+                "content": [{"type": "input_text", "text": "hello"}]
+            }],
+            "stream": true,
+            "store": false
+        })))
+        .respond_with(ResponseTemplate::new(500).set_body_string("codex unavailable"))
+        .mount(&server)
+        .await;
+
+    let (transport, _sentry_guard) = install_test_sentry_hub();
+    let provider = OpenAiCompatibleProvider::new(
+        "openai",
+        &format!("{}/backend-api/codex", server.uri()),
+        Some("oauth-access-token"),
+        AuthStyle::Bearer,
+    )
+    .with_responses_api_primary();
+
+    let err = provider
+        .chat_with_history(&[ChatMessage::user("hello")], "auto", 0.0)
+        .await
+        .expect_err("reportable responses failure should propagate");
+
+    assert!(
+        err.to_string()
+            .contains("openai Responses API error (500): codex unavailable"),
+        "unexpected responses error: {err}"
+    );
+    let events = transport.fetch_and_clear_events();
+    assert_eq!(events.len(), 1, "reportable 500 should reach Sentry once");
+    assert_eq!(
+        events[0].tags.get("model").map(String::as_str),
+        Some(expected_model),
+        "Sentry model tag should use the concrete wire model"
+    );
 }
 
 /// TAURI-RUST-EWD: the Codex/ChatGPT OAuth Responses endpoint rejects

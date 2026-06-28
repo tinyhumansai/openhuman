@@ -154,6 +154,9 @@ impl OpenAiCompatibleProvider {
             "{} Responses API error ({status_str}): {sanitized}",
             self.name
         );
+        // Error telemetry below should reflect the concrete model actually
+        // sent on the wire after Codex `auto` remapping.
+        let model = request_model;
         // A 404 from the `/responses` route can mean this endpoint has no
         // Responses API at all — disable the chat-completions-404 →
         // `/responses` fallback for it so we stop issuing a guaranteed second
