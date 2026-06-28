@@ -4,7 +4,10 @@
 //! as appropriate). External code only sees the public API on
 //! [`super::OpenAiCompatibleProvider`].
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{
+    de::{DeserializeOwned, Error as DeError},
+    Deserialize, Deserializer, Serialize,
+};
 
 // ── Request bodies ────────────────────────────────────────────────────────────
 
@@ -345,38 +348,28 @@ pub(crate) struct ResponseMessage {
 }
 
 // Manual `Deserialize` so that `reasoning` and `reasoning_content` are accepted
-// as DISTINCT wire keys and then folded into the single canonical field.
+// as wire keys and then folded into the single canonical field.
 //
 // A serde `alias` maps both names onto one field slot, which makes a provider
 // that emits BOTH keys in the same object (some OpenRouter / vLLM-SGLang
 // proxies do) fail with `duplicate field \`reasoning_content\``, dropping the
-// entire response. Deserializing them as separate optional fields tolerates
-// any combination; the canonical `reasoning_content` wins when both are present.
+// entire response. A derived shadow struct still rejects an exact duplicate
+// `reasoning_content` key, which NVIDIA-compatible proxies can emit. Parsing
+// through a JSON object folds exact duplicates (last value wins), while the
+// canonical `reasoning_content` field still wins over the `reasoning` alias.
 impl<'de> Deserialize<'de> for ResponseMessage {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        #[derive(Deserialize)]
-        struct Shadow {
-            #[serde(default)]
-            content: Option<String>,
-            #[serde(default)]
-            reasoning_content: Option<String>,
-            #[serde(default)]
-            reasoning: Option<String>,
-            #[serde(default)]
-            tool_calls: Option<Vec<ToolCall>>,
-            #[serde(default)]
-            function_call: Option<Function>,
-        }
-
-        let shadow = Shadow::deserialize(deserializer)?;
+        let mut fields = deserialize_object_fields::<D>(deserializer, "response message")?;
+        let canonical = deserialize_optional_field(fields.remove("reasoning_content"))?;
+        let alias = deserialize_optional_field(fields.remove("reasoning"))?;
         Ok(ResponseMessage {
-            content: shadow.content,
-            reasoning_content: shadow.reasoning_content.or(shadow.reasoning),
-            tool_calls: shadow.tool_calls,
-            function_call: shadow.function_call,
+            content: deserialize_optional_field(fields.remove("content"))?,
+            reasoning_content: canonical.or(alias),
+            tool_calls: deserialize_optional_field(fields.remove("tool_calls"))?,
+            function_call: deserialize_optional_field(fields.remove("function_call"))?,
         })
     }
 }
@@ -501,32 +494,45 @@ pub(crate) struct StreamDelta {
 }
 
 // Manual `Deserialize` for the same reason as `ResponseMessage`: a streaming
-// delta that carries both `reasoning` and `reasoning_content` must not fail
-// with `duplicate field`. They deserialize as distinct keys and fold into the
-// canonical `reasoning_content` (canonical wins when both are present).
+// delta that carries `reasoning`, `reasoning_content`, or exact duplicate
+// `reasoning_content` keys must not fail with `duplicate field`.
 impl<'de> Deserialize<'de> for StreamDelta {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        #[derive(Deserialize)]
-        struct Shadow {
-            #[serde(default)]
-            content: Option<String>,
-            #[serde(default)]
-            reasoning_content: Option<String>,
-            #[serde(default)]
-            reasoning: Option<String>,
-            #[serde(default)]
-            tool_calls: Option<Vec<StreamToolCallDelta>>,
-        }
-
-        let shadow = Shadow::deserialize(deserializer)?;
+        let mut fields = deserialize_object_fields::<D>(deserializer, "stream delta")?;
+        let canonical = deserialize_optional_field(fields.remove("reasoning_content"))?;
+        let alias = deserialize_optional_field(fields.remove("reasoning"))?;
         Ok(StreamDelta {
-            content: shadow.content,
-            reasoning_content: shadow.reasoning_content.or(shadow.reasoning),
-            tool_calls: shadow.tool_calls,
+            content: deserialize_optional_field(fields.remove("content"))?,
+            reasoning_content: canonical.or(alias),
+            tool_calls: deserialize_optional_field(fields.remove("tool_calls"))?,
         })
+    }
+}
+
+fn deserialize_object_fields<'de, D>(
+    deserializer: D,
+    type_name: &str,
+) -> Result<serde_json::Map<String, serde_json::Value>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::Object(fields) => Ok(fields),
+        _ => Err(D::Error::custom(format!("expected {type_name} object"))),
+    }
+}
+
+fn deserialize_optional_field<T, E>(value: Option<serde_json::Value>) -> Result<Option<T>, E>
+where
+    T: DeserializeOwned,
+    E: DeError,
+{
+    match value {
+        Some(serde_json::Value::Null) | None => Ok(None),
+        Some(value) => serde_json::from_value(value).map(Some).map_err(E::custom),
     }
 }
 

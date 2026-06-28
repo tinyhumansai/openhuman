@@ -3204,6 +3204,35 @@ fn reasoning_and_reasoning_content_both_present_in_stream_delta_does_not_error()
     );
 }
 
+/// Regression for Sentry TAURI-RUST-85R: NVIDIA-compatible endpoints can emit
+/// the exact `reasoning_content` key twice in the same message object. Serde's
+/// derived struct deserializer rejects that shape with `duplicate field`, but
+/// we need to keep the completion and fold the duplicate value.
+#[test]
+fn duplicate_reasoning_content_keys_in_response_message_do_not_error() {
+    let json = r#"{"choices":[{"message":{"content":null,"reasoning_content":"first cot","reasoning_content":"final cot"}}]}"#;
+    let resp: ApiChatResponse = serde_json::from_str(json)
+        .expect("duplicate reasoning_content keys must parse without dropping the completion");
+    assert_eq!(
+        resp.choices[0].message.reasoning_content.as_deref(),
+        Some("final cot"),
+        "last duplicate reasoning_content value should be retained"
+    );
+}
+
+/// Same duplicate-key regression on the streaming delta path.
+#[test]
+fn duplicate_reasoning_content_keys_in_stream_delta_do_not_error() {
+    let json = r#"{"choices":[{"delta":{"reasoning_content":"first cot","reasoning_content":"final cot"},"finish_reason":null}]}"#;
+    let chunk: StreamChunkResponse = serde_json::from_str(json)
+        .expect("duplicate reasoning_content delta keys must parse without dropping the stream");
+    assert_eq!(
+        chunk.choices[0].delta.reasoning_content.as_deref(),
+        Some("final cot"),
+        "last duplicate reasoning_content delta value should be retained"
+    );
+}
+
 /// End-to-end: a tool-call turn whose reasoning arrived under the `reasoning`
 /// alias must still be surfaced by `parse_native_response` so the agent loop
 /// can replay it on the follow-up request (the issue #3094 failure path).
