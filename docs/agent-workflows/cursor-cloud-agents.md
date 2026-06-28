@@ -1,6 +1,6 @@
 # Cursor Cloud Agents — parallel workflow
 
-Operator playbook for running 15–20 [Cursor Cloud Agents](https://docs.cursor.com/agents/cloud) in parallel against OpenHuman. Companion to [`codex-pr-checklist.md`](codex-pr-checklist.md); the same merge gates apply.
+Operator playbook for running 15–20 [Cursor Cloud Agents](https://cursor.com/docs/cloud-agent) in parallel against OpenHuman. Companion to [`codex-pr-checklist.md`](codex-pr-checklist.md); the same merge gates apply.
 
 This doc closes [`tinyhumansai/openhuman#1480`](https://github.com/tinyhumansai/openhuman/issues/1480).
 
