@@ -296,6 +296,9 @@ pub enum ExpectedErrorKind {
     BackendErrorCodeOwned,
 }
 
+/// Classifies error strings that are expected runtime/user-state conditions.
+///
+/// Returns `None` for messages that should remain reportable to Sentry.
 pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     let lower = message.to_ascii_lowercase();
     // F2/F4: a managed-backend `errorCode` (#870) means the backend owns this
