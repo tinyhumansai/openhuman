@@ -3,6 +3,7 @@ use crate::openhuman::inference::provider::traits::{
     UsageInfo as ProviderUsageInfo,
 };
 
+use super::super::openai_codex::OPENAI_CODEX_MODEL_HINTS;
 use super::compatible_parse::{
     aggregate_responses_sse_body, build_responses_prompt, extract_responses_text,
     normalize_function_arguments, parse_responses_response_body,
@@ -53,6 +54,24 @@ impl OpenAiCompatibleProvider {
             })
             .unwrap_or(false);
 
+        // TAURI-RUST-AHX: Codex CLI accepts `model=auto`, but the
+        // ChatGPT-account Codex Responses endpoint rejects that sentinel. Resolve
+        // it to the first known Codex model before the request leaves the host.
+        let request_model = if is_codex_oauth_responses && model.trim().eq_ignore_ascii_case("auto")
+        {
+            let resolved = OPENAI_CODEX_MODEL_HINTS
+                .first()
+                .copied()
+                .unwrap_or("gpt-5.5");
+            log::debug!(
+                "[provider] {} remapping Codex OAuth responses model=auto to {resolved}",
+                self.name,
+            );
+            resolved
+        } else {
+            model
+        };
+
         // TAURI-RUST-EWD: the Codex/ChatGPT OAuth Responses endpoint
         // (`chatgpt.com/backend-api/codex/responses`) rejects `max_output_tokens`
         // outright (400 `Unsupported parameter: max_output_tokens`), the same way
@@ -67,7 +86,7 @@ impl OpenAiCompatibleProvider {
             );
         }
         let mut request = ResponsesRequest {
-            model: model.to_string(),
+            model: request_model.to_string(),
             input,
             instructions,
             stream: Some(is_codex_oauth_responses),
@@ -154,7 +173,7 @@ impl OpenAiCompatibleProvider {
             super::super::log_budget_exhausted_http_400(
                 "responses_api",
                 self.name.as_str(),
-                Some(model),
+                Some(request_model),
                 status,
             );
         } else if super::super::is_custom_openai_upstream_bad_request_http_400(
@@ -165,14 +184,14 @@ impl OpenAiCompatibleProvider {
             super::super::log_custom_openai_upstream_bad_request_http_400(
                 "responses_api",
                 self.name.as_str(),
-                Some(model),
+                Some(request_model),
                 status,
             );
         } else if super::super::is_provider_access_policy_denied_http_403(status, &error) {
             super::super::log_provider_access_policy_denied_http_403(
                 "responses_api",
                 self.name.as_str(),
-                Some(model),
+                Some(request_model),
                 status,
             );
         } else if super::super::is_provider_config_rejection_http(
@@ -183,7 +202,7 @@ impl OpenAiCompatibleProvider {
             super::super::log_provider_config_rejection(
                 "responses_api",
                 self.name.as_str(),
-                Some(model),
+                Some(request_model),
                 status,
             );
         } else if super::super::is_byo_provider_auth_failure_http(
@@ -194,7 +213,7 @@ impl OpenAiCompatibleProvider {
             super::super::log_byo_provider_auth_failure(
                 "responses_api",
                 self.name.as_str(),
-                Some(model),
+                Some(request_model),
                 status,
             );
         } else if super::super::is_openai_oauth_session_expired_http(
@@ -205,7 +224,7 @@ impl OpenAiCompatibleProvider {
             super::super::log_openai_oauth_session_expired(
                 "responses_api",
                 self.name.as_str(),
-                Some(model),
+                Some(request_model),
                 status,
             );
         } else if super::super::is_provider_insufficient_credits_402(status, &error) {
@@ -219,7 +238,7 @@ impl OpenAiCompatibleProvider {
             super::super::log_provider_insufficient_credits_402(
                 "responses_api",
                 self.name.as_str(),
-                Some(model),
+                Some(request_model),
                 status,
             );
         } else if super::super::should_report_provider_http_failure(status) {
@@ -229,7 +248,7 @@ impl OpenAiCompatibleProvider {
                 "responses_api",
                 &[
                     ("provider", self.name.as_str()),
-                    ("model", model),
+                    ("model", request_model),
                     ("status", status_str.as_str()),
                     ("failure", "non_2xx"),
                 ],

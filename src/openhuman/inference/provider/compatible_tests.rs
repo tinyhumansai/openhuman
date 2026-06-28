@@ -1062,6 +1062,47 @@ async fn responses_api_primary_posts_directly_to_responses() {
     assert_eq!(text, "hello from responses");
 }
 
+/// TAURI-RUST-AHX / GH #4206: Codex CLI allows `model=auto`, but the
+/// ChatGPT-account Codex Responses endpoint rejects that sentinel. The provider
+/// must resolve it before the request leaves the process.
+#[tokio::test]
+async fn codex_responses_remaps_auto_model_before_posting() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/backend-api/codex/responses"))
+        .and(body_json(serde_json::json!({
+            "model": "gpt-5.5",
+            "input": [{
+                "role": "user",
+                "content": [{"type": "input_text", "text": "hello"}]
+            }],
+            "stream": true,
+            "store": false
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n\
+             data: {\"type\":\"response.completed\",\"response\":{\"output_text\":\"ok\"}}\n\n\
+             data: [DONE]\n\n",
+        ))
+        .mount(&server)
+        .await;
+
+    let provider = OpenAiCompatibleProvider::new(
+        "openai",
+        &format!("{}/backend-api/codex", server.uri()),
+        Some("oauth-access-token"),
+        AuthStyle::Bearer,
+    )
+    .with_responses_api_primary();
+
+    let text = provider
+        .chat_with_history(&[ChatMessage::user("hello")], "auto", 0.0)
+        .await
+        .unwrap();
+
+    assert_eq!(text, "ok");
+}
+
 /// TAURI-RUST-EWD: the Codex/ChatGPT OAuth Responses endpoint rejects
 /// `max_output_tokens` (400 `Unsupported parameter: max_output_tokens`). The
 /// memory-extraction cap (`ChatRequest::max_tokens`) must therefore be dropped
