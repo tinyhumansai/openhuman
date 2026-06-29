@@ -54,6 +54,22 @@ describe('AttachmentPreview', () => {
     expect(screen.queryByAltText('doc.pdf')).not.toBeInTheDocument();
   });
 
+  it('renders a video poster thumbnail with a play overlay', () => {
+    const file = new File([new Uint8Array(64)], 'clip.mp4', { type: 'video/mp4' });
+    const att = makeAttachment({
+      kind: 'video',
+      file,
+      dataUri: 'data:image/jpeg;base64,poster',
+      previewUri: 'data:image/jpeg;base64,poster',
+      mimeType: 'video/mp4',
+      frames: ['data:image/jpeg;base64,poster'],
+    });
+    render(<AttachmentPreview attachments={[att]} onRemove={vi.fn()} />);
+    const img = screen.getByAltText('clip.mp4') as HTMLImageElement;
+    expect(img.src).toBe('data:image/jpeg;base64,poster');
+    expect(screen.getByText('clip.mp4')).toBeInTheDocument();
+  });
+
   it('calls onRemove with the attachment id when × is clicked', () => {
     const onRemove = vi.fn();
     const att = makeAttachment({ id: 'att-42' });

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ALLOWED_ATTACHMENT_MIME_TYPES,
@@ -9,6 +9,7 @@ import {
   ATTACHMENT_MAX_VIDEO_SIZE_BYTES,
   attachmentKindForMime,
   buildMessageWithAttachments,
+  extractVideoFrames,
   fileToDataUri,
   formatFileSize,
   imageMarkerCost,
@@ -264,6 +265,117 @@ describe('video attachments', () => {
   it('fails when no frames could be extracted', async () => {
     vi.spyOn(videoFrameExtractor, 'extract').mockResolvedValue([]);
     const result = await validateAndReadFile(makeFile('clip.mp4', 'video/mp4', 8), 0, 0, true);
+    expect('error' in result && result.error.code).toBe('read_failed');
+  });
+});
+
+describe('extractVideoFrames (DOM-mocked)', () => {
+  // jsdom has no video codec, so stub <video>/<canvas> + URL to exercise the
+  // real decode/seek/paint path deterministically.
+  let realCreateObjectURL: typeof URL.createObjectURL;
+  let realRevokeObjectURL: typeof URL.revokeObjectURL;
+
+  function makeFakeVideo(duration: number) {
+    const listeners: Record<string, Array<() => void>> = {};
+    let ct = 0;
+    return {
+      muted: false,
+      preload: '',
+      _src: '',
+      duration,
+      videoWidth: 320,
+      videoHeight: 240,
+      onloadedmetadata: null as null | (() => void),
+      onerror: null as null | (() => void),
+      set src(v: string) {
+        this._src = v;
+        // Fire metadata asynchronously after the impl assigns the handler.
+        void Promise.resolve().then(() => this.onloadedmetadata?.());
+      },
+      get src() {
+        return this._src;
+      },
+      get currentTime() {
+        return ct;
+      },
+      set currentTime(v: number) {
+        ct = v;
+        (listeners['seeked'] ?? []).forEach(cb => cb());
+      },
+      addEventListener(ev: string, cb: () => void) {
+        (listeners[ev] ??= []).push(cb);
+      },
+      removeEventListener(ev: string, cb: () => void) {
+        listeners[ev] = (listeners[ev] ?? []).filter(f => f !== cb);
+      },
+      removeAttribute() {},
+    };
+  }
+
+  function makeFakeCanvas() {
+    return {
+      width: 0,
+      height: 0,
+      getContext: () => ({ drawImage() {} }),
+      toDataURL: () => 'data:image/jpeg;base64,FRAME',
+    };
+  }
+
+  function installDom(duration: number) {
+    const realCreate = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      if (tag === 'video') return makeFakeVideo(duration) as unknown as HTMLElement;
+      if (tag === 'canvas') return makeFakeCanvas() as unknown as HTMLElement;
+      return realCreate(tag as keyof HTMLElementTagNameMap);
+    });
+  }
+
+  beforeEach(() => {
+    realCreateObjectURL = URL.createObjectURL;
+    realRevokeObjectURL = URL.revokeObjectURL;
+    URL.createObjectURL = vi.fn(() => 'blob:fake');
+    URL.revokeObjectURL = vi.fn();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    URL.createObjectURL = realCreateObjectURL;
+    URL.revokeObjectURL = realRevokeObjectURL;
+  });
+
+  it('samples one frame per seek point for a normal clip', async () => {
+    installDom(10);
+    const frames = await extractVideoFrames(makeFile('c.mp4', 'video/mp4', 8), 2);
+    expect(frames).toEqual(['data:image/jpeg;base64,FRAME', 'data:image/jpeg;base64,FRAME']);
+  });
+
+  it('handles a zero-duration clip without hanging (seek short-circuits)', async () => {
+    installDom(0);
+    const frames = await extractVideoFrames(makeFile('z.mp4', 'video/mp4', 8), 2);
+    expect(frames.length).toBe(2);
+  });
+
+  it('propagates a read_failed error when the video fails to decode', async () => {
+    const realCreate = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      if (tag === 'video') {
+        const v = makeFakeVideo(10);
+        // Override src to fire onerror instead of onloadedmetadata.
+        Object.defineProperty(v, 'src', {
+          set(value: string) {
+            this._src = value;
+            void Promise.resolve().then(() => this.onerror?.());
+          },
+          get() {
+            return this._src;
+          },
+        });
+        return v as unknown as HTMLElement;
+      }
+      if (tag === 'canvas') return makeFakeCanvas() as unknown as HTMLElement;
+      return realCreate(tag as keyof HTMLElementTagNameMap);
+    });
+    const result = await validateAndReadFile(makeFile('bad.mp4', 'video/mp4', 8), 0, 0, true);
     expect('error' in result && result.error.code).toBe('read_failed');
   });
 });
