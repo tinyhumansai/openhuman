@@ -2268,6 +2268,10 @@ const messages: TranslationMap = {
   'chat.attachment.remove': '{name} সরান',
   'chat.attachment.tooMany': 'প্রতি বার্তায় সর্বোচ্চ {max}টি ছবি',
   'chat.attachment.tooManyFiles': 'প্রতি বার্তায় সর্বোচ্চ {max}টি ফাইল',
+  'chat.attachment.tooManyVideos': 'প্রতি বার্তায় সর্বোচ্চ {max}টি ভিডিও',
+  'chat.attachment.videoNotSupported':
+    'এই মডেল ভিডিও পড়তে পারে না। আপনার ভিডিও সংযুক্ত করতে আপনি OpenHuman Reasoning টিয়ার ব্যবহার করতে পারেন।',
+  'chat.attachment.dropToAttach': 'সংযুক্ত করতে ফাইল ছেড়ে দিন',
   'chat.attachment.tooLarge': 'ছবি {max} আকারের সীমা অতিক্রম করেছে',
   'chat.attachment.unsupportedType':
     'অসমর্থিত ফাইল প্রকার। একটি ছবি (PNG, JPEG, WebP, GIF, BMP) অথবা একটি PDF, TXT, বা Markdown ফাইল ব্যবহার করুন।',

@@ -2664,6 +2664,10 @@ const en: TranslationMap = {
   'chat.attachment.remove': 'Remove {name}',
   'chat.attachment.tooMany': 'Maximum {max} images per message',
   'chat.attachment.tooManyFiles': 'Maximum {max} files per message',
+  'chat.attachment.tooManyVideos': 'Maximum {max} videos per message',
+  'chat.attachment.videoNotSupported':
+    'This model can’t read videos. You can use the OpenHuman Reasoning tier to attach your video.',
+  'chat.attachment.dropToAttach': 'Drop files to attach',
   'chat.attachment.tooLarge': 'Image exceeds {max} size limit',
   'chat.attachment.unsupportedType':
     'Unsupported file type. Use an image (PNG, JPEG, WebP, GIF, BMP) or a PDF, TXT, or Markdown file.',

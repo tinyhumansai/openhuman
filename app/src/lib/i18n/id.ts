@@ -2269,6 +2269,10 @@ const messages: TranslationMap = {
   'chat.attachment.remove': 'Hapus {name}',
   'chat.attachment.tooMany': 'Maksimal {max} gambar per pesan',
   'chat.attachment.tooManyFiles': 'Maksimal {max} file per pesan',
+  'chat.attachment.tooManyVideos': 'Maksimal {max} video per pesan',
+  'chat.attachment.videoNotSupported':
+    'Model ini tidak dapat membaca video. Anda dapat menggunakan tingkat OpenHuman Reasoning untuk melampirkan video Anda.',
+  'chat.attachment.dropToAttach': 'Lepaskan file untuk melampirkan',
   'chat.attachment.tooLarge': 'Gambar melebihi batas ukuran {max}',
   'chat.attachment.unsupportedType':
     'Jenis file tidak didukung. Gunakan gambar (PNG, JPEG, WebP, GIF, BMP) atau file PDF, TXT, atau Markdown.',
