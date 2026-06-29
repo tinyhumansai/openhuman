@@ -480,6 +480,13 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         // Conversations silence timer rearms even when the turn is in a long
         // prefill / buffered-reasoning phase that emits no other progress.
         rtLog('inference_heartbeat', { thread: event.thread_id, request: event.request_id });
+        // A parallel (forked) turn streams into its own lane and must NOT keep
+        // the thread's primary silence timer alive — otherwise a sibling branch
+        // would mask a stalled primary turn. Mirror the text/thinking-delta
+        // routing: ignore heartbeats owned by a parallel request.
+        if (store.getState().chatRuntime.parallelRequestThreads[event.request_id] !== undefined) {
+          return;
+        }
         dispatch(bumpInferenceHeartbeatForThread({ threadId: event.thread_id }));
       },
       onIterationStart: (event: ChatIterationStartEvent) => {

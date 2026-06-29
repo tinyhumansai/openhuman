@@ -364,6 +364,31 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       expect(after.streamingAssistantByThread['t-par']?.content).toBe('P');
     });
 
+    it('bumps the heartbeat counter only for the primary turn, never a parallel branch (#4282)', () => {
+      const listeners = renderProvider();
+
+      // Primary turn's heartbeat advances the thread's liveness counter.
+      act(() => {
+        listeners.onInferenceHeartbeat?.({ thread_id: 't-par', request_id: 'primary' });
+      });
+      expect(store.getState().chatRuntime.inferenceHeartbeatByThread['t-par']).toBe(1);
+
+      // A registered parallel branch's heartbeat must NOT rearm the primary
+      // silence timer — otherwise a sibling would mask a stalled primary turn.
+      act(() => {
+        store.dispatch(registerParallelRequest({ threadId: 't-par', requestId: 'branch' }));
+        listeners.onInferenceHeartbeat?.({ thread_id: 't-par', request_id: 'branch' });
+        listeners.onInferenceHeartbeat?.({ thread_id: 't-par', request_id: 'branch' });
+      });
+      expect(store.getState().chatRuntime.inferenceHeartbeatByThread['t-par']).toBe(1);
+
+      // The primary turn keeps beating independently.
+      act(() => {
+        listeners.onInferenceHeartbeat?.({ thread_id: 't-par', request_id: 'primary' });
+      });
+      expect(store.getState().chatRuntime.inferenceHeartbeatByThread['t-par']).toBe(2);
+    });
+
     it('drops duplicate chat_done events with the same thread/request', async () => {
       const listeners = renderProvider();
 
