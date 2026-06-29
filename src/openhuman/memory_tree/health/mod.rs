@@ -81,6 +81,15 @@ pub enum FailureCode {
     /// `OpenHumanCloudEmbedding::embed` starts with
     /// `"<name> embed: refusing empty/whitespace input ..."`.
     EmptyInputRefused,
+    /// The host filesystem cannot service the memory_tree path — `create_dir`
+    /// / DB open returned a persistent OS-level I/O error (EIO `5`, ENOSPC
+    /// `28`, EROFS `30`), e.g. a failing/disconnected SD card or a volume the
+    /// kernel remounted read-only. Unrecoverable from inside the app: only the
+    /// user can reseat/replace/free the storage. Distinct from the embeddings
+    /// provider faults above and from the SQLite-level `SQLITE_FULL` /
+    /// `SQLITE_CORRUPT` handled in the queue worker — this is the
+    /// directory/DB-init layer below them.
+    StorageUnavailable,
     /// Catch-all transient failure (network 5xx, timeout, truncated JSON).
     Transient,
 }
@@ -98,6 +107,7 @@ impl FailureCode {
             Self::ExtractionTimeout => "extraction_timeout",
             Self::SummarizerUnavailable => "summarizer_unavailable",
             Self::EmptyInputRefused => "empty_input_refused",
+            Self::StorageUnavailable => "storage_unavailable",
             Self::Transient => "transient",
         }
     }
@@ -113,6 +123,7 @@ impl FailureCode {
             "extraction_timeout" => Self::ExtractionTimeout,
             "summarizer_unavailable" => Self::SummarizerUnavailable,
             "empty_input_refused" => Self::EmptyInputRefused,
+            "storage_unavailable" => Self::StorageUnavailable,
             "transient" => Self::Transient,
             _ => return None,
         })
@@ -139,6 +150,7 @@ impl FailureCode {
             Self::ExtractionTimeout => "memory.health.remediation.extraction_timeout",
             Self::SummarizerUnavailable => "memory.health.remediation.summarizer_unavailable",
             Self::EmptyInputRefused => "memory.health.remediation.empty_input_refused",
+            Self::StorageUnavailable => "memory.health.remediation.storage_unavailable",
             Self::Transient => "memory.health.remediation.transient",
         }
     }
@@ -333,6 +345,13 @@ pub struct DegradedState {
     /// True when extraction yielded empty across the board so the wiki has
     /// no entity/topic structure.
     pub structure: bool,
+    /// True when the memory_tree's own storage path is unusable — the host
+    /// filesystem returned a persistent I/O error on dir-create / DB open
+    /// (EIO/ENOSPC/EROFS). This is the most severe degradation: the pipeline
+    /// can't even open its DB, so nothing else runs. `#[serde(default)]` keeps
+    /// the wire format backward-compatible (older clients omit it → `false`).
+    #[serde(default)]
+    pub storage: bool,
     /// The cause of the most significant degradation, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cause: Option<PipelineFailure>,
@@ -341,7 +360,7 @@ pub struct DegradedState {
 impl DegradedState {
     /// True when any degradation is present.
     pub fn is_degraded(&self) -> bool {
-        self.semantic_recall || self.structure
+        self.semantic_recall || self.structure || self.storage
     }
 }
 
@@ -360,12 +379,17 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 static SEMANTIC_RECALL_DEGRADED: AtomicBool = AtomicBool::new(false);
 static STRUCTURE_DEGRADED: AtomicBool = AtomicBool::new(false);
+/// The host filesystem can't service the memory_tree path (EIO/ENOSPC/EROFS).
+/// Set by the queue worker's host-I/O arm; cleared on the next successful
+/// claim (storage recovered). Most severe — outranks recall/structure.
+static STORAGE_DEGRADED: AtomicBool = AtomicBool::new(false);
 /// Per-flag degradation cause as a `FailureCode` discriminant (0 = none).
 /// Tracked separately per flag so clearing one degradation can't leave the
 /// other reporting a stale cause (e.g. mark recall, mark structure, clear
 /// structure → recall must still report its OWN cause, not structure's).
 static SEMANTIC_RECALL_CAUSE: AtomicU8 = AtomicU8::new(0);
 static STRUCTURE_CAUSE: AtomicU8 = AtomicU8::new(0);
+static STORAGE_CAUSE: AtomicU8 = AtomicU8::new(0);
 
 fn code_to_u8(code: FailureCode) -> u8 {
     match code {
@@ -379,6 +403,7 @@ fn code_to_u8(code: FailureCode) -> u8 {
         FailureCode::SummarizerUnavailable => 8,
         FailureCode::Transient => 9,
         FailureCode::EmptyInputRefused => 10,
+        FailureCode::StorageUnavailable => 11,
     }
 }
 
@@ -394,6 +419,7 @@ fn u8_to_code(v: u8) -> Option<FailureCode> {
         8 => FailureCode::SummarizerUnavailable,
         9 => FailureCode::Transient,
         10 => FailureCode::EmptyInputRefused,
+        11 => FailureCode::StorageUnavailable,
         _ => return None,
     })
 }
@@ -428,6 +454,24 @@ pub fn clear_structure_degraded() {
     STRUCTURE_CAUSE.store(0, Ordering::Relaxed);
 }
 
+/// Record that the memory_tree storage path is unusable — the host filesystem
+/// returned a persistent I/O error (EIO/ENOSPC/EROFS) on dir-create / DB open.
+/// `cause` is typically [`FailureCode::StorageUnavailable`]. Set by the queue
+/// worker's host-I/O arm so the status surface tells the user to check their
+/// disk; idempotent / cheap.
+pub fn mark_storage_degraded(cause: FailureCode) {
+    STORAGE_DEGRADED.store(true, Ordering::Relaxed);
+    STORAGE_CAUSE.store(code_to_u8(cause), Ordering::Relaxed);
+}
+
+/// Clear the storage degraded flag — call when a claim succeeds (the DB opened,
+/// so the host filesystem recovered), so the surface self-heals. Clears only
+/// this flag's cause.
+pub fn clear_storage_degraded() {
+    STORAGE_DEGRADED.store(false, Ordering::Relaxed);
+    STORAGE_CAUSE.store(0, Ordering::Relaxed);
+}
+
 /// Test-only serialization + reset for the process-global degraded flags.
 ///
 /// The flags are a single process-wide signal, so tests across *different*
@@ -444,8 +488,10 @@ pub fn test_guard() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|p| p.into_inner());
     SEMANTIC_RECALL_DEGRADED.store(false, Ordering::Relaxed);
     STRUCTURE_DEGRADED.store(false, Ordering::Relaxed);
+    STORAGE_DEGRADED.store(false, Ordering::Relaxed);
     SEMANTIC_RECALL_CAUSE.store(0, Ordering::Relaxed);
     STRUCTURE_CAUSE.store(0, Ordering::Relaxed);
+    STORAGE_CAUSE.store(0, Ordering::Relaxed);
     g
 }
 
@@ -455,11 +501,16 @@ pub fn test_guard() -> std::sync::MutexGuard<'static, ()> {
 pub fn current_degraded_state() -> DegradedState {
     let semantic_recall = SEMANTIC_RECALL_DEGRADED.load(Ordering::Relaxed);
     let structure = STRUCTURE_DEGRADED.load(Ordering::Relaxed);
+    let storage = STORAGE_DEGRADED.load(Ordering::Relaxed);
     // Each flag carries its own cause; pick the most actionable one to surface.
-    // Structure degradation (extraction failing → empty wiki) is reported first
-    // because it's the more severe "built but useless" symptom; otherwise the
-    // recall cause. Either way the cause reflects a CURRENTLY-active flag.
-    let cause = if structure {
+    // Storage degradation is reported first — the host FS can't open the DB, so
+    // it's the foundational failure beneath both recall and structure (no point
+    // telling the user "configure embeddings" when the disk is dying). Then
+    // structure (extraction failing → empty wiki), then recall. Either way the
+    // cause reflects a CURRENTLY-active flag.
+    let cause = if storage {
+        u8_to_code(STORAGE_CAUSE.load(Ordering::Relaxed)).map(PipelineFailure::new)
+    } else if structure {
         u8_to_code(STRUCTURE_CAUSE.load(Ordering::Relaxed)).map(PipelineFailure::new)
     } else if semantic_recall {
         u8_to_code(SEMANTIC_RECALL_CAUSE.load(Ordering::Relaxed)).map(PipelineFailure::new)
@@ -469,6 +520,7 @@ pub fn current_degraded_state() -> DegradedState {
     DegradedState {
         semantic_recall,
         structure,
+        storage,
         cause,
     }
 }
@@ -477,7 +529,7 @@ pub fn current_degraded_state() -> DegradedState {
 mod tests {
     use super::*;
 
-    const ALL_CODES: [FailureCode; 10] = [
+    const ALL_CODES: [FailureCode; 11] = [
         FailureCode::BudgetExhausted,
         FailureCode::AuthMissing,
         FailureCode::AuthInvalid,
@@ -487,6 +539,7 @@ mod tests {
         FailureCode::ExtractionTimeout,
         FailureCode::SummarizerUnavailable,
         FailureCode::EmptyInputRefused,
+        FailureCode::StorageUnavailable,
         FailureCode::Transient,
     ];
 
@@ -750,5 +803,55 @@ mod tests {
         let s = current_degraded_state();
         assert!(!s.is_degraded());
         assert!(s.cause.is_none());
+    }
+
+    /// `StorageUnavailable` is the foundational host-FS failure: unrecoverable,
+    /// with its own remediation key.
+    #[test]
+    fn storage_unavailable_is_unrecoverable_with_key() {
+        let f = PipelineFailure::new(FailureCode::StorageUnavailable);
+        assert_eq!(f.class, FailureClass::Unrecoverable);
+        assert!(f.is_unrecoverable());
+        assert_eq!(
+            f.remediation_key,
+            "memory.health.remediation.storage_unavailable"
+        );
+        // discriminant round-trips through the per-flag u8 mapping.
+        assert_eq!(
+            u8_to_code(code_to_u8(FailureCode::StorageUnavailable)),
+            Some(FailureCode::StorageUnavailable)
+        );
+    }
+
+    /// Storage degradation outranks both structure and recall in
+    /// `current_degraded_state` — the host can't open the DB, so the disk fix
+    /// is the one actionable thing to surface. Clearing storage falls back to
+    /// the next-most-severe active cause (structure), each keeping its own.
+    #[test]
+    fn storage_degradation_outranks_structure_and_recall() {
+        let _g = test_guard(); // resets all flags + causes
+
+        mark_semantic_recall_degraded(FailureCode::EmbeddingsUnconfigured);
+        mark_structure_degraded(FailureCode::ExtractionTimeout);
+        mark_storage_degraded(FailureCode::StorageUnavailable);
+
+        // All three active → storage wins.
+        let s = current_degraded_state();
+        assert!(s.storage && s.structure && s.semantic_recall);
+        assert!(s.is_degraded());
+        assert_eq!(
+            s.cause.as_ref().map(|c| c.code),
+            Some(FailureCode::StorageUnavailable)
+        );
+
+        // Clear storage → structure becomes the surfaced cause (its OWN, not
+        // storage's stale one).
+        clear_storage_degraded();
+        let s = current_degraded_state();
+        assert!(!s.storage && s.structure);
+        assert_eq!(
+            s.cause.as_ref().map(|c| c.code),
+            Some(FailureCode::ExtractionTimeout)
+        );
     }
 }
