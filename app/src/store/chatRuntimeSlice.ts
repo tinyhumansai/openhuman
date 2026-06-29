@@ -1228,6 +1228,7 @@ const chatRuntimeSlice = createSlice({
     clearAllChatRuntime: state => {
       state.inferenceStatusByThread = {};
       state.streamingAssistantByThread = {};
+      state.inferenceHeartbeatByThread = {};
       state.parallelStreamsByThread = {};
       state.parallelRequestThreads = {};
       state.toolTimelineByThread = {};

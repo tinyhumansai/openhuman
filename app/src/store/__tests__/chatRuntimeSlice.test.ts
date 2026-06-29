@@ -69,6 +69,11 @@ describe('chatRuntimeSlice', () => {
     const cleared = reducer(other, clearRuntimeForThread({ threadId: 'thread-1' }));
     expect(cleared.inferenceHeartbeatByThread['thread-1']).toBeUndefined();
     expect(cleared.inferenceHeartbeatByThread['thread-2']).toBe(1);
+
+    // Slice-wide reset wipes every thread's heartbeat too — no stale counter
+    // survives a full chat-runtime clear (CodeRabbit #4282).
+    const wiped = reducer(other, clearAllChatRuntime());
+    expect(wiped.inferenceHeartbeatByThread).toEqual({});
   });
 
   it('stores and clears streaming assistant content by thread', () => {
