@@ -8,6 +8,55 @@ import { COMPOSIO_FETCH_TIMEOUT_MS, listAgentReadyToolkits, listConnections } fr
 import { canonicalizeComposioToolkitSlug } from './toolkitSlug';
 import type { ComposioConnection, ComposioToolkitCatalogEntry } from './types';
 
+// ── cold-start retry ──────────────────────────────────────────────
+
+/**
+ * Extra silent attempts before a failed Connections fetch surfaces the
+ * stale-status banner (#4290). The Composio RPC is slow on cold start, so the
+ * first ~8s budget is often blown but a retry seconds later succeeds — exactly
+ * what the user achieves manually with "Try again". One retry (2 attempts
+ * total) self-heals the common case while keeping the worst-case skeleton
+ * window bounded (~2×8s + backoff) on a genuine outage.
+ */
+const COMPOSIO_FETCH_RETRY_ATTEMPTS = 1;
+/** Backoff between a failed attempt and the silent retry. */
+const COMPOSIO_FETCH_RETRY_BACKOFF_MS = 400;
+
+const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+
+type LegResult<T> = { value: T } | { error: string };
+
+/**
+ * Run `fn` with bounded silent retries. Resolves to `{ value }` on the first
+ * success or `{ error }` after the final attempt fails — it never rejects, so
+ * both Connections legs can settle independently. Aborts between attempts when
+ * the hook has unmounted so we don't sleep/setState into a dead component.
+ */
+async function fetchLegWithRetries<T>(
+  label: string,
+  fn: () => Promise<T>,
+  isMounted: () => boolean
+): Promise<LegResult<T>> {
+  let lastError = '';
+  for (let attempt = 0; attempt <= COMPOSIO_FETCH_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      return { value: await fn() };
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+      const willRetry = attempt < COMPOSIO_FETCH_RETRY_ATTEMPTS && isMounted();
+      console.warn(
+        `[composio] refresh leg=${label} attempt=${attempt + 1} failed: ${lastError}${
+          willRetry ? ' — retrying silently' : ''
+        }`
+      );
+      if (!willRetry) break;
+      await delay(COMPOSIO_FETCH_RETRY_BACKOFF_MS);
+      if (!isMounted()) break;
+    }
+  }
+  return { error: lastError };
+}
+
 // ── useComposioIntegrations ───────────────────────────────────────
 
 export interface UseComposioIntegrationsResult {
@@ -99,36 +148,38 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
 
     let nextError: string | null = null;
     try {
-      // Bound both fetches so the loading skeleton can't pin past ~8s on a
-      // cold cache / down backend. This is the only path that opts into the
-      // shorter budget — see COMPOSIO_FETCH_TIMEOUT_MS.
-      const [toolkitsResult, connectionsResult] = await Promise.allSettled([
-        getToolkitCatalog({ timeoutMs: COMPOSIO_FETCH_TIMEOUT_MS }),
-        listConnections({ timeoutMs: COMPOSIO_FETCH_TIMEOUT_MS }),
+      // Bound both fetches so the loading skeleton can't pin past ~8s per
+      // attempt on a cold cache / down backend (COMPOSIO_FETCH_TIMEOUT_MS),
+      // and retry each leg silently before surfacing the stale banner (#4290)
+      // so a single slow cold-start RPC doesn't look broken. `loading` stays
+      // true across the retry window, so the page shows the skeleton — never
+      // the error banner — until a leg has genuinely exhausted its attempts.
+      const isMounted = () => mountedRef.current;
+      const [toolkitsResult, connectionsResult] = await Promise.all([
+        fetchLegWithRetries(
+          'toolkits',
+          () => getToolkitCatalog({ timeoutMs: COMPOSIO_FETCH_TIMEOUT_MS }),
+          isMounted
+        ),
+        fetchLegWithRetries(
+          'connections',
+          () => listConnections({ timeoutMs: COMPOSIO_FETCH_TIMEOUT_MS }),
+          isMounted
+        ),
       ]);
       if (!mountedRef.current) return;
 
-      if (toolkitsResult.status === 'fulfilled') {
+      if ('value' in toolkitsResult) {
         setToolkits(toolkitsResult.value.toolkits ?? []);
         setCatalog(toolkitsResult.value.catalog ?? []);
       } else {
-        const message =
-          toolkitsResult.reason instanceof Error
-            ? toolkitsResult.reason.message
-            : String(toolkitsResult.reason);
-        console.warn('[composio] toolkit fetch failed:', message);
-        nextError = message;
+        nextError = toolkitsResult.error;
       }
 
-      if (connectionsResult.status === 'fulfilled') {
+      if ('value' in connectionsResult) {
         setConnections(connectionsResult.value.connections ?? []);
-      } else {
-        const message =
-          connectionsResult.reason instanceof Error
-            ? connectionsResult.reason.message
-            : String(connectionsResult.reason);
-        console.warn('[composio] connection fetch failed:', message);
-        if (!nextError) nextError = message;
+      } else if (!nextError) {
+        nextError = connectionsResult.error;
       }
 
       setError(nextError);
