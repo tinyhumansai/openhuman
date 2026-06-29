@@ -228,6 +228,13 @@ function sampleFractions(count: number): number[] {
 
 function seekVideo(video: HTMLVideoElement, time: number): Promise<void> {
   return new Promise((resolve, reject) => {
+    // Assigning currentTime to (approximately) its current value is a no-op and
+    // never fires `seeked` (HTML spec) — which would hang for zero-length clips
+    // or a first frame already at t=0. Short-circuit those.
+    if (Math.abs(video.currentTime - time) < 0.01) {
+      resolve();
+      return;
+    }
     const cleanup = () => {
       video.removeEventListener('seeked', onSeeked);
       video.removeEventListener('error', onError);
