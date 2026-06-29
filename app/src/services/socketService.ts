@@ -446,13 +446,15 @@ class SocketService {
         return;
       }
       const errorType = typeof obj.error_type === 'string' ? obj.error_type : undefined;
-      const message = typeof obj.message === 'string' ? obj.message : undefined;
       const provider = typeof obj.error_provider === 'string' ? obj.error_provider : undefined;
       const sourceDomain = typeof obj.error_source === 'string' ? obj.error_source : 'cron';
       socketLog('user_error kind=%s source=%s', errorType ?? 'none', sourceDomain);
-      // Metadata-only ingest: stable kind token + scope, never the raw body.
+      // Metadata-only ingest: forward the stable kind token + scope ONLY, never
+      // a raw `message` body. The cron producer already omits it, but we drop
+      // any `obj.message` here too so a future/buggy broadcast can't leak raw
+      // provider text into the UI — classify() keys on `errorType` for this
+      // path. Locks the no-leak contract FE-side (CodeRabbit #4169).
       ingestRuntimeErrorSignal(store.dispatch, {
-        message,
         errorType,
         scope: 'cron',
         sourceDomain,
