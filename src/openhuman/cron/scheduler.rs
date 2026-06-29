@@ -18,6 +18,18 @@ use tokio::time::{self, Duration};
 const MIN_POLL_SECONDS: u64 = 5;
 const SHELL_JOB_TIMEOUT_SECS: u64 = 120;
 const AGENT_JOB_USER_FAILURE_MESSAGE: &str = "Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path=\"community/discord-report\">Report on Discord</openhuman-link>";
+// Actionable, static failure copy for the three permanent cron halt states
+// (TAURI-RUST-514 / -BMW / -HCK). Surfaced verbatim in the alerts tab + run
+// history in place of the generic `AGENT_JOB_USER_FAILURE_MESSAGE`, so a user
+// whose job halts on a permanent config/billing state sees the exact next step
+// instead of "Something went wrong". Static `&'static str` only — they carry no
+// `err` fields, honouring the no-leak contract on `agent_error_to_user_message`.
+const CRON_HALT_API_KEY_UNSET_MESSAGE: &str =
+    "No API key is set for your AI provider. Add one in Settings \u{2192} AI \u{2192} LLM, then re-run.";
+const CRON_HALT_INSUFFICIENT_CREDITS_MESSAGE: &str =
+    "Your AI provider is out of credits. Top it up or update its key in Settings \u{2192} AI \u{2192} LLM.";
+const CRON_HALT_BUDGET_EXHAUSTED_MESSAGE: &str =
+    "You've reached your managed AI budget. Raise it in Settings \u{2192} Billing.";
 const MORNING_BRIEFING_AGENT_ID: &str = "morning_briefing";
 const MORNING_BRIEFING_FAILURE_NOTIFICATION: &str = "Morning briefing could not run. Check your AI provider, API key, and connected apps, then run it again from Settings > Cron Jobs.";
 /// Recency window the morning briefing installs around its turn so Composio
@@ -579,9 +591,31 @@ async fn execute_job_with_retry(
             job.id.as_str(),
             retries
         );
+        // Replace the generic agent-failure copy with the specific, actionable
+        // (static, leak-safe) reason so the hoisted /notifications alert + run
+        // history tell the user the exact next step rather than "Something went
+        // wrong" (CodeRabbit #4169). The raw `last_agent_error` chain is NEVER
+        // surfaced here — only the `&'static str` constants from
+        // `permanent_halt_message`.
+        last_output = permanent_halt_message(credits_exhausted, budget_exhausted).to_string();
     }
 
     (false, last_output)
+}
+
+/// Static, leak-safe actionable alert copy for a permanent cron halt state.
+/// Returns the user-facing `/notifications` body matching the halt reason —
+/// `&'static str` only, so it can never carry a raw error field (the no-leak
+/// contract that governs [`agent_error_to_user_message`]). Precedence mirrors
+/// the halt classifiers' evaluation order: credits → budget → missing key.
+fn permanent_halt_message(credits_exhausted: bool, budget_exhausted: bool) -> &'static str {
+    if credits_exhausted {
+        CRON_HALT_INSUFFICIENT_CREDITS_MESSAGE
+    } else if budget_exhausted {
+        CRON_HALT_BUDGET_EXHAUSTED_MESSAGE
+    } else {
+        CRON_HALT_API_KEY_UNSET_MESSAGE
+    }
 }
 
 async fn process_due_jobs(config: &Config, security: &Arc<SecurityPolicy>, jobs: Vec<CronJob>) {
@@ -981,16 +1015,24 @@ async fn deliver_if_configured(
         );
     }
 
-    // Failures must stay visible in /notifications even when they produce no
-    // output; only successful-but-empty runs are suppressed entirely.
-    let alert_to_notifications = cron_result_should_alert(success, output);
+    // A failed run must stay visible in /notifications regardless of delivery
+    // mode — a no-delivery agent job that halts on a permanent config/billing
+    // state (e.g. a keyless provider, TAURI-RUST-HCK) would otherwise fail
+    // silently. A *successful* non-empty run only alerts in the delivering
+    // modes (proactive/announce); a `none`-mode success stays silent (its
+    // output lives in last_output only — the cron contract), so we don't spam
+    // explicitly-silent background jobs with an unread alert every interval
+    // (Codex #4166).
+    let mode = delivery.mode.trim().to_ascii_lowercase();
+    let delivers = matches!(mode.as_str(), "proactive" | "announce");
+    let alert_to_notifications =
+        cron_result_should_alert(success, output) && (!success || delivers);
     let alert_body = if is_empty {
         "Scheduled job failed without output."
     } else {
         output
     };
 
-    let mode = delivery.mode.trim().to_ascii_lowercase();
     match mode.as_str() {
         // Proactive delivery — the channels module decides where to send.
         // Used by morning briefings, welcome messages, and other

@@ -156,6 +156,88 @@ async fn deliver_if_configured_does_not_alert_successful_empty_no_delivery() {
     );
 }
 
+// Codex #4166 — a SUCCESSFUL no-delivery (`none`) run with output must stay
+// silent: its result lives in last_output only (the cron contract), so the
+// hoisted alert must NOT fire an unread /notifications entry every interval.
+// Failures still alert (above); delivering modes still alert success (below).
+#[tokio::test]
+async fn deliver_if_configured_does_not_alert_successful_none_delivery_with_output() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let mut job = test_job("");
+    job.job_type = JobType::Agent;
+    assert_eq!(job.delivery.mode, "none", "exercise the no-delivery arm");
+
+    deliver_if_configured(&config, &job, "daily digest: 3 new items", true)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        cron_alerts(&config).await,
+        0,
+        "a successful none-delivery run must not alert (silent by contract)"
+    );
+}
+
+// Counterpart to the gate: a delivering mode (proactive) DOES alert a
+// successful non-empty run — the mode gate only silences `none`.
+#[tokio::test]
+async fn deliver_if_configured_alerts_successful_proactive_with_output() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let job = proactive_job();
+
+    deliver_if_configured(&config, &job, "morning briefing ready", true)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        cron_alerts(&config).await,
+        1,
+        "a delivering-mode successful run still surfaces in /notifications"
+    );
+}
+
+// CodeRabbit #4169 — a permanent config/billing halt must surface its specific,
+// actionable copy (not the generic "Something went wrong"), and that copy must
+// be a static `&'static str` (no raw-error leak). Precedence mirrors the halt
+// classifiers: credits → budget → missing key.
+#[test]
+fn permanent_halt_message_maps_each_state_to_actionable_static_copy() {
+    assert_eq!(
+        permanent_halt_message(true, false),
+        CRON_HALT_INSUFFICIENT_CREDITS_MESSAGE
+    );
+    assert_eq!(
+        permanent_halt_message(false, true),
+        CRON_HALT_BUDGET_EXHAUSTED_MESSAGE
+    );
+    // Neither credits nor budget set → the missing-key state.
+    assert_eq!(
+        permanent_halt_message(false, false),
+        CRON_HALT_API_KEY_UNSET_MESSAGE
+    );
+    // Credits wins when both flags are set (evaluation order).
+    assert_eq!(
+        permanent_halt_message(true, true),
+        CRON_HALT_INSUFFICIENT_CREDITS_MESSAGE
+    );
+    // None of the canned bodies are the generic fallback; all are non-empty and
+    // config-actionable rather than the "report on Discord" generic copy.
+    for body in [
+        CRON_HALT_API_KEY_UNSET_MESSAGE,
+        CRON_HALT_INSUFFICIENT_CREDITS_MESSAGE,
+        CRON_HALT_BUDGET_EXHAUSTED_MESSAGE,
+    ] {
+        assert!(!body.is_empty());
+        assert_ne!(body, AGENT_JOB_USER_FAILURE_MESSAGE);
+        assert!(
+            !body.contains("Discord"),
+            "permanent-halt copy must be config-actionable, not the generic report message"
+        );
+    }
+}
+
 #[test]
 fn agent_session_target_tag_matches_expected_values() {
     assert_eq!(agent_session_target_tag(&SessionTarget::Main), "main");
