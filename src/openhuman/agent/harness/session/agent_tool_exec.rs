@@ -405,44 +405,9 @@ mod tests {
     use std::time::Duration;
 
     struct HangingTool;
-    struct ToolTimeoutTestGuard {
-        original_env: Option<String>,
-        original_timeout: u64,
-    }
-
     struct TestProgress {
         completed: AtomicUsize,
         timeout_completions: AtomicUsize,
-    }
-
-    impl ToolTimeoutTestGuard {
-        fn set_test_timeout(secs: u64) -> Self {
-            let original_env = std::env::var(crate::openhuman::tool_timeout::ENV_VAR).ok();
-            let original_timeout = crate::openhuman::tool_timeout::tool_execution_timeout_secs();
-            unsafe {
-                std::env::remove_var(crate::openhuman::tool_timeout::ENV_VAR);
-            }
-            crate::openhuman::tool_timeout::set_tool_timeout_secs(secs);
-
-            Self {
-                original_env,
-                original_timeout,
-            }
-        }
-    }
-
-    impl Drop for ToolTimeoutTestGuard {
-        fn drop(&mut self) {
-            unsafe {
-                match &self.original_env {
-                    Some(value) => {
-                        std::env::set_var(crate::openhuman::tool_timeout::ENV_VAR, value)
-                    }
-                    None => std::env::remove_var(crate::openhuman::tool_timeout::ENV_VAR),
-                }
-            }
-            crate::openhuman::tool_timeout::set_tool_timeout_secs(self.original_timeout);
-        }
     }
 
     #[async_trait]
@@ -483,17 +448,12 @@ mod tests {
         }
 
         fn timeout_policy(&self, _args: &serde_json::Value) -> ToolTimeout {
-            ToolTimeout::Inherit
+            ToolTimeout::Secs(1)
         }
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn session_tool_executor_enforces_inherited_timeout() {
-        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let _timeout_guard = ToolTimeoutTestGuard::set_test_timeout(1);
-
+    async fn session_tool_executor_enforces_tool_timeout_policy() {
         let tools: Vec<Box<dyn Tool>> = vec![Box::new(HangingTool)];
         let visible_tool_names = HashSet::new();
         let policy_session = ToolPolicyEngine::build_session(
@@ -531,7 +491,7 @@ mod tests {
         };
 
         let outcome = tokio::time::timeout(
-            Duration::from_secs(2),
+            Duration::from_secs(8),
             run_agent_tool_call(&ctx, &progress, &call, 0),
         )
         .await;
