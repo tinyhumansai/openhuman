@@ -1,13 +1,17 @@
-import { renderHook } from '@testing-library/react';
+import { act, renderHook } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { Provider } from 'react-redux';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { store } from '../../store';
 import {
   resetChannelConnectionsState,
   setChannelConnectionStatus,
 } from '../../store/channelConnectionsSlice';
+import {
+  beginDeepLinkAuthProcessing,
+  completeDeepLinkAuthProcessing,
+} from '../../store/deepLinkAuthState';
 import { useOAuthConnectionListener } from '../useOAuthConnectionListener';
 
 const wrapper = ({ children }: { children: ReactNode }) => (
@@ -142,5 +146,149 @@ describe('useOAuthConnectionListener (#2128)', () => {
     // No listener mounted any more — the slice stays at its initial state for
     // discord.oauth (undefined, not connected).
     expect(store.getState().channelConnections.connections.discord.oauth).toBeUndefined();
+  });
+});
+
+// #4299: recover from a `connecting` badge that no OAuth deep link ever resolves
+// (Discord rejected the redirect_uri, user cancelled / closed the browser).
+const GRACE_MS = 2_500;
+const TIMEOUT_MS = 120_000;
+
+const setConnecting = () =>
+  store.dispatch(
+    setChannelConnectionStatus({ channel: 'discord', authMode: 'oauth', status: 'connecting' })
+  );
+
+const oauthStatus = () => store.getState().channelConnections.connections.discord.oauth?.status;
+
+describe('useOAuthConnectionListener stuck-connecting recovery (#4299)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    store.dispatch(resetChannelConnectionsState());
+  });
+
+  afterEach(() => {
+    completeDeepLinkAuthProcessing();
+    vi.useRealTimers();
+    store.dispatch(resetChannelConnectionsState());
+  });
+
+  it('flips to error when the user returns (focus) and no deep link arrives', () => {
+    setConnecting();
+    renderHook(() => useOAuthConnectionListener({ channel: 'discord', authMode: 'oauth' }), {
+      wrapper,
+    });
+
+    act(() => {
+      window.dispatchEvent(new Event('focus'));
+    });
+    act(() => {
+      vi.advanceTimersByTime(GRACE_MS);
+    });
+
+    const connection = store.getState().channelConnections.connections.discord.oauth;
+    expect(connection?.status).toBe('error');
+    expect(connection?.lastError).toMatch(/Couldn't finish connecting Discord/);
+  });
+
+  it('flips to error on the visibilitychange path too', () => {
+    setConnecting();
+    renderHook(() => useOAuthConnectionListener({ channel: 'discord', authMode: 'oauth' }), {
+      wrapper,
+    });
+
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    act(() => {
+      vi.advanceTimersByTime(GRACE_MS);
+    });
+
+    expect(oauthStatus()).toBe('error');
+  });
+
+  it('does NOT flip when a success deep link lands within the grace window', () => {
+    setConnecting();
+    renderHook(() => useOAuthConnectionListener({ channel: 'discord', authMode: 'oauth' }), {
+      wrapper,
+    });
+
+    act(() => {
+      window.dispatchEvent(new Event('focus'));
+    });
+    act(() => {
+      vi.advanceTimersByTime(GRACE_MS - 500);
+      dispatchOAuthSuccess('discord');
+    });
+    act(() => {
+      vi.advanceTimersByTime(GRACE_MS + TIMEOUT_MS);
+    });
+
+    expect(oauthStatus()).toBe('connected');
+  });
+
+  it('flips to error after the absolute timeout when the user never returns', () => {
+    setConnecting();
+    renderHook(() => useOAuthConnectionListener({ channel: 'discord', authMode: 'oauth' }), {
+      wrapper,
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(TIMEOUT_MS);
+    });
+    act(() => {
+      vi.advanceTimersByTime(GRACE_MS);
+    });
+
+    expect(oauthStatus()).toBe('error');
+  });
+
+  it('does not arm recovery when the channel is not connecting', () => {
+    store.dispatch(
+      setChannelConnectionStatus({ channel: 'discord', authMode: 'oauth', status: 'connected' })
+    );
+    renderHook(() => useOAuthConnectionListener({ channel: 'discord', authMode: 'oauth' }), {
+      wrapper,
+    });
+
+    act(() => {
+      window.dispatchEvent(new Event('focus'));
+      vi.advanceTimersByTime(TIMEOUT_MS + GRACE_MS);
+    });
+
+    expect(oauthStatus()).toBe('connected');
+  });
+
+  it('skips recovery while a deep-link auth round-trip is in flight', () => {
+    setConnecting();
+    renderHook(() => useOAuthConnectionListener({ channel: 'discord', authMode: 'oauth' }), {
+      wrapper,
+    });
+
+    beginDeepLinkAuthProcessing();
+    act(() => {
+      window.dispatchEvent(new Event('focus'));
+      vi.advanceTimersByTime(GRACE_MS);
+    });
+
+    expect(oauthStatus()).toBe('connecting');
+  });
+
+  it('clears timers on unmount so a late timeout cannot mutate state', () => {
+    setConnecting();
+    const { unmount } = renderHook(
+      () => useOAuthConnectionListener({ channel: 'discord', authMode: 'oauth' }),
+      { wrapper }
+    );
+
+    act(() => {
+      window.dispatchEvent(new Event('focus'));
+    });
+    unmount();
+    act(() => {
+      vi.advanceTimersByTime(TIMEOUT_MS + GRACE_MS);
+    });
+
+    expect(oauthStatus()).toBe('connecting');
   });
 });
