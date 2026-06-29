@@ -26,7 +26,6 @@
 
 <p align="center">
  <a href="https://discord.tinyhumans.ai/">Discord</a> •
- <a href="https://www.reddit.com/r/tinyhumansai/">Reddit</a> •
  <a href="https://x.com/intent/follow?screen_name=tinyhumansai">X/Twitter</a> •
  <a href="https://tinyhumans.gitbook.io/openhuman/">文档</a> •
  <a href="https://x.com/intent/follow?screen_name=senamakel">关注 @senamakel（作者）</a>
@@ -78,7 +77,7 @@ OpenHuman 是一个开源智能助手，旨在融入你的日常生活。以下�
 
 - **[记忆树](https://tinyhumans.gitbook.io/openhuman/features/memory-tree) + [Obsidian Wiki](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki)**：一个基于你的数据和活动构建的本地优先知识库。你连接的所有内容都被规范化为不超过 3k token 的 Markdown 片段，经过评分后折叠成层级化的摘要树，存储在**你本机的 SQLite** 中。同样的片段以 `.md` 文件形式落地到兼容 Obsidian 的仓库中，你可以打开、浏览和编辑，灵感来源于 Karpathy 的 [obsidian-wiki 工作流](https://x.com/karpathy/status/2039805659525644595)。
 
-- **开箱即用**：默认内置网络搜索、网页抓取[爬虫](https://tinyhumans.gitbook.io/openhuman/features/native-tools)、完整的编码工具集（文件系统、git、lint、test、grep）以及[原生语音](https://tinyhumans.gitbook.io/openhuman/features/voice)（STT 输入、ElevenLabs TTS 输出、吉祥物口型同步、实时 Google Meet 智能体）。默认情况下，[模型路由](https://tinyhumans.gitbook.io/openhuman/features/model-routing)使用 OpenHuman 后端来选择和代理每个工作负载的合适 LLM（推理型、快速型或视觉型）。一个订阅包含所有模型。没有"安装插件才能读文件"的摩擦。[可选通过 Ollama 使用本地 AI](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai) 处理端侧工作负载。
+- **开箱即用**：默认内置网络搜索、网页抓取[爬虫](https://tinyhumans.gitbook.io/openhuman/features/native-tools)、完整的编码工具集（文件系统、git、lint、test、grep）以及[原生语音](../gitbooks/features/native-tools/voice.md)（STT 输入、ElevenLabs TTS 输出、吉祥物口型同步、实时 Google Meet 智能体）。默认情况下，[模型路由](https://tinyhumans.gitbook.io/openhuman/features/model-routing)使用 OpenHuman 后端来选择和代理每个工作负载的合适 LLM（推理型、快速型或视觉型）。一个订阅包含所有模型。没有"安装插件才能读文件"的摩擦。[可选通过 Ollama 使用本地 AI](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai) 处理端侧工作负载。
 
 - **[智能 Token 压缩（TokenJuice）](https://tinyhumans.gitbook.io/openhuman/features/token-compression)**：每个工具调用、抓取结果、邮件正文和搜索载荷在触达任何 LLM 模型之前都会经过 token 压缩层处理。HTML 被转换为 Markdown，长 URL 被缩短，冗长的工具输出会通过可配置的规则层去重并摘要等等。中文、emoji 等多字节字符按字形（grapheme）完整保留，绝不丢弃。你获得相同的信息，但 token 消耗仅为原来的几分之一。最多可降低 80% 的成本和延迟。
 
@@ -131,7 +130,7 @@ OpenHuman 跳过了等待期。连接你的账户，让[自动拉取](https://ti
 _致力于 AGI 和人工意识？为仓库加星，帮助更多人找到这条路。_
 
 <p align="center">
- <a href="https://www.star-history.com/#tinyhumansai/openhuman&type=date&legend=top-left">
+ <a href="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left">
  <picture>
  <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&theme=dark&legend=top-left" />
  <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left" />
