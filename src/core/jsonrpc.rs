@@ -121,6 +121,20 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
                 );
             } else if is_session_expired_error(&display_message) {
                 tracing::info!("[rpc] {} -> err ({}ms): {}", method, ms, display_message);
+            } else if crate::core::observability::is_suppressed_usage_probe_backoff(
+                &display_message,
+            ) {
+                // A `/teams/me/usage` probe that the failure-backoff in
+                // `team::ops` short-circuited within its window — i.e. an
+                // already-reported repeat. The FIRST failure of the streak
+                // already hit the backend and reported here normally; demoting
+                // the repeats is exactly the flood control GH #4153 asks for
+                // (backpressure, not silent drop). Debug-only, never Sentry.
+                tracing::debug!(
+                    method = %method,
+                    elapsed_ms = ms as u64,
+                    "[rpc] usage-probe failure-backoff repeat — not reporting to Sentry"
+                );
             } else if crate::core::observability::is_transient_message_failure(&display_message) {
                 // Downstream call (backend_api / integrations / provider) already
                 // demoted the underlying transient failure to a warn. The error
