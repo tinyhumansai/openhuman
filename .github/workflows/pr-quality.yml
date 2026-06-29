@@ -68,6 +68,8 @@ jobs:
             --exclude '^https?://127\.0\.0\.1'
             --exclude 'docs/install\.md#apt-debianubuntu$'
             --exclude '^https://github\.com/tinyhumansai/homebrew-openhuman'
+            --exclude '^https://www\.reddit\.com/r/tinyhumansai/?$'
+            --exclude '^https://www\.star-history\.com/#tinyhumansai/openhuman&type=date&legend=top-left$'
             'docs/**/*.md'
             'src/**/README.md'
             '.github/PULL_REQUEST_TEMPLATE.md'
