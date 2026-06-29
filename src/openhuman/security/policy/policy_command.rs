@@ -784,10 +784,15 @@ pub(super) fn classify_segment(base: &str, args: &[String], joined: &str) -> Com
     // named file rather than stdout — an arbitrary-path write that side-steps
     // the gated file-write tools (and their workspace confinement), so they
     // must be classified Write (approval-gated) alongside -delete.
+    //
+    // `args` is built with `split_whitespace()`, which keeps shell quotes that
+    // the shell itself strips before `find` runs — `find . '-fprint' out`
+    // arrives as the literal `'-fprint'`. Trim surrounding single/double quotes
+    // before matching so a quoted predicate cannot slip the write past the gate.
     if base == "find" {
         if args.iter().any(|a| {
             matches!(
-                a.as_str(),
+                a.trim_matches(|c| c == '\'' || c == '"'),
                 "-exec"
                     | "-execdir"
                     | "-ok"

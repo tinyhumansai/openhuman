@@ -413,6 +413,15 @@ fn classify_find_file_write_actions_are_write() {
     ] {
         assert_eq!(p.classify_command(c), CommandClass::Write, "{c}");
     }
+    // Quoting the predicate must not slip the write past the gate — the shell
+    // strips the quotes before find runs, so `'-fprint'` is the same write.
+    for c in [
+        "find . '-fprint' /tmp/list.txt",
+        "find . \"-fprintf\" /tmp/out.txt '%p\\n'",
+        "find . '-delete'",
+    ] {
+        assert_eq!(p.classify_command(c), CommandClass::Write, "{c}");
+    }
     // A plain search stays read-only.
     assert_eq!(
         p.classify_command("find . -name '*.rs' -print"),
