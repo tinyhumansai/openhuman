@@ -155,18 +155,33 @@ pub fn effective_backend_api_url(api_url: &Option<String>) -> String {
     if let Some(u) = non_empty_str(api_url) {
         let is_local_ai = looks_like_local_ai_endpoint(u);
         let is_openhuman = looks_like_openhuman_backend_endpoint(u);
+        // A public third-party inference host (openrouter.ai, api.openai.com, …)
+        // set to its canonical base (`https://openrouter.ai/api/v1`) is neither
+        // local-AI nor an OpenHuman backend, so without this check the override
+        // would be used as the backend base and every domain call (team usage,
+        // billing) would 400/404 against the inference host — TAURI-RUST-HW1
+        // (4932 `GET /teams/me/usage` 400s from `openrouter.ai`). Cloud analogue
+        // of the local-AI guard (OPENHUMAN-TAURI-51/-80/-7Z, Ollama).
+        let is_cloud_inference =
+            crate::openhuman::config::schema::cloud_providers::endpoint_host(u).is_some_and(|h| {
+                crate::openhuman::config::schema::cloud_providers::host_is_builtin_cloud_provider(
+                    &h,
+                )
+            });
 
         tracing::debug!(
             api_url = %redact_url_for_log(u),
             is_local_ai,
+            is_cloud_inference,
             is_openhuman,
             "[api/config] evaluating backend api_url override"
         );
 
-        // Let the override through only when it is NOT a local-AI endpoint,
-        // OR when it is one of our own hosted backends (user deliberately set
-        // `api_url` to `https://api.tinyhumans.ai/openai/v1/chat/completions`).
-        if !is_local_ai || is_openhuman {
+        // Let the override through only when it is neither a local-AI endpoint
+        // nor a known cloud inference host, OR when it is one of our own hosted
+        // backends (user deliberately set `api_url` to
+        // `https://api.tinyhumans.ai/openai/v1/chat/completions`).
+        if (!is_local_ai && !is_cloud_inference) || is_openhuman {
             let normalized = normalize_backend_api_base_url(u);
             tracing::trace!(
                 api_url        = %redact_url_for_log(u),
@@ -178,7 +193,9 @@ pub fn effective_backend_api_url(api_url: &Option<String>) -> String {
 
         tracing::debug!(
             api_url = %redact_url_for_log(u),
-            "[api/config] override classified as local AI — falling back to backend default chain"
+            is_local_ai,
+            is_cloud_inference,
+            "[api/config] override classified as local AI or cloud inference host — falling back to backend default chain"
         );
         warn_backend_url_fallback_once(u);
     }
@@ -1044,6 +1061,46 @@ mod tests {
         assert_eq!(
             effective_backend_api_url(&Some("http://127.0.0.1:11434/v1".to_string())),
             expected
+        );
+    }
+
+    #[test]
+    fn backend_url_falls_back_for_cloud_inference_base() {
+        // Regression: TAURI-RUST-HW1. A BYO user whose `api_url` is a public
+        // cloud-inference provider's *canonical base* (no `/chat/completions`
+        // path, public host) must NOT have backend domain calls routed there —
+        // `GET /teams/me/usage` was 400ing against `openrouter.ai`.
+        let _guard = env_lock();
+        let _env = EnvSnapshot::clear_backend_env();
+        let fallback = fallback_backend_base_for_current_build();
+
+        let falls_back: &[&str] = &[
+            "https://openrouter.ai/api/v1",
+            "https://api.openai.com/v1",
+            "https://api.groq.com/openai/v1",
+            "https://generativelanguage.googleapis.com/v1beta/openai",
+        ];
+        for api_url in falls_back {
+            assert_eq!(
+                effective_backend_api_url(&Some(api_url.to_string())),
+                fallback,
+                "cloud inference base must fall back: {api_url}"
+            );
+        }
+
+        // Our own hosted backend still passes through (is_openhuman short-circuit),
+        // and an UNKNOWN custom backend at a bare `/v1` keeps its pass-through so
+        // we don't reroute real self-hosted backends (the deliberate non-match
+        // documented on `looks_like_local_ai_endpoint`).
+        assert_eq!(
+            effective_backend_api_url(&Some("https://api.tinyhumans.ai/v1".to_string())),
+            "https://api.tinyhumans.ai",
+            "openhuman backend host must pass through"
+        );
+        assert_eq!(
+            effective_backend_api_url(&Some("https://my-backend.example/v1".to_string())),
+            "https://my-backend.example",
+            "unknown custom backend must keep pass-through"
         );
     }
 
