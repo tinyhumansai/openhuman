@@ -53,12 +53,18 @@
     "linux": {
       "deb": {
         "depends": [
+          "libatk-bridge2.0-0",
+          "libgbm1",
+          "libgdk-pixbuf-2.0-0",
+          "libglib2.0-0",
           "libgtk-3-0",
+          "libnspr4",
+          "libnss3",
           "libwebkit2gtk-4.1-0",
           "libx11-6",
           "libxdo3",
-          "libgdk-pixbuf-2.0-0",
-          "libglib2.0-0"
+          "libxkbcommon0",
+          "libxshmfence1"
         ],
         "desktopTemplate": "main.desktop"
       }

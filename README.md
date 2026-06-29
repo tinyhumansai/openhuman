@@ -62,11 +62,11 @@
 
 # Install
 
-Download installers from [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) or from the [GitHub Releases](https://github.com/tinyhumansai/openhuman/releases/latest) page. For terminal installs, the native package paths below are preferred — they ride your OS package-manager's signing chain.
+Download installers from [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) or from the [GitHub Releases](https://github.com/tinyhumansai/openhuman/releases/latest) page. For terminal installs, the native package paths below are preferred because they use your OS package manager or native installer where available.
 
 ## Recommended install (native packages)
 
-These paths verify the artifact through your OS package manager's signing chain (Homebrew bottle hash, signed apt repo, MSI signature).
+These paths use native installer surfaces. Homebrew and MSI provide their normal signing/integrity checks; Debian/Ubuntu uses `apt-get` to install the release `.deb` and resolve system dependencies.
 
 **macOS (Homebrew tap):**
 
@@ -75,17 +75,13 @@ brew tap tinyhumansai/core
 brew install openhuman
 ```
 
-**Linux (Debian/Ubuntu — signed apt repo):**
+**Linux (Debian/Ubuntu — release `.deb`):**
 
 ```bash
-sudo apt-get install -y --no-install-recommends gnupg2 curl ca-certificates
-curl -fsSL https://tinyhumansai.github.io/openhuman/apt/KEY.gpg \
-  | sudo gpg --dearmor -o /etc/apt/keyrings/openhuman.gpg
-echo "deb [signed-by=/etc/apt/keyrings/openhuman.gpg arch=amd64] \
-  https://tinyhumansai.github.io/openhuman/apt stable main" \
-  | sudo tee /etc/apt/sources.list.d/openhuman.list
-sudo apt-get update
-sudo apt-get install -y openhuman
+# Download OpenHuman_<version>_amd64.deb or OpenHuman_<version>_arm64.deb
+# from https://github.com/tinyhumansai/openhuman/releases/latest, then:
+# Replace amd64 with arm64 on arm64 hosts.
+sudo apt-get install -y --no-install-recommends ./OpenHuman_*_amd64.deb
 ```
 
 **Linux (Arch — AUR):** the [`openhuman-bin` AUR recipe](./packages/arch/openhuman-bin/) is in the repo. Once published, Arch users can install it with `yay -S openhuman-bin`.
@@ -94,7 +90,7 @@ sudo apt-get install -y openhuman
 
 **Manual `.dmg` / `.deb` / `.AppImage` / `.msi`:** grab the installer for your platform directly from the [latest release page](https://github.com/tinyhumansai/openhuman/releases/latest).
 
-> **Linux:** the AppImage can crash on launch under Wayland (and on Arch-based distros with `sharun: Interpreter not found!`) — see [#2463](https://github.com/tinyhumansai/openhuman/issues/2463) for the cause and env-var workarounds. The `.deb` package above avoids those failure modes on Debian/Ubuntu.
+> **Linux:** the AppImage can crash on launch under Wayland, miss host system libraries such as `libgbm.so.1`, or fail on Arch-based distros with `sharun: Interpreter not found!` — see [#2463](https://github.com/tinyhumansai/openhuman/issues/2463) for the cause and env-var workarounds. The `.deb` package above avoids those failure modes on Debian/Ubuntu by letting apt resolve runtime dependencies.
 
 ## Alternative: script install (no integrity check)
 
@@ -107,6 +103,8 @@ curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts
 # Windows (PowerShell)
 irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.ps1 | iex
 ```
+
+On Debian/Ubuntu, `install.sh` resolves the latest release `.deb` first and installs it with `apt-get` so runtime dependencies are handled by apt. Set `OPENHUMAN_INSTALLER_LINUX_PACKAGE=appimage` to force the AppImage path.
 
 ## Verified script install status
 
