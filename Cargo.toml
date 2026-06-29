@@ -279,6 +279,11 @@ sentry = { version = "0.47.0", default-features = false, features = ["test"] }
 wiremock = "0.6"
 # Used in json_rpc_e2e to backdate mtime on stale lock files.
 filetime = "0.2"
+# `test-util` enables tokio's paused virtual clock (`start_paused`,
+# `time::advance`) so the #4270 inference-heartbeat tests assert the periodic
+# beat without real-time waits. Test-only — the runtime feature set in
+# `[dependencies]` (`full`) intentionally excludes it.
+tokio = { version = "1", features = ["test-util"] }
 
 [features]
 default = ["tokenjuice-treesitter"]
