@@ -64,9 +64,26 @@ fn ack_reaction_technical_category() {
 
 #[test]
 fn ack_reaction_greeting_category() {
-    for msg in ["hi there", "hello", "hey friend", "yo"] {
+    for msg in [
+        "hi there",
+        "hello",
+        "hey friend",
+        "yo",
+        "gm",
+        "GM",
+        "Gm!",
+        "gM?",
+    ] {
         let r = select_acknowledgment_reaction(msg);
         assert!(is_in(r, &["🤗", "😁"]), "`{msg}` → {r}");
+    }
+}
+
+#[test]
+fn ack_reaction_gm_greeting_requires_word_boundary() {
+    for msg in ["gmail invite", "gme earnings"] {
+        let r = select_acknowledgment_reaction(msg);
+        assert!(!is_in(r, &["🤗", "😁"]), "`{msg}` → {r}");
     }
 }
 

@@ -31,6 +31,18 @@ pub(super) fn starts_with_any(s: &str, prefixes: &[&str]) -> bool {
     prefixes.iter().any(|p| s.starts_with(p))
 }
 
+#[inline]
+fn starts_with_gm_greeting(s: &str) -> bool {
+    let Some(rest) = s.trim_start().strip_prefix("gm") else {
+        return false;
+    };
+
+    match rest.chars().next() {
+        None => true,
+        Some(c) => c.is_whitespace() || matches!(c, '!' | '?' | '.' | ',' | ':' | ';'),
+    }
+}
+
 /// Build the per-turn `[Channel context]` block prepended to the user
 /// message for non-web inbound channels (e.g. Telegram, Discord, Slack).
 ///
@@ -140,6 +152,7 @@ pub(super) fn select_acknowledgment_reaction(content: &str) -> &'static str {
         ],
     ) || l == "yo"
         || l.starts_with("yo ")
+        || starts_with_gm_greeting(&l)
     {
         // Greeting
         &["🤗", "😁"]

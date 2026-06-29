@@ -93,6 +93,23 @@ fn dispatch_helpers_cover_channel_context_and_ack_categories() {
     assert!(["👨‍💻", "🤓"].contains(&code));
     let greeting = runtime_support::select_acknowledgment_reaction_for_test("hello there");
     assert!(["🤗", "😁"].contains(&greeting));
+    for content in ["gm", "GM", "Gm!", "gM?"] {
+        let gm = runtime_support::select_acknowledgment_reaction_for_test(content);
+        assert!(
+            ["🤗", "😁"].contains(&gm),
+            "{content:?} should be classified as a greeting"
+        );
+    }
+    for content in ["gmail invite", "gme earnings"] {
+        let non_gm = runtime_support::select_acknowledgment_reaction_for_test(content);
+        assert!(
+            !["🤗", "😁"].contains(&non_gm),
+            "{content:?} should not be classified as a gm greeting"
+        );
+    }
+    let gm_finance =
+        runtime_support::select_acknowledgment_reaction_for_test("GM on the defi timeline");
+    assert!(["💯", "⚡"].contains(&gm_finance));
     let question = runtime_support::select_acknowledgment_reaction_for_test("what happened?");
     assert!(["🤔", "✍️"].contains(&question));
 }
