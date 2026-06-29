@@ -2612,6 +2612,25 @@ pub fn is_transient_message_failure(msg: &str) -> bool {
         || contains_transient_transport_phrase(&lower)
 }
 
+/// Sentinel prefix stamped on a `/teams/me/usage` probe error that the
+/// failure-backoff in `crate::openhuman::team::ops` short-circuited — i.e. an
+/// already-reported repeat within the backoff window. The FIRST failure of a
+/// streak propagates its real error string and reports normally; only the
+/// suppressed repeats carry this prefix so the JSON-RPC boundary can demote
+/// them (no re-report) instead of re-flooding Sentry. See GH #4153.
+///
+/// Single source of truth: the producer (`team::ops::get_usage_with_cache`)
+/// builds its sentinel from this constant, and [`is_suppressed_usage_probe_backoff`]
+/// matches it — coupled by a unit test so the two cannot drift.
+pub const USAGE_PROBE_BACKOFF_PREFIX: &str = "USAGE_PROBE_BACKOFF:";
+
+/// Returns true when a message is the usage-probe failure-backoff sentinel
+/// (see [`USAGE_PROBE_BACKOFF_PREFIX`]). Anchored on the exact prefix so a real
+/// backend error string can never match.
+pub fn is_suppressed_usage_probe_backoff(msg: &str) -> bool {
+    msg.starts_with(USAGE_PROBE_BACKOFF_PREFIX)
+}
+
 /// Returns true when a Sentry event is a budget-exhausted 400 that should be
 /// dropped from `before_send`.
 ///
@@ -2853,6 +2872,22 @@ fn event_contains_budget_exhausted_message(event: &sentry::protocol::Event<'_>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn usage_probe_backoff_sentinel_classifies_only_its_own_prefix() {
+        // The producer in `team::ops` builds its sentinel from this prefix.
+        let sentinel = format!("{USAGE_PROBE_BACKOFF_PREFIX} recent /teams/me/usage failure");
+        assert!(is_suppressed_usage_probe_backoff(&sentinel));
+        // Real backend error strings must NEVER match — they keep reporting.
+        assert!(!is_suppressed_usage_probe_backoff(
+            "GET /teams/me/usage failed (500 Internal Server Error): "
+        ));
+        assert!(!is_suppressed_usage_probe_backoff(
+            "GET /teams/me/usage failed (404 Not Found); response_body_len=91"
+        ));
+        assert!(!is_suppressed_usage_probe_backoff("SESSION_EXPIRED: ..."));
+        assert!(!is_suppressed_usage_probe_backoff(""));
+    }
 
     /// Helper must accept `&anyhow::Error`, `&dyn std::error::Error`, and
     /// plain `&str` — the three shapes that show up at error sites today.
