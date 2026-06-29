@@ -1262,6 +1262,53 @@ mod tests {
         drop(tx);
     }
 
+    /// Lifecycle: once `TurnCompleted` lands the bridge stops beating, so a beat
+    /// can't race the channel close after the FE has already cleared its timer
+    /// on `chat_done`/`chat_error`. Exercises the `turn_active = false` arm and
+    /// the channel-closed `break`.
+    #[tokio::test(start_paused = true)]
+    async fn stops_heartbeat_after_turn_completed() {
+        let mut events = super::super::event_bus::subscribe_web_channel_events();
+        let thread_id = "thread-hb-stop-4270";
+        let tx = spawn_test_bridge(thread_id, "req-hb-stop-4270");
+
+        tx.send(AgentProgress::TurnStarted).await.unwrap();
+        // Drain through the first heartbeat to prove the turn was beating.
+        loop {
+            if recv_for_thread(&mut events, thread_id).await.event == "inference_heartbeat" {
+                break;
+            }
+        }
+
+        // Complete the turn, then drop the sender so the bridge loop breaks.
+        tx.send(AgentProgress::TurnCompleted { iterations: 1 })
+            .await
+            .unwrap();
+        drop(tx);
+
+        // Let the bridge process TurnCompleted + observe the closed channel.
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // Advance well past several intervals — no further beats must appear.
+        tokio::time::advance(Duration::from_secs(INFERENCE_HEARTBEAT_SECS * 4)).await;
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+
+        loop {
+            match events.try_recv() {
+                Ok(ev) => assert_ne!(
+                    (ev.thread_id.as_str(), ev.event.as_str()),
+                    (thread_id, "inference_heartbeat"),
+                    "heartbeat emitted after TurnCompleted"
+                ),
+                Err(TryRecvError::Empty | TryRecvError::Closed) => break,
+                Err(TryRecvError::Lagged(_)) => continue,
+            }
+        }
+    }
+
     /// Gate check: before `TurnStarted` the bridge must NOT beat — otherwise a
     /// beat could land before the FE has armed its timer. Exercises the
     /// `turn_active == false` branch of the heartbeat tick.
