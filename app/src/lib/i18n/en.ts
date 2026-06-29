@@ -1041,6 +1041,8 @@ const en: TranslationMap = {
     'No summarization provider is available for Build Summary Trees. Enable local AI (Ollama), or enable cloud summarization in Settings → AI → Memory.',
   'memory.health.remediation.empty_input_refused':
     'A memory item was skipped because its text was empty. No action needed — newer items continue to embed normally.',
+  'memory.health.remediation.storage_unavailable':
+    "OpenHuman can't write to its memory storage — the disk or SD card appears to be failing, full, or read-only. Check the drive and free up space; memory processing resumes automatically once storage is writable again.",
   'memory.health.remediation.transient':
     'A temporary error interrupted memory processing. It will retry automatically.',
   'memory.health.remediation.unknown':
