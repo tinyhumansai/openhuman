@@ -264,12 +264,12 @@ def choose_asset():
             chosen = first_matching(names, r"x64\.dmg$")
     elif os_name == "linux" and arch == "x86_64":
         if linux_asset_kind == "deb":
-            chosen = first_matching(names, r"amd64\.deb$")
+            chosen = first_matching(names, r"OpenHuman_.*_amd64\.deb$")
         else:
             chosen = first_matching(names, r"amd64\.AppImage$")
     elif os_name == "linux" and arch == "aarch64":
         if linux_asset_kind == "deb":
-            chosen = first_matching(names, r"(arm64|aarch64)\.deb$")
+            chosen = first_matching(names, r"OpenHuman_.*_(arm64|aarch64)\.deb$")
         else:
             chosen = first_matching(names, r"(arm64|aarch64)\.AppImage$")
     if not chosen:
@@ -634,6 +634,7 @@ if [[ "${SOURCE_ONLY}" == "1" ]]; then
 fi
 
 resolve_rc=0
+linux_package_request="${OPENHUMAN_INSTALLER_LINUX_PACKAGE:-auto}"
 
 if [ "${OS}" = "linux" ] && [ "$(linux_package_preference)" = "deb" ]; then
   LINUX_PACKAGE_KIND="deb"
@@ -642,6 +643,16 @@ if [ "${OS}" = "linux" ] && [ "$(linux_package_preference)" = "deb" ]; then
     log_ok "Resolved latest release via releases API (${LATEST_VERSION})"
   else
     resolve_rc=$?
+    if [ "${linux_package_request}" = "deb" ]; then
+      if [ "${DRY_RUN}" = true ]; then
+        log_warn "Could not resolve requested .deb release asset (rc=${resolve_rc}) for ${OS}/${ARCH}."
+        echo "DRY RUN: skipping install for ${OS}/${ARCH} - no .deb asset resolved."
+        exit 0
+      fi
+      log_err "Could not resolve requested .deb release asset for ${OS}/${ARCH}."
+      log_err "Set OPENHUMAN_INSTALLER_LINUX_PACKAGE=appimage to use the AppImage fallback."
+      exit 1
+    fi
     case "${resolve_rc}" in
       2)
         log_warn "No .deb release asset published yet for ${OS}/${ARCH}; falling back to AppImage metadata."

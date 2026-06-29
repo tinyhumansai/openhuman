@@ -59,6 +59,116 @@ if [[ "$release_appimage_name" != "OpenHuman_0.0.0-test_amd64.AppImage" ]]; then
   exit 1
 fi
 
+(
+  tmpdir="$(mktemp -d)"
+  trap 'rm -rf "$tmpdir"' EXIT
+
+  release_without_deb="$tmpdir/release-without-deb.json"
+  cat >"$release_without_deb" <<'JSON'
+{
+  "tag_name": "v0.0.0-test",
+  "assets": [
+    {
+      "name": "OpenHuman_0.0.0-test_amd64.AppImage",
+      "browser_download_url": "https://example.invalid/OpenHuman_0.0.0-test_amd64.AppImage",
+      "digest": "sha256:appimage-amd64"
+    }
+  ]
+}
+JSON
+
+  latest_with_appimage="$tmpdir/latest-with-appimage.json"
+  cat >"$latest_with_appimage" <<'JSON'
+{
+  "version": "0.0.0-test",
+  "platforms": {
+    "linux-x86_64": {
+      "url": "https://example.invalid/OpenHuman_0.0.0-test_amd64.AppImage",
+      "signature": ""
+    }
+  }
+}
+JSON
+
+  cat >"$tmpdir/uname" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  -s) printf 'Linux\n' ;;
+  -m) printf 'x86_64\n' ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "$tmpdir/uname"
+
+  cat >"$tmpdir/curl" <<SH
+#!/usr/bin/env bash
+output=""
+args="\$*"
+while [ "\$#" -gt 0 ]; do
+  if [ "\$1" = "-o" ]; then
+    shift
+    output="\$1"
+  fi
+  shift || true
+done
+case " \$args " in
+  *"api.github.com/repos/tinyhumansai/openhuman/releases/latest"*)
+    cp "$release_without_deb" "\$output"
+    ;;
+  *"github.com/tinyhumansai/openhuman/releases/latest/download/latest.json"*)
+    cp "$latest_with_appimage" "\$output"
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+SH
+  chmod +x "$tmpdir/curl"
+  touch "$tmpdir/apt-get" "$tmpdir/dpkg"
+  chmod +x "$tmpdir/apt-get" "$tmpdir/dpkg"
+
+  set +e
+  explicit_deb_output=$(
+    PATH="$tmpdir:$PATH" OPENHUMAN_INSTALLER_LINUX_PACKAGE=deb bash "$REPO_ROOT/scripts/install.sh" --dry-run 2>&1
+  )
+  explicit_deb_rc=$?
+  set -e
+
+  if [[ "$explicit_deb_rc" -ne 0 ]]; then
+    echo "FAIL: explicit .deb dry-run should report no .deb asset without failing the smoke query"
+    echo "$explicit_deb_output"
+    exit 1
+  fi
+  if [[ "$explicit_deb_output" != *"no .deb asset resolved"* ]]; then
+    echo "FAIL: explicit .deb dry-run should clearly report that no .deb asset was resolved"
+    echo "$explicit_deb_output"
+    exit 1
+  fi
+  if [[ "$explicit_deb_output" == *"AppImage"* ]]; then
+    echo "FAIL: explicit .deb selection must not fall back to AppImage"
+    echo "$explicit_deb_output"
+    exit 1
+  fi
+
+  set +e
+  explicit_deb_install_output=$(
+    PATH="$tmpdir:$PATH" OPENHUMAN_INSTALLER_LINUX_PACKAGE=deb bash "$REPO_ROOT/scripts/install.sh" 2>&1
+  )
+  explicit_deb_install_rc=$?
+  set -e
+
+  if [[ "$explicit_deb_install_rc" -eq 0 ]]; then
+    echo "FAIL: explicit .deb install should fail when no .deb asset is resolved"
+    echo "$explicit_deb_install_output"
+    exit 1
+  fi
+  if [[ "$explicit_deb_install_output" != *"Set OPENHUMAN_INSTALLER_LINUX_PACKAGE=appimage"* ]]; then
+    echo "FAIL: explicit .deb install should explain how to opt into the AppImage fallback"
+    echo "$explicit_deb_install_output"
+    exit 1
+  fi
+)
+
 if ! declare -F install_linux >/dev/null; then
   echo "FAIL: scripts/install.sh --source-only should expose install_linux for dry-run coverage"
   exit 1
@@ -100,6 +210,79 @@ if missing:
     print("FAIL: .deb package is missing CEF runtime dependencies: " + ", ".join(missing))
     sys.exit(1)
 PY
+
+(
+  tmpdir="$(mktemp -d)"
+  trap 'rm -rf "$tmpdir"' EXIT
+
+  latest_complete="$tmpdir/latest-complete.json"
+  cat >"$latest_complete" <<'JSON'
+{
+  "version": "0.0.0-test",
+  "platforms": {
+    "darwin-aarch64": {"url": "https://example.invalid/OpenHuman_0.0.0-test_aarch64.app.tar.gz"},
+    "darwin-x86_64": {"url": "https://example.invalid/OpenHuman_0.0.0-test_x86_64-apple-darwin.app.tar.gz"},
+    "linux-x86_64": {"url": "https://example.invalid/OpenHuman_0.0.0-test_amd64.AppImage"},
+    "linux-aarch64": {"url": "https://example.invalid/OpenHuman_0.0.0-test_aarch64.AppImage"},
+    "windows-x86_64": {"url": "https://example.invalid/OpenHuman_0.0.0-test_x64.msi"}
+  }
+}
+JSON
+
+  release_good_deb_names="$tmpdir/release-good-deb-names.json"
+  cat >"$release_good_deb_names" <<'JSON'
+{
+  "tag_name": "v0.0.0-test",
+  "assets": [
+    {"name": "OpenHuman_0.0.0-test_aarch64.app.tar.gz"},
+    {"name": "OpenHuman_0.0.0-test_x86_64-apple-darwin.app.tar.gz"},
+    {"name": "OpenHuman_0.0.0-test_amd64.AppImage"},
+    {"name": "OpenHuman_0.0.0-test_aarch64.AppImage"},
+    {"name": "OpenHuman_0.0.0-test_x64.msi"},
+    {"name": "OpenHuman_0.0.0-test_amd64.deb"},
+    {"name": "OpenHuman_0.0.0-test_arm64.deb"}
+  ]
+}
+JSON
+
+  if ! "$REPO_ROOT/scripts/validate-release-assets.sh" "$release_good_deb_names" "$latest_complete" >/dev/null; then
+    echo "FAIL: release validation should accept OpenHuman-named .deb assets"
+    exit 1
+  fi
+
+  release_bad_deb_names="$tmpdir/release-bad-deb-names.json"
+  cat >"$release_bad_deb_names" <<'JSON'
+{
+  "tag_name": "v0.0.0-test",
+  "assets": [
+    {"name": "OpenHuman_0.0.0-test_aarch64.app.tar.gz"},
+    {"name": "OpenHuman_0.0.0-test_x86_64-apple-darwin.app.tar.gz"},
+    {"name": "OpenHuman_0.0.0-test_amd64.AppImage"},
+    {"name": "OpenHuman_0.0.0-test_aarch64.AppImage"},
+    {"name": "OpenHuman_0.0.0-test_x64.msi"},
+    {"name": "custom_amd64.deb"},
+    {"name": "custom_arm64.deb"}
+  ]
+}
+JSON
+
+  set +e
+  bad_deb_validation_output=$(
+    "$REPO_ROOT/scripts/validate-release-assets.sh" "$release_bad_deb_names" "$latest_complete" 2>&1
+  )
+  bad_deb_validation_rc=$?
+  set -e
+
+  if [[ "$bad_deb_validation_rc" -eq 0 ]]; then
+    echo "FAIL: release validation should reject non-OpenHuman .deb asset names"
+    exit 1
+  fi
+  if [[ "$bad_deb_validation_output" != *"Missing required release assets"* ]]; then
+    echo "FAIL: release validation should explain missing required .deb assets"
+    echo "$bad_deb_validation_output"
+    exit 1
+  fi
+)
 
 set +e
 missing_channel_output=$(bash "$REPO_ROOT/scripts/install.sh" --channel 2>&1)

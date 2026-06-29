@@ -74,8 +74,8 @@ ASSET_PATTERNS = {
 }
 
 REQUIRED_RELEASE_ASSETS = {
-    "linux-x86_64 .deb":  r"amd64\.deb$",
-    "linux-aarch64 .deb": r"(arm64|aarch64)\.deb$",
+    "linux-x86_64 .deb":  r"OpenHuman_.*_amd64\.deb$",
+    "linux-aarch64 .deb": r"OpenHuman_.*_(arm64|aarch64)\.deb$",
 }
 
 release_path, latest_path = sys.argv[1], sys.argv[2]
