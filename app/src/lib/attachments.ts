@@ -65,16 +65,21 @@ export const ALLOWED_ATTACHMENT_MIME_TYPES = [
 // picks, not at the dialog.
 const EXTRACTABLE_FILE_MIME_TYPES = ['application/pdf', 'text/plain', 'text/markdown'] as const;
 
+// Shared image-marker budget per message. Images cost 1 marker each; a video
+// costs VIDEO_FRAME_COUNT markers (its sampled frames). Mirrors the core default
+// `multimodal.max_images` (src/openhuman/config/schema/tools/multimodal.rs) — the
+// core counts every `[IMAGE:]` marker (frames included) and errors on overflow,
+// so the composer must budget images + video frames against this single cap.
 export const ATTACHMENT_MAX_IMAGES = 4;
 export const ATTACHMENT_MAX_FILES = 4;
-export const ATTACHMENT_MAX_VIDEOS = 2;
 export const ATTACHMENT_MAX_IMAGE_SIZE_BYTES = 8 * 1024 * 1024; // 8 MB
 export const ATTACHMENT_MAX_FILE_SIZE_BYTES = 16 * 1024 * 1024; // 16 MB
 export const ATTACHMENT_MAX_VIDEO_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB
 export const ATTACHMENT_MAX_SIZE_BYTES = ATTACHMENT_MAX_IMAGE_SIZE_BYTES;
-// Number of still frames sampled from a video and forwarded as `[IMAGE:]`
-// markers. Kept small so a clip never blows the provider's image budget.
-export const VIDEO_FRAME_COUNT = 3;
+// Still frames sampled from a video and forwarded as `[IMAGE:]` markers. 2 keeps
+// a clip within the 4-marker budget alongside other attachments (e.g. 1 video +
+// 2 images, or 2 videos).
+export const VIDEO_FRAME_COUNT = 2;
 
 export interface Attachment {
   id: string;
@@ -295,16 +300,25 @@ export function extractVideoFrames(file: File, count?: number): Promise<string[]
   return videoFrameExtractor.extract(file, count);
 }
 
+/** Image-marker cost of an attachment kind (video = its sampled frames). */
+export function imageMarkerCost(kind: AttachmentKind): number {
+  if (kind === 'image') return 1;
+  if (kind === 'video') return VIDEO_FRAME_COUNT;
+  return 0;
+}
+
 export async function validateAndReadFile(
   file: File,
-  existingCount: number,
+  // Image-marker slots already consumed this message: 1 per image + VIDEO_FRAME_COUNT
+  // per video. Images and videos share one budget (ATTACHMENT_MAX_IMAGES) because
+  // the core counts every `[IMAGE:]` marker — frames included — and rejects overflow.
+  existingImageMarkers: number,
   existingFileCount = 0,
   // When `false` (the active chat model isn't vision-capable), image AND video
   // files are rejected (video is conveyed as sampled frames through the vision
   // path); documents (PDF/Word/etc.) still flow. Defaults `true` so non-chat
   // callers are unaffected.
-  allowImages = true,
-  existingVideoCount = 0
+  allowImages = true
 ): Promise<{ attachment: Attachment } | { error: AttachmentError }> {
   if (!isSupportedAttachmentMimeType(file.type)) {
     return { error: { code: 'unsupported_type', mimeType: file.type || 'unknown' } };
@@ -318,16 +332,15 @@ export async function validateAndReadFile(
     return { error: { code: 'video_not_supported' } };
   }
 
-  const maxCount =
-    kind === 'image'
-      ? ATTACHMENT_MAX_IMAGES
-      : kind === 'video'
-        ? ATTACHMENT_MAX_VIDEOS
-        : ATTACHMENT_MAX_FILES;
-  const count =
-    kind === 'image' ? existingCount : kind === 'video' ? existingVideoCount : existingFileCount;
-  if (count >= maxCount) {
-    return { error: { code: 'too_many', kind, max: maxCount } };
+  if (kind === 'file') {
+    if (existingFileCount >= ATTACHMENT_MAX_FILES) {
+      return { error: { code: 'too_many', kind: 'file', max: ATTACHMENT_MAX_FILES } };
+    }
+  } else {
+    // image or video: budget against the shared image-marker cap.
+    if (existingImageMarkers + imageMarkerCost(kind) > ATTACHMENT_MAX_IMAGES) {
+      return { error: { code: 'too_many', kind: 'image', max: ATTACHMENT_MAX_IMAGES } };
+    }
   }
 
   const maxBytes =

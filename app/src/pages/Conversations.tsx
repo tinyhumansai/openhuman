@@ -28,6 +28,7 @@ import {
   ATTACHMENT_MAX_FILES,
   ATTACHMENT_MAX_IMAGES,
   buildMessageWithAttachments,
+  imageMarkerCost,
   parseMessageImages,
   validateAndReadFile,
 } from '../lib/attachments';
@@ -913,19 +914,22 @@ const Conversations = ({
 
   const handleAttachFiles = async (files: FileList | File[] | null) => {
     if (!files) return;
-    let acceptedImageCount = attachments.filter(attachment => attachment.kind === 'image').length;
     let acceptedFileCount = attachments.filter(attachment => attachment.kind === 'file').length;
-    let acceptedVideoCount = attachments.filter(attachment => attachment.kind === 'video').length;
+    // Images and videos share one image-marker budget (video = its frames), so
+    // track consumed markers rather than per-kind counts.
+    let acceptedImageMarkers = attachments.reduce(
+      (sum, attachment) => sum + imageMarkerCost(attachment.kind),
+      0
+    );
     for (const file of Array.from(files)) {
       const result = await validateAndReadFile(
         file,
-        acceptedImageCount,
+        acceptedImageMarkers,
         acceptedFileCount,
         // Allow images AND video when the active model is vision-capable OR a
         // vision sub-agent can take it (orchestrator delegates the image/frames
         // onward). Video is sampled into still frames that ride the same path.
-        modelSupportsVision || visionDelegateAvailable,
-        acceptedVideoCount
+        modelSupportsVision || visionDelegateAvailable
       );
       if ('error' in result) {
         const { error } = result;
@@ -938,12 +942,9 @@ const Conversations = ({
             chatSendError('attachment_invalid', t('chat.attachment.videoNotSupported'))
           );
         } else if (error.code === 'too_many') {
+          // image/video share the image-marker budget → tooMany; files separate.
           const key =
-            error.kind === 'image'
-              ? 'chat.attachment.tooMany'
-              : error.kind === 'video'
-                ? 'chat.attachment.tooManyVideos'
-                : 'chat.attachment.tooManyFiles';
+            error.kind === 'file' ? 'chat.attachment.tooManyFiles' : 'chat.attachment.tooMany';
           setAttachError(
             chatSendError('attachment_invalid', t(key).replace('{max}', String(error.max)))
           );
@@ -962,12 +963,10 @@ const Conversations = ({
         }
         return;
       }
-      if (result.attachment.kind === 'image') {
-        acceptedImageCount++;
-      } else if (result.attachment.kind === 'video') {
-        acceptedVideoCount++;
-      } else {
+      if (result.attachment.kind === 'file') {
         acceptedFileCount++;
+      } else {
+        acceptedImageMarkers += imageMarkerCost(result.attachment.kind);
       }
       setAttachments(prev => [...prev, result.attachment]);
     }

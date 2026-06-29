@@ -7,15 +7,16 @@ import {
   ATTACHMENT_MAX_IMAGES,
   ATTACHMENT_MAX_SIZE_BYTES,
   ATTACHMENT_MAX_VIDEO_SIZE_BYTES,
-  ATTACHMENT_MAX_VIDEOS,
   attachmentKindForMime,
   buildMessageWithAttachments,
   fileToDataUri,
   formatFileSize,
+  imageMarkerCost,
   isAllowedMimeType,
   isVideoMimeType,
   parseMessageImages,
   validateAndReadFile,
+  VIDEO_FRAME_COUNT,
   videoFrameExtractor,
 } from './attachments';
 
@@ -206,33 +207,51 @@ describe('video attachments', () => {
     expect(attachmentKindForMime('video/mp4')).toBe('video');
   });
 
+  it('costs 1 image marker per image and VIDEO_FRAME_COUNT per video', () => {
+    expect(imageMarkerCost('image')).toBe(1);
+    expect(imageMarkerCost('video')).toBe(VIDEO_FRAME_COUNT);
+    expect(imageMarkerCost('file')).toBe(0);
+  });
+
   it('rejects video when allowImages is false (non-vision model)', async () => {
-    const result = await validateAndReadFile(makeFile('clip.mp4', 'video/mp4', 8), 0, 0, false, 0);
+    const result = await validateAndReadFile(makeFile('clip.mp4', 'video/mp4', 8), 0, 0, false);
     expect('error' in result && result.error.code).toBe('video_not_supported');
   });
 
   it('rejects video over the video size limit', async () => {
     const big = makeFile('big.mp4', 'video/mp4', ATTACHMENT_MAX_VIDEO_SIZE_BYTES + 1);
-    const result = await validateAndReadFile(big, 0, 0, true, 0);
+    const result = await validateAndReadFile(big, 0, 0, true);
     expect('error' in result && result.error.code).toBe('too_large');
   });
 
-  it('rejects video when at the max video count', async () => {
+  it('rejects video when its frames would exceed the shared image-marker budget', async () => {
+    // Budget full of images already → no room for a video's frames.
     const result = await validateAndReadFile(
       makeFile('clip.mp4', 'video/mp4', 8),
+      ATTACHMENT_MAX_IMAGES,
       0,
-      0,
-      true,
-      ATTACHMENT_MAX_VIDEOS
+      true
     );
+    expect('error' in result && result.error.code).toBe('too_many');
+    // Reported as the image budget (frames are images to the model).
+    expect('error' in result && result.error.code === 'too_many' && result.error.kind).toBe(
+      'image'
+    );
+  });
+
+  it('rejects a video that partially overflows the budget (images + frames)', async () => {
+    // One image used (1 marker); a video costs VIDEO_FRAME_COUNT more. With the
+    // default budget of 4, 1 + 2 = 3 fits, but seed close to the cap to overflow.
+    const used = ATTACHMENT_MAX_IMAGES - (VIDEO_FRAME_COUNT - 1); // leaves < cost
+    const result = await validateAndReadFile(makeFile('c.mp4', 'video/mp4', 8), used, 0, true);
     expect('error' in result && result.error.code).toBe('too_many');
   });
 
-  it('samples frames and returns a video attachment on a vision model', async () => {
+  it('samples frames and returns a video attachment within budget', async () => {
     const frames = ['data:image/jpeg;base64,f1', 'data:image/jpeg;base64,f2'];
     vi.spyOn(videoFrameExtractor, 'extract').mockResolvedValue(frames);
     const file = makeFile('clip.mp4', 'video/mp4', 4096);
-    const result = await validateAndReadFile(file, 0, 0, true, 0);
+    const result = await validateAndReadFile(file, 0, 0, true);
     expect('attachment' in result).toBe(true);
     if ('attachment' in result) {
       expect(result.attachment.kind).toBe('video');
@@ -244,7 +263,7 @@ describe('video attachments', () => {
 
   it('fails when no frames could be extracted', async () => {
     vi.spyOn(videoFrameExtractor, 'extract').mockResolvedValue([]);
-    const result = await validateAndReadFile(makeFile('clip.mp4', 'video/mp4', 8), 0, 0, true, 0);
+    const result = await validateAndReadFile(makeFile('clip.mp4', 'video/mp4', 8), 0, 0, true);
     expect('error' in result && result.error.code).toBe('read_failed');
   });
 });
