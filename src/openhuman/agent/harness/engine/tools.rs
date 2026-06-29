@@ -498,6 +498,13 @@ mod tests {
     }
 
     #[test]
+    fn inherited_policy_uses_shared_deadline() {
+        let (deadline, secs) = resolve_tool_deadline(ToolTimeout::Inherit);
+        assert!(secs >= crate::openhuman::tool_timeout::MIN_TIMEOUT_SECS);
+        assert_eq!(deadline, Some(std::time::Duration::from_secs(secs)));
+    }
+
+    #[test]
     fn explicit_secs_policy_adds_grace_and_reports_value() {
         let (deadline, secs) = resolve_tool_deadline(ToolTimeout::Secs(300));
         // Reported value is the requested budget; the outer deadline gets a
