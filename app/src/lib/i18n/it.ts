@@ -2304,7 +2304,7 @@ const messages: TranslationMap = {
   'chat.attachment.tooManyFiles': 'Massimo {max} file per messaggio',
   'chat.attachment.tooManyVideos': 'Massimo {max} video per messaggio',
   'chat.attachment.videoNotSupported':
-    'Questo modello non può leggere i video. Puoi usare il livello OpenHuman Reasoning per allegare il tuo video.',
+    'Questo modello non può leggere i video. Puoi usare il livello Ragionamento di OpenHuman per allegare il tuo video.',
   'chat.attachment.dropToAttach': 'Rilascia i file per allegarli',
   'chat.attachment.tooLarge': "L'immagine supera il limite di dimensione di {max}",
   'chat.attachment.unsupportedType':

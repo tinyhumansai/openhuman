@@ -2218,7 +2218,7 @@ const messages: TranslationMap = {
   'chat.attachment.tooManyFiles': 'الحد الأقصى {max} ملفات لكل رسالة',
   'chat.attachment.tooManyVideos': 'الحد الأقصى {max} مقاطع فيديو لكل رسالة',
   'chat.attachment.videoNotSupported':
-    'لا يمكن لهذا النموذج قراءة مقاطع الفيديو. يمكنك استخدام فئة OpenHuman Reasoning لإرفاق الفيديو.',
+    'لا يمكن لهذا النموذج قراءة مقاطع الفيديو. يمكنك استخدام مستوى التفكير من OpenHuman لإرفاق الفيديو.',
   'chat.attachment.dropToAttach': 'أفلت الملفات لإرفاقها',
   'chat.attachment.tooLarge': 'حجم الصورة يتجاوز الحد المسموح {max}',
   'chat.attachment.unsupportedType':

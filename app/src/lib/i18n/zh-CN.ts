@@ -2147,7 +2147,7 @@ const messages: TranslationMap = {
   'chat.attachment.tooManyFiles': '每条消息最多 {max} 个文件',
   'chat.attachment.tooManyVideos': '每条消息最多 {max} 个视频',
   'chat.attachment.videoNotSupported':
-    '此模型无法读取视频。您可以使用 OpenHuman Reasoning 等级来附加视频。',
+    '此模型无法读取视频。您可以使用 OpenHuman 推理层级来附加视频。',
   'chat.attachment.dropToAttach': '拖放文件以添加',
   'chat.attachment.tooLarge': '图片超过 {max} 大小限制',
   'chat.attachment.unsupportedType':
