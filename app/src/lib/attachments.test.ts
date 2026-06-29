@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ALLOWED_ATTACHMENT_MIME_TYPES,
@@ -6,12 +6,17 @@ import {
   ATTACHMENT_MAX_FILE_SIZE_BYTES,
   ATTACHMENT_MAX_IMAGES,
   ATTACHMENT_MAX_SIZE_BYTES,
+  ATTACHMENT_MAX_VIDEO_SIZE_BYTES,
+  ATTACHMENT_MAX_VIDEOS,
+  attachmentKindForMime,
   buildMessageWithAttachments,
   fileToDataUri,
   formatFileSize,
   isAllowedMimeType,
+  isVideoMimeType,
   parseMessageImages,
   validateAndReadFile,
+  videoFrameExtractor,
 } from './attachments';
 
 function makeFile(name: string, type: string, size = 1024): File {
@@ -188,9 +193,80 @@ describe('validateAndReadFile', () => {
   });
 });
 
+describe('video attachments', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('classifies video MIME types as the video kind', () => {
+    expect(isVideoMimeType('video/mp4')).toBe(true);
+    expect(isVideoMimeType('video/quicktime')).toBe(true);
+    expect(isVideoMimeType('video/webm')).toBe(true);
+    expect(isVideoMimeType('image/png')).toBe(false);
+    expect(attachmentKindForMime('video/mp4')).toBe('video');
+  });
+
+  it('rejects video when allowImages is false (non-vision model)', async () => {
+    const result = await validateAndReadFile(makeFile('clip.mp4', 'video/mp4', 8), 0, 0, false, 0);
+    expect('error' in result && result.error.code).toBe('video_not_supported');
+  });
+
+  it('rejects video over the video size limit', async () => {
+    const big = makeFile('big.mp4', 'video/mp4', ATTACHMENT_MAX_VIDEO_SIZE_BYTES + 1);
+    const result = await validateAndReadFile(big, 0, 0, true, 0);
+    expect('error' in result && result.error.code).toBe('too_large');
+  });
+
+  it('rejects video when at the max video count', async () => {
+    const result = await validateAndReadFile(
+      makeFile('clip.mp4', 'video/mp4', 8),
+      0,
+      0,
+      true,
+      ATTACHMENT_MAX_VIDEOS
+    );
+    expect('error' in result && result.error.code).toBe('too_many');
+  });
+
+  it('samples frames and returns a video attachment on a vision model', async () => {
+    const frames = ['data:image/jpeg;base64,f1', 'data:image/jpeg;base64,f2'];
+    vi.spyOn(videoFrameExtractor, 'extract').mockResolvedValue(frames);
+    const file = makeFile('clip.mp4', 'video/mp4', 4096);
+    const result = await validateAndReadFile(file, 0, 0, true, 0);
+    expect('attachment' in result).toBe(true);
+    if ('attachment' in result) {
+      expect(result.attachment.kind).toBe('video');
+      expect(result.attachment.frames).toEqual(frames);
+      expect(result.attachment.previewUri).toBe(frames[0]);
+      expect(result.attachment.file).toBe(file);
+    }
+  });
+
+  it('fails when no frames could be extracted', async () => {
+    vi.spyOn(videoFrameExtractor, 'extract').mockResolvedValue([]);
+    const result = await validateAndReadFile(makeFile('clip.mp4', 'video/mp4', 8), 0, 0, true, 0);
+    expect('error' in result && result.error.code).toBe('read_failed');
+  });
+});
+
 describe('buildMessageWithAttachments', () => {
   it('returns text unchanged when no attachments', () => {
     expect(buildMessageWithAttachments('hello', [])).toBe('hello');
+  });
+
+  it('expands a video into one IMAGE marker per sampled frame', () => {
+    const video = makeAttachment({
+      kind: 'video',
+      file: makeFile('clip.mp4', 'video/mp4'),
+      mimeType: 'video/mp4',
+      dataUri: 'data:image/jpeg;base64,f1',
+      previewUri: 'data:image/jpeg;base64,f1',
+      frames: ['data:image/jpeg;base64,f1', 'data:image/jpeg;base64,f2'],
+    });
+    const result = buildMessageWithAttachments('watch', [video]);
+    expect(result).toBe(
+      'watch [IMAGE:data:image/jpeg;base64,f1] [IMAGE:data:image/jpeg;base64,f2]'
+    );
   });
 
   it('appends IMAGE markers after the text', () => {
