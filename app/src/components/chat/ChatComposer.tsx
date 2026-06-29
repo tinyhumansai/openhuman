@@ -117,11 +117,15 @@ export default function ChatComposer({
     attachments.length >= maxAttachments;
 
   // Drag-and-drop: route dropped files through the same handler as the picker.
+  // We always `preventDefault` for *file* drags so the browser/CEF never
+  // navigates away to the dropped file — even when ingest is disabled — and only
+  // attach (and show the overlay) when ingest is actually allowed.
+  const isFileDrag = (e: React.DragEvent) =>
+    Array.from(e.dataTransfer?.types ?? []).includes('Files');
   const handleDragOver = (e: React.DragEvent) => {
-    if (attachDisabled) return;
-    if (!Array.from(e.dataTransfer?.types ?? []).includes('Files')) return;
+    if (!isFileDrag(e)) return;
     e.preventDefault();
-    setIsDragging(true);
+    if (!attachDisabled) setIsDragging(true);
   };
   const handleDragLeave = (e: React.DragEvent) => {
     // Ignore leave events that bubble while the cursor is still over a child.
@@ -129,11 +133,13 @@ export default function ChatComposer({
     setIsDragging(false);
   };
   const handleDrop = (e: React.DragEvent) => {
+    if (!isFileDrag(e)) return;
+    // Stop the default file-navigation before any early-return below.
+    e.preventDefault();
     setIsDragging(false);
     if (attachDisabled) return;
     const files = e.dataTransfer?.files;
     if (!files || files.length === 0) return;
-    e.preventDefault();
     void onAttachFiles(files);
   };
 
@@ -171,9 +177,9 @@ export default function ChatComposer({
       {/* The input box — only this carries the focus-within highlight. */}
       <div
         className="relative flex flex-col rounded-2xl border border-line bg-surface transition-all focus-within:border-primary-500/50 focus-within:ring-1 focus-within:ring-primary-500/50"
-        onDragOver={attachmentsEnabled ? handleDragOver : undefined}
-        onDragLeave={attachmentsEnabled ? handleDragLeave : undefined}
-        onDrop={attachmentsEnabled ? handleDrop : undefined}>
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}>
         {/* Drag-and-drop overlay: shown while a file drag hovers the composer. */}
         {isDragging && (
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary-500 bg-surface/90 text-sm font-medium text-primary-600">

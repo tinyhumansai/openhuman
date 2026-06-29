@@ -208,6 +208,17 @@ describe('ChatComposer', () => {
       fireEvent.drop(box, { dataTransfer: { files: [makeVideoFile()], types: ['Files'] } });
       expect(onAttachFiles).not.toHaveBeenCalled();
     });
+
+    it('prevents browser file-navigation on drop even when disabled', () => {
+      // fireEvent returns false when the event default was prevented.
+      renderComposer({ attachmentsEnabled: false });
+      const textarea = screen.getByRole('textbox');
+      const box = textarea.closest('div.rounded-2xl') as HTMLElement;
+      const notPrevented = fireEvent.drop(box, {
+        dataTransfer: { files: [makeVideoFile()], types: ['Files'] },
+      });
+      expect(notPrevented).toBe(false);
+    });
   });
 
   describe('clipboard paste', () => {
