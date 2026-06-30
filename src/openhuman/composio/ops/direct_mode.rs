@@ -4,7 +4,7 @@ use crate::openhuman::config::Config;
 use crate::rpc::RpcOutcome;
 
 use super::super::{
-    client::{create_composio_client, direct_list_connections, ComposioClientKind},
+    client::{create_direct_composio_tool_for_api_key, direct_list_connections},
     direct_auth,
 };
 use super::error_utils::OpResult;
@@ -13,15 +13,8 @@ async fn validate_direct_api_key_before_store(config: &Config, api_key: &str) ->
     let key_id = direct_auth::fingerprint_api_key(api_key);
     direct_auth::reset_direct_auth_failure(key_id);
 
-    let mut probe_config = config.clone();
-    probe_config.composio.mode = crate::openhuman::config::schema::COMPOSIO_MODE_DIRECT.into();
-    probe_config.composio.api_key = Some(api_key.to_string());
-
-    let kind = create_composio_client(&probe_config)
+    let direct = create_direct_composio_tool_for_api_key(config, api_key)
         .map_err(|e| format!("[composio-direct] validate_api_key: {e}"))?;
-    let ComposioClientKind::Direct(direct) = kind else {
-        return Err("[composio-direct] validate_api_key: direct client was not selected".into());
-    };
 
     match direct_list_connections(&direct).await {
         Ok(_) => {

@@ -236,7 +236,8 @@ use crate::openhuman::memory_store::chunks::types::{
     chunk_id, Chunk, Metadata, SourceKind, SourceRef,
 };
 use axum::{
-    extract::{Path, Query},
+    extract::{Path, Query, State},
+    http::HeaderMap,
     routing::{get, post},
     Json, Router,
 };
@@ -2006,6 +2007,67 @@ async fn composio_set_api_key_rejects_invalid_direct_key_before_persisting() {
         get_composio_api_key(&config).expect("read composio key after failed save"),
         None,
         "invalid key must not be stored"
+    );
+}
+
+#[tokio::test]
+async fn composio_set_api_key_validates_candidate_key_even_when_stored_key_exists() {
+    use crate::openhuman::config::TEST_ENV_LOCK;
+    use crate::openhuman::credentials::{get_composio_api_key, store_composio_api_key};
+    use std::sync::{Arc, Mutex};
+
+    let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let seen_keys = Arc::new(Mutex::new(Vec::<String>::new()));
+    let app = Router::new()
+        .route(
+            "/connected_accounts",
+            get(
+                |State(seen_keys): State<Arc<Mutex<Vec<String>>>>, headers: HeaderMap| async move {
+                    let key = headers
+                        .get("x-api-key")
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or_default()
+                        .to_string();
+                    seen_keys.lock().unwrap().push(key.clone());
+                    if key == "ck_old_valid" {
+                        (axum::http::StatusCode::OK, Json(json!({ "items": [] })))
+                    } else {
+                        (
+                            axum::http::StatusCode::UNAUTHORIZED,
+                            Json(json!({ "error": { "message": "Invalid API key" } })),
+                        )
+                    }
+                },
+            ),
+        )
+        .with_state(seen_keys.clone());
+    let base = start_mock_backend(app).await;
+    let _base_v2 = EnvVarGuard::set("OPENHUMAN_COMPOSIO_DIRECT_BASE_V2", &base);
+    let _base_v3 = EnvVarGuard::set("OPENHUMAN_COMPOSIO_DIRECT_BASE_V3", &base);
+
+    let tmp = tempfile::tempdir().unwrap();
+    let config = direct_mode_no_key_config(&tmp);
+    store_composio_api_key(&config, "ck_old_valid")
+        .await
+        .expect("seed old stored composio key");
+    let _new_key_guard = DirectAuthFailureGuard::new("ck_new_invalid");
+
+    let err = composio_set_api_key(&config, "ck_new_invalid", false)
+        .await
+        .expect_err("candidate invalid key must be rejected even if old stored key is valid");
+    assert!(
+        err.contains("Invalid Composio API key"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(
+        get_composio_api_key(&config).expect("read composio key after failed replacement"),
+        Some("ck_old_valid".to_string()),
+        "failed replacement must leave the old stored key intact"
+    );
+    assert_eq!(
+        seen_keys.lock().unwrap().as_slice(),
+        ["ck_new_invalid"],
+        "validation must probe the candidate key, not the stored key"
     );
 }
 
