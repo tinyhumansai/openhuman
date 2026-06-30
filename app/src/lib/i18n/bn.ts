@@ -4850,6 +4850,7 @@ const messages: TranslationMap = {
     'আপনার বার্তাগুলি বাবলে রেখে অ্যাসিস্ট্যান্টের উত্তর ফ্রেমহীন টেক্সট হিসেবে দেখান।',
   'settings.mascot.active': 'সক্রিয়',
   'settings.mascot.characterDesc': 'চরিত্রের বিবরণ',
+  'settings.mascot.characterDraft': 'খসড়া',
   'settings.mascot.characterHeading': 'চরিত্রের শিরোনাম',
   'settings.mascot.customGifError':
     'একটি HTTPS .gif URL, লুপব্যাক HTTP .gif URL, file:// .gif URL, অথবা স্থানীয় .gif পাথ লিখুন।',
@@ -5150,9 +5151,11 @@ const messages: TranslationMap = {
   'skills.meetingBots.platformComingSoon': '{label} সমর্থন শীঘ্রই আসছে।',
   'skills.meetingBots.platformHints.gmeet': 'meet.google.com/abc-defg-hij',
   'skills.meetingBots.platformHints.teams': 'teams.microsoft.com/...',
+  'skills.meetingBots.platformHints.webex': 'webex.com/meet/...',
   'skills.meetingBots.platformHints.zoom': 'zoom.us/j/...',
   'skills.meetingBots.platforms.gmeet': 'Google Meet',
   'skills.meetingBots.platforms.teams': 'মাইক্রোসফট টিম',
+  'skills.meetingBots.platforms.webex': 'Webex',
   'skills.meetingBots.platforms.zoom': 'জুম',
   'skills.meetingBots.sendTo': 'পাঠান',
   'skills.meetingBots.serverOverloaded':
@@ -5195,6 +5198,62 @@ const messages: TranslationMap = {
   'skills.meetingBots.activeMode': 'আমি ডাকলে উত্তর দেবে',
   'skills.meetingBots.activeModeDesc':
     'চালু থাকলে, আপনি ওয়েক ফ্রেজ বললে বটটি সশব্দে উত্তর দেয়। বন্ধ থাকলে, এটি শুধু শোনে ও প্রতিলিপি তৈরি করে।',
+  'skills.meetingBots.history.allPlatforms': 'সব প্ল্যাটফর্ম',
+  'skills.meetingBots.history.copyTranscript': 'কপি করুন',
+  'skills.meetingBots.history.downloadTranscript': 'ডাউনলোড',
+  'skills.meetingBots.history.earlier': 'আগে',
+  'skills.meetingBots.history.participantCount': '{count} অংশগ্রহণকারী',
+  'skills.meetingBots.history.participantCountPlural': '{count} অংশগ্রহণকারী',
+  'skills.meetingBots.history.runWithOpenHuman': 'OpenHuman দিয়ে চালান',
+  'skills.meetingBots.history.searchPlaceholder': 'কল খুঁজুন…',
+  'skills.meetingBots.history.selectPrompt':
+    'সারাংশ এবং ট্রান্সক্রিপ্ট দেখতে একটি কল নির্বাচন করুন।',
+  'skills.meetingBots.history.today': 'আজ',
+  'skills.meetingBots.history.yesterday': 'গতকাল',
+  'skills.meetingBots.upcoming.heading': 'আসন্ন',
+  'skills.meetingBots.upcoming.when': 'কখন',
+  'skills.meetingBots.upcoming.meeting': 'মিটিং',
+  'skills.meetingBots.upcoming.platform': 'প্ল্যাটফর্ম',
+  'skills.meetingBots.upcoming.people': 'মানুষ',
+  'skills.meetingBots.upcoming.joinPolicy': 'যোগদান নীতি',
+  'skills.meetingBots.upcoming.joinNow': 'এখনই যোগ দিন',
+  'skills.meetingBots.upcoming.joinNowAriaLabel': '{title}-তে যোগ দিন',
+  'skills.meetingBots.upcoming.join': 'যোগ দিন',
+  'skills.meetingBots.upcoming.auto': 'অটো',
+  'skills.meetingBots.upcoming.ask': 'জিজ্ঞেস করুন',
+  'skills.meetingBots.upcoming.skip': 'এড়িয়ে যান',
+  'skills.meetingBots.upcoming.today': 'আজ',
+  'skills.meetingBots.upcoming.tomorrow': 'আগামীকাল',
+  'skills.meetingBots.upcoming.empty':
+    'কোনো আসন্ন মিটিং নেই — এখানে দেখতে Google Calendar সংযুক্ত করুন।',
+  'skills.meetingBots.upcoming.error': 'আসন্ন মিটিং লোড করা যায়নি।',
+  'skills.meetingBots.upcoming.retry': 'পুনরায় চেষ্টা করুন',
+  'skills.meetingBots.upcoming.refresh': 'রিফ্রেশ',
+  'skills.meetingBots.upcoming.filterAll': 'সব প্ল্যাটফর্ম',
+  'skills.meetingBots.upcoming.participants': '{count} অংশগ্রহণকারী',
+  'skills.meetingBots.upcoming.imminent': 'শীঘ্রই শুরু হচ্ছে',
+  'skills.meetingBots.upcoming.autoJoinsAt': 'স্বয়ংক্রিয়-যোগ ~{time}-এ',
+  'skills.meetingBots.upcoming.asksAtStart': 'শুরুতে জিজ্ঞাসা করে',
+  'skills.meetingBots.upcoming.watchCalendarHint':
+    "'আমার ক্যালেন্ডার দেখুন' ডিফল্টস (গিয়ার আইকন)-এ চালু করুন যাতে স্বয়ংক্রিয়/জিজ্ঞাসা কার্যকর হয় — অন্যথায় এই নীতিগুলি সংরক্ষিত কিন্তু ট্রিগার হবে না।",
+  'skills.meetingBots.relative.now': 'এখন',
+  'skills.meetingBots.relative.inMinutes': '{count} মিনিটে',
+  'skills.meetingBots.relative.inHours': '{count} ঘন্টায়',
+  'skills.meetingBots.relative.minutesAgo': '{count} মিনিট আগে',
+  'skills.meetingBots.relative.hoursAgo': '{count} ঘন্টা আগে',
+  'skills.meetingBots.relative.daysAgo': '{count} দিন আগে',
+  'skills.meetingBots.relative.yesterday': 'গতকাল',
+  'skills.meetingBots.defaults.drawerTitle': 'মিটিং ডিফল্ট',
+  'skills.meetingBots.defaults.closeDrawer': 'বন্ধ করুন',
+  'skills.meetingBots.defaults.openDefaults': 'মিটিং সেটিং',
+  'skills.meetingBots.defaults.watchCalendar': 'আমার ক্যালেন্ডার দেখুন',
+  'skills.meetingBots.defaults.watchCalendarDesc':
+    'OpenHuman-কে আপনার সংযুক্ত ক্যালেন্ডার দেখতে দিন যাতে এটি নীচের নীতিগুলির উপর ভিত্তি করে মিটিংয়ে স্বয়ংক্রিয়ভাবে যোগ দিতে বা অনুরোধ করতে পারে। এটি মিটিং অনুস্মারক বিজ্ঞপ্তি থেকে আলাদা।',
+  'skills.meetingBots.defaults.globalPolicy': 'বৈশ্বিক স্বয়ংক্রিয়-যোগ দেওয়ার নীতি',
+  'skills.meetingBots.defaults.perPlatformTitle': 'প্রতি-প্ল্যাটফর্ম ওভাররাইড',
+  'skills.meetingBots.defaults.perPlatformDesc':
+    'নির্দিষ্ট প্ল্যাটফর্মের জন্য বৈশ্বিক নীতি ওভাররাইড করুন।',
+  'skills.meetingBots.defaults.useDefault': 'ডিফল্ট ব্যবহার করুন',
   'skills.resource.preview.closeAriaLabel': 'প্রিভিউ বন্ধ করুন',
   'skills.resource.preview.failed': 'প্রিভিউ ব্যর্থ',
   'skills.resource.preview.loading': 'প্রিভিউ লোড হচ্ছে…',
@@ -6252,7 +6311,11 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.title': 'প্রদানকারীর ক্রেডিট প্রয়োজন',
   'userErrors.insufficientCredits.body':
     'AI প্রদানকারীর ক্রেডিট শেষ। রিচার্জ করুন বা API কী বদলান।',
+  'userErrors.apiKeyMissing.title': 'API কী প্রয়োজন',
+  'userErrors.apiKeyMissing.body':
+    'আপনার AI প্রদানকারীর কোনো API কী সেট নেই। চালিয়ে যেতে প্রদানকারী সেটিংসে একটি যোগ করুন।',
   'userErrors.scope.chat': 'চ্যাট',
+  'userErrors.scope.cron': 'নির্ধারিত কাজ',
   // Agent World — Identity trading (confirm-before-spend + balance gate)
   'agentWorld.trading.amountLabel': 'পরিমাণ',
   'agentWorld.trading.networkLabel': 'নেটওয়ার্ক',
@@ -6284,6 +6347,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.amountTooManyDecimals': 'এই পরিমাণে অত্যধিক দশমিক স্থান রয়েছে।',
   'agentWorld.trading.amountMustBePositive': 'শূন্যের চেয়ে বড় একটি পরিমাণ লিখুন।',
   'agentWorld.trading.amountInvalid': 'একটি বৈধ পরিমাণ লিখুন।',
+
+  // Code block chrome
+  'codeBlock.copy': 'কপি করুন',
+  'codeBlock.copied': 'কপি হয়েছে!',
 };
 
 export default messages;

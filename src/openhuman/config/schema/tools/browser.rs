@@ -73,7 +73,7 @@ fn default_true() -> bool {
 }
 
 fn default_browser_backend() -> String {
-    "agent_browser".into()
+    "auto".into()
 }
 
 fn default_browser_webdriver_url() -> String {

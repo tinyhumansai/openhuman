@@ -420,7 +420,11 @@ export function extractAgentSources(entries: ToolTimelineEntry[]): AgentSource[]
     const baseName = entry.name.replace(/^subagent:/, '');
     if (!URL_SOURCE_TOOLS.has(baseName)) continue;
     const url = parseToolArgs(entry.argsBuffer)?.url?.trim();
-    if (!url || seen.has(url)) continue;
+    // `url` is the raw tool-call argument the model emitted — it is
+    // prompt-injection-influenceable and not guaranteed to be a real web
+    // address. Only surface http(s) sources as clickable links so a
+    // `javascript:` / `data:` / `file:` value can never reach an `<a href>`.
+    if (!url || seen.has(url) || !isHttpUrl(url)) continue;
     seen.add(url);
     sources.push({ id: entry.id, title: hostnameFromUrl(url) ?? url, url });
   }
@@ -440,6 +444,16 @@ function hostnameFromUrl(url: string): string | undefined {
     return new URL(url).hostname;
   } catch {
     return undefined;
+  }
+}
+
+/** True only for well-formed http(s) URLs — the schemes safe to link out to. */
+function isHttpUrl(url: string): boolean {
+  try {
+    const { protocol } = new URL(url);
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
   }
 }
 

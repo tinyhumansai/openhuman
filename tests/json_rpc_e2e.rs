@@ -982,6 +982,76 @@ fn ensure_test_rpc_auth() {
 }
 
 #[tokio::test]
+async fn json_rpc_config_update_browser_settings_persists_backend() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    write_min_config(&openhuman_home, "http://127.0.0.1:9");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    let updated = post_json_rpc(
+        &rpc_base,
+        4124_1,
+        "openhuman.config_update_browser_settings",
+        json!({
+            "enabled": true,
+            "backend": "playwright"
+        }),
+    )
+    .await;
+    let updated_result =
+        assert_no_jsonrpc_error(&updated, "config_update_browser_settings backend");
+    let updated_snapshot = peel_logs_envelope(updated_result);
+    assert_eq!(
+        updated_snapshot
+            .pointer("/config/browser/enabled")
+            .and_then(Value::as_bool),
+        Some(true),
+        "browser enabled flag should persist in update response: {updated_snapshot}"
+    );
+    assert_eq!(
+        updated_snapshot
+            .pointer("/config/browser/backend")
+            .and_then(Value::as_str),
+        Some("playwright"),
+        "browser backend should persist in update response: {updated_snapshot}"
+    );
+
+    let get = post_json_rpc(&rpc_base, 4124_2, "openhuman.config_get", json!({})).await;
+    let get_result = assert_no_jsonrpc_error(&get, "config_get");
+    let snapshot = peel_logs_envelope(get_result);
+    assert_eq!(
+        snapshot
+            .pointer("/config/browser/backend")
+            .and_then(Value::as_str),
+        Some("playwright"),
+        "browser backend should persist in config_get response: {snapshot}"
+    );
+
+    let invalid = post_json_rpc(
+        &rpc_base,
+        4124_3,
+        "openhuman.config_update_browser_settings",
+        json!({
+            "backend": "netscape"
+        }),
+    )
+    .await;
+    assert_jsonrpc_error(&invalid, "invalid browser backend");
+
+    rpc_join.abort();
+}
+
+#[tokio::test]
 async fn json_rpc_tokenjuice_detect_and_cache_stats() {
     let _env_lock = json_rpc_e2e_env_lock();
     let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
@@ -13539,6 +13609,187 @@ async fn json_rpc_threads_token_usage_reads_persisted_thread_totals() {
     assert_eq!(unknown_data["input_tokens"], 0);
     assert_eq!(unknown_data["cost_usd"], 0.0);
     assert_eq!(unknown_data["has_usage"], false);
+
+    rpc_join.abort();
+}
+
+/// `openhuman.meet_list_upcoming` — verifies the RPC is registered, accepts
+/// optional params, and returns the correct envelope shape.
+///
+/// In the test environment there is no backend session token, so
+/// `create_composio_client` fails gracefully and the handler returns an
+/// empty meetings list (ok=true, meetings=[]) rather than an error.
+/// This validates the graceful no-calendar path without requiring a live
+/// Composio connection.
+#[tokio::test]
+async fn json_rpc_meet_list_upcoming_returns_empty_when_no_calendar_connected() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    write_min_config(&openhuman_home, "http://127.0.0.1:9");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // --- no params: defaults apply, returns ok=true with empty meetings ---
+    let resp_default =
+        post_json_rpc(&rpc_base, 9200, "openhuman.meet_list_upcoming", json!({})).await;
+    let result = assert_no_jsonrpc_error(&resp_default, "meet_list_upcoming no-params");
+    let body = result.get("result").unwrap_or(result);
+    assert_eq!(
+        body.get("ok"),
+        Some(&json!(true)),
+        "ok must be true when no calendar connected"
+    );
+    let meetings = body
+        .get("meetings")
+        .and_then(|v| v.as_array())
+        .expect("meetings array must be present");
+    assert!(
+        meetings.is_empty(),
+        "meetings must be empty when no Composio client available"
+    );
+
+    // --- explicit lookahead_minutes + limit: still returns ok=true with empty ---
+    let resp_explicit = post_json_rpc(
+        &rpc_base,
+        9201,
+        "openhuman.meet_list_upcoming",
+        json!({ "lookahead_minutes": 120, "limit": 5 }),
+    )
+    .await;
+    let result2 = assert_no_jsonrpc_error(&resp_explicit, "meet_list_upcoming explicit params");
+    let body2 = result2.get("result").unwrap_or(result2);
+    assert_eq!(body2.get("ok"), Some(&json!(true)));
+    assert!(body2
+        .get("meetings")
+        .and_then(|v| v.as_array())
+        .is_some_and(|arr| arr.is_empty()));
+
+    // --- invalid param type: lookahead_minutes must be a number ---
+    let resp_bad = post_json_rpc(
+        &rpc_base,
+        9202,
+        "openhuman.meet_list_upcoming",
+        json!({ "lookahead_minutes": "not-a-number" }),
+    )
+    .await;
+    assert_jsonrpc_error(&resp_bad, "meet_list_upcoming bad lookahead type");
+
+    rpc_join.abort();
+}
+
+/// `openhuman.meet_set_event_policy` / `openhuman.meet_get_event_policies` —
+/// verifies the per-event policy RPC round-trip.
+///
+/// Uses an in-process HTTP server so the store hits a real (temp) SQLite DB.
+#[tokio::test]
+async fn json_rpc_meet_event_policy_round_trip() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    write_min_config(&openhuman_home, "http://127.0.0.1:9");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // --- set a policy for two events ---
+    let resp_set1 = post_json_rpc(
+        &rpc_base,
+        9300,
+        "openhuman.meet_set_event_policy",
+        json!({ "calendar_event_id": "cal-evt-001", "policy": "auto" }),
+    )
+    .await;
+    let result1 = assert_no_jsonrpc_error(&resp_set1, "set_event_policy cal-evt-001");
+    let body1 = result1.get("result").unwrap_or(result1);
+    assert_eq!(body1.get("ok"), Some(&json!(true)));
+
+    let resp_set2 = post_json_rpc(
+        &rpc_base,
+        9301,
+        "openhuman.meet_set_event_policy",
+        json!({ "calendar_event_id": "cal-evt-002", "policy": "skip" }),
+    )
+    .await;
+    let result2 = assert_no_jsonrpc_error(&resp_set2, "set_event_policy cal-evt-002");
+    let body2 = result2.get("result").unwrap_or(result2);
+    assert_eq!(body2.get("ok"), Some(&json!(true)));
+
+    // --- retrieve them in a batch ---
+    let resp_get = post_json_rpc(
+        &rpc_base,
+        9302,
+        "openhuman.meet_get_event_policies",
+        json!({ "calendar_event_ids": ["cal-evt-001", "cal-evt-002", "cal-evt-missing"] }),
+    )
+    .await;
+    let result_get = assert_no_jsonrpc_error(&resp_get, "get_event_policies batch");
+    let body_get = result_get.get("result").unwrap_or(result_get);
+    assert_eq!(body_get.get("ok"), Some(&json!(true)));
+    let policies = body_get.get("policies").expect("policies field");
+    assert_eq!(policies.get("cal-evt-001"), Some(&json!("auto")));
+    assert_eq!(policies.get("cal-evt-002"), Some(&json!("skip")));
+    assert!(
+        policies.get("cal-evt-missing").is_none(),
+        "unknown event must be absent from policies map"
+    );
+
+    // --- overwrite a policy and verify the new value is returned ---
+    let resp_overwrite = post_json_rpc(
+        &rpc_base,
+        9303,
+        "openhuman.meet_set_event_policy",
+        json!({ "calendar_event_id": "cal-evt-001", "policy": "ask" }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&resp_overwrite, "set_event_policy overwrite");
+
+    let resp_get2 = post_json_rpc(
+        &rpc_base,
+        9304,
+        "openhuman.meet_get_event_policies",
+        json!({ "calendar_event_ids": ["cal-evt-001"] }),
+    )
+    .await;
+    let result_get2 = assert_no_jsonrpc_error(&resp_get2, "get_event_policies after overwrite");
+    let body_get2 = result_get2.get("result").unwrap_or(result_get2);
+    let policies2 = body_get2
+        .get("policies")
+        .expect("policies field after overwrite");
+    assert_eq!(
+        policies2.get("cal-evt-001"),
+        Some(&json!("ask")),
+        "overwritten policy must reflect the new value"
+    );
+
+    // --- invalid policy string is rejected ---
+    let resp_bad = post_json_rpc(
+        &rpc_base,
+        9305,
+        "openhuman.meet_set_event_policy",
+        json!({ "calendar_event_id": "cal-evt-001", "policy": "invalid_policy" }),
+    )
+    .await;
+    assert_jsonrpc_error(&resp_bad, "set_event_policy invalid policy");
 
     rpc_join.abort();
 }

@@ -483,8 +483,14 @@ fn generate_silent_wav_produces_valid_wav_header() {
     assert_eq!(&wav[8..12], b"WAVE");
     assert_eq!(&wav[12..16], b"fmt ");
     assert_eq!(&wav[36..40], b"data");
-    // total size = header(44) + 800 samples * 2 bytes = 1644
-    assert_eq!(wav.len(), 1644);
+    // 16kHz so the in-process whisper engine accepts it (issue #3425).
+    let sample_rate = u32::from_le_bytes([wav[24], wav[25], wav[26], wav[27]]);
+    assert_eq!(
+        sample_rate, 16_000,
+        "fixture must be 16kHz for in-process STT"
+    );
+    // total size = header(44) + 1600 samples * 2 bytes = 3244
+    assert_eq!(wav.len(), 3244);
 }
 
 #[test]
