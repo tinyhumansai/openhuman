@@ -200,7 +200,10 @@ pub(super) async fn run_inner_loop(
     // Playwright spec.
     let outcome = crate::openhuman::tokenjuice::savings::with_turn_model(
         model.to_string(),
-        super::super::super::model_vision_context::with_current_model_vision(
+        // Box the context chain so the added `with_turn_model` scope keeps the
+        // nested sub-agent future off the constrained worker stack (mirrors the
+        // existing `Box::pin` guard below; issue #4122 review).
+        Box::pin(super::super::super::model_vision_context::with_current_model_vision(
             model_vision,
             Box::pin(super::super::super::engine::run_turn_engine(
                 provider,
@@ -223,7 +226,7 @@ pub(super) async fn run_inner_loop(
                 run_queue, // steering channel for `steer_subagent` (None = non-steerable)
                 autocompact.as_ref(),
             )),
-        ),
+        )),
     )
     .await?;
 
