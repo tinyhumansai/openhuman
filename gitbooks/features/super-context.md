@@ -44,6 +44,8 @@ New thread, first message
 
 Because the scout is **read-only**, it can never take an action on a fresh thread — it only reads and summarizes. And because it runs in the harness rather than as an optional tool, the redundant `agent_prepare_context` tool is suppressed for that turn, so the agent doesn't do the work twice.
 
+The scout runs on the **`burst` tier** (`hint = "burst"` → `burst-v1` on the managed backend) — a cheap, high-throughput, non-reasoning model. The sweep is a latency-tolerant pre-flight pass, so raw throughput on a fast model is a better fit than the pricier agentic/reasoning tiers. See [Automatic Model Routing](model-routing/README.md).
+
 ***
 
 ## Safety and robustness

@@ -14,6 +14,7 @@ import './polyfills';
 import { initGA, initSentry, startUiInteractionTracking, trackEvent } from './services/analytics';
 import { setStoreForApiClient } from './services/apiClient';
 import { primeActiveUserId } from './store/userScopedStorage';
+import './styles/code-highlight.css';
 import './styles/theme.css';
 import { APP_VERSION } from './utils/config';
 import { setupDesktopDeepLinkListener } from './utils/desktopDeepLinkListener';

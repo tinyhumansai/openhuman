@@ -41,6 +41,21 @@ const DEFS: &[BackendMeetControllerDef] = &[
         schema: schema_notification_action,
         handler: handle_notification_action_wrap,
     },
+    BackendMeetControllerDef {
+        function: "list_upcoming",
+        schema: schema_list_upcoming,
+        handler: handle_list_upcoming_wrap,
+    },
+    BackendMeetControllerDef {
+        function: "set_event_policy",
+        schema: schema_set_event_policy,
+        handler: handle_set_event_policy_wrap,
+    },
+    BackendMeetControllerDef {
+        function: "get_event_policies",
+        schema: schema_get_event_policies,
+        handler: handle_get_event_policies_wrap,
+    },
 ];
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -279,6 +294,124 @@ fn handle_notification_action_wrap(params: Map<String, Value>) -> ControllerFutu
     Box::pin(async move { super::ops::handle_notification_action(params).await })
 }
 
+fn schema_list_upcoming() -> ControllerSchema {
+    ControllerSchema {
+        // NOTE: namespace is "meet" (not "agent_meetings") so the RPC name is
+        // `openhuman.meet_list_upcoming`. The handler lives here in the
+        // agent_meetings module because the logic is tightly coupled to the
+        // calendar/meeting infrastructure already present in this domain.
+        namespace: "meet",
+        function: "list_upcoming",
+        description: "List upcoming calendar meetings that have a conferencing link (Google Meet, \
+                      Zoom, Teams, Webex), fetched from the user's connected Google Calendar via \
+                      Composio. Returns an empty list when no calendar is connected. Sort order: \
+                      soonest first. Each record includes the inferred platform, attendee count, \
+                      organizer, and the global auto-join policy as the default join_policy.",
+        inputs: vec![
+            FieldSchema {
+                name: "lookahead_minutes",
+                ty: TypeSchema::U64,
+                comment: "How many minutes ahead to look for meetings. Defaults to 480 (8 hours).",
+                required: false,
+            },
+            FieldSchema {
+                name: "limit",
+                ty: TypeSchema::U64,
+                comment:
+                    "Maximum number of meetings to return. Defaults to 20. Clamped to [1, 100].",
+                required: false,
+            },
+        ],
+        outputs: vec![
+            FieldSchema {
+                name: "ok",
+                ty: TypeSchema::Bool,
+                comment: "Always true on success.",
+                required: true,
+            },
+            FieldSchema {
+                name: "meetings",
+                ty: TypeSchema::Json,
+                comment: "Array of upcoming meeting records (may be empty).",
+                required: true,
+            },
+        ],
+    }
+}
+
+fn handle_list_upcoming_wrap(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { super::ops::handle_list_upcoming(params).await })
+}
+
+fn schema_set_event_policy() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "meet",
+        function: "set_event_policy",
+        description: "Persist a per-event join-policy override for a specific calendar event. \
+                      The stored policy takes precedence over per-platform and global defaults \
+                      when the same event ID appears in meet_list_upcoming.",
+        inputs: vec![
+            FieldSchema {
+                name: "calendar_event_id",
+                ty: TypeSchema::String,
+                comment: "Stable calendar provider event id (the same id returned by meet_list_upcoming).",
+                required: true,
+            },
+            FieldSchema {
+                name: "policy",
+                ty: TypeSchema::String,
+                comment: "Join policy for this event: \"auto\" (always join), \"ask\" (prompt), or \"skip\" (never join).",
+                required: true,
+            },
+        ],
+        outputs: vec![FieldSchema {
+            name: "ok",
+            ty: TypeSchema::Bool,
+            comment: "True when the policy was stored successfully.",
+            required: true,
+        }],
+    }
+}
+
+fn handle_set_event_policy_wrap(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { super::ops::handle_set_event_policy(params).await })
+}
+
+fn schema_get_event_policies() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "meet",
+        function: "get_event_policies",
+        description: "Retrieve stored per-event join-policy overrides for a batch of calendar \
+                      event IDs. Event IDs without a stored override are omitted from the \
+                      returned map.",
+        inputs: vec![FieldSchema {
+            name: "calendar_event_ids",
+            ty: TypeSchema::Json,
+            comment: "Array of calendar event id strings to look up.",
+            required: true,
+        }],
+        outputs: vec![
+            FieldSchema {
+                name: "ok",
+                ty: TypeSchema::Bool,
+                comment: "Always true on success.",
+                required: true,
+            },
+            FieldSchema {
+                name: "policies",
+                ty: TypeSchema::Json,
+                comment: "Object mapping calendar_event_id → policy string (\"auto\" | \"ask\" | \"skip\"). \
+                          Only IDs with a stored override are included.",
+                required: true,
+            },
+        ],
+    }
+}
+
+fn handle_get_event_policies_wrap(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { super::ops::handle_get_event_policies(params).await })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,7 +434,10 @@ mod tests {
                 "leave",
                 "harness_response",
                 "speak",
-                "notification_action"
+                "notification_action",
+                "list_upcoming",
+                "set_event_policy",
+                "get_event_policies",
             ]
         );
     }

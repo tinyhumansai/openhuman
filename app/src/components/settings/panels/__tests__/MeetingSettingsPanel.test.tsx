@@ -21,6 +21,7 @@ const meetSettings = (overrides: Partial<MeetSettings> = {}): MeetSettings => ({
   auto_summarize_policy: 'ask',
   listen_only_default: true,
   ingest_backend_transcripts: false,
+  watch_calendar: false,
   ...overrides,
 });
 

@@ -53,6 +53,12 @@ vi.mock('../coreRpcClient', () => ({
   getCoreRpcToken: vi.fn(async () => 'mock-core-bearer'),
 }));
 
+// Capture the metadata-only ingest the `user_error` handler routes through.
+const ingestRuntimeErrorSignalMock = vi.fn();
+vi.mock('../../lib/userErrors/report', () => ({
+  ingestRuntimeErrorSignal: (...args: unknown[]) => ingestRuntimeErrorSignalMock(...args),
+}));
+
 /** Build a mock socket that captures event handlers in `handlers`. */
 function buildMockSocket(): { handlers: EventHandlerMap; mockSocket: object } {
   const handlers: EventHandlerMap = {};
@@ -332,5 +338,74 @@ describe('socketService — agent_meetings event handlers (lines 428-480)', () =
     expect(storeMock.dispatch).toHaveBeenCalledWith(
       expect.objectContaining({ payload: { error: 'bot crashed' } })
     );
+  });
+
+  it('routes a "user_error" broadcast through the metadata-only ingest (#4165)', async () => {
+    const { handlers, mockSocket } = buildMockSocket();
+
+    vi.doMock('socket.io-client', () => ({ io: vi.fn(() => mockSocket) }));
+    getCoreRpcUrlMock.mockResolvedValue('http://127.0.0.1:7788/rpc');
+    ingestRuntimeErrorSignalMock.mockClear();
+
+    const { socketService } = await import('../socketService');
+    socketService.connect('jwt-test-user-error');
+
+    await pollUntil(() => expect(handlers['user_error']).toBeDefined());
+
+    // Stable kind token + scope only — never a raw provider body. The fixture
+    // deliberately includes a raw `message` to prove the handler drops it
+    // (no-leak contract), not just that it omits it by default.
+    handlers['user_error']!({
+      error_type: 'api_key_missing',
+      error_source: 'cron',
+      error_provider: 'openrouter',
+      message: 'raw upstream provider text',
+    });
+
+    expect(ingestRuntimeErrorSignalMock).toHaveBeenCalledTimes(1);
+    const signal = ingestRuntimeErrorSignalMock.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(signal).toMatchObject({
+      errorType: 'api_key_missing',
+      scope: 'cron',
+      sourceDomain: 'cron',
+      provider: 'openrouter',
+    });
+    // No-leak contract: the raw provider `message` must NEVER be forwarded.
+    expect(signal.message).toBeUndefined();
+  });
+
+  it('defaults "user_error" sourceDomain to cron when error_source is absent (#4165)', async () => {
+    const { handlers, mockSocket } = buildMockSocket();
+
+    vi.doMock('socket.io-client', () => ({ io: vi.fn(() => mockSocket) }));
+    getCoreRpcUrlMock.mockResolvedValue('http://127.0.0.1:7788/rpc');
+    ingestRuntimeErrorSignalMock.mockClear();
+
+    const { socketService } = await import('../socketService');
+    socketService.connect('jwt-test-user-error-default');
+
+    await pollUntil(() => expect(handlers['user_error']).toBeDefined());
+    handlers['user_error']!({ error_type: 'insufficient_credits' });
+
+    expect(ingestRuntimeErrorSignalMock).toHaveBeenCalledWith(
+      storeMock.dispatch,
+      expect.objectContaining({ errorType: 'insufficient_credits', sourceDomain: 'cron' })
+    );
+  });
+
+  it('drops an empty "user_error" payload without ingesting (#4165)', async () => {
+    const { handlers, mockSocket } = buildMockSocket();
+
+    vi.doMock('socket.io-client', () => ({ io: vi.fn(() => mockSocket) }));
+    getCoreRpcUrlMock.mockResolvedValue('http://127.0.0.1:7788/rpc');
+    ingestRuntimeErrorSignalMock.mockClear();
+
+    const { socketService } = await import('../socketService');
+    socketService.connect('jwt-test-user-error-empty');
+
+    await pollUntil(() => expect(handlers['user_error']).toBeDefined());
+    handlers['user_error']!(null);
+
+    expect(ingestRuntimeErrorSignalMock).not.toHaveBeenCalled();
   });
 });

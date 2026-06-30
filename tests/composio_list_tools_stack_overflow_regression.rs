@@ -101,6 +101,11 @@
 //! Assertion is implicit: cargo reports the test as failed when the
 //! tokio runtime aborts with stack overflow.
 
+// This stress target is still compiled by normal cargo test. Under llvm-cov,
+// coverage instrumentation makes the already-large integration-test binary
+// trip CI's linker with SIGBUS before the regression can run.
+#![cfg(not(coverage))]
+
 use anyhow::Result;
 use async_trait::async_trait;
 use openhuman_core::openhuman::agent::harness::definition::{AgentDefinitionRegistry, ModelSpec};
