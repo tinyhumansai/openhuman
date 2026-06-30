@@ -231,6 +231,12 @@ pub enum SummaryGenerationMode {
     UseProvidedOnly,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ThreadAppendMode {
+    BestEffort,
+    Strict,
+}
+
 /// Create a conversation thread labelled "Meetings" containing the transcript.
 ///
 /// The correlation_id (when present) is embedded in the transcript body as an
@@ -263,6 +269,43 @@ pub async fn create_meeting_thread_with_transcript_with_summary_mode(
     generated: Option<&super::summary::GeneratedSummary>,
     summary_mode: SummaryGenerationMode,
 ) -> Result<String, String> {
+    create_meeting_thread_with_transcript_inner(
+        turns,
+        duration_ms,
+        correlation_id,
+        generated,
+        summary_mode,
+        ThreadAppendMode::BestEffort,
+    )
+    .await
+}
+
+async fn create_meeting_thread_with_transcript_with_summary_mode_strict(
+    turns: &[BackendMeetTurn],
+    duration_ms: u64,
+    correlation_id: Option<String>,
+    generated: Option<&super::summary::GeneratedSummary>,
+    summary_mode: SummaryGenerationMode,
+) -> Result<String, String> {
+    create_meeting_thread_with_transcript_inner(
+        turns,
+        duration_ms,
+        correlation_id,
+        generated,
+        summary_mode,
+        ThreadAppendMode::Strict,
+    )
+    .await
+}
+
+async fn create_meeting_thread_with_transcript_inner(
+    turns: &[BackendMeetTurn],
+    duration_ms: u64,
+    correlation_id: Option<String>,
+    generated: Option<&super::summary::GeneratedSummary>,
+    summary_mode: SummaryGenerationMode,
+    append_mode: ThreadAppendMode,
+) -> Result<String, String> {
     use crate::openhuman::memory::{
         AppendConversationMessageRequest, ConversationMessageRecord,
         CreateConversationThreadRequest, UpdateConversationThreadTitleRequest,
@@ -270,7 +313,9 @@ pub async fn create_meeting_thread_with_transcript_with_summary_mode(
     use crate::openhuman::threads::ops;
 
     if turns.is_empty() {
-        return Ok(String::new());
+        return Err(
+            "[agent_meetings] cannot create a meeting thread without transcript turns".to_string(),
+        );
     }
 
     // Format the transcript body first — this is the durable artifact and must
@@ -331,9 +376,13 @@ pub async fn create_meeting_thread_with_transcript_with_summary_mode(
         message: msg,
     };
     if let Err(e) = ops::message_append(append_req).await {
+        let message = format!("[agent_meetings] failed to append transcript message: {e}");
+        if matches!(append_mode, ThreadAppendMode::Strict) {
+            return Err(message);
+        }
         tracing::warn!(
             thread_id = %thread_id,
-            "[agent_meetings] failed to append transcript message: {e}"
+            "{message}"
         );
     }
 
@@ -385,9 +434,13 @@ pub async fn create_meeting_thread_with_transcript_with_summary_mode(
             message: summary_msg,
         };
         if let Err(e) = ops::message_append(summary_req).await {
+            let message = format!("[agent_meetings] failed to append summary message: {e}");
+            if matches!(append_mode, ThreadAppendMode::Strict) {
+                return Err(message);
+            }
             tracing::warn!(
                 thread_id = %thread_id,
-                "[agent_meetings] failed to append summary message: {e}"
+                "{message}"
             );
         }
     }
@@ -482,7 +535,7 @@ pub async fn handle_generate_summary(params: Map<String, Value>) -> Result<Value
     let updated = super::recent_calls::build_detail(meeting_id, &turns, Some(&generated));
     crate::openhuman::meet_agent::store::write_detail(&updated).await?;
 
-    let thread_id = create_meeting_thread_with_transcript_with_summary_mode(
+    let thread_id = create_meeting_thread_with_transcript_with_summary_mode_strict(
         &turns,
         0,
         Some(meeting_id.to_string()),
@@ -1905,6 +1958,24 @@ mod tests {
                 None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
             }
         }
+    }
+
+    #[tokio::test]
+    async fn thread_creation_rejects_empty_transcript_turns() {
+        let err = create_meeting_thread_with_transcript_with_summary_mode(
+            &[],
+            60_000,
+            Some("empty-transcript".to_string()),
+            None,
+            SummaryGenerationMode::UseProvidedOnly,
+        )
+        .await
+        .expect_err("empty transcript should not return a successful empty thread ID");
+
+        assert!(
+            err.contains("without transcript turns"),
+            "unexpected error: {err}"
+        );
     }
 
     #[tokio::test]

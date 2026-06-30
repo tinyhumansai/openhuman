@@ -84,11 +84,22 @@ impl EventHandler for MeetingEventSubscriber {
                 //    patched in by step 4 once it's ready.
                 super::recent_calls::record_backend_call_detail(&request_id, turns, None).await;
 
-                let policy = crate::openhuman::config::Config::load_or_init()
-                    .await
-                    .map(|c| c.meet.auto_summarize_policy)
-                    .unwrap_or_default();
-                let summary_decision = super::summary::post_call_summary_decision(policy);
+                let (policy, summary_decision) =
+                    match crate::openhuman::config::Config::load_or_init().await {
+                        Ok(config) => {
+                            let policy = config.meet.auto_summarize_policy;
+                            (
+                                Some(policy),
+                                super::summary::post_call_summary_decision(policy),
+                            )
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "{LOG_PREFIX} config load failed while resolving summary policy; skipping auto-summary: {e}"
+                            );
+                            (None, super::summary::PostCallSummaryDecision::Skip)
+                        }
+                    };
                 tracing::info!(
                     policy = ?policy,
                     decision = ?summary_decision,
