@@ -85,8 +85,8 @@ fn is_abstract_tier_model(model: &str) -> bool {
         || trimmed == MODEL_REASONING_QUICK_V1
         || trimmed == MODEL_CHAT_V1
         || trimmed == MODEL_AGENTIC_V1
-        || trimmed == MODEL_CODING_V1
         || trimmed == MODEL_BURST_V1
+        || trimmed == MODEL_CODING_V1
         || trimmed == MODEL_VISION_V1
         || trimmed == MODEL_SUMMARIZATION_V1
 }
@@ -109,8 +109,8 @@ pub fn resolve_model_for_hint(hint_or_tier: &str, config: &Config) -> String {
         ("reasoning", crate::openhuman::config::MODEL_REASONING_V1),
         ("chat", crate::openhuman::config::MODEL_CHAT_V1),
         ("agentic", crate::openhuman::config::MODEL_AGENTIC_V1),
-        ("coding", crate::openhuman::config::MODEL_CODING_V1),
         ("burst", crate::openhuman::config::MODEL_BURST_V1),
+        ("coding", crate::openhuman::config::MODEL_CODING_V1),
         ("vision", crate::openhuman::config::MODEL_VISION_V1),
         (
             "summarization",
@@ -126,8 +126,8 @@ pub fn resolve_model_for_hint(hint_or_tier: &str, config: &Config) -> String {
         (crate::openhuman::config::MODEL_CHAT_V1, "chat"),
         (crate::openhuman::config::MODEL_REASONING_QUICK_V1, "chat"),
         (crate::openhuman::config::MODEL_AGENTIC_V1, "agentic"),
-        (crate::openhuman::config::MODEL_CODING_V1, "coding"),
         (crate::openhuman::config::MODEL_BURST_V1, "burst"),
+        (crate::openhuman::config::MODEL_CODING_V1, "coding"),
         (crate::openhuman::config::MODEL_VISION_V1, "vision"),
         (
             crate::openhuman::config::MODEL_SUMMARIZATION_V1,
@@ -195,16 +195,16 @@ pub(crate) fn is_known_openhuman_tier(model: &str) -> bool {
         MODEL_REASONING_V1
             | MODEL_CHAT_V1
             | MODEL_AGENTIC_V1
-            | MODEL_CODING_V1
             | MODEL_BURST_V1
+            | MODEL_CODING_V1
             | MODEL_REASONING_QUICK_V1
             | MODEL_SUMMARIZATION_V1
             | MODEL_VISION_V1
             | "hint:reasoning"
             | "hint:chat"
             | "hint:agentic"
-            | "hint:coding"
             | "hint:burst"
+            | "hint:coding"
             | "hint:summarization"
             | "hint:vision"
     )
@@ -235,9 +235,9 @@ pub(crate) fn oh_tier_supports_vision(model: &str) -> bool {
         MODEL_CHAT_V1 | "hint:chat" => false,
         MODEL_REASONING_QUICK_V1 => false,
         MODEL_AGENTIC_V1 | "hint:agentic" => false,
-        MODEL_CODING_V1 | "hint:coding" => false,
         // Burst is a text-only tier.
         MODEL_BURST_V1 | "hint:burst" => false,
+        MODEL_CODING_V1 | "hint:coding" => false,
         MODEL_SUMMARIZATION_V1 | "hint:summarization" => false,
         _ => false,
     }
@@ -252,9 +252,10 @@ pub(crate) fn oh_tier_supports_vision(model: &str) -> bool {
 ///
 /// Only `chat`, `reasoning`, and `coding` participate in BYOK inheritance.
 /// Background workloads (`memory`, `embeddings`, `heartbeat`, `learning`,
-/// `subconscious`) and the `agentic` workload always fall through to
-/// `primary_cloud` — they use tier-specific models that BYOK providers don't
-/// understand, and their providers are configured independently.
+/// `subconscious`) and the `agentic`/`burst` workloads always fall through to
+/// `primary_cloud` when their explicit provider route is unset — they use
+/// tier-specific models that BYOK providers don't understand, and their
+/// providers are configured independently.
 ///
 /// For backwards compatibility, a legacy external `inference_url` takes
 /// precedence when `primary_cloud` still points at OpenHuman because
@@ -266,11 +267,10 @@ pub fn provider_for_role(role: &str, config: &Config) -> String {
         "reasoning" => config.reasoning_provider.as_deref(),
         "agentic" => config.agentic_provider.as_deref(),
         "coding" => config.coding_provider.as_deref(),
-        // Burst is managed-backend only (no per-workload provider knob): it rides
-        // the hosted high-throughput tier. Unset → falls through to
-        // `primary_cloud` (→ managed `burst-v1`) like the other tier-specific
-        // background workloads.
-        "burst" => None,
+        // Burst uses the existing Agentic workload route for BYOK/local parity.
+        // If unset, it falls through to the managed backend and is pinned to
+        // `burst-v1` by `managed_tier_for_role`.
+        "burst" => config.agentic_provider.as_deref(),
         // Tier-specific multimodal model; like `agentic` it is NOT part of the
         // chat-tier BYOK inheritance below — when unset it falls through to
         // `primary_cloud` (→ managed `vision-v1`).
@@ -291,9 +291,9 @@ pub fn provider_for_role(role: &str, config: &Config) -> String {
     if s.is_empty() || s == "cloud" {
         // BYOK inheritance is scoped to the three chat-tier roles only.
         // Background workloads (memory, embeddings, heartbeat, learning,
-        // subconscious) and the agentic workload must stay on the managed
-        // backend — they use tier-specific models that BYOK providers don't
-        // understand, and their providers are configured separately.
+        // subconscious) and the agentic/burst workloads must stay on the managed
+        // backend when unset — they use tier-specific models that BYOK providers
+        // don't understand, and their providers are configured separately.
         if matches!(role, "chat" | "reasoning" | "coding") {
             if let Some(byok) = resolve_byok_fallback_provider_string(config) {
                 log::debug!(
@@ -311,10 +311,8 @@ pub fn provider_for_role(role: &str, config: &Config) -> String {
         if !matches!(role, "chat" | "reasoning" | "coding") {
             if let Some(chat) = config.chat_provider.as_deref() {
                 if crate::openhuman::inference::local::profile::is_local_provider_string(chat) {
-                    // burst is managed-backend only — there is no `burst_provider`
-                    // knob, so don't suggest setting one.
                     let override_hint = if role == "burst" {
-                        "managed-backend only; no per-workload override".to_string()
+                        "set agentic_provider explicitly to override".to_string()
                     } else {
                         format!("set {role}_provider explicitly to override")
                     };
@@ -1000,8 +998,8 @@ fn make_openhuman_backend(
         Some("reasoning") => crate::openhuman::config::MODEL_REASONING_V1.to_string(),
         Some("chat") => crate::openhuman::config::MODEL_CHAT_V1.to_string(),
         Some("agentic") => crate::openhuman::config::MODEL_AGENTIC_V1.to_string(),
-        Some("coding") => crate::openhuman::config::MODEL_CODING_V1.to_string(),
         Some("burst") => crate::openhuman::config::MODEL_BURST_V1.to_string(),
+        Some("coding") => crate::openhuman::config::MODEL_CODING_V1.to_string(),
         Some("summarization") => crate::openhuman::config::MODEL_SUMMARIZATION_V1.to_string(),
         Some("vision") => crate::openhuman::config::MODEL_VISION_V1.to_string(),
         Some(_) => {
@@ -1014,7 +1012,7 @@ fn make_openhuman_backend(
             } else {
                 log::warn!(
                     "[providers][chat-factory] model '{}' is not a recognized OpenHuman \
-                     backend tier (valid: reasoning-v1, chat-v1, agentic-v1, coding-v1, \
+                     backend tier (valid: reasoning-v1, chat-v1, agentic-v1, burst-v1, coding-v1, \
                      reasoning-quick-v1, summarization-v1, vision-v1); falling back to '{}'",
                     model,
                     crate::openhuman::config::MODEL_REASONING_V1,

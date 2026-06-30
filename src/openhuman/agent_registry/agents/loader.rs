@@ -570,6 +570,24 @@ mod tests {
     }
 
     #[test]
+    fn low_context_workers_use_burst_hint() {
+        for id in [
+            "researcher",
+            "context_scout",
+            "integrations_agent",
+            "tools_agent",
+            "crypto_agent",
+            "tinyplace_agent",
+        ] {
+            let def = find(id);
+            assert!(
+                matches!(def.model, ModelSpec::Hint(ref h) if h == "burst"),
+                "{id} should use the burst worker tier"
+            );
+        }
+    }
+
+    #[test]
     fn orchestrator_has_chat_hint_and_named_tools() {
         let def = find("orchestrator");
         assert!(matches!(def.model, ModelSpec::Hint(ref h) if h == "chat"));
@@ -800,7 +818,7 @@ mod tests {
     #[test]
     fn tinyplace_agent_is_registered_and_narrow() {
         let def = find("tinyplace_agent");
-        assert!(matches!(def.model, ModelSpec::Hint(ref h) if h == "agentic"));
+        assert!(matches!(def.model, ModelSpec::Hint(ref h) if h == "burst"));
         assert_eq!(def.sandbox_mode, SandboxMode::None);
         assert!(!def.omit_safety_preamble);
         assert_eq!(def.delegate_name.as_deref(), Some("use_tinyplace"));
@@ -1077,17 +1095,27 @@ mod tests {
     }
 
     #[test]
-    fn researcher_has_curl_for_artifact_downloads() {
+    fn researcher_is_bounded_to_search_and_fetch() {
         let def = find("researcher");
+        assert_eq!(
+            def.max_iterations, 10,
+            "researcher keeps enough turns to recover from bad search results without broadening its tool surface"
+        );
+        assert_eq!(
+            def.max_turn_output_tokens,
+            Some(4096),
+            "researcher must cap each model turn so verbose research loops cannot flood context"
+        );
+        assert!(
+            def.extra_tools.is_empty(),
+            "researcher must not widen its tool surface via extra_tools"
+        );
         match &def.tools {
             ToolScope::Named(tools) => {
-                assert!(
-                    tools.iter().any(|t| t == "curl"),
-                    "researcher needs curl for artifact downloads"
-                );
-                assert!(
-                    tools.iter().any(|t| t == "http_request"),
-                    "researcher still needs http_request"
+                assert_eq!(
+                    tools,
+                    &vec!["web_search_tool".to_string(), "web_fetch".to_string()],
+                    "researcher must stay limited to search+fetch so simple lookups do not fan out into deep research loops"
                 );
             }
             ToolScope::Wildcard => panic!("researcher must have Named tool scope"),
@@ -1130,9 +1158,9 @@ mod tests {
     #[test]
     fn crypto_agent_has_narrow_wallet_market_tools_and_safety_on() {
         let def = find("crypto_agent");
-        // Hint must be agentic — the agent reasons about quotes vs.
-        // executes across multiple tool calls per turn.
-        assert!(matches!(def.model, ModelSpec::Hint(ref h) if h == "agentic"));
+        // Hint must be burst — latency matters for the narrow quote/execute
+        // workflow and provider routing still preserves explicit agentic BYOK.
+        assert!(matches!(def.model, ModelSpec::Hint(ref h) if h == "burst"));
         assert_eq!(def.sandbox_mode, SandboxMode::None);
         // Financial-risk agent — global safety preamble stays ON.
         assert!(

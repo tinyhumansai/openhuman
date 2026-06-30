@@ -356,6 +356,8 @@ mod tests {
         assert!(model_supports_vision("hint:reasoning", &config));
         assert!(!model_supports_vision("chat-v1", &config));
         assert!(!model_supports_vision("hint:chat", &config));
+        assert!(!model_supports_vision("burst-v1", &config));
+        assert!(!model_supports_vision("hint:burst", &config));
         // BYOK model flagged in the registry is vision-capable.
         assert!(model_supports_vision("my-llava", &config));
         // Unlisted custom model is not.

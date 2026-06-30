@@ -6,6 +6,8 @@
 //!
 //! See epic tinyhumansai/openhuman#3505.
 
+use std::collections::HashMap;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -84,6 +86,22 @@ pub struct MeetConfig {
     /// reply. Set `false` to fall back to a single buffered `bot:speak`.
     #[serde(default = "default_in_call_streaming")]
     pub in_call_streaming: bool,
+
+    /// Per-platform auto-join policy overrides.
+    /// Keys are platform slugs: "gmeet", "zoom", "teams", "webex".
+    /// Falls back to `auto_join_policy` when not set for a platform.
+    #[serde(default)]
+    pub platform_auto_join_policies: HashMap<String, AutoJoinPolicy>,
+
+    /// Master switch for calendar-driven meeting actions. When `true`, the
+    /// heartbeat planner polls the connected calendar so `auto_join_policy`
+    /// (plus per-event / per-platform overrides) can auto-join or prompt for
+    /// meetings. Decoupled from `heartbeat.notify_meetings`, which controls
+    /// only the plain reminder notifications — so a user can have OpenHuman
+    /// join meetings without opting into reminder cards (and vice versa).
+    /// Off by default.
+    #[serde(default)]
+    pub watch_calendar: bool,
 }
 
 fn default_auto_orchestrator_handoff() -> bool {
@@ -116,6 +134,8 @@ impl Default for MeetConfig {
             listen_only_default: true,
             enable_in_call_agency: false,
             in_call_streaming: true,
+            platform_auto_join_policies: HashMap::new(),
+            watch_calendar: false,
         }
     }
 }
@@ -204,6 +224,8 @@ mod tests {
             listen_only_default: false,
             enable_in_call_agency: true,
             in_call_streaming: false,
+            platform_auto_join_policies: HashMap::new(),
+            watch_calendar: true,
         };
         let s = serde_json::to_string(&original).unwrap();
         let back: MeetConfig = serde_json::from_str(&s).unwrap();
@@ -213,5 +235,57 @@ mod tests {
         assert_eq!(back.auto_summarize_policy, AutoSummarizePolicy::Always);
         assert!(!back.listen_only_default);
         assert!(back.enable_in_call_agency);
+        assert!(back.watch_calendar);
+    }
+
+    #[test]
+    fn watch_calendar_defaults_to_false() {
+        let cfg = MeetConfig::default();
+        assert!(!cfg.watch_calendar);
+        // A config that predates the field also defaults it off.
+        let parsed: MeetConfig = serde_json::from_value(json!({})).unwrap();
+        assert!(!parsed.watch_calendar);
+    }
+
+    #[test]
+    fn watch_calendar_round_trips_via_json() {
+        // off → serialise → deserialise
+        let off = MeetConfig {
+            watch_calendar: false,
+            ..MeetConfig::default()
+        };
+        let s_off = serde_json::to_string(&off).unwrap();
+        let back_off: MeetConfig = serde_json::from_str(&s_off).unwrap();
+        assert!(!back_off.watch_calendar);
+
+        // on → serialise → deserialise
+        let on = MeetConfig {
+            watch_calendar: true,
+            ..MeetConfig::default()
+        };
+        let s_on = serde_json::to_string(&on).unwrap();
+        let back_on: MeetConfig = serde_json::from_str(&s_on).unwrap();
+        assert!(back_on.watch_calendar);
+    }
+
+    #[test]
+    fn platform_auto_join_policies_defaults_to_empty() {
+        let config = MeetConfig::default();
+        assert!(config.platform_auto_join_policies.is_empty());
+    }
+
+    #[test]
+    fn deserialize_with_platform_policies() {
+        let json =
+            r#"{"platform_auto_join_policies": {"zoom": "always", "gmeet": "ask_each_time"}}"#;
+        let config: MeetConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            config.platform_auto_join_policies.get("zoom"),
+            Some(&AutoJoinPolicy::Always)
+        );
+        assert_eq!(
+            config.platform_auto_join_policies.get("gmeet"),
+            Some(&AutoJoinPolicy::AskEachTime)
+        );
     }
 }

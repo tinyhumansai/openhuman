@@ -28,7 +28,6 @@ use crate::openhuman::context::guard::{ContextCheckResult, ContextGuard};
 use crate::openhuman::context::{summarize_chat_history, EngineAutocompact};
 use crate::openhuman::inference::provider::{
     ChatMessage, ChatRequest, Provider, ProviderCapabilityError, ToolCall, UsageInfo,
-    AGENT_TURN_MAX_OUTPUT_TOKENS,
 };
 
 use super::super::parse::build_native_assistant_history;
@@ -132,6 +131,7 @@ pub(crate) async fn run_turn_engine(
     multimodal_config: &crate::openhuman::config::MultimodalConfig,
     multimodal_file_config: &crate::openhuman::config::MultimodalFileConfig,
     max_iterations: usize,
+    max_output_tokens: u32,
     on_delta: Option<tokio::sync::mpsc::Sender<String>>,
     early_exit_tool_names: &[&str],
     run_queue: Option<Arc<RunQueue>>,
@@ -562,7 +562,7 @@ pub(crate) async fn run_turn_engine(
                     // Cap the turn so reservation-pricing providers price their
                     // pre-flight against a realistic budget, not the full output
                     // window (TAURI-RUST-C62).
-                    max_tokens: Some(AGENT_TURN_MAX_OUTPUT_TOKENS),
+                    max_tokens: Some(max_output_tokens),
                 },
                 model,
                 temperature,

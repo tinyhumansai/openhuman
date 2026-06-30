@@ -153,7 +153,8 @@ impl HeartbeatEngine {
 
         if !(config.heartbeat.notify_meetings
             || config.heartbeat.notify_reminders
-            || config.heartbeat.notify_relevant_events)
+            || config.heartbeat.notify_relevant_events
+            || config.meet.watch_calendar)
         {
             tracing::debug!("[heartbeat] planner skipped: notification categories disabled");
             return;
