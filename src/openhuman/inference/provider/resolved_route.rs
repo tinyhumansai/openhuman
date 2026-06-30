@@ -23,26 +23,41 @@ pub async fn with_resolved_provider_route_scope<F>(future: F) -> F::Output
 where
     F: std::future::Future,
 {
-    RESOLVED_PROVIDER_ROUTE
+    tracing::trace!("[provider] resolved-route scope enter");
+    let out = RESOLVED_PROVIDER_ROUTE
         .scope(Arc::new(Mutex::new(None)), Box::pin(future))
-        .await
+        .await;
+    tracing::trace!("[provider] resolved-route scope exit");
+    out
 }
 
 pub fn record_resolved_provider_route(provider: impl Into<String>, model: impl Into<String>) {
+    let provider = provider.into();
+    let model = model.into();
     let route = ResolvedProviderRoute {
-        provider: provider.into(),
-        model: model.into(),
+        provider: provider.clone(),
+        model: model.clone(),
     };
-    let _ = RESOLVED_PROVIDER_ROUTE.try_with(|slot| {
-        *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(route);
-    });
+    let wrote = RESOLVED_PROVIDER_ROUTE
+        .try_with(|slot| {
+            *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(route);
+        })
+        .is_ok();
+    tracing::debug!(
+        provider = %provider,
+        model = %model,
+        wrote,
+        "[provider] resolved-route recorded"
+    );
 }
 
 pub fn current_resolved_provider_route() -> Option<ResolvedProviderRoute> {
-    RESOLVED_PROVIDER_ROUTE
+    let route = RESOLVED_PROVIDER_ROUTE
         .try_with(|slot| slot.lock().unwrap_or_else(|e| e.into_inner()).clone())
         .ok()
-        .flatten()
+        .flatten();
+    tracing::trace!(present = route.is_some(), "[provider] resolved-route read");
+    route
 }
 
 #[cfg(test)]
