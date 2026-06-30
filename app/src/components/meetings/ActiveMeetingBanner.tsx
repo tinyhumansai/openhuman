@@ -6,7 +6,7 @@
  * each component within the repo's ~500-line guideline. Behavior is identical
  * to the original; it just lives in its own file now.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { type MascotFace, RiveMascot } from '../../features/human/Mascot';
 import { useT } from '../../lib/i18n/I18nContext';
@@ -24,8 +24,19 @@ import {
 } from '../../store/backendMeetSlice';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import Button from '../ui/Button';
+import { Spinner } from '../ui/icons';
 
 type Toast = { type: 'success' | 'error' | 'info'; title: string; message?: string };
+
+/**
+ * Safety net for the pending "Leaving…" state. The leave RPC only confirms the
+ * `bot:leave` event was enqueued on the socket — it does not wait for the bot to
+ * actually leave. On the happy path `status` flips to ended/error (which unmounts
+ * this banner) well within this window. If no such transition ever arrives (e.g.
+ * the socket drops or the bot fails to emit its completion event), we re-enable
+ * the button after this timeout so the user can retry instead of being stuck.
+ */
+export const LEAVE_SAFETY_TIMEOUT_MS = 10_000;
 
 export interface ActiveMeetingBannerProps {
   onToast?: (toast: Toast) => void;
@@ -74,20 +85,38 @@ export function ActiveMeetingBanner({ onToast }: ActiveMeetingBannerProps) {
   }, [meetUrl]);
 
   const [leaving, setLeaving] = useState(false);
+  const leaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clear the safety timer on unmount (the happy path: the banner unmounts when
+  // `status` flips to ended/error). No setState here — just timer cleanup.
+  useEffect(() => {
+    return () => {
+      if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
+    };
+  }, []);
 
   const handleLeave = async () => {
     if (leaving) return;
     setLeaving(true);
     try {
       await leaveBackendMeetBot('user-requested');
+      // Stay in the pending "Leaving…" state on success: when the bot actually
+      // leaves, `status` flips to ended/error and this banner unmounts (the
+      // parent only renders it while joining/active), so the flag never lingers.
+      // The RPC only confirms the leave was enqueued, not that the bot left, so
+      // arm a safety timeout that re-enables the button if no transition arrives.
+      if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
+      leaveTimerRef.current = setTimeout(() => {
+        leaveTimerRef.current = null;
+        setLeaving(false);
+      }, LEAVE_SAFETY_TIMEOUT_MS);
     } catch (err) {
+      setLeaving(false);
       onToast?.({
         type: 'error',
-        title: t('skills.meetingBots.couldNotStartTitle'),
+        title: t('skills.meetingBots.couldNotLeaveTitle'),
         message: String(err),
       });
-    } finally {
-      setLeaving(false);
     }
   };
 
@@ -118,8 +147,13 @@ export function ActiveMeetingBanner({ onToast }: ActiveMeetingBannerProps) {
           {t('skills.meetingBots.liveBadge')}
         </span>
         {canLeave && (
-          <Button variant="secondary" size="sm" onClick={handleLeave} disabled={leaving}>
-            {t('skills.meetingBots.leaveButton')}
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleLeave}
+            disabled={leaving}
+            leadingIcon={leaving ? <Spinner className="h-3.5 w-3.5" /> : undefined}>
+            {leaving ? t('skills.meetingBots.leavingButton') : t('skills.meetingBots.leaveButton')}
           </Button>
         )}
         {isDone && (

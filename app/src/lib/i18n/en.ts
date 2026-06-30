@@ -5780,6 +5780,7 @@ const en: TranslationMap = {
   'skills.meetingBots.bannerTitle': 'Send OpenHuman to your next meeting',
   'skills.meetingBots.busyTitle': 'OpenHuman is busy',
   'skills.meetingBots.comingSoon': 'coming soon',
+  'skills.meetingBots.couldNotLeaveTitle': 'Couldn’t leave the meeting',
   'skills.meetingBots.couldNotStartTitle': 'Could not start OpenHuman',
   'skills.meetingBots.displayName': 'Display name',
   'skills.meetingBots.failedToStart': 'Failed to start OpenHuman.',
@@ -5831,6 +5832,7 @@ const en: TranslationMap = {
   'skills.meetingBots.liveStatusEnded': 'Meeting ended',
   'skills.meetingBots.liveStatusError': 'Failed to join',
   'skills.meetingBots.leaveButton': 'Leave',
+  'skills.meetingBots.leavingButton': 'Leaving…',
   'skills.meetingBots.respondToParticipant': 'Your Name in This Meeting',
   'skills.meetingBots.respondToParticipantHint': 'e.g. Alice (your display name in the call)',
   'skills.meetingBots.respondToParticipantDesc':

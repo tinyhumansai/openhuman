@@ -5181,6 +5181,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.bannerTitle': 'Заголовок баннера',
   'skills.meetingBots.busyTitle': 'OpenHuman занят',
   'skills.meetingBots.comingSoon': 'Скоро',
+  'skills.meetingBots.couldNotLeaveTitle': 'Не удалось покинуть встречу',
   'skills.meetingBots.couldNotStartTitle': 'Не удалось запустить OpenHuman',
   'skills.meetingBots.displayName': 'Отображаемое имя',
   'skills.meetingBots.failedToStart': 'Не удалось запустить OpenHuman.',
@@ -5230,6 +5231,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.liveStatusEnded': 'Встреча завершена',
   'skills.meetingBots.liveStatusError': 'Ошибка подключения',
   'skills.meetingBots.leaveButton': 'Выйти',
+  'skills.meetingBots.leavingButton': 'Выход…',
   'skills.meetingBots.respondToParticipant': 'Ваше имя на этой встрече',
   'skills.meetingBots.respondToParticipantHint': 'напр. Иван (ваше отображаемое имя в звонке)',
   'skills.meetingBots.respondToParticipantDesc':

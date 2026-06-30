@@ -1,9 +1,9 @@
-import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { setBackendMeetJoined, setBackendMeetLeft } from '../../../store/backendMeetSlice';
 import { renderWithProviders } from '../../../test/test-utils';
-import { ActiveMeetingBanner } from '../ActiveMeetingBanner';
+import { ActiveMeetingBanner, LEAVE_SAFETY_TIMEOUT_MS } from '../ActiveMeetingBanner';
 
 const leaveMock = vi.fn();
 
@@ -79,6 +79,86 @@ describe('ActiveMeetingBanner', () => {
     await waitFor(() => {
       expect(leaveMock).toHaveBeenCalledWith('user-requested');
     });
+  });
+
+  it('shows a pending "Leaving…" state while the leave request is in flight', async () => {
+    // Hold the leave request open so the pending state stays visible.
+    let resolveLeave: () => void = () => {};
+    leaveMock.mockImplementationOnce(
+      () =>
+        new Promise<void>(resolve => {
+          resolveLeave = resolve;
+        })
+    );
+    renderWithProviders(<ActiveMeetingBanner />, { preloadedState: activeState });
+
+    const leaveBtn = screen.getByRole('button', { name: /leave/i });
+    fireEvent.click(leaveBtn);
+
+    // While in flight the label switches to "Leaving…" and the button is disabled.
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /leaving/i })).toBeDisabled();
+    });
+    expect(screen.queryByRole('button', { name: /^leave$/i })).not.toBeInTheDocument();
+
+    resolveLeave();
+  });
+
+  it('keeps the pending state after the request resolves until status changes', async () => {
+    leaveMock.mockResolvedValueOnce(undefined);
+    const { store } = renderWithProviders(<ActiveMeetingBanner />, { preloadedState: activeState });
+
+    fireEvent.click(screen.getByRole('button', { name: /leave/i }));
+
+    // Even after the request resolves, the pending state holds until the bot leaves.
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /leaving/i })).toBeInTheDocument();
+    });
+
+    // Once the meeting ends, the pending Leave button is replaced by Close.
+    store.dispatch(setBackendMeetLeft({ reason: 'done' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /leaving/i })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /close/i })).toBeInTheDocument();
+    });
+  });
+
+  it('re-enables the Leave button via safety timeout if no left event arrives', async () => {
+    vi.useFakeTimers();
+    try {
+      leaveMock.mockResolvedValueOnce(undefined);
+      renderWithProviders(<ActiveMeetingBanner />, { preloadedState: activeState });
+
+      fireEvent.click(screen.getByRole('button', { name: /leave/i }));
+      // Flush the resolved leave promise → pending "Leaving…" + safety timer armed.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(screen.getByRole('button', { name: /leaving/i })).toBeDisabled();
+
+      // No status transition arrives; once the safety timeout elapses the button
+      // returns to an enabled "Leave" so the user can retry.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(LEAVE_SAFETY_TIMEOUT_MS + 100);
+      });
+      expect(screen.getByRole('button', { name: /^leave$/i })).toBeEnabled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears the pending state and toasts when leave fails', async () => {
+    leaveMock.mockRejectedValueOnce(new Error('Network error'));
+    const onToast = vi.fn();
+    renderWithProviders(<ActiveMeetingBanner onToast={onToast} />, { preloadedState: activeState });
+
+    fireEvent.click(screen.getByRole('button', { name: /leave/i }));
+
+    await waitFor(() => {
+      expect(onToast).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
+    });
+    // Button returns to the enabled "Leave" state so the user can retry.
+    expect(screen.getByRole('button', { name: /^leave$/i })).toBeEnabled();
   });
 
   it('renders ended state with Close button', () => {

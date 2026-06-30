@@ -5085,6 +5085,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.bannerTitle': 'OpenHuman을 회의에 보내기',
   'skills.meetingBots.busyTitle': 'OpenHuman이 바쁩니다',
   'skills.meetingBots.comingSoon': '곧 제공 예정',
+  'skills.meetingBots.couldNotLeaveTitle': '회의에서 나갈 수 없습니다',
   'skills.meetingBots.couldNotStartTitle': 'OpenHuman을 시작할 수 없습니다',
   'skills.meetingBots.displayName': '표시 이름',
   'skills.meetingBots.failedToStart': 'OpenHuman 시작에 실패했습니다.',
@@ -5135,6 +5136,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.liveStatusEnded': '회의 종료',
   'skills.meetingBots.liveStatusError': '참가 실패',
   'skills.meetingBots.leaveButton': '나가기',
+  'skills.meetingBots.leavingButton': '나가는 중…',
   'skills.meetingBots.respondToParticipant': '이 회의에서 내 이름',
   'skills.meetingBots.respondToParticipantHint': '예: 김철수 (통화에서 표시되는 이름)',
   'skills.meetingBots.respondToParticipantDesc':
