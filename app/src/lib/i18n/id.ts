@@ -3,6 +3,10 @@ import type { TranslationMap } from './types';
 // Indonesian (Bahasa Indonesia) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Cross-host vault (#4278)
+  'crossHostVault.title': 'Vault berada di host core.',
+  'crossHostVault.message':
+    'Vault memori ini disimpan di host openhuman-core ({os}). Hanya dapat dibuka atau ditampilkan di mesin tersebut, bukan dari perangkat ini.',
   'conversations.backgroundTasks.title': 'Background tasks',
   'nav.feedback': 'Bagikan masukan',
   'feedback.board': 'Papan masukan',

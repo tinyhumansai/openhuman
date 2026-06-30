@@ -3,6 +3,10 @@ import type { TranslationMap } from './types';
 // Portuguese (Português) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Cross-host vault (#4278)
+  'crossHostVault.title': 'O vault está no host do core.',
+  'crossHostVault.message':
+    'Este vault de memória fica armazenado no host openhuman-core ({os}). Só pode ser aberto ou exibido nessa máquina, não a partir deste dispositivo.',
   'conversations.backgroundTasks.title': 'Background tasks',
   'nav.feedback': 'Enviar feedback',
   'feedback.board': 'Quadro de feedback',

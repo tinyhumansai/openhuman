@@ -3,6 +3,10 @@ import type { TranslationMap } from './types';
 // Polish (Polski) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Cross-host vault (#4278)
+  'crossHostVault.title': 'Skarbiec znajduje się na hoście rdzenia.',
+  'crossHostVault.message':
+    'Ten skarbiec pamięci jest przechowywany na hoście openhuman-core ({os}). Można go otworzyć lub pokazać tylko na tym komputerze, a nie z tego urządzenia.',
   'conversations.backgroundTasks.title': 'Background tasks',
   'nav.feedback': 'Podziel się opinią',
   'feedback.board': 'Tablica opinii',

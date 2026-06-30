@@ -3,6 +3,10 @@ import type { TranslationMap } from './types';
 // French (Français) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Cross-host vault (#4278)
+  'crossHostVault.title': "Le coffre se trouve sur l'hôte du cœur.",
+  'crossHostVault.message':
+    "Ce coffre de mémoire est stocké sur l'hôte openhuman-core ({os}). Il ne peut être ouvert ou affiché que sur cette machine, pas depuis cet appareil.",
   'conversations.backgroundTasks.title': 'Background tasks',
   'nav.feedback': 'Donner mon avis',
   'feedback.board': 'Tableau des suggestions',

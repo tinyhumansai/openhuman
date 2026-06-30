@@ -3,6 +3,10 @@ import type { TranslationMap } from './types';
 // Bengali (বাংলা) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Cross-host vault (#4278)
+  'crossHostVault.title': 'ভল্টটি কোর হোস্টে রয়েছে।',
+  'crossHostVault.message':
+    'এই মেমরি ভল্টটি openhuman-core হোস্টে ({os}) সংরক্ষিত আছে। এটি কেবল সেই মেশিনেই খোলা বা দেখানো যায়, এই ডিভাইস থেকে নয়।',
   'conversations.backgroundTasks.title': 'Background tasks',
   'nav.feedback': 'মতামত দিন',
   'feedback.board': 'মতামত বোর্ড',

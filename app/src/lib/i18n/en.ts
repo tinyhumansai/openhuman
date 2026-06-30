@@ -2892,6 +2892,11 @@ const en: TranslationMap = {
   'vaultHealth.timeDayAgo': '{n} day ago',
   'vaultHealth.timeDaysAgo': '{n} days ago',
 
+  // Cross-host vault (#4278) — shared by VaultHealthChecklist + ObsidianVaultSection
+  'crossHostVault.title': 'Vault is on the core host.',
+  'crossHostVault.message':
+    'This memory vault is stored on the openhuman-core host ({os}). It can only be opened or revealed on that machine, not from this device.',
+
   // Memory data panel (storage explainer)
   'memoryData.howItWorks': 'How memory storage works',
   'memoryData.workspaceVault': 'Workspace vault · write',

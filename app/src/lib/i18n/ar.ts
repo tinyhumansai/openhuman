@@ -3,6 +3,10 @@ import type { TranslationMap } from './types';
 // Arabic (العربية) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Cross-host vault (#4278)
+  'crossHostVault.title': 'الخزنة موجودة على مضيف النواة.',
+  'crossHostVault.message':
+    'يتم تخزين خزنة الذاكرة هذه على مضيف openhuman-core ({os}). لا يمكن فتحها أو عرضها إلا على ذلك الجهاز، وليس من هذا الجهاز.',
   'conversations.backgroundTasks.title': 'Background tasks',
   'nav.feedback': 'شارك ملاحظاتك',
   'feedback.board': 'لوحة الملاحظات',

@@ -3,6 +3,10 @@ import type { TranslationMap } from './types';
 // Russian (Русский) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Cross-host vault (#4278)
+  'crossHostVault.title': 'Хранилище находится на хосте ядра.',
+  'crossHostVault.message':
+    'Это хранилище памяти размещено на хосте openhuman-core ({os}). Его можно открыть или показать только на той машине, но не с этого устройства.',
   'conversations.backgroundTasks.title': 'Background tasks',
   'nav.feedback': 'Поделиться отзывом',
   'feedback.board': 'Доска отзывов',

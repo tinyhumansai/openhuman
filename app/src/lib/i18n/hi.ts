@@ -3,6 +3,10 @@ import type { TranslationMap } from './types';
 // Hindi (हिन्दी) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Cross-host vault (#4278)
+  'crossHostVault.title': 'वॉल्ट कोर होस्ट पर है।',
+  'crossHostVault.message':
+    'यह मेमोरी वॉल्ट openhuman-core होस्ट ({os}) पर संग्रहीत है। इसे केवल उसी मशीन पर खोला या दिखाया जा सकता है, इस डिवाइस से नहीं।',
   'conversations.backgroundTasks.title': 'Background tasks',
   'nav.feedback': 'फ़ीडबैक साझा करें',
   'feedback.board': 'फ़ीडबैक बोर्ड',

@@ -3,6 +3,10 @@ import type { TranslationMap } from './types';
 // Korean (한국어) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Cross-host vault (#4278)
+  'crossHostVault.title': '보관소가 코어 호스트에 있습니다.',
+  'crossHostVault.message':
+    '이 메모리 보관소는 openhuman-core 호스트({os})에 저장되어 있습니다. 해당 컴퓨터에서만 열거나 표시할 수 있으며 이 기기에서는 불가능합니다.',
   'conversations.backgroundTasks.title': 'Background tasks',
   'nav.feedback': '피드백 보내기',
   'feedback.board': '피드백 보드',

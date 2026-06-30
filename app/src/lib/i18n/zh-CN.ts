@@ -3,6 +3,10 @@ import type { TranslationMap } from './types';
 // Simplified Chinese (简体中文) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Cross-host vault (#4278)
+  'crossHostVault.title': '记忆库位于核心主机上。',
+  'crossHostVault.message':
+    '此记忆库存储在 openhuman-core 主机（{os}）上。只能在该机器上打开或显示，无法从本设备访问。',
   'conversations.backgroundTasks.title': 'Background tasks',
   'nav.feedback': '分享反馈',
   'feedback.board': '反馈板',
