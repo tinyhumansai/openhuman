@@ -4971,6 +4971,7 @@ const messages: TranslationMap = {
     'Zeigt Assistentenantworten als ungerahmten Text an und lässt deine Nachrichten in Blasen.',
   'settings.mascot.active': 'Aktiv',
   'settings.mascot.characterDesc': 'Charakterbeschreibung',
+  'settings.mascot.characterDraft': 'Entwurf',
   'settings.mascot.characterHeading': 'Zeichenüberschrift',
   'settings.mascot.customGifError':
     'GIF konnte nicht geladen werden. Bitte überprüfe die URL und versuche es erneut.',

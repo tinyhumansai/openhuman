@@ -4851,6 +4851,7 @@ const messages: TranslationMap = {
     'असिस्टेंट के जवाबों को बिना फ्रेम वाले टेक्स्ट के रूप में दिखाएं और आपके संदेश बबल में रखें।',
   'settings.mascot.active': 'एक्टिव',
   'settings.mascot.characterDesc': 'कैरेक्टर विवरण',
+  'settings.mascot.characterDraft': 'ड्राफ़्ट',
   'settings.mascot.characterHeading': 'कैरेक्टर शीर्षक',
   'settings.mascot.customGifError':
     'एक HTTPS .gif URL, लूपबैक HTTP .gif URL, फ़ाइल:// .gif URL, या स्थानीय .gif पथ दर्ज करें।',

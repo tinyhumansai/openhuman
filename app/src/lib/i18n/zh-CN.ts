@@ -4608,6 +4608,7 @@ const messages: TranslationMap = {
   'settings.appearance.assistantTextModeDesc': '将助手回复渲染为无边框文本，同时保留你的消息气泡。',
   'settings.mascot.active': '活跃',
   'settings.mascot.characterDesc': '选择你的 OpenHuman 角色',
+  'settings.mascot.characterDraft': '草稿',
   'settings.mascot.characterHeading': '角色',
   'settings.mascot.customGifError':
     '输入 HTTPS .gif 链接、本地回环 HTTP .gif 链接、file:// .gif 链接或本地 .gif 路径。',

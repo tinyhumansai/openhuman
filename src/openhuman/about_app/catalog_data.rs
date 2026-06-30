@@ -76,6 +76,18 @@ const GITHUB_REPO_SOURCE: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
     destinations: &["GitHub API (api.github.com)"],
 });
 
+// Persona Pack fetches the published mascot manifest directly from GitHub raw
+// content, then downloads the selected runtime asset from the manifest's
+// declared file URL. The request is metadata-class (manifest and asset URLs),
+// but it does leave the device and bypasses the managed backend.
+const GITHUB_MASCOT_MANIFEST: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Metadata,
+    destinations: &[
+        "GitHub raw content (raw.githubusercontent.com) and manifest-declared mascot asset hosts",
+    ],
+});
+
 const SEARXNG_RAW_TO_CONFIGURED_INSTANCE: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
     leaves_device: true,
     data_kind: PrivacyDataKind::Raw,
@@ -1352,7 +1364,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         description: "Personalize the assistant as one identity: set a display name and description, edit or reset the SOUL.md personality prompt, and reach mascot avatar and voice settings — all from a single Persona surface.",
         how_to: "Settings > Persona",
         status: CapabilityStatus::Beta,
-        privacy: None,
+        privacy: GITHUB_MASCOT_MANIFEST,
     },
     Capability {
         id: "settings.manage_privacy_analytics",

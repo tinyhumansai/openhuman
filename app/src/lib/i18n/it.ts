@@ -4928,6 +4928,7 @@ const messages: TranslationMap = {
     "Mostra le risposte dell'assistente come testo senza cornice mantenendo i tuoi messaggi nei fumetti.",
   'settings.mascot.active': 'Attivo',
   'settings.mascot.characterDesc': 'Descrizione personaggio',
+  'settings.mascot.characterDraft': 'Bozza',
   'settings.mascot.characterHeading': 'Intestazione personaggio',
   'settings.mascot.customGifError':
     'Immettere un HTTPS .gif URL, loopback HTTP .gif URL, file:// .gif URL o un percorso .gif locale.',

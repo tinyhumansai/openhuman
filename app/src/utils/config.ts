@@ -240,3 +240,16 @@ export const MASCOT_VOICE_ID =
 export const MASCOT_VOICE_MODEL_ID =
   (import.meta.env.VITE_MASCOT_VOICE_MODEL_ID as string | undefined)?.trim() ||
   'eleven_multilingual_v2';
+
+/**
+ * URL of the published mascot manifest (`dist/mascots.json` from the
+ * `tinyhumansai/mascots` repo). This is the authoritative source for the
+ * in-app mascot library — each entry names a Rive `.riv` runtime file plus its
+ * `stateEngine` (poses, viseme codes, channels). Fetched directly over HTTPS
+ * (the `raw.githubusercontent.com` host is CORS-open and allowed by the
+ * webview CSP's `connect-src https:`). Override with `VITE_MASCOT_MANIFEST_URL`
+ * to point at a fork or a locally-served manifest during development.
+ */
+export const MASCOT_MANIFEST_URL =
+  (import.meta.env.VITE_MASCOT_MANIFEST_URL as string | undefined)?.trim() ||
+  'https://raw.githubusercontent.com/tinyhumansai/mascots/main/dist/mascots.json';

@@ -4846,6 +4846,7 @@ const messages: TranslationMap = {
     'আপনার বার্তাগুলি বাবলে রেখে অ্যাসিস্ট্যান্টের উত্তর ফ্রেমহীন টেক্সট হিসেবে দেখান।',
   'settings.mascot.active': 'সক্রিয়',
   'settings.mascot.characterDesc': 'চরিত্রের বিবরণ',
+  'settings.mascot.characterDraft': 'খসড়া',
   'settings.mascot.characterHeading': 'চরিত্রের শিরোনাম',
   'settings.mascot.customGifError':
     'একটি HTTPS .gif URL, লুপব্যাক HTTP .gif URL, file:// .gif URL, অথবা স্থানীয় .gif পাথ লিখুন।',

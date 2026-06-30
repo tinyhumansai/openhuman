@@ -121,6 +121,37 @@ describe('MeetingBotsCard', () => {
     });
   });
 
+  it('falls back to the legacy mascot color for manifest-only mascot ids', async () => {
+    joinMock.mockResolvedValueOnce({
+      meetUrl: 'https://meet.google.com/abc-defg-hij',
+      platform: 'gmeet',
+    });
+
+    renderWithProviders(<MeetingBotsCard />, {
+      preloadedState: {
+        mascot: {
+          color: 'yellow',
+          voiceId: null,
+          voiceGender: 'male',
+          voiceUseLocaleDefault: false,
+          selectedMascotId: 'river-guide',
+          customMascotGifUrl: null,
+          customPrimaryColor: '#123456',
+          customSecondaryColor: '#abcdef',
+        },
+      },
+    });
+
+    fireEvent.change(screen.getByLabelText(/meeting link/i), {
+      target: { value: 'https://meet.google.com/abc-defg-hij' },
+    });
+    fireEvent.submit(document.querySelector('form')!);
+
+    await vi.waitFor(() => {
+      expect(joinMock).toHaveBeenCalledWith(expect.objectContaining({ mascotId: 'yellow' }));
+    });
+  });
+
   it('surfaces a join error inline + as an error toast', async () => {
     joinMock.mockRejectedValueOnce(new Error('Bad URL'));
     const onToast = vi.fn();

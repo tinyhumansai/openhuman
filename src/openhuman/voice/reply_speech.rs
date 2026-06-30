@@ -294,11 +294,28 @@ fn parse_cue(v: &Value) -> Option<VisemeFrame> {
     if viseme.is_empty() {
         return None;
     }
-    let start = read_u64(v, &["start_ms", "time_ms", "t"]).unwrap_or(0);
-    let end = read_u64(v, &["end_ms"])
+    // Accept millisecond keys, or seconds keys (`startSeconds`/`endSeconds`, the
+    // shape the cloud backend actually ships) converted to ms. Without the
+    // seconds keys every frame collapsed to start=0/end=80 — the mascot mouth
+    // then froze on the first viseme because the whole track had no real timing.
+    let start = read_ms(
+        v,
+        &["start_ms", "time_ms", "t"],
+        &["startSeconds", "start_seconds", "startSec"],
+    )
+    .unwrap_or(0);
+    let end = read_ms(v, &["end_ms"], &["endSeconds", "end_seconds", "endSec"])
         .or_else(|| {
-            let t = read_u64(v, &["time_ms", "t"])?;
-            let d = read_u64(v, &["duration_ms", "d"])?;
+            let t = read_ms(
+                v,
+                &["time_ms", "t"],
+                &["startSeconds", "start_seconds", "startSec"],
+            )?;
+            let d = read_ms(
+                v,
+                &["duration_ms", "d"],
+                &["durationSeconds", "duration_seconds", "durationSec"],
+            )?;
             Some(t + d)
         })
         .unwrap_or(start + 80);
@@ -314,8 +331,8 @@ fn parse_cue(v: &Value) -> Option<VisemeFrame> {
 
 fn parse_alignment(v: &Value) -> Option<AlignmentFrame> {
     let ch = v.get("char").and_then(Value::as_str)?.to_string();
-    let start = read_u64(v, &["start_ms"])?;
-    let end = read_u64(v, &["end_ms"])?;
+    let start = read_ms(v, &["start_ms"], &["startSeconds", "start_seconds"])?;
+    let end = read_ms(v, &["end_ms"], &["endSeconds", "end_seconds"])?;
     if end <= start {
         return None;
     }
@@ -335,6 +352,27 @@ fn read_u64(v: &Value, keys: &[&str]) -> Option<u64> {
             if f.is_finite() && f >= 0.0 {
                 return Some(f as u64);
             }
+        }
+    }
+    None
+}
+
+/// Read a time value in milliseconds. Tries `ms_keys` first (integer or float
+/// ms), then `sec_keys` interpreted as seconds and converted to ms. This lets
+/// the parser tolerate both the `*_ms` contract and the backend's
+/// `*Seconds` shape without the caller caring which arrived.
+fn read_ms(v: &Value, ms_keys: &[&str], sec_keys: &[&str]) -> Option<u64> {
+    if let Some(ms) = read_u64(v, ms_keys) {
+        return Some(ms);
+    }
+    for k in sec_keys {
+        if let Some(f) = v.get(*k).and_then(Value::as_f64) {
+            if f.is_finite() && f >= 0.0 {
+                return Some((f * 1000.0).round() as u64);
+            }
+        }
+        if let Some(n) = v.get(*k).and_then(Value::as_u64) {
+            return Some(n.saturating_mul(1000));
         }
     }
     None
@@ -379,6 +417,75 @@ mod tests {
                 viseme: "PP".into(),
                 start_ms: 0,
                 end_ms: 80
+            }]
+        );
+    }
+
+    #[test]
+    fn normalize_accepts_seconds_keys() {
+        // The cloud backend ships per-frame timing as seconds (`startSeconds`/
+        // `endSeconds`); the parser must convert to ms rather than dropping it
+        // (which collapsed every frame to start=0/end=80 and froze the mouth).
+        let raw = json!({
+            "audio_base64": "AAA=",
+            "visemes": [
+                { "viseme": "sil", "startSeconds": 0.0, "endSeconds": 0.12 },
+                { "viseme": "aa", "startSeconds": 0.12, "endSeconds": 0.45 },
+                // A gap before the next cue (0.45 → 0.90) is a real pause: the
+                // mouth rests there. Preserved because we keep the true ends.
+                { "viseme": "PP", "startSeconds": 0.9, "endSeconds": 1.05 },
+            ],
+            "alignment": [
+                { "char": "h", "startSeconds": 0.0, "endSeconds": 0.05 },
+            ],
+        });
+        let r = normalize_response(&raw);
+        assert_eq!(r.visemes.len(), 3);
+        assert_eq!(
+            r.visemes[0],
+            VisemeFrame {
+                viseme: "sil".into(),
+                start_ms: 0,
+                end_ms: 120
+            }
+        );
+        assert_eq!(
+            r.visemes[1],
+            VisemeFrame {
+                viseme: "aa".into(),
+                start_ms: 120,
+                end_ms: 450
+            }
+        );
+        assert_eq!(
+            r.visemes[2],
+            VisemeFrame {
+                viseme: "PP".into(),
+                start_ms: 900,
+                end_ms: 1050
+            }
+        );
+        let alignment = r.alignment.expect("alignment present");
+        assert_eq!(alignment.len(), 1);
+        assert_eq!(alignment[0].start_ms, 0);
+        assert_eq!(alignment[0].end_ms, 50);
+    }
+
+    #[test]
+    fn normalize_accepts_short_seconds_duration_aliases() {
+        let raw = json!({
+            "audio_base64": "AAA=",
+            "visemes": [
+                { "viseme": "aa", "startSec": 1.2, "durationSec": 0.15 },
+            ],
+        });
+        let r = normalize_response(&raw);
+        assert_eq!(
+            r.visemes,
+            vec![VisemeFrame {
+                viseme: "aa".into(),
+                start_ms: 1200,
+                end_ms: 1350
             }]
         );
     }

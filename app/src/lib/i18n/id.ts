@@ -4863,6 +4863,7 @@ const messages: TranslationMap = {
     'Tampilkan balasan asisten sebagai teks tanpa bingkai, sementara pesan Anda tetap dalam gelembung.',
   'settings.mascot.active': 'Aktif',
   'settings.mascot.characterDesc': 'Deskripsi karakter',
+  'settings.mascot.characterDraft': 'Draf',
   'settings.mascot.characterHeading': 'Judul karakter',
   'settings.mascot.customGifError':
     'Masukkan HTTPS .gif URL, loopback HTTP .gif URL, file:// .gif URL, atau jalur .gif lokal.',
