@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 import type { ChatSendError } from '../../chat/chatSendError';
 import type { Attachment } from '../../lib/attachments';
@@ -32,7 +32,7 @@ export interface ChatComposerProps {
    */
   allowParallelSend?: boolean;
   attachments: Attachment[];
-  onAttachFiles: (files: FileList | null) => Promise<void>;
+  onAttachFiles: (files: FileList | File[] | null) => Promise<void>;
   onRemoveAttachment: (id: string) => void;
   attachError: ChatSendError | null;
   onSwitchToMicCloud: () => void;
@@ -85,6 +85,7 @@ export default function ChatComposer({
   headerSlots = [],
 }: ChatComposerProps) {
   const { t } = useT();
+  const [isDragging, setIsDragging] = useState(false);
 
   // While a turn streams (`allowParallelSend`) the composer stays usable for a
   // queued follow-up / parallel branch, so the in-flight `isSending` spinner
@@ -106,6 +107,57 @@ export default function ChatComposer({
   const hasTypedContent = inputValue.trim().length > 0 || attachments.length > 0;
   const showStopButton = isSending && !!onStopGeneration && !hasTypedContent;
 
+  // Attachment ingest is blocked while the feature is off, the composer is
+  // locked, or the budget is full — drag-drop and paste honour the same gate as
+  // the [+] button so they can't bypass it.
+  const attachDisabled =
+    !attachmentsEnabled ||
+    composerInteractionBlocked ||
+    isSending ||
+    attachments.length >= maxAttachments;
+
+  // Drag-and-drop: route dropped files through the same handler as the picker.
+  // We always `preventDefault` for *file* drags so the browser/CEF never
+  // navigates away to the dropped file — even when ingest is disabled — and only
+  // attach (and show the overlay) when ingest is actually allowed.
+  const isFileDrag = (e: React.DragEvent) =>
+    Array.from(e.dataTransfer?.types ?? []).includes('Files');
+  const handleDragOver = (e: React.DragEvent) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    if (!attachDisabled) setIsDragging(true);
+  };
+  const handleDragLeave = (e: React.DragEvent) => {
+    // Ignore leave events that bubble while the cursor is still over a child.
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+    setIsDragging(false);
+  };
+  const handleDrop = (e: React.DragEvent) => {
+    if (!isFileDrag(e)) return;
+    // Stop the default file-navigation before any early-return below.
+    e.preventDefault();
+    setIsDragging(false);
+    if (attachDisabled) return;
+    const files = e.dataTransfer?.files;
+    if (!files || files.length === 0) return;
+    void onAttachFiles(files);
+  };
+
+  // Clipboard paste: pull image/video files out of the paste payload (e.g. a
+  // screenshot copied to the clipboard) and attach them; leave plain-text paste
+  // untouched so normal typing still works.
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (attachDisabled) return;
+    const items = Array.from(e.clipboardData?.items ?? []);
+    const files = items
+      .filter(item => item.kind === 'file' && /^(image|video)\//.test(item.type))
+      .map(item => item.getAsFile())
+      .filter((file): file is File => file !== null);
+    if (files.length === 0) return;
+    e.preventDefault();
+    void onAttachFiles(files);
+  };
+
   // Auto-resize textarea: grow with content, cap at COMPOSER_MAX_HEIGHT, then scroll.
   useEffect(() => {
     const ta = textInputRef.current;
@@ -123,7 +175,17 @@ export default function ChatComposer({
       {headerSlots}
 
       {/* The input box — only this carries the focus-within highlight. */}
-      <div className="relative flex flex-col rounded-2xl border border-line bg-surface transition-all focus-within:border-primary-500/50 focus-within:ring-1 focus-within:ring-primary-500/50">
+      <div
+        className="relative flex flex-col rounded-2xl border border-line bg-surface transition-all focus-within:border-primary-500/50 focus-within:ring-1 focus-within:ring-primary-500/50"
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}>
+        {/* Drag-and-drop overlay: shown while a file drag hovers the composer. */}
+        {isDragging && (
+          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary-500 bg-surface/90 text-sm font-medium text-primary-600">
+            {t('chat.attachment.dropToAttach')}
+          </div>
+        )}
         {/* Hidden file input for attachment (gated — see attachmentsEnabled). */}
         {attachmentsEnabled && (
           <input
@@ -201,6 +263,7 @@ export default function ChatComposer({
                 isComposingTextRef.current = false;
               }}
               onKeyDown={handleInputKeyDown}
+              onPaste={attachmentsEnabled ? handlePaste : undefined}
               placeholder={allowParallelSend ? t('chat.followupHint') : t('chat.typeMessage')}
               rows={1}
               disabled={textareaDisabled}

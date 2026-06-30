@@ -134,6 +134,42 @@ describe('SkillsExplorerTab', () => {
     expect(screen.getByText('built-in')).toBeInTheDocument();
   });
 
+  it('paginates the registry catalog via the Show more control', async () => {
+    const { workflowsApi } = await import('../../../services/api/workflowsApi');
+    const { skillRegistryApi } = await import('../../../services/api/skillRegistryApi');
+    vi.mocked(workflowsApi.listWorkflows).mockResolvedValue([]);
+    const entries: CatalogEntry[] = Array.from({ length: 130 }, (_, i) => ({
+      ...MOCK_CATALOG_ENTRY,
+      id: `paged-skill-${i}`,
+      name: `Paged Skill ${i}`,
+    }));
+    vi.mocked(skillRegistryApi.browse).mockResolvedValue(entries);
+
+    const { container } = render(<SkillsExplorerTab />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Paged Skill 0')).toBeInTheDocument();
+    });
+
+    const tileCount = () =>
+      container.querySelectorAll('[data-testid^="registry-tile-"]').length;
+
+    // First page only: 60 of 130 revealed.
+    expect(tileCount()).toBe(60);
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('registry-show-more'));
+    });
+    expect(tileCount()).toBe(120);
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('registry-show-more'));
+    });
+    // All 130 revealed → the control disappears.
+    expect(tileCount()).toBe(130);
+    expect(screen.queryByTestId('registry-show-more')).toBeNull();
+  });
+
   it('searches catalog via RPC when typing in search box', async () => {
     const { workflowsApi } = await import('../../../services/api/workflowsApi');
     const { skillRegistryApi } = await import('../../../services/api/skillRegistryApi');

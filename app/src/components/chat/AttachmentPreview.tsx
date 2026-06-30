@@ -28,6 +28,22 @@ export default function AttachmentPreview({
               alt={attachment.file.name}
               className="w-8 h-8 rounded object-cover flex-shrink-0"
             />
+          ) : attachment.kind === 'video' ? (
+            <div className="relative w-8 h-8 flex-shrink-0">
+              <img
+                src={attachment.previewUri ?? attachment.dataUri}
+                alt={attachment.file.name}
+                className="w-8 h-8 rounded object-cover"
+              />
+              <span className="absolute inset-0 flex items-center justify-center">
+                <svg
+                  className="w-3.5 h-3.5 text-white drop-shadow"
+                  fill="currentColor"
+                  viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              </span>
+            </div>
           ) : (
             <div
               aria-hidden

@@ -51,7 +51,7 @@ const TOOL_TIMEOUT_GRACE_SECS: u64 = 5;
 /// [`run_one_tool`]. `deadline` is `None` for an unbounded run (no harness
 /// timeout); `effective_secs` is the value surfaced in the timeout message
 /// (unused when `deadline` is `None`).
-fn resolve_tool_deadline(
+pub(crate) fn resolve_tool_deadline(
     policy: crate::openhuman::tools::traits::ToolTimeout,
 ) -> (Option<std::time::Duration>, u64) {
     use crate::openhuman::tool_timeout::{MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS};
@@ -495,6 +495,13 @@ mod tests {
             deadline.is_none(),
             "scripting tools with no explicit timeout must run unbounded"
         );
+    }
+
+    #[test]
+    fn inherited_policy_uses_shared_deadline() {
+        let (deadline, secs) = resolve_tool_deadline(ToolTimeout::Inherit);
+        assert!(secs >= crate::openhuman::tool_timeout::MIN_TIMEOUT_SECS);
+        assert_eq!(deadline, Some(std::time::Duration::from_secs(secs)));
     }
 
     #[test]

@@ -2001,12 +2001,39 @@ fn cef_force_gpu_enabled(env_override: Option<&str>) -> bool {
     }
 }
 
+/// Emergency CEF startup escape hatch for driver/runtime combinations where
+/// CEF cannot initialize its GPU process before the app can render UI.
+fn cef_disable_gpu_enabled(env_override: Option<&str>) -> bool {
+    match env_override {
+        Some(v) => {
+            let v = v.trim().to_ascii_lowercase();
+            v == "1" || v == "true" || v == "yes" || v == "on"
+        }
+        None => false,
+    }
+}
+
 fn append_platform_cef_gpu_workarounds(
     args: &mut Vec<CefCommandLineArg>,
     os: &str,
     arch: &str,
     force_gpu_override: Option<&str>,
+    disable_gpu_override: Option<&str>,
 ) {
+    let disable_gpu = cef_disable_gpu_enabled(disable_gpu_override);
+
+    // Issue #4294: on some Windows CEF/GPU stacks, cef::initialize can fail
+    // before the app renders any UI, and user-supplied process argv switches
+    // do not reach the vendored CEF runtime. Provide a narrow, release-safe
+    // env escape hatch instead of forwarding arbitrary Chromium flags.
+    if disable_gpu {
+        args.push(("--disable-gpu", None));
+        args.push(("--disable-gpu-compositing", None));
+        log::info!(
+            "[cef-startup] OPENHUMAN_DISABLE_GPU set: adding --disable-gpu and --disable-gpu-compositing for CEF startup compatibility (issue #4294)"
+        );
+    }
+
     // Issue #1697: on Arch/Manjaro-family Linux systems, the AppImage can
     // abort during CEF GPU process startup when EGL context creation fails
     // before Chromium's own fallback path gets a usable renderer.
@@ -2028,7 +2055,7 @@ fn append_platform_cef_gpu_workarounds(
     // SwiftShader-backed WebGL behind it (the "unsafe" label is about software
     // perf, not security). Users with working GPU stacks can still opt into
     // hardware acceleration via `OPENHUMAN_FORCE_GPU=1`.
-    if os == "linux" {
+    if os == "linux" && !disable_gpu {
         if cef_force_gpu_enabled(force_gpu_override) {
             log::info!(
                 "[cef-startup] OPENHUMAN_FORCE_GPU set — skipping SwiftShader software-GL fallback (issue #1697). If the app fails to launch with a GPU process abort, unset the env var."
@@ -2049,7 +2076,7 @@ fn append_platform_cef_gpu_workarounds(
     // Metal on Intel GPU hardware/drivers. Disable GPU compositing on
     // x86_64 macOS so the browser process falls back to software compositing
     // instead of aborting.
-    if os == "macos" && arch == "x86_64" {
+    if os == "macos" && arch == "x86_64" && !disable_gpu {
         args.push(("--disable-gpu-compositing", None));
         log::info!(
             "[cef-startup] Intel macOS detected: adding --disable-gpu-compositing (issue #1012)"
@@ -2790,11 +2817,13 @@ pub fn run() {
             args.push(("--remote-debugging-port", Some(leaked_port)));
         }
         let force_gpu_env = std::env::var("OPENHUMAN_FORCE_GPU").ok();
+        let disable_gpu_env = std::env::var("OPENHUMAN_DISABLE_GPU").ok();
         append_platform_cef_gpu_workarounds(
             &mut args,
             std::env::consts::OS,
             std::env::consts::ARCH,
             force_gpu_env.as_deref(),
+            disable_gpu_env.as_deref(),
         );
         // #3554: never forward a `--time-ticks-at-unix-epoch` switch to CEF —
         // a corrupt/negative value drives the renderer's clock decades off and

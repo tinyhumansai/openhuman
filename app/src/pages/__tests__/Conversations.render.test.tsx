@@ -21,6 +21,7 @@ import agentProfileReducer from '../../store/agentProfileSlice';
 import chatRuntimeReducer, {
   appendProcessingProse,
   beginInferenceTurn,
+  bumpInferenceHeartbeatForThread,
   clearFollowupsForThread,
   enqueueFollowup,
   setInferenceStatusForThread,
@@ -1291,6 +1292,84 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
         await vi.advanceTimersByTimeAsync(80_000);
       });
       expect(store!.getState().thread.activeThreadIds[thread.id]).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rearms the silence timer on inference heartbeat beats during a silent reasoning phase (#4270)', async () => {
+    // Repro for #4270: a long prefill on a large context, or a reasoning-tier
+    // model that buffers `reasoning_content` server-side, streams NO status /
+    // text / tool / board signal for minutes. The core now emits a periodic
+    // `inference_heartbeat`; the rearm effect must treat it as liveness so the
+    // 120s silence timer never false-fires while the turn is genuinely working.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { textarea, store, thread } = await renderSelectedConversation();
+
+      await act(async () => {
+        fireEvent.change(textarea, {
+          target: { value: 'summarize a big codebase in reasoning mode' },
+        });
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      });
+      await waitFor(() => {
+        expect(chatSend).toHaveBeenCalledTimes(1);
+      });
+
+      // 200s elapse in 20s steps — only a heartbeat each step, nothing else.
+      // Without the #4270 fix the 120s timer would fire around the 6th step.
+      for (let i = 0; i < 10; i++) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(20_000);
+        });
+        await act(async () => {
+          store!.dispatch(bumpInferenceHeartbeatForThread({ threadId: thread.id }));
+        });
+      }
+
+      // The beats kept rearming the timer → the turn is still marked active
+      // (a fired safety timeout would have dispatched `clearThreadInferenceActive`).
+      expect(store!.getState().thread.activeThreadIds[thread.id]).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('still fails fast when heartbeats stop — genuine disconnect surfaces (#4270 regression safety)', async () => {
+    // Regression safety: the heartbeat is the liveness signal, so a real
+    // connectivity drop (core/socket dead → no more beats) MUST still trip the
+    // 120s silence timer rather than hanging forever.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { textarea, store, thread } = await renderSelectedConversation();
+
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: 'task whose connection dies' } });
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      });
+      await waitFor(() => {
+        expect(chatSend).toHaveBeenCalledTimes(1);
+      });
+
+      // A couple of early beats, then silence (the socket died).
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20_000);
+      });
+      await act(async () => {
+        store!.dispatch(bumpInferenceHeartbeatForThread({ threadId: thread.id }));
+      });
+
+      // No more beats for a full 120s window → the silence timer fires and
+      // drops the thread from the active set.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120_000);
+      });
+      expect(store!.getState().thread.activeThreadIds[thread.id]).toBeFalsy();
     } finally {
       vi.useRealTimers();
     }

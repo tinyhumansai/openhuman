@@ -2,6 +2,8 @@
 mod agent_prepare_context;
 #[path = "tools/archetype_delegation.rs"]
 mod archetype_delegation;
+#[path = "tools/awaiting_user.rs"]
+mod awaiting_user;
 #[path = "tools/close_subagent.rs"]
 mod close_subagent;
 #[path = "tools/continue_subagent.rs"]

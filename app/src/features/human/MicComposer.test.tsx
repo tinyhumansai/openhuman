@@ -49,6 +49,27 @@ function makeFakeRecorder(mime: string): FakeRecorder {
 
 const fakeStream = { getTracks: () => [{ stop: vi.fn() }] } as unknown as MediaStream;
 
+// jsdom never lays elements out, so getBoundingClientRect returns all-zero
+// rects. The device-menu placement logic measures the trigger and the menu, so
+// tests stub those rects per-element to simulate viewport positions.
+function makeRect(p: Partial<DOMRect>): DOMRect {
+  const top = p.top ?? 0;
+  const left = p.left ?? 0;
+  const width = p.width ?? 0;
+  const height = p.height ?? 0;
+  return {
+    top,
+    left,
+    width,
+    height,
+    bottom: p.bottom ?? top + height,
+    right: p.right ?? left + width,
+    x: left,
+    y: top,
+    toJSON: () => ({}),
+  } as DOMRect;
+}
+
 describe('MicComposer', () => {
   let recorder: FakeRecorder;
   let getUserMediaMock: ReturnType<typeof vi.fn>;
@@ -566,6 +587,97 @@ describe('MicComposer', () => {
     expect(screen.queryByRole('combobox', { name: /microphone device/i })).not.toBeInTheDocument();
     // Composer still functional
     expect(screen.getByText('Tap and speak')).toBeInTheDocument();
+  });
+
+  // ── Device menu placement (#4264: overlay clipped at viewport bottom) ───────
+
+  async function openDeviceMenuWithRects(triggerRect: Partial<DOMRect>) {
+    const enumerateDevicesMock = vi.fn().mockResolvedValue([
+      { kind: 'audioinput', deviceId: 'dev1', label: 'Built-in Mic' },
+      { kind: 'audioinput', deviceId: 'dev2', label: 'USB Headset' },
+    ]);
+    Object.defineProperty(globalThis.navigator, 'mediaDevices', {
+      value: { getUserMedia: getUserMediaMock, enumerateDevices: enumerateDevicesMock },
+      configurable: true,
+      writable: true,
+    });
+    render(<MicComposer disabled={false} onSubmit={vi.fn()} showDeviceSelector />);
+
+    const gearBtn = await screen.findByLabelText(/Microphone device/i);
+    // Per-instance override shadows the prototype, so only the trigger reports
+    // this rect; the menu falls back to the prototype stub below.
+    gearBtn.getBoundingClientRect = () => makeRect(triggerRect);
+    // Menu measures 256×300 (its CSS width is w-64 = 256px); stub a tall list.
+    const menuRectSpy = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.getAttribute('role') === 'menu') {
+          return makeRect({ top: 0, left: 0, width: 256, height: 300 });
+        }
+        return makeRect({});
+      });
+    fireEvent.click(gearBtn);
+    const menu = await screen.findByRole('menu');
+    return { menu, menuRectSpy };
+  }
+
+  it('flips the device menu above the gear when there is no room below', async () => {
+    vi.stubGlobal('innerHeight', 600);
+    vi.stubGlobal('innerWidth', 1000);
+    // Trigger sits near the bottom edge: only 8px below, but 560px above.
+    const { menu, menuRectSpy } = await openDeviceMenuWithRects({
+      top: 560,
+      bottom: 592,
+      left: 100,
+      width: 32,
+      height: 32,
+    });
+    try {
+      // top = trigger.top(560) − margin(8) − menuHeight(300) = 252, fully on-screen.
+      expect(parseFloat(menu.style.top)).toBe(252);
+      expect(parseFloat(menu.style.top)).toBeLessThan(560);
+      expect(menu.style.visibility).toBe('visible');
+    } finally {
+      menuRectSpy.mockRestore();
+    }
+  });
+
+  it('opens the device menu below the gear when there is room', async () => {
+    vi.stubGlobal('innerHeight', 600);
+    vi.stubGlobal('innerWidth', 1000);
+    // Trigger near the top: 518px of room below comfortably fits the 300px menu.
+    const { menu, menuRectSpy } = await openDeviceMenuWithRects({
+      top: 50,
+      bottom: 82,
+      left: 100,
+      width: 32,
+      height: 32,
+    });
+    try {
+      // top = trigger.bottom(82) + margin(8) = 90.
+      expect(parseFloat(menu.style.top)).toBe(90);
+    } finally {
+      menuRectSpy.mockRestore();
+    }
+  });
+
+  it('clamps the device menu horizontally inside the viewport', async () => {
+    vi.stubGlobal('innerHeight', 600);
+    vi.stubGlobal('innerWidth', 1000);
+    // Trigger hugs the right edge — centring the 256px menu would overflow.
+    const { menu, menuRectSpy } = await openDeviceMenuWithRects({
+      top: 50,
+      bottom: 82,
+      left: 980,
+      width: 32,
+      height: 32,
+    });
+    try {
+      // left clamps to viewportW(1000) − menuWidth(256) − margin(8) = 736.
+      expect(parseFloat(menu.style.left)).toBe(736);
+    } finally {
+      menuRectSpy.mockRestore();
+    }
   });
 
   // ── STT retry (#1206) ──────────────────────────────────────────────────────

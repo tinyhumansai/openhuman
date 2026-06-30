@@ -90,6 +90,10 @@ impl ComposioTool {
         )
     }
 
+    pub(crate) fn auth_key_fingerprint(&self) -> u64 {
+        crate::openhuman::composio::direct_auth::fingerprint_api_key(&self.api_key)
+    }
+
     /// Debug-test seam for raw integration coverage: construct a direct
     /// Composio tool against explicit v2/v3 base URLs. Non-HTTPS URLs are
     /// accepted only for loopback hosts and only in debug builds.

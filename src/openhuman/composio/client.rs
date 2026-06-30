@@ -705,6 +705,54 @@ pub enum ComposioClientKind {
     Direct(Arc<crate::openhuman::tools::ComposioTool>),
 }
 
+pub(crate) fn create_direct_composio_tool_for_api_key(
+    config: &crate::openhuman::config::Config,
+    api_key: &str,
+) -> anyhow::Result<Arc<crate::openhuman::tools::ComposioTool>> {
+    let api_key = api_key.trim();
+    if api_key.is_empty() {
+        anyhow::bail!("composio direct api key must not be empty");
+    }
+
+    // The direct client takes a `SecurityPolicy` for `Tool::execute`
+    // gating, but the factory's job is only to materialize a *client*
+    // — it does not actually invoke `execute()` itself, so the
+    // default policy is sufficient here. Callers that go through
+    // the `Tool` surface re-acquire the live policy from their own
+    // context.
+    let security = Arc::new(crate::openhuman::security::SecurityPolicy::default());
+    #[cfg(debug_assertions)]
+    let tool = match (
+        std::env::var("OPENHUMAN_COMPOSIO_DIRECT_BASE_V2").ok(),
+        std::env::var("OPENHUMAN_COMPOSIO_DIRECT_BASE_V3").ok(),
+    ) {
+        (Some(base_v2), Some(base_v3)) => {
+            crate::openhuman::tools::ComposioTool::new_with_base_urls_for_loopback(
+                api_key,
+                Some(config.composio.entity_id.as_str()),
+                security,
+                base_v2,
+                base_v3,
+            )
+            .map_err(|e| {
+                anyhow::anyhow!("invalid debug composio direct loopback base override: {e}")
+            })?
+        }
+        _ => crate::openhuman::tools::ComposioTool::new(
+            api_key,
+            Some(config.composio.entity_id.as_str()),
+            security,
+        ),
+    };
+    #[cfg(not(debug_assertions))]
+    let tool = crate::openhuman::tools::ComposioTool::new(
+        api_key,
+        Some(config.composio.entity_id.as_str()),
+        security,
+    );
+    Ok(Arc::new(tool))
+}
+
 impl ComposioClientKind {
     /// Returns `"backend"` or `"direct"` — handy for logging and tests.
     pub fn mode(&self) -> &'static str {
@@ -772,47 +820,12 @@ pub fn create_composio_client(
                     )
                 })?;
 
-            // The direct client takes a `SecurityPolicy` for `Tool::execute`
-            // gating, but the factory's job is only to materialize a *client*
-            // — it does not actually invoke `execute()` itself, so the
-            // default policy is sufficient here. Callers that go through
-            // the `Tool` surface re-acquire the live policy from their own
-            // context.
-            let security = Arc::new(crate::openhuman::security::SecurityPolicy::default());
-            #[cfg(debug_assertions)]
-            let tool = match (
-                std::env::var("OPENHUMAN_COMPOSIO_DIRECT_BASE_V2").ok(),
-                std::env::var("OPENHUMAN_COMPOSIO_DIRECT_BASE_V3").ok(),
-            ) {
-                (Some(base_v2), Some(base_v3)) => {
-                    crate::openhuman::tools::ComposioTool::new_with_base_urls_for_loopback(
-                        &api_key,
-                        Some(config.composio.entity_id.as_str()),
-                        security,
-                        base_v2,
-                        base_v3,
-                    )
-                    .map_err(|e| {
-                        anyhow::anyhow!("invalid debug composio direct loopback base override: {e}")
-                    })?
-                }
-                _ => crate::openhuman::tools::ComposioTool::new(
-                    &api_key,
-                    Some(config.composio.entity_id.as_str()),
-                    security,
-                ),
-            };
-            #[cfg(not(debug_assertions))]
-            let tool = crate::openhuman::tools::ComposioTool::new(
-                &api_key,
-                Some(config.composio.entity_id.as_str()),
-                security,
-            );
+            let tool = create_direct_composio_tool_for_api_key(config, &api_key)?;
             tracing::debug!(
                 key_len = api_key.len(),
                 "[composio-factory] resolved direct variant (key redacted)"
             );
-            Ok(ComposioClientKind::Direct(Arc::new(tool)))
+            Ok(ComposioClientKind::Direct(tool))
         }
         unknown => {
             tracing::warn!(mode = %unknown, "[composio-factory] unknown composio mode");
@@ -836,7 +849,7 @@ pub fn create_composio_client(
 // direct-mode plumbing can see the full envelope-translation surface
 // in one place.
 
-use super::types::ComposioConnection;
+use super::{direct_auth, types::ComposioConnection};
 
 /// Direct-mode counterpart to [`ComposioClient::authorize`]. Calls
 /// Composio v3 `/connected_accounts/link` via
@@ -963,7 +976,44 @@ pub async fn direct_list_connections(
     direct: &Arc<crate::openhuman::tools::ComposioTool>,
 ) -> anyhow::Result<ComposioConnectionsResponse> {
     tracing::debug!("[composio-direct] list_connections: GET v3 /connected_accounts");
-    let items = direct.list_connected_accounts().await?;
+    let key_id = direct.auth_key_fingerprint();
+    if let Some(error) = direct_auth::direct_auth_backoff_error(key_id) {
+        tracing::warn!(
+            "[composio-direct] list_connections: direct API key backoff gate open; \
+             skipping v3 /connected_accounts"
+        );
+        anyhow::bail!("{error}");
+    }
+
+    let items = match direct.list_connected_accounts().await {
+        Ok(items) => {
+            direct_auth::record_direct_auth_success(key_id);
+            items
+        }
+        Err(error) => {
+            let rendered = format!("{error:#}");
+            match direct_auth::record_direct_auth_failure(key_id, &rendered) {
+                direct_auth::DirectAuthFailureDecision::NotAuthFailure => {}
+                direct_auth::DirectAuthFailureDecision::RetryAllowed { consecutive } => {
+                    tracing::warn!(
+                        consecutive,
+                        threshold = direct_auth::DIRECT_INVALID_API_KEY_THRESHOLD,
+                        "[composio-direct] list_connections: direct API key rejected"
+                    );
+                }
+                direct_auth::DirectAuthFailureDecision::CircuitOpened { consecutive } => {
+                    let backoff = direct_auth::invalid_api_key_backoff_message(consecutive);
+                    tracing::warn!(
+                        consecutive,
+                        threshold = direct_auth::DIRECT_INVALID_API_KEY_THRESHOLD,
+                        "[composio-direct] list_connections: direct API key backoff gate opened"
+                    );
+                    anyhow::bail!("{backoff}");
+                }
+            }
+            return Err(error);
+        }
+    };
     let connections: Vec<ComposioConnection> = items
         .into_iter()
         .filter_map(|item| {

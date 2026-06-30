@@ -128,6 +128,8 @@ impl EventHandler for ConversationPersistenceSubscriber {
                         role: "user",
                         success: None,
                         elapsed_ms: None,
+                        model_provider: None,
+                        model: None,
                         source: "channel_received",
                     },
                 ) {
@@ -146,6 +148,8 @@ impl EventHandler for ConversationPersistenceSubscriber {
                 reply_target,
                 thread_ts,
                 response,
+                provider,
+                model,
                 elapsed_ms,
                 success,
                 workspace_dir,
@@ -179,6 +183,8 @@ impl EventHandler for ConversationPersistenceSubscriber {
                         role: "assistant",
                         success: Some(*success),
                         elapsed_ms: Some(*elapsed_ms),
+                        model_provider: Some(provider),
+                        model: Some(model),
                         source: "channel_processed",
                     },
                 ) {
@@ -205,6 +211,8 @@ struct ChannelTurnDescriptor<'a> {
     role: &'a str,
     success: Option<bool>,
     elapsed_ms: Option<u64>,
+    model_provider: Option<&'a str>,
+    model: Option<&'a str>,
     source: &'a str,
 }
 
@@ -267,6 +275,8 @@ fn persist_channel_turn(
                 "sourceEvent": descriptor.source,
                 "success": descriptor.success,
                 "elapsedMs": descriptor.elapsed_ms,
+                "modelProvider": descriptor.model_provider,
+                "model": descriptor.model,
                 "sourceMessageId": descriptor.message_id,
             }),
             sender: descriptor.role.to_string(),
@@ -368,6 +378,8 @@ mod tests {
                 content: "hello".into(),
                 thread_ts: Some("thread-1".into()),
                 response: "hi there".into(),
+                provider: "test-provider".into(),
+                model: "test-model".into(),
                 elapsed_ms: 42,
                 success: true,
                 workspace_dir: temp.path().to_path_buf(),
@@ -387,6 +399,8 @@ mod tests {
         assert_eq!(messages[1].sender, "assistant");
         assert_eq!(messages[1].extra_metadata["elapsedMs"], 42);
         assert_eq!(messages[1].extra_metadata["success"], true);
+        assert_eq!(messages[1].extra_metadata["modelProvider"], "test-provider");
+        assert_eq!(messages[1].extra_metadata["model"], "test-model");
     }
 
     #[tokio::test]
@@ -558,6 +572,8 @@ mod tests {
                 content: "hello".into(),
                 thread_ts: None,
                 response: "hi there".into(),
+                provider: "test-provider".into(),
+                model: "test-model".into(),
                 elapsed_ms: 10,
                 success: true,
                 workspace_dir: temp.path().to_path_buf(),
@@ -603,6 +619,8 @@ mod tests {
                 content: "hello".into(),
                 thread_ts: None,
                 response: "should not persist".into(),
+                provider: "test-provider".into(),
+                model: "test-model".into(),
                 elapsed_ms: 10,
                 success: true,
                 workspace_dir: stale.path().to_path_buf(),
@@ -652,6 +670,8 @@ mod tests {
                 content: "hello".into(),
                 thread_ts: None,
                 response: "from workspace B — must be dropped".into(),
+                provider: "test-provider".into(),
+                model: "test-model".into(),
                 elapsed_ms: 5,
                 success: true,
                 workspace_dir: workspace_b.path().to_path_buf(),
@@ -668,6 +688,8 @@ mod tests {
                 content: "hello".into(),
                 thread_ts: None,
                 response: "from workspace A — should persist".into(),
+                provider: "test-provider".into(),
+                model: "test-model".into(),
                 elapsed_ms: 10,
                 success: true,
                 workspace_dir: workspace_a.path().to_path_buf(),

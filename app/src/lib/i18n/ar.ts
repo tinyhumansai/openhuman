@@ -1585,6 +1585,12 @@ const messages: TranslationMap = {
   'mcp.connectAuth.oauthOrToken':
     'هل لديك بالفعل رمز وصول؟ الصقه بدلاً من ذلك كرأس Authorization أدناه.',
   'mcp.connectAuth.oauthTimeout': 'انتهت مهلة انتظار تسجيل الدخول عبر المتصفح. حاول مرة أخرى.',
+  'mcp.connectAuth.authError.oauthRequired':
+    'يستخدم هذا الخادم OAuth. استخدم “تسجيل الدخول عبر المتصفح” — لن يتم قبول رمز مميز ملصوق.',
+  'mcp.connectAuth.authError.tokenRejected':
+    'رفض الخادم هذا الرمز المميز. تأكد من أنه صحيح وأن صلاحيته لم تنتهِ.',
+  'mcp.connectAuth.authError.credentialRequired':
+    'يتطلب هذا الخادم مصادقة. أضف رمزًا مميزًا أو سجّل الدخول.',
   'onboarding.skipForNow': 'التخطي الآن',
   'onboarding.localAI.continueWithCloud': 'متابعة مع السحابة',
   'onboarding.localAI.useLocalAnyway':
@@ -2216,6 +2222,10 @@ const messages: TranslationMap = {
   'chat.attachment.remove': 'إزالة {name}',
   'chat.attachment.tooMany': 'الحد الأقصى {max} صور لكل رسالة',
   'chat.attachment.tooManyFiles': 'الحد الأقصى {max} ملفات لكل رسالة',
+  'chat.attachment.tooManyVideos': 'الحد الأقصى {max} مقاطع فيديو لكل رسالة',
+  'chat.attachment.videoNotSupported':
+    'لا يمكن لهذا النموذج قراءة مقاطع الفيديو. يمكنك استخدام مستوى التفكير من OpenHuman لإرفاق الفيديو.',
+  'chat.attachment.dropToAttach': 'أفلت الملفات لإرفاقها',
   'chat.attachment.tooLarge': 'حجم الصورة يتجاوز الحد المسموح {max}',
   'chat.attachment.unsupportedType':
     'نوع ملف غير مدعوم. استخدم صورة (PNG أو JPEG أو WebP أو GIF أو BMP) أو ملف PDF أو TXT أو Markdown.',
@@ -5030,6 +5040,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.bannerTitle': 'عنوان اللافتة',
   'skills.meetingBots.busyTitle': 'OpenHuman مشغول',
   'skills.meetingBots.comingSoon': 'قريبًا',
+  'skills.meetingBots.couldNotLeaveTitle': 'تعذّر مغادرة الاجتماع',
   'skills.meetingBots.couldNotStartTitle': 'تعذّر بدء OpenHuman',
   'skills.meetingBots.displayName': 'الاسم المعروض',
   'skills.meetingBots.failedToStart': 'فشل تشغيل OpenHuman.',
@@ -5079,6 +5090,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.liveStatusEnded': 'انتهى الاجتماع',
   'skills.meetingBots.liveStatusError': 'فشل الانضمام',
   'skills.meetingBots.leaveButton': 'مغادرة',
+  'skills.meetingBots.leavingButton': 'جارٍ المغادرة…',
   'skills.meetingBots.respondToParticipant': 'اسمك في هذا الاجتماع',
   'skills.meetingBots.respondToParticipantHint': 'مثال: أحمد (اسمك في المكالمة)',
   'skills.meetingBots.respondToParticipantDesc':
@@ -5901,6 +5913,8 @@ const messages: TranslationMap = {
     'لا يتوفر مزوّد تلخيص لميزة إنشاء أشجار التلخيص. فعّل الذكاء الاصطناعي المحلي (Ollama)، أو فعّل تلخيص السحابة في الإعدادات → الذكاء الاصطناعي → الذاكرة.',
   'memory.health.remediation.empty_input_refused':
     'تم تخطي عنصر ذاكرة لأن نصه كان فارغًا. لا حاجة لأي إجراء — تستمر العناصر الجديدة في التضمين بشكل طبيعي.',
+  'memory.health.remediation.storage_unavailable':
+    'تعذّر على OpenHuman الكتابة إلى تخزين الذاكرة — يبدو أن القرص أو بطاقة SD معطوبة أو ممتلئة أو للقراءة فقط. تحقّق من محرك الأقراص وحرّر بعض المساحة؛ ستُستأنف معالجة الذاكرة تلقائيًا بمجرد أن يصبح التخزين قابلاً للكتابة مرة أخرى.',
   'memory.health.remediation.transient':
     'حدث خطأ مؤقت أدى إلى مقاطعة معالجة الذاكرة. ستتم إعادة المحاولة تلقائيًا.',
   'memory.health.remediation.unknown':

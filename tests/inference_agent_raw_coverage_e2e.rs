@@ -2927,9 +2927,9 @@ async fn agent_triage_evaluator_covers_native_dispatch_decision_and_deferred_pat
                     && msg.content.contains("SOURCE: webhook")
                     && msg.content.contains("PAYLOAD:")
             }));
-            Ok(AgentTurnResponse {
-                text: r#"{"action":"drop","reason":"already handled"}"#.into(),
-            })
+            Ok(AgentTurnResponse::new(
+                r#"{"action":"drop","reason":"already handled"}"#,
+            ))
         },
     );
     let cloud = ResolvedProvider {
@@ -2989,12 +2989,10 @@ async fn agent_triage_evaluator_covers_native_dispatch_decision_and_deferred_pat
             async move {
                 let attempt = attempts_for_handler.fetch_add(1, Ordering::SeqCst);
                 match attempt {
-                    0 | 1 => Ok(AgentTurnResponse {
-                        text: "not json".into(),
-                    }),
-                    _ => Ok(AgentTurnResponse {
-                        text: r#"{"action":"escalate","target_agent":"orchestrator","prompt":"follow up","reason":"needs work"}"#.into(),
-                    }),
+                    0 | 1 => Ok(AgentTurnResponse::new("not json")),
+                    _ => Ok(AgentTurnResponse::new(
+                        r#"{"action":"escalate","target_agent":"orchestrator","prompt":"follow up","reason":"needs work"}"#,
+                    )),
                 }
             }
         },

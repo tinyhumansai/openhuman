@@ -1607,6 +1607,12 @@ const messages: TranslationMap = {
   'mcp.connectAuth.oauthOrToken':
     '이미 액세스 토큰이 있나요? 대신 아래에 Authorization 헤더로 붙여넣으세요.',
   'mcp.connectAuth.oauthTimeout': '브라우저 로그인 대기 시간이 초과되었습니다. 다시 시도하세요.',
+  'mcp.connectAuth.authError.oauthRequired':
+    '이 서버는 OAuth를 사용합니다. “브라우저로 로그인”을 사용하세요. 붙여넣은 토큰은 사용할 수 없습니다.',
+  'mcp.connectAuth.authError.tokenRejected':
+    '서버가 이 토큰을 거부했습니다. 토큰이 올바르고 만료되지 않았는지 확인하세요.',
+  'mcp.connectAuth.authError.credentialRequired':
+    '이 서버는 인증이 필요합니다. 토큰을 추가하거나 로그인하세요.',
   'onboarding.skipForNow': '지금 건너뛰기',
   'onboarding.localAI.continueWithCloud': '클라우드 계속하기',
   'onboarding.localAI.useLocalAnyway': '어쨌든 로컬 AI 사용(기기에 권장되지 않음)',
@@ -2242,6 +2248,10 @@ const messages: TranslationMap = {
   'chat.attachment.remove': '{name} 제거',
   'chat.attachment.tooMany': '메시지당 최대 {max}개 이미지',
   'chat.attachment.tooManyFiles': '메시지당 최대 {max}개 파일',
+  'chat.attachment.tooManyVideos': '메시지당 최대 {max}개 동영상',
+  'chat.attachment.videoNotSupported':
+    '이 모델은 동영상을 읽을 수 없습니다. 동영상을 첨부하려면 OpenHuman 추론 등급을 사용할 수 있습니다.',
+  'chat.attachment.dropToAttach': '파일을 놓아 첨부',
   'chat.attachment.tooLarge': '이미지가 {max} 크기 제한을 초과합니다',
   'chat.attachment.unsupportedType':
     '지원되지 않는 파일 형식입니다. 이미지(PNG, JPEG, WebP, GIF, BMP) 또는 PDF, TXT, Markdown 파일을 사용하세요.',
@@ -5085,6 +5095,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.bannerTitle': 'OpenHuman을 회의에 보내기',
   'skills.meetingBots.busyTitle': 'OpenHuman이 바쁩니다',
   'skills.meetingBots.comingSoon': '곧 제공 예정',
+  'skills.meetingBots.couldNotLeaveTitle': '회의에서 나갈 수 없습니다',
   'skills.meetingBots.couldNotStartTitle': 'OpenHuman을 시작할 수 없습니다',
   'skills.meetingBots.displayName': '표시 이름',
   'skills.meetingBots.failedToStart': 'OpenHuman 시작에 실패했습니다.',
@@ -5135,6 +5146,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.liveStatusEnded': '회의 종료',
   'skills.meetingBots.liveStatusError': '참가 실패',
   'skills.meetingBots.leaveButton': '나가기',
+  'skills.meetingBots.leavingButton': '나가는 중…',
   'skills.meetingBots.respondToParticipant': '이 회의에서 내 이름',
   'skills.meetingBots.respondToParticipantHint': '예: 김철수 (통화에서 표시되는 이름)',
   'skills.meetingBots.respondToParticipantDesc':
@@ -5964,6 +5976,8 @@ const messages: TranslationMap = {
     '요약 트리 만들기에 사용할 수 있는 요약 제공자가 없습니다. 로컬 AI(Ollama)를 활성화하거나, 설정 → AI → 메모리에서 클라우드 요약을 활성화하세요.',
   'memory.health.remediation.empty_input_refused':
     '텍스트가 비어 있어 메모리 항목이 건너뛰어졌습니다. 조치가 필요하지 않습니다 — 새 항목은 정상적으로 임베딩됩니다.',
+  'memory.health.remediation.storage_unavailable':
+    'OpenHuman이 메모리 저장소에 쓸 수 없습니다 — 디스크 또는 SD 카드가 손상되었거나 가득 찼거나 읽기 전용인 것 같습니다. 드라이브를 확인하고 공간을 확보하세요. 저장소에 다시 쓸 수 있게 되면 메모리 처리가 자동으로 재개됩니다.',
   'memory.health.remediation.transient':
     '일시적인 오류로 메모리 처리가 중단되었습니다. 자동으로 다시 시도됩니다.',
   'memory.health.remediation.unknown':

@@ -196,6 +196,15 @@ named = [
     "spawn_parallel_agents",
     "wait",
     "wait_loop",
+    # Resume a sub-agent that paused on `ask_user_clarification` (#4291). When
+    # a delegated sub-agent (e.g. mcp_setup via `delegate_setup_mcp_server`)
+    # asks the user a question, the runner checkpoints it and the orchestrator
+    # gets a `[SUBAGENT_AWAITING_USER]` envelope with the task_id/agent_id. The
+    # orchestrator MUST resume that exact checkpoint with the user's answer via
+    # this tool — without it, the only continuation is to re-delegate a fresh,
+    # stateless sub-agent that asks again, looping forever. Both the async
+    # spawn and the synchronous delegate paths instruct the model to call it.
+    "continue_subagent",
     "composio_list_connections",
     # Inline OAuth connect card (#3993). Free-form `toolkit` slug — the
     # orchestrator calls this directly to connect a service the user names,

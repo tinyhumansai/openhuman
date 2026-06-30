@@ -73,6 +73,11 @@ ASSET_PATTERNS = {
     "windows-x86_64": r"x64.*\.msi$|x64.*setup\.exe$",
 }
 
+REQUIRED_RELEASE_ASSETS = {
+    "linux-x86_64 .deb":  r"OpenHuman_.*_amd64\.deb$",
+    "linux-aarch64 .deb": r"OpenHuman_.*_(arm64|aarch64)\.deb$",
+}
+
 release_path, latest_path = sys.argv[1], sys.argv[2]
 try:
     release = json.load(open(release_path))
@@ -96,14 +101,20 @@ missing_assets = [
     p for p in SUPPORTED
     if not any(re.search(ASSET_PATTERNS[p], n) for n in asset_names)
 ]
+missing_required_assets = [
+    label for label, pattern in REQUIRED_RELEASE_ASSETS.items()
+    if not any(re.search(pattern, n) for n in asset_names)
+]
 
 tag = release.get("tag_name") or release.get("name") or "<unknown tag>"
-if missing_latest or missing_assets:
+if missing_latest or missing_assets or missing_required_assets:
     print(f"Release validation FAILED for {tag}", file=sys.stderr)
     if missing_latest:
         print(f"  Missing from latest.json: {', '.join(missing_latest)}", file=sys.stderr)
     if missing_assets:
         print(f"  Missing release assets:   {', '.join(missing_assets)}", file=sys.stderr)
+    if missing_required_assets:
+        print(f"  Missing required release assets: {', '.join(missing_required_assets)}", file=sys.stderr)
     print(
         "  See scripts/install.sh for the supported-platform matrix.",
         file=sys.stderr,
