@@ -64,10 +64,14 @@ describe('AttachmentPreview', () => {
       mimeType: 'video/mp4',
       frames: ['data:image/jpeg;base64,poster'],
     });
-    render(<AttachmentPreview attachments={[att]} onRemove={vi.fn()} />);
+    const { container } = render(<AttachmentPreview attachments={[att]} onRemove={vi.fn()} />);
     const img = screen.getByAltText('clip.mp4') as HTMLImageElement;
     expect(img.src).toBe('data:image/jpeg;base64,poster');
     expect(screen.getByText('clip.mp4')).toBeInTheDocument();
+    // Explicitly assert the play overlay (the ▶ triangle drawn over the poster)
+    // is rendered — without this the test would still pass if the overlay
+    // disappeared, which is exactly the regression the title promises to catch.
+    expect(container.querySelector('path[d="M8 5v14l11-7z"]')).not.toBeNull();
   });
 
   it('calls onRemove with the attachment id when × is clicked', () => {
