@@ -32,20 +32,10 @@ async function waitForAdvancedRouteReady(page: Page): Promise<void> {
   await expect(page.getByText(/Select a Runtime|Connect to Your Runtime/)).toHaveCount(0);
 }
 
-async function dismissHarnessInitOverlayIfPresent(page: Page): Promise<void> {
-  const runInBackground = page.getByRole('button', { name: 'Run in background' });
-  if (await runInBackground.isVisible({ timeout: 1_000 }).catch(() => false)) {
-    await runInBackground.click();
-    await expect(runInBackground).toHaveCount(0);
-  }
-}
-
 async function gotoSettingsRoute(page: Page, hash: string): Promise<void> {
   await page.goto(`/#${hash}`);
   await waitForAdvancedRouteReady(page);
-  await dismissHarnessInitOverlayIfPresent(page);
   await dismissWalkthroughIfPresent(page);
-  await dismissHarnessInitOverlayIfPresent(page);
 }
 
 function providerEnabledToggle(
