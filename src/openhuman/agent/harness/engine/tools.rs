@@ -47,6 +47,35 @@ pub(crate) struct ToolRunResult {
 /// child process, whereas the harness backstop merely drops the future.
 const TOOL_TIMEOUT_GRACE_SECS: u64 = 5;
 
+pub(crate) fn sorted_tool_names<'a>(names: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let mut names: Vec<String> = names
+        .into_iter()
+        .filter(|name| !name.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    names
+}
+
+pub(crate) fn format_available_tools_hint(available_tool_names: &[String]) -> String {
+    if available_tool_names.is_empty() {
+        "No tools are available in this turn.".to_string()
+    } else {
+        format!("Available tools: {}", available_tool_names.join(", "))
+    }
+}
+
+pub(crate) fn format_unknown_tool_message(
+    tool_name: &str,
+    available_tool_names: &[String],
+) -> String {
+    format!(
+        "Unknown tool: {tool_name}. {}",
+        format_available_tools_hint(available_tool_names)
+    )
+}
+
 /// Map a [`ToolTimeout`] policy to `(deadline, effective_secs)` for
 /// [`run_one_tool`]. `deadline` is `None` for an unbounded run (no harness
 /// timeout); `effective_secs` is the value surfaced in the timeout message
@@ -90,6 +119,7 @@ pub(crate) async fn run_one_tool(
     tool_policy: &dyn ToolPolicy,
     payload_summarizer: Option<&dyn PayloadSummarizer>,
     progress_call_id: &str,
+    available_tool_names: &[String],
     tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression,
 ) -> ToolRunResult {
     let iteration_u32 = (iteration + 1) as u32;
@@ -162,9 +192,10 @@ pub(crate) async fn run_one_tool(
         tracing::warn!(
             iteration,
             tool = call.name.as_str(),
+            available_tool_count = available_tool_names.len(),
             "[agent_loop] unknown tool requested"
         );
-        let msg = format!("Unknown tool: {}", call.name);
+        let msg = format_unknown_tool_message(&call.name, available_tool_names);
         emit_failed_completion(&msg).await;
         return ToolRunResult {
             text: msg,

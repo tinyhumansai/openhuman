@@ -12,6 +12,9 @@ use std::collections::HashSet;
 
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::{ParsedToolCall, ToolExecutionResult};
+use crate::openhuman::agent::harness::engine::tools::{
+    format_available_tools_hint, format_unknown_tool_message, sorted_tool_names,
+};
 use crate::openhuman::agent::harness::engine::ProgressReporter;
 use crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer;
 use crate::openhuman::agent::harness::tool_result_artifacts::{
@@ -44,6 +47,14 @@ pub(super) struct AgentToolExecCtx<'a> {
     /// Agent-level TokenJuice profile for this session's tool results.
     pub tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression,
     pub artifact_store: Option<&'a ToolResultArtifactStore>,
+}
+
+fn available_tool_names_for_ctx(ctx: &AgentToolExecCtx<'_>) -> Vec<String> {
+    if ctx.visible_tool_names.is_empty() {
+        sorted_tool_names(ctx.tools.iter().map(|tool| tool.name()))
+    } else {
+        sorted_tool_names(ctx.visible_tool_names.iter().map(|name| name.as_str()))
+    }
 }
 
 /// Execute one parsed tool call end-to-end with the Agent's semantics, emitting
@@ -98,8 +109,13 @@ pub(super) async fn run_agent_tool_call(
             "[agent] blocked tool call '{}' — not in visible tool set",
             call.name
         );
+        let available = available_tool_names_for_ctx(ctx);
         (
-            format!("Tool '{}' is not available to this agent", call.name),
+            format!(
+                "Tool '{}' is not available to this agent. {}",
+                call.name,
+                format_available_tools_hint(&available)
+            ),
             false,
         )
     } else if let Some(tool) = ctx.tools.iter().find(|t| t.name() == call.name) {
@@ -300,7 +316,8 @@ pub(super) async fn run_agent_tool_call(
             }
         }
     } else {
-        (format!("Unknown tool: {}", call.name), false)
+        let available = available_tool_names_for_ctx(ctx);
+        (format_unknown_tool_message(&call.name, &available), false)
     };
 
     // Stage 1a — content-aware compaction via the TokenJuice content router.
@@ -450,6 +467,53 @@ mod tests {
         fn timeout_policy(&self, _args: &serde_json::Value) -> ToolTimeout {
             ToolTimeout::Secs(1)
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn session_tool_executor_unknown_tool_lists_available_tools() {
+        let tools: Vec<Box<dyn Tool>> = vec![Box::new(HangingTool)];
+        let visible_tool_names = HashSet::new();
+        let policy_session = ToolPolicyEngine::build_session(
+            "context_scout",
+            "web",
+            "test",
+            &HashMap::new(),
+            &tools,
+            &visible_tool_names,
+        );
+        let tool_policy = AllowAllToolPolicy;
+        let ctx = AgentToolExecCtx {
+            tools: &tools,
+            visible_tool_names: &visible_tool_names,
+            tool_policy_session: &policy_session,
+            tool_policy: &tool_policy,
+            payload_summarizer: None,
+            event_session_id: "session-1",
+            event_channel: "web",
+            agent_definition_id: "context_scout",
+            prefer_markdown: false,
+            budget_bytes: 4096,
+            compaction_enabled: false,
+            tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression::Off,
+            artifact_store: None,
+        };
+        let call = ParsedToolCall {
+            name: "search_files".to_string(),
+            arguments: json!({}),
+            tool_call_id: Some("call-unknown".to_string()),
+        };
+        let progress = TestProgress {
+            completed: AtomicUsize::new(0),
+            timeout_completions: AtomicUsize::new(0),
+        };
+
+        let (result, record) = run_agent_tool_call(&ctx, &progress, &call, 0).await;
+
+        assert!(!result.success);
+        assert!(result.output.contains("Unknown tool: search_files"));
+        assert!(result.output.contains("Available tools: memory_tree"));
+        assert!(!record.success);
+        assert_eq!(progress.completed.load(Ordering::Relaxed), 1);
     }
 
     #[tokio::test(flavor = "current_thread")]

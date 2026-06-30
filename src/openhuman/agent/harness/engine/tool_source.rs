@@ -23,6 +23,7 @@ use async_trait::async_trait;
 
 use super::super::payload_summarizer::PayloadSummarizer;
 use super::progress::ProgressReporter;
+use super::tools::sorted_tool_names;
 use super::{run_one_tool, ToolRunResult};
 use crate::openhuman::agent::harness::parse::ParsedToolCall;
 use crate::openhuman::agent_tool_policy::ToolPolicySession;
@@ -76,6 +77,7 @@ pub(crate) struct RegistryToolSource<'a> {
     tool_policy: &'a dyn ToolPolicy,
     payload_summarizer: Option<&'a dyn PayloadSummarizer>,
     specs: Vec<ToolSpec>,
+    available_tool_names: Vec<String>,
 }
 
 impl<'a> RegistryToolSource<'a> {
@@ -98,6 +100,7 @@ impl<'a> RegistryToolSource<'a> {
             .map(|tool| tool.spec())
             .collect();
         let specs = crate::openhuman::agent::harness::session::dedup_visible_tool_specs(filtered);
+        let available_tool_names = sorted_tool_names(specs.iter().map(|spec| spec.name.as_str()));
         Self {
             registry,
             extra,
@@ -105,6 +108,7 @@ impl<'a> RegistryToolSource<'a> {
             tool_policy,
             payload_summarizer,
             specs,
+            available_tool_names,
         }
     }
 
@@ -143,6 +147,7 @@ impl ToolSource for RegistryToolSource<'_> {
             self.tool_policy,
             self.payload_summarizer,
             progress_call_id,
+            &self.available_tool_names,
             crate::openhuman::tokenjuice::AgentTokenjuiceCompression::Full,
         )
         .await

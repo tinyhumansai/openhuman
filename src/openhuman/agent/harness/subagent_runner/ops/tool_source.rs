@@ -9,6 +9,7 @@
 
 use std::collections::HashSet;
 
+use crate::openhuman::agent::harness::engine::tools::sorted_tool_names;
 use crate::openhuman::tools::{Tool, ToolSpec};
 
 use super::handoff_helper::apply_handoff;
@@ -31,6 +32,16 @@ pub(super) struct SubagentToolSource<'a> {
     pub(super) policy: crate::openhuman::tools::policy::DefaultToolPolicy,
     pub(super) agent_id: String,
     pub(super) tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression,
+}
+
+impl SubagentToolSource<'_> {
+    fn available_tool_names(&self) -> Vec<String> {
+        let mut available: Vec<&str> = self.allowed_names.iter().map(|s| s.as_str()).collect();
+        if let Some(resolver) = self.lazy_resolver.as_ref() {
+            available.extend(resolver.known_slugs());
+        }
+        sorted_tool_names(available)
+    }
 }
 
 #[async_trait::async_trait]
@@ -84,12 +95,7 @@ impl super::super::super::engine::ToolSource for SubagentToolSource<'_> {
                     None,
                 )
                 .await;
-            let mut available: Vec<&str> = self.allowed_names.iter().map(|s| s.as_str()).collect();
-            if let Some(resolver) = self.lazy_resolver.as_ref() {
-                available.extend(resolver.known_slugs());
-            }
-            available.sort_unstable();
-            available.dedup();
+            let available = self.available_tool_names();
             let text = format!(
                 "Error: tool '{}' is not available to the {} sub-agent. Available tools: {}",
                 call.name,
@@ -111,6 +117,7 @@ impl super::super::super::engine::ToolSource for SubagentToolSource<'_> {
             .find(|t| t.name() == call.name)
             .or_else(|| self.parent_tools.iter().find(|t| t.name() == call.name))
             .map(|b| b.as_ref());
+        let available_tool_names = self.available_tool_names();
         let outcome = super::super::super::engine::run_one_tool(
             tool_opt,
             call,
@@ -119,6 +126,7 @@ impl super::super::super::engine::ToolSource for SubagentToolSource<'_> {
             &self.policy,
             None,
             progress_call_id,
+            &available_tool_names,
             self.tokenjuice_compression,
         )
         .await;

@@ -942,6 +942,53 @@ async fn keyword_provider_unknown_tool_surfaces_error_and_loop_continues() {
     assert!(history.iter().any(|m| m.content.contains("Unknown tool")));
 }
 
+#[tokio::test]
+async fn keyword_provider_unknown_tool_lists_available_tools() {
+    let provider = KeywordScriptedProvider::new(vec![
+        KeywordRule::tool_call("go", ScriptedToolCall::new("search_files", json!({}))),
+        KeywordRule::final_reply("Available tools: echo, lookup", "Corrected."),
+    ]);
+
+    let (echo_tool, echo_calls) = RecordingTool::echo("echo");
+    let (lookup_tool, lookup_calls) = RecordingTool::echo("lookup");
+    let tools: Vec<Box<dyn Tool>> = vec![Box::new(echo_tool), Box::new(lookup_tool)];
+
+    let mut history = vec![ChatMessage::user("go please")];
+
+    let out = run_tool_call_loop(
+        &provider,
+        &mut history,
+        &tools,
+        "mock",
+        "test-model",
+        0.0,
+        true,
+        "channel",
+        &mm(),
+        &mff(),
+        5,
+        None,
+        None,
+        &[],
+        None,
+        None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(out, "Corrected.");
+    assert!(echo_calls.lock().is_empty());
+    assert!(lookup_calls.lock().is_empty());
+    let joined = history
+        .iter()
+        .map(|message| message.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains("Unknown tool: search_files"));
+    assert!(joined.contains("Available tools: echo, lookup"));
+}
+
 // ── 5. Max iterations guard ───────────────────────────────────────
 
 #[tokio::test]
