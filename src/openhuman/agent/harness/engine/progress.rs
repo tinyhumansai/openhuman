@@ -84,17 +84,35 @@ impl TurnProgress {
 /// because the orchestrator is `await`ing that sub-agent's tool call and never
 /// makes its next LLM request (the subagent-stall flake). So drop the event on
 /// `Full` (a missed UI tick, not a correctness issue) and `trace` on `Closed`
-/// (no listener). Streaming *text deltas* keep their own blocking backpressure
-/// in their forwarder tasks, so visible message text is unaffected.
+/// (no listener). Streaming deltas use the same non-blocking policy in their
+/// forwarder tasks; the completed provider response is still returned by the
+/// turn engine, so dropping saturated UI delta frames must not wedge the turn.
 fn emit(sink: &tokio::sync::mpsc::Sender<AgentProgress>, event: AgentProgress) {
+    let _ = emit_nonblocking(sink, event, "lifecycle event");
+}
+
+fn emit_stream_delta(
+    sink: &tokio::sync::mpsc::Sender<AgentProgress>,
+    event: AgentProgress,
+) -> bool {
+    emit_nonblocking(sink, event, "stream delta")
+}
+
+fn emit_nonblocking(
+    sink: &tokio::sync::mpsc::Sender<AgentProgress>,
+    event: AgentProgress,
+    label: &str,
+) -> bool {
     use tokio::sync::mpsc::error::TrySendError;
     match sink.try_send(event) {
-        Ok(()) => {}
+        Ok(()) => true,
         Err(TrySendError::Full(_)) => {
-            log::trace!("[agent_loop] progress channel full — dropping lifecycle event");
+            log::trace!("[agent_loop] progress channel full — dropping {label}");
+            true
         }
         Err(TrySendError::Closed(_)) => {
-            log::trace!("[agent_loop] progress sink closed — dropping lifecycle event");
+            log::trace!("[agent_loop] progress sink closed — dropping {label}");
+            false
         }
     }
 }
@@ -316,8 +334,7 @@ impl ProgressReporter for SubagentProgress {
                     ProviderDelta::ToolCallStart { .. }
                     | ProviderDelta::ToolCallArgsDelta { .. } => continue,
                 };
-                // Await backpressure so streamed deltas arrive in order.
-                if sink.send(mapped).await.is_err() {
+                if !emit_stream_delta(&sink, mapped) {
                     break;
                 }
             }
@@ -340,10 +357,12 @@ impl ProgressReporter for NullProgress {}
 /// Returns `(None, None)` when there is no progress sink — the caller then
 /// passes `stream: None` and the provider uses its non-streaming HTTP path.
 ///
-/// Backpressure discipline: the forwarder `.await`s each `send`, so streamed
-/// deltas arrive in order and are never silently dropped when the downstream
-/// bridge is slow. It exits cleanly once the sender is dropped (after the chat
-/// call) or the downstream closes.
+/// Backpressure discipline: the forwarder drains provider deltas without
+/// awaiting the downstream progress bridge. A full UI/progress channel drops
+/// transient delta frames rather than backpressuring the provider stream and
+/// wedging the turn in RESPONSE; the final provider response is still returned
+/// through the normal chat result. It exits cleanly once the sender is dropped
+/// (after the chat call) or the downstream closes.
 pub(crate) fn spawn_delta_forwarder(
     on_progress: Option<tokio::sync::mpsc::Sender<AgentProgress>>,
     iteration: u32,
@@ -379,10 +398,79 @@ pub(crate) fn spawn_delta_forwarder(
                     }
                 }
             };
-            if progress_sink.send(mapped).await.is_err() {
+            if !emit_stream_delta(&progress_sink, mapped) {
                 break;
             }
         }
     });
     (Some(tx), Some(forwarder))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::mpsc;
+    use tokio::time::{timeout, Duration};
+
+    #[tokio::test]
+    async fn delta_forwarder_does_not_wait_on_full_progress_sink() {
+        let (progress_tx, mut progress_rx) = mpsc::channel::<AgentProgress>(1);
+        progress_tx.try_send(AgentProgress::TurnStarted).unwrap();
+
+        let (delta_tx, forwarder) = spawn_delta_forwarder(Some(progress_tx), 1);
+        let delta_tx = delta_tx.expect("stream sink should be created");
+        let forwarder = forwarder.expect("forwarder should be created");
+
+        delta_tx
+            .send(ProviderDelta::TextDelta {
+                delta: "hello".to_string(),
+            })
+            .await
+            .unwrap();
+        drop(delta_tx);
+
+        timeout(Duration::from_millis(50), forwarder)
+            .await
+            .expect("delta forwarder must not block on a full progress sink")
+            .unwrap();
+        assert!(matches!(
+            progress_rx.try_recv(),
+            Ok(AgentProgress::TurnStarted)
+        ));
+        assert!(progress_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn subagent_delta_forwarder_does_not_wait_on_full_progress_sink() {
+        let (progress_tx, mut progress_rx) = mpsc::channel::<AgentProgress>(1);
+        progress_tx.try_send(AgentProgress::TurnStarted).unwrap();
+        let progress = SubagentProgress {
+            sink: Some(progress_tx),
+            agent_id: "agent-1".to_string(),
+            task_id: "task-1".to_string(),
+            extended_policy: false,
+        };
+
+        let (delta_tx, forwarder) = progress.make_stream_sink(1);
+        let delta_tx = delta_tx.expect("stream sink should be created");
+        let forwarder = forwarder.expect("forwarder should be created");
+
+        delta_tx
+            .send(ProviderDelta::TextDelta {
+                delta: "child".to_string(),
+            })
+            .await
+            .unwrap();
+        drop(delta_tx);
+
+        timeout(Duration::from_millis(50), forwarder)
+            .await
+            .expect("subagent delta forwarder must not block on a full progress sink")
+            .unwrap();
+        assert!(matches!(
+            progress_rx.try_recv(),
+            Ok(AgentProgress::TurnStarted)
+        ));
+        assert!(progress_rx.try_recv().is_err());
+    }
 }
