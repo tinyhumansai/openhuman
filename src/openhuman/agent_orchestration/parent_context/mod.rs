@@ -1,12 +1,13 @@
 //! Shared root [`ParentExecutionContext`] builder for controller-spawned
 //! orchestration tasks (#3374 PR4, extracted from the #3375 workflow engine).
 //!
-//! Both the workflow-run engine ([`workflow_runs::engine`]) and the agent-team
-//! runtime ([`agent_teams::runtime`]) need to spawn real sub-agents from a
+//! The workflow-run engine ([`workflow_runs::engine`]), the agent-team runtime
+//! ([`agent_teams::runtime`]), and the subconscious tick
+//! ([`crate::openhuman::subconscious`]) all need to spawn real sub-agents from a
 //! background task that has **no** enclosing agent turn on the stack. Those
 //! spawns read their parent execution context from a task-local
 //! ([`current_parent`]) that is only set inside an agent turn — so a naive spawn
-//! fails with `NoParentContext`.
+//! fails with `NoParentContext` (the TAURI-RUST-HMW regression, #4337).
 //!
 //! The fix (proven in `triage::escalation::dispatch_target_agent`) is to build a
 //! *root* [`ParentExecutionContext`] from a config-built [`Agent`] and run the
@@ -14,8 +15,12 @@
 //! resolves `current_parent()` to this root, inheriting a real provider, tool
 //! registry, memory, and model — the same construction path `agent_chat` uses.
 //!
-//! This was originally inlined in the workflow engine; PR4 lifts it here so the
-//! team runtime reuses the exact same construction (and the single
+//! [`with_root_parent`] is the single blessed entry point that folds the build +
+//! install into one call, so a surface can neither hand-roll the parent nor
+//! forget to install it. Every background orchestration surface goes through it.
+//!
+//! This was originally inlined in the workflow engine; #3374 PR4 lifted it here
+//! so each surface reuses the exact same construction (and the single
 //! registry-initialisation defense) rather than carrying a second copy of the
 //! ~20-field context literal that could drift.
 
@@ -24,7 +29,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 
-use crate::openhuman::agent::harness::fork_context::ParentExecutionContext;
+use crate::openhuman::agent::harness::fork_context::{with_parent_context, ParentExecutionContext};
 use crate::openhuman::agent::Agent;
 use crate::openhuman::config::Config;
 
@@ -108,4 +113,91 @@ pub(crate) async fn build_root_parent(
         on_progress: None,
         run_queue: None,
     })
+}
+
+/// Build a root parent from `config` and run `fut` inside it — the single
+/// blessed entry point for **controller-spawned background orchestration
+/// surfaces** that have no enclosing agent turn (the workflow-run engine, the
+/// agent-team runtime, the subconscious tick).
+///
+/// Folds [`build_root_parent`] + [`with_parent_context`] into one call so a
+/// surface cannot install a hand-rolled parent, and — the TAURI-RUST-HMW
+/// failure mode — cannot *forget* to install one at all and have every nested
+/// `spawn_subagent` die at runtime with
+/// [`SubagentRunError::NoParentContext`](crate::openhuman::agent::harness::subagent_runner::SubagentRunError::NoParentContext).
+/// Running a background surface and establishing its root context become the
+/// same act.
+///
+/// Returns the future's output on success, or the [`build_root_parent`] error
+/// when the root context can't be constructed — the caller decides how to
+/// degrade (fail the run, or fall back to an un-grounded path).
+///
+/// Only for surfaces that build their parent *from `Config`* because there is
+/// no ambient parent. Spawn sites that re-install an **inherited**
+/// `current_parent()` across a `tokio::spawn` boundary (e.g.
+/// `spawn_async_subagent`, `spawn_worker_thread`, the orchestration `ops` task)
+/// are a different pattern and call [`with_parent_context`] directly.
+pub(crate) async fn with_root_parent<F>(
+    config: &Config,
+    agent_definition_id: &str,
+    channel: &str,
+    session_prefix: &str,
+    fut: F,
+) -> Result<F::Output>
+where
+    F: std::future::Future,
+{
+    let parent = build_root_parent(config, agent_definition_id, channel, session_prefix).await?;
+    Ok(with_parent_context(parent, fut).await)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::openhuman::agent::harness::fork_context::current_parent;
+
+    fn test_config() -> (tempfile::TempDir, Config) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config = Config {
+            workspace_dir: dir.path().to_path_buf(),
+            ..Config::default()
+        };
+        (dir, config)
+    }
+
+    /// Baseline for the bug: with no enclosing agent turn there is no ambient
+    /// parent — exactly the state the subconscious tick spawned `context_scout`
+    /// in (TAURI-RUST-HMW / #4337), which made `run_subagent` return
+    /// `NoParentContext`.
+    #[tokio::test]
+    async fn no_ambient_parent_outside_with_root_parent() {
+        assert!(
+            current_parent().is_none(),
+            "no parent context should be installed by default"
+        );
+    }
+
+    /// Regression (TAURI-RUST-HMW / #4337): `with_root_parent` must install a
+    /// real parent for the wrapped future so a background orchestration surface
+    /// (subconscious tick, workflow engine, team runtime) can spawn sub-agents
+    /// without hitting `NoParentContext`. Proven by observing the installed
+    /// parent from inside the future.
+    #[tokio::test]
+    async fn with_root_parent_installs_parent_for_inner_future() {
+        let (_dir, config) = test_config();
+        let observed = with_root_parent(
+            &config,
+            "subconscious",
+            "subconscious",
+            "subconscious",
+            async { current_parent().map(|p| p.agent_definition_id) },
+        )
+        .await
+        .expect("root parent builds from config");
+        assert_eq!(
+            observed.as_deref(),
+            Some("subconscious"),
+            "inner future must observe the installed root parent"
+        );
+    }
 }
