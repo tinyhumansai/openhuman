@@ -150,7 +150,8 @@ fn continuation_prompt(objective: &str) -> String {
         "[goal continuation] You are resuming autonomous work toward this thread's goal — \
          no user is currently present.\n\nGoal: {objective}\n\n\
          Assess progress against concrete evidence, then take the next useful step. \
-         If the goal is already satisfied, call `goal_complete`. If you are blocked or \
+         Verify whether the goal is already satisfied. If yes, call `goal_complete` now. \
+         If you are blocked or \
          need the user (e.g. an irreversible external action, missing input), stop and \
          summarise the blocker and the next step rather than guessing — external actions \
          are not auto-approved while you run unattended."

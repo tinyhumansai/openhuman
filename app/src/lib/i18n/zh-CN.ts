@@ -1538,6 +1538,10 @@ const messages: TranslationMap = {
   'mcp.connectAuth.oauthWaiting': '正在等待登录…',
   'mcp.connectAuth.oauthOrToken': '已经有访问令牌？请改为在下方将其粘贴为 Authorization 请求头。',
   'mcp.connectAuth.oauthTimeout': '等待浏览器登录超时。请重试。',
+  'mcp.connectAuth.authError.oauthRequired':
+    '此服务器使用 OAuth。请使用“使用浏览器登录”——粘贴的令牌将不被接受。',
+  'mcp.connectAuth.authError.tokenRejected': '服务器拒绝了此令牌。请检查它是否正确且尚未过期。',
+  'mcp.connectAuth.authError.credentialRequired': '此服务器需要身份验证。请添加令牌或登录。',
   'onboarding.skipForNow': '暂时跳过',
   'onboarding.localAI.continueWithCloud': '继续使用云',
   'onboarding.localAI.useLocalAnyway': '无论如何使用本地人工智能（不推荐用于您的设备）',
@@ -2145,6 +2149,10 @@ const messages: TranslationMap = {
   'chat.attachment.remove': '移除 {name}',
   'chat.attachment.tooMany': '每条消息最多 {max} 张图片',
   'chat.attachment.tooManyFiles': '每条消息最多 {max} 个文件',
+  'chat.attachment.tooManyVideos': '每条消息最多 {max} 个视频',
+  'chat.attachment.videoNotSupported':
+    '此模型无法读取视频。您可以使用 OpenHuman 推理层级来附加视频。',
+  'chat.attachment.dropToAttach': '拖放文件以添加',
   'chat.attachment.tooLarge': '图片超过 {max} 大小限制',
   'chat.attachment.unsupportedType':
     '不支持的文件类型。请使用图片（PNG、JPEG、WebP、GIF、BMP）或 PDF、TXT、Markdown 文件。',
@@ -4880,6 +4888,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.bannerTitle': '会议机器人',
   'skills.meetingBots.busyTitle': 'OpenHuman 正忙',
   'skills.meetingBots.comingSoon': '即将推出',
+  'skills.meetingBots.couldNotLeaveTitle': '无法离开会议',
   'skills.meetingBots.couldNotStartTitle': '无法启动 OpenHuman',
   'skills.meetingBots.displayName': '显示名称',
   'skills.meetingBots.failedToStart': '启动 OpenHuman 失败。',
@@ -4928,6 +4937,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.liveStatusEnded': '会议已结束',
   'skills.meetingBots.liveStatusError': '加入失败',
   'skills.meetingBots.leaveButton': '离开',
+  'skills.meetingBots.leavingButton': '正在离开…',
   'skills.meetingBots.respondToParticipant': '您在此会议中的姓名',
   'skills.meetingBots.respondToParticipantHint': '例如：小明（通话中的显示名称）',
   'skills.meetingBots.respondToParticipantDesc':
@@ -5718,6 +5728,8 @@ const messages: TranslationMap = {
     '没有可用于构建摘要树的摘要提供方。请启用本地 AI（Ollama），或在设置 → AI → 记忆中启用云端摘要。',
   'memory.health.remediation.empty_input_refused':
     '由于文本为空，一项记忆已被跳过。无需操作 — 新条目继续正常嵌入。',
+  'memory.health.remediation.storage_unavailable':
+    'OpenHuman 无法写入其记忆存储 — 磁盘或 SD 卡似乎已损坏、已满或为只读。请检查驱动器并释放空间；存储恢复可写后，记忆处理将自动继续。',
   'memory.health.remediation.transient': '临时错误中断了记忆处理。将自动重试。',
   'memory.health.remediation.unknown': '记忆处理遇到问题。请在设置 → AI 中检查配置。',
   // Chat — agent-generated artifacts (#2779)

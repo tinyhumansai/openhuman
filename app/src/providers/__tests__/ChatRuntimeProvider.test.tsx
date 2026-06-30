@@ -1,7 +1,7 @@
 import { render, waitFor } from '@testing-library/react';
 import { act } from 'react';
 import { Provider } from 'react-redux';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as chatService from '../../services/chatService';
 import { threadApi } from '../../services/api/threadApi';
@@ -362,6 +362,31 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       expect(after.parallelStreamsByThread['t-par']).toBeUndefined();
       expect(after.parallelRequestThreads['branch']).toBeUndefined();
       expect(after.streamingAssistantByThread['t-par']?.content).toBe('P');
+    });
+
+    it('bumps the heartbeat counter only for the primary turn, never a parallel branch (#4282)', () => {
+      const listeners = renderProvider();
+
+      // Primary turn's heartbeat advances the thread's liveness counter.
+      act(() => {
+        listeners.onInferenceHeartbeat?.({ thread_id: 't-par', request_id: 'primary' });
+      });
+      expect(store.getState().chatRuntime.inferenceHeartbeatByThread['t-par']).toBe(1);
+
+      // A registered parallel branch's heartbeat must NOT rearm the primary
+      // silence timer — otherwise a sibling would mask a stalled primary turn.
+      act(() => {
+        store.dispatch(registerParallelRequest({ threadId: 't-par', requestId: 'branch' }));
+        listeners.onInferenceHeartbeat?.({ thread_id: 't-par', request_id: 'branch' });
+        listeners.onInferenceHeartbeat?.({ thread_id: 't-par', request_id: 'branch' });
+      });
+      expect(store.getState().chatRuntime.inferenceHeartbeatByThread['t-par']).toBe(1);
+
+      // The primary turn keeps beating independently.
+      act(() => {
+        listeners.onInferenceHeartbeat?.({ thread_id: 't-par', request_id: 'primary' });
+      });
+      expect(store.getState().chatRuntime.inferenceHeartbeatByThread['t-par']).toBe(2);
     });
 
     it('drops duplicate chat_done events with the same thread/request', async () => {
@@ -1416,5 +1441,115 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
         )
       );
     });
+  });
+});
+
+describe('ChatRuntimeProvider — skill tool-chain latency (#4273 AC3)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetRuntimeState();
+    vi.mocked(threadApi.appendMessage).mockImplementation(async (_tid, msg) => msg);
+    vi.mocked(threadApi.getThreads).mockResolvedValue({ threads: [], count: 0 });
+    vi.mocked(threadApi.generateTitleIfNeeded).mockResolvedValue({
+      id: 'tid',
+      title: 'new',
+    } as never);
+  });
+
+  afterEach(() => {
+    // Restore the console.warn spy + real timers in shared cleanup so a failing
+    // assertion can't leave a mocked console for the next test (PR #4288).
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  const toolCall = (thread: string): chatService.ChatToolCallEvent => ({
+    thread_id: thread,
+    request_id: 'r1',
+    round: 0,
+    tool_name: 'composio_execute',
+    skill_id: 'gmail',
+    args: {},
+    tool_call_id: `${thread}-call-1`,
+  });
+
+  const done = (thread: string): chatService.ChatDoneEvent =>
+    ({
+      thread_id: thread,
+      request_id: 'r1',
+      full_response: '',
+      rounds_used: 1,
+      total_input_tokens: 0,
+      total_output_tokens: 0,
+    }) as chatService.ChatDoneEvent;
+
+  it('warns when a tool chain overruns the 60s target', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const listeners = renderProvider();
+
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-29T00:00:00.000Z'));
+      act(() => {
+        listeners.onToolCall?.(toolCall('t-slow'));
+      });
+      // 61s later — past the 60s budget.
+      vi.setSystemTime(new Date('2026-06-29T00:01:01.000Z'));
+      act(() => {
+        listeners.onDone?.(done('t-slow'));
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[skill-latency]'));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('exceeds the 60000ms target'));
+  });
+
+  it('does not warn for a chain that completes within the target', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const listeners = renderProvider();
+
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-29T00:00:00.000Z'));
+      act(() => {
+        listeners.onToolCall?.(toolCall('t-fast'));
+      });
+      vi.setSystemTime(new Date('2026-06-29T00:00:02.000Z')); // 2s
+      act(() => {
+        listeners.onDone?.(done('t-fast'));
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(warnSpy.mock.calls.some(args => String(args[0]).includes('[skill-latency]'))).toBe(
+      false
+    );
+  });
+
+  it('closes the latency window on chat_error without warning', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const listeners = renderProvider();
+
+    act(() => {
+      listeners.onToolCall?.(toolCall('t-err'));
+    });
+    expect(() => {
+      act(() => {
+        listeners.onError?.({
+          thread_id: 't-err',
+          request_id: 'r1',
+          error_type: 'provider_error',
+          message: 'boom',
+        } as chatService.ChatErrorEvent);
+      });
+    }).not.toThrow();
+
+    // Error path logs structured latency but never emits the overrun warning.
+    expect(warnSpy.mock.calls.some(args => String(args[0]).includes('[skill-latency]'))).toBe(
+      false
+    );
   });
 });

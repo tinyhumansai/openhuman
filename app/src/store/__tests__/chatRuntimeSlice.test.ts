@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { PersistedTurnState } from '../../types/turnState';
 import reducer, {
   beginInferenceTurn,
+  bumpInferenceHeartbeatForThread,
   clearAllChatRuntime,
   clearArtifactsForThread,
   clearInferenceStatusForThread,
@@ -47,6 +48,32 @@ describe('chatRuntimeSlice', () => {
 
     const cleared = reducer(withStatus, clearInferenceStatusForThread({ threadId: 'thread-1' }));
     expect(cleared.inferenceStatusByThread['thread-1']).toBeUndefined();
+  });
+
+  it('bumps the per-thread inference heartbeat counter and clears it on runtime reset (#4270)', () => {
+    const once = reducer(undefined, bumpInferenceHeartbeatForThread({ threadId: 'thread-1' }));
+    expect(once.inferenceHeartbeatByThread['thread-1']).toBe(1);
+
+    // Each beat advances the counter — the silence-timer rearm watches the
+    // *change*, so a monotonically-different value per beat is what matters.
+    const twice = reducer(once, bumpInferenceHeartbeatForThread({ threadId: 'thread-1' }));
+    expect(twice.inferenceHeartbeatByThread['thread-1']).toBe(2);
+
+    // A different thread tracks its own counter independently.
+    const other = reducer(twice, bumpInferenceHeartbeatForThread({ threadId: 'thread-2' }));
+    expect(other.inferenceHeartbeatByThread['thread-2']).toBe(1);
+    expect(other.inferenceHeartbeatByThread['thread-1']).toBe(2);
+
+    // Turn teardown drops the liveness counter so a stale value can't rearm a
+    // fresh turn's timer.
+    const cleared = reducer(other, clearRuntimeForThread({ threadId: 'thread-1' }));
+    expect(cleared.inferenceHeartbeatByThread['thread-1']).toBeUndefined();
+    expect(cleared.inferenceHeartbeatByThread['thread-2']).toBe(1);
+
+    // Slice-wide reset wipes every thread's heartbeat too — no stale counter
+    // survives a full chat-runtime clear (CodeRabbit #4282).
+    const wiped = reducer(other, clearAllChatRuntime());
+    expect(wiped.inferenceHeartbeatByThread).toEqual({});
   });
 
   it('stores and clears streaming assistant content by thread', () => {

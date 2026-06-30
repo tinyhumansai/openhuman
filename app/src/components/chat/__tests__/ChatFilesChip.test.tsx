@@ -1,14 +1,22 @@
 import { configureStore } from '@reduxjs/toolkit';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Provider } from 'react-redux';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { listArtifactsForThread } from '../../../services/artifactDownloadService';
 import chatRuntimeReducer, {
   type ArtifactSnapshot,
   upsertArtifactInProgressForThread,
   upsertArtifactReadyForThread,
 } from '../../../store/chatRuntimeSlice';
 import ChatFilesChip from '../ChatFilesChip';
+
+vi.mock('../../../services/artifactDownloadService', () => ({
+  listArtifactsForThread: vi.fn(),
+  downloadArtifact: vi.fn(),
+  deleteArtifact: vi.fn(),
+  revealArtifactInFileManager: vi.fn(),
+}));
 
 const THREAD = 't-chip-1';
 
@@ -29,6 +37,11 @@ function readyArtifact(
 }
 
 describe('ChatFilesChip', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(listArtifactsForThread).mockResolvedValue({ ok: true, artifacts: [] });
+  });
+
   it('renders nothing when the thread has zero ready artifacts', () => {
     const store = mkStore();
     const { container } = render(
@@ -39,6 +52,94 @@ describe('ChatFilesChip', () => {
     // Empty render, no chip in DOM.
     expect(container.firstChild).toBeNull();
     expect(screen.queryByTestId('chat-files-chip')).toBeNull();
+  });
+
+  it('hydrates thread artifacts from disk when redux starts cold', async () => {
+    vi.mocked(listArtifactsForThread).mockResolvedValueOnce({
+      ok: true,
+      artifacts: [
+        {
+          artifactId: 'art-cold',
+          kind: 'document',
+          title: 'Cold Redux Report',
+          path: 'artifacts/art-cold/report.pdf',
+          sizeBytes: 2048,
+        },
+      ],
+    });
+    const store = mkStore();
+    render(
+      <Provider store={store}>
+        <ChatFilesChip threadId={THREAD} />
+      </Provider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('chat-files-chip-count')).toHaveTextContent('1');
+    });
+    expect(listArtifactsForThread).toHaveBeenCalledWith(THREAD);
+    expect(store.getState().chatRuntime.artifactsByThread[THREAD]).toMatchObject([
+      {
+        artifactId: 'art-cold',
+        kind: 'document',
+        title: 'Cold Redux Report',
+        status: 'ready',
+        path: 'artifacts/art-cold/report.pdf',
+        sizeBytes: 2048,
+      },
+    ]);
+  });
+
+  it('uses the normalized thread id for hydration and redux lookup', async () => {
+    vi.mocked(listArtifactsForThread).mockResolvedValueOnce({
+      ok: true,
+      artifacts: [
+        {
+          artifactId: 'art-trimmed',
+          kind: 'document',
+          title: 'Trimmed Thread Report',
+          path: 'artifacts/art-trimmed/report.pdf',
+          sizeBytes: 4096,
+        },
+      ],
+    });
+    const store = mkStore();
+    render(
+      <Provider store={store}>
+        <ChatFilesChip threadId={` ${THREAD} `} />
+      </Provider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('chat-files-chip-count')).toHaveTextContent('1');
+    });
+    expect(listArtifactsForThread).toHaveBeenCalledWith(THREAD);
+    expect(store.getState().chatRuntime.artifactsByThread[THREAD]).toMatchObject([
+      { artifactId: 'art-trimmed', status: 'ready', path: 'artifacts/art-trimmed/report.pdf' },
+    ]);
+    expect(store.getState().chatRuntime.artifactsByThread[` ${THREAD} `]).toBeUndefined();
+  });
+
+  it('keeps the chip hidden when disk hydration fails', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.mocked(listArtifactsForThread).mockResolvedValueOnce({
+      ok: false,
+      artifacts: [],
+      error: 'core offline',
+    });
+    const store = mkStore();
+    const { container } = render(
+      <Provider store={store}>
+        <ChatFilesChip threadId={THREAD} />
+      </Provider>
+    );
+
+    await waitFor(() => {
+      expect(listArtifactsForThread).toHaveBeenCalledWith(THREAD);
+    });
+    expect(container.firstChild).toBeNull();
+    expect(store.getState().chatRuntime.artifactsByThread[THREAD]).toBeUndefined();
+    warn.mockRestore();
   });
 
   it('hides itself when only in_progress artifacts exist (those live above composer)', () => {

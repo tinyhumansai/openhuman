@@ -75,4 +75,10 @@ export type ConnStatus = {
   status: ServerStatus;
   tool_count: number;
   last_error?: string;
+  /**
+   * Stable auth-failure reason code refining `status === 'unauthorized'`:
+   * `'oauth_required'` / `'token_rejected'` / `'credential_required'`. Present
+   * only for a 401; never carries the raw message / OAuth metadata URL (#4289).
+   */
+  auth_hint?: string;
 };

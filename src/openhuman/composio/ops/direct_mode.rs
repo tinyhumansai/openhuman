@@ -3,7 +3,43 @@
 use crate::openhuman::config::Config;
 use crate::rpc::RpcOutcome;
 
+use super::super::{
+    client::{create_direct_composio_tool_for_api_key, direct_list_connections},
+    direct_auth,
+};
 use super::error_utils::OpResult;
+
+async fn validate_direct_api_key_before_store(config: &Config, api_key: &str) -> OpResult<()> {
+    let key_id = direct_auth::fingerprint_api_key(api_key);
+    direct_auth::reset_direct_auth_failure(key_id);
+
+    let direct = create_direct_composio_tool_for_api_key(config, api_key)
+        .map_err(|e| format!("[composio-direct] validate_api_key: {e}"))?;
+
+    match direct_list_connections(&direct).await {
+        Ok(_) => {
+            direct_auth::record_direct_auth_success(key_id);
+            tracing::debug!("[composio-direct] validate_api_key: probe succeeded");
+            Ok(())
+        }
+        Err(error) => {
+            let rendered = format!("{error:#}");
+            if direct_auth::is_invalid_api_key_error(&rendered) {
+                tracing::warn!(
+                    "[composio-direct] validate_api_key: rejected invalid API key before storage"
+                );
+                Err("Invalid Composio API key. Re-enter a valid key in Settings > Connections > Composio.".into())
+            } else {
+                tracing::warn!(
+                    error = %rendered,
+                    "[composio-direct] validate_api_key: probe failed for a non-auth reason; \
+                     storing key so the user can retry when Composio is reachable"
+                );
+                Ok(())
+            }
+        }
+    }
+}
 
 /// Read the current Composio routing mode and whether a direct-mode API
 /// key is stored. **The key itself is never returned** — only a boolean
@@ -49,6 +85,7 @@ pub async fn composio_set_api_key(
         activate_direct,
         "[composio-direct] set_api_key (redacted)"
     );
+    validate_direct_api_key_before_store(config, trimmed).await?;
 
     crate::openhuman::credentials::store_composio_api_key(config, trimmed)
         .await
@@ -110,6 +147,7 @@ pub async fn composio_clear_api_key(config: &Config) -> OpResult<RpcOutcome<serd
         .save()
         .await
         .map_err(|e| format!("[composio-direct] save config failed: {e}"))?;
+    direct_auth::reset_all_direct_auth_failures();
 
     crate::core::event_bus::publish_global(
         crate::core::event_bus::DomainEvent::ComposioConfigChanged {

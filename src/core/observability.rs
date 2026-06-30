@@ -294,6 +294,27 @@ pub enum ExpectedErrorKind {
     /// couldn't parse, and the FE *does* page for it, F8). See
     /// [`crate::openhuman::inference::provider::backend_error_code_skips_sentry`].
     BackendErrorCodeOwned,
+    /// A provider embedding call (Cohere `/v2/embed`, OpenAI/Voyage embed,
+    /// custom OpenAI-compatible embed) returned a **403/Forbidden gateway
+    /// HTML page** instead of the provider's JSON error envelope — the
+    /// signature of an edge/CDN/WAF or regional block sitting *in front of*
+    /// the provider API (the request never reached the provider app). The
+    /// endpoint is correct and a key was sent (the empty-key fast-fail guard
+    /// already passed), so there is no local lever: retry won't clear an edge
+    /// policy keyed on the user's network reputation / geo / IP. The
+    /// embedding caller already degrades gracefully and the UI surfaces the
+    /// failure; Sentry has no remediation path.
+    ///
+    /// Anchored on HTML gateway markers (`<!doctype html`, `<title>403`,
+    /// `403 forbidden`) **and the absence of a JSON envelope** so an
+    /// actionable JSON 4xx (Cohere's `{"message": …}`, a real request-shape
+    /// bug in our client) still classifies `None` and reaches Sentry. See
+    /// [`is_upstream_edge_block_message`].
+    ///
+    /// Drops Sentry TAURI-RUST-8S3 (~1.7 k events / 3 users on
+    /// openhuman@0.57.53, `Cohere embed API error (403 Forbidden):
+    /// <!doctype html>…<title>403</title>…`).
+    UpstreamEdgeBlock,
     /// `approval_decide` (`src/openhuman/approval/rpc.rs`) resolved a request_id
     /// whose pending row was **already decided, lazily expired, or superseded**
     /// — `store::decide` updated 0 rows because `decided_at` was already set,
@@ -445,6 +466,14 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     }
     if is_network_unreachable_message(&lower) {
         return Some(ExpectedErrorKind::NetworkUnreachable);
+    }
+    // Check `is_upstream_edge_block_message` BEFORE the transient/backend
+    // matchers: an HTML 403 gateway page from a provider embed call carries a
+    // `403`/`forbidden` token that no other matcher claims, but routing it to
+    // its own bucket keeps "edge/CDN block" distinct from genuine transient
+    // 5xx and from the actionable JSON 4xx that must still page (TAURI-RUST-8S3).
+    if is_upstream_edge_block_message(&lower) {
+        return Some(ExpectedErrorKind::UpstreamEdgeBlock);
     }
     if is_transient_upstream_http_message(&lower) {
         return Some(ExpectedErrorKind::TransientUpstreamHttp);
@@ -1331,6 +1360,57 @@ fn is_transient_upstream_http_message(lower: &str) -> bool {
     })
 }
 
+/// Detect a non-2xx **HTML 403/Forbidden gateway page** returned to a provider
+/// embedding call — the signature of an edge/CDN/WAF or regional block sitting
+/// in front of the provider API, where the request never reached the provider
+/// app and the body is a generic gateway error page rather than the provider's
+/// JSON error envelope.
+///
+/// Canonical wire shape (TAURI-RUST-8S3, `CohereEmbedding::embed` emit site):
+/// `"Cohere embed API error (403 Forbidden): <!doctype html>…<title>403</title>403 Forbidden"`.
+/// The same shape also covers the OpenAI/Voyage and custom OpenAI-compatible
+/// embed paths when their upstream is fronted by the same edge tier, so we do
+/// not pin to a single provider prefix.
+///
+/// Two conditions must BOTH hold:
+///
+/// 1. A **403 token** is present — either the `403` status inside the embed
+///    error prefix or a bare `403 forbidden` in the body.
+/// 2. An **HTML gateway marker** is present (`<!doctype html`, `<html`,
+///    `<title>403`) — proving the body is a gateway page, not the provider's
+///    structured error.
+///
+/// And the body must **not** look like a JSON envelope (no `{` … `"message"` /
+/// `"error"` JSON shape). This is the discrimination guard: Cohere's real JSON
+/// 403 (`{"message": "invalid api key"}`) and any genuine request-shape bug in
+/// our client that round-trips a JSON 4xx stay classified `None` and keep
+/// reaching Sentry. Only the bodiless edge HTML page is demoted.
+///
+/// `genuinely-unpreventable`: endpoint correct, key sent, retry can't clear an
+/// edge policy keyed on the user's network reputation / geo / IP — Sentry has
+/// no remediation path.
+fn is_upstream_edge_block_message(lower: &str) -> bool {
+    // Must originate from an embedding call so we don't silence an HTML 403
+    // surfaced by some unrelated path.
+    let is_embed = lower.contains("embed");
+    if !is_embed {
+        return false;
+    }
+    // A JSON envelope means the provider's app answered with a structured
+    // error — actionable, must page. Don't demote.
+    let looks_like_json = lower.contains('{')
+        && (lower.contains("\"message\"")
+            || lower.contains("\"error\"")
+            || lower.contains("\"detail\""));
+    if looks_like_json {
+        return false;
+    }
+    let has_403 = lower.contains("(403 ") || lower.contains("403 forbidden");
+    let has_html_marker =
+        lower.contains("<!doctype html") || lower.contains("<html") || lower.contains("<title>403");
+    has_403 && has_html_marker
+}
+
 /// Detect non-2xx HTTP failures returned from the backend integrations / composio
 /// clients that are by definition user-input or user-auth-state problems — not
 /// bugs Sentry can act on.
@@ -2111,6 +2191,21 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 kind = "backend_error_code",
                 error_code = %code,
                 "[observability] {domain}.{operation} skipped backend-owned errorCode={code} error: {message}"
+            );
+        }
+        ExpectedErrorKind::UpstreamEdgeBlock => {
+            // Provider embed call hit an edge/CDN/WAF or regional 403 block —
+            // the body is a generic HTML gateway page, not the provider's JSON
+            // error. Endpoint correct, key sent, retry can't clear an edge
+            // policy; the embedding caller degrades gracefully and the UI
+            // surfaces it. Demote at `warn!` so the breadcrumb retains the
+            // shape for triage without spawning an event (TAURI-RUST-8S3).
+            tracing::warn!(
+                domain = domain,
+                operation = operation,
+                kind = "upstream_edge_block",
+                error = %message,
+                "[observability] {domain}.{operation} skipped upstream edge/CDN 403 block: {message}"
             );
         }
         ExpectedErrorKind::ApprovalNoPendingRace => {
@@ -3246,6 +3341,86 @@ mod tests {
             expected_error_kind(cohere_cap_msg),
             Some(ExpectedErrorKind::TransientUpstreamHttp),
             "Cohere retry-cap bail message must classify as TransientUpstreamHttp: {cohere_cap_msg}"
+        );
+    }
+
+    #[test]
+    fn classifies_embedding_html_403_edge_block_as_upstream_edge_block() {
+        // TAURI-RUST-8S3: edge/CDN/WAF or regional 403 block in front of
+        // api.cohere.com — the body is a generic HTML gateway page, not
+        // Cohere's JSON error envelope. Endpoint correct, key sent, no local
+        // lever → demote.
+        let cohere_html_403 = "Cohere embed API error (403 Forbidden): <!doctype html>\
+            <html><head><title>403</title></head><body>403 Forbidden</body></html>";
+        assert_eq!(
+            expected_error_kind(cohere_html_403),
+            Some(ExpectedErrorKind::UpstreamEdgeBlock),
+            "HTML 403 gateway page from an embed call must classify as UpstreamEdgeBlock: {cohere_html_403}"
+        );
+
+        // Generic embed shape (openai/voyage/custom embed path) fronted by the
+        // same edge tier — also demoted (matcher is not pinned to one provider).
+        let openai_html_403 =
+            "Embedding API error (403 Forbidden): <!DOCTYPE html><title>403 Forbidden</title>";
+        assert_eq!(
+            expected_error_kind(openai_html_403),
+            Some(ExpectedErrorKind::UpstreamEdgeBlock),
+            "generic embed HTML 403 must classify as UpstreamEdgeBlock: {openai_html_403}"
+        );
+    }
+
+    #[test]
+    fn does_not_classify_embedding_json_403_as_edge_block() {
+        // A JSON 403 envelope means the provider's app answered with a
+        // structured, actionable error (bad key, blocked org) — must stay in
+        // Sentry. The discrimination guard for TAURI-RUST-8S3.
+        let cohere_json_403 =
+            r#"Cohere embed API error (403 Forbidden): {"message": "invalid api token"}"#;
+        assert_eq!(
+            expected_error_kind(cohere_json_403),
+            None,
+            "JSON 403 envelope must NOT be demoted — stays actionable: {cohere_json_403}"
+        );
+
+        // A non-embed HTML 403 from some unrelated path must not be silenced by
+        // this embed-scoped matcher.
+        let non_embed_html_403 =
+            "page fetch failed (403 Forbidden): <!doctype html><title>403</title>";
+        assert_eq!(
+            expected_error_kind(non_embed_html_403),
+            None,
+            "non-embed HTML 403 must not match the embed edge-block matcher: {non_embed_html_403}"
+        );
+    }
+
+    #[test]
+    fn report_error_or_expected_demotes_embedding_html_403_edge_block() {
+        // Drive the full demote path (`report_error_or_expected` →
+        // `report_expected_message`'s `UpstreamEdgeBlock` arm) so the added
+        // logging branch is exercised, not just the classifier. The HTML 403
+        // edge-block body must take the demoted `warn!` arm and must NOT fall
+        // through to the hard `report_error_message` capture path.
+        let cohere_html_403 = anyhow::anyhow!(
+            "Cohere embed API error (403 Forbidden): <!doctype html>\
+             <html><head><title>403</title></head><body>403 Forbidden</body></html>"
+        );
+        // Confirm the classifier routes it to the demoted arm…
+        assert_eq!(
+            expected_error_kind(&format!("{cohere_html_403:#}")),
+            Some(ExpectedErrorKind::UpstreamEdgeBlock),
+            "edge-block 403 must classify so report_error_or_expected demotes it"
+        );
+        // …then actually invoke the report path to cover the logging arm.
+        report_error_or_expected(&cohere_html_403, "embeddings", "embed", &[]);
+
+        // Companion: a JSON 403 envelope is actionable — it must NOT be demoted
+        // (classifier returns None, so the hard report path is taken instead).
+        let cohere_json_403 =
+            r#"Cohere embed API error (403 Forbidden): {"message": "invalid api token"}"#;
+        assert_eq!(
+            expected_error_kind(cohere_json_403),
+            None,
+            "JSON 403 envelope must stay actionable — not routed to the demote arm"
         );
     }
 

@@ -1617,6 +1617,12 @@ const messages: TranslationMap = {
     'ইতিমধ্যে একটি অ্যাক্সেস টোকেন আছে? এর পরিবর্তে নিচে Authorization হেডার হিসেবে পেস্ট করুন।',
   'mcp.connectAuth.oauthTimeout':
     'ব্রাউজার সাইন-ইনের জন্য অপেক্ষার সময় শেষ হয়েছে। আবার চেষ্টা করুন।',
+  'mcp.connectAuth.authError.oauthRequired':
+    'এই সার্ভারটি OAuth ব্যবহার করে। “ব্রাউজার দিয়ে সাইন ইন করুন” ব্যবহার করুন — পেস্ট করা টোকেন গ্রহণ করা হবে না।',
+  'mcp.connectAuth.authError.tokenRejected':
+    'সার্ভার এই টোকেনটি প্রত্যাখ্যান করেছে। এটি সঠিক এবং এর মেয়াদ শেষ হয়নি তা যাচাই করুন।',
+  'mcp.connectAuth.authError.credentialRequired':
+    'এই সার্ভারের জন্য প্রমাণীকরণ প্রয়োজন। একটি টোকেন যোগ করুন, অথবা সাইন ইন করুন।',
   'onboarding.skipForNow': 'এখনই এড়িয়ে যান',
   'onboarding.localAI.continueWithCloud': 'ক্লাউডের সাথে চালিয়ে যান',
   'onboarding.localAI.useLocalAnyway':
@@ -2268,6 +2274,10 @@ const messages: TranslationMap = {
   'chat.attachment.remove': '{name} সরান',
   'chat.attachment.tooMany': 'প্রতি বার্তায় সর্বোচ্চ {max}টি ছবি',
   'chat.attachment.tooManyFiles': 'প্রতি বার্তায় সর্বোচ্চ {max}টি ফাইল',
+  'chat.attachment.tooManyVideos': 'প্রতি বার্তায় সর্বোচ্চ {max}টি ভিডিও',
+  'chat.attachment.videoNotSupported':
+    'এই মডেল ভিডিও পড়তে পারে না। আপনার ভিডিও সংযুক্ত করতে আপনি OpenHuman যুক্তি স্তর ব্যবহার করতে পারেন।',
+  'chat.attachment.dropToAttach': 'সংযুক্ত করতে ফাইল ছেড়ে দিন',
   'chat.attachment.tooLarge': 'ছবি {max} আকারের সীমা অতিক্রম করেছে',
   'chat.attachment.unsupportedType':
     'অসমর্থিত ফাইল প্রকার। একটি ছবি (PNG, JPEG, WebP, GIF, BMP) অথবা একটি PDF, TXT, বা Markdown ফাইল ব্যবহার করুন।',
@@ -5134,6 +5144,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.bannerTitle': 'ব্যানার শিরোনাম',
   'skills.meetingBots.busyTitle': 'OpenHuman ব্যস্ত',
   'skills.meetingBots.comingSoon': 'শীঘ্রই আসছে',
+  'skills.meetingBots.couldNotLeaveTitle': 'মিটিং থেকে বেরোনো যায়নি',
   'skills.meetingBots.couldNotStartTitle': 'OpenHuman শুরু করা যায়নি',
   'skills.meetingBots.displayName': 'প্রদর্শন নাম',
   'skills.meetingBots.failedToStart': 'OpenHuman শুরু করতে ব্যর্থ।',
@@ -5184,6 +5195,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.liveStatusEnded': 'মিটিং শেষ',
   'skills.meetingBots.liveStatusError': 'যোগ দিতে ব্যর্থ',
   'skills.meetingBots.leaveButton': 'ছেড়ে দিন',
+  'skills.meetingBots.leavingButton': 'বেরিয়ে যাচ্ছে…',
   'skills.meetingBots.respondToParticipant': 'এই মিটিংয়ে আপনার নাম',
   'skills.meetingBots.respondToParticipantHint': 'যেমন: রিয়া (কলে আপনার প্রদর্শনী নাম)',
   'skills.meetingBots.respondToParticipantDesc':
@@ -6024,6 +6036,8 @@ const messages: TranslationMap = {
     'সারাংশ ট্রি তৈরির জন্য কোনও সারাংশ প্রদানকারী উপলব্ধ নেই। স্থানীয় AI (Ollama) সক্ষম করুন, অথবা সেটিংস → AI → মেমরিতে ক্লাউড সারাংশ সক্ষম করুন।',
   'memory.health.remediation.empty_input_refused':
     'একটি মেমরি আইটেম এড়িয়ে যাওয়া হয়েছে কারণ এর পাঠ্য খালি ছিল। কোনো পদক্ষেপের প্রয়োজন নেই — নতুন আইটেমগুলি স্বাভাবিকভাবে এমবেড করতে থাকে।',
+  'memory.health.remediation.storage_unavailable':
+    'OpenHuman তার মেমরি স্টোরেজে লিখতে পারছে না — ডিস্ক বা SD কার্ডটি ত্রুটিপূর্ণ, পূর্ণ বা শুধু-পঠনযোগ্য বলে মনে হচ্ছে। ড্রাইভটি পরীক্ষা করুন এবং কিছু জায়গা খালি করুন; স্টোরেজ আবার লেখার উপযোগী হলে মেমরি প্রক্রিয়াকরণ স্বয়ংক্রিয়ভাবে পুনরায় শুরু হবে।',
   'memory.health.remediation.transient':
     'একটি অস্থায়ী ত্রুটি মেমরি প্রক্রিয়াকরণে বাধা দিয়েছে। স্বয়ংক্রিয়ভাবে পুনরায় চেষ্টা করা হবে।',
   'memory.health.remediation.unknown':

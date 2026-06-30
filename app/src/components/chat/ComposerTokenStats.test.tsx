@@ -110,14 +110,21 @@ describe('<ComposerTokenStats />', () => {
     ]);
     fireEvent.click(screen.getByRole('button'));
     const bd = screen.getByTestId('composer-token-breakdown');
-    // Orchestrator = totals − sub-agents: tokens 600−240=360, cost 0.01−0.004=0.006.
-    expect(within(bd).getByText('token.orchestrator')).toBeInTheDocument();
-    expect(within(bd).getByText(/360/)).toBeInTheDocument();
-    expect(within(bd).getByText(/\$0\.006/)).toBeInTheDocument();
+    // Orchestrator row = totals − sub-agents: tokens 600−240=360, cost 0.01−0.004=0.006.
+    // Scope to the row's <li> because the orchestrator-only context numerator (#4271)
+    // is also 360 for a single turn, so an unscoped /360/ matches twice.
+    const orchRow = within(bd).getByText('token.orchestrator').closest('li') as HTMLElement;
+    expect(within(orchRow).getByText(/360/)).toBeInTheDocument();
+    expect(within(orchRow).getByText(/\$0\.006/)).toBeInTheDocument();
     // Sub-agent row: 200 + 40 = 240 combined tokens, its own cost.
-    expect(within(bd).getByText('researcher')).toBeInTheDocument();
-    expect(within(bd).getByText(/240/)).toBeInTheDocument();
-    expect(within(bd).getByText(/\$0\.004/)).toBeInTheDocument();
+    const subRow = within(bd).getByText('researcher').closest('li') as HTMLElement;
+    expect(within(subRow).getByText(/240/)).toBeInTheDocument();
+    expect(within(subRow).getByText(/\$0\.004/)).toBeInTheDocument();
+    // Context-usage row shows the orchestrator-only numerator (360), not the
+    // combined 600 (parent + sub-agent), so the gauge can't overflow (#4271).
+    const ctxRow = within(bd).getByText('token.popContext').closest('div') as HTMLElement;
+    expect(within(ctxRow).getByText(/\b360\b/)).toBeInTheDocument();
+    expect(within(ctxRow).queryByText(/\b600\b/)).toBeNull();
   });
 
   it('reads the active thread bucket when a threadId is provided', () => {

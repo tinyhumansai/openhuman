@@ -1635,6 +1635,12 @@ const messages: TranslationMap = {
   'mcp.connectAuth.oauthOrToken':
     'Уже есть токен доступа? Вставьте его ниже как заголовок Authorization.',
   'mcp.connectAuth.oauthTimeout': 'Истекло время ожидания входа через браузер. Попробуйте снова.',
+  'mcp.connectAuth.authError.oauthRequired':
+    'Этот сервер использует OAuth. Используйте “Войти через браузер” — вставленный токен не будет принят.',
+  'mcp.connectAuth.authError.tokenRejected':
+    'Сервер отклонил этот токен. Убедитесь, что он правильный и не истёк.',
+  'mcp.connectAuth.authError.credentialRequired':
+    'Этот сервер требует аутентификации. Добавьте токен или войдите.',
   'onboarding.skipForNow': 'Пропустить сейчас',
   'onboarding.localAI.continueWithCloud': 'Продолжить с Облако',
   'onboarding.localAI.useLocalAnyway':
@@ -2284,6 +2290,10 @@ const messages: TranslationMap = {
   'chat.attachment.remove': 'Удалить {name}',
   'chat.attachment.tooMany': 'Максимум {max} изображений на сообщение',
   'chat.attachment.tooManyFiles': 'Максимум {max} файлов на сообщение',
+  'chat.attachment.tooManyVideos': 'Максимум {max} видео на сообщение',
+  'chat.attachment.videoNotSupported':
+    'Эта модель не может читать видео. Вы можете использовать уровень «Рассуждение» от OpenHuman, чтобы прикрепить видео.',
+  'chat.attachment.dropToAttach': 'Перетащите файлы, чтобы прикрепить',
   'chat.attachment.tooLarge': 'Изображение превышает ограничение размера {max}',
   'chat.attachment.unsupportedType':
     'Неподдерживаемый тип файла. Используйте изображение (PNG, JPEG, WebP, GIF, BMP) или файл PDF, TXT либо Markdown.',
@@ -5181,6 +5191,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.bannerTitle': 'Заголовок баннера',
   'skills.meetingBots.busyTitle': 'OpenHuman занят',
   'skills.meetingBots.comingSoon': 'Скоро',
+  'skills.meetingBots.couldNotLeaveTitle': 'Не удалось покинуть встречу',
   'skills.meetingBots.couldNotStartTitle': 'Не удалось запустить OpenHuman',
   'skills.meetingBots.displayName': 'Отображаемое имя',
   'skills.meetingBots.failedToStart': 'Не удалось запустить OpenHuman.',
@@ -5230,6 +5241,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.liveStatusEnded': 'Встреча завершена',
   'skills.meetingBots.liveStatusError': 'Ошибка подключения',
   'skills.meetingBots.leaveButton': 'Выйти',
+  'skills.meetingBots.leavingButton': 'Выход…',
   'skills.meetingBots.respondToParticipant': 'Ваше имя на этой встрече',
   'skills.meetingBots.respondToParticipantHint': 'напр. Иван (ваше отображаемое имя в звонке)',
   'skills.meetingBots.respondToParticipantDesc':
@@ -6081,6 +6093,8 @@ const messages: TranslationMap = {
     'Нет доступного поставщика суммаризации для «Построить деревья сводок». Включите локальный ИИ (Ollama) или включите облачную суммаризацию в разделе Настройки → ИИ → Память.',
   'memory.health.remediation.empty_input_refused':
     'Элемент памяти пропущен, так как его текст был пуст. Действия не требуются — новые элементы продолжают встраиваться как обычно.',
+  'memory.health.remediation.storage_unavailable':
+    'OpenHuman не может записывать в хранилище памяти — диск или SD-карта, похоже, неисправны, заполнены или доступны только для чтения. Проверьте накопитель и освободите место; обработка памяти возобновится автоматически, как только запись снова станет возможной.',
   'memory.health.remediation.transient':
     'Временная ошибка прервала обработку памяти. Повтор произойдёт автоматически.',
   'memory.health.remediation.unknown':

@@ -600,17 +600,37 @@ pub async fn mcp_clients_update_env(
                 )],
             ))
         }
-        Err(err) => Ok(RpcOutcome::new(
-            json!({
-                "server_id": server_id,
-                "status": "disconnected",
-                "env_keys": server.env_keys,
-                "error": err.to_string(),
-            }),
-            vec![format!(
-                "update_env persisted env for server_id={server_id} but reconnect failed: {err}"
-            )],
-        )),
+        Err(err) => {
+            // A 401 is surfaced as `unauthorized` + a stable `auth_hint` code
+            // (oauth_required / token_rejected / credential_required) the UI maps
+            // to actionable copy — the raw message is WITHHELD because it leaks
+            // the OAuth metadata URL (#3719, #4289). Generic transport failures
+            // keep their diagnostic message under `disconnected`.
+            match connections::auth_hint_for(server_id).await {
+                Some(hint) => Ok(RpcOutcome::new(
+                    json!({
+                        "server_id": server_id,
+                        "status": "unauthorized",
+                        "env_keys": server.env_keys,
+                        "auth_hint": hint,
+                    }),
+                    vec![format!(
+                        "update_env persisted env for server_id={server_id} but reconnect was unauthorized: {hint}"
+                    )],
+                )),
+                None => Ok(RpcOutcome::new(
+                    json!({
+                        "server_id": server_id,
+                        "status": "disconnected",
+                        "env_keys": server.env_keys,
+                        "error": err.to_string(),
+                    }),
+                    vec![format!(
+                        "update_env persisted env for server_id={server_id} but reconnect failed: {err}"
+                    )],
+                )),
+            }
+        }
     }
 }
 

@@ -180,11 +180,48 @@ pub(super) async fn run_agent_tool_call(
                     let options = ToolCallOptions {
                         prefer_markdown: ctx.prefer_markdown,
                     };
-                    let outcome = tool
-                        .execute_with_options(call.arguments.clone(), options)
-                        .await;
+                    let policy = tool.timeout_policy(&call.arguments);
+                    let (tool_deadline, timeout_secs) =
+                        crate::openhuman::agent::harness::engine::tools::resolve_tool_deadline(
+                            policy,
+                        );
+                    match policy {
+                        crate::openhuman::tools::traits::ToolTimeout::Secs(req) => {
+                            tracing::debug!(
+                                tool = call.name.as_str(),
+                                requested_timeout_secs = req,
+                                effective_timeout_secs = timeout_secs,
+                                "[agent_loop] session tool requested explicit per-call timeout"
+                            );
+                        }
+                        crate::openhuman::tools::traits::ToolTimeout::Unbounded => {
+                            tracing::debug!(
+                                tool = call.name.as_str(),
+                                "[agent_loop] session tool runs unbounded"
+                            );
+                        }
+                        crate::openhuman::tools::traits::ToolTimeout::Inherit => {
+                            tracing::trace!(
+                                tool = call.name.as_str(),
+                                effective_timeout_secs = timeout_secs,
+                                "[agent_loop] session tool inherits global timeout"
+                            );
+                        }
+                    }
+                    let outcome = match tool_deadline {
+                        Some(deadline) => {
+                            tokio::time::timeout(
+                                deadline,
+                                tool.execute_with_options(call.arguments.clone(), options),
+                            )
+                            .await
+                        }
+                        None => Ok(tool
+                            .execute_with_options(call.arguments.clone(), options)
+                            .await),
+                    };
                     match outcome {
-                        Ok(r) => {
+                        Ok(Ok(r)) => {
                             if !r.is_error {
                                 let mut output = r.output_for_llm(ctx.prefer_markdown);
                                 if ctx.prefer_markdown && r.markdown_formatted.is_some() {
@@ -234,7 +271,30 @@ pub(super) async fn run_agent_tool_call(
                                 )
                             }
                         }
-                        Err(e) => (format!("Error executing {}: {e}", call.name), false),
+                        Ok(Err(e)) => (format!("Error executing {}: {e}", call.name), false),
+                        Err(_) => {
+                            let message = format!(
+                                "tool '{}' timed out after {} seconds",
+                                call.name, timeout_secs
+                            );
+                            tracing::warn!(
+                                tool = call.name.as_str(),
+                                timeout_secs,
+                                "[agent_loop] session tool timed out"
+                            );
+                            crate::core::observability::report_error(
+                                message.as_str(),
+                                "tool",
+                                "execute",
+                                &[
+                                    ("tool", call.name.as_str()),
+                                    ("outcome", "timeout"),
+                                    ("timeout_secs", &timeout_secs.to_string()),
+                                    ("iteration", &(iteration + 1).to_string()),
+                                ],
+                            );
+                            (format!("Error: {message}"), false)
+                        }
                     }
                 }
             }
@@ -329,4 +389,119 @@ pub(super) async fn run_agent_tool_call(
         tool_call_id: call.tool_call_id.clone(),
     };
     (exec_result, record)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::openhuman::agent::dispatcher::ParsedToolCall;
+    use crate::openhuman::agent::tool_policy::AllowAllToolPolicy;
+    use crate::openhuman::agent_tool_policy::ToolPolicyEngine;
+    use crate::openhuman::tools::traits::{ToolResult, ToolTimeout};
+    use async_trait::async_trait;
+    use serde_json::json;
+    use std::collections::{HashMap, HashSet};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    struct HangingTool;
+    struct TestProgress {
+        completed: AtomicUsize,
+        timeout_completions: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl ProgressReporter for TestProgress {
+        async fn tool_completed(
+            &self,
+            _call_id: &str,
+            _tool_name: &str,
+            success: bool,
+            output: &str,
+            _elapsed_ms: u64,
+            _iteration: u32,
+        ) {
+            self.completed.fetch_add(1, Ordering::Relaxed);
+            if !success && output.contains("timed out after 1 seconds") {
+                self.timeout_completions.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Tool for HangingTool {
+        fn name(&self) -> &str {
+            "memory_tree"
+        }
+
+        fn description(&self) -> &str {
+            "test tool that never finishes before the harness timeout"
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            json!({ "type": "object", "properties": {} })
+        }
+
+        async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            Ok(ToolResult::success("late result"))
+        }
+
+        fn timeout_policy(&self, _args: &serde_json::Value) -> ToolTimeout {
+            ToolTimeout::Secs(1)
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn session_tool_executor_enforces_tool_timeout_policy() {
+        let tools: Vec<Box<dyn Tool>> = vec![Box::new(HangingTool)];
+        let visible_tool_names = HashSet::new();
+        let policy_session = ToolPolicyEngine::build_session(
+            "context_scout",
+            "web",
+            "test",
+            &HashMap::new(),
+            &tools,
+            &visible_tool_names,
+        );
+        let tool_policy = AllowAllToolPolicy;
+        let ctx = AgentToolExecCtx {
+            tools: &tools,
+            visible_tool_names: &visible_tool_names,
+            tool_policy_session: &policy_session,
+            tool_policy: &tool_policy,
+            payload_summarizer: None,
+            event_session_id: "session-1",
+            event_channel: "web",
+            agent_definition_id: "context_scout",
+            prefer_markdown: false,
+            budget_bytes: 4096,
+            compaction_enabled: false,
+            tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression::Off,
+            artifact_store: None,
+        };
+        let call = ParsedToolCall {
+            name: "memory_tree".to_string(),
+            arguments: json!({"mode": "walk", "query": "project context"}),
+            tool_call_id: Some("call-1".to_string()),
+        };
+        let progress = TestProgress {
+            completed: AtomicUsize::new(0),
+            timeout_completions: AtomicUsize::new(0),
+        };
+
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(8),
+            run_agent_tool_call(&ctx, &progress, &call, 0),
+        )
+        .await;
+
+        let (result, record) =
+            outcome.expect("session tool executor should return a terminal timeout result");
+        assert!(!result.success);
+        assert!(result.output.contains("timed out after 1 seconds"));
+        assert!(!record.success);
+        assert_eq!(progress.completed.load(Ordering::Relaxed), 1);
+        assert_eq!(progress.timeout_completions.load(Ordering::Relaxed), 1);
+    }
 }

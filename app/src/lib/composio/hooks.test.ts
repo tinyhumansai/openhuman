@@ -48,14 +48,81 @@ describe('useComposioIntegrations', () => {
 
     const { result } = renderHook(() => useComposioIntegrations(0));
 
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false);
-    });
+    // The connections leg retries silently (#4290) before surfacing, so allow
+    // for the retry backoff window before asserting the final error state.
+    await waitFor(
+      () => {
+        expect(result.current.loading).toBe(false);
+      },
+      { timeout: 3000 }
+    );
 
     expect(result.current.toolkits).toEqual(['gmail', 'github', 'notion']);
     expect(result.current.connectionByToolkit.size).toBe(0);
     expect(result.current.connectionsByToolkit.size).toBe(0);
     expect(result.current.error).toBe('backend connection listing failed');
+  });
+
+  it('retries a failed leg silently and clears the error when the retry succeeds (#4290)', async () => {
+    const { useComposioIntegrations } = await import('./hooks');
+
+    // Cold-start: first toolkit fetch times out, the silent retry succeeds.
+    mockListToolkits
+      .mockRejectedValueOnce(new Error('Core RPC openhuman.composio_list_toolkits timed out'))
+      .mockResolvedValue({ toolkits: ['gmail'] });
+    mockListConnections.mockResolvedValue({ connections: [] });
+
+    const { result } = renderHook(() => useComposioIntegrations(0));
+
+    await waitFor(
+      () => {
+        expect(result.current.loading).toBe(false);
+      },
+      { timeout: 3000 }
+    );
+
+    // No banner — the transient cold-start timeout self-healed.
+    expect(result.current.error).toBeNull();
+    expect(result.current.toolkits).toEqual(['gmail']);
+    // Exactly one retry (2 attempts total) on the failing leg.
+    expect(mockListToolkits).toHaveBeenCalledTimes(2);
+  });
+
+  it('surfaces the error only after the silent retry is also exhausted (#4290)', async () => {
+    const { useComposioIntegrations } = await import('./hooks');
+
+    mockListToolkits.mockRejectedValue(new Error('backend down'));
+    mockListConnections.mockResolvedValue({ connections: [] });
+
+    const { result } = renderHook(() => useComposioIntegrations(0));
+
+    await waitFor(
+      () => {
+        expect(result.current.loading).toBe(false);
+      },
+      { timeout: 3000 }
+    );
+
+    // Genuine outage is NOT masked — the banner still appears, just later.
+    expect(result.current.error).toBe('backend down');
+    expect(mockListToolkits).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry a leg that succeeds on the first attempt (#4290)', async () => {
+    const { useComposioIntegrations } = await import('./hooks');
+
+    mockListToolkits.mockResolvedValue({ toolkits: ['gmail'] });
+    mockListConnections.mockResolvedValue({ connections: [] });
+
+    const { result } = renderHook(() => useComposioIntegrations(0));
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    expect(result.current.error).toBeNull();
+    expect(mockListToolkits).toHaveBeenCalledTimes(1);
+    expect(mockListConnections).toHaveBeenCalledTimes(1);
   });
 
   it('exposes the dynamic catalog keyed by canonical slug', async () => {
@@ -98,6 +165,60 @@ describe('useComposioIntegrations', () => {
     expect(result.current.catalogByToolkit.size).toBe(0);
   });
 
+  it('seeds initial state from the durable connection cache for an instant cold-start paint', async () => {
+    // Pre-populate the durable cache as if a prior session had persisted it,
+    // under the active user's namespace (the cache is inert without a user id).
+    window.localStorage.setItem('OPENHUMAN_ACTIVE_USER_ID', 'test-user');
+    window.localStorage.setItem(
+      'test-user:composio:connections:v1',
+      JSON.stringify({
+        fetchedAt: Date.now(),
+        connections: [{ id: 'seed', toolkit: 'gmail', status: 'ACTIVE' }],
+        toolkits: ['gmail'],
+        catalog: [{ slug: 'gmail', name: 'Gmail' }],
+      })
+    );
+
+    // The live fetch hangs so we can observe the seeded state in isolation.
+    mockListToolkits.mockReturnValue(new Promise(() => {}));
+    mockListConnections.mockReturnValue(new Promise(() => {}));
+
+    const { useComposioIntegrations } = await import('./hooks');
+    const { result } = renderHook(() => useComposioIntegrations(0));
+
+    // No loading skeleton — the cached snapshot paints immediately.
+    expect(result.current.loading).toBe(false);
+    expect(result.current.connectionByToolkit.get('gmail')?.status).toBe('ACTIVE');
+    expect(result.current.toolkits).toEqual(['gmail']);
+    expect(result.current.catalogByToolkit.get('gmail')?.name).toBe('Gmail');
+  });
+
+  it('reconciles a stale cached connection away once the live fetch lands', async () => {
+    window.localStorage.setItem('OPENHUMAN_ACTIVE_USER_ID', 'test-user');
+    window.localStorage.setItem(
+      'test-user:composio:connections:v1',
+      JSON.stringify({
+        fetchedAt: Date.now(),
+        connections: [{ id: 'seed', toolkit: 'gmail', status: 'ACTIVE' }],
+        toolkits: ['gmail'],
+        catalog: [],
+      })
+    );
+    // Backend now reports the toolkit disconnected.
+    mockListToolkits.mockResolvedValue({ toolkits: ['gmail'] });
+    mockListConnections.mockResolvedValue({ connections: [] });
+
+    const { useComposioIntegrations } = await import('./hooks');
+    const { result } = renderHook(() => useComposioIntegrations(0));
+
+    // Seeded immediately from the cache…
+    expect(result.current.connectionByToolkit.get('gmail')?.status).toBe('ACTIVE');
+    // …then the live fetch reconciles the stale connection away.
+    await waitFor(() => {
+      expect(result.current.connectionByToolkit.size).toBe(0);
+    });
+  });
+
   it('groups connections by toolkit, sorts by status then createdAt', async () => {
     const { useComposioIntegrations } = await import('./hooks');
 
@@ -135,9 +256,13 @@ describe('useComposioIntegrations', () => {
 
     const { result } = renderHook(() => useComposioIntegrations(0));
 
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false);
-    });
+    // Both legs retry silently (#4290) before surfacing — allow the backoff.
+    await waitFor(
+      () => {
+        expect(result.current.loading).toBe(false);
+      },
+      { timeout: 3000 }
+    );
 
     expect(result.current.toolkits).toEqual([]);
     expect(result.current.connectionByToolkit.size).toBe(0);

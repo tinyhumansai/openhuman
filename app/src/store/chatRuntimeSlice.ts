@@ -245,7 +245,12 @@ export interface SessionTokenUsage {
    * real value; the UI falls back to a default when unknown.
    */
   contextWindow: number;
-  /** Last turn's input+output tokens — the context-window gauge numerator. */
+  /**
+   * Last turn's **orchestrator-only** input+output tokens — the context-window
+   * gauge numerator. Sub-agent spend is excluded so the gauge tracks the parent
+   * thread's own window (each sub-agent runs in its own context window); summing
+   * them in let the gauge exceed 100% in multi-agent sessions (#4271).
+   */
   lastTurnContextUsed: number;
   /** Per-sub-agent spend for the session, keyed by archetype id. */
   subAgents: Record<string, SubAgentUsage>;
@@ -300,13 +305,20 @@ function applyTurnUsage(usage: SessionTokenUsage, payload: ChatTurnUsagePayload)
   usage.lastUpdated = Date.now();
   usage.lastTurnInputTokens = inTok;
   usage.lastTurnOutputTokens = outTok;
-  usage.lastTurnContextUsed = inTok + outTok;
   // Only overwrite the known context window when the turn reported a real value
   // (>0); an unknown-window turn leaves the prior value intact.
   const ctxWindow = nonNeg(payload.contextWindow);
   if (ctxWindow > 0) usage.contextWindow = ctxWindow;
+  // `inTok`/`outTok` are combined parent+sub-agent turn totals (the core sends
+  // one number for cost), but the context window is the orchestrator model's
+  // alone. Subtract this turn's sub-agent spend so the gauge numerator is the
+  // orchestrator thread's own occupancy and can't overflow its window (#4271).
+  let subTurnTokens = 0;
   for (const sub of payload.subAgents ?? []) {
     if (!sub || typeof sub.agentId !== 'string' || sub.agentId.length === 0) continue;
+    const subIn = nonNeg(sub.inputTokens);
+    const subOut = nonNeg(sub.outputTokens);
+    subTurnTokens += subIn + subOut;
     const existing = usage.subAgents[sub.agentId] ?? {
       agentId: sub.agentId,
       inputTokens: 0,
@@ -314,12 +326,13 @@ function applyTurnUsage(usage: SessionTokenUsage, payload: ChatTurnUsagePayload)
       costUsd: 0,
       runs: 0,
     };
-    existing.inputTokens += nonNeg(sub.inputTokens);
-    existing.outputTokens += nonNeg(sub.outputTokens);
+    existing.inputTokens += subIn;
+    existing.outputTokens += subOut;
     existing.costUsd += nonNeg(sub.costUsd);
     existing.runs += 1;
     usage.subAgents[sub.agentId] = existing;
   }
+  usage.lastTurnContextUsed = Math.max(0, inTok + outTok - subTurnTokens);
 }
 
 /**
@@ -412,6 +425,15 @@ interface ChatRuntimeState {
   inferenceStatusByThread: Record<string, InferenceStatus>;
   streamingAssistantByThread: Record<string, StreamingAssistantState>;
   /**
+   * Monotonically-bumped liveness counter per thread, advanced on every
+   * `inference_heartbeat` socket event the core emits while a turn is in flight
+   * (issue #4270). The Conversations silence timer watches this alongside the
+   * status/stream/tool/board slices, so a long prefill or buffered-reasoning
+   * phase that emits no other progress still rearms the timer and avoids a
+   * false "no response after 2 minutes" timeout. Cleared on turn end.
+   */
+  inferenceHeartbeatByThread: Record<string, number>;
+  /**
    * Threads with an optimistic user send in flight, set the instant the user
    * sends (before `addMessageLocal` resolves and before any streaming state
    * exists). Lets global surfaces — e.g. the New Chat shortcut — tell a
@@ -503,6 +525,7 @@ export interface QueuedFollowup {
 const initialState: ChatRuntimeState = {
   inferenceStatusByThread: {},
   streamingAssistantByThread: {},
+  inferenceHeartbeatByThread: {},
   pendingSendThreadIds: {},
   parallelStreamsByThread: {},
   parallelRequestThreads: {},
@@ -755,6 +778,15 @@ const chatRuntimeSlice = createSlice({
     },
     clearInferenceStatusForThread: (state, action: PayloadAction<{ threadId: string }>) => {
       delete state.inferenceStatusByThread[action.payload.threadId];
+    },
+    /**
+     * Bump a thread's liveness counter on each `inference_heartbeat` (issue
+     * #4270). The value is opaque — only the *change* matters to the silence
+     * timer's signature comparison. Wraps via modulo to stay a small integer.
+     */
+    bumpInferenceHeartbeatForThread: (state, action: PayloadAction<{ threadId: string }>) => {
+      const prev = state.inferenceHeartbeatByThread[action.payload.threadId] ?? 0;
+      state.inferenceHeartbeatByThread[action.payload.threadId] = (prev + 1) % 1_000_000;
     },
     setStreamingAssistantForThread: (
       state,
@@ -1181,6 +1213,7 @@ const chatRuntimeSlice = createSlice({
     clearRuntimeForThread: (state, action: PayloadAction<{ threadId: string }>) => {
       delete state.inferenceStatusByThread[action.payload.threadId];
       delete state.streamingAssistantByThread[action.payload.threadId];
+      delete state.inferenceHeartbeatByThread[action.payload.threadId];
       // Drop any parallel (forked) streams for this thread and their
       // request→thread mappings — a hard per-thread reset covers every branch.
       const parallelStreams = state.parallelStreamsByThread[action.payload.threadId];
@@ -1208,6 +1241,7 @@ const chatRuntimeSlice = createSlice({
     clearAllChatRuntime: state => {
       state.inferenceStatusByThread = {};
       state.streamingAssistantByThread = {};
+      state.inferenceHeartbeatByThread = {};
       state.parallelStreamsByThread = {};
       state.parallelRequestThreads = {};
       state.toolTimelineByThread = {};
@@ -1398,6 +1432,7 @@ const chatRuntimeSlice = createSlice({
 export const {
   setInferenceStatusForThread,
   clearInferenceStatusForThread,
+  bumpInferenceHeartbeatForThread,
   setStreamingAssistantForThread,
   clearStreamingAssistantForThread,
   markThreadSendPending,
