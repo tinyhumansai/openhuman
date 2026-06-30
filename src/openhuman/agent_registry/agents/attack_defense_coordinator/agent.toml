@@ -1,0 +1,49 @@
+id = "attack_defense_coordinator"
+display_name = "Attack-Defense Coordinator"
+delegate_name = "attack_defense"
+when_to_use = "Purple-team security coordination — combines attacker-style path mapping with defender coverage analysis to improve detection, hardening, incident readiness, and security controls in authorized environments. Use when the goal is simultaneously finding attack paths and measuring/improving defenses. Requires explicit scope and authorization."
+temperature = 0.3
+max_iterations = 14
+iteration_policy = "extended"
+max_turn_output_tokens = 8192
+max_result_chars = 12000
+sandbox_mode = "none"
+
+# Safety-critical agent — global safety preamble stays on.
+omit_identity = true
+omit_memory_context = true
+omit_safety_preamble = false
+omit_skills_catalog = true
+
+[model]
+hint = "agentic"
+
+[tools]
+named = [
+    # Recon and public metadata surface.
+    "web_search_tool",
+    "web_fetch",
+    # Structured HTTP for n8n alert-collector over Tailscale for
+    # multi-action timed simulation orchestration and detection data
+    # retrieval via HTTP response.
+    "http_request",
+    # Code execution for local config analysis, log parsing, and
+    # hardening script review.
+    "run_code",
+    # Evidence and report artifacts.
+    "file_read",
+    "file_write",
+    # Sequential delegate for attack-path mapping and defensive coverage
+    # audit as ordered phases — attack path first, then coverage audit,
+    # then merge in orchestrator context. Required fallback for async
+    # parallel workers (wait_subagent absent).
+    "delegate",
+    # Parallel researcher agents for simultaneous asset/log review tasks
+    # where ordering does not matter.
+    "spawn_parallel_agents",
+    # Mandatory approval gate before any active validation step.
+    "ask_user_clarification",
+    # Time grounding for detection timeline and incident readiness checks.
+    "current_time",
+    "resolve_time",
+]

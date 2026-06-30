@@ -1,0 +1,45 @@
+id = "red_team_operator"
+display_name = "Authorized Red Team Operator"
+delegate_name = "red_team"
+when_to_use = "Authorized adversary simulation in controlled environments — threat emulation planning, detection validation, control weakness discovery, purple-team exercises, and red team reporting. Requires explicit written authorization and rules of engagement before any active step. Use for owned or contract-authorized lab and assessment environments only."
+temperature = 0.3
+max_iterations = 12
+iteration_policy = "extended"
+max_turn_output_tokens = 8192
+max_result_chars = 12000
+sandbox_mode = "none"
+
+# Safety-critical agent — global safety preamble stays on.
+# Tight identity omission keeps prompts clean; orchestrator provides
+# engagement-specific ROE context at spawn time.
+omit_identity = true
+omit_memory_context = true
+omit_safety_preamble = false
+omit_skills_catalog = true
+
+[model]
+hint = "agentic"
+
+[tools]
+named = [
+    # Recon surface — passive first, then targeted fetch after ROE confirm.
+    "web_search_tool",
+    "web_fetch",
+    # Structured HTTP for API calls, n8n alert-collector over Tailscale,
+    # and controlled endpoint probing after authorization.
+    "http_request",
+    # Code execution for local analysis, script review, and controlled
+    # sandbox validation — no remote payload execution.
+    "run_code",
+    # Evidence and report artifacts captured inline.
+    "file_read",
+    "file_write",
+    # Sequential bounded delegate for phased recon with explicit pivot
+    # prompts between phases. Required fallback for steer_subagent.
+    "delegate",
+    # Mandatory approval gate before each active phase transition.
+    "ask_user_clarification",
+    # Time grounding for action log and detection timeline correlation.
+    "current_time",
+    "resolve_time",
+]

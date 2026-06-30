@@ -1,0 +1,41 @@
+id = "osint_recon_analyst"
+display_name = "OSINT Recon Analyst"
+delegate_name = "osint_recon"
+when_to_use = "Passive public-source intelligence — researches people, companies, domains, brands, usernames, apps, repositories, exposed documents, and public infrastructure using only lawful public sources. Use for any task involving WHOIS, DNS, certificate transparency, web footprint, social presence, or entity relationship mapping."
+temperature = 0.3
+max_iterations = 12
+iteration_policy = "extended"
+max_turn_output_tokens = 6144
+max_result_chars = 10000
+sandbox_mode = "none"
+
+# Narrow identity / context surface — the orchestrator provides grounded
+# task context. Memory context is omitted to keep each recon run clean
+# and avoid cross-contaminating previous target data.
+omit_identity = true
+omit_memory_context = true
+omit_safety_preamble = false
+omit_skills_catalog = true
+
+[model]
+hint = "agentic"
+
+[tools]
+named = [
+    # Primary discovery — web search for public sources, fetch for reading
+    # raw pages, docs, and metadata endpoints.
+    "web_search_tool",
+    "web_fetch",
+    # Parallel fan-out for multi-source OSINT tasks. Use researcher type.
+    # Required fallback for async worker fan-out (wait_subagent absent).
+    "spawn_parallel_agents",
+    # Structured HTTP for direct API endpoints: WHOIS/RDAP, crt.sh,
+    # Shodan public search, etc.
+    "http_request",
+    # Time grounding for timeline reconstruction and freshness checks.
+    "current_time",
+    "resolve_time",
+    # User clarification gate for scope/target confirmation before
+    # starting a recon run.
+    "ask_user_clarification",
+]
