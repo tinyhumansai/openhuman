@@ -806,11 +806,24 @@ fn check_type(value: &Value, ty: &crate::core::TypeSchema) -> Result<(), &'stati
             None => Err("array"),
         },
 
-        TypeSchema::Enum { variants } => match value.as_str() {
-            Some(s) if variants.contains(&s) => Ok(()),
-            Some(_) => Err("one of the allowed enum variants"),
-            None => Err("string"),
-        },
+        TypeSchema::Enum { variants } => {
+            // An explicit JSON `null` on an optional enum field is valid —
+            // the presence check above already guards required fields, so
+            // a null here means the caller left an optional param unset.
+            // Without this guard the validator returns a 400
+            // "could not translate the enum None" for any tool that
+            // exposes an optional enum parameter (e.g. `delegate_tools_agent`
+            // with only `prompt` supplied). Consistent with how
+            // `TypeSchema::Option` handles null above.
+            if value.is_null() {
+                return Ok(());
+            }
+            match value.as_str() {
+                Some(s) if variants.contains(&s) => Ok(()),
+                Some(_) => Err("one of the allowed enum variants"),
+                None => Err("string"),
+            }
+        }
     }
 }
 

@@ -427,6 +427,45 @@ fn validate_params_validates_array_element_types() {
     assert!(err.contains("invalid type for param 'ids'"), "got: {err}");
 }
 
+// Regression test for the delegate_tools_agent 400 "could not translate the
+// enum None" bug: an explicit JSON null on an optional Enum field must pass
+// pre-dispatch validation. The required-presence check already guards required
+// fields, so null here means "caller left an optional param unset" — identical
+// semantics to TypeSchema::Option(Box::new(TypeSchema::String)) receiving null.
+#[test]
+fn validate_params_enum_null_accepted_for_optional_field() {
+    let s = schema(
+        "agent",
+        "delegate_tools_agent",
+        vec![FieldSchema {
+            name: "agent_type",
+            ty: TypeSchema::Enum {
+                variants: vec!["tools_agent", "researcher"],
+            },
+            comment: "Optional agent type; defaults server-side when absent.",
+            required: false,
+        }],
+    );
+
+    // Explicit null must pass (reproduces the 400 bug).
+    let mut null_p = Map::new();
+    null_p.insert("agent_type".into(), Value::Null);
+    assert!(
+        validate_params(&s, &null_p).is_ok(),
+        "explicit null on optional Enum field must not 400"
+    );
+
+    // Valid variant must still pass.
+    let mut ok = Map::new();
+    ok.insert("agent_type".into(), Value::String("tools_agent".into()));
+    assert!(validate_params(&s, &ok).is_ok());
+
+    // Invalid variant must still be rejected.
+    let mut bad = Map::new();
+    bad.insert("agent_type".into(), Value::String("nonexistent".into()));
+    assert!(validate_params(&s, &bad).is_err());
+}
+
 #[test]
 fn validate_params_enforces_enum_variants() {
     let s = schema(
