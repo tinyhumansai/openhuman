@@ -4938,6 +4938,7 @@ const messages: TranslationMap = {
     'Muestra las respuestas del asistente como texto sin marco y mantiene tus mensajes en burbujas.',
   'settings.mascot.active': 'Activo',
   'settings.mascot.characterDesc': 'Descripción del personaje',
+  'settings.mascot.characterDraft': 'Borrador',
   'settings.mascot.characterHeading': 'Encabezado del personaje',
   'settings.mascot.customGifError':
     'Introduzca una ruta HTTPS .gif URL, loopback HTTP .gif URL, file:// .gif URL o ruta .gif local.',

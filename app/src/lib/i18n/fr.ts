@@ -4957,6 +4957,7 @@ const messages: TranslationMap = {
     "Affiche les réponses de l'assistant en texte sans cadre tout en gardant vos messages en bulles.",
   'settings.mascot.active': 'Actif',
   'settings.mascot.characterDesc': 'Description du personnage',
+  'settings.mascot.characterDraft': 'Brouillon',
   'settings.mascot.characterHeading': 'Titre du personnage',
   'settings.mascot.customGifError':
     'Entrez un HTTPS .gif URL, un bouclage HTTP .gif URL, un fichier:// .gif URL ou un chemin local .gif.',

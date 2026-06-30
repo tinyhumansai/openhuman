@@ -4748,6 +4748,7 @@ const messages: TranslationMap = {
     'اعرض ردود المساعد كنص بلا إطار مع إبقاء رسائلك داخل فقاعات.',
   'settings.mascot.active': 'نشط',
   'settings.mascot.characterDesc': 'وصف الشخصية',
+  'settings.mascot.characterDraft': 'مسودة',
   'settings.mascot.characterHeading': 'عنوان الشخصية',
   'settings.mascot.customGifError':
     'أدخل HTTPS .gif URL، أو الاسترجاع HTTP .gif URL، أو file:// .gif URL، أو مسار .gif المحلي.',

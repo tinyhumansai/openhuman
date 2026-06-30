@@ -101,6 +101,15 @@ pub const PRICING_TABLE: &[ModelPricing] = &[
         cached_input_per_mtok_usd: 0.003625,
         output_per_mtok_usd: 0.87,
     },
+    // Burst tier — high-throughput, low-cost model; flat rate both directions,
+    // no prompt cache (so cached rate mirrors the input rate). Used by the
+    // SuperContext scout.
+    ModelPricing {
+        model: "burst-v1",
+        input_per_mtok_usd: 0.208,
+        cached_input_per_mtok_usd: 0.208,
+        output_per_mtok_usd: 0.208,
+    },
     // Vision tier — multimodal; estimate only. The backend's echoed
     // `charged_amount_usd` is authoritative when present.
     ModelPricing {
@@ -250,6 +259,17 @@ mod tests {
         let p = lookup_pricing("vision-v1");
         assert_eq!(p.model, "vision-v1");
         assert_eq!(p.output_per_mtok_usd, 15.0);
+    }
+
+    #[test]
+    fn lookup_pricing_has_a_burst_row() {
+        // The burst tier (SuperContext scout) must price from its own row —
+        // NOT via the $3/$15 fallback, which would inflate first-turn scout cost
+        // and could trip budget gates.
+        let p = lookup_pricing("burst-v1");
+        assert_eq!(p.model, "burst-v1");
+        assert_eq!(p.input_per_mtok_usd, 0.208);
+        assert_eq!(p.output_per_mtok_usd, 0.208);
     }
 
     #[test]

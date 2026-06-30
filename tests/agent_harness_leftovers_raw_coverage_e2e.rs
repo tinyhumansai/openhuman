@@ -360,6 +360,7 @@ fn definition(max_result_chars: Option<usize>) -> AgentDefinition {
         max_iterations: 2,
         iteration_policy: Default::default(),
         max_result_chars,
+        max_turn_output_tokens: None,
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,
         background: false,

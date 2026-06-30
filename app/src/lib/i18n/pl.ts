@@ -4917,6 +4917,7 @@ const messages: TranslationMap = {
     'Wyświetla odpowiedzi asystenta jako tekst bez ramki, a Twoje wiadomości pozostawia w dymkach.',
   'settings.mascot.active': 'Aktywny',
   'settings.mascot.characterDesc': 'Wybierz charakter maskotki OpenHuman.',
+  'settings.mascot.characterDraft': 'Wersja robocza',
   'settings.mascot.characterHeading': 'Charakter',
   'settings.mascot.customGifError':
     'Wprowadź URL .gif HTTPS, URL .gif loopback HTTP, URL file:// .gif lub lokalną ścieżkę .gif.',

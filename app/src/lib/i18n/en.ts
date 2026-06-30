@@ -5483,6 +5483,7 @@ const en: TranslationMap = {
     'Collapse the live step-by-step agent timeline in chat. A blinking “Processing” link still lets you open the full run.',
   'settings.mascot.active': 'Active',
   'settings.mascot.characterDesc': 'Choose your OpenHuman character.',
+  'settings.mascot.characterDraft': 'Draft',
   'settings.mascot.characterHeading': 'Character',
   'settings.mascot.customGifError':
     'Enter an HTTPS .gif URL, loopback HTTP .gif URL, file:// .gif URL, or local .gif path.',

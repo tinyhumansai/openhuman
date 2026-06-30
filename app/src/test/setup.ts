@@ -221,6 +221,8 @@ vi.mock('../utils/config', () => ({
   DEV_JWT_TOKEN: undefined,
   MASCOT_VOICE_ID: 'JBFqnCBsd6RMkjVDRZzb',
   MASCOT_VOICE_MODEL_ID: 'eleven_multilingual_v2',
+  MASCOT_MANIFEST_URL:
+    'https://raw.githubusercontent.com/tinyhumansai/mascots/main/dist/mascots.json',
 }));
 
 vi.mock('../services/backendUrl', () => ({

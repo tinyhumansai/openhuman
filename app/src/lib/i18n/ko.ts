@@ -4798,6 +4798,7 @@ const messages: TranslationMap = {
     '사용자 메시지는 말풍선으로 유지하고 어시스턴트 답변은 프레임 없는 텍스트로 표시합니다.',
   'settings.mascot.active': '활성',
   'settings.mascot.characterDesc': '캐릭터 설명',
+  'settings.mascot.characterDraft': '초안',
   'settings.mascot.characterHeading': '캐릭터 제목',
   'settings.mascot.customGifError':
     'HTTPS .gif URL, loopback HTTP .gif URL, file:// .gif URL 또는 로컬 .gif 경로를 입력하세요.',

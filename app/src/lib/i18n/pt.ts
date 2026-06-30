@@ -4931,6 +4931,7 @@ const messages: TranslationMap = {
     'Renderiza as respostas do assistente como texto sem moldura e mantém suas mensagens em balões.',
   'settings.mascot.active': 'Ativo',
   'settings.mascot.characterDesc': 'Descrição do personagem',
+  'settings.mascot.characterDraft': 'Rascunho',
   'settings.mascot.characterHeading': 'Título do personagem',
   'settings.mascot.customGifError':
     'Insira um caminho HTTPS .gif URL, loopback HTTP .gif URL, arquivo:// .gif URL ou .gif local.',

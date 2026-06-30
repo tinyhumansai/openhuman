@@ -4891,6 +4891,7 @@ const messages: TranslationMap = {
     'Показывает ответы ассистента как текст без рамки, оставляя ваши сообщения в пузырьках.',
   'settings.mascot.active': 'Активно',
   'settings.mascot.characterDesc': 'Описание персонажа',
+  'settings.mascot.characterDraft': 'Черновик',
   'settings.mascot.characterHeading': 'Персонаж',
   'settings.mascot.customGifError':
     'Введите HTTPS .gif URL, петлевой путь HTTP .gif URL, file:// .gif URL или локальный путь .gif.',
