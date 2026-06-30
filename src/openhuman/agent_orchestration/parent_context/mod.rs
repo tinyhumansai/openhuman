@@ -29,7 +29,9 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 
-use crate::openhuman::agent::harness::fork_context::{with_parent_context, ParentExecutionContext};
+use crate::openhuman::agent::harness::fork_context::{
+    current_parent, with_parent_context, ParentExecutionContext,
+};
 use crate::openhuman::agent::Agent;
 use crate::openhuman::config::Config;
 
@@ -115,8 +117,8 @@ pub(crate) async fn build_root_parent(
     })
 }
 
-/// Build a root parent from `config` and run `fut` inside it — the single
-/// blessed entry point for **controller-spawned background orchestration
+/// Ensure a parent execution context is installed for `fut`, then run it — the
+/// single blessed entry point for **controller-spawned background orchestration
 /// surfaces** that have no enclosing agent turn (the workflow-run engine, the
 /// agent-team runtime, the subconscious tick).
 ///
@@ -127,6 +129,14 @@ pub(crate) async fn build_root_parent(
 /// [`SubagentRunError::NoParentContext`](crate::openhuman::agent::harness::subagent_runner::SubagentRunError::NoParentContext).
 /// Running a background surface and establishing its root context become the
 /// same act.
+///
+/// When an ambient [`current_parent`] is already installed, `fut` runs under it
+/// unchanged rather than building a second root. In production these surfaces
+/// run on freshly-spawned tasks where task-locals never cross the `tokio::spawn`
+/// boundary, so the ambient parent is always absent and a root is built from
+/// `config` — but reusing an installed parent keeps the helper correct if it is
+/// ever nested inside a turn, and lets tests drive a surface under a mock
+/// parent (and thus a mock provider) hermetically.
 ///
 /// Returns the future's output on success, or the [`build_root_parent`] error
 /// when the root context can't be constructed — the caller decides how to
@@ -147,6 +157,11 @@ pub(crate) async fn with_root_parent<F>(
 where
     F: std::future::Future,
 {
+    // Already inside a turn (nested call, or a test harness installed a mock
+    // parent): reuse it rather than building a second root.
+    if current_parent().is_some() {
+        return Ok(fut.await);
+    }
     let parent = build_root_parent(config, agent_definition_id, channel, session_prefix).await?;
     Ok(with_parent_context(parent, fut).await)
 }
@@ -198,6 +213,30 @@ mod tests {
             observed.as_deref(),
             Some("subconscious"),
             "inner future must observe the installed root parent"
+        );
+    }
+
+    /// When a parent is already installed, `with_root_parent` reuses it instead
+    /// of building a second root — so a surface nested in a turn (or a test
+    /// driving it under a mock parent) runs under the ambient context.
+    #[tokio::test]
+    async fn with_root_parent_reuses_ambient_parent() {
+        let (_dir, config) = test_config();
+        let outer = build_root_parent(&config, "outer", "outer", "outer")
+            .await
+            .expect("build ambient parent");
+        let observed = with_parent_context(outer, async {
+            with_root_parent(&config, "inner", "inner", "inner", async {
+                current_parent().map(|p| p.agent_definition_id)
+            })
+            .await
+            .expect("reuses ambient, no build error")
+        })
+        .await;
+        assert_eq!(
+            observed.as_deref(),
+            Some("outer"),
+            "with_root_parent must reuse the ambient parent, not build a new 'inner' root"
         );
     }
 }
