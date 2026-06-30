@@ -349,6 +349,45 @@ mod tests {
         MeetingEventSubscriber.handle(&event).await;
     }
 
+    async fn has_summary_prompt_marker(meeting_id: &str) -> bool {
+        use crate::openhuman::memory::rpc_models::{ConversationMessagesRequest, EmptyRequest};
+
+        let threads = crate::openhuman::threads::ops::threads_list(EmptyRequest {})
+            .await
+            .expect("list threads")
+            .value
+            .data
+            .expect("threads data")
+            .threads;
+        for thread in threads {
+            let messages =
+                crate::openhuman::threads::ops::messages_list(ConversationMessagesRequest {
+                    thread_id: thread.id,
+                })
+                .await
+                .expect("list messages")
+                .value
+                .data
+                .expect("messages data")
+                .messages;
+            if messages.iter().any(|message| {
+                message
+                    .extra_metadata
+                    .get("kind")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("meeting_summary_prompt")
+                    && message
+                        .extra_metadata
+                        .get("meeting_id")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(meeting_id)
+            }) {
+                return true;
+            }
+        }
+        false
+    }
+
     #[tokio::test]
     async fn transcript_policy_respects_never_and_ask_without_summary() {
         let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
@@ -370,5 +409,9 @@ mod tests {
             .expect("read ask detail")
             .expect("ask detail exists");
         assert!(ask_detail.summary.is_none());
+        assert!(
+            has_summary_prompt_marker("policy-ask").await,
+            "Ask policy should append a summary prompt marker"
+        );
     }
 }

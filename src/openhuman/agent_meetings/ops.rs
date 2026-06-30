@@ -505,6 +505,39 @@ fn detail_transcript_to_turns(
         .collect()
 }
 
+async fn recorded_meeting_duration_ms(meeting_id: &str) -> Result<u64, String> {
+    let records = crate::openhuman::meet_agent::store::read_recent(
+        crate::openhuman::meet_agent::store::MAX_RECENT_CALLS,
+    )
+    .await?;
+    let Some(record) = records
+        .into_iter()
+        .find(|record| record.request_id == meeting_id)
+    else {
+        tracing::warn!(
+            meeting_id = %meeting_id,
+            "[agent_meetings] no recent call row found for manual summary duration"
+        );
+        return Ok(0);
+    };
+
+    let wall_ms = record.ended_at_ms.saturating_sub(record.started_at_ms);
+    let audio_ms = seconds_to_millis(record.listened_seconds + record.spoken_seconds);
+    Ok(wall_ms.max(audio_ms))
+}
+
+fn seconds_to_millis(seconds: f32) -> u64 {
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return 0;
+    }
+    let millis = (seconds as f64 * 1000.0).round();
+    if millis >= u64::MAX as f64 {
+        u64::MAX
+    } else {
+        millis as u64
+    }
+}
+
 pub async fn handle_generate_summary(params: Map<String, Value>) -> Result<Value, String> {
     let req: GenerateSummaryRequest = serde_json::from_value(Value::Object(params))
         .map_err(|e| format!("[agent_meetings] invalid generate_summary params: {e}"))?;
@@ -534,10 +567,11 @@ pub async fn handle_generate_summary(params: Map<String, Value>) -> Result<Value
 
     let updated = super::recent_calls::build_detail(meeting_id, &turns, Some(&generated));
     crate::openhuman::meet_agent::store::write_detail(&updated).await?;
+    let duration_ms = recorded_meeting_duration_ms(meeting_id).await?;
 
     let thread_id = create_meeting_thread_with_transcript_with_summary_mode_strict(
         &turns,
-        0,
+        duration_ms,
         Some(meeting_id.to_string()),
         Some(&generated),
         SummaryGenerationMode::UseProvidedOnly,
@@ -1958,6 +1992,38 @@ mod tests {
                 None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
             }
         }
+    }
+
+    #[tokio::test]
+    async fn recorded_meeting_duration_uses_recent_call_row() {
+        let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::TempDir::new().unwrap();
+        let _env = EnvGuard::set_workspace(tmp.path());
+
+        crate::openhuman::meet_agent::store::append_record(
+            &crate::openhuman::meet_agent::store::MeetCallRecord {
+                request_id: "duration-call".to_string(),
+                meet_url: "https://meet.google.com/abc-defg-hij".to_string(),
+                bot_display_name: "OpenHuman".to_string(),
+                owner_display_name: "Alice".to_string(),
+                started_at_ms: 10_000,
+                ended_at_ms: 130_000,
+                listened_seconds: 30.0,
+                spoken_seconds: 2.0,
+                turn_count: 1,
+                participants: vec!["Alice".to_string()],
+            },
+        )
+        .await
+        .expect("record call row");
+
+        let duration_ms = recorded_meeting_duration_ms("duration-call")
+            .await
+            .expect("duration reads from recent calls");
+
+        assert_eq!(duration_ms, 120_000);
     }
 
     #[tokio::test]
