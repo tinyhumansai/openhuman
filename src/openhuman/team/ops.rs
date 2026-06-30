@@ -100,8 +100,13 @@ const USAGE_FAILURE_BACKOFF: Duration = Duration::from_secs(60);
 /// Session-expiry (401) failures are intentionally NOT recorded here — they are
 /// handled by their own RPC arm and must keep driving auth recovery.
 struct UsageFailureCache {
-    /// `Instant` of the last reported failure, if a streak is active.
-    inner: RwLock<Option<Instant>>,
+    /// Backend identity + `Instant` of the last reported failure for that
+    /// backend, if a streak is active. Keying on the backend URL means a
+    /// changed `config.api_url` (e.g. after the user fixes a misrouted
+    /// `BACKEND_URL`, or auth/session context that re-points the backend) no
+    /// longer matches the stored key, so the next probe hits the new backend
+    /// immediately instead of inheriting the old backend's backoff (GH #4153).
+    inner: RwLock<Option<(String, Instant)>>,
 }
 
 impl UsageFailureCache {
@@ -111,16 +116,19 @@ impl UsageFailureCache {
         }
     }
 
-    /// True when a failure was recorded within `ttl` of `now`.
-    fn is_fresh(&self, now: Instant, ttl: Duration) -> bool {
+    /// True when a failure for `key` was recorded within `ttl` of `now`. A
+    /// failure anchored under a different backend key never counts as fresh.
+    fn is_fresh(&self, key: &str, now: Instant, ttl: Duration) -> bool {
         let guard = self.inner.read().unwrap_or_else(|e| e.into_inner());
-        guard.is_some_and(|at| now.duration_since(at) < ttl)
+        guard
+            .as_ref()
+            .is_some_and(|(k, at)| k == key && now.duration_since(*at) < ttl)
     }
 
-    /// Anchor a fresh failure (start / keep a streak).
-    fn record(&self, now: Instant) {
+    /// Anchor a fresh failure for `key` (start / keep a streak).
+    fn record(&self, key: &str, now: Instant) {
         let mut guard = self.inner.write().unwrap_or_else(|e| e.into_inner());
-        *guard = Some(now);
+        *guard = Some((key.to_string(), now));
     }
 
     /// Clear the streak — the endpoint recovered.
@@ -133,8 +141,12 @@ impl UsageFailureCache {
 static USAGE_FAILURE_CACHE: UsageFailureCache = UsageFailureCache::new();
 
 pub async fn get_usage(config: &Config) -> Result<RpcOutcome<Value>, String> {
+    // Key the failure backoff by the effective backend URL so a failure on one
+    // backend never suppresses probes after the backend is re-pointed (#4153).
+    let backend_key = effective_backend_api_url(&config.api_url);
     get_usage_with_cache(
         &USAGE_FAILURE_CACHE,
+        &backend_key,
         USAGE_FAILURE_BACKOFF,
         Instant::now(),
         || async { get_authed_value(config, Method::GET, "/teams/me/usage", None).await },
@@ -155,6 +167,7 @@ pub async fn get_usage(config: &Config) -> Result<RpcOutcome<Value>, String> {
 ///   arm handles it / drives auth recovery).
 async fn get_usage_with_cache<F, Fut>(
     cache: &UsageFailureCache,
+    key: &str,
     ttl: Duration,
     now: Instant,
     fetch: F,
@@ -163,7 +176,7 @@ where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<Value, String>>,
 {
-    if cache.is_fresh(now, ttl) {
+    if cache.is_fresh(key, now, ttl) {
         tracing::debug!(
             "[team] usage probe in failure-backoff window — skipping backend call (suppressing repeat report)"
         );
@@ -189,7 +202,7 @@ where
                     "[team] usage probe failed with session-expiry — not anchoring backoff"
                 );
             } else {
-                cache.record(now);
+                cache.record(key, now);
             }
             Err(err)
         }
@@ -514,17 +527,34 @@ mod tests {
     use crate::core::observability::is_suppressed_usage_probe_backoff;
 
     const TTL: Duration = Duration::from_secs(60);
+    const FAIL_KEY: &str = "backend-under-test";
 
     #[test]
     fn usage_failure_cache_freshness_window() {
         let cache = UsageFailureCache::new();
         let base = Instant::now();
-        assert!(!cache.is_fresh(base, TTL), "empty cache is never fresh");
-        cache.record(base);
-        assert!(cache.is_fresh(base + Duration::from_secs(5), TTL));
-        assert!(!cache.is_fresh(base + Duration::from_secs(61), TTL));
+        assert!(!cache.is_fresh(FAIL_KEY, base, TTL), "empty cache is never fresh");
+        cache.record(FAIL_KEY, base);
+        assert!(cache.is_fresh(FAIL_KEY, base + Duration::from_secs(5), TTL));
+        assert!(!cache.is_fresh(FAIL_KEY, base + Duration::from_secs(61), TTL));
         cache.clear();
-        assert!(!cache.is_fresh(base, TTL), "cleared cache is never fresh");
+        assert!(!cache.is_fresh(FAIL_KEY, base, TTL), "cleared cache is never fresh");
+    }
+
+    // GH #4153: a failure anchored under one backend key must NOT suppress a
+    // probe for a different backend (e.g. after the user fixes BACKEND_URL or
+    // the session re-points the backend) — otherwise the new route never gets
+    // tested for up to the backoff window.
+    #[test]
+    fn failure_backoff_is_keyed_per_backend() {
+        let cache = UsageFailureCache::new();
+        let base = Instant::now();
+        cache.record("https://old.example/api/v1", base);
+        assert!(cache.is_fresh("https://old.example/api/v1", base, TTL));
+        assert!(
+            !cache.is_fresh("https://new.example/api/v1", base, TTL),
+            "a different backend key must not inherit the old backend's backoff"
+        );
     }
 
     // T1 — first failure of a streak hits the backend, reports verbatim, anchors.
@@ -533,7 +563,7 @@ mod tests {
         let cache = UsageFailureCache::new();
         let base = Instant::now();
         let calls = AtomicUsize::new(0);
-        let err = get_usage_with_cache(&cache, TTL, base, || {
+        let err = get_usage_with_cache(&cache, FAIL_KEY, TTL, base, || {
             calls.fetch_add(1, Ordering::SeqCst);
             async { Err("GET /teams/me/usage failed (500 Internal Server Error): ".to_string()) }
         })
@@ -544,7 +574,7 @@ mod tests {
             !is_suppressed_usage_probe_backoff(&err),
             "first failure must NOT be the backoff sentinel (it reports): {err}"
         );
-        assert!(cache.is_fresh(base, TTL), "streak anchored");
+        assert!(cache.is_fresh(FAIL_KEY, base, TTL), "streak anchored");
     }
 
     // T2 — a repeat inside the window short-circuits WITHOUT touching the
@@ -553,9 +583,9 @@ mod tests {
     async fn repeat_within_window_suppressed_and_skips_backend() {
         let cache = UsageFailureCache::new();
         let base = Instant::now();
-        cache.record(base);
+        cache.record(FAIL_KEY, base);
         let calls = AtomicUsize::new(0);
-        let err = get_usage_with_cache(&cache, TTL, base + Duration::from_secs(5), || {
+        let err = get_usage_with_cache(&cache, FAIL_KEY, TTL, base + Duration::from_secs(5), || {
             calls.fetch_add(1, Ordering::SeqCst);
             async { panic!("fetch must not run inside the backoff window") }
         })
@@ -577,10 +607,10 @@ mod tests {
     async fn window_expiry_reprobes_and_reports() {
         let cache = UsageFailureCache::new();
         let base = Instant::now();
-        cache.record(base);
+        cache.record(FAIL_KEY, base);
         let later = base + Duration::from_secs(61);
         let calls = AtomicUsize::new(0);
-        let err = get_usage_with_cache(&cache, TTL, later, || {
+        let err = get_usage_with_cache(&cache, FAIL_KEY, TTL, later, || {
             calls.fetch_add(1, Ordering::SeqCst);
             async { Err("GET /teams/me/usage failed (500 Internal Server Error): ".to_string()) }
         })
@@ -592,7 +622,7 @@ mod tests {
             "re-probe failure reports"
         );
         assert!(
-            cache.is_fresh(later, TTL),
+            cache.is_fresh(FAIL_KEY, later, TTL),
             "streak re-anchored at the new probe"
         );
     }
@@ -602,15 +632,15 @@ mod tests {
     async fn success_clears_streak() {
         let cache = UsageFailureCache::new();
         let base = Instant::now();
-        cache.record(base);
+        cache.record(FAIL_KEY, base);
         let later = base + Duration::from_secs(61); // stale → fetch runs
-        let outcome = get_usage_with_cache(&cache, TTL, later, || async {
+        let outcome = get_usage_with_cache(&cache, FAIL_KEY, TTL, later, || async {
             Ok(serde_json::json!({"remainingUsd": 5.0}))
         })
         .await
         .expect("success");
         assert_eq!(outcome.value["remainingUsd"], 5.0);
-        assert!(!cache.is_fresh(later, TTL), "success cleared the streak");
+        assert!(!cache.is_fresh(FAIL_KEY, later, TTL), "success cleared the streak");
     }
 
     // T5 — session-expiry must flow verbatim and must NOT anchor the window
@@ -619,7 +649,7 @@ mod tests {
     async fn session_expiry_bypasses_backoff() {
         let cache = UsageFailureCache::new();
         let base = Instant::now();
-        let err = get_usage_with_cache(&cache, TTL, base, || async {
+        let err = get_usage_with_cache(&cache, FAIL_KEY, TTL, base, || async {
             Err(
                 "SESSION_EXPIRED: backend rejected session token on GET /teams/me/usage"
                     .to_string(),
@@ -633,7 +663,7 @@ mod tests {
         );
         assert!(!is_suppressed_usage_probe_backoff(&err));
         assert!(
-            !cache.is_fresh(base, TTL),
+            !cache.is_fresh(FAIL_KEY, base, TTL),
             "session-expiry must not start a backoff streak"
         );
     }
@@ -643,8 +673,8 @@ mod tests {
     async fn produced_sentinel_is_classified() {
         let cache = UsageFailureCache::new();
         let base = Instant::now();
-        cache.record(base);
-        let err = get_usage_with_cache(&cache, TTL, base, || async {
+        cache.record(FAIL_KEY, base);
+        let err = get_usage_with_cache(&cache, FAIL_KEY, TTL, base, || async {
             unreachable!("fresh window short-circuits")
         })
         .await
