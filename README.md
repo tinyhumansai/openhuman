@@ -62,18 +62,20 @@
 
 # Install
 
-Download installers from [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) or from the [GitHub Releases](https://github.com/tinyhumansai/openhuman/releases/latest) page. For terminal installs, the native package paths below are preferred — they ride your OS package-manager's signing chain.
+Download installers from [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) or from the [GitHub Releases](https://github.com/tinyhumansai/openhuman/releases/latest) page. For terminal installs, the native package paths below are preferred where available — they ride your OS package-manager's signing chain.
 
 ## Recommended install (native packages)
 
-These paths verify the artifact through your OS package manager's signing chain (Homebrew bottle hash, signed apt repo, MSI signature).
+These paths verify the artifact through native package signing or your OS package manager's signing chain (signed DMG, signed apt repo, MSI signature).
 
-**macOS (Homebrew tap):**
+**macOS (Homebrew Cask):**
 
 ```bash
 brew tap tinyhumansai/core
 brew install openhuman
 ```
+
+If the tap has not been published for your release yet, download the signed `.dmg` from the [latest release](https://github.com/tinyhumansai/openhuman/releases/latest) or from [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme).
 
 **Linux (Debian/Ubuntu — signed apt repo):**
 
