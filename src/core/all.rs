@@ -627,7 +627,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         ),
         "meet" => Some(
             "Validate Google Meet call-join requests and mint a request_id; the desktop \
-             shell opens the embedded CEF webview that joins the call as an anonymous guest.",
+             shell opens the embedded CEF webview that joins the call as an anonymous guest. \
+             Also provides meet_list_upcoming to fetch upcoming calendar meetings with \
+             conferencing links from connected Google Calendar accounts.",
         ),
         "meet_agent" => Some(
             "Live agent loop for an open Google Meet call: shell streams inbound PCM, \

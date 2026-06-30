@@ -1,7 +1,7 @@
 ---
 description: >-
   TokenJuice - a multi-stage compression router that compacts verbose tool
-  output and ingested data before it ever enters LLM context.
+  output before it ever enters LLM context.
 icon: file-zipper
 ---
 
@@ -9,7 +9,7 @@ icon: file-zipper
 
 LLM tokens are expensive, and verbose tool output is where most of them go to die. A `git status` in a busy repo, a `cargo build` log, a 600-message email thread, a `docker ps -a` against a real cluster — each can balloon a context window for almost no information gain.
 
-OpenHuman ships with **TokenJuice**, a compression router wired directly into the tool-execution and memory-ingestion paths. Before any tool result or ingested payload reaches a model, TokenJuice classifies it, routes it to a specialized compressor, optionally offloads the full original to a recoverable cache, and records how many tokens (and dollars) it saved.
+OpenHuman ships with **TokenJuice**, a compression router wired directly into the agent's tool-execution path. Before any tool result reaches a model, TokenJuice classifies it, routes it to a specialized compressor, optionally offloads the full original to a recoverable cache, and records how many tokens (and dollars) it saved.
 
 It began as a port of [vincentkoc/tokenjuice](https://github.com/vincentkoc/tokenjuice) — that JSON rule overlay is still in here as the log/command compressor — but it has since grown into a multi-stage, content-aware pipeline.
 
@@ -19,8 +19,8 @@ It began as a port of [vincentkoc/tokenjuice](https://github.com/vincentkoc/toke
 
 Every blob that flows through `compact_tool_output(...)` takes the same path (`src/openhuman/tokenjuice/compress.rs`):
 
-```
-raw tool result / ingested payload
+```text
+raw tool result
         │
         ▼
 1. Size gate          router enabled? input ≥ min_bytes_to_compress (2 KB)?
@@ -104,7 +104,7 @@ So the agent gets the cheap compacted view by default, and can transparently "zo
 
 Every compression is metered (`src/openhuman/tokenjuice/savings.rs`). TokenJuice tracks events, original vs. compacted tokens, tokens saved, and **estimated cost saved in USD** (using per-model input pricing) — aggregated `total`, `by_model`, and `by_compressor`. Stats persist to `<workspace>/state/tokenjuice_savings.json` and survive restarts.
 
-Read them over RPC with `tokenjuice.savings_stats`; clear them with `tokenjuice.savings_reset`.
+Read them over RPC with `openhuman.tokenjuice_savings_stats`; clear them with `openhuman.tokenjuice_savings_reset`.
 
 ***
 
@@ -130,15 +130,17 @@ Everything lives under the `[tokenjuice]` config block (`src/openhuman/config/sc
 * **Thresholds:** `min_bytes_to_compress`, `ccr_min_tokens`.
 * **CCR:** `ccr_enabled`, `ccr_disk_enabled`, `max_cache_entries`, `max_cache_bytes`, `ccr_ttl_secs`.
 * **Per-kind:** `search_enabled`, `code_enabled`, `html_enabled`, plus the `ml_*` keys.
-* **RPC** (`tokenjuice.*`): `detect`, `compress` (dry-run the pipeline), `settings_get` / `settings_update` (live partial patch), `cache_stats`, `retrieve`, `savings_stats`, `savings_reset`.
+* **RPC** (`openhuman.tokenjuice_*`): `detect`, `compress` (dry-run the pipeline), `settings_get` / `settings_update` (live partial patch), `cache_stats`, `retrieve`, `savings_stats`, `savings_reset`.
 * **Agent tool:** `tokenjuice_retrieve` (read-only) recovers offloaded originals.
 * **Debugging:** start the core with `RUST_LOG=openhuman_core::openhuman::tokenjuice=debug` to watch detection, matching, and how much each blob is trimmed.
 
 ***
 
-## Why this matters for memory
+## Why this matters
 
-TokenJuice is what makes [auto-fetch](obsidian-wiki/auto-fetch.md) economically viable. When the Gmail provider syncs a page of 200 messages, TokenJuice compacts each canonicalized email _before_ it enters the model that builds [Memory Tree](obsidian-wiki/memory-tree.md) summaries. The same applies to GitHub diffs, Slack dumps, and any other firehose source. Concretely: ingesting six months of email through a frontier model costs single-digit dollars instead of hundreds.
+Agents live or die by their context budget. A single working session can fan out across dozens of tool calls — greps, builds, test runs, `git` output, and large [web-fetch / scrape](native-tools/web-scraper.md) results the agent pulls down. TokenJuice sits on that tool-execution path and compacts each result before it lands in context, so an agent can sweep a noisy repo or a long web page without each step ballooning the window. The savings compound across a session and are metered in real dollars (see [Billing, Cost & Usage](billing-and-usage.md)).
+
+> **Scope note.** TokenJuice runs on the agent's **tool results**, not on the background [auto-fetch](obsidian-wiki/auto-fetch.md) ingestion pipeline. The 20-minute sync that builds the [Memory Tree](obsidian-wiki/memory-tree.md) has its own canonicalization and chunking and does not route payloads through TokenJuice today.
 
 ***
 

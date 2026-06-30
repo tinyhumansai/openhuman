@@ -201,15 +201,24 @@ export default function Intelligence({ tabParamKey = 'tab' }: IntelligenceProps 
   const activeTabDef = tabs.find(tab => tab.id === activeTab);
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('settings.developerMenu.intelligence.title')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
+    // Rendered inside Brain's `h-full overflow-hidden` card, so this panel must
+    // own its own scroll (like the sibling PanelPage panels) — otherwise its
+    // content overflows the card and is clipped with no scrollbar (#4267). A
+    // flex column pins the header (`flex-shrink-0`) and gives the body the one
+    // vertical scroll (`min-h-0 flex-1 overflow-y-auto`).
+    <div className="z-10 relative flex h-full min-h-0 flex-col">
+      <div className="flex-shrink-0">
+        <SettingsHeader
+          title={t('settings.developerMenu.intelligence.title')}
+          showBackButton={true}
+          onBack={navigateBack}
+          breadcrumbs={breadcrumbs}
+        />
+      </div>
 
-      <div className="p-4 space-y-4">
+      <div
+        className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4"
+        data-testid="intelligence-scroll">
         <ChipTabs<IntelligenceTab>
           items={tabs.map(tab => ({
             id: tab.id,

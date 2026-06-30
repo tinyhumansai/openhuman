@@ -27,7 +27,7 @@ Once paired, the device shows up in **Settings → Devices** on the desktop with
 
 ## Pairing via QR code
 
-```
+```text
 Desktop core                         Backend relay              iOS app
      |                                     |                        |
      |-- devices_create_pairing RPC        |                        |

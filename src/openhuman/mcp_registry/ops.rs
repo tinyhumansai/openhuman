@@ -70,8 +70,9 @@ pub async fn mcp_clients_registry_get(
         .map_err(|e| e.to_string())?;
 
     // Augment the response with required_env_keys derived from the connection
-    // config_schema so the frontend install dialog can build its input form.
-    let required_env_keys = collect_required_env_keys(&detail);
+    // the install will actually use (shared with the setup-agent path), so the
+    // frontend install dialog prompts only for what the picked transport needs.
+    let required_env_keys = super::setup_ops::collect_required_env_keys(&detail);
     let mut server_value =
         serde_json::to_value(&detail).map_err(|e| format!("serialization error: {e}"))?;
     if let Some(obj) = server_value.as_object_mut() {
@@ -107,6 +108,58 @@ pub async fn mcp_clients_installed_list(config: &Config) -> Result<RpcOutcome<Va
 
 // ── install ───────────────────────────────────────────────────────────────────
 
+/// Refresh supplied env/config onto an already-installed row and return the
+/// idempotent install outcome (`already_installed: true`). Shared by the
+/// fast-path (the service was already present when install was called) and the
+/// race-loss path (a concurrent install won the insert). Env is MERGED over the
+/// stored values — same semantics as `update_env` — so a partial dialog
+/// submission doesn't erase keys it didn't resend. A failed env read is
+/// propagated rather than treated as an empty base (which could silently drop
+/// stored keys on the subsequent write).
+fn refresh_existing_install(
+    config: &Config,
+    mut existing: InstalledServer,
+    env: &HashMap<String, String>,
+    config_value: &Option<Value>,
+    canonical_name: &str,
+) -> Result<RpcOutcome<Value>, String> {
+    let mut refreshed = false;
+    if !env.is_empty() {
+        let mut merged = store::load_env_values(config, &existing.server_id)
+            .map_err(|e| format!("Failed to load existing env values: {e}"))?;
+        merged.extend(env.clone());
+        store::set_env_values(config, &existing.server_id, &merged).map_err(|e| e.to_string())?;
+        let mut keys: Vec<String> = merged.keys().cloned().collect();
+        keys.sort();
+        if existing.env_keys != keys {
+            store::update_server_env_keys(config, &existing.server_id, &keys)
+                .map_err(|e| e.to_string())?;
+            existing.env_keys = keys;
+        }
+        refreshed = true;
+    }
+    if let Some(cfg) = config_value.clone() {
+        store::update_server_config(config, &existing.server_id, Some(&cfg))
+            .map_err(|e| e.to_string())?;
+        existing.config = Some(cfg);
+        refreshed = true;
+    }
+    tracing::debug!(
+        "[mcp-client] install no-op{} for {} (server_id={})",
+        if refreshed {
+            " (refreshed env/config)"
+        } else {
+            ""
+        },
+        canonical_name,
+        existing.server_id
+    );
+    Ok(RpcOutcome::new(
+        json!({ "server": existing, "already_installed": true }),
+        vec![format!("already installed qualified_name={canonical_name}")],
+    ))
+}
+
 pub async fn mcp_clients_install(
     config: &Config,
     qualified_name: String,
@@ -123,8 +176,35 @@ pub async fn mcp_clients_install(
         env.keys().collect::<Vec<_>>()
     );
 
-    // Fetch registry detail to resolve command/args/env_keys
-    let detail = registry::registry_get(config, qualified_name.trim())
+    // A source-routed install (`<source>::<qualified_name>`, e.g.
+    // `smithery::@org/server`) carries a registry prefix purely so
+    // `registry_get` can route to the right adapter. The catalog stores and
+    // dedups on the bare qualified_name, so the prefix must be stripped before
+    // the idempotency check and when persisting — otherwise a server installed
+    // once via the catalog (bare name) and again via a source-routed name would
+    // write a second row for the same service.
+    let routing_name = qualified_name.trim();
+    let canonical_name = routing_name
+        .split_once("::")
+        .map(|(_, rest)| rest)
+        .unwrap_or(routing_name);
+
+    // Idempotent install: one server per (bare) qualified_name. If this service
+    // is already installed, refresh any supplied env/config onto the existing
+    // row instead of writing a second one (the table PK is server_id, so nothing
+    // else prevents duplicates). The refresh matters because the install dialog
+    // awaits connect() right after install — a user re-running it to replace an
+    // expired token must not silently reconnect with the stale secret.
+    if let Some(existing) =
+        store::find_server_by_qualified_name(config, canonical_name).map_err(|e| e.to_string())?
+    {
+        return refresh_existing_install(config, existing, &env, &config_value, canonical_name);
+    }
+
+    // Fetch registry detail to resolve command/args/env_keys. Use the full
+    // routing name (with any `<source>::` prefix) so registry_get reaches the
+    // correct adapter even when that registry is search-gated.
+    let detail = registry::registry_get(config, routing_name)
         .await
         .map_err(|e| format!("Failed to fetch registry detail: {e}"))?;
 
@@ -137,11 +217,11 @@ pub async fn mcp_clients_install(
     let picked = super::setup_ops::pick_connection(&detail.connections).ok_or_else(|| {
         format!(
             "server `{}` exposes neither stdio nor http_remote connections; nothing to install",
-            qualified_name.trim()
+            canonical_name
         )
     })?;
     let (transport, command_kind, command, args) =
-        super::setup_ops::build_install_transport(qualified_name.trim(), picked)?;
+        super::setup_ops::build_install_transport(canonical_name, picked)?;
 
     // Derive required env keys from provided map + schema
     let env_keys: Vec<String> = env.keys().cloned().collect();
@@ -154,7 +234,7 @@ pub async fn mcp_clients_install(
 
     let server = InstalledServer {
         server_id: server_id.clone(),
-        qualified_name: qualified_name.trim().to_string(),
+        qualified_name: canonical_name.to_string(),
         display_name: detail.display_name.clone(),
         description: detail.description.clone(),
         icon_url: detail.icon_url.clone(),
@@ -169,7 +249,18 @@ pub async fn mcp_clients_install(
         enabled: true,
     };
 
-    store::insert_server(config, &server).map_err(|e| e.to_string())?;
+    // Insert only if no row for this canonical name exists yet, atomically — the
+    // `find_server_by_qualified_name` above and this insert are separated by the
+    // awaited `registry_get`, so two concurrent installs of the same service
+    // could otherwise both miss and write duplicate rows (the table PK is
+    // `server_id`, which doesn't prevent that). If we lost that race, refresh
+    // onto the row the winner created instead of leaving a duplicate.
+    if !store::insert_server_if_absent(config, &server).map_err(|e| e.to_string())? {
+        let existing = store::find_server_by_qualified_name(config, canonical_name)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "install raced but the existing row could not be found".to_string())?;
+        return refresh_existing_install(config, existing, &env, &server.config, canonical_name);
+    }
     store::set_env_values(config, &server_id, &env).map_err(|e| e.to_string())?;
 
     tracing::debug!(
@@ -720,9 +811,9 @@ pub async fn mcp_clients_config_assist(
         .await
         .map_err(|e| format!("Failed to fetch registry detail: {e}"))?;
 
-    // Collect required env keys from connections (if already known) or from any
-    // registered schema in the connection detail.
-    let required_env_keys: Vec<String> = collect_required_env_keys(&detail);
+    // Collect required env keys from the connection the install will use (shared
+    // with the setup-agent + install-dialog paths).
+    let required_env_keys: Vec<String> = super::setup_ops::collect_required_env_keys(&detail);
 
     let system_prompt = build_config_assist_system_prompt(
         &detail.display_name,
@@ -775,26 +866,6 @@ fn build_config_assist_system_prompt(
          `suggested_env` (an object mapping env var names to values, or null if none detected). \
          Do not include any text outside the JSON object."
     )
-}
-
-fn collect_required_env_keys(detail: &super::types::SmitheryServerDetail) -> Vec<String> {
-    let mut keys = Vec::new();
-    for conn in &detail.connections {
-        // Collect required inputs from every connection type. stdio inputs are
-        // process env vars; http / http_remote inputs are request headers
-        // (e.g. `Authorization`) declared via the registry's `remotes[].headers`
-        // — both are user-supplied secrets the install form must render.
-        if let Some(schema) = &conn.config_schema {
-            if let Some(props) = schema.get("properties").and_then(Value::as_object) {
-                for key in props.keys() {
-                    if !keys.contains(key) {
-                        keys.push(key.clone());
-                    }
-                }
-            }
-        }
-    }
-    keys
 }
 
 /// Invoke a lightweight inference call for config_assist.
@@ -923,7 +994,7 @@ mod tests {
             source: "smithery".to_string(),
             extra: Default::default(),
         };
-        let keys = collect_required_env_keys(&detail);
+        let keys = crate::openhuman::mcp_registry::setup_ops::collect_required_env_keys(&detail);
         assert!(keys.contains(&"API_KEY".to_string()));
         assert!(keys.contains(&"ENDPOINT".to_string()));
     }

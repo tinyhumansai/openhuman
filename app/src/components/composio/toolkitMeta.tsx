@@ -282,7 +282,8 @@ function ComposioLogoBadge({
   );
 }
 
-function composioLogoUrl(slug: string): string {
+/** Composio-hosted logo URL for a given toolkit slug. */
+export function composioLogoUrl(slug: string): string {
   return `https://logos.composio.dev/api/${slug}`;
 }
 

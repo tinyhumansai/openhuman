@@ -321,10 +321,20 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
         result.error === 'EMBEDDINGS_NO_MODEL_LOADED' ||
         result.error === 'EMBEDDINGS_VERIFICATION_FAILED'
       ) {
-        setSetupError(
+        // `result.message`/`result.detail` are backend-emitted (already
+        // context-specific); only the generic fallback is frontend-owned UI
+        // text, so route just that through useT() (#4056 CodeRabbit).
+        const baseMessage =
           typeof result.message === 'string'
             ? result.message
-            : "Couldn't verify the embeddings endpoint. Make sure it's running and serving an embedding model, then save again."
+            : t('settings.embeddings.verifyFallback');
+        // Append the underlying probe failure (HTTP status / server error body)
+        // so the user can self-diagnose instead of seeing only the generic
+        // message (#4056).
+        setSetupError(
+          typeof result.detail === 'string' && result.detail.trim()
+            ? `${baseMessage} (${result.detail})`
+            : baseMessage
         );
         setStatus({ kind: 'idle' });
         return;

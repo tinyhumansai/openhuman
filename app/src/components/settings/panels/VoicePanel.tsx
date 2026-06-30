@@ -553,6 +553,13 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
   const pendingLocalProviderReady =
     pendingKeySlug === 'whisper' ? whisperReady : pendingKeySlug === 'piper' ? piperReady : true;
 
+  // A local engine must finish downloading before its Test button does
+  // anything useful — exercising an un-installed Whisper/Piper just errors
+  // out on a missing model/binary. Cloud + external providers carry no
+  // local artifact, so they are never gated here.
+  const sttTestBlockedByInstall = sttProvider === 'whisper' && !whisperReady;
+  const ttsTestBlockedByInstall = ttsProvider === 'piper' && !piperReady;
+
   return (
     <PanelPage
       className="z-10"
@@ -1022,7 +1029,10 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
                       variant="secondary"
                       size="xs"
                       data-testid="test-stt-button"
-                      disabled={isTestingStt || !sttProvider}
+                      disabled={isTestingStt || !sttProvider || sttTestBlockedByInstall}
+                      title={
+                        sttTestBlockedByInstall ? t('voice.providers.notInstalled') : undefined
+                      }
                       onClick={async () => {
                         setIsTestingStt(true);
                         setSttTestResult(null);
@@ -1115,7 +1125,10 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
                       variant="secondary"
                       size="xs"
                       data-testid="test-tts-button"
-                      disabled={isTestingTts || !ttsProvider}
+                      disabled={isTestingTts || !ttsProvider || ttsTestBlockedByInstall}
+                      title={
+                        ttsTestBlockedByInstall ? t('voice.providers.notInstalled') : undefined
+                      }
                       onClick={async () => {
                         setIsTestingTts(true);
                         setTtsTestResult(null);

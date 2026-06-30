@@ -3,6 +3,7 @@ import { type Socket } from 'socket.io-client';
 
 import { getCoreStateSnapshot } from '../lib/coreState/store';
 import { SocketIOMCPTransportImpl } from '../lib/mcp';
+import { ingestRuntimeErrorSignal } from '../lib/userErrors/report';
 import { store } from '../store';
 import {
   setBackendMeetError,
@@ -428,6 +429,37 @@ class SocketService {
       }
       socketLog('companion:state_changed → %s', event.state);
       store.dispatch(setCompanionState(event));
+    });
+
+    // Permanent user-config / billing failures surfaced from background jobs
+    // (e.g. cron) — core broadcasts these to the "system" room as a
+    // metadata-only `user_error` event carrying a stable kind token in
+    // `error_type` (never a raw provider body). Routed through the same
+    // classifier the chat runtime uses so the UserErrorCenter renders them
+    // durably with a deep-link action, even though no chat thread is active.
+    // Producer: core cron scheduler `publish_cron_user_error` (#4165 /
+    // TAURI-RUST-HCK follow-up).
+    this.socket.on('user_error', (data: unknown) => {
+      const obj = data as Record<string, unknown> | null;
+      if (!obj) {
+        socketWarn('user_error dropped — empty payload');
+        return;
+      }
+      const errorType = typeof obj.error_type === 'string' ? obj.error_type : undefined;
+      const provider = typeof obj.error_provider === 'string' ? obj.error_provider : undefined;
+      const sourceDomain = typeof obj.error_source === 'string' ? obj.error_source : 'cron';
+      socketLog('user_error kind=%s source=%s', errorType ?? 'none', sourceDomain);
+      // Metadata-only ingest: forward the stable kind token + scope ONLY, never
+      // a raw `message` body. The cron producer already omits it, but we drop
+      // any `obj.message` here too so a future/buggy broadcast can't leak raw
+      // provider text into the UI — classify() keys on `errorType` for this
+      // path. Locks the no-leak contract FE-side (CodeRabbit #4169).
+      ingestRuntimeErrorSignal(store.dispatch, {
+        errorType,
+        scope: 'cron',
+        sourceDomain,
+        provider,
+      });
     });
 
     // Backend Meet bot events — forwarded from core's DomainEvent bus

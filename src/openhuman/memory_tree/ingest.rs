@@ -14,6 +14,7 @@ use chrono::{DateTime, Utc};
 use crate::openhuman::config::Config;
 use crate::openhuman::memory_store::chunks::store::with_connection;
 use crate::openhuman::memory_store::content::atomic::{stage_summary, StagedSummary};
+use crate::openhuman::memory_store::content::wiki_git::{SummaryCommitBatch, SummaryCommitEntry};
 use crate::openhuman::memory_store::content::SummaryComposeInput;
 use crate::openhuman::memory_store::trees::types::{SummaryNode, Tree, SUMMARY_FANOUT};
 use crate::openhuman::memory_tree::tree::factory::TreeFactory;
@@ -137,8 +138,13 @@ pub async fn ingest_summary(
         version_ms: None,
     };
 
+    let summary_commit = ingested_summary_batch(tree, &node, &staged.content_path);
+
     // Persist summary + update buffer in one transaction.
     persist_and_buffer(config, tree, &node, &staged, target_level)?;
+
+    commit_ingested_summary(config, &summary_commit)
+        .with_context(|| format!("commit ingested summary {summary_id} after DB persist"))?;
 
     // Cascade seals upward from L1 if the buffer crossed the fanout gate.
     let sealed_ids = cascade_from(config, tree, target_level).await?;
@@ -155,6 +161,34 @@ pub async fn ingest_summary(
         content_path: staged.content_path,
         sealed_ids,
     })
+}
+
+fn ingested_summary_batch(
+    tree: &Tree,
+    node: &SummaryNode,
+    content_path: &str,
+) -> SummaryCommitBatch {
+    SummaryCommitBatch {
+        reason: "summary_ingest".to_string(),
+        tree_id: tree.id.clone(),
+        tree_scope: tree.scope.clone(),
+        entries: vec![SummaryCommitEntry {
+            summary_id: node.id.clone(),
+            content_path: content_path.to_string(),
+            level: node.level,
+            child_count: node.child_ids.len(),
+            token_count: node.token_count,
+            time_range_start: node.time_range_start,
+            time_range_end: node.time_range_end,
+        }],
+    }
+}
+
+fn commit_ingested_summary(config: &Config, batch: &SummaryCommitBatch) -> Result<()> {
+    crate::openhuman::memory_store::content::wiki_git::commit_summaries(
+        &config.memory_tree_content_root(),
+        batch,
+    )
 }
 
 fn persist_and_buffer(

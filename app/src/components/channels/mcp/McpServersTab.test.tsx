@@ -134,6 +134,21 @@ describe('McpServersTab', () => {
     expect(screen.getByText('Author')).toBeInTheDocument();
   });
 
+  it('collapses duplicate installed servers to one row per qualified_name', async () => {
+    // Two legacy installs of the same service (distinct server_id, same slug).
+    const dupA = { ...SERVERS[0], server_id: 'srv-1', installed_at: 1 };
+    const dupB = { ...SERVERS[0], server_id: 'srv-2', installed_at: 2 };
+    mockInstalledList.mockResolvedValue([dupA, dupB]);
+    mockStatus.mockResolvedValue([]);
+
+    await renderAndWaitForLoad();
+    vi.useRealTimers();
+
+    await waitFor(() => expect(screen.getAllByText('File Server')).toHaveLength(1));
+    // The Installed chip count reflects the collapsed list.
+    expect(screen.getByText('Installed (1)')).toBeInTheDocument();
+  });
+
   it('renders filter chips — All, Installed, Registry', async () => {
     mockInstalledList.mockResolvedValue([]);
     mockStatus.mockResolvedValue([]);
@@ -235,7 +250,12 @@ describe('McpServersTab', () => {
     mockStatus.mockResolvedValue([]);
     mockRegistrySearch.mockResolvedValue({
       servers: [
-        { qualified_name: 'acme/new-srv', display_name: 'New Server', description: 'A new server' },
+        {
+          qualified_name: 'acme/new-srv',
+          display_name: 'New Server',
+          description: 'A new server',
+          official: true,
+        },
       ],
       page: 1,
       total_pages: 1,
@@ -250,11 +270,167 @@ describe('McpServersTab', () => {
     expect(screen.getByText('Install')).toBeInTheDocument();
   });
 
+  it('renders only one row per qualified_name when the registry returns duplicates', async () => {
+    mockInstalledList.mockResolvedValue([]);
+    mockStatus.mockResolvedValue([]);
+    mockRegistrySearch.mockResolvedValue({
+      servers: [
+        { qualified_name: 'acme/new-srv', display_name: 'New Server', official: true },
+        { qualified_name: 'acme/new-srv', display_name: 'New Server', official: true },
+      ],
+      page: 1,
+      total_pages: 1,
+    });
+
+    await renderAndWaitForLoad();
+    vi.useRealTimers();
+
+    await waitFor(() => expect(screen.getByText('New Server')).toBeInTheDocument());
+    expect(screen.getAllByText('New Server')).toHaveLength(1);
+  });
+
+  it('dedupes registry rows across "load more" pages that overlap', async () => {
+    mockInstalledList.mockResolvedValue([]);
+    mockStatus.mockResolvedValue([]);
+    mockRegistrySearch.mockImplementation(({ page }: { page: number }) =>
+      Promise.resolve(
+        page === 1
+          ? {
+              servers: [
+                { qualified_name: 'acme/a', display_name: 'Server A', official: true },
+                { qualified_name: 'acme/b', display_name: 'Server B', official: true },
+              ],
+              page: 1,
+              total_pages: 2,
+            }
+          : {
+              // page 2 overlaps page 1 on acme/b and adds acme/c
+              servers: [
+                { qualified_name: 'acme/b', display_name: 'Server B', official: true },
+                { qualified_name: 'acme/c', display_name: 'Server C', official: true },
+              ],
+              page: 2,
+              total_pages: 2,
+            }
+      )
+    );
+
+    await renderAndWaitForLoad();
+    vi.useRealTimers();
+
+    await waitFor(() => screen.getByText('Server A'));
+    fireEvent.click(screen.getByText('Load more'));
+
+    await waitFor(() => expect(screen.getByText('Server C')).toBeInTheDocument());
+    expect(screen.getAllByText('Server B')).toHaveLength(1);
+  });
+
+  it('distinguishes look-alike registry rows by slug and source badge', async () => {
+    mockInstalledList.mockResolvedValue([]);
+    mockStatus.mockResolvedValue([]);
+    mockRegistrySearch.mockResolvedValue({
+      servers: [
+        {
+          qualified_name: 'waystation/gmail',
+          display_name: 'gmail',
+          source: 'mcp_official',
+          official: true,
+        },
+        {
+          qualified_name: 'mintmcp/gmail',
+          display_name: 'gmail',
+          source: 'smithery',
+          official: true,
+        },
+      ],
+      page: 1,
+      total_pages: 1,
+    });
+
+    await renderAndWaitForLoad();
+    vi.useRealTimers();
+
+    // Both rows share the display name "gmail"...
+    await waitFor(() => expect(screen.getAllByText('gmail')).toHaveLength(2));
+    // ...but the unique slug and the registry-source badge tell them apart.
+    expect(screen.getByText('waystation/gmail')).toBeInTheDocument();
+    expect(screen.getByText('mintmcp/gmail')).toBeInTheDocument();
+    expect(screen.getByText('Official')).toBeInTheDocument();
+    expect(screen.getByText('Smithery')).toBeInTheDocument();
+  });
+
+  it('renders the registry as one list (no auth-method grouping) in registry order', async () => {
+    mockInstalledList.mockResolvedValue([]);
+    mockStatus.mockResolvedValue([]);
+    mockRegistrySearch.mockResolvedValue({
+      servers: [
+        { qualified_name: 'a/local-srv', display_name: 'Local One', is_deployed: false },
+        { qualified_name: 'b/hosted-srv', display_name: 'Hosted One', is_deployed: true },
+      ],
+      page: 1,
+      total_pages: 1,
+    });
+
+    await renderAndWaitForLoad();
+    vi.useRealTimers();
+
+    await waitFor(() => screen.getByText('Hosted One'));
+    // The misleading auth-method group headers are gone — `is_deployed` does not
+    // predict whether a server uses browser sign-in or wants a pasted token, so
+    // we no longer split on it. The real requirement surfaces on install.
+    expect(screen.queryByText('Browser sign-in')).not.toBeInTheDocument();
+    expect(screen.queryByText('Token / API key')).not.toBeInTheDocument();
+    // Rows keep their registry order (relevance), regardless of transport.
+    const tableText = screen.getByRole('table').textContent ?? '';
+    expect(tableText.indexOf('Local One')).toBeLessThan(tableText.indexOf('Hosted One'));
+    // Per-row Hosted/Local hint badges still render.
+    expect(screen.getByText('Hosted')).toBeInTheDocument();
+    expect(screen.getByText('Local')).toBeInTheDocument();
+  });
+
+  it('renders every returned row and badges only the official one, with no Show all toggle', async () => {
+    mockInstalledList.mockResolvedValue([]);
+    mockStatus.mockResolvedValue([]);
+    // The core keeps the full deduped catalog and marks the canonical
+    // first-party server with `official`. The tab renders every returned row
+    // (no client-side filtering) and badges only the official one.
+    mockRegistrySearch.mockResolvedValue({
+      servers: [
+        {
+          qualified_name: 'com.notion/mcp',
+          display_name: 'Notion',
+          is_deployed: true,
+          official: true,
+        },
+        {
+          qualified_name: 'ai.smithery/smithery-notion',
+          display_name: 'Community Notion',
+          is_deployed: true,
+          official: false,
+        },
+      ],
+      page: 1,
+      total_pages: 1,
+    });
+
+    await renderAndWaitForLoad();
+    vi.useRealTimers();
+
+    await waitFor(() => screen.getByText('Notion'));
+    // The community row still renders — nothing is hidden.
+    expect(screen.getByText('Community Notion')).toBeInTheDocument();
+    // Exactly one row carries the ✓ Official badge.
+    expect(screen.getByText(/Official/)).toBeInTheDocument();
+    // No verified/all toggle exists.
+    expect(screen.queryByText('Show all')).not.toBeInTheDocument();
+    expect(screen.queryByText('Verified only')).not.toBeInTheDocument();
+  });
+
   it('navigates to install view when a registry server row is clicked', async () => {
     mockInstalledList.mockResolvedValue([]);
     mockStatus.mockResolvedValue([]);
     mockRegistrySearch.mockResolvedValue({
-      servers: [{ qualified_name: 'acme/new-srv', display_name: 'New Server' }],
+      servers: [{ qualified_name: 'acme/new-srv', display_name: 'New Server', official: true }],
       page: 1,
       total_pages: 1,
     });
@@ -275,7 +451,7 @@ describe('McpServersTab', () => {
     mockInstalledList.mockResolvedValue([]);
     mockStatus.mockResolvedValue([]);
     mockRegistrySearch.mockResolvedValue({
-      servers: [{ qualified_name: 'acme/new-srv', display_name: 'New Server' }],
+      servers: [{ qualified_name: 'acme/new-srv', display_name: 'New Server', official: true }],
       page: 1,
       total_pages: 1,
     });
@@ -306,7 +482,7 @@ describe('McpServersTab', () => {
     mockInstalledList.mockResolvedValue([]);
     mockStatus.mockResolvedValue([]);
     mockRegistrySearch.mockResolvedValue({
-      servers: [{ qualified_name: 'acme/new-srv', display_name: 'New Server' }],
+      servers: [{ qualified_name: 'acme/new-srv', display_name: 'New Server', official: true }],
       page: 1,
       total_pages: 1,
     });
@@ -388,7 +564,7 @@ describe('McpServersTab', () => {
     mockInstalledList.mockRejectedValueOnce(new Error('Transient error'));
     mockStatus.mockResolvedValue([]);
     mockRegistrySearch.mockResolvedValue({
-      servers: [{ qualified_name: 'acme/new-srv', display_name: 'New Server' }],
+      servers: [{ qualified_name: 'acme/new-srv', display_name: 'New Server', official: true }],
       page: 1,
       total_pages: 1,
     });

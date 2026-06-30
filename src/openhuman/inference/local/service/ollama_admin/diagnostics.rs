@@ -297,12 +297,23 @@ impl LocalAiService {
         })?;
 
         let payload: OllamaTagsResponse = serde_json::from_str(&body).map_err(|e| {
-            tracing::error!(
+            // Defense-in-depth (TAURI-RUST-560, mirrors the A3T non-success
+            // branch above): a 2xx response whose body is not a JSON object at
+            // all (`OllamaTagsResponse` uses `#[serde(default)]` on `models`, so
+            // parse only fails when the body isn't a JSON object) means the
+            // configured Ollama port is answering with something else entirely
+            // — a different local server/proxy, a captive portal, an HTML page.
+            // That is an external/user-environment condition, not an openhuman
+            // code defect. The diagnostics caller already degrades gracefully
+            // (empty models + surfaces the failure to the UI as `tags_error`),
+            // so log at `warn!` (breadcrumb) instead of `error!` to avoid
+            // flooding Sentry on every diagnostics poll.
+            tracing::warn!(
                 target: "local_ai::ollama_admin",
                 %url,
                 body = %body,
                 error = %e,
-                "[local_ai:ollama_admin] list_models: JSON parse failed"
+                "[local_ai:ollama_admin] list_models: response body is not Ollama tags JSON"
             );
             format!("ollama tags parse failed: {e}")
         })?;
