@@ -281,6 +281,13 @@ const Conversations = ({
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<string | null>(null);
   const [isPlayingReply, setIsPlayingReply] = useState(false);
+  // Measured height of the floating composer footer (page variant only). The
+  // footer is `absolute`ly positioned over the scroll area, so the message list
+  // needs matching bottom padding to keep its tail visible. Defaults to 128px
+  // (the old static `pb-32`) so layout is unchanged until the ResizeObserver
+  // reports a real height — and grows automatically when the queued-followups
+  // panel, approval cards, or error banners expand the footer (#4268).
+  const [composerFooterHeight, setComposerFooterHeight] = useState(128);
   // Thread-list filtering is fixed to the General bucket — the in-sidebar
   // General/Subconscious/Tasks chips were removed. Subconscious reflections and
   // task/worker threads have dedicated surfaces (Intelligence, Tasks board).
@@ -346,6 +353,12 @@ const Conversations = ({
   );
   const streamingAssistantByThread = useAppSelector(
     state => state.chatRuntime.streamingAssistantByThread
+  );
+  // #4270: per-thread liveness counter bumped on each `inference_heartbeat`.
+  // Watched by the silence-timer rearm effect so a long prefill / buffered
+  // reasoning phase that streams no other progress still keeps the timer armed.
+  const inferenceHeartbeatByThread = useAppSelector(
+    state => state.chatRuntime.inferenceHeartbeatByThread
   );
   const parallelStreamsByThread = useAppSelector(
     state => state.chatRuntime.parallelStreamsByThread
@@ -444,6 +457,7 @@ const Conversations = ({
   }, [agentProfiles, selectedAgentProfileId]);
 
   const textInputRef = useRef<HTMLTextAreaElement>(null);
+  const composerFooterRef = useRef<HTMLDivElement>(null);
   const isComposingTextRef = useRef(false);
   // Threads with an in-flight send, guarding against double-submit to the SAME
   // thread. Per-thread (a Set) so a send to thread B isn't blocked by an
@@ -790,6 +804,10 @@ const Conversations = ({
         streamingAssistantByThread[threadId],
         toolTimelineByThread[threadId],
         taskBoardByThread[threadId],
+        // #4270: liveness beat. Kept LAST so the done-transition probe on
+        // `current[0]` (status) is unaffected; a beat alone still flips the
+        // `changed` check and rearms the timer through a silent reasoning phase.
+        inferenceHeartbeatByThread[threadId],
       ] as const;
       const previous = turnSignatureByThreadRef.current.get(threadId);
       const status = current[0];
@@ -812,6 +830,7 @@ const Conversations = ({
     streamingAssistantByThread,
     toolTimelineByThread,
     taskBoardByThread,
+    inferenceHeartbeatByThread,
   ]);
 
   useEffect(() => {
@@ -1760,6 +1779,27 @@ const Conversations = ({
   const isNewWindow =
     !isSidebar && !isLoadingMessages && !messagesError && !hasVisibleMessages && !hasTaskBoard;
 
+  // Track the floating composer footer's height so the message list can reserve
+  // matching bottom padding. In the page variant the footer is absolutely
+  // positioned over the scroll area, so a static padding (the old `pb-32`) gets
+  // overrun whenever the footer grows — most visibly when the "Queued
+  // follow-ups" panel appears mid-reply, hiding the tail of the response
+  // (#4268). The sidebar variant lays the composer out in normal flow and never
+  // overlaps, so we skip the observer there and keep its `pb-4`.
+  useEffect(() => {
+    if (isSidebar) return;
+    const el = composerFooterRef.current;
+    if (!el) return;
+    const measure = () => {
+      const next = Math.round(el.getBoundingClientRect().height);
+      if (next > 0) setComposerFooterHeight(next);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [isSidebar, selectedThreadId]);
+
   // Stable title resolver used by both the sidebar thread list and the header.
   const resolveThreadDisplayTitle = (threadId: string | null): string => {
     if (!threadId) return t('chat.selectThread');
@@ -2064,9 +2104,16 @@ const Conversations = ({
           </div>
         ) : hasVisibleMessages || hasTaskBoard ? (
           <div
+            data-testid="chat-message-list"
             className={`mx-auto w-full max-w-[48.75rem] space-y-3 px-5 pt-4 ${
-              isSidebar ? 'pb-4' : 'pb-32'
-            }`}>
+              isSidebar ? 'pb-4' : ''
+            }`}
+            // Page variant: reserve room for the absolutely-positioned floating
+            // composer footer so its tail stays visible. Tracks the footer's
+            // measured height (+16px gap) instead of a static `pb-32`, so the
+            // queued-followups panel and other dynamic footer content never
+            // overlap the last message (#4268).
+            style={!isSidebar ? { paddingBottom: composerFooterHeight + 16 } : undefined}>
             {visibleMessages.map(msg => {
               const isAgentTextMode = msg.sender === 'agent' && agentMessageViewMode === 'text';
               // Parsed once per message: for current messages (extraMetadata
@@ -2500,6 +2547,7 @@ const Conversations = ({
       )}
 
       <div
+        ref={composerFooterRef}
         data-walkthrough="home-cta"
         // Page variant: float at the bottom (absolute) over the fade; centered +
         // width-capped to match the messages. `z-20` keeps it above messages

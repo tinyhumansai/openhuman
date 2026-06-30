@@ -195,6 +195,7 @@ pub(crate) fn is_computer_use_only_action(action: &str) -> bool {
 pub(crate) fn backend_name(backend: ResolvedBackend) -> &'static str {
     match backend {
         ResolvedBackend::AgentBrowser => "agent_browser",
+        ResolvedBackend::Playwright => "playwright",
         ResolvedBackend::RustNative => "rust_native",
         ResolvedBackend::ComputerUse => "computer_use",
     }

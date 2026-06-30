@@ -39,6 +39,12 @@ vi.mock('./Mascot', async importOriginal => {
 
 vi.mock('./useHumanMascot', () => ({ useHumanMascot: () => ({ face: 'idle', visemes: [] }) }));
 
+// Keep the manifest fetch out of the unit test (no real network to GitHub).
+// entry:null exercises the bundled-default fallback branch (RiveMascot stub).
+vi.mock('./Mascot/manifest/useMascotManifest', () => ({
+  useMascotManifest: () => ({ manifest: null, entry: null, loading: false, error: null }),
+}));
+
 const SPEAK_REPLIES_KEY = 'human.speakReplies';
 
 function buildMinimalStore() {

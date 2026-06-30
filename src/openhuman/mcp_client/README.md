@@ -21,6 +21,7 @@ Reusable **MCP client transport library** plus a **read-only static server set**
 | `src/openhuman/mcp_client/mod.rs` | Export-focused: module docstring + `mod`/`pub use` re-exports of the transport types and registry. No logic. |
 | `src/openhuman/mcp_client/client.rs` | `McpHttpClient` (Streamable HTTP transport), shared MCP protocol types, SSE/`WWW-Authenticate` parsing, `render_tool_result`, `redact_endpoint`, `x-mcp-header` mirroring. Largest file; carries the inline test suite. |
 | `src/openhuman/mcp_client/stdio.rs` | `McpStdioClient` — subprocess spawn + newline-delimited JSON-RPC over stdin/stdout, single cached `StdioSession`. |
+| `src/openhuman/mcp_client/spawn_env.rs` | PATH reconstruction for stdio children: probes the user's login shell (`$SHELL -ilc`) + well-known version-manager dirs (nvm/volta/bun/Homebrew), caches the result, and resolves the command up front so missing `npx`/`uvx` fails with actionable guidance. |
 | `src/openhuman/mcp_client/registry.rs` | `McpServerRegistry`, `McpServerDefinition`, `McpTransportClient` (Http/Stdio dispatch enum), `McpRegistrySource`; builds the static set from `Config`, applies allow/deny tool filtering. |
 
 ## Public surface
@@ -84,3 +85,4 @@ External crates: `reqwest` (HTTP), `tokio` (process + async IO + `sync::Mutex`),
 - The legacy `gitbooks` server is only auto-seeded when `config.gitbooks.enabled` and no explicit server named `gitbooks` exists (explicit config wins, flipping `source` from `LegacyGitbooks` to `Config`).
 - `redact_endpoint` returns `<redacted>` for any URL containing userinfo (`@`) or a non-`http(s)` scheme — used in all log/error output so endpoints never leak credentials.
 - `McpStdioClient` discards child stderr (`Stdio::null()`) and skips non-JSON stdout lines (logged at debug); the session is a single cached `StdioSession` guarded by a tokio `Mutex`.
+- Stdio children inherit a **reconstructed PATH** (`spawn_env::spawn_path`), not the GUI-stripped process PATH, so `npx`/`uvx` servers spawn the same way a terminal would. A config-provided `PATH` env still overrides it. The command is resolved before spawn; a missing Node/uv runtime surfaces actionable install guidance instead of a raw `ENOENT` (#4279).

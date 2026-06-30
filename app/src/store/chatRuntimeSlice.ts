@@ -412,6 +412,15 @@ interface ChatRuntimeState {
   inferenceStatusByThread: Record<string, InferenceStatus>;
   streamingAssistantByThread: Record<string, StreamingAssistantState>;
   /**
+   * Monotonically-bumped liveness counter per thread, advanced on every
+   * `inference_heartbeat` socket event the core emits while a turn is in flight
+   * (issue #4270). The Conversations silence timer watches this alongside the
+   * status/stream/tool/board slices, so a long prefill or buffered-reasoning
+   * phase that emits no other progress still rearms the timer and avoids a
+   * false "no response after 2 minutes" timeout. Cleared on turn end.
+   */
+  inferenceHeartbeatByThread: Record<string, number>;
+  /**
    * Threads with an optimistic user send in flight, set the instant the user
    * sends (before `addMessageLocal` resolves and before any streaming state
    * exists). Lets global surfaces — e.g. the New Chat shortcut — tell a
@@ -503,6 +512,7 @@ export interface QueuedFollowup {
 const initialState: ChatRuntimeState = {
   inferenceStatusByThread: {},
   streamingAssistantByThread: {},
+  inferenceHeartbeatByThread: {},
   pendingSendThreadIds: {},
   parallelStreamsByThread: {},
   parallelRequestThreads: {},
@@ -755,6 +765,15 @@ const chatRuntimeSlice = createSlice({
     },
     clearInferenceStatusForThread: (state, action: PayloadAction<{ threadId: string }>) => {
       delete state.inferenceStatusByThread[action.payload.threadId];
+    },
+    /**
+     * Bump a thread's liveness counter on each `inference_heartbeat` (issue
+     * #4270). The value is opaque — only the *change* matters to the silence
+     * timer's signature comparison. Wraps via modulo to stay a small integer.
+     */
+    bumpInferenceHeartbeatForThread: (state, action: PayloadAction<{ threadId: string }>) => {
+      const prev = state.inferenceHeartbeatByThread[action.payload.threadId] ?? 0;
+      state.inferenceHeartbeatByThread[action.payload.threadId] = (prev + 1) % 1_000_000;
     },
     setStreamingAssistantForThread: (
       state,
@@ -1181,6 +1200,7 @@ const chatRuntimeSlice = createSlice({
     clearRuntimeForThread: (state, action: PayloadAction<{ threadId: string }>) => {
       delete state.inferenceStatusByThread[action.payload.threadId];
       delete state.streamingAssistantByThread[action.payload.threadId];
+      delete state.inferenceHeartbeatByThread[action.payload.threadId];
       // Drop any parallel (forked) streams for this thread and their
       // request→thread mappings — a hard per-thread reset covers every branch.
       const parallelStreams = state.parallelStreamsByThread[action.payload.threadId];
@@ -1208,6 +1228,7 @@ const chatRuntimeSlice = createSlice({
     clearAllChatRuntime: state => {
       state.inferenceStatusByThread = {};
       state.streamingAssistantByThread = {};
+      state.inferenceHeartbeatByThread = {};
       state.parallelStreamsByThread = {};
       state.parallelRequestThreads = {};
       state.toolTimelineByThread = {};
@@ -1398,6 +1419,7 @@ const chatRuntimeSlice = createSlice({
 export const {
   setInferenceStatusForThread,
   clearInferenceStatusForThread,
+  bumpInferenceHeartbeatForThread,
   setStreamingAssistantForThread,
   clearStreamingAssistantForThread,
   markThreadSendPending,

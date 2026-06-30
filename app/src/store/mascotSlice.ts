@@ -110,12 +110,12 @@ export interface MascotState {
    */
   voiceUseLocaleDefault: boolean;
   /**
-   * Server-side mascot id selected from the backend mascot library
-   * (PR tinyhumansai/backend#770). `null` keeps the local YellowMascot
-   * renderer; any non-empty value tells `BackendMascot` (loaded via
-   * `mascotService`) to take over. The id is opaque server-side and
-   * length-capped at the same threshold as voiceId to keep the
-   * persisted blob bounded.
+   * Mascot id selected from the published GitHub manifest
+   * (`tinyhumansai/mascots`, resolved via `useMascotManifest`). `null` falls
+   * back to the manifest's default (first `ready`) mascot; any non-empty value
+   * pins that specific mascot. The id is the manifest entry id (e.g.
+   * `tiny-mascot`) and length-capped at the same threshold as voiceId to keep
+   * the persisted blob bounded.
    */
   selectedMascotId: string | null;
   /**

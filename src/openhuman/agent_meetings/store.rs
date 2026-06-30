@@ -1,5 +1,7 @@
 //! SQLite persistence for `MeetingSession` records.
 
+use std::collections::HashMap;
+
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 
@@ -25,6 +27,11 @@ CREATE INDEX IF NOT EXISTS idx_meeting_sessions_status
     ON meeting_sessions(status);
 CREATE INDEX IF NOT EXISTS idx_meeting_sessions_meet_url
     ON meeting_sessions(meet_url);
+CREATE TABLE IF NOT EXISTS meeting_event_policies (
+    calendar_event_id TEXT PRIMARY KEY,
+    policy            TEXT NOT NULL,
+    updated_at_ms     INTEGER NOT NULL
+);
 ";
 
 fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
@@ -240,6 +247,67 @@ pub fn mark_summary_generated(config: &Config, id: &str, now_ms: u64) -> Result<
     })
 }
 
+/// Persist or replace the join-policy override for a specific calendar event.
+///
+/// The `policy` must be one of "auto" | "ask" | "skip" — anything else is
+/// rejected with an error so the table cannot accumulate invalid values.
+pub fn set_event_policy(config: &Config, calendar_event_id: &str, policy: &str) -> Result<()> {
+    if !matches!(policy, "auto" | "ask" | "skip") {
+        anyhow::bail!(
+            "[meetings::store] set_event_policy: unknown policy {:?} (valid: auto, ask, skip)",
+            policy
+        );
+    }
+    with_connection(config, |conn| {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        conn.execute(
+            "INSERT OR REPLACE INTO meeting_event_policies (calendar_event_id, policy, updated_at_ms) VALUES (?1, ?2, ?3)",
+            rusqlite::params![calendar_event_id, policy, now_ms],
+        )?;
+        Ok(())
+    })
+}
+
+/// Retrieve the join-policy override for a specific calendar event. Returns
+/// `None` when no override has been stored.
+pub fn get_event_policy(config: &Config, calendar_event_id: &str) -> Result<Option<String>> {
+    with_connection(config, |conn| {
+        let mut stmt =
+            conn.prepare("SELECT policy FROM meeting_event_policies WHERE calendar_event_id = ?1")?;
+        let mut rows = stmt.query(rusqlite::params![calendar_event_id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(row.get(0)?))
+        } else {
+            Ok(None)
+        }
+    })
+}
+
+/// Retrieve join-policy overrides for a batch of calendar event IDs in a
+/// single database connection. IDs without a stored override are omitted from
+/// the returned map.
+pub fn get_event_policies_batch(config: &Config, ids: &[&str]) -> Result<HashMap<String, String>> {
+    with_connection(config, |conn| {
+        let mut map = HashMap::new();
+        if ids.is_empty() {
+            return Ok(map);
+        }
+        // Prepare the SELECT once and reuse it for every id — not once per id.
+        let mut stmt =
+            conn.prepare("SELECT policy FROM meeting_event_policies WHERE calendar_event_id = ?1")?;
+        for &id in ids {
+            let mut rows = stmt.query(rusqlite::params![id])?;
+            if let Some(row) = rows.next()? {
+                map.insert(id.to_string(), row.get(0)?);
+            }
+        }
+        Ok(map)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,5 +430,127 @@ mod tests {
         let (config, _dir) = test_config();
         let result = get_session(&config, "nonexistent").unwrap();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn set_get_event_policy() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut config = Config::default();
+        config.workspace_dir = dir.path().to_path_buf();
+        set_event_policy(&config, "evt-1", "auto").unwrap();
+        let result = get_event_policy(&config, "evt-1").unwrap();
+        assert_eq!(result, Some("auto".to_string()));
+    }
+
+    #[test]
+    fn set_overwrites() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut config = Config::default();
+        config.workspace_dir = dir.path().to_path_buf();
+        set_event_policy(&config, "evt-2", "auto").unwrap();
+        set_event_policy(&config, "evt-2", "skip").unwrap();
+        let result = get_event_policy(&config, "evt-2").unwrap();
+        assert_eq!(result, Some("skip".to_string()));
+    }
+
+    #[test]
+    fn missing_event_policy_returns_none() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut config = Config::default();
+        config.workspace_dir = dir.path().to_path_buf();
+        let result = get_event_policy(&config, "nonexistent-evt").unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn batch_policies_round_trip() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut config = Config::default();
+        config.workspace_dir = dir.path().to_path_buf();
+        set_event_policy(&config, "evt-a", "auto").unwrap();
+        set_event_policy(&config, "evt-b", "skip").unwrap();
+        let map = get_event_policies_batch(&config, &["evt-a", "evt-b", "evt-missing"]).unwrap();
+        assert_eq!(map.len(), 2);
+        assert_eq!(map.get("evt-a"), Some(&"auto".to_string()));
+        assert_eq!(map.get("evt-b"), Some(&"skip".to_string()));
+        assert!(!map.contains_key("evt-missing"));
+    }
+
+    // ── policy validation (finding #5) ──────────────────────────
+
+    #[test]
+    fn set_event_policy_accepts_all_known_values() {
+        let (config, _dir) = test_config();
+        set_event_policy(&config, "evt-auto", "auto").unwrap();
+        set_event_policy(&config, "evt-ask", "ask").unwrap();
+        set_event_policy(&config, "evt-skip", "skip").unwrap();
+        assert_eq!(
+            get_event_policy(&config, "evt-auto").unwrap().as_deref(),
+            Some("auto")
+        );
+        assert_eq!(
+            get_event_policy(&config, "evt-ask").unwrap().as_deref(),
+            Some("ask")
+        );
+        assert_eq!(
+            get_event_policy(&config, "evt-skip").unwrap().as_deref(),
+            Some("skip")
+        );
+    }
+
+    #[test]
+    fn set_event_policy_rejects_unknown_value() {
+        let (config, _dir) = test_config();
+        let err = set_event_policy(&config, "evt-bad", "invalid").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("invalid") || msg.contains("unknown"),
+            "error must describe the rejected value: {msg}"
+        );
+        // Must NOT have been persisted.
+        assert!(
+            get_event_policy(&config, "evt-bad").unwrap().is_none(),
+            "unknown policy must not be written to the store"
+        );
+    }
+
+    #[test]
+    fn set_event_policy_rejects_empty_string() {
+        let (config, _dir) = test_config();
+        let err = set_event_policy(&config, "evt-empty", "").unwrap_err();
+        assert!(
+            err.to_string().contains("unknown") || err.to_string().contains("valid"),
+            "empty string should be rejected: {err}"
+        );
+    }
+
+    #[test]
+    fn session_calendar_event_id_persisted_and_retrieved() {
+        // Regression test for finding #3: calendar_event_id on a session must
+        // survive the store round-trip (was previously stored as None).
+        let (config, _dir) = test_config();
+        let now_ms = 99_000u64;
+        let session = MeetingSession {
+            id: "sess-cev-test".into(),
+            meet_url: "https://meet.google.com/cev-test".into(),
+            title: Some("Finding #3 test meeting".into()),
+            calendar_event_id: Some("actual-calendar-event-id-xyz".into()),
+            status: MeetingSessionStatus::Joined,
+            source: AutoJoinSource::Calendar,
+            thread_id: None,
+            transcript_received: false,
+            summary_generated: false,
+            created_at_ms: now_ms,
+            updated_at_ms: now_ms,
+        };
+        create_session(&config, &session).unwrap();
+        let fetched = get_session(&config, "sess-cev-test")
+            .unwrap()
+            .expect("session must exist");
+        assert_eq!(
+            fetched.calendar_event_id.as_deref(),
+            Some("actual-calendar-event-id-xyz"),
+            "calendar_event_id must survive store round-trip"
+        );
     }
 }

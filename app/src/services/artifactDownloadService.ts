@@ -70,6 +70,22 @@ export interface DeleteArtifactOutcome {
   error?: string;
 }
 
+export type ListedArtifactKind = 'presentation' | 'document' | 'image' | 'other';
+
+export interface ListedThreadArtifact {
+  artifactId: string;
+  kind: ListedArtifactKind;
+  title: string;
+  path: string;
+  sizeBytes: number;
+}
+
+export interface ListThreadArtifactsOutcome {
+  ok: boolean;
+  artifacts: ListedThreadArtifact[];
+  error?: string;
+}
+
 /**
  * Shape of the `data` field returned by the
  * `openhuman.ai_get_artifact` JSON-RPC method. We pull only the
@@ -88,6 +104,78 @@ interface ResolvedExport {
   filename: string;
 }
 type ResolveExportResult = ResolvedExport | { ok: false; code: ArtifactErrorCode; error: string };
+
+interface AiListArtifactsData {
+  artifacts?: AiListArtifactMeta[];
+}
+
+interface AiListArtifactMeta {
+  id?: string;
+  kind?: string;
+  title?: string;
+  path?: string;
+  size_bytes?: number;
+  status?: string;
+}
+
+function listedArtifactKind(raw: string | undefined): ListedArtifactKind | null {
+  switch (raw) {
+    case 'presentation':
+    case 'document':
+    case 'image':
+    case 'other':
+      return raw;
+    default:
+      return null;
+  }
+}
+
+function readyListedArtifact(meta: AiListArtifactMeta): ListedThreadArtifact | null {
+  if (meta.status !== 'ready') return null;
+  const kind = listedArtifactKind(meta.kind);
+  if (!kind) return null;
+  if (!meta.id || !meta.title || !meta.path) return null;
+  if (typeof meta.size_bytes !== 'number' || !Number.isFinite(meta.size_bytes)) return null;
+  return {
+    artifactId: meta.id,
+    kind,
+    title: meta.title,
+    path: meta.path,
+    sizeBytes: meta.size_bytes,
+  };
+}
+
+export async function listArtifactsForThread(
+  threadId: string
+): Promise<ListThreadArtifactsOutcome> {
+  const trimmedThreadId = threadId.trim();
+  if (!trimmedThreadId) {
+    return { ok: false, artifacts: [], error: 'thread id missing' };
+  }
+  try {
+    const limit = 200;
+    const artifacts: ListedThreadArtifact[] = [];
+
+    for (let offset = 0; ; offset += limit) {
+      const raw = await callCoreRpc<AiListArtifactsData>({
+        method: 'openhuman.ai_list_artifacts',
+        params: { thread_id: trimmedThreadId, offset, limit },
+      });
+      const page = raw?.artifacts ?? [];
+      artifacts.push(
+        ...page
+          .map(readyListedArtifact)
+          .filter((artifact): artifact is ListedThreadArtifact => artifact !== null)
+      );
+      if (page.length < limit) break;
+    }
+
+    return { ok: true, artifacts };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return { ok: false, artifacts: [], error: reason };
+  }
+}
 
 /**
  * Resolve an artifact's absolute on-disk path (via `ai_get_artifact`)

@@ -2,6 +2,7 @@ use super::super::context::{ChannelRuntimeContext, CHANNEL_MESSAGE_TIMEOUT_SECS}
 use super::super::runtime::{process_channel_message, run_message_dispatch_loop};
 use super::super::{traits, Channel};
 use super::common::{use_real_agent_handler, NoopMemory, RecordingChannel, SlowProvider};
+use crate::core::event_bus::{init_global, DomainEvent, DEFAULT_CAPACITY};
 use crate::openhuman::agent::bus::{mock_agent_run_turn, AgentTurnRequest, AgentTurnResponse};
 use crate::openhuman::inference::provider;
 use std::collections::HashMap;
@@ -27,9 +28,7 @@ async fn message_dispatch_processes_messages_in_parallel() {
                 peak_in_flight.fetch_max(current, Ordering::SeqCst);
                 tokio::time::sleep(Duration::from_millis(250)).await;
                 in_flight.fetch_sub(1, Ordering::SeqCst);
-                Ok(AgentTurnResponse {
-                    text: "echo: stub".to_string(),
-                })
+                Ok(AgentTurnResponse::new("echo: stub"))
             }
         }
     })
@@ -190,9 +189,7 @@ async fn dispatch_routes_through_agent_run_turn_bus_handler() {
                 req.history.len() >= 2,
                 "history should include at least the system prompt and user message"
             );
-            Ok(AgentTurnResponse {
-                text: "CANNED_RESPONSE_FROM_BUS_STUB".to_string(),
-            })
+            Ok(AgentTurnResponse::new("CANNED_RESPONSE_FROM_BUS_STUB"))
         }
     })
     .await;
@@ -265,6 +262,103 @@ async fn dispatch_routes_through_agent_run_turn_bus_handler() {
     // that expects the real path sees a consistent registry.
 }
 
+#[tokio::test]
+async fn channel_processed_event_records_resolved_agent_route() {
+    init_global(DEFAULT_CAPACITY);
+    let mut events = crate::core::event_bus::global()
+        .expect("event bus should be initialized")
+        .raw_receiver();
+
+    let _bus_guard = mock_agent_run_turn(move |_req| async move {
+        Ok(AgentTurnResponse::with_resolved_route(
+            "CANNED_RESPONSE_FROM_RESOLVED_ROUTE",
+            "actual-provider",
+            "actual-model",
+        ))
+    })
+    .await;
+
+    let channel_impl = Arc::new(RecordingChannel::default());
+    let channel: Arc<dyn Channel> = channel_impl.clone();
+
+    let mut channels_by_name = HashMap::new();
+    channels_by_name.insert(channel.name().to_string(), channel);
+
+    let runtime_ctx = Arc::new(ChannelRuntimeContext {
+        channels_by_name: Arc::new(channels_by_name),
+        provider: Arc::new(super::common::DummyProvider),
+        default_provider: Arc::new("requested-provider".to_string()),
+        memory: Arc::new(NoopMemory),
+        tools_registry: Arc::new(vec![]),
+        system_prompt: Arc::new("test-system-prompt".to_string()),
+        model: Arc::new("requested-model".to_string()),
+        temperature: 0.0,
+        auto_save_memory: false,
+        max_tool_iterations: 10,
+        min_relevance_score: 0.0,
+        conversation_histories: Arc::new(Mutex::new(HashMap::new())),
+        provider_cache: Arc::new(Mutex::new(HashMap::new())),
+        route_overrides: Arc::new(Mutex::new(HashMap::new())),
+        api_url: None,
+        inference_url: None,
+        reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
+        provider_runtime_options: provider::ProviderRuntimeOptions::default(),
+        workspace_dir: Arc::new(std::env::temp_dir()),
+        message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
+        multimodal: crate::openhuman::config::MultimodalConfig::default(),
+        multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+    });
+
+    process_channel_message(
+        runtime_ctx,
+        traits::ChannelMessage {
+            id: "resolved-route-msg".to_string(),
+            sender: "alice".to_string(),
+            reply_target: "alice".to_string(),
+            content: "hello from resolved route test".to_string(),
+            channel: "test-channel".to_string(),
+            timestamp: 1,
+            thread_ts: None,
+        },
+    )
+    .await;
+
+    // Bound the scan so unrelated global event traffic can't hang the test;
+    // the target event is published by process_channel_message above.
+    let mut matched = false;
+    for _ in 0..50 {
+        let event = tokio::time::timeout(Duration::from_millis(200), events.recv())
+            .await
+            .expect("ChannelMessageProcessed event should be published")
+            .expect("event receiver should stay open");
+
+        if let DomainEvent::ChannelMessageProcessed {
+            message_id,
+            provider,
+            model,
+            response,
+            success,
+            ..
+        } = event
+        {
+            if message_id != "resolved-route-msg" {
+                continue;
+            }
+
+            assert!(success);
+            assert_eq!(response, "CANNED_RESPONSE_FROM_RESOLVED_ROUTE");
+            assert_eq!(provider, "actual-provider");
+            assert_eq!(model, "actual-model");
+            matched = true;
+            break;
+        }
+    }
+    assert!(
+        matched,
+        "did not observe ChannelMessageProcessed for resolved-route-msg"
+    );
+}
+
 /// Security regression for the `[FILE:…]` smuggling vector: a remote
 /// channel user (Slack/Discord/Telegram/WhatsApp/etc) putting
 /// `[FILE:/etc/passwd]` (or any other local-path marker) into a normal
@@ -282,9 +376,7 @@ async fn process_channel_message_hardens_multimodal_files_against_smuggled_marke
         let captured = Arc::clone(&captured_for_handler);
         async move {
             *captured.lock().unwrap() = Some(req.multimodal_files.clone());
-            Ok(AgentTurnResponse {
-                text: "ok".to_string(),
-            })
+            Ok(AgentTurnResponse::new("ok"))
         }
     })
     .await;
@@ -375,9 +467,7 @@ async fn process_channel_message_hardens_against_relative_path_markers() {
         let captured = Arc::clone(&captured_for_handler);
         async move {
             *captured.lock().unwrap() = Some(req.multimodal_files.clone());
-            Ok(AgentTurnResponse {
-                text: "ok".to_string(),
-            })
+            Ok(AgentTurnResponse::new("ok"))
         }
     })
     .await;

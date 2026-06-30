@@ -1046,6 +1046,77 @@ describe('Trading tab — buy identity (x402)', () => {
     });
   });
 
+  test('Buy buttons re-enable after a purchase and Dismiss clears the banner (#4196)', async () => {
+    vi.mocked(apiClient.marketplace.buyIdentity)
+      .mockResolvedValueOnce({
+        challenge: { amount: '20000000', asset: 'USDC', network: 'solana-devnet' },
+        walletBalance: { raw: '50000000', formatted: '50', decimals: 6, assetSymbol: 'USDC' },
+        walletAddress: 'WalletXyz12345678',
+      })
+      .mockResolvedValueOnce({ result: { saleId: 's1' }, payment: { onChainTx: 'TxId1' } });
+    render(<IdentitiesSection />);
+    await gotoTab('Trading');
+    await userEvent.click(await screen.findByRole('button', { name: 'Buy' }));
+    await userEvent.click(await screen.findByTestId('x402-confirm'));
+
+    // Purchase completed.
+    await screen.findByTestId('buy-identity-success');
+
+    // Regression: the Buy button must NOT stay permanently disabled after a
+    // completed purchase (the old `disabled={buying !== null}` never reset
+    // because `closeBuy` was only reachable from the now-unmounted dialog).
+    expect(screen.getByRole('button', { name: 'Buy' })).toBeEnabled();
+
+    // Dismiss clears the terminal banner and keeps Buy usable.
+    await userEvent.click(screen.getByTestId('buy-identity-dismiss'));
+    expect(screen.queryByTestId('buy-identity-success')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Buy' })).toBeEnabled();
+  });
+
+  test('a failed purchase shows the error banner and Dismiss resets it (#4196)', async () => {
+    vi.mocked(apiClient.marketplace.buyIdentity)
+      .mockResolvedValueOnce({
+        challenge: { amount: '20000000', asset: 'USDC', network: 'solana-devnet' },
+        walletBalance: { raw: '50000000', formatted: '50', decimals: 6, assetSymbol: 'USDC' },
+        walletAddress: 'WalletXyz12345678',
+      })
+      .mockRejectedValueOnce(new Error('settlement boom'));
+    render(<IdentitiesSection />);
+    await gotoTab('Trading');
+    await userEvent.click(await screen.findByRole('button', { name: 'Buy' }));
+    await userEvent.click(await screen.findByTestId('x402-confirm'));
+
+    const errorBanner = await screen.findByTestId('buy-identity-error');
+    expect(errorBanner).toHaveTextContent('Purchase failed.');
+
+    // Buy must re-enable after a failed attempt, and Dismiss clears the banner.
+    expect(screen.getByRole('button', { name: 'Buy' })).toBeEnabled();
+    await userEvent.click(screen.getByTestId('buy-identity-dismiss'));
+    expect(screen.queryByTestId('buy-identity-error')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Buy' })).toBeEnabled();
+  });
+
+  test('a post-payment failure surfaces the broadcast tx in the buy error banner (#4196)', async () => {
+    // The settlement broadcast went out but the purchase did not finalize: the
+    // error carries an `onChainTx=`, so the banner must report "Payment sent…"
+    // (the truthy branch of the buy error message) and re-enable Buy.
+    vi.mocked(apiClient.marketplace.buyIdentity)
+      .mockResolvedValueOnce({
+        challenge: { amount: '20000000', asset: 'USDC', network: 'solana-devnet' },
+        walletBalance: { raw: '50000000', formatted: '50', decimals: 6, assetSymbol: 'USDC' },
+        walletAddress: 'WalletXyz12345678',
+      })
+      .mockRejectedValueOnce(new Error('paid but not confirmed (onChainTx=BuyTx99)'));
+    render(<IdentitiesSection />);
+    await gotoTab('Trading');
+    await userEvent.click(await screen.findByRole('button', { name: 'Buy' }));
+    await userEvent.click(await screen.findByTestId('x402-confirm'));
+
+    const errorBanner = await screen.findByTestId('buy-identity-error');
+    expect(errorBanner).toHaveTextContent('Payment sent but purchase did not complete.');
+    expect(screen.getByRole('button', { name: 'Buy' })).toBeEnabled();
+  });
+
   test('auction listings do not show a Buy button', async () => {
     vi.mocked(apiClient.marketplace.listIdentities).mockResolvedValue({
       identities: [{ ...fixedListing, listingType: 'auction' as const }],

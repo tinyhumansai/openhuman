@@ -2,6 +2,7 @@ use super::traits::{
     ChatMessage, ChatRequest, ChatResponse, StreamChunk, StreamError, StreamOptions, StreamResult,
 };
 use super::Provider;
+use crate::openhuman::inference::provider::record_resolved_provider_route;
 use async_trait::async_trait;
 use futures_util::{stream, StreamExt};
 use std::collections::HashMap;
@@ -511,6 +512,7 @@ impl Provider for ReliableProvider {
                 let mut backoff_ms = self.base_backoff_ms;
 
                 for attempt in 0..=self.max_retries {
+                    record_resolved_provider_route(provider_name, *current_model);
                     match provider
                         .chat_with_system(system_prompt, message, current_model, temperature)
                         .await
@@ -647,6 +649,7 @@ impl Provider for ReliableProvider {
                 let mut backoff_ms = self.base_backoff_ms;
 
                 for attempt in 0..=self.max_retries {
+                    record_resolved_provider_route(provider_name, *current_model);
                     match provider
                         .chat_with_history(messages, current_model, temperature)
                         .await
@@ -814,6 +817,7 @@ impl Provider for ReliableProvider {
                         stream: stream_this_attempt,
                         max_tokens: request.max_tokens,
                     };
+                    record_resolved_provider_route(provider_name, *current_model);
                     match provider.chat(req, current_model, temperature).await {
                         Ok(resp) => {
                             if attempt > 0 || *current_model != model {
@@ -939,6 +943,7 @@ impl Provider for ReliableProvider {
                 let mut backoff_ms = self.base_backoff_ms;
 
                 for attempt in 0..=self.max_retries {
+                    record_resolved_provider_route(provider_name, *current_model);
                     match provider
                         .chat_with_tools(messages, tools, current_model, temperature)
                         .await

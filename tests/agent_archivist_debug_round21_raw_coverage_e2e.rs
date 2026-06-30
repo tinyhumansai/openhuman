@@ -253,6 +253,7 @@ fn definition(max_iterations: usize) -> AgentDefinition {
         max_iterations,
         iteration_policy: Default::default(),
         max_result_chars: None,
+        max_turn_output_tokens: None,
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,
         background: false,
