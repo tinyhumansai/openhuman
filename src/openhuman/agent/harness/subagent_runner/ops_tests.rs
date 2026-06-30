@@ -204,6 +204,27 @@ use crate::openhuman::inference::provider::{
 use parking_lot::Mutex;
 use std::sync::Arc;
 
+struct WorkspaceEnvGuard {
+    previous: Option<std::ffi::OsString>,
+}
+
+impl WorkspaceEnvGuard {
+    fn set(path: &std::path::Path) -> Self {
+        let previous = std::env::var_os("OPENHUMAN_WORKSPACE");
+        std::env::set_var("OPENHUMAN_WORKSPACE", path);
+        Self { previous }
+    }
+}
+
+impl Drop for WorkspaceEnvGuard {
+    fn drop(&mut self) {
+        match self.previous.take() {
+            Some(value) => std::env::set_var("OPENHUMAN_WORKSPACE", value),
+            None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
+        }
+    }
+}
+
 /// Mock provider whose response queue can be inspected by the test
 /// to verify the bytes that arrive at the model.
 #[derive(Clone)]
@@ -699,6 +720,86 @@ async fn typed_mode_filters_tools_by_skill_filter() {
         !system_msg.content.contains("file_read"),
         "skill_filter should have excluded file_read"
     );
+}
+
+#[tokio::test]
+async fn integrations_agent_reuses_cached_toolkit_actions_without_refetching_list_tools() {
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    crate::openhuman::composio::invalidate_connected_integrations_cache();
+
+    let mut fixture = crate::openhuman::agent::harness::test_support::ComposioFixture::realistic();
+    fixture.tools = vec![serde_json::json!({
+        "type": "function",
+        "function": {
+            "name": "GMAIL_SEND_EMAIL",
+            "description": "Send an email via Gmail",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "recipient_email": {"type": "string"},
+                    "subject": {"type": "string"},
+                    "body": {"type": "string"}
+                },
+                "required": ["recipient_email", "subject", "body"]
+            }
+        }
+    })];
+    let backend =
+        crate::openhuman::agent::harness::test_support::spawn_fake_composio_backend(fixture).await;
+    let (config, workspace_root) = backend.config_persisted().await;
+    let _workspace = WorkspaceEnvGuard::set(&workspace_root);
+
+    let integrations = crate::openhuman::composio::fetch_connected_integrations(&config).await;
+    let gmail = integrations
+        .iter()
+        .find(|integration| integration.toolkit == "gmail" && integration.connected)
+        .expect("fixture should expose a connected gmail integration");
+    assert!(
+        !gmail.tools.is_empty(),
+        "cached gmail integration should include action schemas"
+    );
+
+    let requests_before = backend.requests();
+    let tools_before = requests_before
+        .iter()
+        .filter(|(_, path, _)| path == "/tools")
+        .count();
+
+    let provider = ScriptedProvider::new(vec![text_response("done")]);
+    let mut parent = make_parent(provider.clone(), vec![]);
+    parent.connected_integrations = integrations;
+    let mut def = make_def_named_tools(&[]);
+    def.id = "integrations_agent".into();
+    def.tools = ToolScope::Wildcard;
+
+    let outcome = with_parent_context(parent, async {
+        run_subagent(
+            &def,
+            "send a short email to the user",
+            SubagentRunOptions {
+                toolkit_override: Some("gmail".into()),
+                ..Default::default()
+            },
+        )
+        .await
+    })
+    .await
+    .expect("integrations_agent should run using cached gmail actions");
+    assert_eq!(outcome.output, "done");
+
+    let requests_after = backend.requests();
+    let tools_after = requests_after
+        .iter()
+        .filter(|(_, path, _)| path == "/tools")
+        .count();
+    assert_eq!(
+        tools_after, tools_before,
+        "integrations_agent should reuse the parent cached action catalogue; requests: {requests_after:?}"
+    );
+
+    crate::openhuman::composio::invalidate_connected_integrations_cache();
 }
 
 #[tokio::test]
