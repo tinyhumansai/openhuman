@@ -19,7 +19,7 @@ omit_skills_catalog = true
 # grounded request, so it never needed the per-turn memory-tree walk.
 
 [model]
-hint = "agentic"
+hint = "burst"
 
 [tools]
 # Narrow allowlist. Wallet + web3 + market primitives only — no shell, no

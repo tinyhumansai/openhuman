@@ -294,6 +294,24 @@ pub enum ExpectedErrorKind {
     /// couldn't parse, and the FE *does* page for it, F8). See
     /// [`crate::openhuman::inference::provider::backend_error_code_skips_sentry`].
     BackendErrorCodeOwned,
+    /// `approval_decide` (`src/openhuman/approval/rpc.rs`) resolved a request_id
+    /// whose pending row was **already decided, lazily expired, or superseded**
+    /// — `store::decide` updated 0 rows because `decided_at` was already set,
+    /// and `store::get_decision` confirms a persisted decision exists. The
+    /// inline-approvals design spec
+    /// (`docs/superpowers/specs/2026-05-23-telegram-inline-approvals-design.md`)
+    /// classifies "no pending approval found" as a **benign** outcome: the
+    /// frontend `ApprovalRequestCard.decide` and the Telegram callback both call
+    /// `approval_decide` without server-confirmed dedupe, so double-taps, two
+    /// operators racing, and expiry-while-live all land here harmlessly.
+    ///
+    /// Drops the benign half of Sentry TAURI-RUST-5EH (~1,995 events / 8 users
+    /// on `openhuman@0.57.53`). Anchored to the benign `"no pending approval
+    /// found"` wording emitted ONLY when `get_decision` confirms the row was
+    /// resolved; a genuine **never-registered** id raises the distinct
+    /// `"no pending approval ever registered"` string (no anchor) so a real
+    /// lost-registration defect still reaches Sentry.
+    ApprovalNoPendingRace,
     /// A remote MCP server answered the connect handshake with HTTP 401 — it
     /// needs OAuth sign-in, not a code fix. `McpHttpClient::read_response`
     /// (`src/openhuman/mcp_client/client.rs`) raises the typed
@@ -353,6 +371,17 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if lower.contains("codex cli auth") || lower.contains(".codex/auth.json") {
         return Some(ExpectedErrorKind::CodexCliAuthUnavailable);
     }
+    // TAURI-RUST-5EH — `approval_decide` resolved a request_id whose row was
+    // already decided / lazily expired / superseded (benign race per the
+    // inline-approvals design spec). `rpc::approval_decide` emits this exact
+    // `"no pending approval found"` wording ONLY after `store::get_decision`
+    // confirms a persisted decision exists; the genuine never-registered case
+    // raises `"no pending approval ever registered"` (matched by neither this
+    // arm nor any below), so a real lost-registration defect still reaches
+    // Sentry. See `ExpectedErrorKind::ApprovalNoPendingRace`.
+    if lower.contains("no pending approval found") {
+        return Some(ExpectedErrorKind::ApprovalNoPendingRace);
+    }
     // TAURI-RUST-CGP — a remote MCP server answered the connect handshake with
     // HTTP 401 (`McpUnauthorizedError`). `connections::connect` already stores a
     // `needs_auth` flag so the UI prompts for OAuth sign-in (#3733 / #3719), but
@@ -380,11 +409,7 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     // guard now fast-fails before issuing that request, but this arm demotes
     // any residual 401 of that shape — older clients, or a present-but-rejected
     // key — so the flood (TAURI-RUST-52S) stays out of Sentry either way.
-    if lower.contains("api key not set")
-        || lower.contains("missing api key")
-        || lower.contains("no api key is configured")
-        || lower.contains("no api key supplied")
-    {
+    if is_api_key_unset_message(&lower) {
         return Some(ExpectedErrorKind::ApiKeyMissing);
     }
     // Check `ChannelSupervisorRestart` BEFORE `is_loopback_unavailable` and
@@ -964,6 +989,30 @@ pub fn is_session_expired_message(msg: &str) -> bool {
 /// [`ExpectedErrorKind::McpServerNeedsAuth`].
 fn is_mcp_server_needs_auth_message(lower: &str) -> bool {
     lower.contains("mcp unauthorized for ") && lower.contains("(http 401")
+}
+
+/// Detect the "a configured provider has no API key" user-config state.
+///
+/// Single source of truth for the `ApiKeyMissing` wording so the
+/// `expected_error_kind` demotion arm and the cron scheduler's halt-on-first
+/// classifier (`is_api_key_unset_failure`, TAURI-RUST-HCK) can never drift
+/// apart. The phrasing is emitted deterministically, before any HTTP, by the
+/// credential guards:
+///   - `inference/provider/compatible_request.rs::credential_for_request`
+///     ("<provider> API key not set. Configure via the web UI …")
+///   - the embeddings credential guards (cohere/openai) + the composio
+///     direct-mode factory bail ("no api key is configured" / "no api key
+///     supplied").
+///
+/// Distinct from a *rejected* key (a provider 401 "Invalid API key"): that is a
+/// present-but-wrong key and stays actionable in Sentry — this matcher is for
+/// the **absent** key only, which has no Sentry remediation path.
+pub fn is_api_key_unset_message(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("api key not set")
+        || lower.contains("missing api key")
+        || lower.contains("no api key is configured")
+        || lower.contains("no api key supplied")
 }
 
 /// Detect the in-process-core boot-window shape: a sibling component
@@ -2064,6 +2113,22 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 "[observability] {domain}.{operation} skipped backend-owned errorCode={code} error: {message}"
             );
         }
+        ExpectedErrorKind::ApprovalNoPendingRace => {
+            // Benign approval race (TAURI-RUST-5EH): the request_id was already
+            // decided / lazily expired / superseded — `store::get_decision`
+            // confirmed a persisted decision exists, so this is a double-tap,
+            // two-operator, or expiry-while-live race classified benign by the
+            // inline-approvals design spec, not a lost registration. Demote at
+            // `warn!` so a sustained spike still shows in operator dashboards
+            // without paging. The genuine never-registered case takes the
+            // capture path (distinct wording) and stays a Sentry signal.
+            tracing::warn!(
+                domain = domain,
+                operation = operation,
+                kind = "approval_no_pending_race",
+                "[observability] {domain}.{operation} skipped benign already-decided/expired approval race: {message}"
+            );
+        }
     }
 }
 
@@ -2877,6 +2942,43 @@ mod tests {
         assert_eq!(format!("{wrapped:#}"), "outer ctx: inner cause");
     }
 
+    /// Sentry TAURI-RUST-5EH: the benign already-decided/expired approval race
+    /// (`rpc::approval_decide` after `get_decision` confirms a persisted
+    /// decision) must classify as `ApprovalNoPendingRace` so the ~1,995-event
+    /// flood is demoted — while a genuine never-registered id (distinct
+    /// "ever registered" wording) must stay reportable (`None`).
+    #[test]
+    fn classifies_benign_approval_race_but_keeps_genuine_loss() {
+        assert_eq!(
+            expected_error_kind(
+                "rpc.invoke_method failed: no pending approval found for request_id \
+                 '4f1c…' (already decided or expired)"
+            ),
+            Some(ExpectedErrorKind::ApprovalNoPendingRace),
+            "benign already-decided/expired race must be demoted"
+        );
+        assert_eq!(
+            expected_error_kind(
+                "rpc.invoke_method failed: no pending approval ever registered \
+                 for request_id '4f1c…'"
+            ),
+            None,
+            "a genuine lost registration must remain a Sentry signal"
+        );
+    }
+
+    /// Exercise the full demotion path (classifier -> report arm) for a benign
+    /// approval race: it must take the expected branch and not panic.
+    #[test]
+    fn report_error_or_expected_demotes_benign_approval_race() {
+        report_error_or_expected(
+            "no pending approval found for request_id 'abc' (already decided or expired)",
+            "rpc",
+            "invoke_method",
+            &[],
+        );
+    }
+
     #[test]
     fn classifies_expected_config_errors() {
         assert_eq!(
@@ -3067,6 +3169,28 @@ mod tests {
             ),
             Some(ExpectedErrorKind::ApiKeyMissing)
         );
+    }
+
+    /// TAURI-RUST-HCK — the single-source `is_api_key_unset_message` matcher
+    /// (consumed by the cron scheduler's halt-on-first classifier) must match
+    /// the VERBATIM wording emitted by the inference credential guard
+    /// (`credential_for_request`), so a wording drift fails CI instead of
+    /// silently re-opening the cron flood. It must NOT match a present-but-
+    /// rejected key (401 "Invalid API key") nor an ordinary provider error.
+    #[test]
+    fn is_api_key_unset_message_matches_verbatim_credential_guard_wording() {
+        assert!(is_api_key_unset_message(
+            "openrouter API key not set. Configure via the web UI or set the appropriate env var."
+        ));
+        assert!(is_api_key_unset_message(
+            "Cohere embed API error (401 Unauthorized): {\"message\":\"no api key supplied\"}"
+        ));
+        assert!(!is_api_key_unset_message(
+            "OpenAI API error (401 Unauthorized): invalid_api_key"
+        ));
+        assert!(!is_api_key_unset_message(
+            "OpenHuman API error (500 Internal Server Error): {\"error\":\"Internal server error\"}"
+        ));
     }
 
     /// Guard against over-suppression: a genuine BYO-key auth failure

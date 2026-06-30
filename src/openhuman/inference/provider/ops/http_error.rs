@@ -429,6 +429,61 @@ pub fn log_ollama_cloud_internal_500(
     );
 }
 
+/// Whether a provider non-2xx response is an **external content-moderation
+/// rejection** — the user routes their provider (here: ollama) through a
+/// third-party safety/moderation proxy that refuses the prompt with a `400`
+/// and a verdict envelope, e.g.
+/// `{"error":"Message rejected by Ombudsman","score":80}` (TAURI-RUST-ECR,
+/// 4,517 events from a single looping triage-agent machine).
+///
+/// This is `genuinely-unpreventable` from OpenHuman's side: the request is
+/// well-formed, the rejection comes from an external guard we neither own nor
+/// configure, and there is no client lever to reshape the request into one the
+/// proxy will accept. The triage agent re-issues the same prompt every turn, so
+/// the raw 400 floods `report_error` (400 ∉ the transient set in
+/// [`should_report_provider_http_failure`]). Demote to an info log while the
+/// error still propagates so retry/fallback runs unchanged — the same
+/// classify-and-backpressure answer as the 5MV / A3T / 8S3 precedent.
+///
+/// Anchored on the moderation-verdict shape — the rejection wording
+/// (`message rejected` / `ombudsman`) or the `"score"` verdict field — none of
+/// which OpenHuman's own backend or a normal provider 400 (malformed request,
+/// schema error) emits, so a genuine bug still reaches Sentry. Covered by a
+/// verbatim-body test so a proxy wording drift fails CI instead of silently
+/// leaking events.
+pub fn is_provider_moderation_rejection_http_400(status: reqwest::StatusCode, body: &str) -> bool {
+    if status != reqwest::StatusCode::BAD_REQUEST {
+        return false;
+    }
+    let lower = body.to_ascii_lowercase();
+    lower.contains("message rejected")
+        || lower.contains("ombudsman")
+        // The moderation proxy returns its confidence as a `"score"` JSON field
+        // alongside the verdict; anchor on the quoted key shape (not a bare
+        // `score`) so an unrelated 400 mentioning the word in prose isn't
+        // swallowed.
+        || lower.contains("\"score\"")
+}
+
+pub fn log_provider_moderation_rejection(
+    operation: &str,
+    provider: &str,
+    model: Option<&str>,
+    status: reqwest::StatusCode,
+) {
+    tracing::info!(
+        domain = "llm_provider",
+        operation = operation,
+        provider = provider,
+        model = model.unwrap_or(""),
+        status = status.as_u16(),
+        failure = "non_2xx",
+        kind = "external_moderation_rejection",
+        "[llm_provider] {operation} external content-moderation rejection ({status}) — request \
+         refused by a third-party moderation proxy (no client lever), not reporting to Sentry"
+    );
+}
+
 /// Whether a provider non-2xx response is a deterministic
 /// **configuration-rejection** user-state error (unknown model id,
 /// abstract tier leaked to a custom provider, model-specific temperature
@@ -991,6 +1046,10 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
     // provider-internal, non-deterministic, no client lever. Demote from Sentry
     // and replace the opaque ref body with actionable guidance (TAURI-RUST-5MV).
     let is_ollama_cloud_internal_500 = is_ollama_cloud_internal_500(provider, status, &body);
+    // External content-moderation proxy ("Ombudsman") refused the prompt with a
+    // 400 + verdict — well-formed request, external safety guard, no client
+    // lever. Demote from Sentry like the native_chat ladder (TAURI-RUST-ECR).
+    let is_moderation_rejection = is_provider_moderation_rejection_http_400(status, &body);
 
     if is_auth_failure && is_backend {
         // Single source of truth for backend session-expiry handling (warn +
@@ -1021,6 +1080,8 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
         log_provider_insufficient_credits_402("api_error", provider, None, status);
     } else if is_ollama_cloud_internal_500 {
         log_ollama_cloud_internal_500("api_error", provider, None, status);
+    } else if is_moderation_rejection {
+        log_provider_moderation_rejection("api_error", provider, None, status);
     } else if should_report_provider_http_failure(status) {
         crate::core::observability::report_error(
             message.as_str(),
@@ -1370,6 +1431,78 @@ mod tests {
             "ollama",
             Some("minimax-m3:cloud"),
             StatusCode::INTERNAL_SERVER_ERROR,
+        );
+    }
+
+    /// Verbatim TAURI-RUST-ECR provider body — an external content-moderation
+    /// proxy ("Ombudsman") refuses the triage agent's prompt with a 400 +
+    /// verdict envelope. The matcher keys on this prose / verdict field, so
+    /// coupling the test to the exact wire shape makes a proxy wording drift
+    /// fail CI rather than silently leak the 4,517-event flood back to Sentry.
+    const ECR_OMBUDSMAN_BODY: &str = "{\"error\":\"Message rejected by Ombudsman\",\"score\":80}";
+
+    #[test]
+    fn moderation_rejection_matches_verbatim_ecr_body() {
+        // The 400 Ombudsman refusal must be demoted (classified), not reported.
+        assert!(is_provider_moderation_rejection_http_400(
+            StatusCode::BAD_REQUEST,
+            ECR_OMBUDSMAN_BODY
+        ));
+    }
+
+    #[test]
+    fn moderation_rejection_matches_marker_variants() {
+        for body in [
+            "{\"error\":\"Message rejected by Ombudsman\",\"score\":80}",
+            "{\"error\":\"message rejected by moderation\"}",
+            "{\"verdict\":\"blocked\",\"score\":0.97}",
+            "Request blocked by Ombudsman policy",
+        ] {
+            assert!(
+                is_provider_moderation_rejection_http_400(StatusCode::BAD_REQUEST, body),
+                "should match: {body:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn moderation_rejection_ignores_non_400_status() {
+        // Same body on a non-400 status is not this external-guard refusal —
+        // keep it reportable so a genuine bug elsewhere isn't masked.
+        assert!(!is_provider_moderation_rejection_http_400(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ECR_OMBUDSMAN_BODY
+        ));
+        assert!(!is_provider_moderation_rejection_http_400(
+            StatusCode::FORBIDDEN,
+            ECR_OMBUDSMAN_BODY
+        ));
+    }
+
+    #[test]
+    fn moderation_rejection_ignores_unrelated_400() {
+        // A genuine malformed-request 400 (no moderation verdict / score field)
+        // must keep reaching Sentry — the gate must not swallow it.
+        for body in [
+            "{\"error\":{\"message\":\"invalid request: missing field `messages`\"}}",
+            "{\"error\":\"Bad Request\"}",
+            "{\"error\":{\"message\":\"unknown model 'gemma3:1b'\"}}",
+        ] {
+            assert!(
+                !is_provider_moderation_rejection_http_400(StatusCode::BAD_REQUEST, body),
+                "should NOT match: {body:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn log_provider_moderation_rejection_smoke() {
+        // The helper only emits a demotion info log; calling it covers that path.
+        log_provider_moderation_rejection(
+            "native_chat",
+            "ollama",
+            Some("gemma3:1b-it-qat"),
+            StatusCode::BAD_REQUEST,
         );
     }
 

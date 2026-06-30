@@ -284,12 +284,11 @@ const VALID_JSON_REPLY: &str = "{\"action\":\"acknowledge\",\"reason\":\"all goo
 async fn happy_path_returns_cloud_resolution() {
     AgentDefinitionRegistry::init_global_builtins().expect("init_global_builtins");
 
-    let _guard = mock_agent_run_turn(move |_req| async move {
-        Ok(AgentTurnResponse {
-            text: VALID_JSON_REPLY.to_string(),
-        })
-    })
-    .await;
+    let _guard =
+        mock_agent_run_turn(
+            move |_req| async move { Ok(AgentTurnResponse::new(VALID_JSON_REPLY)) },
+        )
+        .await;
 
     let outcome = run_triage_with_arms_for_test(cloud_arm(), Some(local_arm()), &envelope())
         .await
@@ -313,9 +312,7 @@ async fn rate_limited_then_ok_marks_cloud_after_retry() {
             if n == 0 {
                 Err("HTTP 429 Too Many Requests; Retry-After: 0".to_string())
             } else {
-                Ok(AgentTurnResponse {
-                    text: VALID_JSON_REPLY.to_string(),
-                })
+                Ok(AgentTurnResponse::new(VALID_JSON_REPLY))
             }
         }
     })
@@ -348,9 +345,7 @@ async fn double_429_falls_through_to_local_fallback() {
             } else {
                 // Third call should be the local arm.
                 assert_eq!(req.provider_name, "stub-local", "fall-through hits local");
-                Ok(AgentTurnResponse {
-                    text: VALID_JSON_REPLY.to_string(),
-                })
+                Ok(AgentTurnResponse::new(VALID_JSON_REPLY))
             }
         }
     })
@@ -381,9 +376,7 @@ async fn cloud_5xx_falls_through_to_local_fallback() {
                 Err("upstream returned 502 Bad Gateway".to_string())
             } else {
                 assert_eq!(req.provider_name, "stub-local");
-                Ok(AgentTurnResponse {
-                    text: VALID_JSON_REPLY.to_string(),
-                })
+                Ok(AgentTurnResponse::new(VALID_JSON_REPLY))
             }
         }
     })
@@ -492,9 +485,7 @@ async fn cloud_budget_exhausted_skips_retry_and_falls_to_local() {
                     req.provider_name, "stub-local",
                     "budget-exhausted must skip cloud retry and dispatch to local"
                 );
-                Ok(AgentTurnResponse {
-                    text: VALID_JSON_REPLY.to_string(),
-                })
+                Ok(AgentTurnResponse::new(VALID_JSON_REPLY))
             }
         }
     })
@@ -551,9 +542,7 @@ async fn cloud_budget_exhausted_on_retry_falls_through_to_local() {
                         req.provider_name, "stub-local",
                         "post-budget dispatch must land on local"
                     );
-                    Ok(AgentTurnResponse {
-                        text: VALID_JSON_REPLY.to_string(),
-                    })
+                    Ok(AgentTurnResponse::new(VALID_JSON_REPLY))
                 }
             }
         }
@@ -677,9 +666,7 @@ async fn cloud_safety_flagged_then_local_recovers_decides_on_local() {
                     req.provider_name, "stub-local",
                     "safety-flagged on cloud must skip cloud retry and dispatch to local"
                 );
-                Ok(AgentTurnResponse {
-                    text: VALID_JSON_REPLY.to_string(),
-                })
+                Ok(AgentTurnResponse::new(VALID_JSON_REPLY))
             }
         }
     })
@@ -788,17 +775,13 @@ async fn double_cloud_parse_failure_falls_through_to_local_fallback() {
                     req.provider_name, "stub-cloud",
                     "first two attempts should stay on the cloud arm"
                 );
-                Ok(AgentTurnResponse {
-                    text: "not json".to_string(),
-                })
+                Ok(AgentTurnResponse::new("not json"))
             } else {
                 assert_eq!(
                     req.provider_name, "stub-local",
                     "malformed cloud retry should fall through to local"
                 );
-                Ok(AgentTurnResponse {
-                    text: VALID_JSON_REPLY.to_string(),
-                })
+                Ok(AgentTurnResponse::new(VALID_JSON_REPLY))
             }
         }
     })
@@ -828,9 +811,7 @@ async fn double_cloud_parse_failure_without_local_returns_deferred_not_err() {
         let counter = StdArc::clone(&counter_for_stub);
         async move {
             counter.fetch_add(1, Ordering::SeqCst);
-            Ok(AgentTurnResponse {
-                text: "still not json".to_string(),
-            })
+            Ok(AgentTurnResponse::new("still not json"))
         }
     })
     .await;
