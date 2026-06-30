@@ -94,6 +94,19 @@ struct ValidatedChallenge {
 
 // ── Pure helpers (unit-tested; no network, no funds) ──────────────────────────
 
+/// Whether `asset` names USDC — either the `"USDC"` symbol or a known USDC SPL
+/// mint address. The backend's x402 challenge identifies the payment currency
+/// by its on-chain mint, so the registration/buy flows see the mint here rather
+/// than the symbol (#4199). Both the mainnet and devnet mints are accepted; a
+/// cross-cluster mismatch is caught safely by the cluster/mint guards below, so
+/// recognising both here only widens *which* USDC mint is allowed through, not
+/// which chain settles.
+fn asset_is_usdc(asset: &str) -> bool {
+    asset.eq_ignore_ascii_case("USDC")
+        || asset == SolanaCluster::Mainnet.usdc_mint()
+        || asset == SolanaCluster::Devnet.usdc_mint()
+}
+
 /// Validate required challenge fields, check expiry, and route the asset.
 fn validate_challenge(challenge: &PaymentChallenge) -> Result<ValidatedChallenge, String> {
     let asset = non_empty(&challenge.asset).ok_or("x402 challenge missing 'asset'")?;
@@ -101,10 +114,21 @@ fn validate_challenge(challenge: &PaymentChallenge) -> Result<ValidatedChallenge
     let to = non_empty(&challenge.to).ok_or("x402 challenge missing 'to'")?;
     let network = non_empty(&challenge.network).ok_or("x402 challenge missing 'network'")?;
 
-    let asset_symbol = match asset.as_str() {
-        "SOL" => None,
-        "USDC" => Some("USDC".to_string()),
-        other => return Err(format!("unsupported x402 asset: {other}")),
+    // Route the challenge asset to a wallet transfer asset. The backend's x402
+    // challenge identifies USDC by its **SPL mint address**, not the `"USDC"`
+    // symbol, so a literal-symbol match alone rejected every real registration
+    // payment with `unsupported x402 asset: <mint>` (#4199). Accept the `"USDC"`
+    // symbol and any known USDC mint (mainnet/devnet); the cluster guards below
+    // keep a cross-cluster mint from mis-settling.
+    let asset_symbol = if asset.eq_ignore_ascii_case("SOL") {
+        None
+    } else if asset_is_usdc(&asset) {
+        Some("USDC".to_string())
+    } else {
+        // Never surface the raw on-chain asset identifier to the user — log it
+        // for support/diagnostics and return human-readable copy (#4199).
+        log::warn!("{LOG_PREFIX} rejecting unsupported x402 asset (not USDC/SOL): {asset}");
+        return Err("Payment asset not supported — please contact support.".to_string());
     };
 
     let expires_at = non_empty(&challenge.expires_at);
@@ -518,10 +542,35 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_unsupported_asset() {
+    fn validate_rejects_unsupported_asset_without_leaking_identifier() {
+        // #4199: the user-facing error must be human-readable and must NOT echo
+        // the raw asset identifier (symbol or on-chain mint).
         let err = validate_challenge(&mock_challenge("WBTC")).unwrap_err();
-        assert!(err.contains("unsupported"), "got: {err}");
-        assert!(err.contains("WBTC"), "got: {err}");
+        assert_eq!(err, "Payment asset not supported — please contact support.");
+        assert!(!err.contains("WBTC"), "raw asset leaked to user: {err}");
+
+        // A bogus mint address must likewise not be surfaced.
+        let err = validate_challenge(&mock_challenge(
+            "So1BogusMint1111111111111111111111111111111",
+        ))
+        .unwrap_err();
+        assert_eq!(err, "Payment asset not supported — please contact support.");
+        assert!(!err.contains("BogusMint"), "raw mint leaked to user: {err}");
+    }
+
+    #[test]
+    fn validate_accepts_usdc_spl_mint_addresses() {
+        // #4199: the backend sends USDC by its SPL mint, not the "USDC" symbol.
+        // Both cluster mints must route to the SPL transfer.
+        for mint in [
+            SolanaCluster::Mainnet.usdc_mint(),
+            SolanaCluster::Devnet.usdc_mint(),
+        ] {
+            let v = validate_challenge(&mock_challenge(mint)).expect("mint accepted");
+            assert_eq!(v.asset_symbol.as_deref(), Some("USDC"));
+            // The signed authorization echoes the backend-issued asset verbatim.
+            assert_eq!(v.asset, mint);
+        }
     }
 
     #[test]

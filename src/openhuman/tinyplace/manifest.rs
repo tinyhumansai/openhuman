@@ -659,38 +659,68 @@ pub(crate) fn handle_tinyplace_registry_register(params: Map<String, Value>) -> 
 /// render (it falls back to letting the backend reject an underfunded payment).
 async fn wallet_usdc_balance(address: &str) -> (Option<Value>, String) {
     // The wallet's `balances()` only reports NATIVE assets (SOL/ETH/…), never SPL
-    // tokens — so query the SPL USDC balance directly from the configured Solana
-    // cluster's RPC (getTokenAccountsByOwner for the cluster's USDC mint). RPC
-    // failure → None (UI shows "Unknown"); RPC ok but no token account → 0.
-    let cluster = crate::openhuman::wallet::solana_cluster();
-    let mint = cluster.usdc_mint();
-    let rpc_url = cluster.rpc_url();
+    // tokens — so query the SPL USDC balance directly via
+    // `getTokenAccountsByOwner` for the cluster's USDC mint. RPC failure → None
+    // (UI shows "Unknown"); RPC ok but no token account → 0.
+    //
+    // TAURI-RUST / #4202: query tiny.place's own Solana settlement RPC FIRST, not
+    // the bare public cluster RPC. tiny.place settles on its own RPC — the chain
+    // where agent token accounts are actually funded — so reading the balance
+    // from the public `api.mainnet-beta.solana.com` endpoint (which also rate-
+    // limits / restricts `getTokenAccountsByOwner`) returned None and the confirm
+    // card showed "Unknown" even with a funded, connected wallet. Use the same
+    // ordered endpoints the payment path broadcasts through (tiny.place RPC →
+    // public cluster fallback), so the displayed balance matches the chain the
+    // payment will actually settle on.
+    let mint = crate::openhuman::wallet::solana_cluster().usdc_mint();
+    let endpoints = crate::openhuman::wallet::tinyplace_solana_rpc_endpoints();
     let body = serde_json::json!({
         "jsonrpc": "2.0",
         "id": 1,
         "method": "getTokenAccountsByOwner",
         "params": [address, { "mint": mint }, { "encoding": "jsonParsed" }],
     });
-    let json: Value = match reqwest::Client::new()
-        .post(rpc_url)
-        .json(&body)
-        .send()
-        .await
-    {
-        Ok(resp) => match resp.json().await {
-            Ok(j) => j,
+    let client = reqwest::Client::new();
+    // Try each endpoint in priority order; only advance to the next one on a
+    // transport / parse / malformed-shape failure (the endpoint couldn't give an
+    // authoritative answer). A well-formed `/result/value` — including an empty
+    // array (no token account = a real zero balance) — is authoritative and
+    // returns immediately.
+    let mut accounts: Option<Vec<Value>> = None;
+    for rpc_url in &endpoints {
+        // A settlement endpoint may embed a private provider token in its
+        // path/query; redact to scheme+host before it reaches the logs.
+        let safe_url = crate::openhuman::wallet::redact_rpc_url(rpc_url);
+        let json: Value = match client.post(rpc_url).json(&body).send().await {
+            Ok(resp) => match resp.json().await {
+                Ok(j) => j,
+                Err(e) => {
+                    log::warn!("{LOG_PREFIX} usdc balance: rpc parse failed at {safe_url}: {e}");
+                    continue;
+                }
+            },
             Err(e) => {
-                log::warn!("{LOG_PREFIX} usdc balance: rpc parse failed: {e}");
-                return (None, address.to_string());
+                log::warn!("{LOG_PREFIX} usdc balance: rpc send failed at {safe_url}: {e}");
+                continue;
             }
-        },
-        Err(e) => {
-            log::warn!("{LOG_PREFIX} usdc balance: rpc send failed: {e}");
-            return (None, address.to_string());
+        };
+        match json.pointer("/result/value").and_then(Value::as_array) {
+            Some(value) => {
+                accounts = Some(value.clone());
+                break;
+            }
+            None => {
+                log::warn!("{LOG_PREFIX} usdc balance: unexpected rpc shape at {safe_url}");
+                continue;
+            }
         }
-    };
-    let Some(accounts) = json.pointer("/result/value").and_then(Value::as_array) else {
-        log::warn!("{LOG_PREFIX} usdc balance: unexpected rpc shape");
+    }
+    let Some(accounts) = accounts else {
+        log::warn!(
+            "{LOG_PREFIX} usdc balance: no endpoint returned a usable response \
+             (tried {} endpoint(s))",
+            endpoints.len()
+        );
         return (None, address.to_string());
     };
     // No token account = the ATA was never created = a real zero balance.
@@ -711,7 +741,7 @@ async fn wallet_usdc_balance(address: &str) -> (Option<Value>, String) {
         ),
         None => ("0".to_string(), "0".to_string(), 6),
     };
-    log::debug!("{LOG_PREFIX} usdc balance for {address}: {formatted} (cluster={cluster:?})");
+    log::debug!("{LOG_PREFIX} usdc balance for {address}: {formatted} USDC (mint={mint})");
     (
         Some(serde_json::json!({
             "raw": raw,
@@ -2393,6 +2423,35 @@ pub(crate) fn handle_tinyplace_registry_export(params: Map<String, Value>) -> Co
         let client = global_state().client().await?;
         let result = client.registry.export(&name).await.map_err(map_err)?;
         to_value(result)
+    })
+}
+
+/// Assign one of the wallet's purchased handles as its **primary** (active)
+/// identity. The backend clears the primary flag on the wallet's other names
+/// (one primary per wallet), so this is how a user who owns multiple identities
+/// switches which handle is shown as active across feed / profile / directory
+/// (#4198). ANTI-SPOOF: the owning wallet is proven by the request signature the
+/// SDK attaches from the unlocked signer, never from params — so a caller can
+/// only re-point their *own* wallet's primary.
+pub(crate) fn handle_tinyplace_registry_assign_primary(
+    params: Map<String, Value>,
+) -> ControllerFuture {
+    Box::pin(async move {
+        let name = req_str(&params, "name")?
+            .trim()
+            .trim_start_matches('@')
+            .to_string();
+        if name.is_empty() {
+            return Err("missing required param 'name'".to_string());
+        }
+        log::debug!("{LOG_PREFIX} registry_assign_primary name={name}");
+        let client = global_state().client().await?;
+        let identity = client
+            .registry
+            .assign_primary(&name)
+            .await
+            .map_err(map_err)?;
+        to_value(serde_json::json!({ "identity": identity }))
     })
 }
 
@@ -5006,6 +5065,65 @@ mod tests {
         assert_eq!(price_from_params(&p).unwrap().asset, "SOL");
     }
 
+    /// #4202: the confirm-card balance must be read from tiny.place's own Solana
+    /// settlement RPC (the chain where agent token accounts are funded), not the
+    /// bare public cluster RPC. We point `TINYPLACE_SOLANA_RPC_URL` at a mock
+    /// that answers `getTokenAccountsByOwner`; the balance must come back as
+    /// `Some` with the parsed USDC amount. Before the fix `wallet_usdc_balance`
+    /// queried the public cluster directly and ignored this endpoint, so the
+    /// confirm card showed "Unknown".
+    #[tokio::test]
+    async fn wallet_usdc_balance_reads_from_tinyplace_settlement_rpc() {
+        let _lock = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        let app = axum::Router::new().route(
+            "/",
+            axum::routing::post(|| async {
+                axum::Json(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "context": { "slot": 1 },
+                        "value": [{
+                            "account": { "data": { "parsed": { "info": { "tokenAmount": {
+                                "amount": "12500000",
+                                "decimals": 6,
+                                "uiAmount": 12.5,
+                                "uiAmountString": "12.5"
+                            }}}}}
+                        }]
+                    }
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let url = format!("http://127.0.0.1:{}/", addr.port());
+
+        unsafe {
+            std::env::set_var("TINYPLACE_SOLANA_RPC_URL", &url);
+        }
+        let (balance, address) = wallet_usdc_balance("OwnerAddr1111111111").await;
+        unsafe {
+            std::env::remove_var("TINYPLACE_SOLANA_RPC_URL");
+        }
+
+        assert_eq!(address, "OwnerAddr1111111111");
+        let balance = balance.expect("balance must resolve from the tiny.place settlement RPC");
+        assert_eq!(
+            balance.get("formatted").and_then(Value::as_str),
+            Some("12.5")
+        );
+        assert_eq!(
+            balance.get("assetSymbol").and_then(Value::as_str),
+            Some("USDC")
+        );
+        assert_eq!(balance.get("decimals").and_then(Value::as_u64), Some(6));
+    }
+
     // ── GraphQL Feed handler param validation ────────────────────────────────
 
     /// graphql_posts requires `handle`.
@@ -5919,6 +6037,21 @@ mod tests {
         assert!(
             result.unwrap_err().contains("amount"),
             "expected 'amount' in error"
+        );
+    }
+
+    /// registry_assign_primary rejects a blank/@-only name before any client
+    /// work (#4198) — the trim + strip-@ must not leave an empty handle that
+    /// would hit the backend.
+    #[test]
+    fn registry_assign_primary_rejects_blank_name() {
+        let mut params = Map::new();
+        params.insert("name".to_string(), Value::String("  @ ".to_string()));
+        let result = block_on(handle_tinyplace_registry_assign_primary(params));
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().contains("name"),
+            "expected 'name' in error"
         );
     }
 

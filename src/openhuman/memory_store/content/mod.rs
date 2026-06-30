@@ -20,6 +20,7 @@ pub mod paths;
 pub mod raw;
 pub mod read;
 pub mod tags;
+pub mod wiki_git;
 
 use std::path::Path;
 

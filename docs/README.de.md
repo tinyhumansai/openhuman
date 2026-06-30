@@ -27,7 +27,7 @@
 
 <p align="center">
  <a href="https://discord.tinyhumans.ai/">Discord</a> •
- <a href="https://www.reddit.com/r/tinyhumansai/">Reddit</a> •
+ <a href="https://github.com/tinyhumansai/openhuman/discussions">Discussions</a> •
  <a href="https://x.com/intent/follow?screen_name=tinyhumansai">X/Twitter</a> •
  <a href="https://tinyhumans.gitbook.io/openhuman/">Doku</a> •
  <a href="https://x.com/intent/follow?screen_name=senamakel">@senamakel folgen (Creator)</a>
@@ -80,7 +80,7 @@ OpenHuman ist ein quelloffener, agentenbasierter Assistent, der sich in deinen A
 
 - **[Memory Tree](https://tinyhumans.gitbook.io/openhuman/features/memory-tree) + [Obsidian-Wiki](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki)**: eine lokal-zentrierte Wissensbasis, aufgebaut aus deinen Daten und deinen Aktivitäten. Alles, was du verbindest, wird in Markdown-Chunks von ≤3k Tokens kanonisiert, bewertet und in hierarchische Zusammenfassungs-Bäume gefaltet, gespeichert in **SQLite auf deiner Maschine**. Dieselben Chunks landen als `.md`-Dateien in einem Obsidian-kompatiblen Vault, das du öffnen, durchstöbern und editieren kannst — inspiriert von Karpathys [obsidian-wiki-Workflow](https://x.com/karpathy/status/2039805659525644595).
 
-- **Alles eingebaut**: Web-Suche, ein Web-Fetch-[Scraper](https://tinyhumans.gitbook.io/openhuman/features/native-tools), ein vollständiges Coder-Toolset (Dateisystem, Git, Lint, Test, Grep) und [native Sprache](https://tinyhumans.gitbook.io/openhuman/features/voice) (STT als Eingabe, ElevenLabs TTS als Ausgabe, Lippensynchronisation für das Maskottchen, Live-Google-Meet-Agent) sind ab Werk verdrahtet. Standardmäßig nutzt [Model-Routing](https://tinyhumans.gitbook.io/openhuman/features/model-routing) das OpenHuman-Backend, um das passende LLM für jede Workload auszuwählen und zu proxien (Reasoning, Fast oder Vision). Ein Abo umfasst alle Modelle. Keine "erst-ein-Plugin-installieren-um-Dateien-zu-lesen"-Hürde. [Optional lokale KI über Ollama](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai) für On-Device-Workloads.
+- **Alles eingebaut**: Web-Suche, ein Web-Fetch-[Scraper](https://tinyhumans.gitbook.io/openhuman/features/native-tools), ein vollständiges Coder-Toolset (Dateisystem, Git, Lint, Test, Grep) und [native Sprache](https://tinyhumans.gitbook.io/openhuman/features/native-tools/voice) (STT als Eingabe, ElevenLabs TTS als Ausgabe, Lippensynchronisation für das Maskottchen, Live-Google-Meet-Agent) sind ab Werk verdrahtet. Standardmäßig nutzt [Model-Routing](https://tinyhumans.gitbook.io/openhuman/features/model-routing) das OpenHuman-Backend, um das passende LLM für jede Workload auszuwählen und zu proxien (Reasoning, Fast oder Vision). Ein Abo umfasst alle Modelle. Keine "erst-ein-Plugin-installieren-um-Dateien-zu-lesen"-Hürde. [Optional lokale KI über Ollama](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai) für On-Device-Workloads.
 
 - **[Smarte Token-Kompression (TokenJuice)](https://tinyhumans.gitbook.io/openhuman/features/token-compression)**: Jeder Tool-Aufruf, jedes Scrape-Ergebnis, jeder E-Mail-Text und jeder Such-Payload läuft durch eine Token-Kompressionsschicht, bevor er ein LLM-Modell erreicht. HTML wird zu Markdown konvertiert, lange URLs werden gekürzt, und ausschweifende Tool-Ausgaben werden über eine konfigurierbare Regel-Ebene dedupliziert und zusammengefasst usw. CJK, Emojis und andere Multi-Byte-Texte bleiben Graphem für Graphem erhalten — niemals abgeschnitten. Du erhältst dieselbe Information bei einem Bruchteil der Tokens. Kosten und Latenz sinken um bis zu 80%.
 
@@ -133,7 +133,7 @@ Du hostest [agentmemory](https://github.com/rohitg00/agentmemory) bereits selbst
 _Baust du auch in Richtung AGI und künstlichem Bewusstsein? Setze einen Stern und hilf anderen, den Weg zu finden._
 
 <p align="center">
- <a href="https://www.star-history.com/#tinyhumansai/openhuman&type=date&legend=top-left">
+ <a href="https://www.star-history.com">
  <picture>
  <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&theme=dark&legend=top-left" />
  <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left" />

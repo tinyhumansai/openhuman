@@ -5,6 +5,7 @@ import type { PersistedTranscriptItem } from '../../types/turnState';
 import {
   buildProcessingBlocks,
   categorizeTool,
+  extractAgentSources,
   formatTimelineEntry,
   formatToolName,
   isKnownClientTool,
@@ -371,5 +372,40 @@ describe('formatter null-safety (malformed / legacy snapshot guard)', () => {
     expect(formatToolName(undefined)).toBe('');
     expect(stripToolCallEnvelopes(undefined)).toBe('');
     expect(stripToolCallEnvelopes(null)).toBe('');
+  });
+});
+
+describe('extractAgentSources', () => {
+  const source = (id: string, url: string): ToolTimelineEntry =>
+    entry({ id, name: 'web_fetch', argsBuffer: JSON.stringify({ url }) });
+
+  it('surfaces http(s) sources with hostname titles, deduped in first-seen order', () => {
+    const out = extractAgentSources([
+      source('a', 'https://example.com/docs'),
+      source('b', 'http://blog.example.org/post'),
+      source('c', 'https://example.com/docs'), // dup URL — dropped
+    ]);
+    expect(out).toEqual([
+      { id: 'a', title: 'example.com', url: 'https://example.com/docs' },
+      { id: 'b', title: 'blog.example.org', url: 'http://blog.example.org/post' },
+    ]);
+  });
+
+  it('drops non-http(s) URLs so a hostile scheme never reaches an anchor href', () => {
+    const out = extractAgentSources([
+      source('js', 'javascript:alert(1)'),
+      source('data', 'data:text/html,<script>alert(1)</script>'),
+      source('file', 'file:///etc/passwd'),
+      source('ok', 'https://safe.example.com'),
+    ]);
+    expect(out).toEqual([{ id: 'ok', title: 'safe.example.com', url: 'https://safe.example.com' }]);
+  });
+
+  it('ignores entries from non-URL tools', () => {
+    expect(
+      extractAgentSources([
+        entry({ id: 'g', name: 'grep', argsBuffer: JSON.stringify({ url: 'https://x.com' }) }),
+      ])
+    ).toEqual([]);
   });
 });

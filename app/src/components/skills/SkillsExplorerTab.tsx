@@ -533,6 +533,14 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [catalogInitialized, setCatalogInitialized] = useState(false);
   const [installingId, setInstallingId] = useState<string | null>(null);
+  // Catalog entry ids we just installed this session. The "installed" badge is
+  // otherwise derived purely from `isCatalogEntryInstalled`, a heuristic that
+  // maps a refetched installed skill (whose post-install id/location can differ
+  // from the catalog entry) back to the catalog card. When that mapping misses,
+  // a successful install fell back to "Install" — the only signal was a fleeting
+  // toast, so the card looked unchanged (#4150). Recording the installed entry
+  // id here makes the card flip to "Installed" deterministically on success.
+  const [installedEntryIds, setInstalledEntryIds] = useState<Set<string>>(new Set());
 
   const [sources, setSources] = useState<string[]>([]);
   const [activeSources, setActiveSources] = useState<Set<string>>(new Set());
@@ -638,6 +646,16 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
     [skills]
   );
 
+  // A catalog entry counts as installed if the refetched installed list maps
+  // back to it (`isCatalogEntryInstalled`) OR we installed it this session. The
+  // latter guarantees the card reflects a successful install even when the
+  // heuristic key-match misses (#4150).
+  const entryInstalled = useCallback(
+    (entry: CatalogEntry): boolean =>
+      installedEntryIds.has(entry.id) || isCatalogEntryInstalled(entry, installedKeys),
+    [installedEntryIds, installedKeys]
+  );
+
   const filteredSkills = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
     if (!q) return skills;
@@ -701,6 +719,14 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
       setInstallingId(entry.id);
       try {
         const result = await skillRegistryApi.install(entry.id);
+        // Authoritatively mark this entry installed so the card flips to
+        // "Installed" on success regardless of whether the refetched list maps
+        // back to it via the install-key heuristic (#4150).
+        setInstalledEntryIds(prev => {
+          const next = new Set(prev);
+          next.add(entry.id);
+          return next;
+        });
         // Await the refetch so `installedKeys` is fresh before the button
         // re-renders — otherwise it briefly flips back to "Install" between
         // clearing the installing state and the list updating. `fetchSkills`
@@ -975,7 +1001,7 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
                   <CatalogTile
                     key={`${entry.source}-${entry.id}`}
                     entry={entry}
-                    installed={isCatalogEntryInstalled(entry, installedKeys)}
+                    installed={entryInstalled(entry)}
                     installing={installingId === entry.id}
                     onClick={() => setDetailEntry(entry)}
                     onInstall={() => void handleRegistryInstall(entry)}
@@ -1014,13 +1040,13 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
         <SkillDetailDialog
           entry={detailEntry}
           skill={detailSkill}
-          installed={detailEntry ? isCatalogEntryInstalled(detailEntry, installedKeys) : true}
+          installed={detailEntry ? entryInstalled(detailEntry) : true}
           onClose={() => {
             setDetailEntry(null);
             setDetailSkill(null);
           }}
           onInstall={
-            detailEntry && !isCatalogEntryInstalled(detailEntry, installedKeys)
+            detailEntry && !entryInstalled(detailEntry)
               ? () => {
                   void handleRegistryInstall(detailEntry);
                   setDetailEntry(null);

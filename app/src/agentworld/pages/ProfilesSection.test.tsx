@@ -6,7 +6,7 @@
  * renders one of: loading / wallet_locked / no_handle / payment_required /
  * error / populated card. All handles/ids are GENERIC placeholders.
  */
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { type GqlProfile, PaymentRequiredError } from '../../lib/agentworld/invokeApiClient';
@@ -19,7 +19,7 @@ vi.mock('../AgentWorldShell', () => ({
   apiClient: {
     directory: { reverse: vi.fn() },
     follows: { stats: vi.fn() },
-    registry: { export: vi.fn() },
+    registry: { export: vi.fn(), assignPrimary: vi.fn() },
     graphql: { user: vi.fn() },
   },
 }));
@@ -29,6 +29,7 @@ const reverse = vi.mocked(apiClient.directory.reverse);
 const walletStatus = vi.mocked(fetchWalletStatus);
 const followStats = vi.mocked(apiClient.follows.stats);
 const registryExport = vi.mocked(apiClient.registry.export);
+const assignPrimary = vi.mocked(apiClient.registry.assignPrimary);
 const graphqlUser = vi.mocked(apiClient.graphql.user);
 
 const SOLANA_ADDR = 'WaLLetSoLanaAddr0123456789';
@@ -414,6 +415,55 @@ describe('graphql-enriched profile card', () => {
     render(<ProfilesSection />);
     expect(await screen.findByText('No Handle Agent')).toBeInTheDocument();
     expect(reverse).not.toHaveBeenCalled();
+  });
+
+  test('header shows the PRIMARY handle, not identities[0], with multiple handles (#4198)', async () => {
+    graphqlUser.mockResolvedValueOnce(
+      makeProfile({
+        displayName: 'Multi Agent',
+        identities: [
+          { username: 'firstbought', cryptoId: SOLANA_ADDR, primary: false, ...minimalIdentity },
+          { username: 'chosenactive', cryptoId: SOLANA_ADDR, primary: true, ...minimalIdentity },
+        ],
+      })
+    );
+    render(<ProfilesSection />);
+    // The header must reflect the primary-flagged handle even though it is not
+    // first in the array — pre-fix this showed @firstbought.
+    expect(await screen.findByRole('heading', { name: /@chosenactive/ })).toBeInTheDocument();
+  });
+
+  test('clicking "Make active" promotes a non-primary handle and refetches (#4198)', async () => {
+    graphqlUser
+      .mockResolvedValueOnce(
+        makeProfile({
+          identities: [
+            { username: 'active1', cryptoId: SOLANA_ADDR, primary: true, ...minimalIdentity },
+            { username: 'spare2', cryptoId: SOLANA_ADDR, primary: false, ...minimalIdentity },
+          ],
+        })
+      )
+      // After the switch, the refetch returns spare2 as the new primary.
+      .mockResolvedValueOnce(
+        makeProfile({
+          identities: [
+            { username: 'active1', cryptoId: SOLANA_ADDR, primary: false, ...minimalIdentity },
+            { username: 'spare2', cryptoId: SOLANA_ADDR, primary: true, ...minimalIdentity },
+          ],
+        })
+      );
+    assignPrimary.mockResolvedValueOnce({
+      identity: { username: 'spare2', cryptoId: SOLANA_ADDR, primary: true, ...minimalIdentity },
+    });
+    render(<ProfilesSection />);
+
+    const makeActive = await screen.findByRole('button', { name: /Make active/i });
+    fireEvent.click(makeActive);
+
+    await waitFor(() => expect(assignPrimary).toHaveBeenCalledWith('spare2'));
+    // Refetch promoted spare2 — the header now shows it.
+    expect(await screen.findByRole('heading', { name: /@spare2/ })).toBeInTheDocument();
+    expect(graphqlUser).toHaveBeenCalledTimes(2);
   });
 
   test('renders profile with empty attestations array — no Verified Accounts section', async () => {

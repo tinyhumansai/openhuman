@@ -132,6 +132,15 @@ fn main() {
             {
                 return None;
             }
+            // Defense-in-depth: drop skill-install fetch 4xx (esp. 404/410) —
+            // a missing/renamed catalog `SKILL.md` is expected user-input state
+            // surfaced to the UI, not a Sentry-actionable defect. Primary
+            // suppression lives at the `install_workflow_from_url_with_home`
+            // emit site; this catches any future skills call site that reports
+            // a 4xx. 5xx (genuine remote failure) still reports. TAURI-RUST-CGE.
+            if openhuman_core::core::observability::is_skills_install_client_error_event(&event) {
+                return None;
+            }
             // Defense-in-depth: 404 on PATCH/DELETE to a channel-message path
             // is an expected state (provider-side delete or backend GC). Primary
             // suppression lives in `authed_json`; this catches any future call

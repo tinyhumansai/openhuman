@@ -163,6 +163,15 @@ impl Provider for OpenAiCompatibleProvider {
                     Some(model),
                     status,
                 );
+            } else if super::super::is_local_provider_no_model_loaded(status, &error) {
+                // Local inference server up but no model loaded — pure local
+                // user-state, demote instead of paging (TAURI-RUST-DMQ).
+                super::super::log_local_provider_no_model_loaded(
+                    "chat_completions",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
             } else if super::super::is_custom_openai_upstream_bad_request_http_400(
                 self.name.as_str(),
                 status,
@@ -212,6 +221,18 @@ impl Provider for OpenAiCompatibleProvider {
                 // BYO-balance condition (TAURI-RUST-4QF — DeepSeek "Insufficient
                 // Balance"; same class as the native_chat arm added for -C62).
                 super::super::log_provider_insufficient_credits_402(
+                    "chat_completions",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+            } else if super::super::is_provider_moderation_rejection_http_400(status, &error) {
+                // External content-moderation proxy ("Ombudsman") refused the
+                // prompt with a 400 + verdict — well-formed request, external
+                // safety guard, no client lever. Demote like the native_chat
+                // ladder so the looping triage agent doesn't flood Sentry
+                // (TAURI-RUST-ECR).
+                super::super::log_provider_moderation_rejection(
                     "chat_completions",
                     self.name.as_str(),
                     Some(model),
@@ -749,6 +770,19 @@ impl Provider for OpenAiCompatibleProvider {
                     Some(model),
                     status,
                 );
+            } else if super::super::is_local_provider_no_model_loaded(status, &error) {
+                // Local inference server (LM Studio etc.) is up but has no model
+                // loaded — pure local user-state, nothing we sent is malformed.
+                // Demote instead of paging on every retry, and replace the body
+                // with actionable "load a model" guidance (TAURI-RUST-DMQ,
+                // mirrors the embeddings #3688 special-case).
+                super::super::log_local_provider_no_model_loaded(
+                    "native_chat",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+                message = super::super::local_provider_no_model_loaded_user_message();
             } else if super::super::is_custom_openai_upstream_bad_request_http_400(
                 self.name.as_str(),
                 status,
@@ -826,6 +860,21 @@ impl Provider for OpenAiCompatibleProvider {
                     status,
                 );
                 message = super::super::ollama_cloud_internal_500_user_message(Some(model), status);
+            } else if super::super::is_provider_moderation_rejection_http_400(status, &error) {
+                // External content-moderation proxy ("Ombudsman") refused the
+                // prompt with a 400 + verdict
+                // (`{"error":"Message rejected by Ombudsman","score":80}`).
+                // Well-formed request, external safety guard, no local lever —
+                // the triage agent re-issues the same prompt every turn and
+                // floods report_error (400 ∉ the transient set). Demote to info
+                // while the error still propagates so retry/fallback runs
+                // unchanged (TAURI-RUST-ECR).
+                super::super::log_provider_moderation_rejection(
+                    "native_chat",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
             } else if super::super::should_report_provider_http_failure(status) {
                 crate::core::observability::report_error(
                     message.as_str(),
@@ -988,6 +1037,17 @@ impl Provider for OpenAiCompatibleProvider {
                         Some(model_owned.as_str()),
                         status,
                     );
+                } else if crate::openhuman::inference::provider::is_local_provider_no_model_loaded(
+                    status, &raw_error,
+                ) {
+                    // Local inference server up but no model loaded — pure local
+                    // user-state, demote instead of paging (TAURI-RUST-DMQ).
+                    crate::openhuman::inference::provider::log_local_provider_no_model_loaded(
+                        "stream_chat",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
                 } else if crate::openhuman::inference::provider::is_custom_openai_upstream_bad_request_http_400(
                     provider_name.as_str(),
                     status,
@@ -1057,6 +1117,21 @@ impl Provider for OpenAiCompatibleProvider {
                     // unpreventable BYO-balance condition
                     // (TAURI-RUST-4QF — DeepSeek "Insufficient Balance").
                     crate::openhuman::inference::provider::log_provider_insufficient_credits_402(
+                        "stream_chat",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
+                } else if crate::openhuman::inference::provider::is_provider_moderation_rejection_http_400(
+                    status,
+                    &raw_error,
+                ) {
+                    // External content-moderation proxy ("Ombudsman") refused
+                    // the prompt with a 400 + verdict — well-formed request,
+                    // external safety guard, no client lever. Demote like the
+                    // native_chat ladder so the looping triage agent doesn't
+                    // flood Sentry (TAURI-RUST-ECR).
+                    crate::openhuman::inference::provider::log_provider_moderation_rejection(
                         "stream_chat",
                         provider_name.as_str(),
                         Some(model_owned.as_str()),
@@ -1222,6 +1297,17 @@ impl Provider for OpenAiCompatibleProvider {
                         Some(model_owned.as_str()),
                         status,
                     );
+                } else if crate::openhuman::inference::provider::is_local_provider_no_model_loaded(
+                    status, &raw_error,
+                ) {
+                    // Local inference server up but no model loaded — pure local
+                    // user-state, demote instead of paging (TAURI-RUST-DMQ).
+                    crate::openhuman::inference::provider::log_local_provider_no_model_loaded(
+                        "stream_chat_history",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
                 } else if crate::openhuman::inference::provider::is_custom_openai_upstream_bad_request_http_400(
                     provider_name.as_str(),
                     status,
@@ -1291,6 +1377,21 @@ impl Provider for OpenAiCompatibleProvider {
                     // unpreventable BYO-balance condition
                     // (TAURI-RUST-4QF — DeepSeek "Insufficient Balance").
                     crate::openhuman::inference::provider::log_provider_insufficient_credits_402(
+                        "stream_chat_history",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
+                } else if crate::openhuman::inference::provider::is_provider_moderation_rejection_http_400(
+                    status,
+                    &raw_error,
+                ) {
+                    // External content-moderation proxy ("Ombudsman") refused
+                    // the prompt with a 400 + verdict — well-formed request,
+                    // external safety guard, no client lever. Demote like the
+                    // native_chat ladder so the looping triage agent doesn't
+                    // flood Sentry (TAURI-RUST-ECR).
+                    crate::openhuman::inference::provider::log_provider_moderation_rejection(
                         "stream_chat_history",
                         provider_name.as_str(),
                         Some(model_owned.as_str()),

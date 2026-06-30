@@ -101,17 +101,15 @@ describe('<TeamPanel />', () => {
     await waitFor(() => expect(refreshTeams).toHaveBeenCalled());
   });
 
-  it('disables the Create button until a name is typed and calls createTeam on submit', async () => {
+  it('does not render a create-team control and shows the personal-team note', async () => {
     const Panel = await importPanel();
     renderPanel(Panel);
 
-    const createBtn = screen.getByRole('button', { name: 'Create' });
-    expect(createBtn).toBeDisabled();
-
-    fireEvent.change(screen.getByPlaceholderText('Team name'), { target: { value: 'New Team' } });
-    expect(createBtn).not.toBeDisabled();
-    fireEvent.click(createBtn);
-    await waitFor(() => expect(teamApiMock.createTeam).toHaveBeenCalledWith('New Team'));
+    // Create was removed (issue #3723): backend caps one owned team per user.
+    expect(screen.queryByRole('button', { name: 'Create' })).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('Team name')).not.toBeInTheDocument();
+    expect(screen.getByText(/personal team is created automatically/i)).toBeInTheDocument();
+    expect(teamApiMock.createTeam).not.toHaveBeenCalled();
   });
 
   it('joins a team when the user submits a join code', async () => {
@@ -161,13 +159,13 @@ describe('<TeamPanel />', () => {
     expect(navigateToTeamManagement).toHaveBeenCalledWith('team-a');
   });
 
-  it('surfaces the localized error when createTeam rejects', async () => {
-    teamApiMock.createTeam.mockRejectedValueOnce(new Error('boom'));
+  it('falls back to the localized error when joinTeam rejects without a reason', async () => {
+    teamApiMock.joinTeam.mockRejectedValueOnce(new Error('boom'));
     const Panel = await importPanel();
     renderPanel(Panel);
 
-    fireEvent.change(screen.getByPlaceholderText('Team name'), { target: { value: 'New Team' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
-    await waitFor(() => expect(screen.getByText('Failed to create team')).toBeInTheDocument());
+    fireEvent.change(screen.getByPlaceholderText('Invite code'), { target: { value: 'X' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Join' }));
+    await waitFor(() => expect(screen.getByText('boom')).toBeInTheDocument());
   });
 });

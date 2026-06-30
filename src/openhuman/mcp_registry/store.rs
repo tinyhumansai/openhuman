@@ -91,25 +91,54 @@ fn init_schema(conn: &Connection) -> Result<()> {
     // `transport` column with the default value.
     let existing_cols = mcp_servers_columns(conn)?;
     if !existing_cols.iter().any(|c| c == "transport") {
-        conn.execute(
+        add_column_idempotent(
+            conn,
             "ALTER TABLE mcp_servers ADD COLUMN transport TEXT NOT NULL DEFAULT 'stdio'",
-            [],
-        )
-        .context("Failed to add transport column to mcp_servers")?;
+            "transport column to mcp_servers",
+        )?;
     }
     if !existing_cols.iter().any(|c| c == "deployment_url") {
-        conn.execute("ALTER TABLE mcp_servers ADD COLUMN deployment_url TEXT", [])
-            .context("Failed to add deployment_url column to mcp_servers")?;
+        add_column_idempotent(
+            conn,
+            "ALTER TABLE mcp_servers ADD COLUMN deployment_url TEXT",
+            "deployment_url column to mcp_servers",
+        )?;
     }
     if !existing_cols.iter().any(|c| c == "enabled") {
-        conn.execute(
+        add_column_idempotent(
+            conn,
             "ALTER TABLE mcp_servers ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1",
-            [],
-        )
-        .context("Failed to add enabled column to mcp_servers")?;
+            "enabled column to mcp_servers",
+        )?;
     }
 
     Ok(())
+}
+
+/// Run an additive `ALTER TABLE … ADD COLUMN`, treating an "already exists"
+/// failure as success.
+///
+/// The `PRAGMA table_info` snapshot in [`init_schema`] skips the ALTER in the
+/// common case, but that check-then-alter is not atomic *across connections*:
+/// every store call opens its own [`Connection`] and runs `init_schema`, so the
+/// several MCP RPCs a single page load fans out (list / status / registry) can
+/// each snapshot the column as missing before any of them adds it — then all
+/// race to `ALTER`, and every loser fails with "duplicate column name". SQLite's
+/// `ADD COLUMN` has no `IF NOT EXISTS`, so we swallow exactly that error: the
+/// column existing is the desired post-condition, and surfacing it turned a
+/// benign race into the red "Failed to add deployment_url column to mcp_servers"
+/// banner on the MCP Servers page (#4194). Any other failure still propagates.
+fn add_column_idempotent(conn: &Connection, ddl: &str, what: &str) -> Result<()> {
+    match conn.execute(ddl, []) {
+        Ok(_) => Ok(()),
+        Err(rusqlite::Error::SqliteFailure(_, Some(msg)))
+            if msg.contains("duplicate column name") =>
+        {
+            log::debug!("[mcp_registry] {what} already present (concurrent migration) — skipping");
+            Ok(())
+        }
+        Err(e) => Err(anyhow::Error::new(e).context(format!("Failed to add {what}"))),
+    }
 }
 
 /// Snapshot of the column names on `mcp_servers`. Used by the additive
@@ -883,5 +912,54 @@ mod tests {
         let loaded = get_server_conn(&conn, "legacy-1").unwrap();
         assert_eq!(loaded.transport, Transport::Stdio);
         assert_eq!(loaded.command, "npx");
+    }
+
+    /// #4194: the additive migration's PRAGMA-then-ALTER is not atomic across
+    /// the several connections one MCP page load opens, so two can both see a
+    /// column missing and both ALTER — the loser hitting "duplicate column
+    /// name". `add_column_idempotent` must treat that exact error as success
+    /// (the column exists either way) so it never surfaces as a UI error banner.
+    #[test]
+    fn add_column_idempotent_tolerates_duplicate_column() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let conn = rusqlite::Connection::open(tmp.path()).unwrap();
+        conn.execute_batch("CREATE TABLE mcp_servers (server_id TEXT PRIMARY KEY);")
+            .unwrap();
+
+        const DDL: &str = "ALTER TABLE mcp_servers ADD COLUMN deployment_url TEXT";
+
+        // First add succeeds.
+        add_column_idempotent(&conn, DDL, "deployment_url column to mcp_servers").unwrap();
+        assert!(mcp_servers_columns(&conn)
+            .unwrap()
+            .iter()
+            .any(|c| c == "deployment_url"));
+
+        // Re-running the SAME ALTER (the lost race) must NOT error — the column
+        // already existing is the desired post-condition.
+        add_column_idempotent(&conn, DDL, "deployment_url column to mcp_servers")
+            .expect("duplicate column must be tolerated, not surfaced");
+    }
+
+    /// Guard against over-swallowing: a genuine DDL failure (here, a syntax
+    /// error) must still propagate so real migration bugs are not hidden.
+    #[test]
+    fn add_column_idempotent_propagates_other_errors() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let conn = rusqlite::Connection::open(tmp.path()).unwrap();
+        conn.execute_batch("CREATE TABLE mcp_servers (server_id TEXT PRIMARY KEY);")
+            .unwrap();
+
+        let err = add_column_idempotent(
+            &conn,
+            "ALTER TABLE mcp_servers ADD COLUMN", // malformed DDL
+            "bogus column to mcp_servers",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Failed to add bogus column to mcp_servers"),
+            "unexpected error: {err}"
+        );
     }
 }

@@ -40,6 +40,59 @@ fn accessors() {
     assert_eq!(p.signature(), "provider=openai;model=m;dims=1");
 }
 
+// ── Gemini model-id normalization (TAURI-RUST-4SA) ──────
+
+#[test]
+fn gemini_base_url_prefixes_bare_model() {
+    // Gemini's OpenAI-compat shim requires `models/<name>`; a bare id 400s with
+    // `BatchEmbedContentsRequest.model: unexpected model name format`.
+    let p = OpenAiEmbedding::new(
+        "https://generativelanguage.googleapis.com/v1beta/openai",
+        "key",
+        "text-embedding-004",
+        768,
+    );
+    assert_eq!(p.model(), "models/text-embedding-004");
+    assert_eq!(p.model_id(), "models/text-embedding-004");
+}
+
+#[test]
+fn gemini_normalization_is_idempotent() {
+    // An already-prefixed `models/…` or a `tunedModels/…` id is left untouched.
+    let p = OpenAiEmbedding::new(
+        "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "key",
+        "models/text-embedding-004",
+        768,
+    );
+    assert_eq!(p.model(), "models/text-embedding-004");
+
+    let tuned = OpenAiEmbedding::new(
+        "https://generativelanguage.googleapis.com",
+        "key",
+        "tunedModels/my-embed",
+        768,
+    );
+    assert_eq!(tuned.model(), "tunedModels/my-embed");
+}
+
+#[test]
+fn non_gemini_base_url_leaves_model_unchanged() {
+    // Genuine OpenAI / LocalAI / Ollama ids must not grow a `models/` prefix.
+    for base in [
+        "https://api.openai.com",
+        "http://localhost:11434",
+        "https://api.example.com/v1",
+    ] {
+        let p = OpenAiEmbedding::new(base, "key", "text-embedding-004", 768);
+        assert_eq!(
+            p.model(),
+            "text-embedding-004",
+            "non-Gemini base must not prefix the model: {base}"
+        );
+    }
+}
+
 #[test]
 fn url_standard_openai() {
     let p = OpenAiEmbedding::new("https://api.openai.com", "key", "model", 1536);

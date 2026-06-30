@@ -1844,6 +1844,8 @@ const messages: TranslationMap = {
   'team.teamName': 'Nome da equipe',
   'team.creating': 'Criando...',
   'team.joinExistingTeam': 'Entrar em Equipe Existente',
+  'team.personalAutoCreatedNote':
+    'Sua equipe pessoal é criada automaticamente. Para colaborar, entre em uma equipe existente com um código de convite abaixo.',
   'team.inviteCode': 'Código de convite',
   'team.joining': 'Entrando...',
   'team.join': 'Entrar',
@@ -4929,6 +4931,7 @@ const messages: TranslationMap = {
     'Renderiza as respostas do assistente como texto sem moldura e mantém suas mensagens em balões.',
   'settings.mascot.active': 'Ativo',
   'settings.mascot.characterDesc': 'Descrição do personagem',
+  'settings.mascot.characterDraft': 'Rascunho',
   'settings.mascot.characterHeading': 'Título do personagem',
   'settings.mascot.customGifError':
     'Insira um caminho HTTPS .gif URL, loopback HTTP .gif URL, arquivo:// .gif URL ou .gif local.',
@@ -5232,11 +5235,15 @@ const messages: TranslationMap = {
   'skills.meetingBots.platformComingSoon': 'O suporte {label} estará disponível em breve.',
   'skills.meetingBots.platformHints.gmeet': 'meet.google.com/abc-defg-hij',
   'skills.meetingBots.platformHints.teams': 'times.microsoft.com/...',
+  'skills.meetingBots.platformHints.webex': 'webex.com/meet/...',
   'skills.meetingBots.platformHints.zoom': 'zoom.us/j/...',
   'skills.meetingBots.platforms.gmeet': 'Google Conheça',
   'skills.meetingBots.platforms.teams': 'Microsoft Teams',
+  'skills.meetingBots.platforms.webex': 'Webex',
   'skills.meetingBots.platforms.zoom': 'Zoom',
   'skills.meetingBots.sendTo': 'Enviar para',
+  'skills.meetingBots.serverOverloaded':
+    'O OpenHuman está sob carga intensa no momento. Tente novamente em alguns minutos.',
   'skills.meetingBots.soonSuffix': 'em breve',
   'skills.meetingBots.starting': 'Iniciando…',
   'skills.meetingBots.recentCallsAriaLabel': 'Chamadas de reunião recentes',
@@ -5276,6 +5283,62 @@ const messages: TranslationMap = {
   'skills.meetingBots.activeMode': 'Responder quando eu falar com ele',
   'skills.meetingBots.activeModeDesc':
     'Quando ativado, o bot responde em voz alta depois que você diz a frase de ativação. Quando desativado, ele apenas ouve e transcreve.',
+  'skills.meetingBots.history.allPlatforms': 'Todas as plataformas',
+  'skills.meetingBots.history.copyTranscript': 'Copiar',
+  'skills.meetingBots.history.downloadTranscript': 'Baixar',
+  'skills.meetingBots.history.earlier': 'Antes',
+  'skills.meetingBots.history.participantCount': '{count} participante',
+  'skills.meetingBots.history.participantCountPlural': '{count} participantes',
+  'skills.meetingBots.history.runWithOpenHuman': 'Executar com OpenHuman',
+  'skills.meetingBots.history.searchPlaceholder': 'Pesquisar chamadas…',
+  'skills.meetingBots.history.selectPrompt':
+    'Selecione uma chamada para ver seu resumo e transcrição.',
+  'skills.meetingBots.history.today': 'Hoje',
+  'skills.meetingBots.history.yesterday': 'Ontem',
+  'skills.meetingBots.upcoming.heading': 'Próximas',
+  'skills.meetingBots.upcoming.when': 'Quando',
+  'skills.meetingBots.upcoming.meeting': 'Reunião',
+  'skills.meetingBots.upcoming.platform': 'Plataforma',
+  'skills.meetingBots.upcoming.people': 'Pessoas',
+  'skills.meetingBots.upcoming.joinPolicy': 'Política de participação',
+  'skills.meetingBots.upcoming.joinNow': 'Participar agora',
+  'skills.meetingBots.upcoming.joinNowAriaLabel': 'Participar de {title}',
+  'skills.meetingBots.upcoming.join': 'Participar',
+  'skills.meetingBots.upcoming.auto': 'Auto',
+  'skills.meetingBots.upcoming.ask': 'Perguntar',
+  'skills.meetingBots.upcoming.skip': 'Ignorar',
+  'skills.meetingBots.upcoming.today': 'Hoje',
+  'skills.meetingBots.upcoming.tomorrow': 'Amanhã',
+  'skills.meetingBots.upcoming.empty':
+    'Sem reuniões próximas — conecte o Google Calendar para vê-las aqui.',
+  'skills.meetingBots.upcoming.error': 'Não foi possível carregar as reuniões próximas.',
+  'skills.meetingBots.upcoming.retry': 'Tentar novamente',
+  'skills.meetingBots.upcoming.refresh': 'Atualizar',
+  'skills.meetingBots.upcoming.filterAll': 'Todas as plataformas',
+  'skills.meetingBots.upcoming.participants': '{count} participantes',
+  'skills.meetingBots.upcoming.imminent': 'Começa em breve',
+  'skills.meetingBots.upcoming.autoJoinsAt': 'Entra automaticamente ~às {time}',
+  'skills.meetingBots.upcoming.asksAtStart': 'Pergunta no início',
+  'skills.meetingBots.upcoming.watchCalendarHint':
+    "Ative 'Monitorar meu calendário' nos Padrões (ícone de engrenagem) para que Auto/Perguntar entre em vigor — caso contrário, essas políticas ficam salvas mas não serão acionadas.",
+  'skills.meetingBots.relative.now': 'agora',
+  'skills.meetingBots.relative.inMinutes': 'em {count}m',
+  'skills.meetingBots.relative.inHours': 'em {count}h',
+  'skills.meetingBots.relative.minutesAgo': 'há {count}m',
+  'skills.meetingBots.relative.hoursAgo': 'há {count}h',
+  'skills.meetingBots.relative.daysAgo': 'há {count}d',
+  'skills.meetingBots.relative.yesterday': 'ontem',
+  'skills.meetingBots.defaults.drawerTitle': 'Padrões de reunião',
+  'skills.meetingBots.defaults.closeDrawer': 'Fechar',
+  'skills.meetingBots.defaults.openDefaults': 'Configurações de reunião',
+  'skills.meetingBots.defaults.watchCalendar': 'Monitorar meu calendário',
+  'skills.meetingBots.defaults.watchCalendarDesc':
+    'Permita que o OpenHuman monitore seu calendário conectado para entrar automaticamente em reuniões ou solicitar confirmação com base nas políticas abaixo. Isso é separado das notificações de lembrete de reunião.',
+  'skills.meetingBots.defaults.globalPolicy': 'Política global de entrada automática',
+  'skills.meetingBots.defaults.perPlatformTitle': 'Configurações por plataforma',
+  'skills.meetingBots.defaults.perPlatformDesc':
+    'Substituir a política global para plataformas específicas.',
+  'skills.meetingBots.defaults.useDefault': 'Usar padrão',
   'skills.resource.preview.closeAriaLabel': 'Fechar visualização',
   'skills.resource.preview.failed': 'Falha na pré-visualização',
   'skills.resource.preview.loading': 'Carregando visualização…',
@@ -6355,7 +6418,11 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.title': 'Créditos do provedor necessários',
   'userErrors.insufficientCredits.body':
     'Seu provedor de IA ficou sem créditos. Recarregue-o ou atualize a chave de API.',
+  'userErrors.apiKeyMissing.title': 'Chave de API necessária',
+  'userErrors.apiKeyMissing.body':
+    'Seu provedor de IA não tem uma chave de API definida. Adicione uma nas configurações do provedor para continuar.',
   'userErrors.scope.chat': 'Chat',
+  'userErrors.scope.cron': 'Tarefa agendada',
   // Agent World — Identity trading (confirm-before-spend + balance gate)
   'agentWorld.trading.amountLabel': 'Valor',
   'agentWorld.trading.networkLabel': 'Rede',
@@ -6388,6 +6455,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.amountTooManyDecimals': 'Este valor tem casas decimais em excesso.',
   'agentWorld.trading.amountMustBePositive': 'Insira um valor maior que zero.',
   'agentWorld.trading.amountInvalid': 'Insira um valor válido.',
+
+  // Code block chrome
+  'codeBlock.copy': 'Copiar',
+  'codeBlock.copied': 'Copiado!',
 };
 
 export default messages;

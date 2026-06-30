@@ -660,6 +660,45 @@ async fn list_models_errors_on_non_success() {
 }
 
 #[tokio::test]
+async fn list_models_degrades_on_200_with_non_json_body() {
+    // TAURI-RUST-560: a 2xx response whose body is not an Ollama tags JSON
+    // object (a different local server/proxy, a captive portal, an HTML page
+    // bound to the configured Ollama port) must degrade gracefully — return
+    // `Err` so the diagnostics caller surfaces `tags_error` and an empty model
+    // list — rather than emit an `error!`-level event that floods Sentry on
+    // every diagnostics poll. The parse-failure log is now demoted to `warn!`
+    // (a breadcrumb) to match the A3T non-success treatment.
+    let _guard = crate::openhuman::inference::inference_test_guard();
+
+    let app = Router::new().route(
+        "/api/tags",
+        // 200 OK, but the body is an HTML page, not Ollama tags JSON.
+        get(|| async {
+            (
+                axum::http::StatusCode::OK,
+                "<!doctype html><html><head><title>Sign in</title></head>\
+                 <body>Captive portal</body></html>",
+            )
+        }),
+    );
+    let base = spawn_mock(app).await;
+    unsafe {
+        std::env::set_var("OPENHUMAN_OLLAMA_BASE_URL", &base);
+    }
+
+    let config = Config::default();
+    let service = LocalAiService::new(&config);
+    let err = service.list_models_at(&base).await.unwrap_err();
+    assert!(
+        err.contains("parse failed"),
+        "200 non-JSON body must yield a graceful parse-failed Err, got: {err}"
+    );
+    unsafe {
+        std::env::remove_var("OPENHUMAN_OLLAMA_BASE_URL");
+    }
+}
+
+#[tokio::test]
 async fn lm_studio_list_models_returns_loaded_models() {
     let _guard = crate::openhuman::inference::inference_test_guard();
 

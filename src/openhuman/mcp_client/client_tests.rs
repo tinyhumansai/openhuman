@@ -394,6 +394,55 @@ fn parse_sse_events_handles_multiple_frames() {
     assert_eq!(events[1].data.as_ref().unwrap()["b"], 2);
 }
 
+// #4195 — the incremental SSE reader must surface the JSON-RPC reply the moment
+// a complete `data:` frame is buffered, so a server that holds the stream open
+// after replying no longer stalls the tool call until the request timeout.
+
+#[test]
+fn first_complete_sse_data_returns_none_until_event_terminated() {
+    // The data line has arrived but the terminating blank line has not — a
+    // half-received frame must NOT be parsed (it could be truncated JSON).
+    assert!(first_complete_sse_data("event: message\ndata: {\"a\":1}\n")
+        .expect("ok")
+        .is_none());
+    // Nothing complete at all.
+    assert!(first_complete_sse_data("event: mess")
+        .expect("ok")
+        .is_none());
+}
+
+#[test]
+fn first_complete_sse_data_returns_first_complete_frame() {
+    // A fully-terminated event yields its data immediately, even though more
+    // bytes (here, the start of a second frame) trail behind it.
+    let buffer = "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}\n\ndata: {\"b\":2}";
+    let data = first_complete_sse_data(buffer)
+        .expect("ok")
+        .expect("first complete frame");
+    assert_eq!(data["result"]["ok"], true);
+}
+
+#[test]
+fn first_complete_sse_data_skips_keepalive_and_dataless_events() {
+    // Leading SSE comment + a dataless event must be skipped, returning the
+    // first event that actually carries a data frame.
+    let buffer = ": keepalive\n\nevent: ping\n\ndata: {\"id\":7}\n\n";
+    let data = first_complete_sse_data(buffer)
+        .expect("ok")
+        .expect("data frame after keepalive");
+    assert_eq!(data["id"], 7);
+}
+
+#[test]
+fn first_complete_sse_data_handles_crlf_boundaries() {
+    // CRLF streams must split on the same blank-line boundary.
+    let buffer = "event: message\r\ndata: {\"id\":9}\r\n\r\n";
+    let data = first_complete_sse_data(buffer)
+        .expect("ok")
+        .expect("crlf data frame");
+    assert_eq!(data["id"], 9);
+}
+
 #[test]
 fn parse_www_authenticate_extracts_resource_metadata() {
     let mut headers = HeaderMap::new();
