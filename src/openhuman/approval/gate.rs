@@ -45,6 +45,18 @@ use crate::openhuman::security::POLICY_DENIED_MARKER;
 use super::store;
 use super::types::{ApprovalDecision, ExecutionOutcome, GateOutcome, PendingApproval};
 
+/// Disambiguates why [`ApprovalGate::decide`] returned `Ok(None)`. See
+/// [`ApprovalGate::classify_decide_miss`] for the lookup that produces this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecideMiss {
+    /// The pending row was already decided, lazily expired, or superseded — a
+    /// benign race (TAURI-RUST-5EH). Safe to demote out of Sentry.
+    AlreadyResolved,
+    /// No row was ever persisted for this request_id — a genuine lost
+    /// registration that must stay a Sentry signal.
+    NeverRegistered,
+}
+
 /// How long the gate will park a future before timing out and
 /// returning `Deny`. 10 minutes matches the default `expires_at`
 /// written into the persisted row.
@@ -718,6 +730,40 @@ impl ApprovalGate {
         Ok(decided)
     }
 
+    /// Classify a [`Self::decide`] miss — i.e. when `decide` returned
+    /// `Ok(None)` because its conditional `UPDATE ... WHERE decided_at IS NULL`
+    /// matched 0 rows. Two very different states collapse into that `None`:
+    ///
+    /// - [`DecideMiss::AlreadyResolved`] — the row exists but was **already
+    ///   decided, lazily expired (denied), or superseded**. This is the benign
+    ///   double-tap / two-operator / expiry-while-live race the inline-approvals
+    ///   design spec classifies as benign (TAURI-RUST-5EH).
+    /// - [`DecideMiss::NeverRegistered`] — no row was ever persisted for this
+    ///   request_id. That is a genuine lost registration (a core restart dropped
+    ///   the parked future before persisting, or a stray id) and must stay a
+    ///   Sentry signal.
+    ///
+    /// We disambiguate by consulting [`store::get_decision`], which returns a
+    /// decision only when `decided_at IS NOT NULL` — exactly the already-resolved
+    /// case (expiry writes a `Deny` decision, so expired rows report here too).
+    /// A `decide` miss can't be an undecided-but-present row: that row would have
+    /// matched the `UPDATE`. If the lookup itself errors we conservatively keep
+    /// the event visible (`NeverRegistered`) rather than silently demoting.
+    pub fn classify_decide_miss(&self, request_id: &str) -> DecideMiss {
+        match store::get_decision(&self.config, request_id) {
+            Ok(Some(_)) => DecideMiss::AlreadyResolved,
+            Ok(None) => DecideMiss::NeverRegistered,
+            Err(err) => {
+                tracing::warn!(
+                    request_id = %request_id,
+                    error = %err,
+                    "[approval::gate] classify_decide_miss: get_decision failed; treating as never-registered (keep visible)"
+                );
+                DecideMiss::NeverRegistered
+            }
+        }
+    }
+
     /// List all undecided rows, including orphans from prior launches.
     /// Orphan rows have no live parked future so a `decide` on them
     /// updates the DB but cannot resume an action — see [`store::list_pending`].
@@ -1081,6 +1127,63 @@ mod tests {
             .decide("does-not-exist", ApprovalDecision::ApproveOnce)
             .unwrap();
         assert!(decided.is_none());
+    }
+
+    /// TAURI-RUST-5EH: a `decide` miss must be classified — already-decided and
+    /// expired rows are benign (`AlreadyResolved`), while an id that was never
+    /// persisted is a genuine lost registration (`NeverRegistered`) that stays a
+    /// Sentry signal.
+    #[tokio::test]
+    async fn classify_decide_miss_distinguishes_resolved_from_unknown() {
+        let (gate, _dir) = test_gate();
+
+        // Never persisted → genuine loss, keep visible.
+        assert_eq!(
+            gate.classify_decide_miss("never-existed"),
+            DecideMiss::NeverRegistered
+        );
+
+        // Persist + decide a row, then a second decide misses → already-decided.
+        let pending = PendingApproval::new(
+            "req-decided",
+            "composio",
+            "send email",
+            serde_json::json!({}),
+            Some(chrono::Utc::now() + chrono::Duration::minutes(10)),
+        );
+        store::insert_pending(&gate.config, &pending, &gate.session_id).unwrap();
+        assert!(gate
+            .decide("req-decided", ApprovalDecision::ApproveOnce)
+            .unwrap()
+            .is_some());
+        // The conditional UPDATE now matches 0 rows (decided_at set).
+        assert!(gate
+            .decide("req-decided", ApprovalDecision::Deny)
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            gate.classify_decide_miss("req-decided"),
+            DecideMiss::AlreadyResolved
+        );
+
+        // A row past its expiry is lazily denied by `decide`'s expire pass, so
+        // its decide miss is also benign (the persisted decision exists).
+        let expired = PendingApproval::new(
+            "req-expired",
+            "composio",
+            "send email",
+            serde_json::json!({}),
+            Some(chrono::Utc::now() - chrono::Duration::minutes(1)),
+        );
+        store::insert_pending(&gate.config, &expired, &gate.session_id).unwrap();
+        assert!(gate
+            .decide("req-expired", ApprovalDecision::ApproveOnce)
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            gate.classify_decide_miss("req-expired"),
+            DecideMiss::AlreadyResolved
+        );
     }
 
     #[tokio::test]

@@ -8,15 +8,15 @@ import {
   selectCustomPrimaryColor,
   selectCustomSecondaryColor,
   selectMascotColor,
-  selectSelectedMascotId,
 } from '../../store/mascotSlice';
 import {
-  BackendRiveMascot,
   CustomGifMascot,
   getMascotPalette,
   hexToArgbInt,
+  ManifestRiveMascot,
   RiveMascot,
 } from './Mascot';
+import { useMascotManifest } from './Mascot/manifest/useMascotManifest';
 import { useHumanMascot } from './useHumanMascot';
 
 const SPEAK_REPLIES_KEY = 'human.speakReplies';
@@ -37,7 +37,8 @@ const HumanPage = () => {
   const customPrimary = useAppSelector(selectCustomPrimaryColor);
   const customSecondary = useAppSelector(selectCustomSecondaryColor);
   const customMascotGifUrl = useAppSelector(selectCustomMascotGifUrl);
-  const selectedMascotId = useAppSelector(selectSelectedMascotId);
+  // Active mascot resolved from the GitHub manifest (selection + default).
+  const { entry: mascotEntry } = useMascotManifest();
   const palette = getMascotPalette(mascotColor);
   const primaryColor = useMemo(
     () => hexToArgbInt(mascotColor === 'custom' ? customPrimary : palette.bodyFill),
@@ -62,10 +63,10 @@ const HumanPage = () => {
         <div className="relative w-[min(80vh,90%)] aspect-square">
           {customMascotGifUrl ? (
             <CustomGifMascot src={customMascotGifUrl} face={face} />
-          ) : selectedMascotId ? (
-            <BackendRiveMascot
-              key={selectedMascotId}
-              mascotId={selectedMascotId}
+          ) : mascotEntry ? (
+            <ManifestRiveMascot
+              key={mascotEntry.id}
+              entry={mascotEntry}
               face={face}
               primaryColor={primaryColor}
               secondaryColor={secondaryColor}

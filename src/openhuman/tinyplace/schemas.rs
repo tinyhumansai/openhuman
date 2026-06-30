@@ -138,6 +138,7 @@ use crate::openhuman::tinyplace::manifest::{
     handle_tinyplace_profiles_broadcasts,
     handle_tinyplace_profiles_get,
     handle_tinyplace_profiles_groups,
+    handle_tinyplace_registry_assign_primary,
     handle_tinyplace_registry_export,
     handle_tinyplace_registry_get,
     handle_tinyplace_registry_register,
@@ -1424,6 +1425,23 @@ fn schema_follows_feed() -> ControllerSchema {
 
 // ── Registry export schema ─────────────────────────────────────────────────────
 
+fn schema_registry_assign_primary() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "tinyplace",
+        function: "registry_assign_primary",
+        description: "Assign one of the wallet's handles as its primary (active) identity; \
+                      clears the primary flag on the wallet's other handles.",
+        inputs: vec![required_string(
+            "name",
+            "The handle to make primary/active (with or without a leading @).",
+        )],
+        outputs: vec![json_output(
+            "identity",
+            "The updated Identity with primary=true.",
+        )],
+    }
+}
+
 fn schema_registry_export() -> ControllerSchema {
     ControllerSchema {
         namespace: "tinyplace",
@@ -2584,6 +2602,7 @@ pub fn all_tinyplace_controller_schemas() -> Vec<ControllerSchema> {
         schema_marketplace_recent(),
         schema_registry_get(),
         schema_registry_register(),
+        schema_registry_assign_primary(),
         schema_marketplace_buy_product(),
         schema_marketplace_buy_identity(),
         schema_marketplace_bid(),
@@ -2822,6 +2841,10 @@ pub fn all_tinyplace_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schema_registry_register(),
             handler: handle_tinyplace_registry_register,
+        },
+        RegisteredController {
+            schema: schema_registry_assign_primary(),
+            handler: handle_tinyplace_registry_assign_primary,
         },
         RegisteredController {
             schema: schema_marketplace_buy_product(),

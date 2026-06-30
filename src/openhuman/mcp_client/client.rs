@@ -2,6 +2,7 @@ use crate::openhuman::config::{McpAuthConfig, McpClientIdentityConfig};
 use crate::openhuman::workflows::types::ToolResult;
 use anyhow::Context;
 use base64::Engine;
+use futures_util::StreamExt;
 use parking_lot::Mutex;
 #[cfg(test)]
 use reqwest::header::HeaderMap;
@@ -746,8 +747,8 @@ pub fn redact_endpoint(raw: &str) -> String {
 #[path = "client_helpers.rs"]
 mod client_helpers;
 use client_helpers::{
-    header_to_string, parse_sse_events, parse_sse_message, parse_www_authenticate_challenge,
-    x_mcp_headers_from_schema,
+    first_complete_sse_data, header_to_string, parse_sse_events, parse_sse_message,
+    parse_www_authenticate_challenge, x_mcp_headers_from_schema,
 };
 
 impl McpHttpClient {
@@ -759,8 +760,6 @@ impl McpHttpClient {
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
             .to_string();
-        let text = response.text().await?;
-
         if status == reqwest::StatusCode::UNAUTHORIZED {
             let resource_metadata = parse_www_authenticate_challenge(&headers)
                 .and_then(|challenge| challenge.resource_metadata);
@@ -774,12 +773,38 @@ impl McpHttpClient {
             }));
         }
         if !status.is_success() {
+            let text = response.text().await.unwrap_or_default();
             anyhow::bail!("MCP HTTP {} — {}", status.as_u16(), text);
         }
 
         let payload: Value = if content_type.starts_with("text/event-stream") {
-            parse_sse_message(&text)?
+            // Read the SSE body incrementally and return as soon as the single
+            // JSON-RPC reply frame arrives, instead of buffering to stream-close
+            // (`response.text().await`). A server that holds the stream open
+            // after replying would otherwise stall this call until the request
+            // timeout, and those stalls compound across a skill's tool chain
+            // (#4195). The request-level reqwest timeout still bounds the worst
+            // case (a server that never replies).
+            let mut raw: Vec<u8> = Vec::new();
+            let mut stream = response.bytes_stream();
+            let mut frame: Option<Value> = None;
+            while let Some(chunk) = stream.next().await {
+                raw.extend_from_slice(&chunk?);
+                // Decode the whole buffer each pass so a multi-byte UTF-8
+                // sequence split across chunk boundaries is never corrupted.
+                if let Some(data) = first_complete_sse_data(&String::from_utf8_lossy(&raw))? {
+                    frame = Some(data);
+                    break;
+                }
+            }
+            match frame {
+                Some(data) => data,
+                // Stream ended without a data frame — fall back to the whole-body
+                // parser for a clear "no data frame" error that includes the body.
+                None => parse_sse_message(&String::from_utf8_lossy(&raw))?,
+            }
         } else {
+            let text = response.text().await?;
             serde_json::from_str(&text).map_err(|e| {
                 anyhow::anyhow!("Failed to parse MCP JSON response: {e} — body: {text}")
             })?

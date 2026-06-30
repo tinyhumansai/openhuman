@@ -13,6 +13,34 @@ pub(super) fn parse_sse_message(body: &str) -> anyhow::Result<Value> {
     Ok(event)
 }
 
+/// Return the first JSON `data:` frame from the **fully-terminated** prefix of a
+/// partially-received SSE buffer, or `None` if no complete event carrying a data
+/// frame has arrived yet.
+///
+/// MCP Streamable HTTP lets a server keep the POST response's SSE stream open
+/// after it has already emitted the single JSON-RPC reply, so reading the whole
+/// body to stream-close (`response.text().await`) stalls every tool call until
+/// the server closes or the request times out — the dominant transport cause of
+/// the multi-minute skill latency in #4195. Reading incrementally and stopping
+/// at the first data frame lets the call return the instant the reply lands.
+///
+/// Only the portion up to the last blank-line event boundary is parsed, so a
+/// half-received final `data:` line is never decoded as truncated JSON.
+/// Keepalive comments and dataless events are skipped (returns `None`, keep
+/// reading). An SSE event terminates on a blank line; `\r\n` is normalised to
+/// `\n` first so CRLF streams split on the same boundary.
+pub(super) fn first_complete_sse_data(buffer: &str) -> anyhow::Result<Option<Value>> {
+    let normalized = buffer.replace("\r\n", "\n");
+    // The terminator of the last complete event. Without one, nothing is
+    // fully received yet.
+    let Some(boundary) = normalized.rfind("\n\n") else {
+        return Ok(None);
+    };
+    let complete = &normalized[..=boundary];
+    let events = parse_sse_events(complete)?;
+    Ok(events.into_iter().find_map(|event| event.data))
+}
+
 pub(super) fn parse_sse_events(body: &str) -> anyhow::Result<Vec<McpSseEvent>> {
     let mut events = Vec::new();
     let mut event_type: Option<String> = None;

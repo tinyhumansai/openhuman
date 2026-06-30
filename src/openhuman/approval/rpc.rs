@@ -7,7 +7,7 @@ use anyhow::anyhow;
 
 use crate::rpc::RpcOutcome;
 
-use super::gate::{try_boot_state, ApprovalGate, ApprovalGateBootState};
+use super::gate::{try_boot_state, ApprovalGate, ApprovalGateBootState, DecideMiss};
 use super::types::{ApprovalAuditEntry, ApprovalDecision, PendingApproval};
 
 /// Read the host-aware approval-gate boot decision so the UI banner can
@@ -116,13 +116,39 @@ pub async fn approval_decide(
             return Err(err);
         }
     };
-    let row = decided.ok_or_else(|| {
-        tracing::warn!(
-            request_id = request_id,
-            "[rpc:approval_decide] no pending approval found"
-        );
-        anyhow!("no pending approval found for request_id '{request_id}'")
-    })?;
+    let row = match decided {
+        Some(row) => row,
+        None => {
+            // `gate.decide` returned `Ok(None)`: the conditional UPDATE matched
+            // 0 rows. Disambiguate the benign already-decided/expired race from
+            // a genuine lost registration so only the latter reaches Sentry
+            // (TAURI-RUST-5EH). Both stay `warn!` — neither is a hard error the
+            // caller can act on differently — but the benign arm emits the
+            // "no pending approval found" wording that `expected_error_kind`
+            // demotes, while the never-registered arm emits a distinct string
+            // that stays a captured Sentry signal.
+            return match gate.classify_decide_miss(request_id) {
+                DecideMiss::AlreadyResolved => {
+                    tracing::warn!(
+                        request_id = request_id,
+                        "[rpc:approval_decide] no pending approval found (already decided/expired — benign race)"
+                    );
+                    Err(anyhow!(
+                        "no pending approval found for request_id '{request_id}' (already decided or expired)"
+                    ))
+                }
+                DecideMiss::NeverRegistered => {
+                    tracing::warn!(
+                        request_id = request_id,
+                        "[rpc:approval_decide] no pending approval ever registered (genuine lost registration)"
+                    );
+                    Err(anyhow!(
+                        "no pending approval ever registered for request_id '{request_id}'"
+                    ))
+                }
+            };
+        }
+    };
 
     let mut logs = vec![format!(
         "[approval] decided request_id={} tool={} decision={}",

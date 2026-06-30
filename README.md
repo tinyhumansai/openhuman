@@ -32,6 +32,7 @@
 
 <p align="center">
  <a href="https://discord.tinyhumans.ai/">Discord</a> •
+ <a href="https://www.reddit.com/r/tinyhumansai/">Reddit</a> •
  <a href="https://x.com/intent/follow?screen_name=tinyhumansai">X/Twitter</a> •
  <a href="https://tinyhumans.gitbook.io/openhuman/">Docs</a> •
  <a href="https://x.com/intent/follow?screen_name=senamakel">Follow @senamakel (Creator)</a>
@@ -180,7 +181,7 @@ High-level comparison (products evolve, so verify against each vendor). OpenHuma
 _Building toward AGI and artificial consciousness? Star the repo and help others find the path._
 
 <p align="center">
- <a href="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left">
+ <a href="https://www.star-history.com/#tinyhumansai/openhuman&type=date&legend=top-left">
  <picture>
  <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&theme=dark&legend=top-left" />
  <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left" />

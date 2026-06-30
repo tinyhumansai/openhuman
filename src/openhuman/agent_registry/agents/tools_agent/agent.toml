@@ -17,7 +17,7 @@ omit_skills_catalog = true
 disallowed_tools = ["polymarket", "kalshi", "tinyplace_*"]
 
 [model]
-hint = "agentic"
+hint = "burst"
 
 [tools]
 # Wildcard — the agent inherits the orchestrator's full built-in tool

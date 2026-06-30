@@ -20,6 +20,7 @@ use async_trait::async_trait;
 use crate::openhuman::config::{
     MODEL_AGENTIC_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_V1,
 };
+use crate::openhuman::inference::provider::record_resolved_provider_route;
 use crate::openhuman::inference::provider::traits::{
     ChatMessage, ChatRequest, ChatResponse, Provider, ProviderCapabilities, StreamChunk,
     StreamError, StreamOptions, StreamResult, ToolsPayload,
@@ -189,24 +190,26 @@ impl IntelligentRoutingProvider {
         match &result {
             Err(e) => {
                 if !privacy_required {
-                    if let Some(RoutingTarget::Remote { .. }) = fallback {
+                    if let Some(RoutingTarget::Remote { model }) = fallback {
                         tracing::warn!(
                             hint,
                             error = ?e,
                             "[routing] local call failed, retrying with remote"
                         );
+                        record_resolved_provider_route("remote", model);
                         return (fallback_fn.await, true);
                     }
                 }
                 (result, false)
             }
             Ok(text) if !privacy_required && quality::is_low_quality(text) => {
-                if let Some(RoutingTarget::Remote { .. }) = fallback {
+                if let Some(RoutingTarget::Remote { model }) = fallback {
                     tracing::warn!(
                         hint,
                         response_preview = truncate_safe(text, 80),
                         "[routing] local response low quality, retrying with remote"
                     );
+                    record_resolved_provider_route("remote", model);
                     return (fallback_fn.await, true);
                 }
                 (result, false)
@@ -228,6 +231,7 @@ impl IntelligentRoutingProvider {
         let (result, fallback_occurred) = match &primary {
             RoutingTarget::Local { model: m } => {
                 tracing::debug!(model = m.as_str(), hint = model, "[routing] → local");
+                record_resolved_provider_route("local", m);
                 let m = m.clone();
                 let fb_model = fallback
                     .as_ref()
@@ -253,6 +257,7 @@ impl IntelligentRoutingProvider {
             }
             RoutingTarget::Remote { model: m } => {
                 tracing::debug!(model = m.as_str(), hint = model, "[routing] → remote");
+                record_resolved_provider_route("remote", m);
                 (
                     self.remote
                         .chat_with_system(system_prompt, message, m, temperature)
@@ -312,11 +317,13 @@ impl IntelligentRoutingProvider {
 
         let result = match &effective_primary {
             RoutingTarget::Local { model: m } => {
+                record_resolved_provider_route("local", m);
                 let r = self.local.chat(request, m, temperature).await;
                 if should_fallback(&r, self.hints.privacy_required, &fallback) {
                     if let Some(RoutingTarget::Remote { model: fb }) = &fallback {
                         tracing::warn!(hint = model, "[routing] local chat fallback → remote");
                         fallback_occurred = true;
+                        record_resolved_provider_route("remote", fb);
                         self.remote.chat(request, fb, temperature).await
                     } else {
                         r
@@ -325,7 +332,10 @@ impl IntelligentRoutingProvider {
                     r
                 }
             }
-            RoutingTarget::Remote { model: m } => self.remote.chat(request, m, temperature).await,
+            RoutingTarget::Remote { model: m } => {
+                record_resolved_provider_route("remote", m);
+                self.remote.chat(request, m, temperature).await
+            }
         };
 
         let (input_tokens, output_tokens, cost_usd) = match &result {
@@ -398,6 +408,7 @@ impl Provider for IntelligentRoutingProvider {
 
         let result = match &primary {
             RoutingTarget::Local { model: m } => {
+                record_resolved_provider_route("local", m);
                 let r = self.local.chat_with_history(messages, m, temperature).await;
                 let do_fallback = !self.hints.privacy_required
                     && fallback.is_some()
@@ -412,6 +423,7 @@ impl Provider for IntelligentRoutingProvider {
                             "[routing] local history failed/low-quality → remote"
                         );
                         fallback_occurred = true;
+                        record_resolved_provider_route("remote", fb);
                         self.remote
                             .chat_with_history(messages, fb, temperature)
                             .await
@@ -423,6 +435,7 @@ impl Provider for IntelligentRoutingProvider {
                 }
             }
             RoutingTarget::Remote { model: m } => {
+                record_resolved_provider_route("remote", m);
                 self.remote
                     .chat_with_history(messages, m, temperature)
                     .await

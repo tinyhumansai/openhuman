@@ -390,9 +390,7 @@ pub async fn run_dispatch_harness(options: DispatchHarnessOptions) -> DispatchHa
 
                 match handler_error {
                     Some(message) => Err(message),
-                    None => Ok(AgentTurnResponse {
-                        text: response_text,
-                    }),
+                    None => Ok(AgentTurnResponse::new(response_text)),
                 }
             }
         }
