@@ -91,6 +91,34 @@ pub(crate) fn tier_gate_decision(
     Ok(())
 }
 
+async fn filter_cached_toolkit_actions_with_current_scope(
+    agent_id: &str,
+    toolkit: &str,
+    actions: &[crate::openhuman::context::prompt::ConnectedIntegrationTool],
+) -> Vec<crate::openhuman::context::prompt::ConnectedIntegrationTool> {
+    let pref = crate::openhuman::composio::providers::load_user_scope_or_default(toolkit).await;
+    let before = actions.len();
+    let filtered: Vec<_> = actions
+        .iter()
+        .filter(|action| {
+            crate::openhuman::composio::providers::is_action_visible_with_pref(&action.name, &pref)
+        })
+        .cloned()
+        .collect();
+    tracing::debug!(
+        agent_id = %agent_id,
+        toolkit = %toolkit,
+        cached_actions = before,
+        visible_actions = filtered.len(),
+        hidden_actions = before.saturating_sub(filtered.len()),
+        read = pref.read,
+        write = pref.write,
+        admin = pref.admin,
+        "[subagent_runner:typed] re-filtered cached toolkit catalogue with current user scope"
+    );
+    filtered
+}
+
 /// Run a sub-agent based on its definition and a task prompt.
 ///
 /// This is the primary entry point for agent delegation. It performs the following:
@@ -429,7 +457,12 @@ async fn run_typed_mode(
                         cached_actions = cached_integration.tools.len(),
                         "[subagent_runner:typed] using cached toolkit catalogue"
                     );
-                    cached_integration.tools.clone()
+                    filter_cached_toolkit_actions_with_current_scope(
+                        &definition.id,
+                        tk,
+                        &cached_integration.tools,
+                    )
+                    .await
                 } else {
                     match &client_kind {
                         Some(ComposioClientKind::Backend(client)) => {

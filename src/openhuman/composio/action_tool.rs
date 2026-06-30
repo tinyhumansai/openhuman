@@ -184,6 +184,15 @@ impl Tool for ComposioActionTool {
             }
         }
 
+        if let Some(message) = super::tools::action_execution_block_message(&self.action_name).await
+        {
+            tracing::info!(
+                tool = %self.action_name,
+                "[composio][scopes] per-action execute blocked by user scope pref"
+            );
+            return Ok(ToolResult::error(message));
+        }
+
         // Inject `timeZone` / `singleEvents` defaults for Google
         // Calendar list slugs (issue #1714). The per-action surface is
         // the spawn-time tool an integrations sub-agent picks when it
@@ -487,6 +496,43 @@ mod tests {
             !msg.contains("strict read-only"),
             "unset sandbox must never trigger the gate, got: {msg}"
         );
+    }
+
+    #[tokio::test]
+    async fn user_scope_blocks_per_action_write_call_before_dispatch() {
+        let _memory_guard = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let memory = crate::openhuman::memory::global::init(tmp.path().join("workspace"))
+            .expect("global memory client should initialize for action scope test");
+        crate::openhuman::composio::providers::user_scopes::save(
+            &memory,
+            "gmail",
+            crate::openhuman::composio::providers::UserScopePref {
+                read: true,
+                write: false,
+                admin: false,
+            },
+        )
+        .await
+        .expect("scope pref should persist");
+
+        let t = ComposioActionTool::new(
+            fake_config(),
+            "GMAIL_SEND_EMAIL".to_string(),
+            "send a gmail message".to_string(),
+            None,
+        );
+        let result = t.execute(serde_json::json!({})).await.unwrap();
+        assert!(
+            result.is_error,
+            "per-action Write must error when the user's current scope pref disables write"
+        );
+        let msg = error_text(&result);
+        assert!(msg.contains("disabled"), "got: {msg}");
+        assert!(msg.contains("`write`"), "got: {msg}");
+        assert!(msg.contains("Connections"), "got: {msg}");
     }
 
     // ── Factory routing (#1710) ──────────────────────────────────────

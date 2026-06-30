@@ -803,6 +803,141 @@ async fn integrations_agent_reuses_cached_toolkit_actions_without_refetching_lis
 }
 
 #[tokio::test]
+async fn integrations_agent_refilters_cached_actions_with_current_user_scope() {
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _memory_guard = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+        .lock()
+        .await;
+    crate::openhuman::composio::invalidate_connected_integrations_cache();
+
+    let mut fixture = crate::openhuman::agent::harness::test_support::ComposioFixture::realistic();
+    fixture.tools = vec![
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "GMAIL_FETCH_EMAILS",
+                "description": "Fetch emails from Gmail",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"}
+                    }
+                }
+            }
+        }),
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "GMAIL_SEND_EMAIL",
+                "description": "Send an email via Gmail",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "recipient_email": {"type": "string"},
+                        "subject": {"type": "string"},
+                        "body": {"type": "string"}
+                    },
+                    "required": ["recipient_email", "subject", "body"]
+                }
+            }
+        }),
+    ];
+    let backend =
+        crate::openhuman::agent::harness::test_support::spawn_fake_composio_backend(fixture).await;
+    let (config, workspace_root) = backend.config_persisted().await;
+    let _workspace = WorkspaceEnvGuard::set(&workspace_root);
+    let memory = crate::openhuman::memory::global::init(config.workspace_dir.clone())
+        .expect("global memory client should initialize for scope filtering test");
+
+    let integrations = crate::openhuman::composio::fetch_connected_integrations(&config).await;
+    let gmail = integrations
+        .iter()
+        .find(|integration| integration.toolkit == "gmail" && integration.connected)
+        .expect("fixture should expose a connected gmail integration");
+    assert!(
+        gmail
+            .tools
+            .iter()
+            .any(|tool| tool.name == "GMAIL_SEND_EMAIL"),
+        "warm cache should include write action before the user disables write scope"
+    );
+
+    crate::openhuman::composio::providers::user_scopes::save(
+        &memory,
+        "gmail",
+        crate::openhuman::composio::providers::UserScopePref {
+            read: true,
+            write: false,
+            admin: false,
+        },
+    )
+    .await
+    .expect("scope pref should persist");
+
+    let requests_before = backend.requests();
+    let tools_before = requests_before
+        .iter()
+        .filter(|(_, path, _)| path == "/tools")
+        .count();
+
+    let provider = ScriptedProvider::new(vec![text_response("done")]);
+    let mut parent = make_parent(provider.clone(), vec![]);
+    parent.connected_integrations = integrations;
+    let mut def = make_def_named_tools(&[]);
+    def.id = "integrations_agent".into();
+    def.tools = ToolScope::Wildcard;
+
+    let outcome = with_parent_context(parent, async {
+        run_subagent(
+            &def,
+            "read recent email",
+            SubagentRunOptions {
+                toolkit_override: Some("gmail".into()),
+                ..Default::default()
+            },
+        )
+        .await
+    })
+    .await
+    .expect("integrations_agent should run using scope-filtered cached gmail actions");
+    assert_eq!(outcome.output, "done");
+
+    let captured = provider.captured.lock();
+    let first_request = captured
+        .first()
+        .expect("provider should receive one integrations_agent request");
+    let system_msg = first_request
+        .messages
+        .iter()
+        .find(|message| message.role == "system")
+        .expect("system prompt should be present");
+    assert!(
+        system_msg.content.contains("GMAIL_FETCH_EMAILS"),
+        "read-scoped cached action should remain visible in the prompt; system: {}",
+        system_msg.content
+    );
+    assert!(
+        !system_msg.content.contains("GMAIL_SEND_EMAIL"),
+        "write-scoped cached action must be hidden after the current user scope disables write; system: {}",
+        system_msg.content
+    );
+
+    let requests_after = backend.requests();
+    let tools_after = requests_after
+        .iter()
+        .filter(|(_, path, _)| path == "/tools")
+        .count();
+    assert_eq!(
+        tools_after, tools_before,
+        "scope re-filtering should not re-fetch list_tools; requests: {requests_after:?}"
+    );
+
+    crate::openhuman::composio::invalidate_connected_integrations_cache();
+}
+
+#[tokio::test]
 async fn typed_mode_executes_one_tool_then_returns() {
     // Two-round script: round 1 returns a tool call, round 2 returns
     // the final text. Verifies the inner tool-call loop wires up the
