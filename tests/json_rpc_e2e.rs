@@ -13793,3 +13793,39 @@ async fn json_rpc_meet_event_policy_round_trip() {
 
     rpc_join.abort();
 }
+
+/// `openhuman.agent_meetings_generate_summary` — verifies the manual summary
+/// RPC is registered and reaches handler validation without needing an LLM.
+#[tokio::test]
+async fn json_rpc_agent_meetings_generate_summary_rejects_empty_meeting_id() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    write_min_config(&openhuman_home, "http://127.0.0.1:9");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    let resp = post_json_rpc(
+        &rpc_base,
+        9310,
+        "openhuman.agent_meetings_generate_summary",
+        json!({ "meeting_id": "" }),
+    )
+    .await;
+    let err = assert_jsonrpc_error(&resp, "agent_meetings_generate_summary empty meeting_id");
+    let message = err.get("message").and_then(Value::as_str).unwrap_or("");
+    assert!(
+        message.contains("meeting_id must not be empty"),
+        "expected generate_summary validation error, got: {err}"
+    );
+
+    rpc_join.abort();
+}

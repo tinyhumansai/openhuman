@@ -17,7 +17,8 @@ use crate::rpc::RpcOutcome;
 
 use super::types::{
     BackendMeetHarnessResponseRequest, BackendMeetJoinRequest, BackendMeetJoinResponse,
-    BackendMeetLeaveRequest, BackendMeetSpeakRequest, MeetingSessionStatus,
+    BackendMeetLeaveRequest, BackendMeetSpeakRequest, GenerateSummaryRequest,
+    GenerateSummaryResponse, MeetingSessionStatus,
 };
 
 const ALLOWED_HOSTS: &[(&str, &str)] = &[
@@ -217,15 +218,17 @@ pub async fn ingest_backend_meeting_transcript(
         "[agent_meetings] transcript ingested into memory tree"
     );
 
-    // Create a meeting thread with the transcript for the thread system. This
-    // path has no pre-generated summary, so the thread generates its own.
-    if let Err(e) =
-        create_meeting_thread_with_transcript(&turns, duration_ms, correlation_id, None).await
-    {
-        tracing::warn!("[agent_meetings] meeting thread creation failed: {e}");
-    }
-
     Ok(())
+}
+
+/// Whether thread creation may perform its own summary generation when the
+/// caller did not pass a pre-generated summary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SummaryGenerationMode {
+    /// Preserve the legacy behavior: enrich transcript threads when possible.
+    GenerateIfMissing,
+    /// Append only a summary supplied by the caller; never invoke the LLM.
+    UseProvidedOnly,
 }
 
 /// Create a conversation thread labelled "Meetings" containing the transcript.
@@ -242,7 +245,24 @@ pub async fn create_meeting_thread_with_transcript(
     duration_ms: u64,
     correlation_id: Option<String>,
     generated: Option<&super::summary::GeneratedSummary>,
-) -> Result<(), String> {
+) -> Result<String, String> {
+    create_meeting_thread_with_transcript_with_summary_mode(
+        turns,
+        duration_ms,
+        correlation_id,
+        generated,
+        SummaryGenerationMode::GenerateIfMissing,
+    )
+    .await
+}
+
+pub async fn create_meeting_thread_with_transcript_with_summary_mode(
+    turns: &[BackendMeetTurn],
+    duration_ms: u64,
+    correlation_id: Option<String>,
+    generated: Option<&super::summary::GeneratedSummary>,
+    summary_mode: SummaryGenerationMode,
+) -> Result<String, String> {
     use crate::openhuman::memory::{
         AppendConversationMessageRequest, ConversationMessageRecord,
         CreateConversationThreadRequest, UpdateConversationThreadTitleRequest,
@@ -250,7 +270,7 @@ pub async fn create_meeting_thread_with_transcript(
     use crate::openhuman::threads::ops;
 
     if turns.is_empty() {
-        return Ok(());
+        return Ok(String::new());
     }
 
     // Format the transcript body first — this is the durable artifact and must
@@ -322,7 +342,9 @@ pub async fn create_meeting_thread_with_transcript(
     //    and this thread); otherwise generate one here, bounded so a slow/flaky
     //    provider can never dominate the path. Any failure or timeout leaves the
     //    plain-transcript thread untouched.
-    let owned_generated = if generated.is_none() {
+    let owned_generated = if generated.is_none()
+        && matches!(summary_mode, SummaryGenerationMode::GenerateIfMissing)
+    {
         super::summary::generate_meeting_summary_bounded(turns, correlation_id.as_deref()).await
     } else {
         None
@@ -376,7 +398,104 @@ pub async fn create_meeting_thread_with_transcript(
         summarized = generated.is_some(),
         "[agent_meetings] meeting thread created"
     );
+    Ok(thread_id)
+}
+
+pub async fn append_summary_prompt_message(
+    thread_id: &str,
+    meeting_id: &str,
+) -> Result<(), String> {
+    use crate::openhuman::memory::{AppendConversationMessageRequest, ConversationMessageRecord};
+    use crate::openhuman::threads::ops;
+
+    let content = super::summary::format_summary_prompt_markdown(meeting_id);
+    let req = AppendConversationMessageRequest {
+        thread_id: thread_id.to_string(),
+        message: ConversationMessageRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            content,
+            message_type: "system".to_string(),
+            extra_metadata: serde_json::json!({
+                "kind": "meeting_summary_prompt",
+                "meeting_id": meeting_id,
+            }),
+            sender: "system".to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+        },
+    };
+    ops::message_append(req)
+        .await
+        .map_err(|e| format!("[agent_meetings] append summary prompt failed: {e}"))?;
+    tracing::info!(
+        thread_id = %thread_id,
+        meeting_id = %meeting_id,
+        "[agent_meetings] summary prompt appended"
+    );
     Ok(())
+}
+
+fn detail_transcript_to_turns(
+    detail: &crate::openhuman::meet_agent::store::MeetCallDetail,
+) -> Vec<BackendMeetTurn> {
+    detail
+        .transcript
+        .iter()
+        .filter(|line| !line.content.trim().is_empty())
+        .map(|line| BackendMeetTurn {
+            role: if line.role.eq_ignore_ascii_case("assistant") {
+                "assistant".to_string()
+            } else {
+                "user".to_string()
+            },
+            content: line.content.trim().to_string(),
+        })
+        .collect()
+}
+
+pub async fn handle_generate_summary(params: Map<String, Value>) -> Result<Value, String> {
+    let req: GenerateSummaryRequest = serde_json::from_value(Value::Object(params))
+        .map_err(|e| format!("[agent_meetings] invalid generate_summary params: {e}"))?;
+    let meeting_id = req.meeting_id.trim();
+    if meeting_id.is_empty() {
+        return Err("[agent_meetings] meeting_id must not be empty".to_string());
+    }
+
+    tracing::info!(
+        meeting_id = %meeting_id,
+        "[agent_meetings] manual summary requested"
+    );
+
+    let detail = crate::openhuman::meet_agent::store::read_detail(meeting_id)
+        .await?
+        .ok_or_else(|| format!("[agent_meetings] no recorded meeting detail for {meeting_id}"))?;
+    let turns = detail_transcript_to_turns(&detail);
+    if turns.is_empty() {
+        return Err(format!(
+            "[agent_meetings] meeting {meeting_id} has no transcript lines to summarize"
+        ));
+    }
+
+    let generated = super::summary::generate_meeting_summary_bounded(&turns, Some(meeting_id))
+        .await
+        .ok_or_else(|| format!("[agent_meetings] summary generation failed for {meeting_id}"))?;
+
+    let updated = super::recent_calls::build_detail(meeting_id, &turns, Some(&generated));
+    crate::openhuman::meet_agent::store::write_detail(&updated).await?;
+
+    let thread_id = create_meeting_thread_with_transcript_with_summary_mode(
+        &turns,
+        0,
+        Some(meeting_id.to_string()),
+        Some(&generated),
+        SummaryGenerationMode::UseProvidedOnly,
+    )
+    .await?;
+
+    serde_json::to_value(GenerateSummaryResponse {
+        ok: true,
+        thread_id,
+    })
+    .map_err(|e| format!("[agent_meetings] serialize generate_summary response: {e}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -1745,6 +1864,85 @@ mod tests {
         assert_eq!(
             resolve_effective_join_policy(Some("evt-zoom-2"), Some("zoom"), &config),
             "auto"
+        );
+    }
+
+    struct CountingProvider {
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::openhuman::inference::provider::Provider for CountingProvider {
+        async fn chat_with_system(
+            &self,
+            _system_prompt: Option<&str>,
+            _message: &str,
+            _model: &str,
+            _temperature: f64,
+        ) -> anyhow::Result<String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok("{\"label\":\"Policy Test\",\"headline\":\"Done\",\"key_points\":[],\"action_items\":[]}"
+                .to_string())
+        }
+    }
+
+    struct EnvGuard {
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set_workspace(path: &std::path::Path) -> Self {
+            let previous = std::env::var_os("OPENHUMAN_WORKSPACE");
+            std::env::set_var("OPENHUMAN_WORKSPACE", path);
+            Self { previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => std::env::set_var("OPENHUMAN_WORKSPACE", value),
+                None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn thread_creation_use_provided_only_does_not_generate_missing_summary() {
+        let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::TempDir::new().unwrap();
+        let _env = EnvGuard::set_workspace(tmp.path());
+
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let _provider =
+            crate::openhuman::inference::provider::factory::test_provider_override::install(
+                std::sync::Arc::new(CountingProvider {
+                    calls: calls.clone(),
+                }),
+            );
+
+        let turns = vec![BackendMeetTurn {
+            role: "user".to_string(),
+            content: "[00:01] [Alice] ship it".to_string(),
+        }];
+
+        let thread_id = create_meeting_thread_with_transcript_with_summary_mode(
+            &turns,
+            60_000,
+            Some("policy-never".to_string()),
+            None,
+            SummaryGenerationMode::UseProvidedOnly,
+        )
+        .await
+        .expect("thread created without generated summary");
+
+        assert!(!thread_id.is_empty());
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "UseProvidedOnly must not call the summarization provider"
         );
     }
 }

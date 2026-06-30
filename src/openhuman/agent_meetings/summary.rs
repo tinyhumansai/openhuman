@@ -14,7 +14,7 @@
 use serde::Deserialize;
 
 use crate::core::event_bus::BackendMeetTurn;
-use crate::openhuman::config::Config;
+use crate::openhuman::config::{AutoSummarizePolicy, Config};
 use crate::openhuman::inference::provider::create_chat_provider;
 
 use super::types::{ActionItem, ActionItemKind, MeetingSummary};
@@ -96,6 +96,35 @@ pub struct GeneratedSummary {
     /// returned nothing usable — callers should skip the label in that case.
     pub label: String,
     pub summary: MeetingSummary,
+}
+
+/// Call-end action derived from the user's post-call summary policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PostCallSummaryDecision {
+    /// Generate immediately after the transcript is recorded.
+    Generate,
+    /// Leave the transcript intact and surface an explicit prompt instead.
+    Prompt,
+    /// Do not generate or prompt automatically.
+    Skip,
+}
+
+/// Map the persisted setting to the call-end behavior. Kept pure so the bus
+/// and manual paths can share the policy contract without duplicating matches.
+pub fn post_call_summary_decision(policy: AutoSummarizePolicy) -> PostCallSummaryDecision {
+    match policy {
+        AutoSummarizePolicy::Always => PostCallSummaryDecision::Generate,
+        AutoSummarizePolicy::Ask => PostCallSummaryDecision::Prompt,
+        AutoSummarizePolicy::Never => PostCallSummaryDecision::Skip,
+    }
+}
+
+/// Render the lightweight Ask-mode prompt appended to the meeting thread.
+pub fn format_summary_prompt_markdown(meeting_id: &str) -> String {
+    format!(
+        "## Meeting ended\n\nWant me to summarize this call? Use the Generate summary action for meeting `{}`.",
+        meeting_id.trim()
+    )
 }
 
 /// Generate a structured summary + context label from a finished call's turns.
@@ -584,5 +613,23 @@ mod tests {
         assert!(!md.contains("### Key points"));
         assert!(!md.contains("### Action items"));
         assert!(!md.contains("**Topic:**"));
+    }
+
+    #[test]
+    fn post_call_summary_decision_maps_user_policy() {
+        use crate::openhuman::config::AutoSummarizePolicy;
+
+        assert_eq!(
+            post_call_summary_decision(AutoSummarizePolicy::Always),
+            PostCallSummaryDecision::Generate
+        );
+        assert_eq!(
+            post_call_summary_decision(AutoSummarizePolicy::Ask),
+            PostCallSummaryDecision::Prompt
+        );
+        assert_eq!(
+            post_call_summary_decision(AutoSummarizePolicy::Never),
+            PostCallSummaryDecision::Skip
+        );
     }
 }
