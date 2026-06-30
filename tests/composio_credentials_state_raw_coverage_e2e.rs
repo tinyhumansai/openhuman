@@ -12,7 +12,7 @@ use axum::body::to_bytes;
 use axum::extract::{Request, State};
 use axum::http::{Method, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::any;
+use axum::routing::{any, get};
 use axum::{Json, Router};
 use chrono::{Duration as ChronoDuration, Utc};
 use serde_json::{json, Value};
@@ -388,6 +388,13 @@ async fn round15_composio_direct_key_mode_flips_without_network() {
     let _lock = env_lock();
     let harness = setup("http://127.0.0.1:9");
     let config = harness.config().await;
+    let direct_base = start_loopback_backend(Router::new().route(
+        "/connected_accounts",
+        get(composio_direct_connected_accounts),
+    ))
+    .await;
+    let _direct_v2_guard = EnvGuard::set("OPENHUMAN_COMPOSIO_DIRECT_BASE_V2", &direct_base);
+    let _direct_v3_guard = EnvGuard::set("OPENHUMAN_COMPOSIO_DIRECT_BASE_V3", &direct_base);
 
     let empty = composio_set_api_key(&config, "   ", false)
         .await
@@ -848,6 +855,10 @@ async fn composio_backend_handler(State(state): State<MockState>, request: Reque
         )
             .into_response(),
     }
+}
+
+async fn composio_direct_connected_accounts() -> Json<Value> {
+    Json(json!({ "items": [] }))
 }
 
 async fn start_loopback_backend(app: Router) -> String {

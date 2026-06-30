@@ -5,11 +5,13 @@
 //! an isolated workspace. It avoids live network calls.
 
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+use axum::extract::State;
 use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
-use axum::{response::Html, routing::get, Router};
+use axum::{response::Html, routing::get, Json, Router};
 use reqwest::StatusCode;
 use serde_json::{json, Value};
 use tempfile::{tempdir, TempDir};
@@ -124,6 +126,8 @@ async fn setup() -> Harness {
         EnvVarGuard::unset("BACKEND_URL"),
         EnvVarGuard::unset("VITE_BACKEND_URL"),
         EnvVarGuard::unset("OPENHUMAN_API_URL"),
+        EnvVarGuard::unset("OPENHUMAN_COMPOSIO_DIRECT_BASE_V2"),
+        EnvVarGuard::unset("OPENHUMAN_COMPOSIO_DIRECT_BASE_V3"),
         EnvVarGuard::set("OPENHUMAN_KEYRING_BACKEND", "file"),
         EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_STRICT", "false"),
         EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_ENDPOINT", ""),
@@ -362,6 +366,9 @@ async fn channels_remaining_controller_paths_validate_without_live_services() {
 async fn composio_direct_mode_api_key_and_static_catalogs_round_trip() {
     let _lock = env_lock();
     let harness = setup().await;
+    let (composio_base, composio_hits, composio_join) = serve_composio_direct_fixtures().await;
+    let _composio_v2_guard = EnvVarGuard::set("OPENHUMAN_COMPOSIO_DIRECT_BASE_V2", &composio_base);
+    let _composio_v3_guard = EnvVarGuard::set("OPENHUMAN_COMPOSIO_DIRECT_BASE_V3", &composio_base);
 
     let capabilities = rpc(
         &harness.rpc_base,
@@ -430,6 +437,11 @@ async fn composio_direct_mode_api_key_and_static_catalogs_round_trip() {
             .and_then(Value::as_str),
         Some("direct")
     );
+    assert_eq!(
+        composio_hits.load(Ordering::SeqCst),
+        1,
+        "saving a direct-mode API key should validate the candidate key against the v3 mock"
+    );
 
     let mode1 = rpc(
         &harness.rpc_base,
@@ -480,6 +492,7 @@ async fn composio_direct_mode_api_key_and_static_catalogs_round_trip() {
             .and_then(Value::as_str),
         Some("backend")
     );
+    composio_join.abort();
 }
 
 #[tokio::test]
@@ -1003,6 +1016,32 @@ async fn serve_source_fixtures() -> (String, tokio::task::JoinHandle<Result<(), 
         .route("/feed", get(feed));
     let join = tokio::spawn(async move { axum::serve(listener, app).await });
     (format!("http://{addr}"), join)
+}
+
+async fn serve_composio_direct_fixtures() -> (
+    String,
+    Arc<AtomicUsize>,
+    tokio::task::JoinHandle<Result<(), std::io::Error>>,
+) {
+    async fn connected_accounts(State(hits): State<Arc<AtomicUsize>>) -> Json<Value> {
+        hits.fetch_add(1, Ordering::SeqCst);
+        Json(json!({
+            "items": []
+        }))
+    }
+
+    let hits = Arc::new(AtomicUsize::new(0));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind composio fixture listener");
+    let addr = listener
+        .local_addr()
+        .expect("composio fixture listener addr");
+    let app = Router::new()
+        .route("/connected_accounts", get(connected_accounts))
+        .with_state(hits.clone());
+    let join = tokio::spawn(async move { axum::serve(listener, app).await });
+    (format!("http://{addr}"), hits, join)
 }
 
 #[tokio::test]

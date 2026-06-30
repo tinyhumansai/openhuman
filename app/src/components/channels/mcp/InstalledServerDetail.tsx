@@ -10,7 +10,7 @@ import { mcpClientsApi } from '../../../services/api/mcpClientsApi';
 import Button from '../../ui/Button';
 import { clearConfigChat } from './ConfigAssistantPanel';
 import ConfigHelpModal from './ConfigHelpModal';
-import ConnectAuthModal from './ConnectAuthModal';
+import ConnectAuthModal, { authHintMessageKey } from './ConnectAuthModal';
 import McpStatusBadge from './McpStatusBadge';
 import McpToolList from './McpToolList';
 import McpToolPlayground from './McpToolPlayground';
@@ -205,6 +205,13 @@ const InstalledServerDetail = ({
         env: reconfigValues,
       });
       setTools(result.tools ?? []);
+      if (result.status === 'unauthorized') {
+        // A 401 after reconfigure: show the actionable auth reason (use Sign in
+        // / token rejected / credential required) the same way the Connect
+        // dialog does — the raw 401 message is withheld server-side (#4289).
+        const key = authHintMessageKey(result.auth_hint);
+        throw new Error(key ? t(key) : t('mcp.detail.reconfigureReconnectFailed'));
+      }
       if (result.status !== 'connected') {
         throw new Error(result.error ?? t('mcp.detail.reconfigureReconnectFailed'));
       }

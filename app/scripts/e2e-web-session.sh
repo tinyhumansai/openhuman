@@ -129,6 +129,8 @@ fi
 
 export OPENHUMAN_CORE_TOKEN="$PW_CORE_RPC_TOKEN"
 export OPENHUMAN_TELEGRAM_BOT_API_BASE="http://127.0.0.1:${E2E_MOCK_PORT}"
+export OPENHUMAN_COMPOSIO_DIRECT_BASE_V2="http://127.0.0.1:${E2E_MOCK_PORT}"
+export OPENHUMAN_COMPOSIO_DIRECT_BASE_V3="http://127.0.0.1:${E2E_MOCK_PORT}"
 # Keep the standalone core aligned with the Rust mock runner: sub-agent
 # orchestration builds large async futures and can overflow the default stack.
 export RUST_MIN_STACK="${RUST_MIN_STACK:-16777216}"

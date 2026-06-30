@@ -1,7 +1,8 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import ConnectAuthModal from './ConnectAuthModal';
+import en from '../../../lib/i18n/en';
+import ConnectAuthModal, { authHintMessageKey, reconnectErrorMessage } from './ConnectAuthModal';
 
 const mockConnect = vi.fn();
 const mockUpdateEnv = vi.fn();
@@ -449,5 +450,73 @@ describe('ConnectAuthModal', () => {
     // pasting a token there is exactly what fails (e.g. a GitHub PAT vs OAuth).
     await screen.findByRole('button', { name: 'Sign in with browser' });
     expect(screen.queryByDisplayValue('Authorization')).not.toBeInTheDocument();
+  });
+});
+
+// A `t` that resolves against the real English bundle, so these tests also prove
+// the three new `mcp.connectAuth.authError.*` keys actually exist in en.ts.
+const tEn = (key: string): string => (en as Record<string, string>)[key] ?? key;
+
+describe('authHintMessageKey (#4289)', () => {
+  it('maps each core auth_hint code to its i18n key', () => {
+    expect(authHintMessageKey('oauth_required')).toBe('mcp.connectAuth.authError.oauthRequired');
+    expect(authHintMessageKey('token_rejected')).toBe('mcp.connectAuth.authError.tokenRejected');
+    expect(authHintMessageKey('credential_required')).toBe(
+      'mcp.connectAuth.authError.credentialRequired'
+    );
+  });
+
+  it('returns null for an unknown or absent code', () => {
+    expect(authHintMessageKey('something_else')).toBeNull();
+    expect(authHintMessageKey(undefined)).toBeNull();
+  });
+
+  it('every mapped key resolves to non-placeholder English copy', () => {
+    for (const code of ['oauth_required', 'token_rejected', 'credential_required']) {
+      const key = authHintMessageKey(code);
+      expect(key).not.toBeNull();
+      const copy = tEn(key as string);
+      expect(copy).not.toBe(key); // resolved, not echoed back
+      expect(copy.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('reconnectErrorMessage (#4289)', () => {
+  it('returns null when the reconnect actually connected', () => {
+    expect(reconnectErrorMessage({ status: 'connected' }, tEn)).toBeNull();
+  });
+
+  it('OAuth-only 401 → "use Sign in" copy, never the raw message', () => {
+    const msg = reconnectErrorMessage({ status: 'unauthorized', auth_hint: 'oauth_required' }, tEn);
+    expect(msg).toBe(tEn('mcp.connectAuth.authError.oauthRequired'));
+  });
+
+  it('rejected static token 401 → token-rejected copy', () => {
+    const msg = reconnectErrorMessage({ status: 'unauthorized', auth_hint: 'token_rejected' }, tEn);
+    expect(msg).toBe(tEn('mcp.connectAuth.authError.tokenRejected'));
+  });
+
+  it('401 with no/unknown hint falls back to generic reconnect copy', () => {
+    // Missing hint…
+    expect(reconnectErrorMessage({ status: 'unauthorized' }, tEn)).toBe(
+      tEn('mcp.connectAuth.reconnectFailed')
+    );
+    // …and an unrecognized code (forward-compat with a future core reason).
+    expect(
+      reconnectErrorMessage({ status: 'unauthorized', auth_hint: 'brand_new_reason' }, tEn)
+    ).toBe(tEn('mcp.connectAuth.reconnectFailed'));
+  });
+
+  it('a generic (non-401) failure surfaces its own message', () => {
+    expect(reconnectErrorMessage({ status: 'disconnected', error: 'timed out' }, tEn)).toBe(
+      'timed out'
+    );
+  });
+
+  it('a non-401 failure with no message falls back to generic copy', () => {
+    expect(reconnectErrorMessage({ status: 'disconnected' }, tEn)).toBe(
+      tEn('mcp.connectAuth.reconnectFailed')
+    );
   });
 });

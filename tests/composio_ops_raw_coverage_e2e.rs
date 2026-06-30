@@ -4,13 +4,13 @@
 //! public ops layer instead of unit-test-only helpers so coverage lands on the
 //! RPC-facing paths used by controllers, tools, and prompt integration fetches.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use axum::body::to_bytes;
 use axum::extract::{Request, State};
 use axum::http::{Method, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::any;
+use axum::routing::{any, get};
 use axum::{Json, Router};
 use serde_json::Map;
 use serde_json::{json, Value};
@@ -48,6 +48,37 @@ struct RecordedRequest {
     path: String,
     query: String,
     body: Value,
+}
+
+static COMPOSIO_OPS_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+struct EnvGuard {
+    key: &'static str,
+    old: Option<String>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let old = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key, old }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match &self.old {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+
+fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    COMPOSIO_OPS_ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[tokio::test]
@@ -323,6 +354,15 @@ async fn composio_ops_use_loopback_backend_for_happy_and_error_paths() {
 
 #[tokio::test]
 async fn composio_direct_key_ops_and_agent_tools_take_local_validation_paths() {
+    let _lock = env_lock();
+    let direct_base = start_loopback_backend(Router::new().route(
+        "/connected_accounts",
+        get(composio_direct_connected_accounts),
+    ))
+    .await;
+    let _direct_v2_guard = EnvGuard::set("OPENHUMAN_COMPOSIO_DIRECT_BASE_V2", &direct_base);
+    let _direct_v3_guard = EnvGuard::set("OPENHUMAN_COMPOSIO_DIRECT_BASE_V3", &direct_base);
+
     let dir = tempdir().expect("tempdir");
     let mut config = Config {
         workspace_dir: dir.path().join("workspace"),
@@ -725,6 +765,10 @@ async fn start_loopback_backend(app: Router) -> String {
         let _ = axum::serve(listener, app).await;
     });
     format!("http://127.0.0.1:{}", addr.port())
+}
+
+async fn composio_direct_connected_accounts() -> Json<Value> {
+    Json(json!({ "items": [] }))
 }
 
 fn store_app_session_token(config: &Config, token: &str) {

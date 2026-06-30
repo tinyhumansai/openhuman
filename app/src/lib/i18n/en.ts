@@ -1963,6 +1963,12 @@ const en: TranslationMap = {
   'mcp.connectAuth.oauthOrToken':
     'Already have an access token? Paste it as an Authorization header below instead.',
   'mcp.connectAuth.oauthTimeout': 'Timed out waiting for browser sign-in. Try again.',
+  'mcp.connectAuth.authError.oauthRequired':
+    'This server uses OAuth. Use “Sign in with browser” — a pasted token will not be accepted.',
+  'mcp.connectAuth.authError.tokenRejected':
+    'The server rejected this token. Check that it is correct and has not expired.',
+  'mcp.connectAuth.authError.credentialRequired':
+    'This server requires authentication. Add a token, or sign in.',
   'mcp.detail.enable': 'Enable',
   'mcp.detail.disable': 'Disable',
   'mcp.status.disabled': 'Disabled',
@@ -2666,6 +2672,10 @@ const en: TranslationMap = {
   'chat.attachment.remove': 'Remove {name}',
   'chat.attachment.tooMany': 'Maximum {max} images per message',
   'chat.attachment.tooManyFiles': 'Maximum {max} files per message',
+  'chat.attachment.tooManyVideos': 'Maximum {max} videos per message',
+  'chat.attachment.videoNotSupported':
+    'This model can’t read videos. You can use the OpenHuman Reasoning tier to attach your video.',
+  'chat.attachment.dropToAttach': 'Drop files to attach',
   'chat.attachment.tooLarge': 'Image exceeds {max} size limit',
   'chat.attachment.unsupportedType':
     'Unsupported file type. Use an image (PNG, JPEG, WebP, GIF, BMP) or a PDF, TXT, or Markdown file.',

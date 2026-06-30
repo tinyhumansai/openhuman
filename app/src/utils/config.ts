@@ -91,11 +91,13 @@ export const CONSUMER_FIRST_SESSION_ENABLED =
   import.meta.env.VITE_CONSUMER_FIRST_SESSION === 'true';
 
 /**
- * Chat multimodal attachments (image + supported file markers). Disabled by
- * default — the attach affordance and file-picker path are off. Opt in for a
- * build by setting `VITE_CHAT_ATTACHMENTS=true`.
+ * Master kill-switch for chat multimodal attachments (image / video / document).
+ * Enabled by default; the actual affordance is gated on the resolved model's
+ * capability tier at the call site (`Conversations.tsx`) — images and video need
+ * a vision-capable tier, documents flow on any model. Set
+ * `VITE_CHAT_ATTACHMENTS=false` to hard-disable the whole feature for a build.
  */
-export const CHAT_ATTACHMENTS_ENABLED = import.meta.env.VITE_CHAT_ATTACHMENTS === 'true';
+export const CHAT_ATTACHMENTS_ENABLED = import.meta.env.VITE_CHAT_ATTACHMENTS !== 'false';
 
 export const SKILLS_GITHUB_REPO =
   import.meta.env.VITE_SKILLS_GITHUB_REPO || 'tinyhumansai/openhuman-skills';

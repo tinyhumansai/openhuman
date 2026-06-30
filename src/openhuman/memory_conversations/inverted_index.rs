@@ -273,9 +273,29 @@ impl InvertedIndex {
         }
 
         let total_terms = terms.len() as f64;
-        let mut hits: Vec<CrossThreadHit> = hit_counts
+        // Rank on cheap keys first — the match count and a borrowed `created_at`
+        // — then materialize the heavy CrossThreadHit (which clones the KB-sized
+        // `content`) only for the `limit` survivors. Phase 2 can leave thousands
+        // of candidates in `hit_counts` while callers ask for 3-10 results, so
+        // cloning every candidate's content before truncating is ~99% wasted.
+        // Ranking by `matched` (usize) is order-equivalent to ranking by
+        // `score = matched / total_terms` since `total_terms` is a positive
+        // constant, so the returned order is unchanged.
+        let mut ranked: Vec<(u32, usize, &str)> = hit_counts
             .into_iter()
             .map(|(doc_id, matched)| {
+                let entry = self.docs[doc_id as usize]
+                    .as_ref()
+                    .expect("doc_id from hit_counts must be live");
+                (doc_id, matched, entry.created_at.as_str())
+            })
+            .collect();
+        ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| b.2.cmp(a.2)));
+        ranked.truncate(limit);
+
+        ranked
+            .into_iter()
+            .map(|(doc_id, matched, _)| {
                 let entry = self.docs[doc_id as usize]
                     .as_ref()
                     .expect("doc_id from hit_counts must be live");
@@ -288,16 +308,7 @@ impl InvertedIndex {
                     score: matched as f64 / total_terms,
                 }
             })
-            .collect();
-
-        hits.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| b.created_at.cmp(&a.created_at))
-        });
-        hits.truncate(limit);
-        hits
+            .collect()
     }
 
     /// Build the Phase 1 candidate set for one query term.
@@ -357,27 +368,41 @@ impl InvertedIndex {
         exclude_thread_id: Option<&str>,
         limit: usize,
     ) -> Vec<CrossThreadHit> {
-        let mut hits: Vec<CrossThreadHit> = self
+        // Rank the whole corpus by recency on a borrowed `created_at`, then
+        // clone the heavy fields only for the `limit` newest survivors — this
+        // fallback fires when a term matches >10k docs, so cloning every doc's
+        // content before truncating could allocate hundreds of MB needlessly.
+        let mut ranked: Vec<(usize, &str)> = self
             .docs
             .iter()
-            .filter_map(|slot| slot.as_ref())
-            .filter(|entry| exclude_thread_id != Some(entry.thread_id.as_ref()))
-            .map(|entry| CrossThreadHit {
-                thread_id: entry.thread_id.to_string(),
-                message_id: entry.message_id.clone(),
-                role: entry.role.to_string(),
-                content: entry.content.clone(),
-                created_at: entry.created_at.clone(),
-                // Score 0.0 signals "matched via recency fallback only" —
-                // documented in the function rustdoc above. Callers
-                // sorting by `(score desc, created_at desc)` still see
-                // the newest entries first.
-                score: 0.0,
-            })
+            .enumerate()
+            .filter_map(|(i, slot)| slot.as_ref().map(|entry| (i, entry)))
+            .filter(|(_, entry)| exclude_thread_id != Some(entry.thread_id.as_ref()))
+            .map(|(i, entry)| (i, entry.created_at.as_str()))
             .collect();
-        hits.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-        hits.truncate(limit);
-        hits
+        ranked.sort_by(|a, b| b.1.cmp(a.1));
+        ranked.truncate(limit);
+
+        ranked
+            .into_iter()
+            .map(|(i, _)| {
+                let entry = self.docs[i]
+                    .as_ref()
+                    .expect("index from a live doc slot must stay live");
+                CrossThreadHit {
+                    thread_id: entry.thread_id.to_string(),
+                    message_id: entry.message_id.clone(),
+                    role: entry.role.to_string(),
+                    content: entry.content.clone(),
+                    created_at: entry.created_at.clone(),
+                    // Score 0.0 signals "matched via recency fallback only" —
+                    // documented in the function rustdoc above. Callers
+                    // sorting by `(score desc, created_at desc)` still see
+                    // the newest entries first.
+                    score: 0.0,
+                }
+            })
+            .collect()
     }
 }
 
@@ -532,6 +557,42 @@ mod tests {
             (hits[0].score - 0.4).abs() < 1e-9,
             "score = {}",
             hits[0].score
+        );
+    }
+
+    #[test]
+    fn ranks_by_score_then_recency_before_truncating() {
+        // More matches than `limit`, so truncation must keep the top-ranked
+        // hits by (score desc, created_at desc) — this pins that ranking still
+        // happens before the result set is cut, not after.
+        let mut idx = InvertedIndex::new();
+        // Both terms → score 1.0, but oldest.
+        idx.insert(
+            "t1",
+            msg("both", "alpha beta gamma", "2026-04-10T10:00:00Z"),
+        );
+        // One term → score 0.5, newest of the 0.5 group.
+        idx.insert("t1", msg("newest", "alpha delta", "2026-04-10T10:03:00Z"));
+        // One term → score 0.5, middle.
+        idx.insert("t1", msg("middle", "alpha epsilon", "2026-04-10T10:02:00Z"));
+        // One term → score 0.5, oldest of the 0.5 group.
+        idx.insert("t1", msg("oldest", "beta zeta", "2026-04-10T10:01:00Z"));
+
+        let hits = idx.search("alpha beta", 2, None);
+        assert_eq!(hits.len(), 2, "must respect the limit");
+        // Highest score wins outright; the recency tiebreak then picks the
+        // newest of the equal-score remainder. "middle"/"oldest" are dropped.
+        assert_eq!(hits[0].message_id, "both");
+        assert!(
+            (hits[0].score - 1.0).abs() < 1e-9,
+            "score = {}",
+            hits[0].score
+        );
+        assert_eq!(hits[1].message_id, "newest");
+        assert!(
+            (hits[1].score - 0.5).abs() < 1e-9,
+            "score = {}",
+            hits[1].score
         );
     }
 

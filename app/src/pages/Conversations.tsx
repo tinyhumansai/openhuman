@@ -28,6 +28,7 @@ import {
   ATTACHMENT_MAX_FILES,
   ATTACHMENT_MAX_IMAGES,
   buildMessageWithAttachments,
+  imageMarkerCost,
   parseMessageImages,
   validateAndReadFile,
 } from '../lib/attachments';
@@ -930,17 +931,23 @@ const Conversations = ({
     return true;
   };
 
-  const handleAttachFiles = async (files: FileList | null) => {
+  const handleAttachFiles = async (files: FileList | File[] | null) => {
     if (!files) return;
-    let acceptedImageCount = attachments.filter(attachment => attachment.kind === 'image').length;
     let acceptedFileCount = attachments.filter(attachment => attachment.kind === 'file').length;
+    // Images and videos share one image-marker budget (video = its frames), so
+    // track consumed markers rather than per-kind counts.
+    let acceptedImageMarkers = attachments.reduce(
+      (sum, attachment) => sum + imageMarkerCost(attachment.kind),
+      0
+    );
     for (const file of Array.from(files)) {
       const result = await validateAndReadFile(
         file,
-        acceptedImageCount,
+        acceptedImageMarkers,
         acceptedFileCount,
-        // Allow the image when the active model is vision-capable OR a vision
-        // sub-agent can take it (orchestrator delegates the image onward).
+        // Allow images AND video when the active model is vision-capable OR a
+        // vision sub-agent can take it (orchestrator delegates the image/frames
+        // onward). Video is sampled into still frames that ride the same path.
         modelSupportsVision || visionDelegateAvailable
       );
       if ('error' in result) {
@@ -949,9 +956,14 @@ const Conversations = ({
           setAttachError(
             chatSendError('attachment_invalid', t('chat.attachment.imageNotSupported'))
           );
+        } else if (error.code === 'video_not_supported') {
+          setAttachError(
+            chatSendError('attachment_invalid', t('chat.attachment.videoNotSupported'))
+          );
         } else if (error.code === 'too_many') {
+          // image/video share the image-marker budget → tooMany; files separate.
           const key =
-            error.kind === 'image' ? 'chat.attachment.tooMany' : 'chat.attachment.tooManyFiles';
+            error.kind === 'file' ? 'chat.attachment.tooManyFiles' : 'chat.attachment.tooMany';
           setAttachError(
             chatSendError('attachment_invalid', t(key).replace('{max}', String(error.max)))
           );
@@ -970,10 +982,10 @@ const Conversations = ({
         }
         return;
       }
-      if (result.attachment.kind === 'image') {
-        acceptedImageCount++;
-      } else {
+      if (result.attachment.kind === 'file') {
         acceptedFileCount++;
+      } else {
+        acceptedImageMarkers += imageMarkerCost(result.attachment.kind);
       }
       setAttachments(prev => [...prev, result.attachment]);
     }
@@ -1051,6 +1063,11 @@ const Conversations = ({
               attachmentDataUris: pendingAttachments
                 .filter(a => a.kind === 'image')
                 .map(a => a.previewUri ?? a.dataUri),
+              // Poster (first frame) per attachment, index-aligned with
+              // attachmentKinds — only video entries carry one; others null.
+              attachmentPosters: pendingAttachments.map(a =>
+                a.kind === 'video' ? (a.previewUri ?? a.dataUri) : null
+              ),
               attachmentCompressed: pendingAttachments.map(a => a.compressed),
             }
           : {},
@@ -1170,6 +1187,11 @@ const Conversations = ({
               attachmentDataUris: pendingAttachments
                 .filter(a => a.kind === 'image')
                 .map(a => a.previewUri ?? a.dataUri),
+              // Poster (first frame) per attachment, index-aligned with
+              // attachmentKinds — only video entries carry one; others null.
+              attachmentPosters: pendingAttachments.map(a =>
+                a.kind === 'video' ? (a.previewUri ?? a.dataUri) : null
+              ),
               attachmentCompressed: pendingAttachments.map(a => a.compressed),
               parallelBranch: true,
             }
@@ -1250,6 +1272,11 @@ const Conversations = ({
               attachmentDataUris: pendingAttachments
                 .filter(a => a.kind === 'image')
                 .map(a => a.previewUri ?? a.dataUri),
+              // Poster (first frame) per attachment, index-aligned with
+              // attachmentKinds — only video entries carry one; others null.
+              attachmentPosters: pendingAttachments.map(a =>
+                a.kind === 'video' ? (a.previewUri ?? a.dataUri) : null
+              ),
               attachmentCompressed: pendingAttachments.map(a => a.compressed),
             }
           : {},
@@ -2281,6 +2308,18 @@ const Conversations = ({
                               const fileNames = kinds
                                 .map((k, i) => (k === 'file' ? names[i] : null))
                                 .filter((n): n is string => Boolean(n));
+                              const posters = Array.isArray(msg.extraMetadata?.attachmentPosters)
+                                ? (msg.extraMetadata.attachmentPosters as (string | null)[])
+                                : [];
+                              const videoItems = kinds
+                                .map((k, i) =>
+                                  k === 'video'
+                                    ? { name: names[i] ?? '', poster: posters[i] ?? null }
+                                    : null
+                                )
+                                .filter((v): v is { name: string; poster: string | null } =>
+                                  Boolean(v)
+                                );
                               const showTime = latestVisibleMessage?.id === msg.id;
                               return (
                                 <>
@@ -2293,6 +2332,47 @@ const Conversations = ({
                                           alt=""
                                           className="max-w-[200px] max-h-[200px] rounded-2xl object-cover"
                                         />
+                                      ))}
+                                    </div>
+                                  )}
+                                  {videoItems.length > 0 && (
+                                    <div className="flex flex-wrap gap-1.5 justify-end">
+                                      {videoItems.map((video, i) => (
+                                        <div
+                                          key={i}
+                                          className="relative flex items-center gap-2 rounded-lg border border-line bg-surface-muted px-2.5 py-1.5 text-xs text-content-secondary max-w-[220px]">
+                                          {video.poster ? (
+                                            <div className="relative w-10 h-10 flex-shrink-0">
+                                              <img
+                                                src={video.poster}
+                                                alt=""
+                                                className="w-10 h-10 rounded object-cover"
+                                              />
+                                              <span className="absolute inset-0 flex items-center justify-center">
+                                                <svg
+                                                  className="w-4 h-4 text-white drop-shadow"
+                                                  fill="currentColor"
+                                                  viewBox="0 0 24 24">
+                                                  <path d="M8 5v14l11-7z" />
+                                                </svg>
+                                              </span>
+                                            </div>
+                                          ) : (
+                                            <svg
+                                              className="w-4 h-4 flex-shrink-0 text-content-muted"
+                                              fill="none"
+                                              stroke="currentColor"
+                                              viewBox="0 0 24 24">
+                                              <path
+                                                strokeLinecap="round"
+                                                strokeLinejoin="round"
+                                                strokeWidth={1.8}
+                                                d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 6h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2z"
+                                              />
+                                            </svg>
+                                          )}
+                                          <span className="truncate font-medium">{video.name}</span>
+                                        </div>
                                       ))}
                                     </div>
                                   )}

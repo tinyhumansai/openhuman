@@ -210,6 +210,14 @@ pub struct ConnStatus {
     pub status: ServerStatus,
     pub tool_count: u32,
     pub last_error: Option<String>,
+    /// Stable reason code refining a `ServerStatus::Unauthorized` so the UI can
+    /// render actionable copy: `"oauth_required"` (use Sign in — a pasted token
+    /// won't work), `"token_rejected"` (a credential was sent but refused), or
+    /// `"credential_required"` (auth needed, none provided). `None` for every
+    /// non-401 status. Only this code crosses the wire — never the raw 401
+    /// message / OAuth metadata URL (#3719, #4289).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_hint: Option<String>,
 }
 
 // ── Smithery registry DTOs ───────────────────────────────────────────────────
@@ -620,8 +628,11 @@ mod tests {
             status: ServerStatus::Connected,
             tool_count: 3,
             last_error: None,
+            auth_hint: None,
         };
         let v = serde_json::to_value(&s).unwrap();
         assert_eq!(v["status"], json!("connected"));
+        // `auth_hint` is omitted from the wire when absent (skip_serializing_if).
+        assert!(v.get("auth_hint").is_none());
     }
 }

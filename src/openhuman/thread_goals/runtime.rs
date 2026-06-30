@@ -91,8 +91,9 @@ pub async fn pause_for_current_thread(workspace_dir: &Path) {
 pub fn active_goal_context_block(goal: &ThreadGoal) -> Option<String> {
     let directive = match goal.status {
         ThreadGoalStatus::Active => {
-            "Keep working toward this goal. When evidence confirms it's done, call \
-             goal_complete; if the objective has changed, update it with goal_set."
+            "Keep working toward this goal. Before responding, verify whether the \
+             objective is satisfied. If confirmed, call `goal_complete` now. \
+             If the objective has changed, call `goal_set` to update it."
         }
         ThreadGoalStatus::BudgetLimited => {
             "This goal has reached its token budget. Stop substantive work: summarise \
