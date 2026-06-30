@@ -31,8 +31,7 @@
 use anyhow::{anyhow, Result};
 use serde_json::json;
 
-use crate::openhuman::agent::harness::fork_context::with_parent_context;
-use crate::openhuman::agent_orchestration::parent_context::build_root_parent;
+use crate::openhuman::agent_orchestration::parent_context::with_root_parent;
 use crate::openhuman::agent_orchestration::{
     AgentOrchestrationSession, AgentStatus, SpawnAgentRequest, WaitAgentOptions,
 };
@@ -188,24 +187,21 @@ async fn run_member_loop(
     run_id: &str,
     model_override: Option<String>,
 ) {
-    let outcome = match build_root_parent(config, "agent_team_runtime", "team", "teamrun").await {
-        Ok(parent) => {
-            with_parent_context(parent, async {
-                drive_member(
-                    config,
-                    team_id,
-                    member_id,
-                    agent_id,
-                    &task,
-                    run_id,
-                    model_override,
-                )
-                .await
-            })
-            .await
-        }
-        Err(err) => Err(err),
-    };
+    let outcome = with_root_parent(config, "agent_team_runtime", "team", "teamrun", async {
+        drive_member(
+            config,
+            team_id,
+            member_id,
+            agent_id,
+            &task,
+            run_id,
+            model_override,
+        )
+        .await
+    })
+    .await
+    // Flatten: outer Err = root-parent build failure, inner = drive_member result.
+    .unwrap_or_else(Err);
 
     if let Err(err) = outcome {
         log::error!(
