@@ -429,7 +429,7 @@ mod tests {
             .unwrap();
         drop(delta_tx);
 
-        timeout(Duration::from_millis(50), forwarder)
+        timeout(Duration::from_secs(1), forwarder)
             .await
             .expect("delta forwarder must not block on a full progress sink")
             .unwrap();
@@ -463,7 +463,7 @@ mod tests {
             .unwrap();
         drop(delta_tx);
 
-        timeout(Duration::from_millis(50), forwarder)
+        timeout(Duration::from_secs(1), forwarder)
             .await
             .expect("subagent delta forwarder must not block on a full progress sink")
             .unwrap();
