@@ -1819,6 +1819,20 @@ async fn run_server_inner(
                     ),
                     Err(e) => log::warn!("[boot] whatsapp_data::global init failed: {e}"),
                 }
+                // Seed the people store so people controllers + `people_*`
+                // tools can read/write. Without this the process-global stays
+                // empty and every call fails with "people store not
+                // initialised" (Sentry TAURI-RUST-8NM). Sits inside this
+                // Ok(cfg) arm so it inherits the wrong-workspace guard above
+                // (never seed against a Config::default fallback).
+                match crate::openhuman::people::store::init_from_workspace(&cfg.workspace_dir).await
+                {
+                    Ok(_) => log::info!(
+                        "[boot] people::store initialized (workspace={})",
+                        cfg.workspace_dir.display()
+                    ),
+                    Err(e) => log::warn!("[boot] people::store init failed: {e}"),
+                }
                 // Prune legacy bundled skills (dev-workflow / github-issue-crusher
                 // / pr-review-shepherd) that older builds seeded into
                 // <workspace>/skills/. OpenHuman no longer ships bundled defaults;
