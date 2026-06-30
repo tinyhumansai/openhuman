@@ -1625,6 +1625,12 @@ const messages: TranslationMap = {
   'mcp.connectAuth.oauthOrToken':
     'Sudah punya token akses? Tempelkan sebagai header Authorization di bawah ini saja.',
   'mcp.connectAuth.oauthTimeout': 'Waktu menunggu proses masuk lewat browser habis. Coba lagi.',
+  'mcp.connectAuth.authError.oauthRequired':
+    'Server ini menggunakan OAuth. Gunakan “Masuk dengan browser” — token yang ditempelkan tidak akan diterima.',
+  'mcp.connectAuth.authError.tokenRejected':
+    'Server menolak token ini. Pastikan token benar dan belum kedaluwarsa.',
+  'mcp.connectAuth.authError.credentialRequired':
+    'Server ini memerlukan autentikasi. Tambahkan token, atau masuk.',
   'onboarding.skipForNow': 'Lewati Sekarang',
   'onboarding.localAI.continueWithCloud': 'Lanjutkan dengan Cloud',
   'onboarding.localAI.useLocalAnyway':
@@ -2269,6 +2275,10 @@ const messages: TranslationMap = {
   'chat.attachment.remove': 'Hapus {name}',
   'chat.attachment.tooMany': 'Maksimal {max} gambar per pesan',
   'chat.attachment.tooManyFiles': 'Maksimal {max} file per pesan',
+  'chat.attachment.tooManyVideos': 'Maksimal {max} video per pesan',
+  'chat.attachment.videoNotSupported':
+    'Model ini tidak dapat membaca video. Anda dapat menggunakan tingkat Penalaran OpenHuman untuk melampirkan video Anda.',
+  'chat.attachment.dropToAttach': 'Lepaskan file untuk melampirkan',
   'chat.attachment.tooLarge': 'Gambar melebihi batas ukuran {max}',
   'chat.attachment.unsupportedType':
     'Jenis file tidak didukung. Gunakan gambar (PNG, JPEG, WebP, GIF, BMP) atau file PDF, TXT, atau Markdown.',
@@ -5152,6 +5162,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.bannerTitle': 'Judul banner',
   'skills.meetingBots.busyTitle': 'OpenHuman sedang sibuk',
   'skills.meetingBots.comingSoon': 'Segera hadir',
+  'skills.meetingBots.couldNotLeaveTitle': 'Tidak dapat keluar dari rapat',
   'skills.meetingBots.couldNotStartTitle': 'Tidak bisa memulai OpenHuman',
   'skills.meetingBots.displayName': 'Nama tampilan',
   'skills.meetingBots.failedToStart': 'Gagal memulai OpenHuman.',
@@ -5165,9 +5176,11 @@ const messages: TranslationMap = {
   'skills.meetingBots.platformComingSoon': '{label} dukungan akan segera hadir.',
   'skills.meetingBots.platformHints.gmeet': 'meet.google.com/abc-defg-hij',
   'skills.meetingBots.platformHints.teams': 'team.microsoft.com/...',
+  'skills.meetingBots.platformHints.webex': 'webex.com/meet/...',
   'skills.meetingBots.platformHints.zoom': 'zoom.us/j/...',
   'skills.meetingBots.platforms.gmeet': 'Google Temui',
   'skills.meetingBots.platforms.teams': 'Microsoft Teams',
+  'skills.meetingBots.platforms.webex': 'Webex',
   'skills.meetingBots.platforms.zoom': 'Zoom',
   'skills.meetingBots.sendTo': 'Kirim ke',
   'skills.meetingBots.serverOverloaded':
@@ -5201,6 +5214,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.liveStatusEnded': 'Rapat selesai',
   'skills.meetingBots.liveStatusError': 'Gagal bergabung',
   'skills.meetingBots.leaveButton': 'Keluar',
+  'skills.meetingBots.leavingButton': 'Keluar\u2026',
   'skills.meetingBots.respondToParticipant': 'Nama Anda di Rapat Ini',
   'skills.meetingBots.respondToParticipantHint': 'mis. Budi (nama tampilan Anda di panggilan)',
   'skills.meetingBots.respondToParticipantDesc':
@@ -5211,6 +5225,61 @@ const messages: TranslationMap = {
   'skills.meetingBots.activeMode': 'Tanggapi saat saya menyapa',
   'skills.meetingBots.activeModeDesc':
     'Saat aktif, bot menjawab dengan suara setelah Anda mengucapkan frasa pemicunya. Saat nonaktif, bot hanya mendengarkan dan mentranskripsikan.',
+  'skills.meetingBots.history.allPlatforms': 'Semua platform',
+  'skills.meetingBots.history.copyTranscript': 'Salin',
+  'skills.meetingBots.history.downloadTranscript': 'Unduh',
+  'skills.meetingBots.history.earlier': 'Sebelumnya',
+  'skills.meetingBots.history.participantCount': '{count} peserta',
+  'skills.meetingBots.history.participantCountPlural': '{count} peserta',
+  'skills.meetingBots.history.runWithOpenHuman': 'Jalankan dengan OpenHuman',
+  'skills.meetingBots.history.searchPlaceholder': 'Cari panggilan…',
+  'skills.meetingBots.history.selectPrompt':
+    'Pilih panggilan untuk melihat ringkasan dan transkripnya.',
+  'skills.meetingBots.history.today': 'Hari ini',
+  'skills.meetingBots.history.yesterday': 'Kemarin',
+  'skills.meetingBots.upcoming.heading': 'Mendatang',
+  'skills.meetingBots.upcoming.when': 'Kapan',
+  'skills.meetingBots.upcoming.meeting': 'Rapat',
+  'skills.meetingBots.upcoming.platform': 'Platform',
+  'skills.meetingBots.upcoming.people': 'Orang',
+  'skills.meetingBots.upcoming.joinPolicy': 'Kebijakan bergabung',
+  'skills.meetingBots.upcoming.joinNow': 'Bergabung sekarang',
+  'skills.meetingBots.upcoming.joinNowAriaLabel': 'Bergabung dengan {title}',
+  'skills.meetingBots.upcoming.join': 'Bergabung',
+  'skills.meetingBots.upcoming.auto': 'Otomatis',
+  'skills.meetingBots.upcoming.ask': 'Tanya',
+  'skills.meetingBots.upcoming.skip': 'Lewati',
+  'skills.meetingBots.upcoming.today': 'Hari ini',
+  'skills.meetingBots.upcoming.tomorrow': 'Besok',
+  'skills.meetingBots.upcoming.empty':
+    'Tidak ada rapat mendatang — hubungkan Google Calendar untuk melihatnya di sini.',
+  'skills.meetingBots.upcoming.error': 'Tidak dapat memuat rapat mendatang.',
+  'skills.meetingBots.upcoming.retry': 'Coba lagi',
+  'skills.meetingBots.upcoming.refresh': 'Segarkan',
+  'skills.meetingBots.upcoming.filterAll': 'Semua platform',
+  'skills.meetingBots.upcoming.participants': '{count} peserta',
+  'skills.meetingBots.upcoming.imminent': 'Segera dimulai',
+  'skills.meetingBots.upcoming.autoJoinsAt': 'Bergabung otomatis ~pukul {time}',
+  'skills.meetingBots.upcoming.asksAtStart': 'Bertanya saat mulai',
+  'skills.meetingBots.upcoming.watchCalendarHint':
+    "Aktifkan 'Pantau kalender saya' di Pengaturan Default (ikon gigi) agar Auto/Tanya berlaku — jika tidak, kebijakan ini disimpan tetapi tidak akan dipicu.",
+  'skills.meetingBots.relative.now': 'sekarang',
+  'skills.meetingBots.relative.inMinutes': 'dalam {count}m',
+  'skills.meetingBots.relative.inHours': 'dalam {count}j',
+  'skills.meetingBots.relative.minutesAgo': '{count}m lalu',
+  'skills.meetingBots.relative.hoursAgo': '{count}j lalu',
+  'skills.meetingBots.relative.daysAgo': '{count}h lalu',
+  'skills.meetingBots.relative.yesterday': 'kemarin',
+  'skills.meetingBots.defaults.drawerTitle': 'Default Rapat',
+  'skills.meetingBots.defaults.closeDrawer': 'Tutup',
+  'skills.meetingBots.defaults.openDefaults': 'Pengaturan rapat',
+  'skills.meetingBots.defaults.watchCalendar': 'Pantau kalender saya',
+  'skills.meetingBots.defaults.watchCalendarDesc':
+    'Biarkan OpenHuman memantau kalender yang terhubung agar dapat bergabung otomatis atau meminta konfirmasi untuk rapat berdasarkan kebijakan di bawah ini. Ini terpisah dari notifikasi pengingat rapat.',
+  'skills.meetingBots.defaults.globalPolicy': 'Kebijakan bergabung otomatis global',
+  'skills.meetingBots.defaults.perPlatformTitle': 'Pengaturan per platform',
+  'skills.meetingBots.defaults.perPlatformDesc': 'Timpa kebijakan global untuk platform tertentu.',
+  'skills.meetingBots.defaults.useDefault': 'Gunakan default',
   'skills.resource.preview.closeAriaLabel': 'Tutup pratinjau',
   'skills.resource.preview.failed': 'Pratinjau gagal',
   'skills.resource.preview.loading': 'Memuat pratinjau...',
@@ -5986,6 +6055,8 @@ const messages: TranslationMap = {
     'Tidak ada penyedia ringkasan yang tersedia untuk Buat Pohon Ringkasan. Aktifkan AI lokal (Ollama), atau aktifkan ringkasan cloud di Pengaturan → AI → Memori.',
   'memory.health.remediation.empty_input_refused':
     'Item memori dilewati karena teksnya kosong. Tidak diperlukan tindakan — item baru tetap disematkan seperti biasa.',
+  'memory.health.remediation.storage_unavailable':
+    'OpenHuman tidak dapat menulis ke penyimpanan memorinya — disk atau kartu SD tampaknya rusak, penuh, atau hanya-baca. Periksa drive dan kosongkan ruang; pemrosesan memori akan dilanjutkan secara otomatis setelah penyimpanan dapat ditulisi kembali.',
   'memory.health.remediation.transient':
     'Kesalahan sementara mengganggu pemrosesan memori. Akan dicoba lagi secara otomatis.',
   'memory.health.remediation.unknown':
@@ -6275,7 +6346,11 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.title': 'Kredit penyedia diperlukan',
   'userErrors.insufficientCredits.body':
     'Penyedia AI Anda kehabisan kredit. Isi ulang atau perbarui kunci API-nya.',
+  'userErrors.apiKeyMissing.title': 'Kunci API diperlukan',
+  'userErrors.apiKeyMissing.body':
+    'Penyedia AI Anda belum memiliki kunci API. Tambahkan satu di pengaturan penyedia untuk melanjutkan.',
   'userErrors.scope.chat': 'Obrolan',
+  'userErrors.scope.cron': 'Tugas terjadwal',
   // Agent World — Identity trading (confirm-before-spend + balance gate)
   'agentWorld.trading.amountLabel': 'Jumlah',
   'agentWorld.trading.networkLabel': 'Jaringan',
@@ -6308,6 +6383,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.amountTooManyDecimals': 'Jumlah ini memiliki terlalu banyak angka desimal.',
   'agentWorld.trading.amountMustBePositive': 'Masukkan jumlah lebih besar dari nol.',
   'agentWorld.trading.amountInvalid': 'Masukkan jumlah yang valid.',
+
+  // Code block chrome
+  'codeBlock.copy': 'Salin',
+  'codeBlock.copied': 'Disalin!',
 };
 
 export default messages;

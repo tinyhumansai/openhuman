@@ -4,9 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { callCoreRpc } from '../coreRpcClient';
 import {
   closeMeetCall,
+  getEventPolicies,
   joinMeetCall,
   joinMeetViaBackendBot,
   listMeetCalls,
+  listUpcomingMeetings,
+  parseTranscriptLine,
+  setEventPolicy,
 } from '../meetCallService';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: vi.fn() }));
@@ -253,5 +257,164 @@ describe('closeMeetCall', () => {
 
     await expect(closeMeetCall('req-1')).resolves.toBe(false);
     expect(invoke).not.toHaveBeenCalled();
+  });
+});
+
+describe('listUpcomingMeetings', () => {
+  beforeEach(() => {
+    vi.mocked(callCoreRpc).mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const mockMeeting = {
+    calendar_event_id: 'evt-1',
+    title: 'Standup',
+    start_time_ms: Date.now() + 30 * 60 * 1000,
+    end_time_ms: Date.now() + 60 * 60 * 1000,
+    meet_url: 'https://meet.google.com/abc-def-ghi',
+    platform: 'gmeet',
+    participant_count: 4,
+    organizer: 'alice@example.com',
+    join_policy: 'ask',
+    calendar_source: 'google:alice@example.com',
+  };
+
+  it('calls openhuman.meet_list_upcoming with no params when no args given', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({ ok: true, meetings: [mockMeeting] } as never);
+
+    const result = await listUpcomingMeetings();
+
+    expect(callCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.meet_list_upcoming',
+      params: {},
+    });
+    expect(result).toEqual([mockMeeting]);
+  });
+
+  it('forwards lookahead_minutes and limit when provided', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({ ok: true, meetings: [] } as never);
+
+    await listUpcomingMeetings(120, 10);
+
+    expect(callCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.meet_list_upcoming',
+      params: { lookahead_minutes: 120, limit: 10 },
+    });
+  });
+
+  it('returns an empty array when core returns no meetings', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({ ok: true, meetings: undefined } as never);
+
+    const result = await listUpcomingMeetings();
+    expect(result).toEqual([]);
+  });
+
+  it('throws when core returns ok: false', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({ ok: false } as never);
+    await expect(listUpcomingMeetings()).rejects.toThrow(/meet_list_upcoming/);
+  });
+
+  it('throws when core returns a falsy result', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce(null as never);
+    await expect(listUpcomingMeetings()).rejects.toThrow(/meet_list_upcoming/);
+  });
+});
+
+describe('setEventPolicy', () => {
+  beforeEach(() => {
+    vi.mocked(callCoreRpc).mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('calls meet_set_event_policy with correct params', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({ ok: true } as never);
+    await setEventPolicy('evt-123', 'skip');
+    expect(callCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.meet_set_event_policy',
+      params: { calendar_event_id: 'evt-123', policy: 'skip' },
+    });
+  });
+
+  it('throws when core returns ok=false', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({ ok: false } as never);
+    await expect(setEventPolicy('evt-123', 'auto')).rejects.toThrow('meet_set_event_policy');
+  });
+});
+
+describe('getEventPolicies', () => {
+  beforeEach(() => {
+    vi.mocked(callCoreRpc).mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('calls meet_get_event_policies with correct params', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({
+      ok: true,
+      policies: { 'evt-1': 'skip' },
+    } as never);
+    const result = await getEventPolicies(['evt-1', 'evt-2']);
+    expect(callCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.meet_get_event_policies',
+      params: { calendar_event_ids: ['evt-1', 'evt-2'] },
+    });
+    expect(result).toEqual({ 'evt-1': 'skip' });
+  });
+
+  it('returns empty object for empty input', async () => {
+    const result = await getEventPolicies([]);
+    expect(callCoreRpc).not.toHaveBeenCalled();
+    expect(result).toEqual({});
+  });
+
+  it('throws when core returns ok=false', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({ ok: false } as never);
+    await expect(getEventPolicies(['evt-x'])).rejects.toThrow('meet_get_event_policies');
+  });
+});
+
+describe('parseTranscriptLine', () => {
+  it('parses a line with a [MM:SS] [Name] prefix', () => {
+    const result = parseTranscriptLine({
+      role: 'participant',
+      content: '[1:23] [Alice] Hello there!',
+    });
+    expect(result.timestamp).toBe('1:23');
+    expect(result.speaker).toBe('Alice');
+    expect(result.text).toBe('Hello there!');
+    expect(result.role).toBe('participant');
+  });
+
+  it('returns null timestamp and speaker when prefix is absent', () => {
+    const result = parseTranscriptLine({ role: 'assistant', content: 'How can I help?' });
+    expect(result.timestamp).toBeNull();
+    expect(result.speaker).toBeNull();
+    expect(result.text).toBe('How can I help?');
+    expect(result.role).toBe('assistant');
+  });
+
+  it('handles partial brackets — no match, returns full content', () => {
+    const result = parseTranscriptLine({
+      role: 'participant',
+      content: '[1:23] missing second bracket',
+    });
+    expect(result.timestamp).toBeNull();
+    expect(result.speaker).toBeNull();
+    expect(result.text).toBe('[1:23] missing second bracket');
+  });
+
+  it('handles malformed content gracefully', () => {
+    const result = parseTranscriptLine({ role: 'participant', content: 'just plain text' });
+    expect(result.timestamp).toBeNull();
+    expect(result.speaker).toBeNull();
+    expect(result.text).toBe('just plain text');
   });
 });

@@ -39,7 +39,7 @@ use openhuman_core::openhuman::agent::harness::definition::{
 };
 use openhuman_core::openhuman::agent::harness::subagent_runner::{
     autonomous_iter_cap, with_autonomous_iter_cap, SubagentMode, SubagentRunError,
-    SubagentRunOptions, SubagentRunOutcome, SubagentRunStatus,
+    SubagentRunOptions, SubagentRunOutcome, SubagentRunStatus, SubagentUsage,
 };
 use openhuman_core::openhuman::agent::harness::{
     check_interrupt, current_sandbox_mode, with_current_sandbox_mode, InterruptFence,
@@ -2927,9 +2927,9 @@ async fn agent_triage_evaluator_covers_native_dispatch_decision_and_deferred_pat
                     && msg.content.contains("SOURCE: webhook")
                     && msg.content.contains("PAYLOAD:")
             }));
-            Ok(AgentTurnResponse {
-                text: r#"{"action":"drop","reason":"already handled"}"#.into(),
-            })
+            Ok(AgentTurnResponse::new(
+                r#"{"action":"drop","reason":"already handled"}"#,
+            ))
         },
     );
     let cloud = ResolvedProvider {
@@ -2989,12 +2989,10 @@ async fn agent_triage_evaluator_covers_native_dispatch_decision_and_deferred_pat
             async move {
                 let attempt = attempts_for_handler.fetch_add(1, Ordering::SeqCst);
                 match attempt {
-                    0 | 1 => Ok(AgentTurnResponse {
-                        text: "not json".into(),
-                    }),
-                    _ => Ok(AgentTurnResponse {
-                        text: r#"{"action":"escalate","target_agent":"orchestrator","prompt":"follow up","reason":"needs work"}"#.into(),
-                    }),
+                    0 | 1 => Ok(AgentTurnResponse::new("not json")),
+                    _ => Ok(AgentTurnResponse::new(
+                        r#"{"action":"escalate","target_agent":"orchestrator","prompt":"follow up","reason":"needs work"}"#,
+                    )),
                 }
             }
         },
@@ -4704,7 +4702,7 @@ async fn agent_subagent_public_types_cover_task_local_and_error_display_paths() 
         mode: SubagentMode::Typed,
         status: SubagentRunStatus::Completed,
         final_history: Vec::new(),
-        usage: Default::default(),
+        usage: SubagentUsage::default(),
     };
     assert_eq!(outcome.mode.as_str(), "typed");
     assert_eq!(outcome.elapsed.as_millis(), 12);

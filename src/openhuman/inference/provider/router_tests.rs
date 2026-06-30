@@ -439,6 +439,30 @@ async fn chat_with_system_passes_system_prompt() {
 }
 
 #[tokio::test]
+async fn records_resolved_route_after_hint_resolution() {
+    let (router, mocks) = make_router(
+        vec![("fast", "fast-response"), ("smart", "smart-response")],
+        vec![("reasoning", "smart", "claude-opus")],
+    );
+
+    let recorded =
+        crate::openhuman::inference::provider::with_resolved_provider_route_scope(async {
+            let result = router
+                .chat_with_system(Some("system"), "think", "hint:reasoning", 0.5)
+                .await
+                .unwrap();
+            assert_eq!(result, "smart-response");
+            crate::openhuman::inference::provider::current_resolved_provider_route()
+        })
+        .await
+        .expect("router should record the concrete provider route");
+
+    assert_eq!(recorded.provider, "smart");
+    assert_eq!(recorded.model, "claude-opus");
+    assert_eq!(mocks[1].last_model(), "claude-opus");
+}
+
+#[tokio::test]
 async fn chat_with_tools_delegates_to_resolved_provider() {
     let mock = Arc::new(MockProvider::new("tool-response"));
     let router = RouterProvider::new(

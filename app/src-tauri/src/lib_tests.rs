@@ -316,7 +316,7 @@ fn platform_os_is_macos_on_macos_build() {
 #[test]
 fn platform_cef_gpu_workarounds_force_swiftshader_on_linux() {
     let mut args = Vec::new();
-    append_platform_cef_gpu_workarounds(&mut args, "linux", "x86_64", None);
+    append_platform_cef_gpu_workarounds(&mut args, "linux", "x86_64", None, None);
 
     // #4193: the GPU process must NOT be killed outright — `--disable-gpu`
     // takes every WebGL surface (the Tiny Place world renderer) down with it.
@@ -336,7 +336,7 @@ fn platform_cef_gpu_workarounds_force_swiftshader_on_linux() {
 #[test]
 fn platform_cef_gpu_workarounds_disable_intel_macos_compositing_only() {
     let mut args = Vec::new();
-    append_platform_cef_gpu_workarounds(&mut args, "macos", "x86_64", None);
+    append_platform_cef_gpu_workarounds(&mut args, "macos", "x86_64", None, None);
 
     assert_eq!(args, vec![("--disable-gpu-compositing", None)]);
 }
@@ -345,7 +345,7 @@ fn platform_cef_gpu_workarounds_disable_intel_macos_compositing_only() {
 fn platform_cef_gpu_workarounds_leave_other_platforms_alone() {
     for (os, arch) in [("macos", "aarch64"), ("windows", "x86_64")] {
         let mut args = Vec::new();
-        append_platform_cef_gpu_workarounds(&mut args, os, arch, None);
+        append_platform_cef_gpu_workarounds(&mut args, os, arch, None, None);
 
         assert!(
             args.is_empty(),
@@ -392,7 +392,7 @@ fn platform_cef_gpu_workarounds_skip_linux_disable_when_force_gpu_set() {
     // OPENHUMAN-TAURI-K1 branch, which would make a strict `is_empty()`
     // check fail spuriously. We only care about the GPU branch here.
     let mut args = Vec::new();
-    append_platform_cef_gpu_workarounds(&mut args, "linux", "x86_64", Some("1"));
+    append_platform_cef_gpu_workarounds(&mut args, "linux", "x86_64", Some("1"), None);
 
     assert!(
         !args.contains(&("--disable-gpu", None)),
@@ -417,9 +417,62 @@ fn platform_cef_gpu_workarounds_force_gpu_does_not_affect_intel_macos_path() {
     // separate Intel-macOS #1012 disable must still apply, regardless of
     // the env var.
     let mut args = Vec::new();
-    append_platform_cef_gpu_workarounds(&mut args, "macos", "x86_64", Some("1"));
+    append_platform_cef_gpu_workarounds(&mut args, "macos", "x86_64", Some("1"), None);
 
     assert_eq!(args, vec![("--disable-gpu-compositing", None)]);
+}
+
+// -------------------------------------------------------------------------
+// OPENHUMAN_DISABLE_GPU override (emergency CEF startup escape hatch)
+// -------------------------------------------------------------------------
+
+#[test]
+fn disable_gpu_default_off_when_env_unset() {
+    assert!(!cef_disable_gpu_enabled(None));
+}
+
+#[test]
+fn disable_gpu_explicit_enable_values_match_force_gpu_pattern() {
+    for v in ["1", "true", "yes", "on", "TRUE", "Yes", "On"] {
+        assert!(
+            cef_disable_gpu_enabled(Some(v)),
+            "OPENHUMAN_DISABLE_GPU={v:?} should opt in"
+        );
+    }
+}
+
+#[test]
+fn disable_gpu_anything_else_is_off() {
+    for v in ["", "0", "false", "no", "off", "FALSE", "Off", "maybe", " "] {
+        assert!(
+            !cef_disable_gpu_enabled(Some(v)),
+            "OPENHUMAN_DISABLE_GPU={v:?} must not silently opt in"
+        );
+    }
+}
+
+#[test]
+fn platform_cef_gpu_workarounds_disable_windows_gpu_when_requested() {
+    let mut args = Vec::new();
+    append_platform_cef_gpu_workarounds(&mut args, "windows", "x86_64", None, Some("1"));
+
+    assert_eq!(
+        args,
+        vec![("--disable-gpu", None), ("--disable-gpu-compositing", None)]
+    );
+}
+
+#[test]
+fn platform_cef_gpu_workarounds_disable_gpu_wins_over_linux_force_gpu() {
+    let mut args = Vec::new();
+    append_platform_cef_gpu_workarounds(&mut args, "linux", "x86_64", Some("1"), Some("1"));
+
+    assert!(args.contains(&("--disable-gpu", None)));
+    assert!(args.contains(&("--disable-gpu-compositing", None)));
+    assert!(
+        !args.contains(&("--use-angle", Some("swiftshader"))),
+        "OPENHUMAN_DISABLE_GPU=1 must not also force SwiftShader, got: {args:?}"
+    );
 }
 
 // -------------------------------------------------------------------------

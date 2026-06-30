@@ -1650,6 +1650,12 @@ const messages: TranslationMap = {
   'mcp.connectAuth.oauthOrToken':
     'Hai già un token di accesso? Incollalo invece come intestazione Authorization qui sotto.',
   'mcp.connectAuth.oauthTimeout': "Tempo scaduto in attesa dell'accesso dal browser. Riprova.",
+  'mcp.connectAuth.authError.oauthRequired':
+    'Questo server usa OAuth. Usa “Accedi con il browser” — un token incollato non verrà accettato.',
+  'mcp.connectAuth.authError.tokenRejected':
+    'Il server ha rifiutato questo token. Verifica che sia corretto e che non sia scaduto.',
+  'mcp.connectAuth.authError.credentialRequired':
+    "Questo server richiede l'autenticazione. Aggiungi un token oppure accedi.",
   'onboarding.skipForNow': 'Salta per ora',
   'onboarding.localAI.continueWithCloud': 'Continua con Cloud',
   'onboarding.localAI.useLocalAnyway':
@@ -2302,6 +2308,10 @@ const messages: TranslationMap = {
   'chat.attachment.remove': 'Rimuovi {name}',
   'chat.attachment.tooMany': 'Massimo {max} immagini per messaggio',
   'chat.attachment.tooManyFiles': 'Massimo {max} file per messaggio',
+  'chat.attachment.tooManyVideos': 'Massimo {max} video per messaggio',
+  'chat.attachment.videoNotSupported':
+    'Questo modello non può leggere i video. Puoi usare il livello Ragionamento di OpenHuman per allegare il tuo video.',
+  'chat.attachment.dropToAttach': 'Rilascia i file per allegarli',
   'chat.attachment.tooLarge': "L'immagine supera il limite di dimensione di {max}",
   'chat.attachment.unsupportedType':
     'Tipo di file non supportato. Usa un file immagine (PNG, JPEG, WebP, GIF, BMP) oppure PDF, TXT o Markdown.',
@@ -5219,6 +5229,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.bannerTitle': 'Titolo banner',
   'skills.meetingBots.busyTitle': 'OpenHuman è occupato',
   'skills.meetingBots.comingSoon': 'In arrivo',
+  'skills.meetingBots.couldNotLeaveTitle': 'Impossibile uscire dalla riunione',
   'skills.meetingBots.couldNotStartTitle': 'Impossibile avviare OpenHuman',
   'skills.meetingBots.displayName': 'Nome visualizzato',
   'skills.meetingBots.failedToStart': 'Avvio di OpenHuman fallito.',
@@ -5232,9 +5243,11 @@ const messages: TranslationMap = {
   'skills.meetingBots.platformComingSoon': 'Il supporto {label} sarà presto disponibile.',
   'skills.meetingBots.platformHints.gmeet': 'meet.google.com/abc-defg-hij',
   'skills.meetingBots.platformHints.teams': 'teams.microsoft.com/...',
+  'skills.meetingBots.platformHints.webex': 'webex.com/meet/...',
   'skills.meetingBots.platformHints.zoom': 'zoom.us/j/...',
   'skills.meetingBots.platforms.gmeet': 'Google Incontra',
   'skills.meetingBots.platforms.teams': 'Microsoft Teams',
+  'skills.meetingBots.platforms.webex': 'Webex',
   'skills.meetingBots.platforms.zoom': 'Zoom',
   'skills.meetingBots.sendTo': 'Invia a',
   'skills.meetingBots.serverOverloaded':
@@ -5268,6 +5281,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.liveStatusEnded': 'Riunione terminata',
   'skills.meetingBots.liveStatusError': 'Partecipazione fallita',
   'skills.meetingBots.leaveButton': 'Esci',
+  'skills.meetingBots.leavingButton': 'Uscita in corso…',
   'skills.meetingBots.respondToParticipant': 'Il tuo nome in questa riunione',
   'skills.meetingBots.respondToParticipantHint':
     'es. Mario (il tuo nome visualizzato nella chiamata)',
@@ -5279,6 +5293,62 @@ const messages: TranslationMap = {
   'skills.meetingBots.activeMode': 'Rispondi quando mi rivolgo a lui',
   'skills.meetingBots.activeModeDesc':
     'Se attivo, il bot risponde ad alta voce dopo che pronunci la sua frase di attivazione. Se disattivato, si limita ad ascoltare e trascrivere.',
+  'skills.meetingBots.history.allPlatforms': 'Tutte le piattaforme',
+  'skills.meetingBots.history.copyTranscript': 'Copia',
+  'skills.meetingBots.history.downloadTranscript': 'Scarica',
+  'skills.meetingBots.history.earlier': 'Prima',
+  'skills.meetingBots.history.participantCount': '{count} partecipante',
+  'skills.meetingBots.history.participantCountPlural': '{count} partecipanti',
+  'skills.meetingBots.history.runWithOpenHuman': 'Esegui con OpenHuman',
+  'skills.meetingBots.history.searchPlaceholder': 'Cerca chiamate…',
+  'skills.meetingBots.history.selectPrompt':
+    'Seleziona una chiamata per vedere il riepilogo e la trascrizione.',
+  'skills.meetingBots.history.today': 'Oggi',
+  'skills.meetingBots.history.yesterday': 'Ieri',
+  'skills.meetingBots.upcoming.heading': 'In arrivo',
+  'skills.meetingBots.upcoming.when': 'Quando',
+  'skills.meetingBots.upcoming.meeting': 'Riunione',
+  'skills.meetingBots.upcoming.platform': 'Piattaforma',
+  'skills.meetingBots.upcoming.people': 'Persone',
+  'skills.meetingBots.upcoming.joinPolicy': 'Politica di partecipazione',
+  'skills.meetingBots.upcoming.joinNow': 'Partecipa ora',
+  'skills.meetingBots.upcoming.joinNowAriaLabel': 'Partecipa a {title}',
+  'skills.meetingBots.upcoming.join': 'Partecipa',
+  'skills.meetingBots.upcoming.auto': 'Auto',
+  'skills.meetingBots.upcoming.ask': 'Chiedi',
+  'skills.meetingBots.upcoming.skip': 'Salta',
+  'skills.meetingBots.upcoming.today': 'Oggi',
+  'skills.meetingBots.upcoming.tomorrow': 'Domani',
+  'skills.meetingBots.upcoming.empty':
+    'Nessuna riunione in arrivo — collega Google Calendar per vederle qui.',
+  'skills.meetingBots.upcoming.error': 'Impossibile caricare le riunioni in arrivo.',
+  'skills.meetingBots.upcoming.retry': 'Riprova',
+  'skills.meetingBots.upcoming.refresh': 'Aggiorna',
+  'skills.meetingBots.upcoming.filterAll': 'Tutte le piattaforme',
+  'skills.meetingBots.upcoming.participants': '{count} partecipanti',
+  'skills.meetingBots.upcoming.imminent': 'Inizia presto',
+  'skills.meetingBots.upcoming.autoJoinsAt': 'Partecipazione automatica ~alle {time}',
+  'skills.meetingBots.upcoming.asksAtStart': "Chiede all'inizio",
+  'skills.meetingBots.upcoming.watchCalendarHint':
+    "Attiva 'Monitora il mio calendario' nelle Impostazioni predefinite (icona a ingranaggio) affinché Auto/Chiedi abbiano effetto — altrimenti queste politiche vengono salvate ma non si attivano.",
+  'skills.meetingBots.relative.now': 'adesso',
+  'skills.meetingBots.relative.inMinutes': 'tra {count}m',
+  'skills.meetingBots.relative.inHours': 'tra {count}h',
+  'skills.meetingBots.relative.minutesAgo': '{count}m fa',
+  'skills.meetingBots.relative.hoursAgo': '{count}h fa',
+  'skills.meetingBots.relative.daysAgo': '{count}g fa',
+  'skills.meetingBots.relative.yesterday': 'ieri',
+  'skills.meetingBots.defaults.drawerTitle': 'Impostazioni riunione',
+  'skills.meetingBots.defaults.closeDrawer': 'Chiudi',
+  'skills.meetingBots.defaults.openDefaults': 'Impostazioni riunione',
+  'skills.meetingBots.defaults.watchCalendar': 'Monitora il mio calendario',
+  'skills.meetingBots.defaults.watchCalendarDesc':
+    'Consenti a OpenHuman di monitorare il tuo calendario connesso per poter partecipare automaticamente o richiedere conferma per le riunioni in base alle politiche seguenti. Questo è separato dalle notifiche di promemoria delle riunioni.',
+  'skills.meetingBots.defaults.globalPolicy': 'Politica di partecipazione automatica globale',
+  'skills.meetingBots.defaults.perPlatformTitle': 'Impostazioni per piattaforma',
+  'skills.meetingBots.defaults.perPlatformDesc':
+    'Sostituire la politica globale per piattaforme specifiche.',
+  'skills.meetingBots.defaults.useDefault': 'Usa predefinito',
   'skills.resource.preview.closeAriaLabel': 'Chiudi anteprima',
   'skills.resource.preview.failed': 'Anteprima fallita',
   'skills.resource.preview.loading': 'Caricamento anteprima…',
@@ -6069,6 +6139,8 @@ const messages: TranslationMap = {
     "Nessun provider di riepilogo è disponibile per Crea alberi di riepilogo. Abilita l'IA locale (Ollama) o abilita il riepilogo cloud in Impostazioni → IA → Memoria.",
   'memory.health.remediation.empty_input_refused':
     'Un elemento di memoria è stato saltato perché il suo testo era vuoto. Nessuna azione necessaria — i nuovi elementi continuano a essere incorporati normalmente.',
+  'memory.health.remediation.storage_unavailable':
+    "OpenHuman non riesce a scrivere nella sua memoria — il disco o la scheda SD sembra guasto, pieno o di sola lettura. Controlla l'unità e libera spazio; l'elaborazione della memoria riprenderà automaticamente quando lo spazio di archiviazione tornerà scrivibile.",
   'memory.health.remediation.transient':
     "Un errore temporaneo ha interrotto l'elaborazione della memoria. Verrà riprovato automaticamente.",
   'memory.health.remediation.unknown':
@@ -6368,7 +6440,11 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.title': 'Crediti del provider necessari',
   'userErrors.insufficientCredits.body':
     'Il tuo provider IA ha esaurito i crediti. Ricaricalo o aggiorna la chiave API.',
+  'userErrors.apiKeyMissing.title': 'Chiave API richiesta',
+  'userErrors.apiKeyMissing.body':
+    'Il tuo provider IA non ha una chiave API impostata. Aggiungine una nelle impostazioni del provider per continuare.',
   'userErrors.scope.chat': 'Chat',
+  'userErrors.scope.cron': 'Attività pianificata',
   // Agent World — Identity trading (confirm-before-spend + balance gate)
   'agentWorld.trading.amountLabel': 'Importo',
   'agentWorld.trading.networkLabel': 'Rete',
@@ -6401,6 +6477,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.amountTooManyDecimals': 'Questo importo ha troppe cifre decimali.',
   'agentWorld.trading.amountMustBePositive': 'Inserisci un importo maggiore di zero.',
   'agentWorld.trading.amountInvalid': 'Inserisci un importo valido.',
+
+  // Code block chrome
+  'codeBlock.copy': 'Copia',
+  'codeBlock.copied': 'Copiato!',
 };
 
 export default messages;

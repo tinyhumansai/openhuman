@@ -1607,6 +1607,12 @@ const messages: TranslationMap = {
   'mcp.connectAuth.oauthOrToken':
     '이미 액세스 토큰이 있나요? 대신 아래에 Authorization 헤더로 붙여넣으세요.',
   'mcp.connectAuth.oauthTimeout': '브라우저 로그인 대기 시간이 초과되었습니다. 다시 시도하세요.',
+  'mcp.connectAuth.authError.oauthRequired':
+    '이 서버는 OAuth를 사용합니다. “브라우저로 로그인”을 사용하세요. 붙여넣은 토큰은 사용할 수 없습니다.',
+  'mcp.connectAuth.authError.tokenRejected':
+    '서버가 이 토큰을 거부했습니다. 토큰이 올바르고 만료되지 않았는지 확인하세요.',
+  'mcp.connectAuth.authError.credentialRequired':
+    '이 서버는 인증이 필요합니다. 토큰을 추가하거나 로그인하세요.',
   'onboarding.skipForNow': '지금 건너뛰기',
   'onboarding.localAI.continueWithCloud': '클라우드 계속하기',
   'onboarding.localAI.useLocalAnyway': '어쨌든 로컬 AI 사용(기기에 권장되지 않음)',
@@ -2242,6 +2248,10 @@ const messages: TranslationMap = {
   'chat.attachment.remove': '{name} 제거',
   'chat.attachment.tooMany': '메시지당 최대 {max}개 이미지',
   'chat.attachment.tooManyFiles': '메시지당 최대 {max}개 파일',
+  'chat.attachment.tooManyVideos': '메시지당 최대 {max}개 동영상',
+  'chat.attachment.videoNotSupported':
+    '이 모델은 동영상을 읽을 수 없습니다. 동영상을 첨부하려면 OpenHuman 추론 등급을 사용할 수 있습니다.',
+  'chat.attachment.dropToAttach': '파일을 놓아 첨부',
   'chat.attachment.tooLarge': '이미지가 {max} 크기 제한을 초과합니다',
   'chat.attachment.unsupportedType':
     '지원되지 않는 파일 형식입니다. 이미지(PNG, JPEG, WebP, GIF, BMP) 또는 PDF, TXT, Markdown 파일을 사용하세요.',
@@ -5085,6 +5095,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.bannerTitle': 'OpenHuman을 회의에 보내기',
   'skills.meetingBots.busyTitle': 'OpenHuman이 바쁩니다',
   'skills.meetingBots.comingSoon': '곧 제공 예정',
+  'skills.meetingBots.couldNotLeaveTitle': '회의에서 나갈 수 없습니다',
   'skills.meetingBots.couldNotStartTitle': 'OpenHuman을 시작할 수 없습니다',
   'skills.meetingBots.displayName': '표시 이름',
   'skills.meetingBots.failedToStart': 'OpenHuman 시작에 실패했습니다.',
@@ -5099,9 +5110,11 @@ const messages: TranslationMap = {
   'skills.meetingBots.platformComingSoon': '{label} 지원이 곧 제공될 예정입니다.',
   'skills.meetingBots.platformHints.gmeet': 'Meet.google.com/abc-defg-hij',
   'skills.meetingBots.platformHints.teams': 'Teams.microsoft.com/...',
+  'skills.meetingBots.platformHints.webex': 'webex.com/meet/...',
   'skills.meetingBots.platformHints.zoom': 'Zoom.us/j/...',
   'skills.meetingBots.platforms.gmeet': 'Google 모임',
   'skills.meetingBots.platforms.teams': 'Microsoft Teams',
+  'skills.meetingBots.platforms.webex': 'Webex',
   'skills.meetingBots.platforms.zoom': 'Zoom',
   'skills.meetingBots.sendTo': '보내기',
   'skills.meetingBots.serverOverloaded':
@@ -5133,6 +5146,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.liveStatusEnded': '회의 종료',
   'skills.meetingBots.liveStatusError': '참가 실패',
   'skills.meetingBots.leaveButton': '나가기',
+  'skills.meetingBots.leavingButton': '나가는 중…',
   'skills.meetingBots.respondToParticipant': '이 회의에서 내 이름',
   'skills.meetingBots.respondToParticipantHint': '예: 김철수 (통화에서 표시되는 이름)',
   'skills.meetingBots.respondToParticipantDesc':
@@ -5143,6 +5157,60 @@ const messages: TranslationMap = {
   'skills.meetingBots.activeMode': '부르면 응답하기',
   'skills.meetingBots.activeModeDesc':
     '켜면 호출 문구를 말한 뒤 봇이 소리 내어 답합니다. 끄면 듣고 기록만 합니다.',
+  'skills.meetingBots.history.allPlatforms': '모든 플랫폼',
+  'skills.meetingBots.history.copyTranscript': '복사',
+  'skills.meetingBots.history.downloadTranscript': '다운로드',
+  'skills.meetingBots.history.earlier': '이전',
+  'skills.meetingBots.history.participantCount': '{count}명 참가자',
+  'skills.meetingBots.history.participantCountPlural': '{count}명 참가자',
+  'skills.meetingBots.history.runWithOpenHuman': 'OpenHuman으로 실행',
+  'skills.meetingBots.history.searchPlaceholder': '통화 검색…',
+  'skills.meetingBots.history.selectPrompt': '통화를 선택하면 요약과 전사를 볼 수 있습니다.',
+  'skills.meetingBots.history.today': '오늘',
+  'skills.meetingBots.history.yesterday': '어제',
+  'skills.meetingBots.upcoming.heading': '예정된 회의',
+  'skills.meetingBots.upcoming.when': '시간',
+  'skills.meetingBots.upcoming.meeting': '회의',
+  'skills.meetingBots.upcoming.platform': '플랫폼',
+  'skills.meetingBots.upcoming.people': '참가자',
+  'skills.meetingBots.upcoming.joinPolicy': '참여 정책',
+  'skills.meetingBots.upcoming.joinNow': '지금 참여',
+  'skills.meetingBots.upcoming.joinNowAriaLabel': '{title} 참여',
+  'skills.meetingBots.upcoming.join': '참여',
+  'skills.meetingBots.upcoming.auto': '자동',
+  'skills.meetingBots.upcoming.ask': '묻기',
+  'skills.meetingBots.upcoming.skip': '건너뛰기',
+  'skills.meetingBots.upcoming.today': '오늘',
+  'skills.meetingBots.upcoming.tomorrow': '내일',
+  'skills.meetingBots.upcoming.empty':
+    '예정된 회의가 없습니다 — Google Calendar를 연결하여 여기에서 확인하세요.',
+  'skills.meetingBots.upcoming.error': '예정된 회의를 불러올 수 없습니다.',
+  'skills.meetingBots.upcoming.retry': '다시 시도',
+  'skills.meetingBots.upcoming.refresh': '새로 고침',
+  'skills.meetingBots.upcoming.filterAll': '모든 플랫폼',
+  'skills.meetingBots.upcoming.participants': '{count}명',
+  'skills.meetingBots.upcoming.imminent': '곧 시작',
+  'skills.meetingBots.upcoming.autoJoinsAt': '~{time}에 자동 참가',
+  'skills.meetingBots.upcoming.asksAtStart': '시작 시 묻기',
+  'skills.meetingBots.upcoming.watchCalendarHint':
+    "자동/묻기가 적용되도록 기본값(기어 아이콘)에서 '내 캘린더 감시'를 활성화하세요 — 그렇지 않으면 이 정책들은 저장되지만 트리거되지 않습니다.",
+  'skills.meetingBots.relative.now': '지금',
+  'skills.meetingBots.relative.inMinutes': '{count}분 후',
+  'skills.meetingBots.relative.inHours': '{count}시간 후',
+  'skills.meetingBots.relative.minutesAgo': '{count}분 전',
+  'skills.meetingBots.relative.hoursAgo': '{count}시간 전',
+  'skills.meetingBots.relative.daysAgo': '{count}일 전',
+  'skills.meetingBots.relative.yesterday': '어제',
+  'skills.meetingBots.defaults.drawerTitle': '회의 기본값',
+  'skills.meetingBots.defaults.closeDrawer': '닫기',
+  'skills.meetingBots.defaults.openDefaults': '회의 설정',
+  'skills.meetingBots.defaults.watchCalendar': '내 캘린더 감시',
+  'skills.meetingBots.defaults.watchCalendarDesc':
+    'OpenHuman이 연결된 캘린더를 감시하여 아래 정책에 따라 회의에 자동 참가하거나 참가 여부를 묻도록 허용합니다. 이는 회의 알림과는 별개입니다.',
+  'skills.meetingBots.defaults.globalPolicy': '전역 자동 참가 정책',
+  'skills.meetingBots.defaults.perPlatformTitle': '플랫폼별 설정',
+  'skills.meetingBots.defaults.perPlatformDesc': '특정 플랫폼에 대한 전역 정책을 재정의합니다.',
+  'skills.meetingBots.defaults.useDefault': '기본값 사용',
   'skills.resource.preview.closeAriaLabel': '미리보기 닫기',
   'skills.resource.preview.failed': '미리보기 실패',
   'skills.resource.preview.loading': '미리보기 불러오는 중…',
@@ -5908,6 +5976,8 @@ const messages: TranslationMap = {
     '요약 트리 만들기에 사용할 수 있는 요약 제공자가 없습니다. 로컬 AI(Ollama)를 활성화하거나, 설정 → AI → 메모리에서 클라우드 요약을 활성화하세요.',
   'memory.health.remediation.empty_input_refused':
     '텍스트가 비어 있어 메모리 항목이 건너뛰어졌습니다. 조치가 필요하지 않습니다 — 새 항목은 정상적으로 임베딩됩니다.',
+  'memory.health.remediation.storage_unavailable':
+    'OpenHuman이 메모리 저장소에 쓸 수 없습니다 — 디스크 또는 SD 카드가 손상되었거나 가득 찼거나 읽기 전용인 것 같습니다. 드라이브를 확인하고 공간을 확보하세요. 저장소에 다시 쓸 수 있게 되면 메모리 처리가 자동으로 재개됩니다.',
   'memory.health.remediation.transient':
     '일시적인 오류로 메모리 처리가 중단되었습니다. 자동으로 다시 시도됩니다.',
   'memory.health.remediation.unknown':
@@ -6189,7 +6259,11 @@ const messages: TranslationMap = {
   'userErrors.budgetExceeded.body': '관리형 AI 예산이 모두 소진되었습니다.',
   'userErrors.insufficientCredits.title': '제공업체 크레딧 필요',
   'userErrors.insufficientCredits.body': 'AI 제공업체 크레딧이 소진되었습니다.',
+  'userErrors.apiKeyMissing.title': 'API 키 필요',
+  'userErrors.apiKeyMissing.body':
+    'AI 제공업체에 API 키가 설정되지 않았습니다. 제공업체 설정에서 추가하세요.',
   'userErrors.scope.chat': '채팅',
+  'userErrors.scope.cron': '예약된 작업',
   // Agent World — Identity trading (confirm-before-spend + balance gate)
   'agentWorld.trading.amountLabel': '금액',
   'agentWorld.trading.networkLabel': '네트워크',
@@ -6221,6 +6295,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.amountTooManyDecimals': '이 금액의 소수점 자릿수가 너무 많습니다.',
   'agentWorld.trading.amountMustBePositive': '0보다 큰 금액을 입력하세요.',
   'agentWorld.trading.amountInvalid': '유효한 금액을 입력하세요.',
+
+  // Code block chrome
+  'codeBlock.copy': '복사',
+  'codeBlock.copied': '복사됨!',
 };
 
 export default messages;

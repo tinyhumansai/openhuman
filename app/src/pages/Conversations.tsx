@@ -28,6 +28,7 @@ import {
   ATTACHMENT_MAX_FILES,
   ATTACHMENT_MAX_IMAGES,
   buildMessageWithAttachments,
+  imageMarkerCost,
   parseMessageImages,
   validateAndReadFile,
 } from '../lib/attachments';
@@ -281,6 +282,13 @@ const Conversations = ({
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<string | null>(null);
   const [isPlayingReply, setIsPlayingReply] = useState(false);
+  // Measured height of the floating composer footer (page variant only). The
+  // footer is `absolute`ly positioned over the scroll area, so the message list
+  // needs matching bottom padding to keep its tail visible. Defaults to 128px
+  // (the old static `pb-32`) so layout is unchanged until the ResizeObserver
+  // reports a real height — and grows automatically when the queued-followups
+  // panel, approval cards, or error banners expand the footer (#4268).
+  const [composerFooterHeight, setComposerFooterHeight] = useState(128);
   // Thread-list filtering is fixed to the General bucket — the in-sidebar
   // General/Subconscious/Tasks chips were removed. Subconscious reflections and
   // task/worker threads have dedicated surfaces (Intelligence, Tasks board).
@@ -346,6 +354,12 @@ const Conversations = ({
   );
   const streamingAssistantByThread = useAppSelector(
     state => state.chatRuntime.streamingAssistantByThread
+  );
+  // #4270: per-thread liveness counter bumped on each `inference_heartbeat`.
+  // Watched by the silence-timer rearm effect so a long prefill / buffered
+  // reasoning phase that streams no other progress still keeps the timer armed.
+  const inferenceHeartbeatByThread = useAppSelector(
+    state => state.chatRuntime.inferenceHeartbeatByThread
   );
   const parallelStreamsByThread = useAppSelector(
     state => state.chatRuntime.parallelStreamsByThread
@@ -444,6 +458,7 @@ const Conversations = ({
   }, [agentProfiles, selectedAgentProfileId]);
 
   const textInputRef = useRef<HTMLTextAreaElement>(null);
+  const composerFooterRef = useRef<HTMLDivElement>(null);
   const isComposingTextRef = useRef(false);
   // Threads with an in-flight send, guarding against double-submit to the SAME
   // thread. Per-thread (a Set) so a send to thread B isn't blocked by an
@@ -790,6 +805,10 @@ const Conversations = ({
         streamingAssistantByThread[threadId],
         toolTimelineByThread[threadId],
         taskBoardByThread[threadId],
+        // #4270: liveness beat. Kept LAST so the done-transition probe on
+        // `current[0]` (status) is unaffected; a beat alone still flips the
+        // `changed` check and rearms the timer through a silent reasoning phase.
+        inferenceHeartbeatByThread[threadId],
       ] as const;
       const previous = turnSignatureByThreadRef.current.get(threadId);
       const status = current[0];
@@ -812,6 +831,7 @@ const Conversations = ({
     streamingAssistantByThread,
     toolTimelineByThread,
     taskBoardByThread,
+    inferenceHeartbeatByThread,
   ]);
 
   useEffect(() => {
@@ -911,17 +931,23 @@ const Conversations = ({
     return true;
   };
 
-  const handleAttachFiles = async (files: FileList | null) => {
+  const handleAttachFiles = async (files: FileList | File[] | null) => {
     if (!files) return;
-    let acceptedImageCount = attachments.filter(attachment => attachment.kind === 'image').length;
     let acceptedFileCount = attachments.filter(attachment => attachment.kind === 'file').length;
+    // Images and videos share one image-marker budget (video = its frames), so
+    // track consumed markers rather than per-kind counts.
+    let acceptedImageMarkers = attachments.reduce(
+      (sum, attachment) => sum + imageMarkerCost(attachment.kind),
+      0
+    );
     for (const file of Array.from(files)) {
       const result = await validateAndReadFile(
         file,
-        acceptedImageCount,
+        acceptedImageMarkers,
         acceptedFileCount,
-        // Allow the image when the active model is vision-capable OR a vision
-        // sub-agent can take it (orchestrator delegates the image onward).
+        // Allow images AND video when the active model is vision-capable OR a
+        // vision sub-agent can take it (orchestrator delegates the image/frames
+        // onward). Video is sampled into still frames that ride the same path.
         modelSupportsVision || visionDelegateAvailable
       );
       if ('error' in result) {
@@ -930,9 +956,14 @@ const Conversations = ({
           setAttachError(
             chatSendError('attachment_invalid', t('chat.attachment.imageNotSupported'))
           );
+        } else if (error.code === 'video_not_supported') {
+          setAttachError(
+            chatSendError('attachment_invalid', t('chat.attachment.videoNotSupported'))
+          );
         } else if (error.code === 'too_many') {
+          // image/video share the image-marker budget → tooMany; files separate.
           const key =
-            error.kind === 'image' ? 'chat.attachment.tooMany' : 'chat.attachment.tooManyFiles';
+            error.kind === 'file' ? 'chat.attachment.tooManyFiles' : 'chat.attachment.tooMany';
           setAttachError(
             chatSendError('attachment_invalid', t(key).replace('{max}', String(error.max)))
           );
@@ -951,10 +982,10 @@ const Conversations = ({
         }
         return;
       }
-      if (result.attachment.kind === 'image') {
-        acceptedImageCount++;
-      } else {
+      if (result.attachment.kind === 'file') {
         acceptedFileCount++;
+      } else {
+        acceptedImageMarkers += imageMarkerCost(result.attachment.kind);
       }
       setAttachments(prev => [...prev, result.attachment]);
     }
@@ -1032,6 +1063,11 @@ const Conversations = ({
               attachmentDataUris: pendingAttachments
                 .filter(a => a.kind === 'image')
                 .map(a => a.previewUri ?? a.dataUri),
+              // Poster (first frame) per attachment, index-aligned with
+              // attachmentKinds — only video entries carry one; others null.
+              attachmentPosters: pendingAttachments.map(a =>
+                a.kind === 'video' ? (a.previewUri ?? a.dataUri) : null
+              ),
               attachmentCompressed: pendingAttachments.map(a => a.compressed),
             }
           : {},
@@ -1151,6 +1187,11 @@ const Conversations = ({
               attachmentDataUris: pendingAttachments
                 .filter(a => a.kind === 'image')
                 .map(a => a.previewUri ?? a.dataUri),
+              // Poster (first frame) per attachment, index-aligned with
+              // attachmentKinds — only video entries carry one; others null.
+              attachmentPosters: pendingAttachments.map(a =>
+                a.kind === 'video' ? (a.previewUri ?? a.dataUri) : null
+              ),
               attachmentCompressed: pendingAttachments.map(a => a.compressed),
               parallelBranch: true,
             }
@@ -1231,6 +1272,11 @@ const Conversations = ({
               attachmentDataUris: pendingAttachments
                 .filter(a => a.kind === 'image')
                 .map(a => a.previewUri ?? a.dataUri),
+              // Poster (first frame) per attachment, index-aligned with
+              // attachmentKinds — only video entries carry one; others null.
+              attachmentPosters: pendingAttachments.map(a =>
+                a.kind === 'video' ? (a.previewUri ?? a.dataUri) : null
+              ),
               attachmentCompressed: pendingAttachments.map(a => a.compressed),
             }
           : {},
@@ -1760,6 +1806,27 @@ const Conversations = ({
   const isNewWindow =
     !isSidebar && !isLoadingMessages && !messagesError && !hasVisibleMessages && !hasTaskBoard;
 
+  // Track the floating composer footer's height so the message list can reserve
+  // matching bottom padding. In the page variant the footer is absolutely
+  // positioned over the scroll area, so a static padding (the old `pb-32`) gets
+  // overrun whenever the footer grows — most visibly when the "Queued
+  // follow-ups" panel appears mid-reply, hiding the tail of the response
+  // (#4268). The sidebar variant lays the composer out in normal flow and never
+  // overlaps, so we skip the observer there and keep its `pb-4`.
+  useEffect(() => {
+    if (isSidebar) return;
+    const el = composerFooterRef.current;
+    if (!el) return;
+    const measure = () => {
+      const next = Math.round(el.getBoundingClientRect().height);
+      if (next > 0) setComposerFooterHeight(next);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [isSidebar, selectedThreadId]);
+
   // Stable title resolver used by both the sidebar thread list and the header.
   const resolveThreadDisplayTitle = (threadId: string | null): string => {
     if (!threadId) return t('chat.selectThread');
@@ -2064,9 +2131,16 @@ const Conversations = ({
           </div>
         ) : hasVisibleMessages || hasTaskBoard ? (
           <div
+            data-testid="chat-message-list"
             className={`mx-auto w-full max-w-[48.75rem] space-y-3 px-5 pt-4 ${
-              isSidebar ? 'pb-4' : 'pb-32'
-            }`}>
+              isSidebar ? 'pb-4' : ''
+            }`}
+            // Page variant: reserve room for the absolutely-positioned floating
+            // composer footer so its tail stays visible. Tracks the footer's
+            // measured height (+16px gap) instead of a static `pb-32`, so the
+            // queued-followups panel and other dynamic footer content never
+            // overlap the last message (#4268).
+            style={!isSidebar ? { paddingBottom: composerFooterHeight + 16 } : undefined}>
             {visibleMessages.map(msg => {
               const isAgentTextMode = msg.sender === 'agent' && agentMessageViewMode === 'text';
               // Parsed once per message: for current messages (extraMetadata
@@ -2234,6 +2308,18 @@ const Conversations = ({
                               const fileNames = kinds
                                 .map((k, i) => (k === 'file' ? names[i] : null))
                                 .filter((n): n is string => Boolean(n));
+                              const posters = Array.isArray(msg.extraMetadata?.attachmentPosters)
+                                ? (msg.extraMetadata.attachmentPosters as (string | null)[])
+                                : [];
+                              const videoItems = kinds
+                                .map((k, i) =>
+                                  k === 'video'
+                                    ? { name: names[i] ?? '', poster: posters[i] ?? null }
+                                    : null
+                                )
+                                .filter((v): v is { name: string; poster: string | null } =>
+                                  Boolean(v)
+                                );
                               const showTime = latestVisibleMessage?.id === msg.id;
                               return (
                                 <>
@@ -2246,6 +2332,47 @@ const Conversations = ({
                                           alt=""
                                           className="max-w-[200px] max-h-[200px] rounded-2xl object-cover"
                                         />
+                                      ))}
+                                    </div>
+                                  )}
+                                  {videoItems.length > 0 && (
+                                    <div className="flex flex-wrap gap-1.5 justify-end">
+                                      {videoItems.map((video, i) => (
+                                        <div
+                                          key={i}
+                                          className="relative flex items-center gap-2 rounded-lg border border-line bg-surface-muted px-2.5 py-1.5 text-xs text-content-secondary max-w-[220px]">
+                                          {video.poster ? (
+                                            <div className="relative w-10 h-10 flex-shrink-0">
+                                              <img
+                                                src={video.poster}
+                                                alt=""
+                                                className="w-10 h-10 rounded object-cover"
+                                              />
+                                              <span className="absolute inset-0 flex items-center justify-center">
+                                                <svg
+                                                  className="w-4 h-4 text-white drop-shadow"
+                                                  fill="currentColor"
+                                                  viewBox="0 0 24 24">
+                                                  <path d="M8 5v14l11-7z" />
+                                                </svg>
+                                              </span>
+                                            </div>
+                                          ) : (
+                                            <svg
+                                              className="w-4 h-4 flex-shrink-0 text-content-muted"
+                                              fill="none"
+                                              stroke="currentColor"
+                                              viewBox="0 0 24 24">
+                                              <path
+                                                strokeLinecap="round"
+                                                strokeLinejoin="round"
+                                                strokeWidth={1.8}
+                                                d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 6h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2z"
+                                              />
+                                            </svg>
+                                          )}
+                                          <span className="truncate font-medium">{video.name}</span>
+                                        </div>
                                       ))}
                                     </div>
                                   )}
@@ -2500,6 +2627,7 @@ const Conversations = ({
       )}
 
       <div
+        ref={composerFooterRef}
         data-walkthrough="home-cta"
         // Page variant: float at the bottom (absolute) over the fade; centered +
         // width-capped to match the messages. `z-20` keeps it above messages

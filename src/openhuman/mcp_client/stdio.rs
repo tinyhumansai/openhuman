@@ -1,4 +1,5 @@
 use super::client::{render_tool_result, McpInitializeResult, McpRemoteTool, McpServerToolResult};
+use super::spawn_env;
 use crate::openhuman::config::McpClientIdentityConfig;
 use anyhow::Context;
 use serde_json::{json, Value};
@@ -59,6 +60,11 @@ impl McpStdioClient {
             return Ok(session.initialize.clone());
         }
 
+        // Desktop GUI launches inherit a stripped PATH (e.g. macOS Finder/launchd
+        // gives `/usr/bin:/bin:/usr/sbin:/sbin`), so `npx`/`uvx`-based servers
+        // can't be found. Rebuild the user's real shell PATH before spawning.
+        let resolved_path = spawn_env::spawn_path().await;
+
         let mut command = Command::new(&self.command);
         command
             .args(&self.args)
@@ -68,8 +74,29 @@ impl McpStdioClient {
         if let Some(cwd) = self.cwd.as_ref() {
             command.current_dir(cwd);
         }
+        // Apply the reconstructed PATH first; config-provided env is applied
+        // afterwards so an explicit `PATH` override from the server config wins.
+        command.env("PATH", &resolved_path);
         for (key, value) in &self.env {
             command.env(key, value);
+        }
+
+        // Resolve the command up front so a missing Node/uv runtime fails with
+        // actionable guidance instead of a bare ENOENT from `spawn`.
+        let effective_path = self
+            .env
+            .iter()
+            .rev()
+            .find(|(key, _)| key == "PATH")
+            .map(|(_, value)| value.as_str())
+            .unwrap_or(resolved_path.as_str());
+        if spawn_env::locate_command(&self.command, effective_path, self.cwd.as_deref()).is_none() {
+            tracing::warn!(
+                target: "[mcp_client::stdio]",
+                command = %self.command,
+                "stdio MCP command not found on resolved PATH"
+            );
+            anyhow::bail!(spawn_env::missing_command_error(&self.command));
         }
 
         let mut child = command
@@ -236,5 +263,50 @@ impl McpStdioClient {
         session.stdin.write_all(b"\n").await?;
         session.stdin.flush().await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn initialize_missing_command_returns_actionable_error() {
+        let client = McpStdioClient::new(
+            "openhuman-nonexistent-binary-zzz".to_string(),
+            Vec::new(),
+            Vec::new(),
+            None,
+            McpClientIdentityConfig::default(),
+        );
+        let err = client
+            .initialize()
+            .await
+            .expect_err("spawn of a missing command must fail");
+        assert!(
+            err.to_string().contains("was not found"),
+            "expected actionable error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn initialize_missing_npx_mentions_node() {
+        // A config PATH override with no npx forces the missing-runtime branch
+        // deterministically, independent of the host's real PATH.
+        let client = McpStdioClient::new(
+            "npx".to_string(),
+            Vec::new(),
+            vec![("PATH".to_string(), "/openhuman/does-not-exist".to_string())],
+            None,
+            McpClientIdentityConfig::default(),
+        );
+        let err = client
+            .initialize()
+            .await
+            .expect_err("missing npx must fail");
+        assert!(
+            err.to_string().contains("Node.js"),
+            "expected Node.js guidance, got: {err}"
+        );
     }
 }

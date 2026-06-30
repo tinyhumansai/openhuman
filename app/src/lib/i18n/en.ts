@@ -1041,6 +1041,8 @@ const en: TranslationMap = {
     'No summarization provider is available for Build Summary Trees. Enable local AI (Ollama), or enable cloud summarization in Settings → AI → Memory.',
   'memory.health.remediation.empty_input_refused':
     'A memory item was skipped because its text was empty. No action needed — newer items continue to embed normally.',
+  'memory.health.remediation.storage_unavailable':
+    "OpenHuman can't write to its memory storage — the disk or SD card appears to be failing, full, or read-only. Check the drive and free up space; memory processing resumes automatically once storage is writable again.",
   'memory.health.remediation.transient':
     'A temporary error interrupted memory processing. It will retry automatically.',
   'memory.health.remediation.unknown':
@@ -1961,6 +1963,12 @@ const en: TranslationMap = {
   'mcp.connectAuth.oauthOrToken':
     'Already have an access token? Paste it as an Authorization header below instead.',
   'mcp.connectAuth.oauthTimeout': 'Timed out waiting for browser sign-in. Try again.',
+  'mcp.connectAuth.authError.oauthRequired':
+    'This server uses OAuth. Use “Sign in with browser” — a pasted token will not be accepted.',
+  'mcp.connectAuth.authError.tokenRejected':
+    'The server rejected this token. Check that it is correct and has not expired.',
+  'mcp.connectAuth.authError.credentialRequired':
+    'This server requires authentication. Add a token, or sign in.',
   'mcp.detail.enable': 'Enable',
   'mcp.detail.disable': 'Disable',
   'mcp.status.disabled': 'Disabled',
@@ -2664,6 +2672,10 @@ const en: TranslationMap = {
   'chat.attachment.remove': 'Remove {name}',
   'chat.attachment.tooMany': 'Maximum {max} images per message',
   'chat.attachment.tooManyFiles': 'Maximum {max} files per message',
+  'chat.attachment.tooManyVideos': 'Maximum {max} videos per message',
+  'chat.attachment.videoNotSupported':
+    'This model can’t read videos. You can use the OpenHuman Reasoning tier to attach your video.',
+  'chat.attachment.dropToAttach': 'Drop files to attach',
   'chat.attachment.tooLarge': 'Image exceeds {max} size limit',
   'chat.attachment.unsupportedType':
     'Unsupported file type. Use an image (PNG, JPEG, WebP, GIF, BMP) or a PDF, TXT, or Markdown file.',
@@ -5780,6 +5792,7 @@ const en: TranslationMap = {
   'skills.meetingBots.bannerTitle': 'Send OpenHuman to your next meeting',
   'skills.meetingBots.busyTitle': 'OpenHuman is busy',
   'skills.meetingBots.comingSoon': 'coming soon',
+  'skills.meetingBots.couldNotLeaveTitle': 'Couldn’t leave the meeting',
   'skills.meetingBots.couldNotStartTitle': 'Could not start OpenHuman',
   'skills.meetingBots.displayName': 'Display name',
   'skills.meetingBots.failedToStart': 'Failed to start OpenHuman.',
@@ -5794,9 +5807,11 @@ const en: TranslationMap = {
   'skills.meetingBots.platformComingSoon': '{label} support is coming soon.',
   'skills.meetingBots.platformHints.gmeet': 'meet.google.com/abc-defg-hij',
   'skills.meetingBots.platformHints.teams': 'teams.microsoft.com/...',
+  'skills.meetingBots.platformHints.webex': 'webex.com/meet/...',
   'skills.meetingBots.platformHints.zoom': 'zoom.us/j/...',
   'skills.meetingBots.platforms.gmeet': 'Google Meet',
   'skills.meetingBots.platforms.teams': 'Microsoft Teams',
+  'skills.meetingBots.platforms.webex': 'Webex',
   'skills.meetingBots.platforms.zoom': 'Zoom',
   'skills.meetingBots.sendTo': 'Send to {label}',
   'skills.meetingBots.serverOverloaded':
@@ -5829,6 +5844,7 @@ const en: TranslationMap = {
   'skills.meetingBots.liveStatusEnded': 'Meeting ended',
   'skills.meetingBots.liveStatusError': 'Failed to join',
   'skills.meetingBots.leaveButton': 'Leave',
+  'skills.meetingBots.leavingButton': 'Leaving…',
   'skills.meetingBots.respondToParticipant': 'Your Name in This Meeting',
   'skills.meetingBots.respondToParticipantHint': 'e.g. Alice (your display name in the call)',
   'skills.meetingBots.respondToParticipantDesc':
@@ -5839,6 +5855,61 @@ const en: TranslationMap = {
   'skills.meetingBots.activeMode': 'Respond when I address it',
   'skills.meetingBots.activeModeDesc':
     'When on, the bot speaks a reply after you say its wake phrase. When off, it only listens and transcribes.',
+  'skills.meetingBots.history.allPlatforms': 'All platforms',
+  'skills.meetingBots.history.copyTranscript': 'Copy',
+  'skills.meetingBots.history.downloadTranscript': 'Download',
+  'skills.meetingBots.history.earlier': 'Earlier',
+  'skills.meetingBots.history.participantCount': '{count} participant',
+  'skills.meetingBots.history.participantCountPlural': '{count} participants',
+  'skills.meetingBots.history.runWithOpenHuman': 'Run with OpenHuman',
+  'skills.meetingBots.history.searchPlaceholder': 'Search calls…',
+  'skills.meetingBots.history.selectPrompt': 'Select a call to see its summary and transcript.',
+  'skills.meetingBots.history.today': 'Today',
+  'skills.meetingBots.history.yesterday': 'Yesterday',
+  'skills.meetingBots.upcoming.heading': 'Upcoming',
+  'skills.meetingBots.upcoming.when': 'When',
+  'skills.meetingBots.upcoming.meeting': 'Meeting',
+  'skills.meetingBots.upcoming.platform': 'Platform',
+  'skills.meetingBots.upcoming.people': 'People',
+  'skills.meetingBots.upcoming.joinPolicy': 'Join Policy',
+  'skills.meetingBots.upcoming.joinNow': 'Join now',
+  'skills.meetingBots.upcoming.joinNowAriaLabel': 'Join {title}',
+  'skills.meetingBots.upcoming.join': 'Join',
+  'skills.meetingBots.upcoming.auto': 'Auto',
+  'skills.meetingBots.upcoming.ask': 'Ask',
+  'skills.meetingBots.upcoming.skip': 'Skip',
+  'skills.meetingBots.upcoming.today': 'Today',
+  'skills.meetingBots.upcoming.tomorrow': 'Tomorrow',
+  'skills.meetingBots.upcoming.empty':
+    'No upcoming meetings — connect Google Calendar to see them here.',
+  'skills.meetingBots.upcoming.error': 'Couldn’t load upcoming meetings.',
+  'skills.meetingBots.upcoming.retry': 'Retry',
+  'skills.meetingBots.upcoming.refresh': 'Refresh',
+  'skills.meetingBots.upcoming.filterAll': 'All platforms',
+  'skills.meetingBots.upcoming.participants': '{count} participants',
+  'skills.meetingBots.upcoming.imminent': 'Starting soon',
+  'skills.meetingBots.upcoming.autoJoinsAt': 'Auto-joins ~at {time}',
+  'skills.meetingBots.upcoming.asksAtStart': 'Asks at start',
+  'skills.meetingBots.relative.now': 'now',
+  'skills.meetingBots.relative.inMinutes': 'in {count}m',
+  'skills.meetingBots.relative.inHours': 'in {count}h',
+  'skills.meetingBots.relative.minutesAgo': '{count}m ago',
+  'skills.meetingBots.relative.hoursAgo': '{count}h ago',
+  'skills.meetingBots.relative.daysAgo': '{count}d ago',
+  'skills.meetingBots.relative.yesterday': 'yesterday',
+  'skills.meetingBots.defaults.drawerTitle': 'Meeting Defaults',
+  'skills.meetingBots.defaults.closeDrawer': 'Close defaults',
+  'skills.meetingBots.defaults.openDefaults': 'Meeting defaults',
+  'skills.meetingBots.defaults.watchCalendar': 'Watch my calendar',
+  'skills.meetingBots.defaults.watchCalendarDesc':
+    'Let OpenHuman watch your connected calendar so it can auto-join or prompt for meetings based on the policies below. This is separate from meeting reminder notifications.',
+  'skills.meetingBots.defaults.globalPolicy': 'Global auto-join policy',
+  'skills.meetingBots.defaults.perPlatformTitle': 'Per-platform overrides',
+  'skills.meetingBots.defaults.perPlatformDesc':
+    'Override the global policy for specific platforms.',
+  'skills.meetingBots.defaults.useDefault': 'Use default',
+  'skills.meetingBots.upcoming.watchCalendarHint':
+    "Turn on 'Watch my calendar' in Defaults (gear icon) for Auto/Ask to take effect — otherwise these policies are saved but won't trigger.",
   'skills.resource.preview.closeAriaLabel': 'Close preview',
   'skills.resource.preview.failed': 'Preview failed',
   'skills.resource.preview.loading': 'Loading preview…',
@@ -6544,6 +6615,10 @@ const en: TranslationMap = {
   'agentworld.messaging.missingSignalBundle':
     "This user hasn't enabled encrypted messaging yet. Ask them to open Agent World and enable secure DMs before sending a message.",
 
+  // Code block chrome
+  'codeBlock.copy': 'Copy',
+  'codeBlock.copied': 'Copied!',
+
   // User-actionable runtime errors (#3931)
   'userErrors.title': 'Action needed',
   'userErrors.dismiss': 'Dismiss',
@@ -6555,7 +6630,11 @@ const en: TranslationMap = {
   'userErrors.insufficientCredits.title': 'Provider credits required',
   'userErrors.insufficientCredits.body':
     'Your AI provider is out of credits. Top it up or update its API key to continue.',
+  'userErrors.apiKeyMissing.title': 'API key required',
+  'userErrors.apiKeyMissing.body':
+    'Your AI provider has no API key set. Add one in provider settings to continue.',
   'userErrors.scope.chat': 'Chat',
+  'userErrors.scope.cron': 'Scheduled job',
 };
 
 export default en;

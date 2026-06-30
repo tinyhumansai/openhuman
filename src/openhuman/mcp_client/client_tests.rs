@@ -521,6 +521,105 @@ async fn bearer_auth_is_attached_to_initialize() {
     assert_eq!(init.server_info["name"], "bearer-server");
 }
 
+/// 401 unless the single custom header `X-Custom-Token: tok-xyz` is present —
+/// proves the `McpAuthConfig::Header` arm reaches the wire (#4289).
+async fn custom_header_required_handler(
+    headers: AxumHeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    if headers.get("x-custom-token").and_then(|v| v.to_str().ok()) != Some("tok-xyz") {
+        return (
+            StatusCode::UNAUTHORIZED,
+            "missing custom header".to_string(),
+        )
+            .into_response();
+    }
+    Json(json!({
+        "jsonrpc": "2.0",
+        "id": body["id"].clone(),
+        "result": {
+            "protocolVersion": LATEST_PROTOCOL_VERSION,
+            "capabilities": {},
+            "serverInfo": { "name": "custom-header-server", "version": "1.0.0" }
+        }
+    }))
+    .into_response()
+}
+
+/// 401 unless BOTH `X-Client-Key` and `Authorization` are present — proves the
+/// `McpAuthConfig::Headers` (multi-header) arm sends every header (#4289).
+async fn multi_header_required_handler(
+    headers: AxumHeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    let key_ok = headers.get("x-client-key").and_then(|v| v.to_str().ok()) == Some("ck-1");
+    let auth_ok =
+        headers.get(AUTHORIZATION).and_then(|v| v.to_str().ok()) == Some("Bearer multi-secret");
+    if !(key_ok && auth_ok) {
+        return (StatusCode::UNAUTHORIZED, "missing a header".to_string()).into_response();
+    }
+    Json(json!({
+        "jsonrpc": "2.0",
+        "id": body["id"].clone(),
+        "result": {
+            "protocolVersion": LATEST_PROTOCOL_VERSION,
+            "capabilities": {},
+            "serverInfo": { "name": "multi-header-server", "version": "1.0.0" }
+        }
+    }))
+    .into_response()
+}
+
+#[tokio::test]
+async fn custom_header_auth_is_attached_to_initialize() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = Router::new().route("/", post(custom_header_required_handler));
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let client = McpHttpClient::with_options(
+        format!("http://{addr}/"),
+        2,
+        McpAuthConfig::Header {
+            name: "X-Custom-Token".into(),
+            value: "tok-xyz".into(),
+        },
+        McpClientIdentityConfig::default(),
+    );
+    let init = client.initialize().await.expect("initialize");
+    assert_eq!(init.server_info["name"], "custom-header-server");
+}
+
+#[tokio::test]
+async fn multi_header_auth_all_attached_to_initialize() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = Router::new().route("/", post(multi_header_required_handler));
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let client = McpHttpClient::with_options(
+        format!("http://{addr}/"),
+        2,
+        McpAuthConfig::Headers {
+            headers: vec![
+                crate::openhuman::config::HttpHeader {
+                    name: "X-Client-Key".into(),
+                    value: "ck-1".into(),
+                },
+                crate::openhuman::config::HttpHeader {
+                    name: "Authorization".into(),
+                    value: "Bearer multi-secret".into(),
+                },
+            ],
+        },
+        McpClientIdentityConfig::default(),
+    );
+    let init = client.initialize().await.expect("initialize");
+    assert_eq!(init.server_info["name"], "multi-header-server");
+}
+
 #[test]
 fn display_description_runs_full_sanitization_pipeline() {
     let tool = McpRemoteTool {

@@ -1585,6 +1585,12 @@ const messages: TranslationMap = {
   'mcp.connectAuth.oauthOrToken':
     'هل لديك بالفعل رمز وصول؟ الصقه بدلاً من ذلك كرأس Authorization أدناه.',
   'mcp.connectAuth.oauthTimeout': 'انتهت مهلة انتظار تسجيل الدخول عبر المتصفح. حاول مرة أخرى.',
+  'mcp.connectAuth.authError.oauthRequired':
+    'يستخدم هذا الخادم OAuth. استخدم “تسجيل الدخول عبر المتصفح” — لن يتم قبول رمز مميز ملصوق.',
+  'mcp.connectAuth.authError.tokenRejected':
+    'رفض الخادم هذا الرمز المميز. تأكد من أنه صحيح وأن صلاحيته لم تنتهِ.',
+  'mcp.connectAuth.authError.credentialRequired':
+    'يتطلب هذا الخادم مصادقة. أضف رمزًا مميزًا أو سجّل الدخول.',
   'onboarding.skipForNow': 'التخطي الآن',
   'onboarding.localAI.continueWithCloud': 'متابعة مع السحابة',
   'onboarding.localAI.useLocalAnyway':
@@ -2216,6 +2222,10 @@ const messages: TranslationMap = {
   'chat.attachment.remove': 'إزالة {name}',
   'chat.attachment.tooMany': 'الحد الأقصى {max} صور لكل رسالة',
   'chat.attachment.tooManyFiles': 'الحد الأقصى {max} ملفات لكل رسالة',
+  'chat.attachment.tooManyVideos': 'الحد الأقصى {max} مقاطع فيديو لكل رسالة',
+  'chat.attachment.videoNotSupported':
+    'لا يمكن لهذا النموذج قراءة مقاطع الفيديو. يمكنك استخدام مستوى التفكير من OpenHuman لإرفاق الفيديو.',
+  'chat.attachment.dropToAttach': 'أفلت الملفات لإرفاقها',
   'chat.attachment.tooLarge': 'حجم الصورة يتجاوز الحد المسموح {max}',
   'chat.attachment.unsupportedType':
     'نوع ملف غير مدعوم. استخدم صورة (PNG أو JPEG أو WebP أو GIF أو BMP) أو ملف PDF أو TXT أو Markdown.',
@@ -5030,6 +5040,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.bannerTitle': 'عنوان اللافتة',
   'skills.meetingBots.busyTitle': 'OpenHuman مشغول',
   'skills.meetingBots.comingSoon': 'قريبًا',
+  'skills.meetingBots.couldNotLeaveTitle': 'تعذّر مغادرة الاجتماع',
   'skills.meetingBots.couldNotStartTitle': 'تعذّر بدء OpenHuman',
   'skills.meetingBots.displayName': 'الاسم المعروض',
   'skills.meetingBots.failedToStart': 'فشل تشغيل OpenHuman.',
@@ -5043,9 +5054,11 @@ const messages: TranslationMap = {
   'skills.meetingBots.platformComingSoon': '{label} الدعم قريبًا.',
   'skills.meetingBots.platformHints.gmeet': 'meet.google.com/abc-defg-hij',
   'skills.meetingBots.platformHints.teams': 'Teams.microsoft.com/...',
+  'skills.meetingBots.platformHints.webex': 'webex.com/meet/...',
   'skills.meetingBots.platformHints.zoom': 'Zoom.us/j/...',
   'skills.meetingBots.platforms.gmeet': 'Google لقاء',
   'skills.meetingBots.platforms.teams': 'Microsoft Teams',
+  'skills.meetingBots.platforms.webex': 'Webex',
   'skills.meetingBots.platforms.zoom': 'تكبير',
   'skills.meetingBots.sendTo': 'إرسال إلى',
   'skills.meetingBots.serverOverloaded':
@@ -5077,6 +5090,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.liveStatusEnded': 'انتهى الاجتماع',
   'skills.meetingBots.liveStatusError': 'فشل الانضمام',
   'skills.meetingBots.leaveButton': 'مغادرة',
+  'skills.meetingBots.leavingButton': 'جارٍ المغادرة…',
   'skills.meetingBots.respondToParticipant': 'اسمك في هذا الاجتماع',
   'skills.meetingBots.respondToParticipantHint': 'مثال: أحمد (اسمك في المكالمة)',
   'skills.meetingBots.respondToParticipantDesc':
@@ -5087,6 +5101,60 @@ const messages: TranslationMap = {
   'skills.meetingBots.activeMode': 'الرد عندما أناديه',
   'skills.meetingBots.activeModeDesc':
     'عند التفعيل، يرد البوت بصوت مسموع بعد أن تقول عبارة التنبيه. عند الإيقاف، يكتفي بالاستماع وتدوين النص.',
+  'skills.meetingBots.history.allPlatforms': 'جميع المنصات',
+  'skills.meetingBots.history.copyTranscript': 'نسخ',
+  'skills.meetingBots.history.downloadTranscript': 'تنزيل',
+  'skills.meetingBots.history.earlier': 'سابقًا',
+  'skills.meetingBots.history.participantCount': '{count} مشارك',
+  'skills.meetingBots.history.participantCountPlural': '{count} مشاركين',
+  'skills.meetingBots.history.runWithOpenHuman': 'تشغيل مع OpenHuman',
+  'skills.meetingBots.history.searchPlaceholder': 'البحث في المكالمات…',
+  'skills.meetingBots.history.selectPrompt': 'اختر مكالمة لعرض ملخصها ونصها.',
+  'skills.meetingBots.history.today': 'اليوم',
+  'skills.meetingBots.history.yesterday': 'أمس',
+  'skills.meetingBots.upcoming.heading': 'القادمة',
+  'skills.meetingBots.upcoming.when': 'الوقت',
+  'skills.meetingBots.upcoming.meeting': 'الاجتماع',
+  'skills.meetingBots.upcoming.platform': 'المنصة',
+  'skills.meetingBots.upcoming.people': 'الأشخاص',
+  'skills.meetingBots.upcoming.joinPolicy': 'سياسة الانضمام',
+  'skills.meetingBots.upcoming.joinNow': 'انضم الآن',
+  'skills.meetingBots.upcoming.joinNowAriaLabel': 'انضم إلى {title}',
+  'skills.meetingBots.upcoming.join': 'انضم',
+  'skills.meetingBots.upcoming.auto': 'تلقائي',
+  'skills.meetingBots.upcoming.ask': 'اسأل',
+  'skills.meetingBots.upcoming.skip': 'تخطَّ',
+  'skills.meetingBots.upcoming.today': 'اليوم',
+  'skills.meetingBots.upcoming.tomorrow': 'غداً',
+  'skills.meetingBots.upcoming.empty':
+    'لا توجد اجتماعات قادمة — قم بربط Google Calendar لرؤيتها هنا.',
+  'skills.meetingBots.upcoming.error': 'تعذّر تحميل الاجتماعات القادمة.',
+  'skills.meetingBots.upcoming.retry': 'إعادة المحاولة',
+  'skills.meetingBots.upcoming.refresh': 'تحديث',
+  'skills.meetingBots.upcoming.filterAll': 'كل المنصات',
+  'skills.meetingBots.upcoming.participants': '{count} مشاركون',
+  'skills.meetingBots.upcoming.imminent': 'يبدأ قريباً',
+  'skills.meetingBots.upcoming.autoJoinsAt': 'ينضم تلقائيًا ~في {time}',
+  'skills.meetingBots.upcoming.asksAtStart': 'يسأل عند البدء',
+  'skills.meetingBots.upcoming.watchCalendarHint':
+    "فعِّل 'مراقبة التقويم' في الإعدادات الافتراضية (أيقونة الترس) حتى يصبح الانضمام التلقائي/السؤال فعالاً — وإلا فإن هذه السياسات محفوظة لكنها لن تُفعَّل.",
+  'skills.meetingBots.relative.now': 'الآن',
+  'skills.meetingBots.relative.inMinutes': 'في {count} د',
+  'skills.meetingBots.relative.inHours': 'في {count} س',
+  'skills.meetingBots.relative.minutesAgo': 'منذ {count} د',
+  'skills.meetingBots.relative.hoursAgo': 'منذ {count} س',
+  'skills.meetingBots.relative.daysAgo': 'منذ {count} ي',
+  'skills.meetingBots.relative.yesterday': 'أمس',
+  'skills.meetingBots.defaults.drawerTitle': 'إعدادات الاجتماع الافتراضية',
+  'skills.meetingBots.defaults.closeDrawer': 'إغلاق',
+  'skills.meetingBots.defaults.openDefaults': 'إعدادات الاجتماع',
+  'skills.meetingBots.defaults.watchCalendar': 'مراقبة التقويم',
+  'skills.meetingBots.defaults.watchCalendarDesc':
+    'اسمح لـ OpenHuman بمراقبة التقويم المتصل حتى يتمكن من الانضمام تلقائياً أو مطالبتك بالاجتماعات بناءً على السياسات أدناه. هذا منفصل عن إشعارات تذكير الاجتماعات.',
+  'skills.meetingBots.defaults.globalPolicy': 'سياسة الانضمام التلقائي العامة',
+  'skills.meetingBots.defaults.perPlatformTitle': 'إعدادات خاصة بالمنصة',
+  'skills.meetingBots.defaults.perPlatformDesc': 'تجاوز السياسة العامة لمنصات محددة.',
+  'skills.meetingBots.defaults.useDefault': 'استخدام الافتراضي',
   'skills.resource.preview.closeAriaLabel': 'إغلاق المعاينة',
   'skills.resource.preview.failed': 'فشلت المعاينة',
   'skills.resource.preview.loading': 'جارٍ تحميل المعاينة…',
@@ -5845,6 +5913,8 @@ const messages: TranslationMap = {
     'لا يتوفر مزوّد تلخيص لميزة إنشاء أشجار التلخيص. فعّل الذكاء الاصطناعي المحلي (Ollama)، أو فعّل تلخيص السحابة في الإعدادات → الذكاء الاصطناعي → الذاكرة.',
   'memory.health.remediation.empty_input_refused':
     'تم تخطي عنصر ذاكرة لأن نصه كان فارغًا. لا حاجة لأي إجراء — تستمر العناصر الجديدة في التضمين بشكل طبيعي.',
+  'memory.health.remediation.storage_unavailable':
+    'تعذّر على OpenHuman الكتابة إلى تخزين الذاكرة — يبدو أن القرص أو بطاقة SD معطوبة أو ممتلئة أو للقراءة فقط. تحقّق من محرك الأقراص وحرّر بعض المساحة؛ ستُستأنف معالجة الذاكرة تلقائيًا بمجرد أن يصبح التخزين قابلاً للكتابة مرة أخرى.',
   'memory.health.remediation.transient':
     'حدث خطأ مؤقت أدى إلى مقاطعة معالجة الذاكرة. ستتم إعادة المحاولة تلقائيًا.',
   'memory.health.remediation.unknown':
@@ -6121,7 +6191,11 @@ const messages: TranslationMap = {
   'userErrors.budgetExceeded.body': 'نفدت الميزانية المُدارة. أضف ميزانية أو غيّر خطتك.',
   'userErrors.insufficientCredits.title': 'مطلوب رصيد المزود',
   'userErrors.insufficientCredits.body': 'نفد رصيد المزود. أعد الشحن أو حدّث مفتاح API.',
+  'userErrors.apiKeyMissing.title': 'مطلوب مفتاح API',
+  'userErrors.apiKeyMissing.body':
+    'لا يوجد مفتاح API لمزوّد الذكاء الاصطناعي. أضِفه في إعدادات المزوّد للمتابعة.',
   'userErrors.scope.chat': 'الدردشة',
+  'userErrors.scope.cron': 'مهمة مجدوَلة',
   // Agent World — Identity trading (confirm-before-spend + balance gate)
   'agentWorld.trading.amountLabel': 'المبلغ',
   'agentWorld.trading.networkLabel': 'الشبكة',
@@ -6153,6 +6227,10 @@ const messages: TranslationMap = {
     'يحتوي هذا المبلغ على عدد كبير جدًا من المنازل العشرية.',
   'agentWorld.trading.amountMustBePositive': 'أدخل مبلغًا أكبر من صفر.',
   'agentWorld.trading.amountInvalid': 'أدخل مبلغًا صالحًا.',
+
+  // Code block chrome
+  'codeBlock.copy': 'نسخ',
+  'codeBlock.copied': 'تم النسخ!',
 };
 
 export default messages;

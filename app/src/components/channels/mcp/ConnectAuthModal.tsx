@@ -68,6 +68,44 @@ const applyScheme = (scheme: 'bearer' | 'raw', value: string): string => {
   return v;
 };
 
+/** Map a core `auth_hint` reason code (returned by `update_env` on a 401) to its
+ * i18n key, so the user sees what to DO rather than an opaque "connect failed":
+ *   • `oauth_required`      → use the browser Sign-in (a pasted token won't work)
+ *   • `token_rejected`      → the token was wrong/expired
+ *   • `credential_required` → auth is needed but none was provided
+ * Returns `null` for an unknown/absent code so the caller falls back to generic
+ * copy. Exported for unit testing. (#4289) */
+export const authHintMessageKey = (code: string | undefined): string | null => {
+  switch (code) {
+    case 'oauth_required':
+      return 'mcp.connectAuth.authError.oauthRequired';
+    case 'token_rejected':
+      return 'mcp.connectAuth.authError.tokenRejected';
+    case 'credential_required':
+      return 'mcp.connectAuth.authError.credentialRequired';
+    default:
+      return null;
+  }
+};
+
+/** Derive the error string to show after an `update_env` reconnect, or `null`
+ * when it actually connected. A 401 (`status === 'unauthorized'`) maps to the
+ * actionable `auth_hint` copy — the raw 401 message is withheld server-side, so
+ * we never show it; any other non-connected status surfaces its message (or a
+ * generic fallback). Pure + exported so the branch is unit-tested without a full
+ * modal render. (#4289) */
+export const reconnectErrorMessage = (
+  result: { status: string; auth_hint?: string; error?: string },
+  t: (key: string) => string
+): string | null => {
+  if (result.status === 'connected') return null;
+  if (result.status === 'unauthorized') {
+    const key = authHintMessageKey(result.auth_hint);
+    return key ? t(key) : t('mcp.connectAuth.reconnectFailed');
+  }
+  return result.error ?? t('mcp.connectAuth.reconnectFailed');
+};
+
 /** Whether a field name is an `Authorization` header (offers a Bearer scheme). */
 const isAuthorizationField = (name: string): boolean => name.toLowerCase() === 'authorization';
 
@@ -369,8 +407,12 @@ const ConnectAuthModal = ({ server, onClose, onConnected }: ConnectAuthModalProp
         if (Object.keys(env).length > 0) {
           log('connect-with-auth server_id=%s keys=%o', server.server_id, Object.keys(env));
           const result = await mcpClientsApi.updateEnv({ server_id: server.server_id, env });
-          if (result.status !== 'connected') {
-            throw new Error(result.error ?? t('mcp.connectAuth.reconnectFailed'));
+          // 401 → actionable reason (oauth-required / token-rejected /
+          // credential-required); other failure → its message; null → connected.
+          const errMsg = reconnectErrorMessage(result, t);
+          if (errMsg) {
+            setError(errMsg);
+            return;
           }
           tools = result.tools ?? [];
         } else {
