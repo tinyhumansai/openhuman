@@ -14,6 +14,7 @@ The body is **immutable** once written — only the YAML front-matter `tags:` bl
 - [`raw.rs`](raw.rs) — verbatim source-byte mirror under `<content_root>/raw/`. Writes the unmodified upstream payload (eml, slack json, raw markdown) so downstream callers can re-canonicalise without re-fetching.
 - [`obsidian.rs`](obsidian.rs) + [`obsidian_defaults/`](obsidian_defaults/) — bootstrap an `.obsidian/` config (workspace, graph, app) into the content root on first write so a user opening the vault gets a usable view.
 - [`tags.rs`](tags.rs) — post-extraction tag rewrites. `update_chunk_tags` (atomic tempfile rewrite of the `tags:` block) and `update_summary_tags` (fetches entities from `mem_tree_entity_index`, builds Obsidian `kind/Value` tags, rewrites, verifies body SHA is unchanged). `slugify_tag_kind`, `slugify_tag_value`, `entity_tag` build the tag strings.
+- [`wiki_git/`](wiki_git/) — initializes `<content_root>/wiki/.git`, commits only summary-node markdown under `summaries/**` plus the repo `.gitignore`, and stores read high-water marks as lightweight `refs/tags/read/*` pointers. Summary files are staged by `atomic.rs`; seal/ingest callers create descriptive git commits after SQLite persistence succeeds.
 
 ## Integrity contract
 

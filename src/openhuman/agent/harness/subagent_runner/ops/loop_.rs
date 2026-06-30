@@ -54,6 +54,7 @@ pub(super) async fn run_inner_loop(
     model_vision: bool,
     temperature: f64,
     max_iterations: usize,
+    max_output_tokens: u32,
     task_id: &str,
     agent_id: &str,
     worker_thread_id: Option<String>,
@@ -164,6 +165,7 @@ pub(super) async fn run_inner_loop(
         model: model.to_string(),
         temperature,
         agent_id: agent_id.to_string(),
+        max_output_tokens,
     };
     let progress = super::super::super::engine::SubagentProgress {
         sink: parent.on_progress.clone(),
@@ -213,6 +215,7 @@ pub(super) async fn run_inner_loop(
             &crate::openhuman::config::MultimodalConfig::default(),
             &crate::openhuman::config::MultimodalFileConfig::default(),
             max_iterations,
+            max_output_tokens,
             None, // sub-agents don't stream a draft
             &["ask_user_clarification"],
             run_queue, // steering channel for `steer_subagent` (None = non-steerable)

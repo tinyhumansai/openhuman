@@ -24,6 +24,52 @@ pub fn is_budget_exhausted_http_400(status: reqwest::StatusCode, body: &str) -> 
         && crate::openhuman::inference::provider::is_budget_exhausted_message(body)
 }
 
+/// Whether a provider non-2xx response is a local inference server that is
+/// running but has **no model loaded** (e.g. LM Studio idle): a 400 carrying
+/// `No models loaded. Please load a model …`.
+///
+/// This is pure local user-state — nothing OpenHuman sent is malformed, there
+/// is no product bug and no local lever beyond the user loading a model — so it
+/// should be demoted from Sentry to an info log rather than paging on every
+/// retry (TAURI-RUST-DMQ: 5,469 events from a single idle LM Studio server).
+/// The embeddings path already special-cases this exact string
+/// (`embeddings/rpc.rs`, PR #3688 / TAURI-RUST-4P4); this is the chat sibling.
+pub fn is_local_provider_no_model_loaded(status: reqwest::StatusCode, body: &str) -> bool {
+    status == reqwest::StatusCode::BAD_REQUEST
+        && body.to_ascii_lowercase().contains("no models loaded")
+}
+
+/// Actionable user-facing guidance for a local inference server with no model
+/// loaded, mirroring the embeddings verification message
+/// (`embeddings/rpc.rs`). Returned in place of the raw provider body so the
+/// surfaced error tells the user how to fix it.
+pub fn local_provider_no_model_loaded_user_message() -> String {
+    "Your local inference server (e.g. LM Studio) is running but has no model loaded. \
+     Load a model — in LM Studio use the developer page or the `lms load` command — \
+     then try again."
+        .to_string()
+}
+
+pub fn log_local_provider_no_model_loaded(
+    operation: &str,
+    provider: &str,
+    model: Option<&str>,
+    status: reqwest::StatusCode,
+) {
+    tracing::info!(
+        domain = "llm_provider",
+        operation = operation,
+        provider = provider,
+        model = model.unwrap_or(""),
+        status = status.as_u16(),
+        failure = "non_2xx",
+        kind = "provider_user_state",
+        reason = "local_provider_no_model_loaded",
+        "[llm_provider] {operation} local inference server has no model loaded — \
+         user must load a model, not reporting to Sentry"
+    );
+}
+
 /// Whether a custom OpenAI-compatible proxy returned the known generic
 /// upstream 400 envelope:
 /// `{"error":{"message":"Bad request to upstream provider","type":"upstream_error","status":400}}`.
@@ -255,6 +301,13 @@ pub fn body_indicates_quota_exhausted(body: &str) -> bool {
         || lower.contains("monthly quota")
         || lower.contains("quota exceeded")
         || lower.contains("usage limit exceeded")
+        // Codex/ChatGPT OAuth `/responses` plan-cap body (TAURI-RUST-AFE):
+        // `usage_limit_reached` / "The usage limit has been reached" — a plan
+        // quota with no "monthly"/"quota" co-marker, so the phrases above miss
+        // it. Both are quota-specific enough to match on their own (the loop
+        // retries until `resets_at`, flooding from a single capped Plus user).
+        || lower.contains("usage_limit_reached")
+        || lower.contains("usage limit has been reached")
         // "reached the limit" alone is ambiguous (rate-limit, token-limit), so
         // require a quota/plan/request/monthly co-marker to keep the blast
         // radius on plan-quota exhaustion only.
@@ -894,6 +947,11 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
     let is_auth_failure = matches!(status.as_u16(), 401 | 403);
     let is_backend = provider == openhuman_backend::PROVIDER_LABEL;
     let is_budget_exhausted_user_state = is_budget_exhausted_http_400(status, &body);
+    // Local inference server (LM Studio etc.) running with no model loaded —
+    // pure local user-state, nothing we sent is malformed. Demote and replace
+    // the body with actionable "load a model" guidance (TAURI-RUST-DMQ, mirrors
+    // the embeddings #3688 special-case).
+    let is_local_provider_no_model_loaded = is_local_provider_no_model_loaded(status, &body);
     let is_custom_openai_upstream_bad_request =
         is_custom_openai_upstream_bad_request_http_400(provider, status, &body);
     let is_provider_access_policy_denied = is_provider_access_policy_denied_http_403(status, &body);
@@ -941,6 +999,8 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
         publish_backend_session_expired("api_error", provider, status, &message);
     } else if is_budget_exhausted_user_state {
         log_budget_exhausted_http_400("api_error", provider, None, status);
+    } else if is_local_provider_no_model_loaded {
+        log_local_provider_no_model_loaded("api_error", provider, None, status);
     } else if is_custom_openai_upstream_bad_request {
         log_custom_openai_upstream_bad_request_http_400("api_error", provider, None, status);
     } else if is_provider_access_policy_denied {
@@ -979,6 +1039,11 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
     if is_ollama_cloud_internal_500 {
         return anyhow::anyhow!(ollama_cloud_internal_500_user_message(None, status));
     }
+    // Replace the raw `No models loaded` body with actionable guidance so the
+    // surfaced chat error tells the user how to recover (TAURI-RUST-DMQ).
+    if is_local_provider_no_model_loaded {
+        return anyhow::anyhow!(local_provider_no_model_loaded_user_message());
+    }
     anyhow::anyhow!(message)
 }
 
@@ -986,6 +1051,37 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
 mod tests {
     use super::*;
     use reqwest::StatusCode;
+
+    /// Verbatim TAURI-RUST-DMQ LM Studio body — the local server is running but
+    /// has no model loaded. The matcher keys on this prose, so coupling the test
+    /// to the exact string makes a wording drift fail CI rather than silently
+    /// leak events back to Sentry.
+    const DMQ_BODY: &str = "lm_studio API error (400 Bad Request): {\"error\":\
+        {\"message\":\"No models loaded. Please load a model in the developer page \
+        or via `lms load`.\",\"type\":\"invalid_request_error\",\"param\":\"model\"}}";
+
+    #[test]
+    fn local_provider_no_model_loaded_matches_verbatim_dmq_body() {
+        assert!(is_local_provider_no_model_loaded(
+            StatusCode::BAD_REQUEST,
+            DMQ_BODY
+        ));
+        // Status-gated: the same prose on a non-400 status must not match (the
+        // 400 is the local-idle signal; other statuses are different failures).
+        assert!(!is_local_provider_no_model_loaded(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            DMQ_BODY
+        ));
+        // A generic 400 (malformed request) must stay reportable.
+        assert!(!is_local_provider_no_model_loaded(
+            StatusCode::BAD_REQUEST,
+            "{\"error\":{\"message\":\"invalid 'temperature': must be <= 2\"}}"
+        ));
+        // The surfaced guidance is actionable (tells the user to load a model).
+        assert!(local_provider_no_model_loaded_user_message()
+            .to_ascii_lowercase()
+            .contains("load a model"));
+    }
 
     /// Verbatim TAURI-RUST-C62 provider body. The matcher keys on this prose,
     /// so coupling the test to the exact string makes a provider wording drift
@@ -1051,12 +1147,35 @@ mod tests {
         reached the limit.\\\",\\\"reason\\\":\\\"MONTHLY_REQUEST_COUNT\\\"}\",\
         \"type\":\"server_error\"}}";
 
+    /// Verbatim TAURI-RUST-AFE Responses-API body — the Codex/ChatGPT OAuth
+    /// `/responses` endpoint refuses with `usage_limit_reached` once the Plus
+    /// plan cap is hit. It carries no "monthly"/"quota" co-marker, so the C9A
+    /// phrase set missed it; couple the test to the exact string so a wording
+    /// drift fails CI rather than silently leaking events back to Sentry.
+    const AFE_BODY: &str = "openai Responses API error: {\"error\":{\"type\":\
+        \"usage_limit_reached\",\"message\":\"The usage limit has been reached\",\
+        \"plan_type\":\"plus\",\"resets_at\":1750000000}}";
+
     #[test]
     fn quota_exhausted_matches_verbatim_c9a_body() {
         // Status-agnostic: the verbatim 500-wrapped body must match even though
         // the transport status is 500, not 402.
         assert!(is_provider_quota_exhausted(C9A_BODY));
         assert!(body_indicates_quota_exhausted(C9A_BODY));
+    }
+
+    #[test]
+    fn quota_exhausted_matches_verbatim_afe_body() {
+        // Coverage gap closed (TAURI-RUST-AFE): the Responses `usage_limit_reached`
+        // body must demote through the same #4076 quota machinery even though it
+        // lacks a "monthly"/"quota" co-marker.
+        assert!(is_provider_quota_exhausted(AFE_BODY));
+        assert!(body_indicates_quota_exhausted(AFE_BODY));
+        // Bare phrasings (no surrounding envelope) must also match.
+        assert!(body_indicates_quota_exhausted("usage_limit_reached"));
+        assert!(body_indicates_quota_exhausted(
+            "The usage limit has been reached"
+        ));
     }
 
     #[test]

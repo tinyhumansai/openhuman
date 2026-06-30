@@ -91,25 +91,54 @@ fn init_schema(conn: &Connection) -> Result<()> {
     // `transport` column with the default value.
     let existing_cols = mcp_servers_columns(conn)?;
     if !existing_cols.iter().any(|c| c == "transport") {
-        conn.execute(
+        add_column_idempotent(
+            conn,
             "ALTER TABLE mcp_servers ADD COLUMN transport TEXT NOT NULL DEFAULT 'stdio'",
-            [],
-        )
-        .context("Failed to add transport column to mcp_servers")?;
+            "transport column to mcp_servers",
+        )?;
     }
     if !existing_cols.iter().any(|c| c == "deployment_url") {
-        conn.execute("ALTER TABLE mcp_servers ADD COLUMN deployment_url TEXT", [])
-            .context("Failed to add deployment_url column to mcp_servers")?;
+        add_column_idempotent(
+            conn,
+            "ALTER TABLE mcp_servers ADD COLUMN deployment_url TEXT",
+            "deployment_url column to mcp_servers",
+        )?;
     }
     if !existing_cols.iter().any(|c| c == "enabled") {
-        conn.execute(
+        add_column_idempotent(
+            conn,
             "ALTER TABLE mcp_servers ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1",
-            [],
-        )
-        .context("Failed to add enabled column to mcp_servers")?;
+            "enabled column to mcp_servers",
+        )?;
     }
 
     Ok(())
+}
+
+/// Run an additive `ALTER TABLE … ADD COLUMN`, treating an "already exists"
+/// failure as success.
+///
+/// The `PRAGMA table_info` snapshot in [`init_schema`] skips the ALTER in the
+/// common case, but that check-then-alter is not atomic *across connections*:
+/// every store call opens its own [`Connection`] and runs `init_schema`, so the
+/// several MCP RPCs a single page load fans out (list / status / registry) can
+/// each snapshot the column as missing before any of them adds it — then all
+/// race to `ALTER`, and every loser fails with "duplicate column name". SQLite's
+/// `ADD COLUMN` has no `IF NOT EXISTS`, so we swallow exactly that error: the
+/// column existing is the desired post-condition, and surfacing it turned a
+/// benign race into the red "Failed to add deployment_url column to mcp_servers"
+/// banner on the MCP Servers page (#4194). Any other failure still propagates.
+fn add_column_idempotent(conn: &Connection, ddl: &str, what: &str) -> Result<()> {
+    match conn.execute(ddl, []) {
+        Ok(_) => Ok(()),
+        Err(rusqlite::Error::SqliteFailure(_, Some(msg)))
+            if msg.contains("duplicate column name") =>
+        {
+            log::debug!("[mcp_registry] {what} already present (concurrent migration) — skipping");
+            Ok(())
+        }
+        Err(e) => Err(anyhow::Error::new(e).context(format!("Failed to add {what}"))),
+    }
 }
 
 /// Snapshot of the column names on `mcp_servers`. Used by the additive
@@ -171,6 +200,56 @@ pub fn insert_server_conn(conn: &Connection, server: &InstalledServer) -> Result
     Ok(())
 }
 
+/// Insert a server row only if no row with the same `qualified_name` already
+/// exists, in a single atomic statement. The `mcp_clients_install` flow checks
+/// `find_server_by_qualified_name` before inserting, but an awaited
+/// `registry_get` sits between that read and the write, so two concurrent
+/// installs of the same service could both miss and insert (the PK is
+/// `server_id`, which doesn't prevent duplicate `qualified_name`s). `INSERT …
+/// SELECT … WHERE NOT EXISTS` closes that window without a schema change.
+/// Returns `true` if this call inserted the row, `false` if one already existed.
+pub fn insert_server_if_absent(config: &Config, server: &InstalledServer) -> Result<bool> {
+    with_connection(config, |conn| insert_server_if_absent_conn(conn, server))
+}
+
+pub fn insert_server_if_absent_conn(conn: &Connection, server: &InstalledServer) -> Result<bool> {
+    let args_json = serde_json::to_string(&server.args)?;
+    let env_keys_json = serde_json::to_string(&server.env_keys)?;
+    let config_json = server
+        .config
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()?;
+    let n = conn
+        .execute(
+            "INSERT INTO mcp_servers
+                     (server_id, qualified_name, display_name, description, icon_url,
+                      command_kind, command, args_json, env_keys_json, config_json,
+                      installed_at, last_connected_at, transport, deployment_url, enabled)
+                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15
+                 WHERE NOT EXISTS (SELECT 1 FROM mcp_servers WHERE qualified_name = ?2)",
+            params![
+                server.server_id,
+                server.qualified_name,
+                server.display_name,
+                server.description,
+                server.icon_url,
+                server.command_kind.as_str(),
+                server.command,
+                args_json,
+                env_keys_json,
+                config_json,
+                server.installed_at,
+                server.last_connected_at,
+                server.transport.dispatch_kind(),
+                server.transport.deployment_url(),
+                server.enabled as i64,
+            ],
+        )
+        .context("Failed to insert mcp_server (if absent)")?;
+    Ok(n > 0)
+}
+
 /// Update only the `env_keys` list for an installed server. Used by
 /// `mcp_clients_update_env` to keep the persisted key-name list in sync with a
 /// reconfigure — the env *values* live in the separate `mcp_client_env` table,
@@ -186,6 +265,34 @@ pub fn update_server_env_keys(config: &Config, server_id: &str, env_keys: &[Stri
         .context("Failed to update mcp_server env_keys")?;
         Ok(())
     })
+}
+
+/// Update only the `config_json` blob for an installed server. Used by the
+/// idempotent re-install path so a second install carrying new config refreshes
+/// the existing row instead of dropping it — a plain `insert_server` would
+/// conflict on the primary key. `None` clears the stored config.
+pub fn update_server_config(
+    config: &Config,
+    server_id: &str,
+    value: Option<&serde_json::Value>,
+) -> Result<()> {
+    with_connection(config, |conn| {
+        update_server_config_conn(conn, server_id, value)
+    })
+}
+
+pub fn update_server_config_conn(
+    conn: &Connection,
+    server_id: &str,
+    value: Option<&serde_json::Value>,
+) -> Result<()> {
+    let config_json = value.map(serde_json::to_string).transpose()?;
+    conn.execute(
+        "UPDATE mcp_servers SET config_json = ?2 WHERE server_id = ?1",
+        params![server_id, config_json],
+    )
+    .context("Failed to update mcp_server config")?;
+    Ok(())
 }
 
 pub fn list_servers(config: &Config) -> Result<Vec<InstalledServer>> {
@@ -205,6 +312,37 @@ pub fn list_servers_conn(conn: &Connection) -> Result<Vec<InstalledServer>> {
         servers.push(row?);
     }
     Ok(servers)
+}
+
+/// First installed server with this qualified name, if any. The schema allows
+/// multiple installs of the same `qualified_name` (the PK is `server_id`), so
+/// this returns the earliest by `installed_at` — used to keep install
+/// idempotent (one install per service).
+pub fn find_server_by_qualified_name(
+    config: &Config,
+    qualified_name: &str,
+) -> Result<Option<InstalledServer>> {
+    with_connection(config, |conn| {
+        find_server_by_qualified_name_conn(conn, qualified_name)
+    })
+}
+
+pub fn find_server_by_qualified_name_conn(
+    conn: &Connection,
+    qualified_name: &str,
+) -> Result<Option<InstalledServer>> {
+    let mut stmt = conn.prepare(
+        "SELECT server_id, qualified_name, display_name, description, icon_url,
+                command_kind, command, args_json, env_keys_json, config_json,
+                installed_at, last_connected_at, transport, deployment_url, enabled
+         FROM mcp_servers WHERE qualified_name = ?1
+         ORDER BY installed_at ASC LIMIT 1",
+    )?;
+    let mut rows = stmt.query(params![qualified_name])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(map_server_row(row)?)),
+        None => Ok(None),
+    }
 }
 
 pub fn get_server(config: &Config, server_id: &str) -> Result<InstalledServer> {
@@ -476,6 +614,64 @@ mod tests {
     }
 
     #[test]
+    fn update_server_config_round_trips_and_clears() {
+        let (_f, conn) = open_test_conn();
+        insert_server_conn(&conn, &sample_server("srv-cfg")).unwrap();
+        // sample_server starts with no config.
+        assert_eq!(get_server_conn(&conn, "srv-cfg").unwrap().config, None);
+        // Setting a config blob persists and reads back identically.
+        let cfg = serde_json::json!({ "mode": "fast", "n": 3 });
+        update_server_config_conn(&conn, "srv-cfg", Some(&cfg)).unwrap();
+        assert_eq!(get_server_conn(&conn, "srv-cfg").unwrap().config, Some(cfg));
+        // None clears it back to NULL.
+        update_server_config_conn(&conn, "srv-cfg", None).unwrap();
+        assert_eq!(get_server_conn(&conn, "srv-cfg").unwrap().config, None);
+    }
+
+    #[test]
+    fn insert_server_if_absent_dedups_on_qualified_name() {
+        let (_f, conn) = open_test_conn();
+        // First install of a service inserts the row.
+        let mut first = sample_server("srv-a");
+        first.qualified_name = "@dup/server".to_string();
+        assert!(insert_server_if_absent_conn(&conn, &first).unwrap());
+        // A second install of the SAME qualified_name (different server_id) is a
+        // no-op — the count stays at one and the original row survives.
+        let mut second = sample_server("srv-b");
+        second.qualified_name = "@dup/server".to_string();
+        assert!(!insert_server_if_absent_conn(&conn, &second).unwrap());
+        let rows: Vec<_> = list_servers_conn(&conn)
+            .unwrap()
+            .into_iter()
+            .filter(|s| s.qualified_name == "@dup/server")
+            .collect();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].server_id, "srv-a");
+    }
+
+    #[test]
+    fn find_server_by_qualified_name_returns_earliest_install() {
+        let (_f, conn) = open_test_conn();
+        // Two installs of the same service (different ids, different times).
+        let mut early = sample_server("srv-early");
+        early.installed_at = 100;
+        let mut late = sample_server("srv-late");
+        late.installed_at = 200;
+        // Insert the later one first to prove ordering is by installed_at.
+        insert_server_conn(&conn, &late).unwrap();
+        insert_server_conn(&conn, &early).unwrap();
+
+        let found = find_server_by_qualified_name_conn(&conn, "@test/server")
+            .unwrap()
+            .expect("server present");
+        assert_eq!(found.server_id, "srv-early");
+
+        assert!(find_server_by_qualified_name_conn(&conn, "@nope/missing")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
     fn get_server_not_found() {
         let (_f, conn) = open_test_conn();
         let err = get_server_conn(&conn, "missing").unwrap_err();
@@ -716,5 +912,54 @@ mod tests {
         let loaded = get_server_conn(&conn, "legacy-1").unwrap();
         assert_eq!(loaded.transport, Transport::Stdio);
         assert_eq!(loaded.command, "npx");
+    }
+
+    /// #4194: the additive migration's PRAGMA-then-ALTER is not atomic across
+    /// the several connections one MCP page load opens, so two can both see a
+    /// column missing and both ALTER — the loser hitting "duplicate column
+    /// name". `add_column_idempotent` must treat that exact error as success
+    /// (the column exists either way) so it never surfaces as a UI error banner.
+    #[test]
+    fn add_column_idempotent_tolerates_duplicate_column() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let conn = rusqlite::Connection::open(tmp.path()).unwrap();
+        conn.execute_batch("CREATE TABLE mcp_servers (server_id TEXT PRIMARY KEY);")
+            .unwrap();
+
+        const DDL: &str = "ALTER TABLE mcp_servers ADD COLUMN deployment_url TEXT";
+
+        // First add succeeds.
+        add_column_idempotent(&conn, DDL, "deployment_url column to mcp_servers").unwrap();
+        assert!(mcp_servers_columns(&conn)
+            .unwrap()
+            .iter()
+            .any(|c| c == "deployment_url"));
+
+        // Re-running the SAME ALTER (the lost race) must NOT error — the column
+        // already existing is the desired post-condition.
+        add_column_idempotent(&conn, DDL, "deployment_url column to mcp_servers")
+            .expect("duplicate column must be tolerated, not surfaced");
+    }
+
+    /// Guard against over-swallowing: a genuine DDL failure (here, a syntax
+    /// error) must still propagate so real migration bugs are not hidden.
+    #[test]
+    fn add_column_idempotent_propagates_other_errors() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let conn = rusqlite::Connection::open(tmp.path()).unwrap();
+        conn.execute_batch("CREATE TABLE mcp_servers (server_id TEXT PRIMARY KEY);")
+            .unwrap();
+
+        let err = add_column_idempotent(
+            &conn,
+            "ALTER TABLE mcp_servers ADD COLUMN", // malformed DDL
+            "bogus column to mcp_servers",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Failed to add bogus column to mcp_servers"),
+            "unexpected error: {err}"
+        );
     }
 }

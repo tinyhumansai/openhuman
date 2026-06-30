@@ -94,6 +94,42 @@ pub(crate) fn ollama_spawn_marker_path(config: &Config) -> PathBuf {
         .join("ollama.spawn")
 }
 
+/// Standard Unix locations a CLI binary may live in that are **not**
+/// guaranteed to be on the `PATH` a GUI app inherits. A macOS app launched
+/// from Finder/Dock gets the minimal launchd `PATH`
+/// (`/usr/bin:/bin:/usr/sbin:/sbin`), so Homebrew dirs (`/opt/homebrew/bin`
+/// on Apple Silicon, `/usr/local/bin` on Intel) are invisible even when the
+/// user installed the binary there and it runs fine from a terminal — the
+/// exact symptom in issue #3425. Probe these explicitly as a last resort.
+///
+/// Windows resolution relies entirely on the `PATH` scan, so this is empty
+/// there (the installer drops `whisper-cli.exe` into the workspace anyway).
+fn standard_unix_bin_dirs() -> Vec<PathBuf> {
+    if cfg!(windows) {
+        return Vec::new();
+    }
+    [
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+    ]
+    .iter()
+    .map(PathBuf::from)
+    .collect()
+}
+
+/// Return the first of `dirs` that holds `bin_name` as a regular file.
+/// Shared by the `PATH` scan and the standard-dir fallback so both agree on
+/// what "found" means.
+fn resolve_binary_in_dirs(bin_name: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
+    dirs.iter()
+        .map(|dir| dir.join(bin_name))
+        .find(|candidate| candidate.is_file())
+}
+
 pub(crate) fn resolve_whisper_binary() -> Option<PathBuf> {
     // Precedence: workspace install > env override > PATH lookup. The
     // workspace install path is the canonical drop-zone for the binary
@@ -138,11 +174,24 @@ pub(crate) fn resolve_whisper_binary() -> Option<PathBuf> {
     } else {
         "whisper-cli"
     };
-    std::env::var_os("PATH").and_then(|path_var| {
-        std::env::split_paths(&path_var)
-            .map(|entry| entry.join(bin_name))
-            .find(|candidate| candidate.is_file())
-    })
+    if let Some(from_path) = std::env::var_os("PATH").and_then(|path_var| {
+        let dirs: Vec<PathBuf> = std::env::split_paths(&path_var).collect();
+        resolve_binary_in_dirs(bin_name, &dirs)
+    }) {
+        return Some(from_path);
+    }
+
+    // Last resort: a GUI app inherits a minimal PATH that omits Homebrew
+    // dirs, so a `brew install whisper-cpp` binary that works in a terminal
+    // is invisible to the scan above. Probe the standard Unix bin dirs.
+    if let Some(from_std) = resolve_binary_in_dirs(bin_name, &standard_unix_bin_dirs()) {
+        log::debug!(
+            "[voice-install:whisper] resolved binary from standard dir {}",
+            from_std.display()
+        );
+        return Some(from_std);
+    }
+    None
 }
 
 /// Config-aware whisper resolution. Preference order:
@@ -194,11 +243,24 @@ pub(crate) fn resolve_piper_binary() -> Option<PathBuf> {
     }
 
     let bin_name = if cfg!(windows) { "piper.exe" } else { "piper" };
-    std::env::var_os("PATH").and_then(|path_var| {
-        std::env::split_paths(&path_var)
-            .map(|entry| entry.join(bin_name))
-            .find(|candidate| candidate.is_file())
-    })
+    if let Some(from_path) = std::env::var_os("PATH").and_then(|path_var| {
+        let dirs: Vec<PathBuf> = std::env::split_paths(&path_var).collect();
+        resolve_binary_in_dirs(bin_name, &dirs)
+    }) {
+        return Some(from_path);
+    }
+
+    // Last resort: GUI-app PATH omits Homebrew dirs (see
+    // `standard_unix_bin_dirs`). Probe them so a `brew install piper` binary
+    // is found even when launched from Finder.
+    if let Some(from_std) = resolve_binary_in_dirs(bin_name, &standard_unix_bin_dirs()) {
+        log::debug!(
+            "[voice-install:piper] resolved binary from standard dir {}",
+            from_std.display()
+        );
+        return Some(from_std);
+    }
+    None
 }
 
 /// Config-aware piper resolution. Same precedence shape as
@@ -663,5 +725,73 @@ mod tests {
         let resolved = resolve_piper_binary_with_config(&config).expect("workspace resolve");
         assert_eq!(resolved, target);
         let _ = std::fs::remove_dir_all(workspace_piper_dir(&config));
+    }
+
+    #[test]
+    fn standard_unix_bin_dirs_membership_is_platform_correct() {
+        let dirs = standard_unix_bin_dirs();
+        if cfg!(windows) {
+            assert!(dirs.is_empty(), "Windows relies on PATH; no standard dirs");
+        } else {
+            // Homebrew dirs are the whole point — a GUI app's minimal PATH
+            // omits them, so they MUST be probed explicitly (issue #3425).
+            assert!(
+                dirs.contains(&PathBuf::from("/opt/homebrew/bin")),
+                "Apple Silicon Homebrew dir must be probed"
+            );
+            assert!(
+                dirs.contains(&PathBuf::from("/usr/local/bin")),
+                "Intel Homebrew / common /usr/local dir must be probed"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_binary_in_dirs_finds_first_match_in_order() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let first = tmp.path().join("first");
+        let second = tmp.path().join("second");
+        std::fs::create_dir_all(&first).expect("mkdir first");
+        std::fs::create_dir_all(&second).expect("mkdir second");
+        // Only the second dir holds the binary → it is returned.
+        let bin = second.join("whisper-cli");
+        std::fs::write(&bin, b"stub").expect("write stub");
+        let found = resolve_binary_in_dirs("whisper-cli", &[first.clone(), second.clone()]);
+        assert_eq!(found, Some(bin.clone()));
+
+        // When both hold it, the earlier dir wins (precedence is positional).
+        let bin_first = first.join("whisper-cli");
+        std::fs::write(&bin_first, b"stub").expect("write stub");
+        let found = resolve_binary_in_dirs("whisper-cli", &[first, second]);
+        assert_eq!(found, Some(bin_first));
+    }
+
+    #[test]
+    fn resolve_binary_in_dirs_returns_none_when_absent() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let found = resolve_binary_in_dirs("piper", &[tmp.path().to_path_buf()]);
+        assert!(found.is_none(), "missing binary must resolve to None");
+    }
+
+    #[test]
+    fn resolve_whisper_binary_with_config_prefers_workspace_over_standard_dirs() {
+        // Precedence guard: even though /usr/bin etc. are now probed, an
+        // installed workspace binary must still win so the in-app installer
+        // result is never shadowed by a stray system binary.
+        let _g = shared_install_lock();
+        let (_tmp, config) = temp_config();
+        let target = workspace_whisper_binary_candidates(&config)
+            .into_iter()
+            .next()
+            .expect("at least one candidate");
+        let _ = std::fs::remove_dir_all(workspace_whisper_dir(&config));
+        std::fs::create_dir_all(target.parent().expect("parent")).expect("mkdir");
+        std::fs::write(&target, b"stub").expect("write stub");
+        let resolved = resolve_whisper_binary_with_config(&config).expect("workspace resolve");
+        assert_eq!(
+            resolved, target,
+            "workspace install must outrank standard-dir fallback"
+        );
+        let _ = std::fs::remove_dir_all(workspace_whisper_dir(&config));
     }
 }

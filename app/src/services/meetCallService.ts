@@ -219,6 +219,38 @@ export async function getMeetCallDetail(requestId: string): Promise<MeetCallDeta
 }
 
 // ---------------------------------------------------------------------------
+// Transcript parsing
+// ---------------------------------------------------------------------------
+
+/** A transcript line with its parsed timestamp/speaker prefix stripped out. */
+export interface ParsedTranscriptLine {
+  timestamp: string | null;
+  speaker: string | null;
+  text: string;
+  role: string;
+}
+
+const TRANSCRIPT_PREFIX_RE = /^\[(\d{1,2}:\d{2})\]\s*\[([^\]]+)\]\s*(.*)/s;
+
+/**
+ * Parse a raw transcript line's content for the optional `[MM:SS] [Name]` prefix.
+ * When the prefix is present, returns the parsed timestamp, speaker, and remaining text.
+ * When absent, timestamp and speaker are null and text is the full content.
+ */
+export function parseTranscriptLine(line: MeetCallTranscriptLine): ParsedTranscriptLine {
+  const match = TRANSCRIPT_PREFIX_RE.exec(line.content);
+  if (match) {
+    return {
+      timestamp: match[1] ?? null,
+      speaker: match[2] ?? null,
+      text: match[3] ?? '',
+      role: line.role,
+    };
+  }
+  return { timestamp: null, speaker: null, text: line.content, role: line.role };
+}
+
+// ---------------------------------------------------------------------------
 // Backend Meet Bot via Core Socket.IO bridge
 // ---------------------------------------------------------------------------
 
@@ -320,7 +352,8 @@ export async function sendHarnessResponse(result: string): Promise<void> {
  * The app normally uses `joinMeetViaBackendBot`, which routes through the
  * core Socket.IO bridge so backend bot events can be handled locally too.
  */
-export type MascotMeetPlatform = 'gmeet' | 'zoom' | 'teams' | 'webex';
+/** Alias of {@link MeetingPlatform} — kept for existing consumers. */
+export type MascotMeetPlatform = MeetingPlatform;
 
 export interface MascotJoinMeetingInput {
   platform: MascotMeetPlatform;
@@ -334,12 +367,33 @@ export interface MascotJoinMeetingResult {
 }
 
 /**
- * The 429 capacity-gate message the backend emits for free users. Treated
- * as the canonical user-facing copy so the UI can show a tailored notice
- * without leaking the underlying paid-plan rule.
+ * Tailored, actionable user-facing copy shown when the backend's capacity gate
+ * trips — replaces the backend's terse "…Please try again later." with retry
+ * guidance, without leaking the underlying paid-plan rule.
  */
 export const SERVER_OVERLOADED_MESSAGE =
   'OpenHuman is under heavy load right now. Please try again in a few minutes.';
+
+/**
+ * Recognize the backend's free-user capacity-gate response (`SERVER_OVERLOADED`,
+ * backend `paidPlan.ts` → `"Mascot streaming capacity is exhausted. Please try
+ * again later."`).
+ *
+ * The shared `apiClient` drops `errorCode` from error bodies (`apiClient.ts`
+ * only forwards `error` + `message`), so the message text is the only signal
+ * that survives. Detection therefore MUST key on the backend wording — it used
+ * to be compared for exact equality against [`SERVER_OVERLOADED_MESSAGE`], but
+ * that constant was changed to friendlier copy and no longer matches the
+ * backend string, so the check silently never fired and the raw generic
+ * "…try again later." leaked to the user instead of the tailored notice
+ * (#4151). Match a stable substring, case-insensitively, so minor wording drift
+ * on either side still resolves to the actionable message.
+ */
+export function isCapacityGateMessage(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const t = text.toLowerCase();
+  return t.includes('streaming capacity') || t.includes('capacity is exhausted');
+}
 
 export interface MascotJoinMeetingError {
   /** User-safe error text. Falls back to a generic message. */
@@ -350,6 +404,105 @@ export interface MascotJoinMeetingError {
 
 function isApiErrorLike(value: unknown): value is { error?: unknown; message?: unknown } {
   return !!value && typeof value === 'object' && ('error' in value || 'message' in value);
+}
+
+// ---------------------------------------------------------------------------
+// Upcoming meetings (meet_list_upcoming RPC)
+// ---------------------------------------------------------------------------
+
+/**
+ * One upcoming calendar meeting returned by `openhuman.meet_list_upcoming`.
+ * Mirrors `UpcomingMeeting` in `src/openhuman/agent_meetings/types.rs`.
+ */
+export interface UpcomingMeeting {
+  calendar_event_id: string;
+  title: string;
+  /** Unix milliseconds */
+  start_time_ms: number;
+  /** Unix milliseconds */
+  end_time_ms: number;
+  meet_url: string | null;
+  /** Platform slug: "gmeet" | "zoom" | "teams" | "webex" */
+  platform: string | null;
+  participant_count: number | null;
+  organizer: string | null;
+  /** "auto" | "ask" | "skip" — local UI state only this phase */
+  join_policy: string;
+  calendar_source: string;
+}
+
+interface CoreListUpcomingResponse {
+  ok: boolean;
+  meetings: UpcomingMeeting[];
+}
+
+/**
+ * Fetch upcoming calendar meetings that have a conferencing link.
+ * Returns an empty array when no Google Calendar is connected.
+ */
+export async function listUpcomingMeetings(
+  lookaheadMinutes?: number,
+  limit?: number
+): Promise<UpcomingMeeting[]> {
+  const result = await callCoreRpc<CoreListUpcomingResponse>({
+    method: 'openhuman.meet_list_upcoming',
+    params: {
+      ...(lookaheadMinutes != null ? { lookahead_minutes: lookaheadMinutes } : {}),
+      ...(limit != null ? { limit } : {}),
+    },
+  });
+  if (!result?.ok) {
+    throw new Error('Core rejected the meet_list_upcoming request.');
+  }
+  return result.meetings ?? [];
+}
+
+// ---------------------------------------------------------------------------
+// Per-event join-policy overrides
+// ---------------------------------------------------------------------------
+
+interface CoreSetEventPolicyResponse {
+  ok: boolean;
+}
+
+interface CoreGetEventPoliciesResponse {
+  ok: boolean;
+  policies: Record<string, string>;
+}
+
+/**
+ * Persist a per-event join-policy override for a specific calendar event.
+ * Resolution order (Rust side): per-event > per-platform > global.
+ */
+export async function setEventPolicy(
+  calendarEventId: string,
+  policy: 'auto' | 'ask' | 'skip'
+): Promise<void> {
+  const result = await callCoreRpc<CoreSetEventPolicyResponse>({
+    method: 'openhuman.meet_set_event_policy',
+    params: { calendar_event_id: calendarEventId, policy },
+  });
+  if (!result?.ok) {
+    throw new Error('Core rejected the meet_set_event_policy request.');
+  }
+}
+
+/**
+ * Batch-fetch per-event join-policy overrides for the given calendar event IDs.
+ * Only IDs that have an explicit override are present in the returned map.
+ */
+export async function getEventPolicies(
+  calendarEventIds: string[]
+): Promise<Record<string, string>> {
+  if (calendarEventIds.length === 0) return {};
+  const result = await callCoreRpc<CoreGetEventPoliciesResponse>({
+    method: 'openhuman.meet_get_event_policies',
+    params: { calendar_event_ids: calendarEventIds },
+  });
+  if (!result?.ok) {
+    throw new Error('Core rejected the meet_get_event_policies request.');
+  }
+  return result.policies ?? {};
 }
 
 export async function joinMeetingViaMascotBot(
@@ -379,8 +532,13 @@ export async function joinMeetingViaMascotBot(
       : err instanceof Error
         ? err.message
         : 'Failed to start meeting bot.';
-    const isCapacityGated = text === SERVER_OVERLOADED_MESSAGE;
-    const wrapped: MascotJoinMeetingError = { message: text, isCapacityGated };
+    const isCapacityGated = isCapacityGateMessage(text);
+    // When capacity-gated, surface the tailored, actionable copy instead of the
+    // backend's raw "…try again later." string (#4151).
+    const wrapped: MascotJoinMeetingError = {
+      message: isCapacityGated ? SERVER_OVERLOADED_MESSAGE : text,
+      isCapacityGated,
+    };
     throw wrapped;
   }
 }

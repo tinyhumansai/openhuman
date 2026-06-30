@@ -27,7 +27,7 @@
 
 <p align="center">
  <a href="https://discord.tinyhumans.ai/">Discord</a> •
- Reddit •
+ <a href="https://github.com/tinyhumansai/openhuman/discussions">Discussions</a> •
  <a href="https://x.com/intent/follow?screen_name=tinyhumansai">X/Twitter</a> •
  <a href="https://tinyhumans.gitbook.io/openhuman/">Doku</a> •
  <a href="https://x.com/intent/follow?screen_name=senamakel">@senamakel folgen (Creator)</a>
@@ -133,7 +133,7 @@ Du hostest [agentmemory](https://github.com/rohitg00/agentmemory) bereits selbst
 _Baust du auch in Richtung AGI und künstlichem Bewusstsein? Setze einen Stern und hilf anderen, den Weg zu finden._
 
 <p align="center">
- <a href="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left">
+ <a href="https://www.star-history.com">
  <picture>
  <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&theme=dark&legend=top-left" />
  <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left" />

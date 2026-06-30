@@ -948,13 +948,14 @@ fn parse_models_response_distinguishes_missing_data_field_from_wrong_type() {
     // shape (`object` + `data` keys both present, but `data` isn't an
     // array). The error MUST NOT say "missing" — it must surface the
     // actual JSON type so triage knows what shape the provider sent.
+    // `null` is deliberately excluded here — it is a valid empty catalog,
+    // not a wrong type (see `parse_models_response_treats_null_data_as_empty_list`).
     for (label, value) in [
         (
             "object",
             serde_json::json!({"object":"error","message":"boom"}),
         ),
         ("string", serde_json::json!("models go here")),
-        ("null", serde_json::Value::Null),
         ("bool", serde_json::json!(true)),
         ("number", serde_json::json!(42)),
     ] {
@@ -967,6 +968,71 @@ fn parse_models_response_distinguishes_missing_data_field_from_wrong_type() {
         assert!(
             err.contains(label),
             "wrong-type error must name the actual JSON kind ({label}): {err}"
+        );
+    }
+}
+
+#[test]
+fn parse_models_response_treats_null_data_as_empty_list() {
+    // TAURI-RUST-874 / TAURI-RUST-875: Ollama's OpenAI-compatible
+    // `/v1/models` null-encodes the catalog (`{"object":"list","data":null}`)
+    // when no models are pulled. A null `data`/`models` field is a valid empty
+    // model list, not a malformed envelope — it MUST parse to an empty Vec
+    // instead of manufacturing a hard error that floods Sentry.
+    let data_null = serde_json::json!({ "object": "list", "data": serde_json::Value::Null });
+    let models = parse_models_response(&data_null)
+        .expect("null `data` must parse as an empty catalog, not an error");
+    assert!(
+        models.is_empty(),
+        "null `data` must yield an empty model list, got {models:?}"
+    );
+
+    // The sibling `models` key (Codex-shaped envelope) gets the same treatment.
+    let models_null = serde_json::json!({ "object": "list", "models": serde_json::Value::Null });
+    let models = parse_models_response(&models_null)
+        .expect("null `models` must parse as an empty catalog, not an error");
+    assert!(
+        models.is_empty(),
+        "null `models` must yield an empty model list, got {models:?}"
+    );
+
+    // A bare success envelope with no `object` field still null-encodes an
+    // empty catalog (treated as success — `object` absent ⇒ not an error).
+    let object_absent = serde_json::json!({ "data": serde_json::Value::Null });
+    let models = parse_models_response(&object_absent)
+        .expect("null `data` with no `object` field must parse as an empty catalog");
+    assert!(
+        models.is_empty(),
+        "null `data` (object absent) must yield an empty model list, got {models:?}"
+    );
+}
+
+#[test]
+fn parse_models_response_rejects_null_data_on_error_envelope() {
+    // Codex P2 (PR #4157): an HTTP-200 error body such as
+    // `{"object":"error","data":null}` ALSO null-encodes `data`. The
+    // null-as-empty short-circuit MUST NOT swallow it as a successful empty
+    // catalog — that would hide provider/endpoint failures from the UI and
+    // Sentry. A non-"list" `object` with null `data` falls through to the
+    // descriptive malformed/error-envelope error, which surfaces `object`.
+    for field in ["data", "models"] {
+        let body = serde_json::json!({ "object": "error", field: serde_json::Value::Null });
+        let err = match parse_models_response(&body) {
+            Ok(models) => panic!(
+                "null `{field}` on an error envelope must fail, not return empty (got {models:?})"
+            ),
+            Err(err) => err,
+        };
+        assert!(
+            !err.contains("missing"),
+            "error-envelope null `{field}` must not say `missing`: {err}"
+        );
+        // Tighten on the surfaced `object` value, not the literal "error
+        // envelope" prose, so the assertion proves the provider error is
+        // actually carried through to triage.
+        assert!(
+            err.contains(r#""object" = "error""#),
+            "error-envelope null `{field}` must surface `\"object\" = \"error\"`: {err}"
         );
     }
 }

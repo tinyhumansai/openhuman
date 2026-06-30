@@ -44,6 +44,8 @@ export interface EmbeddingsUpdateResult {
   /** Present when confirm_wipe was required but not supplied */
   error?: string;
   message?: string;
+  /** Underlying probe failure (HTTP status / server error body) for diagnosis (#4056) */
+  detail?: string;
   old_signature?: string;
 }
 

@@ -85,6 +85,14 @@ allowlist = [
     # of an attached image / screenshot / on-disk image file here — it rides the
     # multimodal `vision-v1` tier, so it can actually see the image.
     "vision_agent",
+    # Image-generation specialist. Synthesised into a `delegate_create_image`
+    # tool. Route make/generate/edit an image requests here — it owns prompt
+    # craft, model selection, and saving the result to the workspace.
+    "image_agent",
+    # Video-generation specialist. Synthesised into a `delegate_create_video`
+    # tool. Route make/generate a video or animate this image requests here —
+    # generation is async (minutes) and the agent blocks until the clip is saved.
+    "video_agent",
     "skill_creator",
     "critic",
     "archivist",

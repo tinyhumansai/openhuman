@@ -134,6 +134,18 @@ const RESOURCE_CATALOG: &[PromptResource] = &[
         content: include_str!("../agent_registry/agents/vision_agent/prompt.md"),
     },
     PromptResource {
+        uri: "openhuman://prompts/agents/image_agent",
+        name: "image_agent",
+        description: "Worker that generates or edits images via GMI and saves them to the workspace.",
+        content: include_str!("../agent_registry/agents/image_agent/prompt.md"),
+    },
+    PromptResource {
+        uri: "openhuman://prompts/agents/video_agent",
+        name: "video_agent",
+        description: "Worker that generates short videos via GMI and saves them to the workspace.",
+        content: include_str!("../agent_registry/agents/video_agent/prompt.md"),
+    },
+    PromptResource {
         uri: "openhuman://prompts/agents/archivist",
         name: "archivist",
         description: "Background worker that distils conversations into persistent memory.",

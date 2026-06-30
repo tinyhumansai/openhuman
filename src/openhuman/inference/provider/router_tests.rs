@@ -222,6 +222,7 @@ fn resolve_translates_openhuman_tier_aliases_via_route_table() {
         vec![
             ("reasoning", "smart", "gpt-5.5"),
             ("chat", "smart", "gpt-5.5-mini"),
+            ("burst", "smart", "gpt-5.5-burst"),
             ("summarization", "smart", "gpt-4.1-nano"),
             ("vision", "smart", "gpt-5.5-vision"),
         ],
@@ -234,6 +235,10 @@ fn resolve_translates_openhuman_tier_aliases_via_route_table() {
     let (chat_idx, chat_model) = router.resolve("chat-v1");
     assert_eq!(chat_idx, 1);
     assert_eq!(chat_model, "gpt-5.5-mini");
+
+    let (burst_idx, burst_model) = router.resolve("burst-v1");
+    assert_eq!(burst_idx, 1);
+    assert_eq!(burst_model, "gpt-5.5-burst");
 
     let (summary_idx, summary_model) = router.resolve("summarization-v1");
     assert_eq!(summary_idx, 1);

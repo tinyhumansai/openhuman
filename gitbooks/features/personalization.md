@@ -34,7 +34,7 @@ Recurring people, topics, and past threads are **not** stored here — those liv
 
 Evidence flows through four stages: **capture → score → render → inject**.
 
-```
+```text
  your activity                 candidate buffer            stability detector
  ────────────                  ────────────────            ──────────────────
  chat turns        ──┐

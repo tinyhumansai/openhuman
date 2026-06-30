@@ -239,6 +239,12 @@ pub struct SmitheryServerSummary {
     /// originating upstream.
     #[serde(default)]
     pub source: String,
+    /// `true` when this is the canonical first-party server for a well-known
+    /// service (exact `qualified_name` match in `super::curation`). The UI
+    /// badges it "Official"; everything else is shown without a badge. Set by
+    /// the dispatcher; never trusted from the wire.
+    #[serde(default)]
+    pub official: bool,
     /// Raw extra fields preserved for future use.
     #[serde(flatten, default)]
     pub extra: std::collections::HashMap<String, Value>,
@@ -500,6 +506,7 @@ mod tests {
             use_count: 10,
             is_deployed: true,
             source: "mcp_official".to_string(),
+            official: false,
             extra: Default::default(),
         };
         let v = serde_json::to_value(&s).unwrap();

@@ -294,6 +294,41 @@ pub enum ExpectedErrorKind {
     /// couldn't parse, and the FE *does* page for it, F8). See
     /// [`crate::openhuman::inference::provider::backend_error_code_skips_sentry`].
     BackendErrorCodeOwned,
+    /// `approval_decide` (`src/openhuman/approval/rpc.rs`) resolved a request_id
+    /// whose pending row was **already decided, lazily expired, or superseded**
+    /// — `store::decide` updated 0 rows because `decided_at` was already set,
+    /// and `store::get_decision` confirms a persisted decision exists. The
+    /// inline-approvals design spec
+    /// (`docs/superpowers/specs/2026-05-23-telegram-inline-approvals-design.md`)
+    /// classifies "no pending approval found" as a **benign** outcome: the
+    /// frontend `ApprovalRequestCard.decide` and the Telegram callback both call
+    /// `approval_decide` without server-confirmed dedupe, so double-taps, two
+    /// operators racing, and expiry-while-live all land here harmlessly.
+    ///
+    /// Drops the benign half of Sentry TAURI-RUST-5EH (~1,995 events / 8 users
+    /// on `openhuman@0.57.53`). Anchored to the benign `"no pending approval
+    /// found"` wording emitted ONLY when `get_decision` confirms the row was
+    /// resolved; a genuine **never-registered** id raises the distinct
+    /// `"no pending approval ever registered"` string (no anchor) so a real
+    /// lost-registration defect still reaches Sentry.
+    ApprovalNoPendingRace,
+    /// A remote MCP server answered the connect handshake with HTTP 401 — it
+    /// needs OAuth sign-in, not a code fix. `McpHttpClient::read_response`
+    /// (`src/openhuman/mcp_client/client.rs`) raises the typed
+    /// [`crate::openhuman::mcp_client::McpUnauthorizedError`], and
+    /// `mcp_registry::connections::connect` already classifies it and stores a
+    /// `needs_auth` flag so the UI prompts the user to authenticate (the
+    /// `needs_auth` UX shipped in #3733 / #3719). But `mcp_clients_connect`
+    /// still returns `Err(e.to_string())`, which propagates to the RPC
+    /// dispatcher (`jsonrpc` → `report_error_or_expected`) where no arm matched
+    /// it — so the same user-state condition the UI already handles was being
+    /// captured as a full Sentry error (TAURI-RUST-CGP: ~1.2k events / 79 users
+    /// on `openhuman@0.57.53`). This arm closes that ship gap: the connect-time
+    /// 401 is preventable user-state with no Sentry-actionable signal, so demote
+    /// it to info. Anchored on the canonical `McpUnauthorizedError` Display body
+    /// (`"MCP unauthorized for "` + `"(HTTP 401"`) so an unrelated MCP transport
+    /// failure still reaches Sentry.
+    McpServerNeedsAuth,
 }
 
 pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
@@ -336,6 +371,27 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if lower.contains("codex cli auth") || lower.contains(".codex/auth.json") {
         return Some(ExpectedErrorKind::CodexCliAuthUnavailable);
     }
+    // TAURI-RUST-5EH — `approval_decide` resolved a request_id whose row was
+    // already decided / lazily expired / superseded (benign race per the
+    // inline-approvals design spec). `rpc::approval_decide` emits this exact
+    // `"no pending approval found"` wording ONLY after `store::get_decision`
+    // confirms a persisted decision exists; the genuine never-registered case
+    // raises `"no pending approval ever registered"` (matched by neither this
+    // arm nor any below), so a real lost-registration defect still reaches
+    // Sentry. See `ExpectedErrorKind::ApprovalNoPendingRace`.
+    if lower.contains("no pending approval found") {
+        return Some(ExpectedErrorKind::ApprovalNoPendingRace);
+    }
+    // TAURI-RUST-CGP — a remote MCP server answered the connect handshake with
+    // HTTP 401 (`McpUnauthorizedError`). `connections::connect` already stores a
+    // `needs_auth` flag so the UI prompts for OAuth sign-in (#3733 / #3719), but
+    // the `mcp_clients_connect` RPC still re-raises the stringified error here.
+    // It is preventable user-state (the server needs sign-in) with no
+    // Sentry-actionable signal — demote it. Highly specific anchor; no overlap
+    // with the generic matchers below. See `is_mcp_server_needs_auth_message`.
+    if is_mcp_server_needs_auth_message(&lower) {
+        return Some(ExpectedErrorKind::McpServerNeedsAuth);
+    }
     if lower.contains("local ai is disabled") {
         return Some(ExpectedErrorKind::LocalAiDisabled);
     }
@@ -353,11 +409,7 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     // guard now fast-fails before issuing that request, but this arm demotes
     // any residual 401 of that shape — older clients, or a present-but-rejected
     // key — so the flood (TAURI-RUST-52S) stays out of Sentry either way.
-    if lower.contains("api key not set")
-        || lower.contains("missing api key")
-        || lower.contains("no api key is configured")
-        || lower.contains("no api key supplied")
-    {
+    if is_api_key_unset_message(&lower) {
         return Some(ExpectedErrorKind::ApiKeyMissing);
     }
     // Check `ChannelSupervisorRestart` BEFORE `is_loopback_unavailable` and
@@ -787,7 +839,20 @@ pub(crate) fn is_embedding_endpoint_absent(lower: &str) -> bool {
 fn is_embedding_model_rejected(lower: &str) -> bool {
     lower.contains("embedding api error")
         && lower.contains("(400")
-        && (lower.contains("does not exist") || lower.contains("does not support embeddings"))
+        && (lower.contains("does not exist")
+            || lower.contains("does not support embeddings")
+            // Gemini's OpenAI-compat shim (generativelanguage.googleapis.com)
+            // maps `/v1/embeddings` → `BatchEmbedContents` and rejects a bare
+            // model id with `BatchEmbedContentsRequest.model: unexpected model
+            // name format` / `INVALID_ARGUMENT` on every re-embed (TAURI-RUST-4SA,
+            // 4,494 events / 1 user). The Custom-endpoint path now normalizes the
+            // id to `models/<name>` at the source; this demotes any that slip
+            // through (already-stored bad state, older releases, other compat
+            // hosts) so the per-embed flood stays out of Sentry. Distinct cause
+            // from the #4070/9SK `"does not exist"` family.
+            || lower.contains("unexpected model name format")
+            || (lower.contains("invalid_argument")
+                && lower.contains("batchembedcontentsrequest.model")))
 }
 
 /// Detect the memory-store chunk DB's circuit-breaker-open message that
@@ -903,6 +968,51 @@ pub fn is_session_expired_message(msg: &str) -> bool {
         // `does_not_classify_streaming_byo_key_401_as_session_expired`.
         || (msg.contains("OpenHuman streaming API error (401")
             && msg.contains("\"error\":\"Invalid token\""))
+}
+
+/// Detect a remote MCP server's connect-time 401 — the user must sign in to
+/// that server (OAuth), not a code defect. Anchored on the canonical
+/// [`crate::openhuman::mcp_client::McpUnauthorizedError`] `Display`
+/// body, which renders as `"MCP unauthorized for \`<endpoint>\` (HTTP 401…)"`.
+///
+/// Conjunctive match — both anchors must hit (input already lower-cased):
+///
+/// 1. `"mcp unauthorized for "` — the typed-error prefix. Scopes the match to
+///    the MCP transport's own 401 so an unrelated "unauthorized" / "401" from
+///    another domain cannot borrow this demotion.
+/// 2. `"(http 401"` — the parenthesised status the `Display` impl always emits
+///    (with or without the trailing `resource metadata:` discovery hint).
+///
+/// `connections::connect` already classifies this and stores a `needs_auth`
+/// flag so the UI prompts for sign-in; this predicate keeps the parallel
+/// `mcp_clients_connect` RPC re-report out of Sentry. See
+/// [`ExpectedErrorKind::McpServerNeedsAuth`].
+fn is_mcp_server_needs_auth_message(lower: &str) -> bool {
+    lower.contains("mcp unauthorized for ") && lower.contains("(http 401")
+}
+
+/// Detect the "a configured provider has no API key" user-config state.
+///
+/// Single source of truth for the `ApiKeyMissing` wording so the
+/// `expected_error_kind` demotion arm and the cron scheduler's halt-on-first
+/// classifier (`is_api_key_unset_failure`, TAURI-RUST-HCK) can never drift
+/// apart. The phrasing is emitted deterministically, before any HTTP, by the
+/// credential guards:
+///   - `inference/provider/compatible_request.rs::credential_for_request`
+///     ("<provider> API key not set. Configure via the web UI …")
+///   - the embeddings credential guards (cohere/openai) + the composio
+///     direct-mode factory bail ("no api key is configured" / "no api key
+///     supplied").
+///
+/// Distinct from a *rejected* key (a provider 401 "Invalid API key"): that is a
+/// present-but-wrong key and stays actionable in Sentry — this matcher is for
+/// the **absent** key only, which has no Sentry remediation path.
+pub fn is_api_key_unset_message(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("api key not set")
+        || lower.contains("missing api key")
+        || lower.contains("no api key is configured")
+        || lower.contains("no api key supplied")
 }
 
 /// Detect the in-process-core boot-window shape: a sibling component
@@ -1691,6 +1801,23 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 "[observability] {domain}.{operation} skipped expected provider-user-state error: {message}"
             );
         }
+        ExpectedErrorKind::McpServerNeedsAuth => {
+            // A remote MCP server rejected the connect handshake with HTTP 401:
+            // it needs OAuth sign-in. `mcp_registry::connections::connect`
+            // already stores a `needs_auth` flag and the UI prompts the user to
+            // authenticate (#3733 / #3719) — but `mcp_clients_connect` re-raises
+            // the stringified error to the RPC dispatcher, where it was being
+            // captured as a full Sentry error (TAURI-RUST-CGP: ~1.2k events / 79
+            // users). Preventable user-state with no Sentry-actionable signal;
+            // demote to info so the breadcrumb survives but no error event fires.
+            tracing::info!(
+                domain = domain,
+                operation = operation,
+                kind = "mcp_server_needs_auth",
+                error = %message,
+                "[observability] {domain}.{operation} skipped expected MCP needs-auth (401) error: {message}"
+            );
+        }
         ExpectedErrorKind::ProviderConfigRejection => {
             // User-config state: a custom cloud provider rejected the
             // request because of the user's model / parameter setup — an
@@ -1984,6 +2111,22 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 kind = "backend_error_code",
                 error_code = %code,
                 "[observability] {domain}.{operation} skipped backend-owned errorCode={code} error: {message}"
+            );
+        }
+        ExpectedErrorKind::ApprovalNoPendingRace => {
+            // Benign approval race (TAURI-RUST-5EH): the request_id was already
+            // decided / lazily expired / superseded — `store::get_decision`
+            // confirmed a persisted decision exists, so this is a double-tap,
+            // two-operator, or expiry-while-live race classified benign by the
+            // inline-approvals design spec, not a lost registration. Demote at
+            // `warn!` so a sustained spike still shows in operator dashboards
+            // without paging. The genuine never-registered case takes the
+            // capture path (distinct wording) and stays a Sentry signal.
+            tracing::warn!(
+                domain = domain,
+                operation = operation,
+                kind = "approval_no_pending_race",
+                "[observability] {domain}.{operation} skipped benign already-decided/expired approval race: {message}"
             );
         }
     }
@@ -2468,6 +2611,31 @@ pub fn is_transient_integrations_failure(event: &sentry::protocol::Event<'_>) ->
         || is_transient_domain_failure(event, "composio")
 }
 
+/// Skill-install fetch **client errors** (4xx, esp. 404/410).
+///
+/// `install_workflow_from_url_with_home` fetches a user/catalog-supplied
+/// `SKILL.md`; a 4xx means the requested URL is gone or wrong — expected
+/// user-input state surfaced to the UI as "skill not found", not a
+/// Sentry-actionable defect. The primary suppression lives at that emit site
+/// (it no longer calls `report_error` for 4xx); this is the defense-in-depth
+/// net mirroring the `is_transient_*` filters, catching any future skills call
+/// site that reports a 4xx. Matched by the tags `report_error` writes:
+/// `domain=skills`, `failure=non_2xx`, and a 4xx `status`. A 5xx is a genuine
+/// remote failure and stays reportable. Drops TAURI-RUST-CGE (~1,446 events /
+/// 72 users on `openhuman@0.57.53`).
+pub fn is_skills_install_client_error_event(event: &sentry::protocol::Event<'_>) -> bool {
+    let tags = &event.tags;
+    if tags.get("domain").map(String::as_str) != Some("skills") {
+        return false;
+    }
+    if tags.get("failure").map(String::as_str) != Some("non_2xx") {
+        return false;
+    }
+    tags.get("status")
+        .and_then(|status| status.parse::<u16>().ok())
+        .is_some_and(|code| (400..500).contains(&code))
+}
+
 /// Transient updater failures from GitHub release probes/downloads.
 ///
 /// Core-side reports carry structured tags (`domain=update`, often
@@ -2797,6 +2965,43 @@ mod tests {
         assert_eq!(format!("{wrapped:#}"), "outer ctx: inner cause");
     }
 
+    /// Sentry TAURI-RUST-5EH: the benign already-decided/expired approval race
+    /// (`rpc::approval_decide` after `get_decision` confirms a persisted
+    /// decision) must classify as `ApprovalNoPendingRace` so the ~1,995-event
+    /// flood is demoted — while a genuine never-registered id (distinct
+    /// "ever registered" wording) must stay reportable (`None`).
+    #[test]
+    fn classifies_benign_approval_race_but_keeps_genuine_loss() {
+        assert_eq!(
+            expected_error_kind(
+                "rpc.invoke_method failed: no pending approval found for request_id \
+                 '4f1c…' (already decided or expired)"
+            ),
+            Some(ExpectedErrorKind::ApprovalNoPendingRace),
+            "benign already-decided/expired race must be demoted"
+        );
+        assert_eq!(
+            expected_error_kind(
+                "rpc.invoke_method failed: no pending approval ever registered \
+                 for request_id '4f1c…'"
+            ),
+            None,
+            "a genuine lost registration must remain a Sentry signal"
+        );
+    }
+
+    /// Exercise the full demotion path (classifier -> report arm) for a benign
+    /// approval race: it must take the expected branch and not panic.
+    #[test]
+    fn report_error_or_expected_demotes_benign_approval_race() {
+        report_error_or_expected(
+            "no pending approval found for request_id 'abc' (already decided or expired)",
+            "rpc",
+            "invoke_method",
+            &[],
+        );
+    }
+
     #[test]
     fn classifies_expected_config_errors() {
         assert_eq!(
@@ -2850,6 +3055,68 @@ mod tests {
             "openai_oauth_import_codex_cli",
             &[],
         );
+    }
+
+    /// Sentry TAURI-RUST-CGP: a remote MCP server's connect-time 401 is
+    /// preventable user-state (the server needs OAuth sign-in), already handled
+    /// by the `needs_auth` UX (#3733 / #3719), so it must classify as
+    /// `McpServerNeedsAuth` and stay out of Sentry. The canonical body comes
+    /// straight from the typed `McpUnauthorizedError` `Display` impl (both the
+    /// bare and `resource metadata:` variants), plus the
+    /// `mcp_clients_connect`-prefixed RPC re-report shape that actually reaches
+    /// the dispatcher.
+    #[test]
+    fn classifies_mcp_connect_401_as_needs_auth() {
+        use crate::openhuman::mcp_client::McpUnauthorizedError;
+
+        let bare = McpUnauthorizedError {
+            endpoint: "https://youtube.run.tools".to_string(),
+            resource_metadata: None,
+        };
+        let with_meta = McpUnauthorizedError {
+            endpoint: "https://youtube.run.tools".to_string(),
+            resource_metadata: Some(
+                "https://youtube.run.tools/.well-known/oauth-protected-resource".to_string(),
+            ),
+        };
+        for msg in [
+            bare.to_string(),
+            with_meta.to_string(),
+            // The stringified RPC re-report shape that propagates from
+            // `mcp_clients_connect` to `report_error_or_expected`.
+            format!("openhuman.mcp_clients_connect failed: {with_meta}"),
+        ] {
+            assert_eq!(
+                expected_error_kind(&msg),
+                Some(ExpectedErrorKind::McpServerNeedsAuth),
+                "must classify MCP connect 401 as McpServerNeedsAuth: {msg}"
+            );
+        }
+        // Full demotion path (classifier -> report arm) must not panic.
+        report_error_or_expected(
+            &bare.to_string(),
+            "rpc",
+            "openhuman.mcp_clients_connect",
+            &[],
+        );
+    }
+
+    /// Guard against over-suppression: an MCP transport failure that is NOT the
+    /// typed 401 (a 500, or a generic "unauthorized" with no MCP anchor) MUST
+    /// still reach Sentry (stay `None`) so a real defect isn't blinded.
+    #[test]
+    fn does_not_classify_other_mcp_or_401_errors_as_needs_auth() {
+        for msg in [
+            "MCP server `https://youtube.run.tools` returned HTTP 500: internal error",
+            "openhuman.mcp_clients_connect failed: connection refused",
+            "Unauthorized (HTTP 401) from some unrelated provider",
+        ] {
+            assert_ne!(
+                expected_error_kind(msg),
+                Some(ExpectedErrorKind::McpServerNeedsAuth),
+                "must NOT classify as McpServerNeedsAuth: {msg}"
+            );
+        }
     }
 
     /// Guard against over-suppression on the import path: a genuine
@@ -2925,6 +3192,28 @@ mod tests {
             ),
             Some(ExpectedErrorKind::ApiKeyMissing)
         );
+    }
+
+    /// TAURI-RUST-HCK — the single-source `is_api_key_unset_message` matcher
+    /// (consumed by the cron scheduler's halt-on-first classifier) must match
+    /// the VERBATIM wording emitted by the inference credential guard
+    /// (`credential_for_request`), so a wording drift fails CI instead of
+    /// silently re-opening the cron flood. It must NOT match a present-but-
+    /// rejected key (401 "Invalid API key") nor an ordinary provider error.
+    #[test]
+    fn is_api_key_unset_message_matches_verbatim_credential_guard_wording() {
+        assert!(is_api_key_unset_message(
+            "openrouter API key not set. Configure via the web UI or set the appropriate env var."
+        ));
+        assert!(is_api_key_unset_message(
+            "Cohere embed API error (401 Unauthorized): {\"message\":\"no api key supplied\"}"
+        ));
+        assert!(!is_api_key_unset_message(
+            "OpenAI API error (401 Unauthorized): invalid_api_key"
+        ));
+        assert!(!is_api_key_unset_message(
+            "OpenHuman API error (500 Internal Server Error): {\"error\":\"Internal server error\"}"
+        ));
     }
 
     /// Guard against over-suppression: a genuine BYO-key auth failure
@@ -3065,6 +3354,27 @@ mod tests {
                 expected_error_kind(raw),
                 Some(ExpectedErrorKind::ProviderConfigRejection),
                 "should classify embedding model-rejection 400 as config rejection: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_gemini_model_format_400_as_config_rejection() {
+        // TAURI-RUST-4SA (~4,494 events / 1 user) — a bare model id sent to
+        // Gemini's OpenAI-compat shim, which maps `/v1/embeddings` →
+        // `BatchEmbedContents` and demands `models/<name>`. Verbatim Gemini wire
+        // body plus the enriched form after the emit site appends the Gemini
+        // remediation, and the alternate `INVALID_ARGUMENT` + field-path shape.
+        // All must demote so the per-embed flood stays out of Sentry.
+        for raw in [
+            r#"Embedding API error (400 Bad Request): {"error":{"code":400,"message":"BatchEmbedContentsRequest.model: unexpected model name format","status":"INVALID_ARGUMENT"}}"#,
+            "Embedding API error (400 Bad Request): {\"error\":{\"code\":400,\"message\":\"BatchEmbedContentsRequest.model: unexpected model name format\",\"status\":\"INVALID_ARGUMENT\"}} — Gemini needs the embeddings model id in `models/<name>` form (e.g. `models/text-embedding-004`); fix it in Settings → Memory",
+            r#"Embedding API error (400 Bad Request): {"error":{"code":400,"message":"Invalid value at 'model'","status":"INVALID_ARGUMENT","details":[{"field":"BatchEmbedContentsRequest.model"}]}}"#,
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::ProviderConfigRejection),
+                "should classify Gemini model-format 400 as config rejection: {raw}"
             );
         }
     }
@@ -5769,6 +6079,58 @@ mod tests {
         );
     }
 
+    /// TAURI-RUST-CGE: skill-install fetch 4xx (a missing/renamed catalog
+    /// `SKILL.md`) is expected user-input state — the before_send net must drop
+    /// it, while a genuine 5xx remote failure and unrelated domains stay
+    /// reportable.
+    #[test]
+    fn skills_install_client_error_filter_drops_4xx_keeps_5xx() {
+        // 4xx (esp. 404/410) = missing skill / wrong URL → dropped.
+        for status in ["400", "403", "404", "410", "429"] {
+            let event = event_with_tags(&[
+                ("domain", "skills"),
+                ("failure", "non_2xx"),
+                ("status", status),
+            ]);
+            assert!(
+                is_skills_install_client_error_event(&event),
+                "skills install 4xx {status} must be dropped"
+            );
+        }
+
+        // 5xx = genuine remote failure → stays a Sentry signal.
+        for status in ["500", "502", "503"] {
+            let event = event_with_tags(&[
+                ("domain", "skills"),
+                ("failure", "non_2xx"),
+                ("status", status),
+            ]);
+            assert!(
+                !is_skills_install_client_error_event(&event),
+                "skills install 5xx {status} must stay reportable"
+            );
+        }
+
+        // Domain scoping: a 4xx in another domain must not be touched here.
+        let other_domain = event_with_tags(&[
+            ("domain", "backend_api"),
+            ("failure", "non_2xx"),
+            ("status", "404"),
+        ]);
+        assert!(
+            !is_skills_install_client_error_event(&other_domain),
+            "non-skills 4xx must not be swallowed by the skills filter"
+        );
+
+        // A skills event without the non_2xx failure marker (e.g. a transport
+        // failure) must not be dropped by this status-scoped filter.
+        let skills_transport = event_with_tags(&[("domain", "skills"), ("failure", "transport")]);
+        assert!(
+            !is_skills_install_client_error_event(&skills_transport),
+            "skills transport failures are out of scope for the 4xx filter"
+        );
+    }
+
     #[test]
     fn composio_domain_routes_through_integrations_filter() {
         // OPENHUMAN-TAURI-35 (~139 events) / -2H (~26 events):
@@ -6112,6 +6474,25 @@ mod tests {
         let body = "kiro API error (500 Internal Server Error): {\"error\":{\"message\":\
             \"HTTP 402 from Kiro IDE: {\\\"reason\\\":\\\"MONTHLY_REQUEST_COUNT\\\"}\",\
             \"type\":\"server_error\"}}";
+        assert!(is_quota_exhausted_event(&event_with_message(body)));
+        assert!(is_quota_exhausted_event(&event_with_exception_value(body)));
+        assert!(is_quota_exhausted_message(body));
+    }
+
+    #[test]
+    fn quota_exhausted_filter_matches_responses_usage_limit_reached_event() {
+        // TAURI-RUST-AFE: verbatim message as formatted by the `chat_via_responses`
+        // emit site — the Codex/ChatGPT OAuth `/responses` plan cap. Mirrors the
+        // real production shape `"<name> Responses API error (<status>): <body>"`
+        // (`compatible_helpers.rs:135`), including the `(429)` status segment and
+        // the full AFE payload (`plan_type` + `resets_at`) from `ops/http_error.rs`,
+        // so this stays coupled to the actual wire format rather than a loose
+        // substring. No "monthly"/"quota" co-marker, so it exercises the AFE
+        // phrase extension reaching the before_send net on both message and
+        // exception paths (the subconscious loop retries until `resets_at`).
+        let body = "openai Responses API error (429): {\"error\":{\"type\":\
+            \"usage_limit_reached\",\"message\":\"The usage limit has been reached\",\
+            \"plan_type\":\"plus\",\"resets_at\":1750000000}}";
         assert!(is_quota_exhausted_event(&event_with_message(body)));
         assert!(is_quota_exhausted_event(&event_with_exception_value(body)));
         assert!(is_quota_exhausted_message(body));

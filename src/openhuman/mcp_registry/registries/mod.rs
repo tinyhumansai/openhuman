@@ -56,20 +56,58 @@ pub trait Registry: Send + Sync {
     async fn get(&self, config: &Config, qualified_name: &str) -> Result<SmitheryServerDetail>;
 }
 
-/// All registries currently enabled for the user.
-/// Official modelcontextprotocol.io is primary; Smithery is a fallback for
-/// servers not yet listed on the official registry.
-pub fn enabled_registries() -> Vec<Box<dyn Registry>> {
+/// Every registry adapter, unconditionally. Used to resolve a `source` id back
+/// to its adapter even when that registry isn't part of the default search set
+/// (e.g. `registry_get` for an already-installed Smithery server).
+fn all_registries() -> Vec<Box<dyn Registry>> {
     vec![
         Box::new(mcp_official::McpOfficialRegistry),
         Box::new(smithery::SmitheryRegistry),
     ]
 }
 
-/// Resolve a registry by [`Registry::source`] id. Used by `registry_get` to
-/// route a fetch back to the upstream that produced the qualified name.
+/// Registries that participate in catalog **search** for this user. The
+/// official modelcontextprotocol.io registry is always on; Smithery is included
+/// only when a Smithery API key is configured.
+///
+/// Why gate Smithery: its servers don't run standalone — they're reached
+/// through Smithery's gateway (`server.smithery.ai/<qn>/mcp?api_key=…&profile=…`)
+/// using the user's Smithery account, with per-server credentials configured on
+/// smithery.ai. Without a key they can't connect in-app, so listing thousands
+/// of them only yields un-installable rows with a misleading "sign in" banner.
+/// Surface them only once the user has opted in by setting a key.
+pub fn enabled_registries(config: &Config) -> Vec<Box<dyn Registry>> {
+    let mut registries: Vec<Box<dyn Registry>> = vec![Box::new(mcp_official::McpOfficialRegistry)];
+    if smithery::smithery_api_key(config).is_some() {
+        registries.push(Box::new(smithery::SmitheryRegistry));
+    }
+    registries
+}
+
+/// Resolve a registry by [`Registry::source`] id. Searches *all* adapters (not
+/// just the search-enabled ones) so a source-routed `registry_get` for an
+/// already-installed server resolves regardless of the Smithery-key gate.
 pub fn registry_for_source(source: &str) -> Option<Box<dyn Registry>> {
-    enabled_registries()
-        .into_iter()
-        .find(|r| r.source() == source)
+    all_registries().into_iter().find(|r| r.source() == source)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn registry_for_source_resolves_every_adapter_even_when_search_gated() {
+        // `registry_for_source` must resolve Smithery regardless of the
+        // search-time key gate, so detail lookups for an already-installed
+        // Smithery server keep working when no key is set.
+        assert_eq!(
+            registry_for_source(SOURCE_MCP_OFFICIAL).map(|r| r.source()),
+            Some(SOURCE_MCP_OFFICIAL)
+        );
+        assert_eq!(
+            registry_for_source(SOURCE_SMITHERY).map(|r| r.source()),
+            Some(SOURCE_SMITHERY)
+        );
+        assert!(registry_for_source("nope").is_none());
+    }
 }
