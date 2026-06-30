@@ -66,8 +66,31 @@ impl OpenAiCompatibleProvider {
                 max_output_tokens,
             );
         }
+
+        // TAURI-RUST-AHX: the ChatGPT-OAuth Codex Responses endpoint rejects the
+        // `auto` model sentinel with a 400 (`The 'auto' model is not supported
+        // when using Codex with a ChatGPT account.`). `auto` is a Codex-CLI alias
+        // valid only for API-key Codex; here it would otherwise leak unchanged to
+        // the provider. Remap it to a concrete Codex-class model proactively for
+        // this endpoint only, mirroring the #3201 (drop `stream:false`) and EWD
+        // (drop `max_output_tokens`) adjustments above. Every other endpoint keeps
+        // `model` untouched.
+        let effective_model = if is_codex_oauth_responses && model.eq_ignore_ascii_case("auto") {
+            let remapped = super::super::openai_codex::OPENAI_CODEX_MODEL_HINTS
+                .first()
+                .copied()
+                .unwrap_or("gpt-5.5");
+            log::info!(
+                "[provider] {} remapping model=auto -> {remapped} for Codex OAuth responses endpoint (auto unsupported on ChatGPT account)",
+                self.name,
+            );
+            remapped.to_string()
+        } else {
+            model.to_string()
+        };
+
         let mut request = ResponsesRequest {
-            model: model.to_string(),
+            model: effective_model,
             input,
             instructions,
             stream: Some(is_codex_oauth_responses),
@@ -144,13 +167,28 @@ impl OpenAiCompatibleProvider {
         // model on a Responses-capable endpoint. Skip when Responses is the
         // primary path (Codex OAuth): the fallback flag is never consulted
         // and a 404 there is not evidence the route is missing.
-        if status == reqwest::StatusCode::NOT_FOUND
+        let responses_route_missing = status == reqwest::StatusCode::NOT_FOUND
             && !self.responses_api_primary
-            && Self::responses_404_indicates_missing_route(&error)
-        {
+            && Self::responses_404_indicates_missing_route(&error);
+        if responses_route_missing {
             super::mark_responses_api_unsupported(&self.base_url);
         }
-        if super::super::is_budget_exhausted_http_400(status, &error) {
+        if responses_route_missing {
+            // The `/responses` route 404'd: this endpoint is chat-completions
+            // only. We've just cached it unsupported so the fallback won't fire
+            // again this process, but the very first probe per process still
+            // lands here — and reporting it floods Sentry with one
+            // `"<provider> Responses API error (404): …"` event per fresh
+            // session (TAURI-RUST-5A1, ~900 status=404 events). It is an
+            // expected capability-probe miss (the chat-completions path serves
+            // the request), not a Sentry-actionable defect, so demote to info.
+            log::info!(
+                "[provider] {} /responses route 404 — endpoint is chat-completions only; \
+                 demoting and caching unsupported (fallback disabled henceforth): {}",
+                self.name,
+                super::super::factory::redact_endpoint(&self.base_url),
+            );
+        } else if super::super::is_budget_exhausted_http_400(status, &error) {
             super::super::log_budget_exhausted_http_400(
                 "responses_api",
                 self.name.as_str(),
@@ -217,6 +255,20 @@ impl OpenAiCompatibleProvider {
             // BYO-balance condition
             // (TAURI-RUST-4QF — DeepSeek "Insufficient Balance").
             super::super::log_provider_insufficient_credits_402(
+                "responses_api",
+                self.name.as_str(),
+                Some(model),
+                status,
+            );
+        } else if super::super::is_provider_quota_exhausted(&error) {
+            // Codex/ChatGPT OAuth `/responses` plan cap hit
+            // (`usage_limit_reached` / "The usage limit has been reached"): a
+            // third-party plan limit with no local lever. The subconscious loop
+            // retries until `resets_at`, so a single capped Plus user emits
+            // hundreds of identical events — demote to info instead of paging on
+            // every retry (TAURI-RUST-AFE, extends the #4076/C9A quota machinery
+            // to the Responses path).
+            super::super::log_provider_quota_exhausted(
                 "responses_api",
                 self.name.as_str(),
                 Some(model),

@@ -39,7 +39,7 @@ Anything that lands on **Prompt** is parked at the gate. `Block` is refused outr
 
 ## The flow
 
-```
+```text
 agent wants to act
         │
         ▼

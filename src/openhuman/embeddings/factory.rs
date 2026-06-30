@@ -16,7 +16,7 @@ use super::{NoopEmbedding, OllamaEmbedding, OpenAiEmbedding};
 /// arbitrary OpenAI-compatible servers (vLLM, text-embeddings-inference,
 /// stricter LocalAI builds) makes those servers 400 on an unknown field, so we
 /// gate on the model id rather than the provider kind. (Reviewer sanil-23, #3076.)
-fn model_supports_dimensions(model: &str) -> bool {
+pub(crate) fn model_supports_dimensions(model: &str) -> bool {
     model.starts_with("text-embedding-3-")
 }
 

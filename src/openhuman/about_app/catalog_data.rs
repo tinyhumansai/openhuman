@@ -22,6 +22,14 @@ const IMAGE_TO_BACKEND: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
     destinations: &["OpenHuman backend", "TinyHumans Neocortex"],
 });
 
+// Media generation sends the prompt (and any reference image URL) to GMI Cloud
+// via the OpenHuman backend; generated media is downloaded back to the device.
+const MEDIA_GEN_TO_BACKEND: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Raw,
+    destinations: &["OpenHuman backend", "GMI Cloud"],
+});
+
 const LOCAL_CREDENTIALS: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
     leaves_device: false,
     data_kind: PrivacyDataKind::Credentials,
@@ -66,6 +74,18 @@ const GITHUB_REPO_SOURCE: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
     leaves_device: true,
     data_kind: PrivacyDataKind::Metadata,
     destinations: &["GitHub API (api.github.com)"],
+});
+
+// Persona Pack fetches the published mascot manifest directly from GitHub raw
+// content, then downloads the selected runtime asset from the manifest's
+// declared file URL. The request is metadata-class (manifest and asset URLs),
+// but it does leave the device and bypasses the managed backend.
+const GITHUB_MASCOT_MANIFEST: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Metadata,
+    destinations: &[
+        "GitHub raw content (raw.githubusercontent.com) and manifest-declared mascot asset hosts",
+    ],
 });
 
 const SEARXNG_RAW_TO_CONFIGURED_INSTANCE: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
@@ -260,6 +280,26 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         how_to: "Attach an image in chat, or ask the assistant to look at a screenshot / image file",
         status: CapabilityStatus::Beta,
         privacy: IMAGE_TO_BACKEND,
+    },
+    Capability {
+        id: "intelligence.image_generation",
+        name: "Image Generation",
+        domain: "agent",
+        category: CapabilityCategory::Intelligence,
+        description: "Delegate image creation to a dedicated image sub-agent — generate images from a text prompt, or edit/restyle reference images, using hosted GMI models (Seedream / SeedEdit). Results are saved to the workspace.",
+        how_to: "Ask the assistant to generate, draw, or edit an image",
+        status: CapabilityStatus::Beta,
+        privacy: MEDIA_GEN_TO_BACKEND,
+    },
+    Capability {
+        id: "intelligence.video_generation",
+        name: "Video Generation",
+        domain: "agent",
+        category: CapabilityCategory::Intelligence,
+        description: "Delegate short-video creation to a dedicated video sub-agent — text-to-video or animate a reference image using hosted GMI models (Seedance / Veo). Generation is asynchronous; the finished clip is saved to the workspace.",
+        how_to: "Ask the assistant to generate a video or animate an image",
+        status: CapabilityStatus::Beta,
+        privacy: MEDIA_GEN_TO_BACKEND,
     },
     Capability {
         id: "conversation.label_filter",
@@ -1324,7 +1364,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         description: "Personalize the assistant as one identity: set a display name and description, edit or reset the SOUL.md personality prompt, and reach mascot avatar and voice settings — all from a single Persona surface.",
         how_to: "Settings > Persona",
         status: CapabilityStatus::Beta,
-        privacy: None,
+        privacy: GITHUB_MASCOT_MANIFEST,
     },
     Capability {
         id: "settings.manage_privacy_analytics",

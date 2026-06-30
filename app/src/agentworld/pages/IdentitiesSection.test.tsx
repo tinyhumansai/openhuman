@@ -18,7 +18,7 @@ import {
   PaymentRequiredError,
 } from '../../lib/agentworld/invokeApiClient';
 import { apiClient } from '../AgentWorldShell';
-import IdentitiesSection from './IdentitiesSection';
+import IdentitiesSection, { IDENTITY_PRICING_TIERS } from './IdentitiesSection';
 
 // ── Mock apiClient ────────────────────────────────────────────────────────────
 // Replace every namespace/method IdentitiesSection calls through.
@@ -217,9 +217,11 @@ describe('Register tab — handle availability', () => {
   test('renders the pricing tiers', () => {
     render(<IdentitiesSection />);
     expect(screen.getByText('Pricing tiers')).toBeInTheDocument();
-    expect(screen.getByText('$250/yr')).toBeInTheDocument();
-    expect(screen.getByText('$50/yr')).toBeInTheDocument();
-    expect(screen.getByText('$10/yr')).toBeInTheDocument();
+    // Authoritative tiny.place per-character USDC tiers (#3825), replacing the
+    // old incorrect "$250 / $50 / $10 per year" labels.
+    expect(screen.getByText('2,000 USDC')).toBeInTheDocument();
+    expect(screen.getByText('500 USDC')).toBeInTheDocument();
+    expect(screen.getByText('1 USDC')).toBeInTheDocument();
   });
 
   test('shows a Register button only when the handle is available', async () => {
@@ -1044,6 +1046,77 @@ describe('Trading tab — buy identity (x402)', () => {
     });
   });
 
+  test('Buy buttons re-enable after a purchase and Dismiss clears the banner (#4196)', async () => {
+    vi.mocked(apiClient.marketplace.buyIdentity)
+      .mockResolvedValueOnce({
+        challenge: { amount: '20000000', asset: 'USDC', network: 'solana-devnet' },
+        walletBalance: { raw: '50000000', formatted: '50', decimals: 6, assetSymbol: 'USDC' },
+        walletAddress: 'WalletXyz12345678',
+      })
+      .mockResolvedValueOnce({ result: { saleId: 's1' }, payment: { onChainTx: 'TxId1' } });
+    render(<IdentitiesSection />);
+    await gotoTab('Trading');
+    await userEvent.click(await screen.findByRole('button', { name: 'Buy' }));
+    await userEvent.click(await screen.findByTestId('x402-confirm'));
+
+    // Purchase completed.
+    await screen.findByTestId('buy-identity-success');
+
+    // Regression: the Buy button must NOT stay permanently disabled after a
+    // completed purchase (the old `disabled={buying !== null}` never reset
+    // because `closeBuy` was only reachable from the now-unmounted dialog).
+    expect(screen.getByRole('button', { name: 'Buy' })).toBeEnabled();
+
+    // Dismiss clears the terminal banner and keeps Buy usable.
+    await userEvent.click(screen.getByTestId('buy-identity-dismiss'));
+    expect(screen.queryByTestId('buy-identity-success')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Buy' })).toBeEnabled();
+  });
+
+  test('a failed purchase shows the error banner and Dismiss resets it (#4196)', async () => {
+    vi.mocked(apiClient.marketplace.buyIdentity)
+      .mockResolvedValueOnce({
+        challenge: { amount: '20000000', asset: 'USDC', network: 'solana-devnet' },
+        walletBalance: { raw: '50000000', formatted: '50', decimals: 6, assetSymbol: 'USDC' },
+        walletAddress: 'WalletXyz12345678',
+      })
+      .mockRejectedValueOnce(new Error('settlement boom'));
+    render(<IdentitiesSection />);
+    await gotoTab('Trading');
+    await userEvent.click(await screen.findByRole('button', { name: 'Buy' }));
+    await userEvent.click(await screen.findByTestId('x402-confirm'));
+
+    const errorBanner = await screen.findByTestId('buy-identity-error');
+    expect(errorBanner).toHaveTextContent('Purchase failed.');
+
+    // Buy must re-enable after a failed attempt, and Dismiss clears the banner.
+    expect(screen.getByRole('button', { name: 'Buy' })).toBeEnabled();
+    await userEvent.click(screen.getByTestId('buy-identity-dismiss'));
+    expect(screen.queryByTestId('buy-identity-error')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Buy' })).toBeEnabled();
+  });
+
+  test('a post-payment failure surfaces the broadcast tx in the buy error banner (#4196)', async () => {
+    // The settlement broadcast went out but the purchase did not finalize: the
+    // error carries an `onChainTx=`, so the banner must report "Payment sent…"
+    // (the truthy branch of the buy error message) and re-enable Buy.
+    vi.mocked(apiClient.marketplace.buyIdentity)
+      .mockResolvedValueOnce({
+        challenge: { amount: '20000000', asset: 'USDC', network: 'solana-devnet' },
+        walletBalance: { raw: '50000000', formatted: '50', decimals: 6, assetSymbol: 'USDC' },
+        walletAddress: 'WalletXyz12345678',
+      })
+      .mockRejectedValueOnce(new Error('paid but not confirmed (onChainTx=BuyTx99)'));
+    render(<IdentitiesSection />);
+    await gotoTab('Trading');
+    await userEvent.click(await screen.findByRole('button', { name: 'Buy' }));
+    await userEvent.click(await screen.findByTestId('x402-confirm'));
+
+    const errorBanner = await screen.findByTestId('buy-identity-error');
+    expect(errorBanner).toHaveTextContent('Payment sent but purchase did not complete.');
+    expect(screen.getByRole('button', { name: 'Buy' })).toBeEnabled();
+  });
+
   test('auction listings do not show a Buy button', async () => {
     vi.mocked(apiClient.marketplace.listIdentities).mockResolvedValue({
       identities: [{ ...fixedListing, listingType: 'auction' as const }],
@@ -1173,5 +1246,37 @@ describe('Trading tab — bid / offer commitments', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
     expect(screen.queryByTestId('commit-submit')).not.toBeInTheDocument();
     expect(apiClient.marketplace.offer).not.toHaveBeenCalled();
+  });
+});
+
+// ── Pricing tiers (#3825 — displayed price must match what is charged) ─────────
+
+describe('IDENTITY_PRICING_TIERS', () => {
+  test('mirrors tiny.place authoritative per-character USDC tiers', () => {
+    // The old table showed $250 / $50 / $10 for only 3 / 4 / 5+ chars — wrong
+    // units, wrong amounts, missing the 1- and 2-char tiers. Pin the corrected
+    // authoritative tiers so a regression to USD or the old values fails CI.
+    expect(IDENTITY_PRICING_TIERS.map(t => [t.label, t.fee])).toEqual([
+      ['1 char', '2,000 USDC'],
+      ['2 chars', '1,000 USDC'],
+      ['3 chars', '500 USDC'],
+      ['4 chars', '100 USDC'],
+      ['5+ chars', '1 USDC'],
+    ]);
+  });
+
+  test('quotes every tier in USDC, never the old per-year USD format', () => {
+    for (const tier of IDENTITY_PRICING_TIERS) {
+      expect(tier.fee).toMatch(/USDC$/);
+      expect(tier.fee).not.toMatch(/\$|\/yr/);
+    }
+  });
+
+  test('renders the corrected tiers (and not the old USD prices) on the Register tab', () => {
+    render(<IdentitiesSection />);
+    expect(screen.getByText('2,000 USDC')).toBeInTheDocument();
+    expect(screen.getByText('100 USDC')).toBeInTheDocument();
+    expect(screen.queryByText('$250/yr')).not.toBeInTheDocument();
+    expect(screen.queryByText('$10/yr')).not.toBeInTheDocument();
   });
 });

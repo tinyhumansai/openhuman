@@ -6,6 +6,7 @@ use super::*;
 use crate::openhuman::memory::chat::{test_override, ChatProvider, StaticChatProvider};
 use crate::openhuman::memory::tree_source::registry::get_or_create_source_tree;
 use crate::openhuman::memory_store::content as content_store;
+use crate::openhuman::memory_store::trees::types::TreeKind;
 use std::sync::Arc;
 use tempfile::TempDir;
 

@@ -282,6 +282,27 @@ function formatPrice(amount: string, asset: string): string {
   return formatAssetAmount(amount, asset);
 }
 
+// Indicative handle-registration pricing, by handle length. These mirror
+// tiny.place's authoritative per-character tiers (`domain-pricing.ts`:
+// 2,000 / 1,000 / 500 / 100 / 1 USDC for 1 / 2 / 3 / 4 / 5+ chars). The old
+// table here showed `$250 / $50 / $10` for only the 3 / 4 / 5+ tiers — wrong
+// units (USD not USDC), wrong amounts, and missing the 1- and 2-char tiers —
+// so users saw a price that bore no relation to what they were charged
+// (#3825, a billing-integrity bug). The binding amount is always the
+// server-quoted x402 challenge shown in the confirm dialog below; this table
+// is reference only.
+export const IDENTITY_PRICING_TIERS: ReadonlyArray<{
+  label: string;
+  example: string;
+  fee: string;
+}> = [
+  { label: '1 char', example: '@a', fee: '2,000 USDC' },
+  { label: '2 chars', example: '@ab', fee: '1,000 USDC' },
+  { label: '3 chars', example: '@abc', fee: '500 USDC' },
+  { label: '4 chars', example: '@abcd', fee: '100 USDC' },
+  { label: '5+ chars', example: '@abcde', fee: '1 USDC' },
+];
+
 // ── Register tab ──────────────────────────────────────────────────────────────
 
 // Devnet/mainnet Solana explorer link for a settled payment tx.
@@ -522,11 +543,7 @@ function RegisterTab({ onRegistered }: { onRegistered?: () => void }) {
       <div className="rounded-lg border border-line bg-surface-muted p-4">
         <h4 className="text-xs font-semibold text-content mb-2">Pricing tiers</h4>
         <div className="space-y-1">
-          {[
-            { label: '3 chars', example: '@abc', fee: '$250/yr' },
-            { label: '4 chars', example: '@abcd', fee: '$50/yr' },
-            { label: '5+ chars', example: '@abcde', fee: '$10/yr' },
-          ].map(tier => (
+          {IDENTITY_PRICING_TIERS.map(tier => (
             <div
               key={tier.label}
               className="flex items-center justify-between text-xs text-content-muted">
@@ -537,6 +554,9 @@ function RegisterTab({ onRegistered }: { onRegistered?: () => void }) {
             </div>
           ))}
         </div>
+        <p className="mt-2 text-[11px] leading-relaxed text-content-faint">
+          Indicative only — the exact price is confirmed at checkout from the on-chain x402 quote.
+        </p>
       </div>
 
       {/* Confirm-before-spend dialog (only while a challenge is pending). */}
@@ -687,6 +707,13 @@ function TradingTab() {
   const [buying, setBuying] = useState<IdentityListing | null>(null);
   const buy = useX402Buy((id, opts) => apiClient.marketplace.buyIdentity(id, opts));
   const bs = buy.state;
+  // A buy is "in flight" only while the probe/confirm/pay round-trip is active.
+  // Once it reaches a terminal banner (success/error) the Buy buttons must
+  // re-enable so the user can buy again. Otherwise `buying` stays set forever —
+  // `closeBuy` is only reachable from the dialog, which unmounts on success/error
+  // — and `disabled={buying !== null}` leaves every Buy button permanently
+  // greyed out after the first attempt (#4196).
+  const buyInFlight = buying !== null && bs.phase !== 'success' && bs.phase !== 'error';
   function startBuy(listing: IdentityListing) {
     setBuying(listing);
     buy.begin(listing.listingId);
@@ -790,7 +817,7 @@ function TradingTab() {
                       variant="primary"
                       size="xs"
                       className="flex-1"
-                      disabled={buying !== null}
+                      disabled={buyInFlight}
                       onClick={() => startBuy(listing)}>
                       Buy
                     </Button>
@@ -856,7 +883,16 @@ function TradingTab() {
           <div
             className="mt-3 rounded-md border border-green-500/30 bg-green-500/10 p-3"
             data-testid="buy-identity-success">
-            <p className="text-xs font-medium text-green-500">Purchased {buying.name}</p>
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-xs font-medium text-green-500">Purchased {buying.name}</p>
+              <Button
+                variant="secondary"
+                size="xs"
+                onClick={closeBuy}
+                data-testid="buy-identity-dismiss">
+                Dismiss
+              </Button>
+            </div>
             {bs.onChainTx && (
               <a
                 href={buyExplorerTxUrl(bs.onChainTx, bs.network)}
@@ -872,9 +908,18 @@ function TradingTab() {
           <div
             className="mt-3 rounded-md border border-red-500/30 bg-red-500/10 p-3"
             data-testid="buy-identity-error">
-            <p className="text-xs font-medium text-red-500">
-              {bs.onChainTx ? 'Payment sent but purchase did not complete.' : 'Purchase failed.'}
-            </p>
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-xs font-medium text-red-500">
+                {bs.onChainTx ? 'Payment sent but purchase did not complete.' : 'Purchase failed.'}
+              </p>
+              <Button
+                variant="secondary"
+                size="xs"
+                onClick={closeBuy}
+                data-testid="buy-identity-dismiss">
+                Dismiss
+              </Button>
+            </div>
             <p className="mt-1 text-xs text-content-muted">{bs.message}</p>
           </div>
         )}

@@ -19,7 +19,7 @@
  * (Flatpak/Snap/portable). "Open anyway" and the config-dir override are the
  * escape hatches for that case; a false "not registered" never blocks the user.
  */
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import type { ToastNotification } from '../../types/intelligence';
@@ -58,6 +58,35 @@ export function ObsidianVaultSection({ contentRootAbs, onToast }: ObsidianVaultS
   const [configFound, setConfigFound] = useState<boolean | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [configDir, setConfigDir] = useState<string>(readConfigDirOverride);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const closePanel = useCallback(() => setExpanded(false), []);
+
+  // The guidance panel is a floating popover, so it needs explicit dismissal:
+  // click outside the section or press Escape to close it. (Clicking the View
+  // Vault button itself stays inside `containerRef`, so it re-runs the check
+  // rather than dismissing — matching the panel's "click View Vault again" copy.)
+  useEffect(() => {
+    if (!expanded) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        console.debug('[ui-flow][obsidian-vault] dismiss: outside click');
+        setExpanded(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        console.debug('[ui-flow][obsidian-vault] dismiss: escape');
+        setExpanded(false);
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [expanded]);
 
   /**
    * Build + fire the `obsidian://` deep link.
@@ -192,8 +221,14 @@ export function ObsidianVaultSection({ contentRootAbs, onToast }: ObsidianVaultS
       ? t('workspace.obsidianNotFoundHelp')
       : t('workspace.vaultNotRegisteredHelp');
 
+  // The guidance panel is rendered as an absolutely-positioned popover anchored
+  // to the button (out of normal flow) rather than as an inline sibling. This
+  // component lives inside the horizontal MemoryControls toolbar; an in-flow
+  // `w-full`/wide panel would grow this flex item and force the whole toolbar to
+  // wrap/misalign (issue #4266). Taking the panel out of flow keeps the toolbar
+  // row stable regardless of the panel's visibility.
   return (
-    <div className="flex flex-col items-end gap-2" data-testid="obsidian-vault-section">
+    <div className="relative inline-flex" data-testid="obsidian-vault-section" ref={containerRef}>
       <Button
         variant="secondary"
         size="sm"
@@ -208,8 +243,19 @@ export function ObsidianVaultSection({ contentRootAbs, onToast }: ObsidianVaultS
       {expanded && (
         <div
           data-testid="obsidian-vault-guidance"
-          className="w-full max-w-xl rounded-lg border border-violet-200 bg-violet-50 p-4
-                     text-sm dark:border-violet-500/30 dark:bg-violet-500/10">
+          className="absolute right-0 top-full z-20 mt-2 w-[36rem] max-w-[calc(100vw-2rem)]
+                     rounded-lg border border-violet-200 bg-violet-50 p-4 pr-10 text-sm shadow-xl
+                     dark:border-violet-500/30 dark:bg-violet-950">
+          <button
+            type="button"
+            onClick={closePanel}
+            data-testid="obsidian-vault-close"
+            aria-label={t('common.close')}
+            className="absolute right-2 top-2 rounded-md p-1 text-content-muted
+                       hover:bg-violet-100 hover:text-content-secondary
+                       dark:hover:bg-violet-500/20 dark:hover:text-content">
+            <CloseIcon />
+          </button>
           <p className="text-content-secondary">{helpText}</p>
 
           <code
@@ -285,6 +331,24 @@ export function ObsidianVaultSection({ contentRootAbs, onToast }: ObsidianVaultS
         </div>
       )}
     </div>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true">
+      <path d="M18 6L6 18" />
+      <path d="M6 6l12 12" />
+    </svg>
   );
 }
 

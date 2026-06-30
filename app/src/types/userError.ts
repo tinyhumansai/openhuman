@@ -14,7 +14,7 @@
  */
 
 /** Stable discriminator the UI branches on. Extend as new states are added. */
-export type UserErrorKind = 'insufficient_credits' | 'budget_exceeded';
+export type UserErrorKind = 'insufficient_credits' | 'budget_exceeded' | 'api_key_missing';
 
 /** Where the failure originated, for grouping/labelling (privacy-safe). */
 export type UserErrorScope = 'chat' | 'cron' | 'provider' | 'integration' | 'workspace';

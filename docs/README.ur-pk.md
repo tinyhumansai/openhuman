@@ -34,7 +34,7 @@
 
 <p align="center">
  <a href="https://discord.tinyhumans.ai/">ڈسکارڈ</a> •
- ریڈٹ •
+ <a href="https://github.com/tinyhumansai/openhuman/discussions">Discussions</a> •
  <a href="https://x.com/intent/follow?screen_name=tinyhumansai">X/ٹویٹر</a> •
  <a href="https://tinyhumans.gitbook.io/openhuman/">دستاویزات</a> •
  <a href="https://x.com/intent/follow?screen_name=senamakel">فالو کریں @senamakel (مصنف)</a>
@@ -225,7 +225,7 @@ _AGI اور مصنوعی شعور کی طرف بڑھ رہے ہیں؟ ریپو ک
 <div dir="ltr">
 
 <p align="center">
- <a href="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left">
+ <a href="https://www.star-history.com">
  <picture>
  <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&theme=dark&legend=top-left" />
  <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left" />

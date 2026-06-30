@@ -147,6 +147,54 @@ async fn falls_back_after_retries_exhausted() {
 }
 
 #[tokio::test]
+async fn records_successful_fallback_provider_route() {
+    let primary_calls = Arc::new(AtomicUsize::new(0));
+    let fallback_calls = Arc::new(AtomicUsize::new(0));
+
+    let provider = ReliableProvider::new(
+        vec![
+            (
+                "primary".into(),
+                Box::new(MockProvider {
+                    calls: Arc::clone(&primary_calls),
+                    fail_until_attempt: usize::MAX,
+                    response: "never",
+                    error: "primary down",
+                }),
+            ),
+            (
+                "fallback".into(),
+                Box::new(MockProvider {
+                    calls: Arc::clone(&fallback_calls),
+                    fail_until_attempt: 0,
+                    response: "ok",
+                    error: "boom",
+                }),
+            ),
+        ],
+        0,
+        1,
+    );
+
+    let recorded =
+        crate::openhuman::inference::provider::with_resolved_provider_route_scope(async {
+            let result = provider
+                .chat_with_system(Some("system"), "hello", "requested-model", 0.0)
+                .await
+                .unwrap();
+            assert_eq!(result, "ok");
+            crate::openhuman::inference::provider::current_resolved_provider_route()
+        })
+        .await
+        .expect("reliable provider should record the successful route");
+
+    assert_eq!(recorded.provider, "fallback");
+    assert_eq!(recorded.model, "requested-model");
+    assert_eq!(primary_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(fallback_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn returns_aggregated_error_when_all_providers_fail() {
     let provider = ReliableProvider::new(
         vec![

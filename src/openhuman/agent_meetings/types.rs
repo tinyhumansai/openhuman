@@ -153,6 +153,84 @@ pub struct BackendMeetSpeakRequest {
     pub correlation_id: Option<String>,
 }
 
+// ---------------------------------------------------------------------------
+// meet_list_upcoming RPC types
+// ---------------------------------------------------------------------------
+
+/// Inputs to `openhuman.meet_list_upcoming`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ListUpcomingRequest {
+    /// How many minutes ahead to look for meetings. Defaults to 480 (8 hours).
+    #[serde(default)]
+    pub lookahead_minutes: Option<u32>,
+    /// Maximum number of meetings to return. Defaults to 20.
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+/// One upcoming calendar meeting that has a conferencing link.
+#[derive(Debug, Clone, Serialize)]
+pub struct UpcomingMeeting {
+    /// Calendar provider event id (stable dedupe key).
+    pub calendar_event_id: String,
+    /// Human-readable meeting title (from calendar event summary).
+    pub title: String,
+    /// Start time as Unix milliseconds.
+    pub start_time_ms: u64,
+    /// End time as Unix milliseconds.
+    pub end_time_ms: u64,
+    /// Conferencing URL (Google Meet, Zoom, Teams, Webex).
+    pub meet_url: Option<String>,
+    /// Platform slug inferred from the URL host: gmeet, zoom, teams, webex.
+    pub platform: Option<String>,
+    /// Number of attendees listed on the calendar event.
+    pub participant_count: Option<u32>,
+    /// Organizer display name or email, if present.
+    pub organizer: Option<String>,
+    /// Join policy string: "auto" | "ask" | "skip" (mapped from MeetConfig.auto_join_policy).
+    pub join_policy: String,
+    /// Source integration slug, e.g. "googlecalendar".
+    pub calendar_source: String,
+}
+
+/// Response from `openhuman.meet_list_upcoming`.
+#[derive(Debug, Clone, Serialize)]
+pub struct ListUpcomingResponse {
+    pub ok: bool,
+    pub meetings: Vec<UpcomingMeeting>,
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 per-event policy RPC types
+// ---------------------------------------------------------------------------
+
+/// Request for `openhuman.meet_set_event_policy`.
+#[derive(Debug, Deserialize)]
+pub struct SetEventPolicyRequest {
+    pub calendar_event_id: String,
+    /// "auto" | "ask" | "skip"
+    pub policy: String,
+}
+
+/// Response for `openhuman.meet_set_event_policy`.
+#[derive(Debug, Serialize)]
+pub struct SetEventPolicyResponse {
+    pub ok: bool,
+}
+
+/// Request for `openhuman.meet_get_event_policies`.
+#[derive(Debug, Deserialize)]
+pub struct GetEventPoliciesRequest {
+    pub calendar_event_ids: Vec<String>,
+}
+
+/// Response for `openhuman.meet_get_event_policies`.
+#[derive(Debug, Serialize)]
+pub struct GetEventPoliciesResponse {
+    pub ok: bool,
+    pub policies: std::collections::HashMap<String, String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

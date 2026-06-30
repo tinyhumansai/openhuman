@@ -47,10 +47,11 @@ use crate::openhuman::memory_store::chunks::store::with_connection;
 use crate::openhuman::memory_store::content::{
     atomic::stage_summary_with_layout,
     paths::{slugify_source_id, SummaryDiskLayout},
+    wiki_git::{SummaryCommitBatch, SummaryCommitEntry},
     SummaryComposeInput,
 };
 use crate::openhuman::memory_store::trees::types::{
-    Buffer, SummaryNode, Tree, TreeKind, INPUT_TOKEN_BUDGET, OUTPUT_TOKEN_BUDGET, SUMMARY_FANOUT,
+    Buffer, SummaryNode, Tree, INPUT_TOKEN_BUDGET, OUTPUT_TOKEN_BUDGET, SUMMARY_FANOUT,
 };
 use crate::openhuman::memory_tree::score::embed::build_write_embedder;
 use crate::openhuman::memory_tree::score::extract::EntityExtractor;
@@ -714,6 +715,18 @@ pub(crate) async fn seal_one_level(
         node.id,
         staged.content_path
     );
+    let summary_commit = summary_seal_batch(
+        tree,
+        "bucket_seal",
+        std::slice::from_ref(&node),
+        std::slice::from_ref(&staged.content_path),
+    )
+    .with_context(|| {
+        format!(
+            "build summary git batch failed for {}; seal aborted, buffer stays unsealed for retry",
+            node.id
+        )
+    })?;
 
     // Single write transaction: insert summary, clear this buffer, append
     // summary id to parent buffer, bump tree max_level/root if needed,
@@ -724,7 +737,6 @@ pub(crate) async fn seal_one_level(
     let summary_id_for_closure = summary_id.clone();
     let target_level_for_closure = target_level;
     let tree_id = tree.id.clone();
-    let tree_kind = tree.kind;
     with_connection(config, move |conn| {
         let tx = conn.unchecked_transaction()?;
 
@@ -836,6 +848,13 @@ pub(crate) async fn seal_one_level(
         Ok(())
     })?;
 
+    commit_summary_seal(config, &summary_commit).with_context(|| {
+        format!(
+            "commit_summary_seal failed for {} after DB seal commit",
+            summary_id
+        )
+    })?;
+
     log::info!(
         "[tree::bucket_seal] sealed tree_id={} level={}→{} summary_id={} children={}",
         tree.id,
@@ -874,6 +893,57 @@ fn refresh_last_sealed_tx(
     )
     .with_context(|| format!("Failed to refresh last_sealed_at for tree {tree_id}"))?;
     Ok(())
+}
+
+fn summary_seal_batch(
+    tree: &Tree,
+    reason: &str,
+    nodes: &[SummaryNode],
+    content_paths: &[String],
+) -> Result<SummaryCommitBatch> {
+    if nodes.is_empty() {
+        return Ok(SummaryCommitBatch {
+            reason: reason.to_string(),
+            tree_id: tree.id.clone(),
+            tree_scope: tree.scope.clone(),
+            entries: Vec::new(),
+        });
+    }
+    if nodes.len() != content_paths.len() {
+        anyhow::bail!(
+            "[tree::bucket_seal] commit_summary_seal: node/path length mismatch nodes={} paths={}",
+            nodes.len(),
+            content_paths.len()
+        );
+    }
+
+    let entries = nodes
+        .iter()
+        .zip(content_paths.iter())
+        .map(|(node, content_path)| SummaryCommitEntry {
+            summary_id: node.id.clone(),
+            content_path: content_path.clone(),
+            level: node.level,
+            child_count: node.child_ids.len(),
+            token_count: node.token_count,
+            time_range_start: node.time_range_start,
+            time_range_end: node.time_range_end,
+        })
+        .collect();
+
+    Ok(SummaryCommitBatch {
+        reason: reason.to_string(),
+        tree_id: tree.id.clone(),
+        tree_scope: tree.scope.clone(),
+        entries,
+    })
+}
+
+fn commit_summary_seal(config: &Config, batch: &SummaryCommitBatch) -> Result<()> {
+    crate::openhuman::memory_store::content::wiki_git::commit_summaries(
+        &config.memory_tree_content_root(),
+        batch,
+    )
 }
 
 /// Fetch contributions for `item_ids`. At level 0 we pull from
@@ -1426,6 +1496,18 @@ async fn seal_explicit_children(
                 node.id
             )
         })?;
+    let summary_commit = summary_seal_batch(
+        tree,
+        "document_subtree_seal",
+        std::slice::from_ref(&node),
+        std::slice::from_ref(&staged.content_path),
+    )
+    .with_context(|| {
+        format!(
+            "build summary git batch failed for doc-subtree node {}; seal aborted",
+            node.id
+        )
+    })?;
 
     // Persist the summary row + backlink children — NO buffer / tree-root
     // mutation (those belong to the merge tier).
@@ -1470,6 +1552,13 @@ async fn seal_explicit_children(
         }
         tx.commit()?;
         Ok(())
+    })?;
+
+    commit_summary_seal(config, &summary_commit).with_context(|| {
+        format!(
+            "commit_summary_seal failed for doc-subtree node {} after DB seal commit",
+            summary_id
+        )
     })?;
 
     log::info!(

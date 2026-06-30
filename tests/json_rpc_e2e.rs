@@ -982,6 +982,76 @@ fn ensure_test_rpc_auth() {
 }
 
 #[tokio::test]
+async fn json_rpc_config_update_browser_settings_persists_backend() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    write_min_config(&openhuman_home, "http://127.0.0.1:9");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    let updated = post_json_rpc(
+        &rpc_base,
+        4124_1,
+        "openhuman.config_update_browser_settings",
+        json!({
+            "enabled": true,
+            "backend": "playwright"
+        }),
+    )
+    .await;
+    let updated_result =
+        assert_no_jsonrpc_error(&updated, "config_update_browser_settings backend");
+    let updated_snapshot = peel_logs_envelope(updated_result);
+    assert_eq!(
+        updated_snapshot
+            .pointer("/config/browser/enabled")
+            .and_then(Value::as_bool),
+        Some(true),
+        "browser enabled flag should persist in update response: {updated_snapshot}"
+    );
+    assert_eq!(
+        updated_snapshot
+            .pointer("/config/browser/backend")
+            .and_then(Value::as_str),
+        Some("playwright"),
+        "browser backend should persist in update response: {updated_snapshot}"
+    );
+
+    let get = post_json_rpc(&rpc_base, 4124_2, "openhuman.config_get", json!({})).await;
+    let get_result = assert_no_jsonrpc_error(&get, "config_get");
+    let snapshot = peel_logs_envelope(get_result);
+    assert_eq!(
+        snapshot
+            .pointer("/config/browser/backend")
+            .and_then(Value::as_str),
+        Some("playwright"),
+        "browser backend should persist in config_get response: {snapshot}"
+    );
+
+    let invalid = post_json_rpc(
+        &rpc_base,
+        4124_3,
+        "openhuman.config_update_browser_settings",
+        json!({
+            "backend": "netscape"
+        }),
+    )
+    .await;
+    assert_jsonrpc_error(&invalid, "invalid browser backend");
+
+    rpc_join.abort();
+}
+
+#[tokio::test]
 async fn json_rpc_tokenjuice_detect_and_cache_stats() {
     let _env_lock = json_rpc_e2e_env_lock();
     let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
@@ -10357,6 +10427,12 @@ async fn mcp_clients_lifecycle() {
 /// No npx, no network: we pre-seed `smithery:detail:<name>` with a detail whose
 /// stdio `exampleConfig.command` points at the stub binary, so
 /// `mcp_clients_install` resolves the launch command to the stub.
+///
+/// Smithery is now opt-in (only enabled when an API key is set), so we install
+/// with the explicit `smithery::` source prefix. `registry_get` routes a
+/// prefixed name straight to that adapter via `registry_for_source`, which
+/// resolves Smithery regardless of the key gate — the same path used for detail
+/// lookups of an already-installed Smithery server.
 #[tokio::test]
 async fn mcp_clients_install_connect_tool_call_happy_path() {
     let _env_lock = json_rpc_e2e_env_lock();
@@ -10410,7 +10486,7 @@ async fn mcp_clients_install_connect_tool_call_happy_path() {
         &rpc_base,
         9920,
         "openhuman.mcp_clients_install",
-        json!({ "qualified_name": qualified_name, "env": {} }),
+        json!({ "qualified_name": format!("smithery::{qualified_name}"), "env": {} }),
     )
     .await;
     let install_result = assert_no_jsonrpc_error(&install, "mcp_clients_install (happy path)");
@@ -10564,6 +10640,9 @@ async fn mcp_clients_set_enabled_smoke() {
     write_min_config(&user_scoped_dir, &mock_origin);
 
     // Seed the registry detail cache so install resolves offline to the stub.
+    // Smithery is opt-in (gated on an API key), so install routes via the
+    // explicit `smithery::` source prefix below — `registry_for_source` resolves
+    // the adapter regardless of the key gate.
     let stub_path = env!("CARGO_BIN_EXE_test-mcp-stub");
     let qualified_name = "@openhuman-test/echo-set-enabled";
     let detail = serde_json::json!({
@@ -10595,7 +10674,7 @@ async fn mcp_clients_set_enabled_smoke() {
         &rpc_base,
         9940,
         "openhuman.mcp_clients_install",
-        json!({ "qualified_name": qualified_name, "env": {} }),
+        json!({ "qualified_name": format!("smithery::{qualified_name}"), "env": {} }),
     )
     .await;
     let install_result =
@@ -10644,6 +10723,151 @@ async fn mcp_clients_set_enabled_smoke() {
         se_true_body.get("enabled"),
         Some(&json!(true)),
         "set_enabled=true should report enabled=true: {se_true_body}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+/// `mcp_clients_install` idempotency (issue #4120 review): a re-install of the
+/// same service (a) collapses to ONE row and returns `already_installed:true`
+/// even when the first install used a source-prefixed name and the second used
+/// the bare name (canonical dedup), and (b) MERGES new env onto the existing row
+/// so re-running the dialog to replace an expired token doesn't drop the user's
+/// other stored keys.
+#[tokio::test]
+async fn mcp_clients_install_idempotent_refresh_and_canonical_dedup() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+    let user_scoped_dir = openhuman_home.join("users").join("local");
+    write_min_config(&user_scoped_dir, &mock_origin);
+
+    // Seed the smithery detail cache so the FIRST (prefixed) install resolves
+    // offline. The second install hits the idempotency branch before registry_get,
+    // so it needs no cache.
+    let stub_path = env!("CARGO_BIN_EXE_test-mcp-stub");
+    let qualified_name = "@openhuman-test/echo-reinstall";
+    let detail = serde_json::json!({
+        "qualifiedName": qualified_name,
+        "displayName": "Test Echo Reinstall",
+        "description": "Stub for install idempotency.",
+        "connections": [{
+            "type": "stdio",
+            "published": true,
+            "exampleConfig": { "command": stub_path, "args": [] }
+        }]
+    });
+    let seed_config = openhuman_core::openhuman::config::load_config_with_timeout()
+        .await
+        .expect("load config for cache seed");
+    openhuman_core::openhuman::mcp_registry::store::set_cached(
+        &seed_config,
+        &format!("smithery:detail:{qualified_name}"),
+        &detail.to_string(),
+    )
+    .expect("seed smithery detail cache");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // ── 1. install via the source-prefixed name with two env keys ────────────
+    let install1 = post_json_rpc(
+        &rpc_base,
+        9960,
+        "openhuman.mcp_clients_install",
+        json!({
+            "qualified_name": format!("smithery::{qualified_name}"),
+            "env": { "TOKEN": "old", "KEEP": "v1" }
+        }),
+    )
+    .await;
+    let r1 = assert_no_jsonrpc_error(&install1, "mcp_clients_install (first)");
+    let b1 = peel_logs_envelope(r1);
+    let server_id = b1
+        .get("server")
+        .and_then(|s| s.get("server_id"))
+        .and_then(Value::as_str)
+        .expect("first install returns server_id")
+        .to_string();
+    // Stored qualified_name is the bare (canonical) name, not the prefixed one.
+    assert_eq!(
+        b1.get("server")
+            .and_then(|s| s.get("qualified_name"))
+            .and_then(Value::as_str),
+        Some(qualified_name),
+        "install should store the canonical (bare) qualified_name: {b1}"
+    );
+
+    // ── 2. re-install via the BARE name with a rotated token ─────────────────
+    let install2 = post_json_rpc(
+        &rpc_base,
+        9961,
+        "openhuman.mcp_clients_install",
+        json!({ "qualified_name": qualified_name, "env": { "TOKEN": "new" } }),
+    )
+    .await;
+    let r2 = assert_no_jsonrpc_error(&install2, "mcp_clients_install (re-install)");
+    let b2 = peel_logs_envelope(r2);
+    assert_eq!(
+        b2.get("already_installed"),
+        Some(&json!(true)),
+        "re-install should be flagged already_installed: {b2}"
+    );
+    assert_eq!(
+        b2.get("server")
+            .and_then(|s| s.get("server_id"))
+            .and_then(Value::as_str),
+        Some(server_id.as_str()),
+        "re-install should return the same server_id: {b2}"
+    );
+    // Env merged: the rotated key AND the untouched first-install key survive.
+    let env_keys: Vec<String> = b2
+        .get("server")
+        .and_then(|s| s.get("env_keys"))
+        .and_then(Value::as_array)
+        .expect("re-install returns env_keys")
+        .iter()
+        .filter_map(|v| v.as_str().map(String::from))
+        .collect();
+    assert!(
+        env_keys.contains(&"TOKEN".to_string()) && env_keys.contains(&"KEEP".to_string()),
+        "re-install should merge env (KEEP preserved, TOKEN present): {env_keys:?}"
+    );
+
+    // ── 3. exactly one installed row for this service (no duplicate) ─────────
+    let listed = post_json_rpc(
+        &rpc_base,
+        9962,
+        "openhuman.mcp_clients_installed_list",
+        json!({}),
+    )
+    .await;
+    let lb = peel_logs_envelope(assert_no_jsonrpc_error(
+        &listed,
+        "mcp_clients_installed_list",
+    ));
+    let count = lb
+        .get("installed")
+        .and_then(Value::as_array)
+        .expect("installed list")
+        .iter()
+        .filter(|s| s.get("qualified_name").and_then(Value::as_str) == Some(qualified_name))
+        .count();
+    assert_eq!(
+        count, 1,
+        "prefixed + bare install must collapse to one row: {lb}"
     );
 
     mock_join.abort();
@@ -13385,6 +13609,187 @@ async fn json_rpc_threads_token_usage_reads_persisted_thread_totals() {
     assert_eq!(unknown_data["input_tokens"], 0);
     assert_eq!(unknown_data["cost_usd"], 0.0);
     assert_eq!(unknown_data["has_usage"], false);
+
+    rpc_join.abort();
+}
+
+/// `openhuman.meet_list_upcoming` — verifies the RPC is registered, accepts
+/// optional params, and returns the correct envelope shape.
+///
+/// In the test environment there is no backend session token, so
+/// `create_composio_client` fails gracefully and the handler returns an
+/// empty meetings list (ok=true, meetings=[]) rather than an error.
+/// This validates the graceful no-calendar path without requiring a live
+/// Composio connection.
+#[tokio::test]
+async fn json_rpc_meet_list_upcoming_returns_empty_when_no_calendar_connected() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    write_min_config(&openhuman_home, "http://127.0.0.1:9");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // --- no params: defaults apply, returns ok=true with empty meetings ---
+    let resp_default =
+        post_json_rpc(&rpc_base, 9200, "openhuman.meet_list_upcoming", json!({})).await;
+    let result = assert_no_jsonrpc_error(&resp_default, "meet_list_upcoming no-params");
+    let body = result.get("result").unwrap_or(result);
+    assert_eq!(
+        body.get("ok"),
+        Some(&json!(true)),
+        "ok must be true when no calendar connected"
+    );
+    let meetings = body
+        .get("meetings")
+        .and_then(|v| v.as_array())
+        .expect("meetings array must be present");
+    assert!(
+        meetings.is_empty(),
+        "meetings must be empty when no Composio client available"
+    );
+
+    // --- explicit lookahead_minutes + limit: still returns ok=true with empty ---
+    let resp_explicit = post_json_rpc(
+        &rpc_base,
+        9201,
+        "openhuman.meet_list_upcoming",
+        json!({ "lookahead_minutes": 120, "limit": 5 }),
+    )
+    .await;
+    let result2 = assert_no_jsonrpc_error(&resp_explicit, "meet_list_upcoming explicit params");
+    let body2 = result2.get("result").unwrap_or(result2);
+    assert_eq!(body2.get("ok"), Some(&json!(true)));
+    assert!(body2
+        .get("meetings")
+        .and_then(|v| v.as_array())
+        .is_some_and(|arr| arr.is_empty()));
+
+    // --- invalid param type: lookahead_minutes must be a number ---
+    let resp_bad = post_json_rpc(
+        &rpc_base,
+        9202,
+        "openhuman.meet_list_upcoming",
+        json!({ "lookahead_minutes": "not-a-number" }),
+    )
+    .await;
+    assert_jsonrpc_error(&resp_bad, "meet_list_upcoming bad lookahead type");
+
+    rpc_join.abort();
+}
+
+/// `openhuman.meet_set_event_policy` / `openhuman.meet_get_event_policies` —
+/// verifies the per-event policy RPC round-trip.
+///
+/// Uses an in-process HTTP server so the store hits a real (temp) SQLite DB.
+#[tokio::test]
+async fn json_rpc_meet_event_policy_round_trip() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    write_min_config(&openhuman_home, "http://127.0.0.1:9");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // --- set a policy for two events ---
+    let resp_set1 = post_json_rpc(
+        &rpc_base,
+        9300,
+        "openhuman.meet_set_event_policy",
+        json!({ "calendar_event_id": "cal-evt-001", "policy": "auto" }),
+    )
+    .await;
+    let result1 = assert_no_jsonrpc_error(&resp_set1, "set_event_policy cal-evt-001");
+    let body1 = result1.get("result").unwrap_or(result1);
+    assert_eq!(body1.get("ok"), Some(&json!(true)));
+
+    let resp_set2 = post_json_rpc(
+        &rpc_base,
+        9301,
+        "openhuman.meet_set_event_policy",
+        json!({ "calendar_event_id": "cal-evt-002", "policy": "skip" }),
+    )
+    .await;
+    let result2 = assert_no_jsonrpc_error(&resp_set2, "set_event_policy cal-evt-002");
+    let body2 = result2.get("result").unwrap_or(result2);
+    assert_eq!(body2.get("ok"), Some(&json!(true)));
+
+    // --- retrieve them in a batch ---
+    let resp_get = post_json_rpc(
+        &rpc_base,
+        9302,
+        "openhuman.meet_get_event_policies",
+        json!({ "calendar_event_ids": ["cal-evt-001", "cal-evt-002", "cal-evt-missing"] }),
+    )
+    .await;
+    let result_get = assert_no_jsonrpc_error(&resp_get, "get_event_policies batch");
+    let body_get = result_get.get("result").unwrap_or(result_get);
+    assert_eq!(body_get.get("ok"), Some(&json!(true)));
+    let policies = body_get.get("policies").expect("policies field");
+    assert_eq!(policies.get("cal-evt-001"), Some(&json!("auto")));
+    assert_eq!(policies.get("cal-evt-002"), Some(&json!("skip")));
+    assert!(
+        policies.get("cal-evt-missing").is_none(),
+        "unknown event must be absent from policies map"
+    );
+
+    // --- overwrite a policy and verify the new value is returned ---
+    let resp_overwrite = post_json_rpc(
+        &rpc_base,
+        9303,
+        "openhuman.meet_set_event_policy",
+        json!({ "calendar_event_id": "cal-evt-001", "policy": "ask" }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&resp_overwrite, "set_event_policy overwrite");
+
+    let resp_get2 = post_json_rpc(
+        &rpc_base,
+        9304,
+        "openhuman.meet_get_event_policies",
+        json!({ "calendar_event_ids": ["cal-evt-001"] }),
+    )
+    .await;
+    let result_get2 = assert_no_jsonrpc_error(&resp_get2, "get_event_policies after overwrite");
+    let body_get2 = result_get2.get("result").unwrap_or(result_get2);
+    let policies2 = body_get2
+        .get("policies")
+        .expect("policies field after overwrite");
+    assert_eq!(
+        policies2.get("cal-evt-001"),
+        Some(&json!("ask")),
+        "overwritten policy must reflect the new value"
+    );
+
+    // --- invalid policy string is rejected ---
+    let resp_bad = post_json_rpc(
+        &rpc_base,
+        9305,
+        "openhuman.meet_set_event_policy",
+        json!({ "calendar_event_id": "cal-evt-001", "policy": "invalid_policy" }),
+    )
+    .await;
+    assert_jsonrpc_error(&resp_bad, "set_event_policy invalid policy");
 
     rpc_join.abort();
 }

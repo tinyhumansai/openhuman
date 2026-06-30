@@ -1,0 +1,280 @@
+/*
+ * Syntax-highlighting token theme for highlight.js via rehype-highlight.
+ *
+ * Design decisions:
+ *   - Background is transparent so the bubble container (.prose-pre:bg-stone-300/50
+ *     or .prose-pre:bg-white/10) owns the background. CodeBlock.tsx further wraps
+ *     the <pre> in a container div that also contributes the bg — this rule just
+ *     prevents hljs from re-painting the background.
+ *   - Dark mode: `:root.dark` selector, matching the convention in tokens.css.
+ *   - User-tone dark bubbles: `[data-tone="user"] .hljs-*` block forces readable
+ *     colours on the dark background used by user message bubbles.
+ *
+ * Palette rationale (project token reference — see styles/tokens.css):
+ *   keywords/built_in    → primary blue  (#4A83DD family)
+ *   strings              → sage/green    (#22c55e family)
+ *   numbers/literals     → amber         (#f59e0b family)
+ *   comments             → muted grey    (--content-muted)
+ *   function/class names → lighter blue  (primary-400)
+ *   attributes           → coral         (#f87171 family)
+ *   types/meta           → primary-300 / light blue
+ *   punctuation/default  → content (inherits prose)
+ */
+
+/* ── Base reset ─────────────────────────────────────────────────────────── */
+pre code.hljs {
+  background: transparent;
+  padding: 0;
+  /* Let the parent <pre> control font-size (prose-code:text-xs). */
+  font-size: inherit;
+  line-height: 1.6;
+}
+
+/* ── Light mode tokens ──────────────────────────────────────────────────── */
+.hljs {
+  color: #171717; /* stone-900 / --content */
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-tag {
+  color: #2563eb; /* primary-600 */
+  font-weight: 500;
+}
+
+.hljs-built_in,
+.hljs-builtin-name {
+  color: #1d4ed8; /* primary-700 */
+}
+
+.hljs-type,
+.hljs-class .hljs-title,
+.hljs-title.class_,
+.hljs-title.class_.inherited__ {
+  color: #3b82f6; /* primary-500 */
+}
+
+.hljs-function .hljs-title,
+.hljs-title.function_,
+.hljs-title {
+  color: #60a5fa; /* primary-400 */
+  font-weight: 500;
+}
+
+.hljs-string,
+.hljs-template-string,
+.hljs-regexp {
+  color: #16a34a; /* sage-600 */
+}
+
+.hljs-number,
+.hljs-literal {
+  color: #d97706; /* amber-600 */
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: #737373; /* --content-muted / stone-500 */
+  font-style: italic;
+}
+
+.hljs-attr,
+.hljs-attribute,
+.hljs-selector-attr,
+.hljs-selector-pseudo {
+  color: #dc2626; /* coral-600 */
+}
+
+.hljs-variable,
+.hljs-template-variable {
+  color: #b45309; /* amber-700 */
+}
+
+.hljs-symbol,
+.hljs-bullet,
+.hljs-link,
+.hljs-meta,
+.hljs-meta .hljs-keyword,
+.hljs-selector-id,
+.hljs-selector-class {
+  color: #1d4ed8; /* primary-700 */
+}
+
+.hljs-deletion {
+  color: #dc2626;
+  background: #fee2e2;
+}
+
+.hljs-addition {
+  color: #15803d;
+  background: #dcfce7;
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: 700;
+}
+
+/* ── Dark mode tokens (:root.dark matches tokens.css convention) ─────────── */
+:root.dark .hljs {
+  color: #f5f5f5; /* neutral-100 / --content dark */
+}
+
+:root.dark .hljs-keyword,
+:root.dark .hljs-selector-tag,
+:root.dark .hljs-tag {
+  color: #60a5fa; /* primary-400 */
+}
+
+:root.dark .hljs-built_in,
+:root.dark .hljs-builtin-name {
+  color: #93c5fd; /* primary-300 */
+}
+
+:root.dark .hljs-type,
+:root.dark .hljs-class .hljs-title,
+:root.dark .hljs-title.class_,
+:root.dark .hljs-title.class_.inherited__ {
+  color: #93c5fd; /* primary-300 */
+}
+
+:root.dark .hljs-function .hljs-title,
+:root.dark .hljs-title.function_,
+:root.dark .hljs-title {
+  color: #bfdbfe; /* primary-200 */
+}
+
+:root.dark .hljs-string,
+:root.dark .hljs-template-string,
+:root.dark .hljs-regexp {
+  color: #4ade80; /* sage-400 */
+}
+
+:root.dark .hljs-number,
+:root.dark .hljs-literal {
+  color: #fbbf24; /* amber-400 */
+}
+
+:root.dark .hljs-comment,
+:root.dark .hljs-quote {
+  color: #737373; /* stone-500 */
+  font-style: italic;
+}
+
+:root.dark .hljs-attr,
+:root.dark .hljs-attribute,
+:root.dark .hljs-selector-attr,
+:root.dark .hljs-selector-pseudo {
+  color: #f87171; /* coral-400 */
+}
+
+:root.dark .hljs-variable,
+:root.dark .hljs-template-variable {
+  color: #fbbf24; /* amber-400 */
+}
+
+:root.dark .hljs-symbol,
+:root.dark .hljs-bullet,
+:root.dark .hljs-link,
+:root.dark .hljs-meta,
+:root.dark .hljs-meta .hljs-keyword,
+:root.dark .hljs-selector-id,
+:root.dark .hljs-selector-class {
+  color: #93c5fd; /* primary-300 */
+}
+
+:root.dark .hljs-deletion {
+  color: #f87171; /* coral-400 */
+  background: rgba(239, 68, 68, 0.15);
+}
+
+:root.dark .hljs-addition {
+  color: #4ade80; /* sage-400 */
+  background: rgba(74, 222, 128, 0.1);
+}
+
+/* ── User-tone bubble overrides (dark background in both light + dark modes) ─ */
+/*
+ * User message bubbles use a dark primary-coloured background in both light
+ * and dark app themes. `.data-tone="user"` is set on the CodeBlock container
+ * div. These selectors ensure token colours stay legible on that dark surface.
+ */
+[data-tone='user'] .hljs {
+  color: #f5f5f5;
+}
+
+[data-tone='user'] .hljs-keyword,
+[data-tone='user'] .hljs-selector-tag,
+[data-tone='user'] .hljs-tag {
+  color: #93c5fd; /* primary-300 */
+}
+
+[data-tone='user'] .hljs-built_in,
+[data-tone='user'] .hljs-builtin-name {
+  color: #bfdbfe; /* primary-200 */
+}
+
+[data-tone='user'] .hljs-type,
+[data-tone='user'] .hljs-class .hljs-title,
+[data-tone='user'] .hljs-title.class_,
+[data-tone='user'] .hljs-title.class_.inherited__ {
+  color: #93c5fd;
+}
+
+[data-tone='user'] .hljs-function .hljs-title,
+[data-tone='user'] .hljs-title.function_,
+[data-tone='user'] .hljs-title {
+  color: #bfdbfe;
+}
+
+[data-tone='user'] .hljs-string,
+[data-tone='user'] .hljs-template-string,
+[data-tone='user'] .hljs-regexp {
+  color: #86efac; /* sage-300 */
+}
+
+[data-tone='user'] .hljs-number,
+[data-tone='user'] .hljs-literal {
+  color: #fde68a; /* amber-200 */
+}
+
+[data-tone='user'] .hljs-comment,
+[data-tone='user'] .hljs-quote {
+  color: #a3a3a3; /* neutral-400 */
+  font-style: italic;
+}
+
+[data-tone='user'] .hljs-attr,
+[data-tone='user'] .hljs-attribute,
+[data-tone='user'] .hljs-selector-attr,
+[data-tone='user'] .hljs-selector-pseudo {
+  color: #fca5a5; /* coral-300 */
+}
+
+[data-tone='user'] .hljs-variable,
+[data-tone='user'] .hljs-template-variable {
+  color: #fde68a; /* amber-200 */
+}
+
+[data-tone='user'] .hljs-symbol,
+[data-tone='user'] .hljs-bullet,
+[data-tone='user'] .hljs-link,
+[data-tone='user'] .hljs-meta,
+[data-tone='user'] .hljs-meta .hljs-keyword,
+[data-tone='user'] .hljs-selector-id,
+[data-tone='user'] .hljs-selector-class {
+  color: #bfdbfe; /* primary-200 */
+}
+
+[data-tone='user'] .hljs-deletion {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.2);
+}
+
+[data-tone='user'] .hljs-addition {
+  color: #86efac;
+  background: rgba(74, 222, 128, 0.15);
+}

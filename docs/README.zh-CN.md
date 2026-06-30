@@ -26,7 +26,7 @@
 
 <p align="center">
  <a href="https://discord.tinyhumans.ai/">Discord</a> •
- Reddit •
+ <a href="https://github.com/tinyhumansai/openhuman/discussions">Discussions</a> •
  <a href="https://x.com/intent/follow?screen_name=tinyhumansai">X/Twitter</a> •
  <a href="https://tinyhumans.gitbook.io/openhuman/">文档</a> •
  <a href="https://x.com/intent/follow?screen_name=senamakel">关注 @senamakel（作者）</a>
@@ -131,7 +131,7 @@ OpenHuman 跳过了等待期。连接你的账户，让[自动拉取](https://ti
 _致力于 AGI 和人工意识？为仓库加星，帮助更多人找到这条路。_
 
 <p align="center">
- <a href="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left">
+ <a href="https://www.star-history.com">
  <picture>
  <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&theme=dark&legend=top-left" />
  <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left" />

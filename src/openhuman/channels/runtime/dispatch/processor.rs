@@ -462,7 +462,6 @@ pub(crate) async fn process_channel_message(
             turn_request,
         )
         .await
-        .map(|resp| resp.text)
         .map_err(|err| match err {
             // Unwrap handler-returned errors so the underlying
             // message (e.g. "Agent exceeded maximum tool iterations")
@@ -514,8 +513,17 @@ pub(crate) async fn process_channel_message(
         log_worker_join_result(handle.await);
     }
 
-    let (success, response_text) = match llm_result {
+    let (success, response_text, response_provider, response_model) = match llm_result {
         Ok(Ok(response)) => {
+            let resolved_provider = response
+                .resolved_provider
+                .clone()
+                .unwrap_or_else(|| route.provider.clone());
+            let resolved_model = response
+                .resolved_model
+                .clone()
+                .unwrap_or_else(|| route.model.clone());
+            let response_text = response.text;
             // Save user + assistant turn to per-sender history
             {
                 let mut histories = ctx
@@ -524,7 +532,7 @@ pub(crate) async fn process_channel_message(
                     .unwrap_or_else(|e| e.into_inner());
                 let turns = histories.entry(history_key).or_default();
                 turns.push(ChatMessage::user(&enriched_message));
-                turns.push(ChatMessage::assistant(&response));
+                turns.push(ChatMessage::assistant(&response_text));
                 // Trim to MAX_CHANNEL_HISTORY (keep recent turns)
                 while turns.len() > crate::openhuman::channels::context::MAX_CHANNEL_HISTORY {
                     turns.remove(0);
@@ -533,7 +541,7 @@ pub(crate) async fn process_channel_message(
             println!(
                 "  🤖 Reply ({}ms): {}",
                 started_at.elapsed().as_millis(),
-                truncate_with_ellipsis(&response, REPLY_LOG_TRUNCATE_CHARS)
+                truncate_with_ellipsis(&response_text, REPLY_LOG_TRUNCATE_CHARS)
             );
             if let Some(channel) = target_channel.as_ref() {
                 if let Some(ref draft_id) = draft_message_id {
@@ -541,7 +549,7 @@ pub(crate) async fn process_channel_message(
                         .finalize_draft(
                             &msg.reply_target,
                             draft_id,
-                            &response,
+                            &response_text,
                             msg.thread_ts.as_deref(),
                         )
                         .await
@@ -549,14 +557,14 @@ pub(crate) async fn process_channel_message(
                         tracing::warn!("Failed to finalize draft: {e}; sending as new message");
                         let _ = channel
                             .send(
-                                &SendMessage::new(&response, &msg.reply_target)
+                                &SendMessage::new(&response_text, &msg.reply_target)
                                     .in_thread(msg.thread_ts.clone()),
                             )
                             .await;
                     }
                 } else if let Err(e) = channel
                     .send(
-                        &SendMessage::new(&response, &msg.reply_target)
+                        &SendMessage::new(&response_text, &msg.reply_target)
                             .in_thread(msg.thread_ts.clone()),
                     )
                     .await
@@ -564,7 +572,7 @@ pub(crate) async fn process_channel_message(
                     eprintln!("  ❌ Failed to reply on {}: {e}", channel.name());
                 }
             }
-            (true, response)
+            (true, response_text, resolved_provider, resolved_model)
         }
         Ok(Err(e)) => {
             if is_context_window_overflow_error(&e) {
@@ -607,6 +615,8 @@ pub(crate) async fn process_channel_message(
                     content: msg.content.clone(),
                     thread_ts: msg.thread_ts.clone(),
                     response: error_text.to_string(),
+                    provider: route.provider.clone(),
+                    model: route.model.clone(),
                     elapsed_ms: started_at.elapsed().as_millis() as u64,
                     success: false,
                     workspace_dir: ctx.workspace_dir.as_ref().clone(),
@@ -685,7 +695,12 @@ pub(crate) async fn process_channel_message(
                         .await;
                 }
             }
-            (false, error_response)
+            (
+                false,
+                error_response,
+                route.provider.clone(),
+                route.model.clone(),
+            )
         }
         Err(_) => {
             let timeout_msg = format!("LLM response timed out after {}s", ctx.message_timeout_secs);
@@ -724,7 +739,12 @@ pub(crate) async fn process_channel_message(
                         .await;
                 }
             }
-            (false, error_text)
+            (
+                false,
+                error_text,
+                route.provider.clone(),
+                route.model.clone(),
+            )
         }
     };
 
@@ -736,6 +756,8 @@ pub(crate) async fn process_channel_message(
         content: msg.content.clone(),
         thread_ts: msg.thread_ts.clone(),
         response: response_text,
+        provider: response_provider,
+        model: response_model,
         elapsed_ms: started_at.elapsed().as_millis() as u64,
         success,
         workspace_dir: ctx.workspace_dir.as_ref().clone(),

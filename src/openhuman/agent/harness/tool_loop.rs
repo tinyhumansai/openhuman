@@ -1,5 +1,5 @@
 use crate::openhuman::agent::progress::AgentProgress;
-use crate::openhuman::inference::provider::{ChatMessage, Provider};
+use crate::openhuman::inference::provider::{ChatMessage, Provider, AGENT_TURN_MAX_OUTPUT_TOKENS};
 use crate::openhuman::tools::policy::{DefaultToolPolicy, ToolPolicy};
 use crate::openhuman::tools::Tool;
 use anyhow::Result;
@@ -599,6 +599,7 @@ pub(crate) async fn run_tool_call_loop(
         multimodal_config,
         multimodal_file_config,
         max_iterations,
+        AGENT_TURN_MAX_OUTPUT_TOKENS,
         on_delta,
         &[],
         None,

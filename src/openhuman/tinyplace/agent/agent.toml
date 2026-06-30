@@ -12,7 +12,7 @@ omit_safety_preamble = false
 omit_skills_catalog = true
 
 [model]
-hint = "agentic"
+hint = "burst"
 
 [tools]
 # Curated agent surface (see src/openhuman/tinyplace/agent_tools/). A handful of

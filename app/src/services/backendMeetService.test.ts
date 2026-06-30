@@ -110,6 +110,33 @@ describe('joinMeetViaBackendBot', () => {
     );
   });
 
+  it('forwards active meeting gates to the core RPC payload', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({
+      ok: true,
+      meet_url: 'https://meet.google.com/abc',
+      platform: 'gmeet',
+    });
+
+    await joinMeetViaBackendBot({
+      meetUrl: 'https://meet.google.com/abc',
+      respondToParticipant: '  Alice Chen  ',
+      wakePhrase: '  Hey Tiny  ',
+      correlationId: '  meet-123  ',
+      listenOnly: false,
+    });
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({
+          respond_to_participant: 'Alice Chen',
+          wake_phrase: 'Hey Tiny',
+          correlation_id: 'meet-123',
+          listen_only: false,
+        }),
+      })
+    );
+  });
+
   it('forwards mascotId as mascot_id', async () => {
     mockCallCoreRpc.mockResolvedValueOnce({
       ok: true,

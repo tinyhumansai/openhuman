@@ -145,7 +145,32 @@ impl EventHandler for MeetCalendarSubscriber {
             "[meet:calendar] detected imminent Google Meet meeting"
         );
 
-        handle_calendar_meeting_candidate(meet_url, event_title, owner_display_name).await;
+        // Extract the calendar event id from the payload so the per-event
+        // policy tier can fire. Use the SHARED canonical extractor (id →
+        // eventId → icalUID, top-level or nested under `data`) so the webhook
+        // path keys per-event policy lookups by the SAME id the UI persists
+        // overrides under — the events.list resource id built in upcoming.rs and
+        // by the heartbeat collector. See finding #3.
+        let calendar_event_id = super::ops::extract_calendar_event_id_from_payload(payload);
+        if calendar_event_id.is_none() {
+            // TODO(meet): if a real Composio googlecalendar trigger ever carries
+            // the event id under a key other than id/eventId/icalUID, the
+            // per-event override won't resolve here. Surface it so we notice
+            // rather than silently dropping to the per-platform/global tier.
+            tracing::warn!(
+                trigger = %trigger,
+                "[meet:calendar] webhook payload has no event id (id/eventId/icalUID) — \
+                 per-event policy override cannot be applied; using per-platform/global tier"
+            );
+        }
+
+        handle_calendar_meeting_candidate(
+            meet_url,
+            event_title,
+            owner_display_name,
+            calendar_event_id,
+        )
+        .await;
     }
 }
 
@@ -274,7 +299,23 @@ pub async fn handle_calendar_meeting_candidate(
     meet_url: String,
     event_title: String,
     owner_display_name: Option<String>,
+    calendar_event_id: Option<String>,
 ) -> bool {
+    // SECURITY: strict allowlist validation before any auto-join can fire. This
+    // is the last gate shared by the live Composio webhook path and the
+    // heartbeat poller — both feed URLs harvested from calendar event text. A
+    // spoofed host like `https://meet.google.com.attacker.com/x` would slip past
+    // a loose substring check; `validate_meeting_url` parses the host and
+    // matches it exactly against the allowlist, rejecting the spoof.
+    if let Err(e) = super::ops::validate_meeting_url(&meet_url) {
+        tracing::warn!(
+            meet_url = %meet_url,
+            error = %e,
+            "[meet:calendar] rejected non-allowlisted meeting URL (possible spoofed host) — not auto-joining"
+        );
+        return false;
+    }
+
     // Resolve the reply anchor. Callers without payload context (the heartbeat
     // poller passes `None`) fall back to the signed-in account identity here so
     // the bot still knows who to reply to.
@@ -312,7 +353,28 @@ pub async fn handle_calendar_meeting_candidate(
         }
     };
 
-    match config.meet.auto_join_policy {
+    // Resolve the effective join policy using the three-tier precedence:
+    // per-event override → per-platform default → global default.
+    let platform = url::Url::parse(&meet_url)
+        .ok()
+        .map(|u| super::ops::infer_platform(&u).to_string());
+    let effective_policy_str = super::ops::resolve_effective_join_policy(
+        calendar_event_id.as_deref(),
+        platform.as_deref(),
+        &config,
+    );
+    let effective_policy = super::ops::str_to_auto_join_policy(&effective_policy_str)
+        .unwrap_or(crate::openhuman::config::schema::AutoJoinPolicy::AskEachTime);
+
+    tracing::debug!(
+        meet_url = %meet_url,
+        calendar_event_id = ?calendar_event_id,
+        platform = ?platform,
+        effective_policy = %effective_policy_str,
+        "[meet:calendar] resolved effective join policy"
+    );
+
+    match effective_policy {
         crate::openhuman::config::schema::AutoJoinPolicy::Never => {
             tracing::debug!("[meet:calendar] auto_join_policy=never, dropping");
             false
@@ -353,12 +415,15 @@ pub async fn handle_calendar_meeting_candidate(
 
             // Persist a session keyed by correlation_id so future trigger
             // firings find the existing entry and skip (see dedup guard above).
+            // Persist the resolved calendar_event_id so per-event policy
+            // lookups and dedup can key off the calendar event rather than
+            // only the meeting URL.
             let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
             let session = MeetingSession {
                 id: correlation_id.clone(),
                 meet_url: meet_url.clone(),
                 title: Some(event_title.clone()),
-                calendar_event_id: None,
+                calendar_event_id: calendar_event_id.clone(),
                 status: MeetingSessionStatus::Joined,
                 source: AutoJoinSource::Calendar,
                 thread_id: None,
@@ -417,11 +482,14 @@ pub async fn handle_calendar_meeting_candidate(
 
             let meeting_id = uuid::Uuid::new_v4().to_string();
             let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+            // Persist the resolved calendar_event_id so per-event policy
+            // lookups and dedup can key off the calendar event rather than
+            // only the meeting URL.
             let session = MeetingSession {
                 id: meeting_id.clone(),
                 meet_url: meet_url.clone(),
                 title: Some(event_title.clone()),
-                calendar_event_id: None,
+                calendar_event_id: calendar_event_id.clone(),
                 status: MeetingSessionStatus::Pending,
                 source: AutoJoinSource::Calendar,
                 thread_id: None,
@@ -565,43 +633,9 @@ fn is_meeting_imminent(payload: &serde_json::Value) -> bool {
     true
 }
 
-/// Supported meeting URL host patterns. A string is considered a meeting
-/// link when it contains any of these substrings.
-const MEETING_HOST_PATTERNS: &[&str] = &[
-    "meet.google.com",
-    "zoom.us",
-    "teams.microsoft.com",
-    "webex.com",
-];
-
-fn is_meeting_url(s: &str) -> bool {
-    MEETING_HOST_PATTERNS.iter().any(|pat| s.contains(pat))
-}
-
-/// Pull the first parseable meeting URL out of a free-form string.
-///
-/// Calendar `location` is free-form and commonly mixes a label with a URL
-/// (e.g. `"Zoom Meeting: https://zoom.us/j/123"`). Returning the raw string
-/// would produce a `meeting_url` that `url::Url::parse` later rejects, leaving
-/// Join/Skip buttons that silently fail. So scan whitespace-separated tokens,
-/// strip surrounding punctuation (including trailing `.`), and return the first
-/// token that both matches a known meeting host and parses as an http(s) URL.
-fn extract_meeting_url_from_text(text: &str) -> Option<String> {
-    text.split_whitespace()
-        .map(|tok| {
-            tok.trim_matches(|c: char| {
-                matches!(
-                    c,
-                    '(' | ')' | '[' | ']' | '<' | '>' | ',' | ';' | '"' | '\'' | '.'
-                )
-            })
-        })
-        .filter(|tok| is_meeting_url(tok))
-        .find_map(|tok| {
-            let parsed = url::Url::parse(tok).ok()?;
-            matches!(parsed.scheme(), "http" | "https").then(|| parsed.to_string())
-        })
-}
+// URL/host/platform primitives (`is_meeting_url`, `extract_url_from_text`)
+// live in `super::ops` as the single canonical, strict implementations —
+// see finding #9. This module just composes them over the Composio payload.
 
 /// Extract a meeting URL from a Composio Google Calendar trigger payload.
 ///
@@ -614,7 +648,7 @@ fn extract_meet_url(payload: &serde_json::Value) -> Option<String> {
     for root in [payload, payload.get("data").unwrap_or(payload)] {
         // hangoutLink (Google Meet)
         if let Some(link) = root.get("hangoutLink").and_then(|v| v.as_str()) {
-            if is_meeting_url(link) {
+            if super::ops::is_meeting_url(link) {
                 return Some(link.to_string());
             }
         }
@@ -627,7 +661,7 @@ fn extract_meet_url(payload: &serde_json::Value) -> Option<String> {
         {
             for entry in entries {
                 if let Some(uri) = entry.get("uri").and_then(|v| v.as_str()) {
-                    if is_meeting_url(uri) {
+                    if super::ops::is_meeting_url(uri) {
                         return Some(uri.to_string());
                     }
                 }
@@ -639,7 +673,7 @@ fn extract_meet_url(payload: &serde_json::Value) -> Option<String> {
         // parseable URL token — returning the whole string would fail later
         // validation in handle_join → validate_meeting_url.
         if let Some(loc) = root.get("location").and_then(|v| v.as_str()) {
-            if let Some(url) = extract_meeting_url_from_text(loc) {
+            if let Some(url) = super::ops::extract_url_from_text(loc) {
                 return Some(url);
             }
         }
@@ -651,7 +685,7 @@ fn extract_meet_url(payload: &serde_json::Value) -> Option<String> {
 
 fn find_meet_url_recursive(val: &serde_json::Value) -> Option<String> {
     match val {
-        serde_json::Value::String(s) if is_meeting_url(s) => Some(s.clone()),
+        serde_json::Value::String(s) if super::ops::is_meeting_url(s) => Some(s.clone()),
         serde_json::Value::Object(map) => {
             for v in map.values() {
                 if let Some(url) = find_meet_url_recursive(v) {
@@ -681,7 +715,6 @@ async fn auto_join_meeting(
     owner_display_name: Option<String>,
 ) {
     use crate::openhuman::socket::global_socket_manager;
-    use serde_json::json;
 
     let mgr = match global_socket_manager() {
         Some(mgr) if mgr.is_connected() => mgr,
@@ -691,8 +724,15 @@ async fn auto_join_meeting(
         }
     };
 
+    // Resolve the platform from the URL so the backend bot routes to the
+    // right provider instead of defaulting every auto-join to Google Meet.
+    // Uses the same strict host validation as the manual-join path; an
+    // unrecognized host falls back to "gmeet".
+    let platform = super::ops::infer_platform_from_url(&meet_url).unwrap_or("gmeet");
+
     let payload = build_auto_join_payload(
         &meet_url,
+        platform,
         &correlation_id,
         listen_only,
         owner_display_name.as_deref(),
@@ -700,6 +740,7 @@ async fn auto_join_meeting(
 
     tracing::info!(
         meet_url = %meet_url,
+        platform = %platform,
         title = %event_title,
         correlation_id = %correlation_id,
         listen_only = listen_only,
@@ -745,12 +786,14 @@ fn build_action_payload(
 /// which the backend bot treats as "respond to everyone".
 fn build_auto_join_payload(
     meet_url: &str,
+    platform: &str,
     correlation_id: &str,
     listen_only: bool,
     owner_display_name: Option<&str>,
 ) -> serde_json::Value {
     let mut payload = serde_json::json!({
         "meetUrl": meet_url,
+        "platform": platform,
         "displayName": "Tiny",
         "correlationId": correlation_id,
         "listenOnly": listen_only,
@@ -766,6 +809,8 @@ fn build_auto_join_payload(
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The free-form URL extractor now lives in `ops` (finding #9 consolidation).
+    use crate::openhuman::agent_meetings::ops::extract_url_from_text as extract_meeting_url_from_text;
     use serde_json::json;
 
     #[test]
@@ -817,6 +862,39 @@ mod tests {
             "location": "Office kitchen"
         });
         assert!(extract_meet_url(&payload).is_none());
+    }
+
+    // ── spoofed-host rejection (finding #1) ─────────────────────
+
+    #[test]
+    fn extract_meet_url_rejects_spoofed_host() {
+        // A loose `contains("meet.google.com")` would extract this; the strict
+        // host check must reject it so it never reaches auto-join.
+        let payload = json!({
+            "summary": "Phishing invite",
+            "hangoutLink": "https://meet.google.com.attacker.com/x"
+        });
+        assert!(extract_meet_url(&payload).is_none());
+
+        let payload2 = json!({
+            "location": "Join: https://zoom.us.evil.example/j/1"
+        });
+        assert!(extract_meet_url(&payload2).is_none());
+    }
+
+    #[tokio::test]
+    async fn candidate_rejects_spoofed_host_before_join() {
+        // Strict validation gates the auto-join entry point: a spoofed host
+        // returns false without emitting bot:join (no config/socket needed since
+        // the gate fires first).
+        let joined = handle_calendar_meeting_candidate(
+            "https://meet.google.com.attacker.com/x".to_string(),
+            "Spoofed".to_string(),
+            None,
+            None,
+        )
+        .await;
+        assert!(!joined);
     }
 
     #[test]
@@ -1047,6 +1125,7 @@ mod tests {
     fn auto_join_payload_includes_respond_to_participant() {
         let p = build_auto_join_payload(
             "https://meet.google.com/abc",
+            "gmeet",
             "corr-1",
             false,
             Some("Aditya"),
@@ -1059,14 +1138,27 @@ mod tests {
 
     #[test]
     fn auto_join_payload_omits_respond_to_participant_when_absent() {
-        let p = build_auto_join_payload("https://meet.google.com/abc", "corr-1", true, None);
+        let p =
+            build_auto_join_payload("https://meet.google.com/abc", "gmeet", "corr-1", true, None);
         assert!(p.get("respondToParticipant").is_none());
     }
 
     #[test]
     fn auto_join_payload_omits_respond_to_participant_when_blank() {
-        let p = build_auto_join_payload("https://meet.google.com/abc", "corr-1", true, Some("   "));
+        let p = build_auto_join_payload(
+            "https://meet.google.com/abc",
+            "gmeet",
+            "corr-1",
+            true,
+            Some("   "),
+        );
         assert!(p.get("respondToParticipant").is_none());
+    }
+
+    #[test]
+    fn auto_join_payload_includes_platform() {
+        let p = build_auto_join_payload("https://zoom.us/j/123", "zoom", "corr-1", true, None);
+        assert_eq!(p["platform"], json!("zoom"));
     }
 
     // ── effective_listen_only ───────────────────────────────────
@@ -1192,6 +1284,50 @@ mod tests {
         assert_eq!(
             extract_meet_url(&payload).as_deref(),
             Some("https://teams.microsoft.com/l/meetup-join/abc")
+        );
+    }
+
+    // ── calendar_event_id persisted on session (finding #3) ─────
+
+    #[test]
+    fn session_persists_calendar_event_id_round_trip() {
+        use crate::openhuman::agent_meetings::store;
+        use crate::openhuman::agent_meetings::types::{
+            AutoJoinSource, MeetingSession, MeetingSessionStatus,
+        };
+        use crate::openhuman::config::Config;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let mut config = Config::default();
+        config.workspace_dir = dir.path().to_path_buf();
+
+        // Simulate what handle_calendar_meeting_candidate does after the fix:
+        // it populates calendar_event_id from the resolved payload id.
+        let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+        let session = MeetingSession {
+            id: "corr-id-abc".to_string(),
+            meet_url: "https://meet.google.com/cal-test".to_string(),
+            title: Some("Calendar meeting".to_string()),
+            // After finding #3 fix this is Some("cal-ev-xyz"), not None.
+            calendar_event_id: Some("cal-ev-xyz".to_string()),
+            status: MeetingSessionStatus::Joined,
+            source: AutoJoinSource::Calendar,
+            thread_id: None,
+            transcript_received: false,
+            summary_generated: false,
+            created_at_ms: now_ms,
+            updated_at_ms: now_ms,
+        };
+        store::create_session(&config, &session).unwrap();
+
+        let fetched = store::get_session(&config, "corr-id-abc")
+            .unwrap()
+            .expect("session must exist");
+        assert_eq!(
+            fetched.calendar_event_id.as_deref(),
+            Some("cal-ev-xyz"),
+            "calendar_event_id must survive store round-trip (finding #3)"
         );
     }
 }

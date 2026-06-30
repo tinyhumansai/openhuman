@@ -22,7 +22,7 @@
 
 <p align="center">
  <a href="https://discord.tinyhumans.ai/">Discord</a> •
- Reddit •
+ <a href="https://github.com/tinyhumansai/openhuman/discussions">Discussions</a> •
  <a href="https://x.com/intent/follow?screen_name=tinyhumansai">X/Twitter</a> •
  <a href="https://tinyhumans.gitbook.io/openhuman/">문서</a> •
  <a href="https://x.com/intent/follow?screen_name=senamakel">@senamakel(제작자) 팔로우</a>
@@ -132,7 +132,7 @@ OpenHuman은 기다림을 생략합니다. 계정을 연결하고, [자동 가�
 _AGI와 인공 의식을 향해 나아가고 계신가요? 저장소에 스타를 눌러 다른 사람들도 이 길을 찾을 수 있도록 도와주세요._
 
 <p align="center">
- <a href="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left">
+ <a href="https://www.star-history.com">
  <picture>
  <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&theme=dark&legend=top-left" />
  <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left" />
