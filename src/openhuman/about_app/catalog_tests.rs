@@ -103,6 +103,26 @@ fn local_only_capability_marks_no_destinations() {
 }
 
 #[test]
+fn persona_pack_reports_github_mascot_manifest_destination() {
+    let cap = lookup("settings.persona_pack").expect("persona pack capability exists");
+    let privacy = cap.privacy.expect("persona pack is privacy-annotated");
+
+    assert!(
+        privacy.leaves_device,
+        "loading the mascot library fetches a GitHub-hosted manifest"
+    );
+    assert_eq!(privacy.data_kind, PrivacyDataKind::Metadata);
+    let haystack = privacy.destinations.join(" | ").to_lowercase();
+    assert!(
+        haystack.contains("github")
+            && haystack.contains("raw.githubusercontent.com")
+            && haystack.contains("asset"),
+        "destinations must disclose the GitHub raw manifest host and manifest asset hosts, got: {:?}",
+        privacy.destinations
+    );
+}
+
+#[test]
 fn unannotated_capability_serializes_without_privacy_field() {
     let cap = lookup("conversation.create").expect("capability exists");
     assert!(cap.privacy.is_none());

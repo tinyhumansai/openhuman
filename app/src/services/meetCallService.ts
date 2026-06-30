@@ -219,6 +219,38 @@ export async function getMeetCallDetail(requestId: string): Promise<MeetCallDeta
 }
 
 // ---------------------------------------------------------------------------
+// Transcript parsing
+// ---------------------------------------------------------------------------
+
+/** A transcript line with its parsed timestamp/speaker prefix stripped out. */
+export interface ParsedTranscriptLine {
+  timestamp: string | null;
+  speaker: string | null;
+  text: string;
+  role: string;
+}
+
+const TRANSCRIPT_PREFIX_RE = /^\[(\d{1,2}:\d{2})\]\s*\[([^\]]+)\]\s*(.*)/s;
+
+/**
+ * Parse a raw transcript line's content for the optional `[MM:SS] [Name]` prefix.
+ * When the prefix is present, returns the parsed timestamp, speaker, and remaining text.
+ * When absent, timestamp and speaker are null and text is the full content.
+ */
+export function parseTranscriptLine(line: MeetCallTranscriptLine): ParsedTranscriptLine {
+  const match = TRANSCRIPT_PREFIX_RE.exec(line.content);
+  if (match) {
+    return {
+      timestamp: match[1] ?? null,
+      speaker: match[2] ?? null,
+      text: match[3] ?? '',
+      role: line.role,
+    };
+  }
+  return { timestamp: null, speaker: null, text: line.content, role: line.role };
+}
+
+// ---------------------------------------------------------------------------
 // Backend Meet Bot via Core Socket.IO bridge
 // ---------------------------------------------------------------------------
 
@@ -320,7 +352,8 @@ export async function sendHarnessResponse(result: string): Promise<void> {
  * The app normally uses `joinMeetViaBackendBot`, which routes through the
  * core Socket.IO bridge so backend bot events can be handled locally too.
  */
-export type MascotMeetPlatform = 'gmeet' | 'zoom' | 'teams' | 'webex';
+/** Alias of {@link MeetingPlatform} — kept for existing consumers. */
+export type MascotMeetPlatform = MeetingPlatform;
 
 export interface MascotJoinMeetingInput {
   platform: MascotMeetPlatform;
@@ -371,6 +404,105 @@ export interface MascotJoinMeetingError {
 
 function isApiErrorLike(value: unknown): value is { error?: unknown; message?: unknown } {
   return !!value && typeof value === 'object' && ('error' in value || 'message' in value);
+}
+
+// ---------------------------------------------------------------------------
+// Upcoming meetings (meet_list_upcoming RPC)
+// ---------------------------------------------------------------------------
+
+/**
+ * One upcoming calendar meeting returned by `openhuman.meet_list_upcoming`.
+ * Mirrors `UpcomingMeeting` in `src/openhuman/agent_meetings/types.rs`.
+ */
+export interface UpcomingMeeting {
+  calendar_event_id: string;
+  title: string;
+  /** Unix milliseconds */
+  start_time_ms: number;
+  /** Unix milliseconds */
+  end_time_ms: number;
+  meet_url: string | null;
+  /** Platform slug: "gmeet" | "zoom" | "teams" | "webex" */
+  platform: string | null;
+  participant_count: number | null;
+  organizer: string | null;
+  /** "auto" | "ask" | "skip" — local UI state only this phase */
+  join_policy: string;
+  calendar_source: string;
+}
+
+interface CoreListUpcomingResponse {
+  ok: boolean;
+  meetings: UpcomingMeeting[];
+}
+
+/**
+ * Fetch upcoming calendar meetings that have a conferencing link.
+ * Returns an empty array when no Google Calendar is connected.
+ */
+export async function listUpcomingMeetings(
+  lookaheadMinutes?: number,
+  limit?: number
+): Promise<UpcomingMeeting[]> {
+  const result = await callCoreRpc<CoreListUpcomingResponse>({
+    method: 'openhuman.meet_list_upcoming',
+    params: {
+      ...(lookaheadMinutes != null ? { lookahead_minutes: lookaheadMinutes } : {}),
+      ...(limit != null ? { limit } : {}),
+    },
+  });
+  if (!result?.ok) {
+    throw new Error('Core rejected the meet_list_upcoming request.');
+  }
+  return result.meetings ?? [];
+}
+
+// ---------------------------------------------------------------------------
+// Per-event join-policy overrides
+// ---------------------------------------------------------------------------
+
+interface CoreSetEventPolicyResponse {
+  ok: boolean;
+}
+
+interface CoreGetEventPoliciesResponse {
+  ok: boolean;
+  policies: Record<string, string>;
+}
+
+/**
+ * Persist a per-event join-policy override for a specific calendar event.
+ * Resolution order (Rust side): per-event > per-platform > global.
+ */
+export async function setEventPolicy(
+  calendarEventId: string,
+  policy: 'auto' | 'ask' | 'skip'
+): Promise<void> {
+  const result = await callCoreRpc<CoreSetEventPolicyResponse>({
+    method: 'openhuman.meet_set_event_policy',
+    params: { calendar_event_id: calendarEventId, policy },
+  });
+  if (!result?.ok) {
+    throw new Error('Core rejected the meet_set_event_policy request.');
+  }
+}
+
+/**
+ * Batch-fetch per-event join-policy overrides for the given calendar event IDs.
+ * Only IDs that have an explicit override are present in the returned map.
+ */
+export async function getEventPolicies(
+  calendarEventIds: string[]
+): Promise<Record<string, string>> {
+  if (calendarEventIds.length === 0) return {};
+  const result = await callCoreRpc<CoreGetEventPoliciesResponse>({
+    method: 'openhuman.meet_get_event_policies',
+    params: { calendar_event_ids: calendarEventIds },
+  });
+  if (!result?.ok) {
+    throw new Error('Core rejected the meet_get_event_policies request.');
+  }
+  return result.policies ?? {};
 }
 
 export async function joinMeetingViaMascotBot(

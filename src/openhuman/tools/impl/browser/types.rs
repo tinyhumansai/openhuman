@@ -44,6 +44,7 @@ impl Default for ComputerUseConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BrowserBackendKind {
     AgentBrowser,
+    Playwright,
     RustNative,
     ComputerUse,
     Auto,
@@ -52,6 +53,7 @@ pub(crate) enum BrowserBackendKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ResolvedBackend {
     AgentBrowser,
+    Playwright,
     RustNative,
     ComputerUse,
 }
@@ -61,11 +63,12 @@ impl BrowserBackendKind {
         let key = raw.trim().to_ascii_lowercase().replace('-', "_");
         match key.as_str() {
             "agent_browser" | "agentbrowser" => Ok(Self::AgentBrowser),
+            "playwright" => Ok(Self::Playwright),
             "rust_native" | "native" => Ok(Self::RustNative),
             "computer_use" | "computeruse" => Ok(Self::ComputerUse),
             "auto" => Ok(Self::Auto),
             _ => anyhow::bail!(
-                "Unsupported browser backend '{raw}'. Use 'agent_browser', 'rust_native', 'computer_use', or 'auto'"
+                "Unsupported browser backend '{raw}'. Use 'agent_browser', 'playwright', 'rust_native', 'computer_use', or 'auto'"
             ),
         }
     }
@@ -73,6 +76,7 @@ impl BrowserBackendKind {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::AgentBrowser => "agent_browser",
+            Self::Playwright => "playwright",
             Self::RustNative => "rust_native",
             Self::ComputerUse => "computer_use",
             Self::Auto => "auto",

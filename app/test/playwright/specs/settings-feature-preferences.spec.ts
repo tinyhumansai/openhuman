@@ -42,13 +42,28 @@ async function getDefaultMessagingChannel(page: Page): Promise<string | null> {
 async function getMascotVoiceId(page: Page): Promise<string | null> {
   return page.evaluate(() => {
     const win = window as unknown as {
-      __OPENHUMAN_STORE__?: { getState?: () => { mascot: { voiceId?: string | null } } };
+      __OPENHUMAN_STORE__?: {
+        getState?: () => { mascot: { selectedMascotId?: string | null; voiceId?: string | null } };
+      };
     };
     const state = win.__OPENHUMAN_STORE__?.getState?.();
     if (!state) {
       throw new Error('__OPENHUMAN_STORE__ is unavailable');
     }
     return state.mascot.voiceId ?? null;
+  });
+}
+
+async function getSelectedMascotId(page: Page): Promise<string | null> {
+  return page.evaluate(() => {
+    const win = window as unknown as {
+      __OPENHUMAN_STORE__?: { getState?: () => { mascot: { selectedMascotId?: string | null } } };
+    };
+    const state = win.__OPENHUMAN_STORE__?.getState?.();
+    if (!state) {
+      throw new Error('__OPENHUMAN_STORE__ is unavailable');
+    }
+    return state.mascot.selectedMascotId ?? null;
   });
 }
 
@@ -71,9 +86,81 @@ async function getPersistedMascotColor(page: Page): Promise<string | null> {
   });
 }
 
+async function getPersistedSelectedMascotId(page: Page): Promise<string | null> {
+  return page.evaluate(() => {
+    const userId = localStorage.getItem('OPENHUMAN_ACTIVE_USER_ID');
+    if (!userId) return null;
+
+    const raw = localStorage.getItem(`${userId}:persist:mascot`);
+    if (!raw) return null;
+
+    try {
+      const parsed = JSON.parse(raw) as { selectedMascotId?: unknown };
+      if (typeof parsed.selectedMascotId !== 'string') return null;
+      const selectedMascotId = JSON.parse(parsed.selectedMascotId) as unknown;
+      return typeof selectedMascotId === 'string' ? selectedMascotId : null;
+    } catch {
+      return null;
+    }
+  });
+}
+
 async function getAriaChecked(page: Page, label: string): Promise<string | null> {
   const value = await page.getByRole('switch', { name: label }).getAttribute('aria-checked');
   return value;
+}
+
+async function installMascotManifestMock(page: Page): Promise<void> {
+  const manifest = {
+    schemaVersion: 1,
+    generatedAt: '2026-06-29T00:00:00.000Z',
+    source: { repository: 'tinyhumansai/mascots', branch: 'main', commit: 'e2e' },
+    mascots: [
+      {
+        id: 'tiny-mascot',
+        name: 'Tiny Default',
+        status: 'ready',
+        files: [
+          {
+            role: 'runtime',
+            path: 'dist/tiny.riv',
+            url: 'https://example.test/mascots/tiny.riv',
+            sha256: 'tiny-runtime-sha',
+          },
+        ],
+        stateEngine: {
+          states: { idle: 'idle', thinking: 'thinking', speaking: 'speaking', writing: 'writing' },
+          idlePoseCycle: ['idle'],
+          visemeCodes: ['sil', 'aa', 'oh'],
+        },
+      },
+      {
+        id: 'river-guide',
+        name: 'River Guide',
+        status: 'draft',
+        files: [
+          {
+            role: 'runtime',
+            path: 'dist/river.riv',
+            url: 'https://example.test/mascots/river.riv',
+            sha256: 'river-runtime-sha',
+          },
+        ],
+        stateEngine: {
+          states: { idle: 'idle', thinking: 'thinking', speaking: 'speaking', writing: 'writing' },
+          idlePoseCycle: ['idle', 'wave'],
+          visemeCodes: ['sil', 'aa', 'oh'],
+        },
+      },
+    ],
+  };
+
+  await page.route('https://raw.githubusercontent.com/tinyhumansai/mascots/**', route =>
+    route.fulfill({ contentType: 'application/json', body: JSON.stringify(manifest) })
+  );
+  await page.route('https://example.test/mascots/*.riv', route =>
+    route.fulfill({ contentType: 'application/octet-stream', body: Buffer.from('not-a-rive-file') })
+  );
 }
 
 interface ToolsSnapshot {
@@ -209,6 +296,32 @@ test.describe('Settings - Feature Preferences', () => {
 
     await reloadAndWait(page);
     await expect(page.getByTestId('mascot-color-burgundy')).toHaveAttribute('aria-checked', 'true');
+  });
+
+  test('persists manifest mascot selection and uses it on the Human page', async ({ page }) => {
+    await installMascotManifestMock(page);
+    await openAuthenticatedRoute(page, 'pw-settings-manifest-mascot', '/settings/mascot');
+
+    await expect(page.getByRole('heading', { name: 'Character', exact: true })).toBeVisible();
+    await expect(page.getByTestId('manifest-mascot-river-guide')).toContainText('River Guide');
+    await page.getByTestId('manifest-mascot-river-guide').click();
+    await expect(page.getByTestId('manifest-mascot-river-guide')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+    await expect.poll(() => getSelectedMascotId(page)).toBe('river-guide');
+    await expect.poll(() => getPersistedSelectedMascotId(page)).toBe('river-guide');
+
+    await reloadAndWait(page);
+    await expect.poll(() => getSelectedMascotId(page)).toBe('river-guide');
+    await expect(page.getByTestId('manifest-mascot-river-guide')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+
+    await page.goto('/#/human');
+    await waitForAppReady(page);
+    await expect.poll(() => getSelectedMascotId(page)).toBe('river-guide');
   });
 
   test('persists the custom mascot voice override on the voice panel', async ({ page }) => {

@@ -5,9 +5,7 @@
 //! instead of erroring. Falls back to a deterministic digest summary if the
 //! summarization call fails or returns no prose.
 
-use crate::openhuman::inference::provider::{
-    ChatMessage, ChatRequest, Provider, AGENT_TURN_MAX_OUTPUT_TOKENS,
-};
+use crate::openhuman::inference::provider::{ChatMessage, ChatRequest, Provider};
 
 /// Sub-agent [`CheckpointStrategy`]: when the iteration cap is hit, summarize
 /// the run-so-far into a resumable checkpoint (so the delegating agent can
@@ -19,6 +17,7 @@ pub(super) struct SubagentCheckpoint<'a> {
     pub(super) model: String,
     pub(super) temperature: f64,
     pub(super) agent_id: String,
+    pub(super) max_output_tokens: u32,
 }
 
 #[async_trait::async_trait]
@@ -48,7 +47,7 @@ impl super::super::super::engine::CheckpointStrategy for SubagentCheckpoint<'_> 
                     stream: None,
                     // Bounded progress-summary turn; cap also keeps the
                     // reservation-pricing pre-flight realistic (TAURI-RUST-C62).
-                    max_tokens: Some(AGENT_TURN_MAX_OUTPUT_TOKENS),
+                    max_tokens: Some(self.max_output_tokens),
                 },
                 &self.model,
                 self.temperature,
