@@ -355,8 +355,11 @@ pub fn looks_like_inference_provider_endpoint(url: &str) -> bool {
     }
 
     // ── Signal 2: OpenAI-compatible bare `/v1` or `/api/v1` base path ──────
+    // Exact-match both arms (per the doc contract): a longer self-hosted path
+    // that merely *ends* in `/api/v1` (e.g. `https://backend.internal/svc/api/v1`)
+    // is a custom backend, not an inference base, and must keep routing.
     let path = parsed.path().trim_end_matches('/');
-    if path.ends_with("/api/v1") || path == "/v1" {
+    if path == "/api/v1" || path == "/v1" {
         return true;
     }
 
