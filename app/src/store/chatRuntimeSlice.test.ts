@@ -114,6 +114,49 @@ describe('chatRuntimeSlice recordChatTurnUsage', () => {
     expect(subs.coder.inputTokens).toBe(80);
   });
 
+  it('excludes sub-agent tokens from the context gauge numerator (#4271)', () => {
+    const store = makeStore();
+    // Core sends combined parent+sub-agent turn totals; the gauge must reflect
+    // the orchestrator thread's own window only, never the sum across agents.
+    store.dispatch(
+      recordChatTurnUsage({
+        inputTokens: 1_000_000,
+        outputTokens: 50_000,
+        contextWindow: 1_000_000,
+        subAgents: [
+          { agentId: 'researcher', inputTokens: 600_000, outputTokens: 30_000, costUsd: 0.6 },
+          { agentId: 'context_scout', inputTokens: 150_000, outputTokens: 10_000, costUsd: 0.15 },
+        ],
+      })
+    );
+    const usage = store.getState().chatRuntime.sessionTokenUsage;
+    // orchestrator-only = (1_000_000 + 50_000) - (600_000+30_000 + 150_000+10_000)
+    expect(usage.lastTurnContextUsed).toBe(260_000);
+    // Gauge stays within its window: 260_000 / 1_000_000 = 26% ≤ 100%.
+    expect(usage.lastTurnContextUsed).toBeLessThanOrEqual(usage.contextWindow);
+  });
+
+  it('keeps the full turn as the gauge numerator with no sub-agents (#4271)', () => {
+    const store = makeStore();
+    store.dispatch(
+      recordChatTurnUsage({ inputTokens: 800, outputTokens: 120, contextWindow: 200_000 })
+    );
+    // Single-agent path is unchanged: nothing to subtract.
+    expect(store.getState().chatRuntime.sessionTokenUsage.lastTurnContextUsed).toBe(920);
+  });
+
+  it('clamps the gauge numerator to zero when sub-agents exceed the turn total (#4271)', () => {
+    const store = makeStore();
+    store.dispatch(
+      recordChatTurnUsage({
+        inputTokens: 50,
+        outputTokens: 10,
+        subAgents: [{ agentId: 'researcher', inputTokens: 100, outputTokens: 20, costUsd: 0.001 }],
+      })
+    );
+    expect(store.getState().chatRuntime.sessionTokenUsage.lastTurnContextUsed).toBe(0);
+  });
+
   it('keeps the prior context window when a turn reports an unknown (0) window', () => {
     const store = makeStore();
     store.dispatch(

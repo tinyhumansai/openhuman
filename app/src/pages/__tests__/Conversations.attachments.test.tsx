@@ -638,6 +638,63 @@ describe('Conversations — attachment feature', () => {
     });
   });
 
+  it('renders a video poster chip in the user bubble from attachmentKinds/Posters', async () => {
+    const thread = makeThread({ id: 'video-thread', title: 'Video Thread' });
+    const message = {
+      id: 'msg-video-1',
+      content: 'whats in this clip',
+      type: 'text' as const,
+      sender: 'user' as const,
+      createdAt: new Date().toISOString(),
+      extraMetadata: {
+        attachmentCount: 1,
+        attachmentKinds: ['video'],
+        attachmentNames: ['demo.mp4'],
+        attachmentPosters: ['data:image/jpeg;base64,poster'],
+      },
+    };
+
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    mockGetThreadMessages.mockResolvedValue({ messages: [message], count: 1 });
+
+    const store = buildStore({
+      thread: {
+        threads: [thread],
+        selectedThreadId: thread.id,
+        activeThreadIds: {},
+        welcomeThreadId: null,
+        messagesByThreadId: { [thread.id]: [message] },
+        messages: [message],
+        isLoadingThreads: false,
+        isLoadingMessages: false,
+        messagesError: null,
+      },
+      socket: socketState('connected'),
+    });
+
+    const { default: Conversations } = await import('../Conversations');
+
+    render(
+      <Provider store={store}>
+        <MemoryRouter>
+          <SidebarSlotProvider>
+            <SidebarSlotOutlet />
+            <Conversations />
+          </SidebarSlotProvider>
+        </MemoryRouter>
+      </Provider>
+    );
+
+    // The video attachment surfaces as a filename chip with its poster <img>.
+    await waitFor(() => {
+      expect(document.body.textContent).toContain('demo.mp4');
+    });
+    const poster = Array.from(document.querySelectorAll('img')).find(
+      img => (img as HTMLImageElement).src === 'data:image/jpeg;base64,poster'
+    );
+    expect(poster).toBeTruthy();
+  });
+
   it('strips raw IMAGE/FILE markers from a legacy message with no extraMetadata', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });

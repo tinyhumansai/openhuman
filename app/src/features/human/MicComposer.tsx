@@ -1,5 +1,5 @@
 import debug from 'debug';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { useT } from '../../lib/i18n/I18nContext';
@@ -165,6 +165,12 @@ export function MicComposer({
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   const [deviceMenuOpen, setDeviceMenuOpen] = useState(false);
   const gearButtonRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  // Final viewport coordinates for the portaled device menu. Computed AFTER the
+  // menu mounts (see positionDeviceMenu) so we can measure its real height and
+  // flip it above the trigger when there isn't room below — otherwise the list
+  // clips off the bottom of the screen when the mic UI sits near the viewport
+  // edge. `null` while the menu is mounted-but-unmeasured (kept invisible).
   const [menuAnchor, setMenuAnchor] = useState<{ top: number; left: number } | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -228,6 +234,55 @@ export function MicComposer({
     navigator.mediaDevices?.addEventListener?.('devicechange', onDeviceChange);
     return () => navigator.mediaDevices?.removeEventListener?.('devicechange', onDeviceChange);
   }, [showDeviceSelector]);
+
+  // Boundary-aware placement for the device menu. The menu is portaled to
+  // `document.body` and positioned `fixed`, so it must clamp itself inside the
+  // viewport: open below the gear when there's room, otherwise flip above it,
+  // and horizontally centre-then-clamp. Runs after the menu mounts (and on
+  // resize/scroll while open) so it can measure the menu's real size — a fixed
+  // `rect.bottom + 8` anchor clips the list off-screen near the bottom edge.
+  const positionDeviceMenu = useCallback(() => {
+    const trigger = gearButtonRef.current?.getBoundingClientRect();
+    const menu = menuRef.current?.getBoundingClientRect();
+    if (!trigger || !menu) return;
+    const MARGIN = 8;
+    const viewportH = window.innerHeight;
+    const viewportW = window.innerWidth;
+    const spaceBelow = viewportH - trigger.bottom;
+    const spaceAbove = trigger.top;
+    // Prefer below; flip above only when below can't fit the menu AND above has
+    // more room. Either way the final `top` is clamped into the viewport so the
+    // scrollable max-height fallback keeps every option reachable.
+    const flipUp = spaceBelow < menu.height + MARGIN && spaceAbove > spaceBelow;
+    let top = flipUp ? trigger.top - MARGIN - menu.height : trigger.bottom + MARGIN;
+    top = Math.max(MARGIN, Math.min(top, viewportH - menu.height - MARGIN));
+    let left = trigger.left + trigger.width / 2 - menu.width / 2;
+    left = Math.max(MARGIN, Math.min(left, viewportW - menu.width - MARGIN));
+    composerLog(
+      'positioned device menu: placement=%s top=%d left=%d (spaceBelow=%d spaceAbove=%d menuH=%d)',
+      flipUp ? 'above' : 'below',
+      Math.round(top),
+      Math.round(left),
+      Math.round(spaceBelow),
+      Math.round(spaceAbove),
+      Math.round(menu.height)
+    );
+    setMenuAnchor({ top, left });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!deviceMenuOpen) return;
+    positionDeviceMenu();
+    window.addEventListener('resize', positionDeviceMenu);
+    // Capture-phase scroll so the menu tracks any scrolling ancestor, not just
+    // the window, and stays clamped to the viewport while the page moves.
+    window.addEventListener('scroll', positionDeviceMenu, true);
+    return () => {
+      window.removeEventListener('resize', positionDeviceMenu);
+      window.removeEventListener('scroll', positionDeviceMenu, true);
+    };
+    // devices.length re-measures when the option count (and thus height) changes.
+  }, [deviceMenuOpen, devices.length, positionDeviceMenu]);
 
   // Spacebar = tap-to-toggle (#1471). Scoped to whatever surface mounts
   // this composer — today only the Human agent page. The listener lives
@@ -749,14 +804,14 @@ export function MicComposer({
             <button
               ref={gearButtonRef}
               type="button"
-              aria-label={t('mic.deviceSelector') || 'Microphone device'}
+              aria-label={t('mic.deviceSelector')}
               aria-expanded={deviceMenuOpen}
               onClick={() => {
-                const rect = gearButtonRef.current?.getBoundingClientRect();
-                if (rect) {
-                  setMenuAnchor({ top: rect.bottom + 8, left: rect.left + rect.width / 2 });
-                }
-                setDeviceMenuOpen(open => !open);
+                const willOpen = !deviceMenuOpen;
+                // Hide the menu until positionDeviceMenu measures it this open
+                // cycle, so it never flashes at the previous cycle's anchor.
+                if (willOpen) setMenuAnchor(null);
+                setDeviceMenuOpen(willOpen);
               }}
               disabled={state !== 'idle'}
               className="w-8 h-8 flex items-center justify-center rounded-full border border-line bg-surface text-content-muted hover:text-content-secondary hover:border-line-strong dark:hover:border-neutral-600 transition-colors shadow-soft disabled:opacity-40 disabled:cursor-not-allowed">
@@ -780,7 +835,6 @@ export function MicComposer({
               </svg>
             </button>
             {deviceMenuOpen &&
-              menuAnchor &&
               createPortal(
                 <>
                   <div
@@ -790,13 +844,18 @@ export function MicComposer({
                     aria-hidden
                   />
                   <div
+                    ref={menuRef}
                     role="menu"
-                    aria-label={t('mic.deviceSelector') || 'Microphone device'}
+                    aria-label={t('mic.deviceSelector')}
                     style={{
                       position: 'fixed',
-                      top: menuAnchor.top,
-                      left: menuAnchor.left,
-                      transform: 'translateX(-50%)',
+                      top: menuAnchor?.top ?? 0,
+                      left: menuAnchor?.left ?? 0,
+                      // Kept out of view (but laid out, so it can be measured)
+                      // until positionDeviceMenu computes the clamped anchor.
+                      visibility: menuAnchor ? 'visible' : 'hidden',
+                      maxHeight: 'calc(100vh - 16px)',
+                      overflowY: 'auto',
                       zIndex: 99999,
                     }}
                     className="w-64 rounded-xl border border-line bg-surface shadow-soft py-1">

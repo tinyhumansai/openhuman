@@ -66,11 +66,11 @@
 
 # انسٹال کریں
 
-انسٹالر [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) سے یا [GitHub ریلیز](https://github.com/tinyhumansai/openhuman/releases/latest) صفحے سے ڈاؤن لوڈ کریں۔ ٹرمینل انسٹال کے لیے، نیچے دیے گئے مقامی پیکیج کے راستے ترجیحی ہیں — یہ آپ کے OS پیکیج مینیجر کے دستخطی سلسلے پر سوار ہوتے ہیں۔
+انسٹالر [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) سے یا [GitHub ریلیز](https://github.com/tinyhumansai/openhuman/releases/latest) صفحے سے ڈاؤن لوڈ کریں۔ ٹرمینل انسٹال کے لیے، نیچے دیے گئے مقامی پیکیج کے راستے ترجیحی ہیں کیونکہ جہاں دستیاب ہو وہاں یہ OS پیکیج مینیجر یا مقامی انسٹالر استعمال کرتے ہیں۔
 
 ## تجویز کردہ انسٹال (مقامی پیکیجز)
 
-یہ راستے OS پیکیج مینیجر کے دستخطی سلسلے کے ذریعے آرٹیفیکٹ کی تصدیق کرتے ہیں (Homebrew bottle hash، signed apt repo، MSI signature)۔
+یہ راستے مقامی installer surfaces استعمال کرتے ہیں۔ Homebrew اور MSI اپنی معمول کی signing/integrity checks فراہم کرتے ہیں؛ Debian/Ubuntu release `.deb` کو `apt-get` سے انسٹال کرتا ہے تاکہ سسٹم dependencies حل ہوں۔
 
 **میک او ایس (ہومبریو ٹیپ):**
 
@@ -87,21 +87,17 @@ brew install openhuman
 
 <div dir="rtl" lang="ur">
 
-**لینکس (ڈیبین/ابونٹو — دستخط شدہ اے پی ٹی ریپو):**
+**لینکس (ڈیبین/ابونٹو — ریلیز `.deb`):**
 
 </div>
 
 <div dir="ltr">
 
 ```bash
-sudo apt-get install -y --no-install-recommends gnupg2 curl ca-certificates
-curl -fsSL https://tinyhumansai.github.io/openhuman/apt/KEY.gpg \
-  | sudo gpg --dearmor -o /etc/apt/keyrings/openhuman.gpg
-echo "deb [signed-by=/etc/apt/keyrings/openhuman.gpg arch=amd64] \
-  https://tinyhumansai.github.io/openhuman/apt stable main" \
-  | sudo tee /etc/apt/sources.list.d/openhuman.list
-sudo apt-get update
-sudo apt-get install -y openhuman
+# Download OpenHuman_<version>_amd64.deb or OpenHuman_<version>_arm64.deb
+# from https://github.com/tinyhumansai/openhuman/releases/latest, then:
+# Replace amd64 with arm64 on arm64 hosts.
+sudo apt-get install -y --no-install-recommends ./OpenHuman_*_amd64.deb
 ```
 
 </div>
@@ -114,7 +110,7 @@ sudo apt-get install -y openhuman
 
 **دستی `.dmg` / `.deb` / `.AppImage` / `.msi`:** اپنے پلیٹ فارم کے لیے انسٹالر براہ راست [تازہ ترین ریلیز صفحے](https://github.com/tinyhumansai/openhuman/releases/latest) سے حاصل کریں۔
 
-> **لینکس:** ایپ امیج وے لینڈ کے تحت لانچ ہوتے وقت کریش کر سکتا ہے (اور آرچ پر مبنی ڈسٹرو پر `sharun: Interpreter not found!` کے ساتھ) — وجہ اور env-var ورک‌اراؤنڈ کے لیے [#2463](https://github.com/tinyhumansai/openhuman/issues/2463) دیکھیں۔ اوپر والا `.deb` پیکیج ڈیبین/ابونٹو پر ان ناکامیوں سے بچاتا ہے۔
+> **لینکس:** ایپ امیج وے لینڈ کے تحت لانچ ہوتے وقت کریش کر سکتا ہے، `libgbm.so.1` جیسی میزبان سسٹم لائبریری کھو سکتا ہے، یا آرچ پر مبنی ڈسٹرو پر `sharun: Interpreter not found!` کے ساتھ ناکام ہو سکتا ہے — وجہ اور env-var ورک‌اراؤنڈ کے لیے [#2463](https://github.com/tinyhumansai/openhuman/issues/2463) دیکھیں۔ اوپر والا `.deb` پیکیج ڈیبین/ابونٹو پر apt کے ذریعے runtime dependencies حل کرتا ہے۔
 
 ## متبادل: اسکرپٹ انسٹال (مربوطیت کی تصدیق نہیں)
 
@@ -135,6 +131,8 @@ irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/instal
 </div>
 
 <div dir="rtl" lang="ur">
+
+ڈیبین/ابونٹو پر `install.sh` پہلے تازہ ترین release `.deb` resolve کرتا ہے اور اسے `apt-get` سے انسٹال کرتا ہے تاکہ runtime dependencies apt حل کرے۔ AppImage راستہ زبردستی استعمال کرنے کے لیے `OPENHUMAN_INSTALLER_LINUX_PACKAGE=appimage` سیٹ کریں۔
 
 ## تصدیق شدہ اسکرپٹ انسٹال کی حیثیت
 
@@ -225,7 +223,7 @@ _AGI اور مصنوعی شعور کی طرف بڑھ رہے ہیں؟ ریپو ک
 <div dir="ltr">
 
 <p align="center">
- <a href="https://www.star-history.com">
+ <a href="https://www.star-history.com/#tinyhumansai/openhuman&type=date&legend=top-left">
  <picture>
  <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&theme=dark&legend=top-left" />
  <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left" />

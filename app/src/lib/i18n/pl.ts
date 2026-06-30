@@ -1638,6 +1638,12 @@ const messages: TranslationMap = {
     'Masz już token dostępu? Wklej go zamiast tego poniżej jako nagłówek Authorization.',
   'mcp.connectAuth.oauthTimeout':
     'Upłynął limit czasu oczekiwania na logowanie w przeglądarce. Spróbuj ponownie.',
+  'mcp.connectAuth.authError.oauthRequired':
+    'Ten serwer używa OAuth. Użyj “Zaloguj się przez przeglądarkę” — wklejony token nie zostanie zaakceptowany.',
+  'mcp.connectAuth.authError.tokenRejected':
+    'Serwer odrzucił ten token. Sprawdź, czy jest poprawny i czy nie wygasł.',
+  'mcp.connectAuth.authError.credentialRequired':
+    'Ten serwer wymaga uwierzytelnienia. Dodaj token lub zaloguj się.',
   'onboarding.skipForNow': 'Pomiń na razie',
   'onboarding.localAI.continueWithCloud': 'Kontynuuj z chmurą',
   'onboarding.localAI.useLocalAnyway':
@@ -2288,6 +2294,10 @@ const messages: TranslationMap = {
   'chat.attachment.remove': 'Usuń {name}',
   'chat.attachment.tooMany': 'Maksymalnie {max} obrazów na wiadomość',
   'chat.attachment.tooManyFiles': 'Maksymalnie {max} plików na wiadomość',
+  'chat.attachment.tooManyVideos': 'Maksymalnie {max} filmów na wiadomość',
+  'chat.attachment.videoNotSupported':
+    'Ten model nie odczytuje filmów. Możesz użyć poziomu Rozumowanie OpenHuman, aby dołączyć film.',
+  'chat.attachment.dropToAttach': 'Upuść pliki, aby je dołączyć',
   'chat.attachment.tooLarge': 'Obraz przekracza limit rozmiaru {max}',
   'chat.attachment.unsupportedType':
     'Nieobsługiwany typ pliku. Użyj obrazu (PNG, JPEG, WebP, GIF, BMP) lub pliku PDF, TXT albo Markdown.',
@@ -5205,6 +5215,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.bannerTitle': 'Wyślij OpenHuman na spotkanie',
   'skills.meetingBots.busyTitle': 'OpenHuman jest zajęty',
   'skills.meetingBots.comingSoon': 'Wkrótce',
+  'skills.meetingBots.couldNotLeaveTitle': 'Nie można opuścić spotkania',
   'skills.meetingBots.couldNotStartTitle': 'Nie udało się uruchomić OpenHuman',
   'skills.meetingBots.displayName': 'Wyświetlana nazwa',
   'skills.meetingBots.failedToStart': 'Nie udało się uruchomić OpenHuman.',
@@ -5257,6 +5268,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.liveStatusEnded': 'Spotkanie zakończone',
   'skills.meetingBots.liveStatusError': 'Nie można dołączyć',
   'skills.meetingBots.leaveButton': 'Wyjdź',
+  'skills.meetingBots.leavingButton': 'Opuszczanie…',
   'skills.meetingBots.respondToParticipant': 'Twoje imię na tym spotkaniu',
   'skills.meetingBots.respondToParticipantHint':
     'np. Anna (Twoja nazwa wyświetlana podczas rozmowy)',
@@ -6111,6 +6123,8 @@ const messages: TranslationMap = {
     'Brak dostępnego dostawcy podsumowań dla funkcji Twórz drzewa podsumowań. Włącz lokalną AI (Ollama) lub włącz podsumowywanie w chmurze w Ustawienia → AI → Pamięć.',
   'memory.health.remediation.empty_input_refused':
     'Pominięto element pamięci, ponieważ jego tekst był pusty. Żadne działanie nie jest wymagane — nowe elementy są nadal osadzane normalnie.',
+  'memory.health.remediation.storage_unavailable':
+    'OpenHuman nie może zapisywać w pamięci — dysk lub karta SD wydaje się uszkodzona, pełna lub tylko do odczytu. Sprawdź dysk i zwolnij miejsce; przetwarzanie pamięci wznowi się automatycznie, gdy zapis znów będzie możliwy.',
   'memory.health.remediation.transient':
     'Tymczasowy błąd przerwał przetwarzanie pamięci. Ponowna próba nastąpi automatycznie.',
   'memory.health.remediation.unknown':

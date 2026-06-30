@@ -22,7 +22,9 @@ use crate::core::event_bus::register_native_global;
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::agent::turn_origin::{self, AgentTurnOrigin};
 use crate::openhuman::config::MultimodalConfig;
-use crate::openhuman::inference::provider::{ChatMessage, Provider};
+use crate::openhuman::inference::provider::{
+    current_resolved_provider_route, with_resolved_provider_route_scope, ChatMessage, Provider,
+};
 use crate::openhuman::prompt_injection::{
     enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
 };
@@ -144,6 +146,37 @@ pub struct AgentTurnRequest {
 pub struct AgentTurnResponse {
     /// Final assistant text after all tool calls resolved and the loop terminated.
     pub text: String,
+    /// Provider that actually produced the final response, after any routing,
+    /// retry, or fallback layer. `None` means the provider stack did not expose
+    /// resolved-route metadata and callers should fall back to the requested
+    /// provider.
+    pub resolved_provider: Option<String>,
+    /// Model that actually produced the final response, after any routing,
+    /// retry, or fallback layer. `None` means callers should fall back to the
+    /// requested model.
+    pub resolved_model: Option<String>,
+}
+
+impl AgentTurnResponse {
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            resolved_provider: None,
+            resolved_model: None,
+        }
+    }
+
+    pub fn with_resolved_route(
+        text: impl Into<String>,
+        provider: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
+        Self {
+            text: text.into(),
+            resolved_provider: Some(provider.into()),
+            resolved_model: Some(model.into()),
+        }
+    }
 }
 
 /// Register the agent domain's native request handlers on the global
@@ -262,43 +295,48 @@ pub fn register_agent_handlers() {
                 channel_name,
                 target_agent_id.as_deref().unwrap_or("root")
             );
-            let text = turn_origin::with_origin(
-                origin,
-                with_file_state_agent_id(
-                    file_state_id,
-                    with_current_sandbox_mode(sandbox_mode, async {
-                        run_tool_call_loop(
-                            provider.as_ref(),
-                            &mut history,
-                            tools_registry.as_ref(),
-                            &provider_name,
-                            &model,
-                            temperature,
-                            silent,
-                            &channel_name,
-                            &multimodal,
-                            &multimodal_files,
-                            max_tool_iterations,
-                            on_delta,
-                            visible_tool_names.as_ref(),
-                            &extra_tools,
-                            on_progress,
-                            // Bus path runs ad-hoc agent turns without an Agent
-                            // handle, so we pass None — payload summarization is
-                            // wired into the orchestrator session via Agent::turn,
-                            // not the bus dispatcher.
-                            None,
-                            // Use the default (allow-all) tool policy. Custom
-                            // policies can be wired in via AgentTurnRequest when
-                            // per-channel policy configuration is added (#2134).
-                            &crate::openhuman::tools::policy::DefaultToolPolicy,
-                        )
-                        .await
-                    }),
-                ),
-            )
-            .await
-            .map_err(|e| e.to_string())?;
+            let (text, resolved_route) = with_resolved_provider_route_scope(async {
+                let text = turn_origin::with_origin(
+                    origin,
+                    with_file_state_agent_id(
+                        file_state_id,
+                        with_current_sandbox_mode(sandbox_mode, async {
+                            run_tool_call_loop(
+                                provider.as_ref(),
+                                &mut history,
+                                tools_registry.as_ref(),
+                                &provider_name,
+                                &model,
+                                temperature,
+                                silent,
+                                &channel_name,
+                                &multimodal,
+                                &multimodal_files,
+                                max_tool_iterations,
+                                on_delta,
+                                visible_tool_names.as_ref(),
+                                &extra_tools,
+                                on_progress,
+                                // Bus path runs ad-hoc agent turns without an Agent
+                                // handle, so we pass None — payload summarization is
+                                // wired into the orchestrator session via Agent::turn,
+                                // not the bus dispatcher.
+                                None,
+                                // Use the default (allow-all) tool policy. Custom
+                                // policies can be wired in via AgentTurnRequest when
+                                // per-channel policy configuration is added (#2134).
+                                &crate::openhuman::tools::policy::DefaultToolPolicy,
+                            )
+                            .await
+                        }),
+                    ),
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+                let resolved_route = current_resolved_provider_route();
+                Ok::<_, String>((text, resolved_route))
+            })
+            .await?;
 
             tracing::debug!(
                 channel = %channel_name,
@@ -306,7 +344,12 @@ pub fn register_agent_handlers() {
                 "[agent::bus] {AGENT_RUN_TURN_METHOD} completed"
             );
 
-            Ok(AgentTurnResponse { text })
+            Ok(match resolved_route {
+                Some(route) => {
+                    AgentTurnResponse::with_resolved_route(text, route.provider, route.model)
+                }
+                None => AgentTurnResponse::new(text),
+            })
         },
     );
     tracing::debug!("[agent::bus] registered native handler `{AGENT_RUN_TURN_METHOD}`");
@@ -346,7 +389,7 @@ pub fn register_agent_handlers() {
 ///         async move {
 ///             calls.fetch_add(1, Ordering::SeqCst);
 ///             assert_eq!(req.channel_name, "discord");
-///             Ok(AgentTurnResponse { text: "CANNED".into() })
+///             Ok(AgentTurnResponse::new("CANNED"))
 ///         }
 ///     })
 ///     .await;
@@ -459,9 +502,10 @@ mod tests {
                 assert_eq!(req.provider_name, "fake-provider");
                 assert_eq!(req.channel_name, "test-channel");
                 assert_eq!(req.history.len(), 2);
-                Ok(AgentTurnResponse {
-                    text: format!("handled({})", req.history.len()),
-                })
+                Ok(AgentTurnResponse::new(format!(
+                    "handled({})",
+                    req.history.len()
+                )))
             },
         );
 
@@ -487,9 +531,7 @@ mod tests {
                     .expect("streaming test must supply an on_delta sender");
                 tx.send("chunk1".into()).await.map_err(|e| e.to_string())?;
                 tx.send("chunk2".into()).await.map_err(|e| e.to_string())?;
-                Ok(AgentTurnResponse {
-                    text: "streamed".into(),
-                })
+                Ok(AgentTurnResponse::new("streamed"))
             },
         );
 

@@ -336,7 +336,11 @@ jobs:
     needs: [changes, rust-quality]
     if: always() && needs.changes.outputs['rust-core'] == 'true' && needs['rust-quality'].result == 'success'
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    # 30 min was only ever enough because a stack overflow aborted the run early
+    # (see RUST_MIN_STACK below). With the overflow fixed the job runs the full
+    # instrumented suite (~13.6k tests, single-threaded build) end-to-end, which
+    # needs more wall-time.
+    timeout-minutes: 50
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     env:
@@ -349,6 +353,13 @@ jobs:
       # the maximum-shrink setting; line-tables-only was still too large for the
       # instrumented build.
       CARGO_PROFILE_DEV_DEBUG: "0"
+      # cargo-llvm-cov instrumentation inflates per-frame stack usage, so deep
+      # async tests (e.g. cron::scheduler agent-job tests that drive the full
+      # harness) overflow the default ~2 MB test-thread stack and SIGABRT the
+      # whole run with "stack overflow". Give libtest's per-test threads a large
+      # stack so coverage runs don't abort. (Virtual reservation only — no real
+      # memory cost.)
+      RUST_MIN_STACK: "67108864"
     steps:
       - name: Free disk space
         run: |
@@ -425,6 +436,9 @@ jobs:
       # __llvm_covmap/__llvm_covfun sections, NOT from DWARF, so coverage
       # numbers are unaffected. Mirrors rust-core-coverage.
       CARGO_PROFILE_DEV_DEBUG: "0"
+      # Large test-thread stack so coverage instrumentation's inflated frames
+      # don't overflow deep async tests. Mirrors rust-core-coverage.
+      RUST_MIN_STACK: "67108864"
     steps:
       - name: Free disk space
         run: |

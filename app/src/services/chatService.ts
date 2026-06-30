@@ -275,6 +275,18 @@ export interface ChatInferenceStartEvent {
   request_id: string;
 }
 
+/**
+ * Periodic liveness beat emitted by the core progress bridge for the whole
+ * duration of an in-flight turn (issue #4270). Carries no payload beyond the
+ * ids — its sole purpose is to rearm the frontend silence timer so a long
+ * prefill or a buffered-reasoning phase that streams no other progress event
+ * does not trip a false "no response after 2 minutes" timeout.
+ */
+export interface ChatInferenceHeartbeatEvent {
+  thread_id: string;
+  request_id: string;
+}
+
 /** Emitted at the start of each LLM iteration in the tool loop. */
 export interface ChatIterationStartEvent {
   thread_id: string;
@@ -493,6 +505,7 @@ export interface ChatTaskBoardUpdatedEvent {
 
 export interface ChatEventListeners {
   onInferenceStart?: (event: ChatInferenceStartEvent) => void;
+  onInferenceHeartbeat?: (event: ChatInferenceHeartbeatEvent) => void;
   onIterationStart?: (event: ChatIterationStartEvent) => void;
   onToolCall?: (event: ChatToolCallEvent) => void;
   onToolResult?: (event: ChatToolResultEvent) => void;
@@ -529,6 +542,7 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
   // processing the same logical event twice.
   const EVENTS = {
     inferenceStart: 'inference_start',
+    inferenceHeartbeat: 'inference_heartbeat',
     iterationStart: 'iteration_start',
     toolCall: 'tool_call',
     toolResult: 'tool_result',
@@ -564,6 +578,21 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
     };
     socket.on(EVENTS.inferenceStart, cb);
     handlers.push([EVENTS.inferenceStart, cb]);
+  }
+
+  if (listeners.onInferenceHeartbeat) {
+    const cb = (payload: unknown) => {
+      const e = payload as ChatInferenceHeartbeatEvent;
+      chatLog(
+        '%s thread_id=%s request_id=%s',
+        EVENTS.inferenceHeartbeat,
+        e.thread_id,
+        e.request_id
+      );
+      listeners.onInferenceHeartbeat?.(e);
+    };
+    socket.on(EVENTS.inferenceHeartbeat, cb);
+    handlers.push([EVENTS.inferenceHeartbeat, cb]);
   }
 
   if (listeners.onIterationStart) {

@@ -33,7 +33,7 @@
 //!     |req| async move {
 //!         let text = run_tool_call_loop(/* ... */).await
 //!             .map_err(|e| e.to_string())?;
-//!         Ok(AgentTurnResponse { text })
+//!         Ok(AgentTurnResponse::new(text))
 //!     },
 //! );
 //!

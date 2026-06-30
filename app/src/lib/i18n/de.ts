@@ -1661,6 +1661,12 @@ const messages: TranslationMap = {
     'Sie haben bereits ein Zugriffstoken? Fügen Sie es stattdessen unten als Authorization-Header ein.',
   'mcp.connectAuth.oauthTimeout':
     'Zeitüberschreitung beim Warten auf die Browser-Anmeldung. Versuchen Sie es erneut.',
+  'mcp.connectAuth.authError.oauthRequired':
+    'Dieser Server verwendet OAuth. Nutzen Sie “Im Browser anmelden” — ein eingefügtes Token wird nicht akzeptiert.',
+  'mcp.connectAuth.authError.tokenRejected':
+    'Der Server hat dieses Token abgelehnt. Prüfen Sie, ob es korrekt ist und nicht abgelaufen ist.',
+  'mcp.connectAuth.authError.credentialRequired':
+    'Dieser Server erfordert eine Authentifizierung. Fügen Sie ein Token hinzu oder melden Sie sich an.',
   'onboarding.skipForNow': 'Vorerst überspringen',
   'onboarding.localAI.continueWithCloud': 'Fahren Sie mit der Cloud fort.',
   'onboarding.localAI.useLocalAnyway':
@@ -2321,6 +2327,10 @@ const messages: TranslationMap = {
   'chat.attachment.remove': '{name} entfernen',
   'chat.attachment.tooMany': 'Maximal {max} Bilder pro Nachricht',
   'chat.attachment.tooManyFiles': 'Maximal {max} Dateien pro Nachricht',
+  'chat.attachment.tooManyVideos': 'Maximal {max} Videos pro Nachricht',
+  'chat.attachment.videoNotSupported':
+    'Dieses Modell kann keine Videos lesen. Du kannst die OpenHuman-Stufe „Denkmodus“ verwenden, um dein Video anzuhängen.',
+  'chat.attachment.dropToAttach': 'Dateien zum Anhängen ablegen',
   'chat.attachment.tooLarge': 'Bild überschreitet die Größenbeschränkung von {max}',
   'chat.attachment.unsupportedType':
     'Nicht unterstützter Dateityp. Verwenden Sie ein Bild (PNG, JPEG, WebP, GIF, BMP) oder eine PDF-, TXT- oder Markdown-Datei.',
@@ -5265,6 +5275,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.bannerTitle': 'Sende OpenHuman an eine Besprechung',
   'skills.meetingBots.busyTitle': 'OpenHuman ist beschäftigt',
   'skills.meetingBots.comingSoon': 'Kommt bald',
+  'skills.meetingBots.couldNotLeaveTitle': 'Meeting konnte nicht verlassen werden',
   'skills.meetingBots.couldNotStartTitle': 'OpenHuman konnte nicht gestartet werden',
   'skills.meetingBots.displayName': 'Anzeigename',
   'skills.meetingBots.failedToStart': 'OpenHuman konnte nicht gestartet werden.',
@@ -5317,6 +5328,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.liveStatusEnded': 'Meeting beendet',
   'skills.meetingBots.liveStatusError': 'Beitritt fehlgeschlagen',
   'skills.meetingBots.leaveButton': 'Verlassen',
+  'skills.meetingBots.leavingButton': 'Wird verlassen…',
   'skills.meetingBots.respondToParticipant': 'Ihr Name in diesem Meeting',
   'skills.meetingBots.respondToParticipantHint': 'z. B. Max (Ihr Anzeigename im Anruf)',
   'skills.meetingBots.respondToParticipantDesc':
@@ -6178,6 +6190,8 @@ const messages: TranslationMap = {
     'Für „Zusammenfassungsbäume erstellen” ist kein Zusammenfassungsanbieter verfügbar. Aktiviere die lokale KI (Ollama) oder aktiviere die Cloud-Zusammenfassung unter Einstellungen → KI → Speicher.',
   'memory.health.remediation.empty_input_refused':
     'Ein Speicherelement wurde übersprungen, weil sein Text leer war. Keine Aktion erforderlich — neue Einträge werden weiterhin normal eingebettet.',
+  'memory.health.remediation.storage_unavailable':
+    'OpenHuman kann nicht in seinen Speicher schreiben — die Festplatte oder SD-Karte scheint defekt, voll oder schreibgeschützt zu sein. Überprüfe das Laufwerk und gib Speicherplatz frei; die Speicherverarbeitung wird automatisch fortgesetzt, sobald der Speicher wieder beschreibbar ist.',
   'memory.health.remediation.transient':
     'Ein vorübergehender Fehler hat die Speicherverarbeitung unterbrochen. Es wird automatisch erneut versucht.',
   'memory.health.remediation.unknown':

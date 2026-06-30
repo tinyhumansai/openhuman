@@ -98,6 +98,60 @@ describe('useComposioIntegrations', () => {
     expect(result.current.catalogByToolkit.size).toBe(0);
   });
 
+  it('seeds initial state from the durable connection cache for an instant cold-start paint', async () => {
+    // Pre-populate the durable cache as if a prior session had persisted it,
+    // under the active user's namespace (the cache is inert without a user id).
+    window.localStorage.setItem('OPENHUMAN_ACTIVE_USER_ID', 'test-user');
+    window.localStorage.setItem(
+      'test-user:composio:connections:v1',
+      JSON.stringify({
+        fetchedAt: Date.now(),
+        connections: [{ id: 'seed', toolkit: 'gmail', status: 'ACTIVE' }],
+        toolkits: ['gmail'],
+        catalog: [{ slug: 'gmail', name: 'Gmail' }],
+      })
+    );
+
+    // The live fetch hangs so we can observe the seeded state in isolation.
+    mockListToolkits.mockReturnValue(new Promise(() => {}));
+    mockListConnections.mockReturnValue(new Promise(() => {}));
+
+    const { useComposioIntegrations } = await import('./hooks');
+    const { result } = renderHook(() => useComposioIntegrations(0));
+
+    // No loading skeleton — the cached snapshot paints immediately.
+    expect(result.current.loading).toBe(false);
+    expect(result.current.connectionByToolkit.get('gmail')?.status).toBe('ACTIVE');
+    expect(result.current.toolkits).toEqual(['gmail']);
+    expect(result.current.catalogByToolkit.get('gmail')?.name).toBe('Gmail');
+  });
+
+  it('reconciles a stale cached connection away once the live fetch lands', async () => {
+    window.localStorage.setItem('OPENHUMAN_ACTIVE_USER_ID', 'test-user');
+    window.localStorage.setItem(
+      'test-user:composio:connections:v1',
+      JSON.stringify({
+        fetchedAt: Date.now(),
+        connections: [{ id: 'seed', toolkit: 'gmail', status: 'ACTIVE' }],
+        toolkits: ['gmail'],
+        catalog: [],
+      })
+    );
+    // Backend now reports the toolkit disconnected.
+    mockListToolkits.mockResolvedValue({ toolkits: ['gmail'] });
+    mockListConnections.mockResolvedValue({ connections: [] });
+
+    const { useComposioIntegrations } = await import('./hooks');
+    const { result } = renderHook(() => useComposioIntegrations(0));
+
+    // Seeded immediately from the cache…
+    expect(result.current.connectionByToolkit.get('gmail')?.status).toBe('ACTIVE');
+    // …then the live fetch reconciles the stale connection away.
+    await waitFor(() => {
+      expect(result.current.connectionByToolkit.size).toBe(0);
+    });
+  });
+
   it('groups connections by toolkit, sorts by status then createdAt', async () => {
     const { useComposioIntegrations } = await import('./hooks');
 

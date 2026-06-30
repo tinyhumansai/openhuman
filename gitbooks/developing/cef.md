@@ -117,6 +117,13 @@ for these details in the issue:
 For Windows Insider builds, also confirm whether the same installer launches on
 the current stable Windows release. That separates a profile/cache problem from
 an OS/runtime compatibility regression in CEF startup.
+
+If the logs point to a GPU-process startup failure rather than a stale CEF
+profile lock, set `OPENHUMAN_DISABLE_GPU=1` before launching OpenHuman. This
+passes `--disable-gpu` and `--disable-gpu-compositing` to the embedded CEF
+runtime without forwarding arbitrary Chromium flags. Leave it unset for normal
+use because disabling the GPU path can break WebGL-heavy surfaces.
+
 ## Linux shell fallback for CEF startup crashes
 
 On some Linux desktops, especially NVIDIA proprietary driver setups under Wayland/XWayland, the Tauri/CEF shell can fail during native window configuration before the React app becomes usable. One known symptom is an X11 `BadWindow` error after CEF reports the main browser context.

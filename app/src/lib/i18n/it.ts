@@ -1650,6 +1650,12 @@ const messages: TranslationMap = {
   'mcp.connectAuth.oauthOrToken':
     'Hai già un token di accesso? Incollalo invece come intestazione Authorization qui sotto.',
   'mcp.connectAuth.oauthTimeout': "Tempo scaduto in attesa dell'accesso dal browser. Riprova.",
+  'mcp.connectAuth.authError.oauthRequired':
+    'Questo server usa OAuth. Usa “Accedi con il browser” — un token incollato non verrà accettato.',
+  'mcp.connectAuth.authError.tokenRejected':
+    'Il server ha rifiutato questo token. Verifica che sia corretto e che non sia scaduto.',
+  'mcp.connectAuth.authError.credentialRequired':
+    "Questo server richiede l'autenticazione. Aggiungi un token oppure accedi.",
   'onboarding.skipForNow': 'Salta per ora',
   'onboarding.localAI.continueWithCloud': 'Continua con Cloud',
   'onboarding.localAI.useLocalAnyway':
@@ -2302,6 +2308,10 @@ const messages: TranslationMap = {
   'chat.attachment.remove': 'Rimuovi {name}',
   'chat.attachment.tooMany': 'Massimo {max} immagini per messaggio',
   'chat.attachment.tooManyFiles': 'Massimo {max} file per messaggio',
+  'chat.attachment.tooManyVideos': 'Massimo {max} video per messaggio',
+  'chat.attachment.videoNotSupported':
+    'Questo modello non può leggere i video. Puoi usare il livello Ragionamento di OpenHuman per allegare il tuo video.',
+  'chat.attachment.dropToAttach': 'Rilascia i file per allegarli',
   'chat.attachment.tooLarge': "L'immagine supera il limite di dimensione di {max}",
   'chat.attachment.unsupportedType':
     'Tipo di file non supportato. Usa un file immagine (PNG, JPEG, WebP, GIF, BMP) oppure PDF, TXT o Markdown.',
@@ -5219,6 +5229,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.bannerTitle': 'Titolo banner',
   'skills.meetingBots.busyTitle': 'OpenHuman è occupato',
   'skills.meetingBots.comingSoon': 'In arrivo',
+  'skills.meetingBots.couldNotLeaveTitle': 'Impossibile uscire dalla riunione',
   'skills.meetingBots.couldNotStartTitle': 'Impossibile avviare OpenHuman',
   'skills.meetingBots.displayName': 'Nome visualizzato',
   'skills.meetingBots.failedToStart': 'Avvio di OpenHuman fallito.',
@@ -5270,6 +5281,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.liveStatusEnded': 'Riunione terminata',
   'skills.meetingBots.liveStatusError': 'Partecipazione fallita',
   'skills.meetingBots.leaveButton': 'Esci',
+  'skills.meetingBots.leavingButton': 'Uscita in corso…',
   'skills.meetingBots.respondToParticipant': 'Il tuo nome in questa riunione',
   'skills.meetingBots.respondToParticipantHint':
     'es. Mario (il tuo nome visualizzato nella chiamata)',
@@ -6127,6 +6139,8 @@ const messages: TranslationMap = {
     "Nessun provider di riepilogo è disponibile per Crea alberi di riepilogo. Abilita l'IA locale (Ollama) o abilita il riepilogo cloud in Impostazioni → IA → Memoria.",
   'memory.health.remediation.empty_input_refused':
     'Un elemento di memoria è stato saltato perché il suo testo era vuoto. Nessuna azione necessaria — i nuovi elementi continuano a essere incorporati normalmente.',
+  'memory.health.remediation.storage_unavailable':
+    "OpenHuman non riesce a scrivere nella sua memoria — il disco o la scheda SD sembra guasto, pieno o di sola lettura. Controlla l'unità e libera spazio; l'elaborazione della memoria riprenderà automaticamente quando lo spazio di archiviazione tornerà scrivibile.",
   'memory.health.remediation.transient':
     "Un errore temporaneo ha interrotto l'elaborazione della memoria. Verrà riprovato automaticamente.",
   'memory.health.remediation.unknown':

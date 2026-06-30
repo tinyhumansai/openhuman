@@ -1041,6 +1041,8 @@ const en: TranslationMap = {
     'No summarization provider is available for Build Summary Trees. Enable local AI (Ollama), or enable cloud summarization in Settings → AI → Memory.',
   'memory.health.remediation.empty_input_refused':
     'A memory item was skipped because its text was empty. No action needed — newer items continue to embed normally.',
+  'memory.health.remediation.storage_unavailable':
+    "OpenHuman can't write to its memory storage — the disk or SD card appears to be failing, full, or read-only. Check the drive and free up space; memory processing resumes automatically once storage is writable again.",
   'memory.health.remediation.transient':
     'A temporary error interrupted memory processing. It will retry automatically.',
   'memory.health.remediation.unknown':
@@ -1961,6 +1963,12 @@ const en: TranslationMap = {
   'mcp.connectAuth.oauthOrToken':
     'Already have an access token? Paste it as an Authorization header below instead.',
   'mcp.connectAuth.oauthTimeout': 'Timed out waiting for browser sign-in. Try again.',
+  'mcp.connectAuth.authError.oauthRequired':
+    'This server uses OAuth. Use “Sign in with browser” — a pasted token will not be accepted.',
+  'mcp.connectAuth.authError.tokenRejected':
+    'The server rejected this token. Check that it is correct and has not expired.',
+  'mcp.connectAuth.authError.credentialRequired':
+    'This server requires authentication. Add a token, or sign in.',
   'mcp.detail.enable': 'Enable',
   'mcp.detail.disable': 'Disable',
   'mcp.status.disabled': 'Disabled',
@@ -2664,6 +2672,10 @@ const en: TranslationMap = {
   'chat.attachment.remove': 'Remove {name}',
   'chat.attachment.tooMany': 'Maximum {max} images per message',
   'chat.attachment.tooManyFiles': 'Maximum {max} files per message',
+  'chat.attachment.tooManyVideos': 'Maximum {max} videos per message',
+  'chat.attachment.videoNotSupported':
+    'This model can’t read videos. You can use the OpenHuman Reasoning tier to attach your video.',
+  'chat.attachment.dropToAttach': 'Drop files to attach',
   'chat.attachment.tooLarge': 'Image exceeds {max} size limit',
   'chat.attachment.unsupportedType':
     'Unsupported file type. Use an image (PNG, JPEG, WebP, GIF, BMP) or a PDF, TXT, or Markdown file.',
@@ -5780,6 +5792,7 @@ const en: TranslationMap = {
   'skills.meetingBots.bannerTitle': 'Send OpenHuman to your next meeting',
   'skills.meetingBots.busyTitle': 'OpenHuman is busy',
   'skills.meetingBots.comingSoon': 'coming soon',
+  'skills.meetingBots.couldNotLeaveTitle': 'Couldn’t leave the meeting',
   'skills.meetingBots.couldNotStartTitle': 'Could not start OpenHuman',
   'skills.meetingBots.displayName': 'Display name',
   'skills.meetingBots.failedToStart': 'Failed to start OpenHuman.',
@@ -5831,6 +5844,7 @@ const en: TranslationMap = {
   'skills.meetingBots.liveStatusEnded': 'Meeting ended',
   'skills.meetingBots.liveStatusError': 'Failed to join',
   'skills.meetingBots.leaveButton': 'Leave',
+  'skills.meetingBots.leavingButton': 'Leaving…',
   'skills.meetingBots.respondToParticipant': 'Your Name in This Meeting',
   'skills.meetingBots.respondToParticipantHint': 'e.g. Alice (your display name in the call)',
   'skills.meetingBots.respondToParticipantDesc':

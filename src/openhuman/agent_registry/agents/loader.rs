@@ -431,6 +431,27 @@ mod tests {
     }
 
     #[test]
+    fn orchestrator_can_resume_paused_subagents_via_continue_subagent() {
+        // #4291: when a delegated sub-agent (e.g. mcp_setup) pauses on
+        // ask_user_clarification, the orchestrator gets a
+        // [SUBAGENT_AWAITING_USER] envelope and must resume that exact
+        // checkpoint with `continue_subagent`. Without the tool in scope the
+        // only continuation is to re-delegate a fresh, stateless sub-agent
+        // that asks again — the infinite re-spawn loop. Lock the tool in.
+        let def = find("orchestrator");
+        match &def.tools {
+            ToolScope::Named(tools) => assert!(
+                tools.iter().any(|t| t == "continue_subagent"),
+                "orchestrator must expose continue_subagent to resume paused \
+                 sub-agents instead of re-spawning them (#4291)"
+            ),
+            ToolScope::Wildcard => {
+                panic!("orchestrator must have a Named tool scope")
+            }
+        }
+    }
+
+    #[test]
     fn trigger_triage_has_no_tools_and_pulls_memory_context() {
         let def = find("trigger_triage");
         match &def.tools {
