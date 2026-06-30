@@ -138,6 +138,8 @@ fn all_variants_have_correct_domain() {
                 content: "hi".into(),
                 thread_ts: None,
                 response: "hello".into(),
+                provider: "test-provider".into(),
+                model: "test-model".into(),
                 elapsed_ms: 0,
                 success: true,
                 workspace_dir: std::path::PathBuf::from("/test"),

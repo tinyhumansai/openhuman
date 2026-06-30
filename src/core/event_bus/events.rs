@@ -354,6 +354,10 @@ pub enum DomainEvent {
         content: String,
         thread_ts: Option<String>,
         response: String,
+        /// Provider route selected for the LLM turn.
+        provider: String,
+        /// Model route selected for the LLM turn.
+        model: String,
         elapsed_ms: u64,
         success: bool,
         /// Workspace directory active when this event was published.

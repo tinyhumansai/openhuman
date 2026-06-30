@@ -15,7 +15,9 @@ use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::agent_experience::{
     prepend_experience_block, render_experience_hits, AgentExperienceStore, ExperienceQuery,
 };
-use crate::openhuman::inference::provider::{ChatMessage, ConversationMessage};
+use crate::openhuman::inference::provider::{
+    ChatMessage, ConversationMessage, AGENT_TURN_MAX_OUTPUT_TOKENS,
+};
 use crate::openhuman::memory::MemoryCategory;
 use crate::openhuman::util::truncate_with_ellipsis;
 
@@ -833,6 +835,7 @@ impl Agent {
                     &multimodal,
                     &multimodal_files,
                     max_iterations,
+                    AGENT_TURN_MAX_OUTPUT_TOKENS,
                     None, // the web bridge streams via on_progress deltas, not on_delta
                     &[],
                     turn_run_queue,

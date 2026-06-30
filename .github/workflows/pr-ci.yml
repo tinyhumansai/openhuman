@@ -373,8 +373,17 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: . -> target
-          cache-on-failure: true
+          cache-on-failure: false
           shared-key: pr-rust-core-cov
+
+      - name: Prune stale coverage test executables
+        run: |
+          # The restored target cache can contain prior llvm-cov integration-test
+          # executables. Those are enormous after coverage instrumentation and
+          # can exhaust the runner before the current cargo invocation finishes.
+          find target/llvm-cov-target -type f -path '*/debug/deps/*' -perm -111 -delete 2>/dev/null || true
+          echo "Disk after coverage target prune:"
+          df -h /__w || true
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
@@ -383,6 +392,13 @@ jobs:
         run: bash scripts/ci-cancel-aware.sh cargo llvm-cov --no-fail-fast -p openhuman --lcov --output-path lcov-core.info
         env:
           CARGO_BUILD_JOBS: "1"
+
+      - name: Prune coverage test executables before cache save
+        if: always()
+        run: |
+          find target/llvm-cov-target -type f -path '*/debug/deps/*' -perm -111 -delete 2>/dev/null || true
+          echo "Disk after post-coverage prune:"
+          df -h /__w || true
 
       - name: Upload core lcov
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5

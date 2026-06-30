@@ -4957,6 +4957,7 @@ const messages: TranslationMap = {
     "Affiche les réponses de l'assistant en texte sans cadre tout en gardant vos messages en bulles.",
   'settings.mascot.active': 'Actif',
   'settings.mascot.characterDesc': 'Description du personnage',
+  'settings.mascot.characterDraft': 'Brouillon',
   'settings.mascot.characterHeading': 'Titre du personnage',
   'settings.mascot.customGifError':
     'Entrez un HTTPS .gif URL, un bouclage HTTP .gif URL, un fichier:// .gif URL ou un chemin local .gif.',
@@ -5263,9 +5264,11 @@ const messages: TranslationMap = {
   'skills.meetingBots.platformComingSoon': '{label} sera bientôt disponible.',
   'skills.meetingBots.platformHints.gmeet': 'meet.google.com/abc-defg-hij',
   'skills.meetingBots.platformHints.teams': 'teams.microsoft.com/...',
+  'skills.meetingBots.platformHints.webex': 'webex.com/meet/...',
   'skills.meetingBots.platformHints.zoom': 'zoom.us/j/...',
   'skills.meetingBots.platforms.gmeet': 'Google Meet',
   'skills.meetingBots.platforms.teams': 'Microsoft Teams',
+  'skills.meetingBots.platforms.webex': 'Webex',
   'skills.meetingBots.platforms.zoom': 'Zoom',
   'skills.meetingBots.sendTo': 'Envoyer à',
   'skills.meetingBots.serverOverloaded':
@@ -5309,6 +5312,62 @@ const messages: TranslationMap = {
   'skills.meetingBots.activeMode': 'Répondre quand je m’adresse à lui',
   'skills.meetingBots.activeModeDesc':
     'Activé, le bot répond à voix haute après que vous prononcez sa phrase d’activation. Désactivé, il se contente d’écouter et de transcrire.',
+  'skills.meetingBots.history.allPlatforms': 'Toutes les plateformes',
+  'skills.meetingBots.history.copyTranscript': 'Copier',
+  'skills.meetingBots.history.downloadTranscript': 'Télécharger',
+  'skills.meetingBots.history.earlier': 'Plus tôt',
+  'skills.meetingBots.history.participantCount': '{count} participant',
+  'skills.meetingBots.history.participantCountPlural': '{count} participants',
+  'skills.meetingBots.history.runWithOpenHuman': 'Exécuter avec OpenHuman',
+  'skills.meetingBots.history.searchPlaceholder': 'Rechercher des appels…',
+  'skills.meetingBots.history.selectPrompt':
+    'Sélectionnez un appel pour voir son résumé et sa transcription.',
+  'skills.meetingBots.history.today': "Aujourd'hui",
+  'skills.meetingBots.history.yesterday': 'Hier',
+  'skills.meetingBots.upcoming.heading': 'À venir',
+  'skills.meetingBots.upcoming.when': 'Quand',
+  'skills.meetingBots.upcoming.meeting': 'Réunion',
+  'skills.meetingBots.upcoming.platform': 'Plateforme',
+  'skills.meetingBots.upcoming.people': 'Personnes',
+  'skills.meetingBots.upcoming.joinPolicy': 'Politique de participation',
+  'skills.meetingBots.upcoming.joinNow': 'Rejoindre maintenant',
+  'skills.meetingBots.upcoming.joinNowAriaLabel': 'Rejoindre {title}',
+  'skills.meetingBots.upcoming.join': 'Rejoindre',
+  'skills.meetingBots.upcoming.auto': 'Auto',
+  'skills.meetingBots.upcoming.ask': 'Demander',
+  'skills.meetingBots.upcoming.skip': 'Ignorer',
+  'skills.meetingBots.upcoming.today': "Aujourd'hui",
+  'skills.meetingBots.upcoming.tomorrow': 'Demain',
+  'skills.meetingBots.upcoming.empty':
+    'Aucune réunion à venir — connectez Google Calendar pour les voir ici.',
+  'skills.meetingBots.upcoming.error': 'Impossible de charger les réunions à venir.',
+  'skills.meetingBots.upcoming.retry': 'Réessayer',
+  'skills.meetingBots.upcoming.refresh': 'Actualiser',
+  'skills.meetingBots.upcoming.filterAll': 'Toutes les plateformes',
+  'skills.meetingBots.upcoming.participants': '{count} participants',
+  'skills.meetingBots.upcoming.imminent': 'Commence bientôt',
+  'skills.meetingBots.upcoming.autoJoinsAt': 'Rejoint automatiquement ~à {time}',
+  'skills.meetingBots.upcoming.asksAtStart': 'Demande au début',
+  'skills.meetingBots.upcoming.watchCalendarHint':
+    "Activez 'Surveiller mon agenda' dans les Paramètres (icône engrenage) pour que Auto/Demander prenne effet — sinon ces politiques sont enregistrées mais ne se déclencheront pas.",
+  'skills.meetingBots.relative.now': 'maintenant',
+  'skills.meetingBots.relative.inMinutes': 'dans {count}m',
+  'skills.meetingBots.relative.inHours': 'dans {count}h',
+  'skills.meetingBots.relative.minutesAgo': 'il y a {count}m',
+  'skills.meetingBots.relative.hoursAgo': 'il y a {count}h',
+  'skills.meetingBots.relative.daysAgo': 'il y a {count}j',
+  'skills.meetingBots.relative.yesterday': 'hier',
+  'skills.meetingBots.defaults.drawerTitle': 'Paramètres de réunion',
+  'skills.meetingBots.defaults.closeDrawer': 'Fermer',
+  'skills.meetingBots.defaults.openDefaults': 'Paramètres de réunion',
+  'skills.meetingBots.defaults.watchCalendar': 'Surveiller mon agenda',
+  'skills.meetingBots.defaults.watchCalendarDesc':
+    "Laissez OpenHuman surveiller votre agenda connecté pour qu'il puisse rejoindre automatiquement ou vous inviter à des réunions selon les politiques ci-dessous. Cela est indépendant des notifications de rappel de réunion.",
+  'skills.meetingBots.defaults.globalPolicy': "Politique d'adhésion automatique globale",
+  'skills.meetingBots.defaults.perPlatformTitle': 'Paramètres par plateforme',
+  'skills.meetingBots.defaults.perPlatformDesc':
+    'Remplacer la politique globale pour des plateformes spécifiques.',
+  'skills.meetingBots.defaults.useDefault': 'Utiliser par défaut',
   'skills.resource.preview.closeAriaLabel': "Fermer l'aperçu",
   'skills.resource.preview.failed': "Échec de l'aperçu",
   'skills.resource.preview.loading': "Chargement de l'aperçu…",
@@ -6400,7 +6459,11 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.title': 'Crédits du fournisseur requis',
   'userErrors.insufficientCredits.body':
     "Votre fournisseur IA n'a plus de crédits. Rechargez-le ou mettez à jour sa clé API.",
+  'userErrors.apiKeyMissing.title': 'Clé API requise',
+  'userErrors.apiKeyMissing.body':
+    "Aucune clé API n'est définie pour votre fournisseur d'IA. Ajoutez-en une dans les paramètres du fournisseur pour continuer.",
   'userErrors.scope.chat': 'Chat',
+  'userErrors.scope.cron': 'Tâche planifiée',
   // Agent World — Identity trading (confirm-before-spend + balance gate)
   'agentWorld.trading.amountLabel': 'Montant',
   'agentWorld.trading.networkLabel': 'Réseau',
@@ -6433,6 +6496,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.amountTooManyDecimals': 'Ce montant comporte trop de décimales.',
   'agentWorld.trading.amountMustBePositive': 'Saisissez un montant supérieur à zéro.',
   'agentWorld.trading.amountInvalid': 'Saisissez un montant valide.',
+
+  // Code block chrome
+  'codeBlock.copy': 'Copier',
+  'codeBlock.copied': 'Copié !',
 };
 
 export default messages;

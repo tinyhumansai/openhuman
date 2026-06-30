@@ -60,6 +60,7 @@ fn make_def_named_tools(names: &[&str]) -> AgentDefinition {
         max_iterations: 5,
         iteration_policy: Default::default(),
         max_result_chars: None,
+        max_turn_output_tokens: None,
         timeout_secs: None,
         sandbox_mode: crate::openhuman::agent::harness::definition::SandboxMode::None,
         background: false,
