@@ -1224,6 +1224,8 @@ const messages: TranslationMap = {
   'settings.embeddings.testing': '测试中…',
   'settings.embeddings.testSuccess': '已连接 — {dims} 维度',
   'settings.embeddings.connectionTestFailed': '测试失败',
+  'settings.embeddings.verifyFallback':
+    '无法验证嵌入端点。请确认其正在运行并提供嵌入模型，然后重新保存。',
   'settings.embeddings.testFailed': '失败：{error}',
   'settings.embeddings.saving': '保存中…',
   'settings.embeddings.saved': '已保存。',
@@ -1449,6 +1451,14 @@ const messages: TranslationMap = {
   'mcp.tab.column.source': '来源',
   'mcp.tab.column.author': '作者',
   'mcp.tab.column.action': '操作',
+  'mcp.tab.source.official': '官方',
+  'mcp.tab.source.smithery': 'Smithery',
+  'mcp.tab.transport.hosted': '托管',
+  'mcp.tab.transport.local': '本地',
+  'mcp.tab.transport.hostedHint': '在远程服务器上运行 — 安装时设置登录或令牌',
+  'mcp.tab.transport.localHint': '在您的设备上运行 — 安装时可能需要令牌',
+  'mcp.tab.officialBadge': '官方',
+  'mcp.tab.officialHint': '来自供应商的官方服务器',
   'mcp.tab.badge.installed': '已安装',
   'mcp.tab.badge.registry': '注册表',
   'mcp.tab.action.manage': '管理',
@@ -1516,6 +1526,8 @@ const messages: TranslationMap = {
   'mcp.connectAuth.headerValue': '值',
   'mcp.connectAuth.removeHeader': '移除请求头',
   'mcp.connectAuth.howToGetToken': '帮助与配置',
+  'mcp.connectAuth.tokenProvider': '获取令牌的位置：',
+  'mcp.connectAuth.findToken': '在哪里获取令牌？',
   'mcp.connectAuth.hideHelp': '隐藏帮助',
   'mcp.connectAuth.schemeLabel': '如何发送该值',
   'mcp.connectAuth.schemeBearer': 'Bearer',
@@ -1697,6 +1709,8 @@ const messages: TranslationMap = {
   'team.teamName': '团队名称',
   'team.creating': '创建中...',
   'team.joinExistingTeam': '加入已有团队',
+  'team.personalAutoCreatedNote':
+    '您的个人团队会自动创建。如需协作，请使用下方的邀请码加入现有团队。',
   'team.inviteCode': '邀请码',
   'team.joining': '加入中...',
   'team.join': '加入',
@@ -4594,6 +4608,7 @@ const messages: TranslationMap = {
   'settings.appearance.assistantTextModeDesc': '将助手回复渲染为无边框文本，同时保留你的消息气泡。',
   'settings.mascot.active': '活跃',
   'settings.mascot.characterDesc': '选择你的 OpenHuman 角色',
+  'settings.mascot.characterDraft': '草稿',
   'settings.mascot.characterHeading': '角色',
   'settings.mascot.customGifError':
     '输入 HTTPS .gif 链接、本地回环 HTTP .gif 链接、file:// .gif 链接或本地 .gif 路径。',
@@ -4883,6 +4898,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.platforms.teams': '微软团队',
   'skills.meetingBots.platforms.zoom': '变焦',
   'skills.meetingBots.sendTo': '发送到会议',
+  'skills.meetingBots.serverOverloaded': 'OpenHuman 当前负载过高，请几分钟后重试。',
   'skills.meetingBots.soonSuffix': '很快',
   'skills.meetingBots.starting': '启动中…',
   'skills.meetingBots.recentCallsAriaLabel': '最近的会议通话',
@@ -5915,7 +5931,10 @@ const messages: TranslationMap = {
   'userErrors.budgetExceeded.body': '托管 AI 预算已用尽，请增加预算或更改套餐。',
   'userErrors.insufficientCredits.title': '需要提供商额度',
   'userErrors.insufficientCredits.body': '提供商额度已用完，请充值或更新 API 密钥。',
+  'userErrors.apiKeyMissing.title': '需要 API 密钥',
+  'userErrors.apiKeyMissing.body': '您的 AI 提供商未设置 API 密钥，请在提供商设置中添加以继续。',
   'userErrors.scope.chat': '聊天',
+  'userErrors.scope.cron': '定时任务',
   // Agent World — Identity trading (confirm-before-spend + balance gate)
   'agentWorld.trading.amountLabel': '金额',
   'agentWorld.trading.networkLabel': '网络',
@@ -5946,6 +5965,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.amountTooManyDecimals': '该金额的小数位数过多。',
   'agentWorld.trading.amountMustBePositive': '请输入大于零的金额。',
   'agentWorld.trading.amountInvalid': '请输入有效的金额。',
+
+  // Code block chrome
+  'codeBlock.copy': '复制',
+  'codeBlock.copied': '已复制！',
 };
 
 export default messages;

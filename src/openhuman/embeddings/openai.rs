@@ -30,13 +30,69 @@ pub struct OpenAiEmbedding {
     requires_api_key: bool,
 }
 
+/// True when `base_url` is Google Gemini's OpenAI-compatibility host.
+///
+/// Gemini exposes an OpenAI-compatible shim at
+/// `https://generativelanguage.googleapis.com/v1beta/openai/`. We match on the
+/// host (any path / scheme) so it triggers whether the user pasted the
+/// `/v1beta/openai` form, a bare host, or a future path variant.
+fn is_gemini_base_url(base_url: &str) -> bool {
+    reqwest::Url::parse(base_url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+        .is_some_and(|h| {
+            h == "generativelanguage.googleapis.com"
+                || h.ends_with(".generativelanguage.googleapis.com")
+        })
+}
+
+/// Normalize a model id for the configured base URL.
+///
+/// Gemini's OpenAI-compat shim maps `POST /v1/embeddings` onto its native
+/// `BatchEmbedContents` RPC, which requires the model in `models/<name>` form
+/// (e.g. `models/text-embedding-004`). A user who points the Custom
+/// (OpenAI-compatible) embeddings provider at Gemini's compat base URL and
+/// pastes a bare id (`text-embedding-004`) gets a `400 … BatchEmbedContents\
+/// Request.model: unexpected model name format` on every memory re-embed
+/// (TAURI-RUST-4SA, 4,494 events / 1 user — non-fatal, so the pipeline retries
+/// per document and floods Sentry). Prefix `models/` so the request is
+/// well-formed before it leaves the process. Host-scoped (genuine OpenAI /
+/// LocalAI / Ollama ids are untouched) and idempotent (an already-prefixed
+/// `models/…` or a `tunedModels/…` id is left alone).
+fn normalize_model_for_base_url(base_url: &str, model: &str) -> String {
+    if is_gemini_base_url(base_url)
+        && !model.is_empty()
+        && !model.starts_with("models/")
+        && !model.starts_with("tunedModels/")
+    {
+        format!("models/{model}")
+    } else {
+        model.to_string()
+    }
+}
+
+/// True when a `400` body is Gemini's model-id format rejection (the OpenAI-side
+/// surface of TAURI-RUST-4SA). Mirrors the wire phrases the
+/// `is_embedding_model_rejected` classifier in `core::observability` keys on so
+/// the remediation hint and the Sentry demotion never drift.
+fn is_gemini_model_format_rejection(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("unexpected model name format")
+        || (lower.contains("invalid_argument") && lower.contains("batchembedcontentsrequest.model"))
+}
+
 impl OpenAiEmbedding {
     /// Creates a new OpenAI-style provider.
     pub fn new(base_url: &str, api_key: &str, model: &str, dims: usize) -> Self {
+        let base_url = base_url.trim_end_matches('/').to_string();
+        // Repair a bare Gemini model id (`text-embedding-004`) into the
+        // `models/<name>` form Gemini's OpenAI-compat shim requires, so the
+        // Custom-endpoint path doesn't 400 on every embed (TAURI-RUST-4SA).
+        let model = normalize_model_for_base_url(&base_url, model);
         Self {
-            base_url: base_url.trim_end_matches('/').to_string(),
+            base_url,
             api_key: api_key.to_string(),
-            model: model.to_string(),
+            model,
             dims,
             send_dimensions: false,
             requires_api_key: false,
@@ -294,16 +350,27 @@ impl EmbeddingProvider for OpenAiEmbedding {
                          embeddings-capable provider in Settings → Memory",
                     );
                 }
+                // A 400 with Gemini's `… BatchEmbedContentsRequest.model:
+                // unexpected model name format` / `INVALID_ARGUMENT` body means
+                // the user pointed the Custom provider at Gemini's OpenAI-compat
+                // URL with a bare model id. The constructor now normalizes the id
+                // to `models/<name>`, so this only fires for already-stored bad
+                // state or other compat hosts; append an actionable hint while
+                // PRESERVING the `(400` + body so the
+                // `observability::is_embedding_model_rejected` classifier still
+                // demotes the per-embed flood. TAURI-RUST-4SA.
+                else if status.as_u16() == 400 && is_gemini_model_format_rejection(&text) {
+                    message.push_str(
+                        " — Gemini needs the embeddings model id in `models/<name>` \
+                         form (e.g. `models/text-embedding-004`); fix it in \
+                         Settings → Memory",
+                    );
+                }
                 // A 400 "… does not exist" / "does not support embeddings" body
                 // means the endpoint IS an embeddings API but the configured
                 // model id is not an embeddings model — the user pasted a chat
                 // model (e.g. an OpenRouter `…:free` id) into the embeddings
-                // model field. Append an actionable remediation while PRESERVING
-                // the `(400` + body text that `observability::
-                // is_embedding_model_rejected` keys on, so the event is demoted
-                // from a per-embed Sentry flood to a breadcrumb. Scoped to the
-                // model-rejection body shape so a genuine 400 (oversized input,
-                // real server fault) still reaches Sentry. TAURI-RUST-9SK.
+                // model field. Same demotion contract as above. TAURI-RUST-9SK.
                 else if status.as_u16() == 400
                     && (text.contains("does not exist")
                         || text.contains("does not support embeddings"))

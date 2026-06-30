@@ -30,6 +30,7 @@ use crate::openhuman::context::prompt::{
     render_subagent_system_prompt, PromptContext, PromptTool, SubagentRenderOptions,
 };
 use crate::openhuman::file_state::with_file_state_agent_id;
+use crate::openhuman::inference::provider::AGENT_TURN_MAX_OUTPUT_TOKENS;
 use crate::openhuman::tools::{Tool, ToolCategory, ToolSpec};
 
 use super::loop_::run_inner_loop;
@@ -275,6 +276,9 @@ async fn run_typed_mode(
         options.model_override.as_deref(),
     );
     let temperature = definition.temperature;
+    let max_output_tokens = definition
+        .max_turn_output_tokens
+        .unwrap_or(AGENT_TURN_MAX_OUTPUT_TOKENS);
 
     // ── Refresh connected-integrations at spawn time ───────────────────
     //
@@ -806,6 +810,7 @@ async fn run_typed_mode(
         model_vision,
         temperature,
         definition.effective_max_iterations(),
+        max_output_tokens,
         task_id,
         &definition.id,
         options.worker_thread_id.clone(),

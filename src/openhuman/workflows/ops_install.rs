@@ -196,25 +196,29 @@ pub(crate) async fn install_workflow_from_url_with_home(
 
     let status = response.status();
     if !status.is_success() {
-        let status_str = status.as_u16().to_string();
-        let msg = format!(
-            "fetch failed: {fetch_url} returned status {}",
-            status.as_u16()
-        );
-        let report_msg = format!(
-            "fetch failed: {redacted_fetch_url} returned status {}",
-            status.as_u16()
-        );
-        crate::core::observability::report_error(
-            report_msg.as_str(),
-            "skills",
-            "install_fetch",
-            &[
-                ("url", redacted_fetch_url.as_str()),
-                ("status", status_str.as_str()),
-                ("failure", "non_2xx"),
-            ],
-        );
+        let code = status.as_u16();
+        let msg = format!("fetch failed: {fetch_url} returned status {code}");
+        // A 4xx (esp. 404/410) means the requested SKILL.md is gone or the URL
+        // is wrong — expected user/catalog input state, surfaced to the UI as
+        // "skill not found". Don't page Sentry for it (TAURI-RUST-CGE: ~1,446
+        // events / 72 users on `openhuman@0.57.53`, almost all 404). Keep
+        // reporting 5xx — a genuine remote failure is still Sentry-actionable.
+        // The `Err(msg)` return is unchanged in both cases so the UI always
+        // surfaces the failure.
+        if !status.is_client_error() {
+            let status_str = code.to_string();
+            let report_msg = format!("fetch failed: {redacted_fetch_url} returned status {code}");
+            crate::core::observability::report_error(
+                report_msg.as_str(),
+                "skills",
+                "install_fetch",
+                &[
+                    ("url", redacted_fetch_url.as_str()),
+                    ("status", status_str.as_str()),
+                    ("failure", "non_2xx"),
+                ],
+            );
+        }
         return Err(msg);
     }
 
@@ -863,4 +867,61 @@ fn is_private_v6(ip: &Ipv6Addr) -> bool {
         return true;
     }
     false
+}
+
+#[cfg(test)]
+mod install_fetch_tests {
+    use super::*;
+    use axum::{http::StatusCode, Router};
+    use tempfile::TempDir;
+
+    /// Spawn a throwaway local HTTP server whose every route answers with
+    /// `status`. Returns its `http://127.0.0.1:<port>` base.
+    async fn spawn_status(status: StatusCode) -> String {
+        let app = Router::new().fallback(move || async move { status });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://127.0.0.1:{}", addr.port())
+    }
+
+    /// TAURI-RUST-CGE: a non-2xx skill-install fetch always returns the
+    /// user-facing `Err` (so the UI surfaces "skill not found" / the failure),
+    /// for both a 4xx (which is NOT reported to Sentry) and a 5xx (which is).
+    /// Exercises both branches of the non-2xx handling; the report-suppression
+    /// polarity itself is asserted by `is_skills_install_client_error_event` in
+    /// observability. Uses the local-HTTP install escape hatch so the loopback
+    /// mock passes URL validation.
+    #[tokio::test]
+    async fn non_2xx_install_fetch_returns_err_for_4xx_and_5xx() {
+        let _env = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        std::env::set_var(ALLOW_LOCAL_HTTP_ENV, "1");
+
+        let tmp = TempDir::new().unwrap();
+
+        for status in [StatusCode::NOT_FOUND, StatusCode::INTERNAL_SERVER_ERROR] {
+            let base = spawn_status(status).await;
+            let url = format!("{base}/skill.md");
+            let err = install_workflow_from_url_with_home(
+                tmp.path(),
+                InstallWorkflowFromUrlParams {
+                    url,
+                    timeout_secs: Some(5),
+                },
+                None,
+            )
+            .await
+            .expect_err("a non-2xx fetch must return Err so the UI surfaces it");
+            assert!(
+                err.contains(&format!("returned status {}", status.as_u16())),
+                "error must surface the status to the UI: {err}"
+            );
+        }
+
+        std::env::remove_var(ALLOW_LOCAL_HTTP_ENV);
+    }
 }

@@ -1,0 +1,29 @@
+id = "video_agent"
+display_name = "Video Creator"
+delegate_name = "create_video"
+when_to_use = "Video-generation specialist — create short video clips from a text prompt (text-to-video) or animate a supplied image (image-to-video) using the hosted GMI models (Seedance / Veo). Route here for make/generate a video, animate this image, or short clip requests. Generation can take a few minutes; it blocks until the clip is ready, saves it to the workspace, and returns the local file path."
+temperature = 0.6
+max_iterations = 8
+agent_tier = "worker"
+omit_identity = true
+omit_memory_context = true
+omit_safety_preamble = false
+omit_skills_catalog = true
+omit_profile = true
+omit_memory_md = true
+
+# Multimodal tier so the agent can inspect a reference/first-frame image or the
+# returned thumbnail when shaping an image-to-video request.
+[model]
+hint = "vision"
+
+[tools]
+# media_generate_video submits the generation and returns a saved local path;
+# media_list_models surfaces the catalog; image_info / file_read let it inspect
+# a reference image before animating it.
+named = [
+    "media_generate_video",
+    "media_list_models",
+    "image_info",
+    "file_read",
+]

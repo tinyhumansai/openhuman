@@ -1320,6 +1320,8 @@ const messages: TranslationMap = {
   'settings.embeddings.testing': 'Wird getestet…',
   'settings.embeddings.testSuccess': 'Verbunden — {dims} Dimensionen',
   'settings.embeddings.connectionTestFailed': 'Test fehlgeschlagen',
+  'settings.embeddings.verifyFallback':
+    'Der Embeddings-Endpunkt konnte nicht überprüft werden. Stelle sicher, dass er läuft und ein Embedding-Modell bereitstellt, und speichere erneut.',
   'settings.embeddings.testFailed': 'Fehlgeschlagen: {error}',
   'settings.embeddings.saving': 'Wird gespeichert…',
   'settings.embeddings.saved': 'Gespeichert.',
@@ -1562,6 +1564,16 @@ const messages: TranslationMap = {
   'mcp.tab.column.source': 'Quelle',
   'mcp.tab.column.author': 'Autor',
   'mcp.tab.column.action': 'Aktion',
+  'mcp.tab.source.official': 'Offiziell',
+  'mcp.tab.source.smithery': 'Smithery',
+  'mcp.tab.transport.hosted': 'Gehostet',
+  'mcp.tab.transport.local': 'Lokal',
+  'mcp.tab.transport.hostedHint':
+    'Läuft auf einem entfernten Server – Anmeldung oder Token wird bei der Installation eingerichtet',
+  'mcp.tab.transport.localHint':
+    'Läuft auf Ihrem Gerät – benötigt bei der Installation möglicherweise ein Token',
+  'mcp.tab.officialBadge': 'Offiziell',
+  'mcp.tab.officialHint': 'Offizieller Server des Anbieters',
   'mcp.tab.badge.installed': 'Installiert',
   'mcp.tab.badge.registry': 'Registrierung',
   'mcp.tab.action.manage': 'Verwalten',
@@ -1633,6 +1645,8 @@ const messages: TranslationMap = {
   'mcp.connectAuth.headerValue': 'Wert',
   'mcp.connectAuth.removeHeader': 'Header entfernen',
   'mcp.connectAuth.howToGetToken': 'Hilfe & Einrichtung',
+  'mcp.connectAuth.tokenProvider': 'Token beziehen von:',
+  'mcp.connectAuth.findToken': 'Wo erhalte ich das Token?',
   'mcp.connectAuth.hideHelp': 'Hilfe ausblenden',
   'mcp.connectAuth.schemeLabel': 'Wie der Wert gesendet wird',
   'mcp.connectAuth.schemeBearer': 'Bearer',
@@ -1838,6 +1852,8 @@ const messages: TranslationMap = {
   'team.teamName': 'Teamname',
   'team.creating': 'Erstellen...',
   'team.joinExistingTeam': 'Tritt einem bestehenden Team bei',
+  'team.personalAutoCreatedNote':
+    'Dein persönliches Team wird automatisch erstellt. Um zusammenzuarbeiten, tritt unten mit einem Einladungscode einem bestehenden Team bei.',
   'team.inviteCode': 'Einladungscode',
   'team.joining': 'Beitritt...',
   'team.join': 'Mach mit',
@@ -4955,6 +4971,7 @@ const messages: TranslationMap = {
     'Zeigt Assistentenantworten als ungerahmten Text an und lässt deine Nachrichten in Blasen.',
   'settings.mascot.active': 'Aktiv',
   'settings.mascot.characterDesc': 'Charakterbeschreibung',
+  'settings.mascot.characterDraft': 'Entwurf',
   'settings.mascot.characterHeading': 'Zeichenüberschrift',
   'settings.mascot.customGifError':
     'GIF konnte nicht geladen werden. Bitte überprüfe die URL und versuche es erneut.',
@@ -5267,6 +5284,8 @@ const messages: TranslationMap = {
   'skills.meetingBots.platforms.teams': 'Microsoft Teams',
   'skills.meetingBots.platforms.zoom': 'Zoom',
   'skills.meetingBots.sendTo': 'Senden an',
+  'skills.meetingBots.serverOverloaded':
+    'OpenHuman ist gerade stark ausgelastet. Bitte versuche es in ein paar Minuten erneut.',
   'skills.meetingBots.soonSuffix': 'bald',
   'skills.meetingBots.starting': 'Beginnend mit …',
   'skills.meetingBots.recentCallsAriaLabel': 'Letzte Meeting-Anrufe',
@@ -6403,7 +6422,11 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.title': 'Anbieter-Guthaben erforderlich',
   'userErrors.insufficientCredits.body':
     'Deinem KI-Anbieter ist das Guthaben ausgegangen. Lade es auf oder aktualisiere den Schlüssel.',
+  'userErrors.apiKeyMissing.title': 'API-Schlüssel erforderlich',
+  'userErrors.apiKeyMissing.body':
+    'Für deinen KI-Anbieter ist kein API-Schlüssel hinterlegt. Füge in den Anbietereinstellungen einen hinzu, um fortzufahren.',
   'userErrors.scope.chat': 'Chat',
+  'userErrors.scope.cron': 'Geplante Aufgabe',
   // Agent World — Identity trading (confirm-before-spend + balance gate)
   'agentWorld.trading.amountLabel': 'Betrag',
   'agentWorld.trading.networkLabel': 'Netzwerk',
@@ -6436,6 +6459,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.amountTooManyDecimals': 'Dieser Betrag hat zu viele Nachkommastellen.',
   'agentWorld.trading.amountMustBePositive': 'Gib einen Betrag größer als null ein.',
   'agentWorld.trading.amountInvalid': 'Gib einen gültigen Betrag ein.',
+
+  // Code block chrome
+  'codeBlock.copy': 'Kopieren',
+  'codeBlock.copied': 'Kopiert!',
 };
 
 export default messages;

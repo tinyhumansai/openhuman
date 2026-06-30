@@ -90,6 +90,7 @@ const AutocompleteDebugPanel = () => {
 
   // Live logs
   const [logs, setLogs] = useState<string[]>([]);
+  const isMountedRef = useRef(true);
   const previousStatusRef = useRef<AutocompleteStatus | null>(null);
 
   // Personalization history
@@ -103,6 +104,7 @@ const AutocompleteDebugPanel = () => {
 
   const appendLogs = (entries: string[]) => {
     if (entries.length === 0) return;
+    if (!isMountedRef.current) return;
     const now = new Date();
     const stamp = `${now.toLocaleTimeString()}.${String(now.getMilliseconds()).padStart(3, '0')}`;
     setLogs(current =>
@@ -179,22 +181,30 @@ const AutocompleteDebugPanel = () => {
 
   const loadHistory = async (): Promise<AcceptedCompletion[]> => {
     if (!isTauri()) return [];
+    if (!isMountedRef.current) return [];
     setIsHistoryLoading(true);
     try {
       const response = await openhumanAutocompleteHistory({ limit: 20 });
+      if (!isMountedRef.current) return response.result.entries;
       setHistoryEntries(response.result.entries);
       return response.result.entries;
     } catch {
       // Non-critical — silently ignore
       return [];
     } finally {
-      setIsHistoryLoading(false);
+      if (isMountedRef.current) {
+        setIsHistoryLoading(false);
+      }
     }
   };
 
   useEffect(() => {
+    isMountedRef.current = true;
     void load();
     void loadHistory();
+    return () => {
+      isMountedRef.current = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -210,6 +220,7 @@ const AutocompleteDebugPanel = () => {
     }
     try {
       const response = await openhumanAutocompleteStatus();
+      if (!isMountedRef.current) return response.result;
       setStatus(response.result);
       trackStatusChanges(response.result);
       if (showSpinner) {
@@ -344,7 +355,10 @@ const AutocompleteDebugPanel = () => {
         return;
       }
       if (attempt < maxAttempts - 1) {
-        await new Promise(resolve => window.setTimeout(resolve, 180));
+        await new Promise(resolve => globalThis.setTimeout(resolve, 180));
+      }
+      if (!isMountedRef.current) {
+        return;
       }
     }
   };
@@ -359,6 +373,7 @@ const AutocompleteDebugPanel = () => {
         suggestion: status?.suggestion?.value ?? undefined,
         skip_apply: true,
       });
+      if (!isMountedRef.current) return;
       appendLogs(response.logs);
       if (response.result.accepted && response.result.value) {
         setMessage(

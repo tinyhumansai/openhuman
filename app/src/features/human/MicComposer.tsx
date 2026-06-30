@@ -55,6 +55,21 @@ function isTransientError(err: unknown): boolean {
 }
 
 /**
+ * A missing local STT binary (`whisper-cli`) won't reappear on retry, and the
+ * native MediaRecorder codec (webm/mp4) can't use the binary-free in-process
+ * engine — only 16kHz WAV can. This error must therefore stop the *current*
+ * codec's retry loop immediately (no wasted backoff), yet still let
+ * `transcribeWithFallback` re-encode to WAV and reach the in-process route.
+ * It is deliberately NOT a `PERMANENT_ERROR_PATTERN`: those bail out before the
+ * WAV fallback, which is exactly the path that makes local STT work without an
+ * external binary on macOS (issue #3425).
+ */
+function isMissingLocalBinaryError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return msg.includes('binary not found');
+}
+
+/**
  * Heuristic check for low-confidence transcripts. The backend doesn't expose
  * a confidence score, so we detect likely bad results from text patterns:
  * - Single character (often a stray noise → "I" or "A")
@@ -558,6 +573,19 @@ export function MicComposer({
         if (!isTransientError(err)) {
           composerLog(
             '[session:%d] transcribe permanent failure path=%s attempt=%d: %s',
+            sessionIdRef.current,
+            label,
+            attempt,
+            msg
+          );
+          throw err;
+        }
+        if (isMissingLocalBinaryError(err)) {
+          // The local subprocess binary is absent — retrying this codec is
+          // pointless. Bail out now so the caller re-encodes to 16kHz WAV and
+          // uses the in-process engine instead of burning the backoff budget.
+          composerLog(
+            '[session:%d] transcribe missing local binary path=%s attempt=%d — skipping retries for WAV/in-process fallback: %s',
             sessionIdRef.current,
             label,
             attempt,

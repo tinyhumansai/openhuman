@@ -253,7 +253,13 @@ pub fn schemas(function: &str) -> ControllerSchema {
             namespace: "config",
             function: "update_browser_settings",
             description: "Update browser automation settings.",
-            inputs: vec![optional_bool("enabled", "Enable browser integration.")],
+            inputs: vec![
+                optional_bool("enabled", "Enable browser integration."),
+                optional_string(
+                    "backend",
+                    "Browser backend: agent_browser, playwright, rust_native, computer_use, or auto.",
+                ),
+            ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
         "update_local_ai_settings" => ControllerSchema {

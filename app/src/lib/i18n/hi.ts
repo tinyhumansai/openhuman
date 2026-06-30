@@ -1284,6 +1284,8 @@ const messages: TranslationMap = {
   'settings.embeddings.testing': 'परीक्षण हो रहा है…',
   'settings.embeddings.testSuccess': 'कनेक्ट — {dims} आयाम',
   'settings.embeddings.connectionTestFailed': 'परीक्षण विफल',
+  'settings.embeddings.verifyFallback':
+    'एम्बेडिंग एंडपॉइंट सत्यापित नहीं किया जा सका। सुनिश्चित करें कि यह चल रहा है और एक एम्बेडिंग मॉडल प्रदान कर रहा है, फिर दोबारा सहेजें।',
   'settings.embeddings.testFailed': 'विफल: {error}',
   'settings.embeddings.saving': 'सहेजा जा रहा है…',
   'settings.embeddings.saved': 'सहेजा गया।',
@@ -1518,6 +1520,16 @@ const messages: TranslationMap = {
   'mcp.tab.column.source': 'स्रोत',
   'mcp.tab.column.author': 'लेखक',
   'mcp.tab.column.action': 'क्रिया',
+  'mcp.tab.source.official': 'आधिकारिक',
+  'mcp.tab.source.smithery': 'Smithery',
+  'mcp.tab.transport.hosted': 'होस्टेड',
+  'mcp.tab.transport.local': 'लोकल',
+  'mcp.tab.transport.hostedHint':
+    'दूरस्थ सर्वर पर चलता है — इंस्टॉल करते समय साइन-इन या टोकन सेट किया जाता है',
+  'mcp.tab.transport.localHint':
+    'आपके डिवाइस पर चलता है — इंस्टॉल करते समय टोकन की ज़रूरत हो सकती है',
+  'mcp.tab.officialBadge': 'आधिकारिक',
+  'mcp.tab.officialHint': 'वेंडर का आधिकारिक सर्वर',
   'mcp.tab.badge.installed': 'इंस्टॉल किया गया',
   'mcp.tab.badge.registry': 'रजिस्ट्री',
   'mcp.tab.action.manage': 'प्रबंधित करें',
@@ -1589,6 +1601,8 @@ const messages: TranslationMap = {
   'mcp.connectAuth.headerValue': 'मान',
   'mcp.connectAuth.removeHeader': 'हेडर हटाएं',
   'mcp.connectAuth.howToGetToken': 'सहायता और कॉन्फ़िगर करें',
+  'mcp.connectAuth.tokenProvider': 'टोकन यहाँ से लें:',
+  'mcp.connectAuth.findToken': 'टोकन कहाँ से मिलेगा?',
   'mcp.connectAuth.hideHelp': 'सहायता छिपाएं',
   'mcp.connectAuth.schemeLabel': 'मान को कैसे भेजें',
   'mcp.connectAuth.schemeBearer': 'Bearer',
@@ -1789,6 +1803,8 @@ const messages: TranslationMap = {
   'team.teamName': 'टीम का नाम',
   'team.creating': 'बन रही है...',
   'team.joinExistingTeam': 'मौजूदा टीम जॉइन करें',
+  'team.personalAutoCreatedNote':
+    'आपकी व्यक्तिगत टीम स्वतः बन जाती है। सहयोग के लिए, नीचे आमंत्रण कोड के साथ किसी मौजूदा टीम में शामिल हों।',
   'team.inviteCode': 'इनवाइट कोड',
   'team.joining': 'जॉइन हो रहे हैं...',
   'team.join': 'जॉइन करें',
@@ -4835,6 +4851,7 @@ const messages: TranslationMap = {
     'असिस्टेंट के जवाबों को बिना फ्रेम वाले टेक्स्ट के रूप में दिखाएं और आपके संदेश बबल में रखें।',
   'settings.mascot.active': 'एक्टिव',
   'settings.mascot.characterDesc': 'कैरेक्टर विवरण',
+  'settings.mascot.characterDraft': 'ड्राफ़्ट',
   'settings.mascot.characterHeading': 'कैरेक्टर शीर्षक',
   'settings.mascot.customGifError':
     'एक HTTPS .gif URL, लूपबैक HTTP .gif URL, फ़ाइल:// .gif URL, या स्थानीय .gif पथ दर्ज करें।',
@@ -5139,6 +5156,8 @@ const messages: TranslationMap = {
   'skills.meetingBots.platforms.teams': 'माइक्रोसॉफ्ट टीमें',
   'skills.meetingBots.platforms.zoom': 'ज़ूम करें',
   'skills.meetingBots.sendTo': 'भेजें',
+  'skills.meetingBots.serverOverloaded':
+    'OpenHuman अभी भारी लोड में है। कृपया कुछ मिनटों में फिर से प्रयास करें।',
   'skills.meetingBots.soonSuffix': 'जल्द ही',
   'skills.meetingBots.starting': 'शुरू हो रहा है…',
   'skills.meetingBots.recentCallsAriaLabel': 'हाल की मीटिंग कॉल',
@@ -6234,7 +6253,11 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.title': 'प्रदाता क्रेडिट आवश्यक',
   'userErrors.insufficientCredits.body':
     'AI प्रदाता के क्रेडिट समाप्त। रिचार्ज करें या API कुंजी बदलें।',
+  'userErrors.apiKeyMissing.title': 'API कुंजी आवश्यक',
+  'userErrors.apiKeyMissing.body':
+    'आपके AI प्रदाता के लिए कोई API कुंजी सेट नहीं है। जारी रखने के लिए प्रदाता सेटिंग्स में एक जोड़ें।',
   'userErrors.scope.chat': 'चैट',
+  'userErrors.scope.cron': 'निर्धारित कार्य',
   // Agent World — Identity trading (confirm-before-spend + balance gate)
   'agentWorld.trading.amountLabel': 'राशि',
   'agentWorld.trading.networkLabel': 'नेटवर्क',
@@ -6267,6 +6290,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.amountTooManyDecimals': 'इस राशि में बहुत अधिक दशमलव स्थान हैं।',
   'agentWorld.trading.amountMustBePositive': 'शून्य से बड़ी राशि दर्ज करें।',
   'agentWorld.trading.amountInvalid': 'एक मान्य राशि दर्ज करें।',
+
+  // Code block chrome
+  'codeBlock.copy': 'कॉपी करें',
+  'codeBlock.copied': 'कॉपी हो गया!',
 };
 
 export default messages;

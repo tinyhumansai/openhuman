@@ -133,16 +133,22 @@ const InstallDialog = ({ qualifiedName, prefillEnv, onSuccess, onCancel }: Insta
         config: parsedConfig,
       });
       log('install success server_id=%s', server.server_id);
-      void mcpClientsApi
-        .connect(server.server_id)
-        .then(() => log('auto-connect success server_id=%s', server.server_id))
-        .catch((connectErr: unknown) =>
-          log(
-            'auto-connect failed server_id=%s: %s',
-            server.server_id,
-            connectErr instanceof Error ? connectErr.message : String(connectErr)
-          )
+      // Await the first connect so the detail view opens with an accurate
+      // status rather than a stale "disconnected" that races the background
+      // attempt. A failed connect is expected for servers that need auth
+      // (OAuth sign-in / token) — we keep the install and let the detail view
+      // surface the error and prompt to connect, so we never treat a connect
+      // failure as an install failure.
+      try {
+        await mcpClientsApi.connect(server.server_id);
+        log('auto-connect success server_id=%s', server.server_id);
+      } catch (connectErr: unknown) {
+        log(
+          'auto-connect failed server_id=%s: %s',
+          server.server_id,
+          connectErr instanceof Error ? connectErr.message : String(connectErr)
         );
+      }
       onSuccess(server);
     } catch (err) {
       const msg = err instanceof Error ? err.message : t('mcp.install.failedInstall');

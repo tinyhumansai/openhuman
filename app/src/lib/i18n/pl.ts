@@ -1303,6 +1303,8 @@ const messages: TranslationMap = {
   'settings.embeddings.testing': 'Testowanie…',
   'settings.embeddings.testSuccess': 'Połączono — wymiarów: {dims}',
   'settings.embeddings.connectionTestFailed': 'Test nie powiódł się',
+  'settings.embeddings.verifyFallback':
+    'Nie można zweryfikować punktu końcowego osadzeń. Upewnij się, że działa i udostępnia model osadzeń, a następnie zapisz ponownie.',
   'settings.embeddings.testFailed': 'Niepowodzenie: {error}',
   'settings.embeddings.saving': 'Zapisywanie…',
   'settings.embeddings.saved': 'Zapisano.',
@@ -1541,6 +1543,15 @@ const messages: TranslationMap = {
   'mcp.tab.column.source': 'Źródło',
   'mcp.tab.column.author': 'Autor',
   'mcp.tab.column.action': 'Akcja',
+  'mcp.tab.source.official': 'Oficjalny',
+  'mcp.tab.source.smithery': 'Smithery',
+  'mcp.tab.transport.hosted': 'Hostowany',
+  'mcp.tab.transport.local': 'Lokalny',
+  'mcp.tab.transport.hostedHint':
+    'Działa na zdalnym serwerze — logowanie lub token jest konfigurowany przy instalacji',
+  'mcp.tab.transport.localHint': 'Działa na Twoim urządzeniu — może wymagać tokena przy instalacji',
+  'mcp.tab.officialBadge': 'Oficjalny',
+  'mcp.tab.officialHint': 'Oficjalny serwer dostawcy',
   'mcp.tab.badge.installed': 'Zainstalowane',
   'mcp.tab.badge.registry': 'Rejestr',
   'mcp.tab.action.manage': 'Zarządzaj',
@@ -1612,6 +1623,8 @@ const messages: TranslationMap = {
   'mcp.connectAuth.headerValue': 'Wartość',
   'mcp.connectAuth.removeHeader': 'Usuń nagłówek',
   'mcp.connectAuth.howToGetToken': 'Pomoc i konfiguracja',
+  'mcp.connectAuth.tokenProvider': 'Token zdobędziesz na:',
+  'mcp.connectAuth.findToken': 'Skąd wziąć token?',
   'mcp.connectAuth.hideHelp': 'Ukryj pomoc',
   'mcp.connectAuth.schemeLabel': 'Jak wysłać wartość',
   'mcp.connectAuth.schemeBearer': 'Bearer',
@@ -1812,6 +1825,8 @@ const messages: TranslationMap = {
   'team.teamName': 'Nazwa zespołu',
   'team.creating': 'Tworzenie...',
   'team.joinExistingTeam': 'Dołącz do istniejącego zespołu',
+  'team.personalAutoCreatedNote':
+    'Twój zespół osobisty jest tworzony automatycznie. Aby współpracować, dołącz do istniejącego zespołu, używając kodu zaproszenia poniżej.',
   'team.inviteCode': 'Kod zaproszenia',
   'team.joining': 'Dołączanie...',
   'team.join': 'Dołącz',
@@ -4902,6 +4917,7 @@ const messages: TranslationMap = {
     'Wyświetla odpowiedzi asystenta jako tekst bez ramki, a Twoje wiadomości pozostawia w dymkach.',
   'settings.mascot.active': 'Aktywny',
   'settings.mascot.characterDesc': 'Wybierz charakter maskotki OpenHuman.',
+  'settings.mascot.characterDraft': 'Wersja robocza',
   'settings.mascot.characterHeading': 'Charakter',
   'settings.mascot.customGifError':
     'Wprowadź URL .gif HTTPS, URL .gif loopback HTTP, URL file:// .gif lub lokalną ścieżkę .gif.',
@@ -5208,6 +5224,8 @@ const messages: TranslationMap = {
   'skills.meetingBots.platforms.teams': 'Microsoft Teams',
   'skills.meetingBots.platforms.zoom': 'Zoom',
   'skills.meetingBots.sendTo': 'Wyślij do',
+  'skills.meetingBots.serverOverloaded':
+    'OpenHuman jest teraz mocno obciążony. Spróbuj ponownie za kilka minut.',
   'skills.meetingBots.soonSuffix': 'wkrótce',
   'skills.meetingBots.starting': 'Uruchamianie…',
   'skills.meetingBots.recentCallsAriaLabel': 'Ostatnie rozmowy na spotkaniach',
@@ -6325,7 +6343,11 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.title': 'Wymagane środki u dostawcy',
   'userErrors.insufficientCredits.body':
     'Twój dostawca AI nie ma już środków. Doładuj je lub zaktualizuj klucz API.',
+  'userErrors.apiKeyMissing.title': 'Wymagany klucz API',
+  'userErrors.apiKeyMissing.body':
+    'Twój dostawca AI nie ma ustawionego klucza API. Dodaj go w ustawieniach dostawcy, aby kontynuować.',
   'userErrors.scope.chat': 'Czat',
+  'userErrors.scope.cron': 'Zaplanowane zadanie',
   // Agent World — Identity trading (confirm-before-spend + balance gate)
   'agentWorld.trading.amountLabel': 'Kwota',
   'agentWorld.trading.networkLabel': 'Sieć',
@@ -6357,6 +6379,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.amountTooManyDecimals': 'Ta kwota ma zbyt wiele miejsc po przecinku.',
   'agentWorld.trading.amountMustBePositive': 'Wprowadź kwotę większą od zera.',
   'agentWorld.trading.amountInvalid': 'Wprowadź prawidłową kwotę.',
+
+  // Code block chrome
+  'codeBlock.copy': 'Kopiuj',
+  'codeBlock.copied': 'Skopiowano!',
 };
 
 export default messages;

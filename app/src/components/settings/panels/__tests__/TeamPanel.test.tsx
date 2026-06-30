@@ -25,6 +25,7 @@ vi.mock('../../../../lib/i18n/I18nContext', () => ({
         'team.yourTeams': 'Your Teams',
         'team.createNewTeam': 'Create New Team',
         'team.joinExistingTeam': 'Join Existing Team',
+        'team.personalAutoCreatedNote': 'Personal team is auto-created. Join below.',
         'team.teamName': 'Team Name',
         'team.inviteCode': 'Invite Code',
         'team.creating': 'Creating...',
@@ -151,37 +152,24 @@ describe('TeamPanel — role badge rendering (line 165)', () => {
   });
 });
 
-describe('TeamPanel — create team (line 281)', () => {
+describe('TeamPanel — create team removed (issue #3723)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockCreateTeam.mockResolvedValue({});
     setupState({ teams: [] });
   });
 
-  it('calls createTeam when form is submitted (line 281)', async () => {
+  it('does not render a create-team control', () => {
     render(<TeamPanel />);
-
-    const input = screen.getByPlaceholderText('Team Name') ?? screen.getByLabelText('Team Name');
-    fireEvent.change(input, { target: { value: 'My New Team' } });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
-
-    await waitFor(() => {
-      expect(mockCreateTeam).toHaveBeenCalledWith('My New Team');
-    });
+    // The "Create New Team" section is gone — backend caps one owned team per
+    // user, so the control could never succeed (always 404'd).
+    expect(screen.queryByRole('button', { name: 'Create' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Team Name')).not.toBeInTheDocument();
+    expect(mockCreateTeam).not.toHaveBeenCalled();
   });
 
-  it('shows an error banner when createTeam fails', async () => {
-    mockCreateTeam.mockRejectedValue({ error: 'Team limit reached' });
+  it('renders the personal-team explanatory note', () => {
     render(<TeamPanel />);
-
-    const input = screen.getByLabelText('Team Name');
-    fireEvent.change(input, { target: { value: 'New Team' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
-
-    await waitFor(() => {
-      expect(screen.getByText('Team limit reached')).toBeInTheDocument();
-    });
+    expect(screen.getByText('Personal team is auto-created. Join below.')).toBeInTheDocument();
   });
 });
 
@@ -197,7 +185,6 @@ describe('TeamPanel — join team (line 304)', () => {
 
     const input = screen.getByLabelText('Invite Code');
     fireEvent.change(input, { target: { value: 'CODE-XYZ' } });
-    // Need to find the Join button — it's the second submit button (after Create)
     const joinBtn = screen.getByRole('button', { name: /^Join$/i });
     fireEvent.click(joinBtn);
 
@@ -216,6 +203,25 @@ describe('TeamPanel — join team (line 304)', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Code not found')).toBeInTheDocument();
+    });
+  });
+
+  it('surfaces the real backend reason from a CoreRpcError (issue #3723)', async () => {
+    // Production rejects with a CoreRpcError — which has no `.error` field, so
+    // the old `'error' in err` check dropped the reason. Verify it now shows.
+    mockJoinTeam.mockRejectedValue(
+      new CoreRpcError(
+        'POST /teams/join failed (400 Bad Request): {"error":"Invite expired"}',
+        'unknown'
+      )
+    );
+    render(<TeamPanel />);
+
+    fireEvent.change(screen.getByLabelText('Invite Code'), { target: { value: 'OLD-CODE' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Join$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Invite expired')).toBeInTheDocument();
     });
   });
 });

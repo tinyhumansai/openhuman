@@ -12,6 +12,7 @@ use super::loader::{fallback_workspace_dir, load_config_with_timeout, snapshot_c
 #[derive(Debug, Clone, Default)]
 pub struct BrowserSettingsPatch {
     pub enabled: Option<bool>,
+    pub backend: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -102,8 +103,17 @@ pub async fn apply_browser_settings(
     config: &mut Config,
     update: BrowserSettingsPatch,
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let normalized_backend = update
+        .backend
+        .as_deref()
+        .map(normalize_browser_backend)
+        .transpose()?;
+
     if let Some(enabled) = update.enabled {
         config.browser.enabled = enabled;
+    }
+    if let Some(backend) = normalized_backend {
+        config.browser.backend = backend;
     }
     config.save().await.map_err(|e| e.to_string())?;
     let snapshot = snapshot_config_json(config)?;
@@ -114,6 +124,20 @@ pub async fn apply_browser_settings(
             config.config_path.display()
         )],
     ))
+}
+
+fn normalize_browser_backend(raw: &str) -> Result<String, String> {
+    let key = raw.trim().to_ascii_lowercase().replace('-', "_");
+    match key.as_str() {
+        "agent_browser" | "agentbrowser" => Ok("agent_browser".to_string()),
+        "playwright" => Ok("playwright".to_string()),
+        "rust_native" | "native" => Ok("rust_native".to_string()),
+        "computer_use" | "computeruse" => Ok("computer_use".to_string()),
+        "auto" => Ok("auto".to_string()),
+        _ => Err(format!(
+            "Unsupported browser backend '{raw}'. Use agent_browser, playwright, rust_native, computer_use, or auto"
+        )),
+    }
 }
 
 /// Loads the configuration, applies browser settings updates, and saves it.

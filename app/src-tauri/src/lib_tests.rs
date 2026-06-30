@@ -314,11 +314,22 @@ fn platform_os_is_macos_on_macos_build() {
 }
 
 #[test]
-fn platform_cef_gpu_workarounds_disable_linux_gpu_path() {
+fn platform_cef_gpu_workarounds_force_swiftshader_on_linux() {
     let mut args = Vec::new();
     append_platform_cef_gpu_workarounds(&mut args, "linux", "x86_64", None);
 
-    assert!(args.contains(&("--disable-gpu", None)));
+    // #4193: the GPU process must NOT be killed outright — `--disable-gpu`
+    // takes every WebGL surface (the Tiny Place world renderer) down with it.
+    assert!(
+        !args.contains(&("--disable-gpu", None)),
+        "--disable-gpu kills WebGL and must not be set, got: {args:?}"
+    );
+    // Instead the GPU process is pinned to ANGLE/SwiftShader software GL, which
+    // keeps WebGL available while still avoiding the #1697 hardware-EGL abort.
+    assert!(args.contains(&("--use-gl", Some("angle"))));
+    assert!(args.contains(&("--use-angle", Some("swiftshader"))));
+    assert!(args.contains(&("--enable-unsafe-swiftshader", None)));
+    // Page compositing stays on the CPU exactly as before.
     assert!(args.contains(&("--disable-gpu-compositing", None)));
 }
 
@@ -390,6 +401,13 @@ fn platform_cef_gpu_workarounds_skip_linux_disable_when_force_gpu_set() {
     assert!(
         !args.contains(&("--disable-gpu-compositing", None)),
         "OPENHUMAN_FORCE_GPU=1 must suppress --disable-gpu-compositing, got: {args:?}"
+    );
+    // With hardware acceleration opted in, the SwiftShader software-GL fallback
+    // must NOT be forced either — otherwise WebGL would still be stuck on the
+    // software rasteriser despite the override.
+    assert!(
+        !args.contains(&("--use-angle", Some("swiftshader"))),
+        "OPENHUMAN_FORCE_GPU=1 must not force SwiftShader, got: {args:?}"
     );
 }
 

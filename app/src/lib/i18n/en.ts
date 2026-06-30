@@ -1638,6 +1638,8 @@ const en: TranslationMap = {
   'settings.embeddings.testing': 'Testing…',
   'settings.embeddings.testSuccess': 'Connected — {dims} dimensions',
   'settings.embeddings.connectionTestFailed': 'Test failed',
+  'settings.embeddings.verifyFallback':
+    "Couldn't verify the embeddings endpoint. Make sure it's running and serving an embedding model, then save again.",
   'settings.embeddings.testFailed': 'Failed: {error}',
   'settings.embeddings.saving': 'Saving…',
   'settings.embeddings.saved': 'Saved.',
@@ -1871,6 +1873,15 @@ const en: TranslationMap = {
   'mcp.tab.column.source': 'Source',
   'mcp.tab.column.author': 'Author',
   'mcp.tab.column.action': 'Action',
+  'mcp.tab.source.official': 'Official',
+  'mcp.tab.source.smithery': 'Smithery',
+  'mcp.tab.transport.hosted': 'Hosted',
+  'mcp.tab.transport.local': 'Local',
+  'mcp.tab.transport.hostedHint':
+    'Runs on a remote server — sign-in or token is set up when you install',
+  'mcp.tab.transport.localHint': 'Runs on your device — may need a token when you install',
+  'mcp.tab.officialBadge': 'Official',
+  'mcp.tab.officialHint': 'Official server from the vendor',
   'mcp.tab.badge.installed': 'Installed',
   'mcp.tab.badge.registry': 'Registry',
   'mcp.tab.action.manage': 'Manage',
@@ -1936,6 +1947,8 @@ const en: TranslationMap = {
   'mcp.connectAuth.headerValue': 'Value',
   'mcp.connectAuth.removeHeader': 'Remove header',
   'mcp.connectAuth.howToGetToken': 'Help & configure',
+  'mcp.connectAuth.tokenProvider': 'Get your token from:',
+  'mcp.connectAuth.findToken': 'Where do I get the token?',
   'mcp.connectAuth.hideHelp': 'Hide help',
   'mcp.connectAuth.schemeLabel': 'How to send the value',
   'mcp.connectAuth.schemeBearer': 'Bearer',
@@ -2157,6 +2170,8 @@ const en: TranslationMap = {
   'team.teamName': 'Team name',
   'team.creating': 'Creating...',
   'team.joinExistingTeam': 'Join Existing Team',
+  'team.personalAutoCreatedNote':
+    'Your personal team is created automatically. To collaborate, join an existing team with an invite code below.',
   'team.inviteCode': 'Invite code',
   'team.joining': 'Joining...',
   'team.join': 'Join',
@@ -5468,6 +5483,7 @@ const en: TranslationMap = {
     'Collapse the live step-by-step agent timeline in chat. A blinking “Processing” link still lets you open the full run.',
   'settings.mascot.active': 'Active',
   'settings.mascot.characterDesc': 'Choose your OpenHuman character.',
+  'settings.mascot.characterDraft': 'Draft',
   'settings.mascot.characterHeading': 'Character',
   'settings.mascot.customGifError':
     'Enter an HTTPS .gif URL, loopback HTTP .gif URL, file:// .gif URL, or local .gif path.',
@@ -5783,6 +5799,8 @@ const en: TranslationMap = {
   'skills.meetingBots.platforms.teams': 'Microsoft Teams',
   'skills.meetingBots.platforms.zoom': 'Zoom',
   'skills.meetingBots.sendTo': 'Send to {label}',
+  'skills.meetingBots.serverOverloaded':
+    'OpenHuman is under heavy load right now. Please try again in a few minutes.',
   'skills.meetingBots.soonSuffix': 'soon',
   'skills.meetingBots.starting': 'Starting…',
   'skills.meetingBots.recentCallsAriaLabel': 'Recent meeting calls',
@@ -6526,6 +6544,10 @@ const en: TranslationMap = {
   'agentworld.messaging.missingSignalBundle':
     "This user hasn't enabled encrypted messaging yet. Ask them to open Agent World and enable secure DMs before sending a message.",
 
+  // Code block chrome
+  'codeBlock.copy': 'Copy',
+  'codeBlock.copied': 'Copied!',
+
   // User-actionable runtime errors (#3931)
   'userErrors.title': 'Action needed',
   'userErrors.dismiss': 'Dismiss',
@@ -6537,7 +6559,11 @@ const en: TranslationMap = {
   'userErrors.insufficientCredits.title': 'Provider credits required',
   'userErrors.insufficientCredits.body':
     'Your AI provider is out of credits. Top it up or update its API key to continue.',
+  'userErrors.apiKeyMissing.title': 'API key required',
+  'userErrors.apiKeyMissing.body':
+    'Your AI provider has no API key set. Add one in provider settings to continue.',
   'userErrors.scope.chat': 'Chat',
+  'userErrors.scope.cron': 'Scheduled job',
 };
 
 export default en;

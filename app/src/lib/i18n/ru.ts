@@ -1301,6 +1301,8 @@ const messages: TranslationMap = {
   'settings.embeddings.testing': 'Проверка…',
   'settings.embeddings.testSuccess': 'Подключено — {dims} измерений',
   'settings.embeddings.connectionTestFailed': 'Проверка не удалась',
+  'settings.embeddings.verifyFallback':
+    'Не удалось проверить конечную точку эмбеддингов. Убедитесь, что она запущена и предоставляет модель эмбеддингов, затем сохраните снова.',
   'settings.embeddings.testFailed': 'Ошибка: {error}',
   'settings.embeddings.saving': 'Сохранение…',
   'settings.embeddings.saved': 'Сохранено.',
@@ -1538,6 +1540,16 @@ const messages: TranslationMap = {
   'mcp.tab.column.source': 'Источник',
   'mcp.tab.column.author': 'Автор',
   'mcp.tab.column.action': 'Действие',
+  'mcp.tab.source.official': 'Официальный',
+  'mcp.tab.source.smithery': 'Smithery',
+  'mcp.tab.transport.hosted': 'Размещённый',
+  'mcp.tab.transport.local': 'Локальный',
+  'mcp.tab.transport.hostedHint':
+    'Работает на удалённом сервере — вход или токен настраивается при установке',
+  'mcp.tab.transport.localHint':
+    'Работает на вашем устройстве — может потребоваться токен при установке',
+  'mcp.tab.officialBadge': 'Официальный',
+  'mcp.tab.officialHint': 'Официальный сервер от поставщика',
   'mcp.tab.badge.installed': 'Установлено',
   'mcp.tab.badge.registry': 'Реестр',
   'mcp.tab.action.manage': 'Управление',
@@ -1609,6 +1621,8 @@ const messages: TranslationMap = {
   'mcp.connectAuth.headerValue': 'Значение',
   'mcp.connectAuth.removeHeader': 'Удалить заголовок',
   'mcp.connectAuth.howToGetToken': 'Справка и настройка',
+  'mcp.connectAuth.tokenProvider': 'Получите токен на:',
+  'mcp.connectAuth.findToken': 'Где взять токен?',
   'mcp.connectAuth.hideHelp': 'Скрыть справку',
   'mcp.connectAuth.schemeLabel': 'Как отправить значение',
   'mcp.connectAuth.schemeBearer': 'Bearer',
@@ -1806,6 +1820,8 @@ const messages: TranslationMap = {
   'team.teamName': 'Название команды',
   'team.creating': 'Создание...',
   'team.joinExistingTeam': 'Вступить в существующую команду',
+  'team.personalAutoCreatedNote':
+    'Ваша личная команда создаётся автоматически. Чтобы работать вместе, присоединитесь к существующей команде по коду приглашения ниже.',
   'team.inviteCode': 'Код приглашения',
   'team.joining': 'Вход...',
   'team.join': 'Вступить',
@@ -4875,6 +4891,7 @@ const messages: TranslationMap = {
     'Показывает ответы ассистента как текст без рамки, оставляя ваши сообщения в пузырьках.',
   'settings.mascot.active': 'Активно',
   'settings.mascot.characterDesc': 'Описание персонажа',
+  'settings.mascot.characterDraft': 'Черновик',
   'settings.mascot.characterHeading': 'Персонаж',
   'settings.mascot.customGifError':
     'Введите HTTPS .gif URL, петлевой путь HTTP .gif URL, file:// .gif URL или локальный путь .gif.',
@@ -5182,6 +5199,8 @@ const messages: TranslationMap = {
   'skills.meetingBots.platforms.teams': 'Microsoft Teams',
   'skills.meetingBots.platforms.zoom': 'Zoom',
   'skills.meetingBots.sendTo': 'Отправить',
+  'skills.meetingBots.serverOverloaded':
+    'OpenHuman сейчас сильно загружен. Пожалуйста, повторите попытку через несколько минут.',
   'skills.meetingBots.soonSuffix': 'скоро',
   'skills.meetingBots.starting': 'Запуск…',
   'skills.meetingBots.recentCallsAriaLabel': 'Недавние звонки на встречах',
@@ -6297,7 +6316,11 @@ const messages: TranslationMap = {
   'userErrors.budgetExceeded.body': 'Управляемый бюджет ИИ исчерпан. Измените план.',
   'userErrors.insufficientCredits.title': 'Требуются кредиты провайдера',
   'userErrors.insufficientCredits.body': 'У провайдера закончились кредиты. Пополните их.',
+  'userErrors.apiKeyMissing.title': 'Требуется ключ API',
+  'userErrors.apiKeyMissing.body':
+    'У провайдера ИИ не задан ключ API. Добавьте его в настройках провайдера.',
   'userErrors.scope.chat': 'Чат',
+  'userErrors.scope.cron': 'Запланированная задача',
   // Agent World — Identity trading (confirm-before-spend + balance gate)
   'agentWorld.trading.amountLabel': 'Сумма',
   'agentWorld.trading.networkLabel': 'Сеть',
@@ -6329,6 +6352,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.amountTooManyDecimals': 'В этой сумме слишком много знаков после запятой.',
   'agentWorld.trading.amountMustBePositive': 'Введите сумму больше нуля.',
   'agentWorld.trading.amountInvalid': 'Введите корректную сумму.',
+
+  // Code block chrome
+  'codeBlock.copy': 'Копировать',
+  'codeBlock.copied': 'Скопировано!',
 };
 
 export default messages;

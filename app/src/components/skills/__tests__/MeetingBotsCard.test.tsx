@@ -61,6 +61,9 @@ describe('MeetingBotsCard', () => {
           agentName: 'Tiny',
           // Participant-name field is wired to the backend authorized-speaker gate.
           respondToParticipant: 'Alice',
+          // Active mode must give the backend a wake phrase so it can emit
+          // bot:in_call_request when the participant addresses the bot.
+          wakePhrase: 'Hey Tiny',
           // Active toggle defaults to checked → listen-only false.
           listenOnly: false,
         })
@@ -109,11 +112,43 @@ describe('MeetingBotsCard', () => {
           meetUrl: 'https://meet.google.com/abc-defg-hij',
           displayName: 'Nova',
           agentName: 'Nova',
+          wakePhrase: 'Hey Nova',
           systemPrompt: 'Calm and concise.',
           mascotId: 'yellow',
           riveColors: { primaryColor: '#123456', secondaryColor: '#abcdef' },
         })
       );
+    });
+  });
+
+  it('falls back to the legacy mascot color for manifest-only mascot ids', async () => {
+    joinMock.mockResolvedValueOnce({
+      meetUrl: 'https://meet.google.com/abc-defg-hij',
+      platform: 'gmeet',
+    });
+
+    renderWithProviders(<MeetingBotsCard />, {
+      preloadedState: {
+        mascot: {
+          color: 'yellow',
+          voiceId: null,
+          voiceGender: 'male',
+          voiceUseLocaleDefault: false,
+          selectedMascotId: 'river-guide',
+          customMascotGifUrl: null,
+          customPrimaryColor: '#123456',
+          customSecondaryColor: '#abcdef',
+        },
+      },
+    });
+
+    fireEvent.change(screen.getByLabelText(/meeting link/i), {
+      target: { value: 'https://meet.google.com/abc-defg-hij' },
+    });
+    fireEvent.submit(document.querySelector('form')!);
+
+    await vi.waitFor(() => {
+      expect(joinMock).toHaveBeenCalledWith(expect.objectContaining({ mascotId: 'yellow' }));
     });
   });
 
@@ -188,7 +223,12 @@ describe('MeetingBotsCard', () => {
     fireEvent.submit(document.querySelector('form')!);
 
     await vi.waitFor(() => {
-      expect(joinMock).toHaveBeenCalledWith(expect.objectContaining({ listenOnly: true }));
+      expect(joinMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          listenOnly: true,
+          wakePhrase: undefined,
+        })
+      );
     });
   });
 });

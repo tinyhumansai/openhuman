@@ -1285,6 +1285,8 @@ const messages: TranslationMap = {
   'settings.embeddings.testing': 'পরীক্ষা হচ্ছে…',
   'settings.embeddings.testSuccess': 'সংযুক্ত — {dims} মাত্রা',
   'settings.embeddings.connectionTestFailed': 'পরীক্ষা ব্যর্থ হয়েছে',
+  'settings.embeddings.verifyFallback':
+    'এমবেডিংস এন্ডপয়েন্ট যাচাই করা যায়নি। নিশ্চিত করুন এটি চলছে এবং একটি এমবেডিং মডেল পরিবেশন করছে, তারপর আবার সংরক্ষণ করুন।',
   'settings.embeddings.testFailed': 'ব্যর্থ: {error}',
   'settings.embeddings.saving': 'সংরক্ষণ হচ্ছে…',
   'settings.embeddings.saved': 'সংরক্ষিত।',
@@ -1520,6 +1522,15 @@ const messages: TranslationMap = {
   'mcp.tab.column.source': 'উৎস',
   'mcp.tab.column.author': 'লেখক',
   'mcp.tab.column.action': 'ক্রিয়া',
+  'mcp.tab.source.official': 'অফিসিয়াল',
+  'mcp.tab.source.smithery': 'Smithery',
+  'mcp.tab.transport.hosted': 'হোস্টেড',
+  'mcp.tab.transport.local': 'লোকাল',
+  'mcp.tab.transport.hostedHint':
+    'একটি দূরবর্তী সার্ভারে চলে — ইনস্টলের সময় সাইন-ইন বা টোকেন সেট করা হয়',
+  'mcp.tab.transport.localHint': 'আপনার ডিভাইসে চলে — ইনস্টলের সময় টোকেন লাগতে পারে',
+  'mcp.tab.officialBadge': 'অফিশিয়াল',
+  'mcp.tab.officialHint': 'বিক্রেতার অফিশিয়াল সার্ভার',
   'mcp.tab.badge.installed': 'ইনস্টল করা',
   'mcp.tab.badge.registry': 'রেজিস্ট্রি',
   'mcp.tab.action.manage': 'পরিচালনা',
@@ -1591,6 +1602,8 @@ const messages: TranslationMap = {
   'mcp.connectAuth.headerValue': 'মান',
   'mcp.connectAuth.removeHeader': 'হেডার সরান',
   'mcp.connectAuth.howToGetToken': 'সহায়তা ও কনফিগার করুন',
+  'mcp.connectAuth.tokenProvider': 'টোকেন নিন:',
+  'mcp.connectAuth.findToken': 'টোকেন কোথায় পাব?',
   'mcp.connectAuth.hideHelp': 'সহায়তা লুকান',
   'mcp.connectAuth.schemeLabel': 'মানটি কীভাবে পাঠানো হবে',
   'mcp.connectAuth.schemeBearer': 'Bearer',
@@ -1792,6 +1805,8 @@ const messages: TranslationMap = {
   'team.teamName': 'টিমের নাম',
   'team.creating': 'তৈরি হচ্ছে...',
   'team.joinExistingTeam': 'বিদ্যমান টিমে যোগ দিন',
+  'team.personalAutoCreatedNote':
+    'আপনার ব্যক্তিগত টিম স্বয়ংক্রিয়ভাবে তৈরি হয়। সহযোগিতার জন্য, নিচে একটি আমন্ত্রণ কোড দিয়ে বিদ্যমান টিমে যোগ দিন।',
   'team.inviteCode': 'আমন্ত্রণ কোড',
   'team.joining': 'যোগ দেওয়া হচ্ছে...',
   'team.join': 'যোগ দিন',
@@ -4831,6 +4846,7 @@ const messages: TranslationMap = {
     'আপনার বার্তাগুলি বাবলে রেখে অ্যাসিস্ট্যান্টের উত্তর ফ্রেমহীন টেক্সট হিসেবে দেখান।',
   'settings.mascot.active': 'সক্রিয়',
   'settings.mascot.characterDesc': 'চরিত্রের বিবরণ',
+  'settings.mascot.characterDraft': 'খসড়া',
   'settings.mascot.characterHeading': 'চরিত্রের শিরোনাম',
   'settings.mascot.customGifError':
     'একটি HTTPS .gif URL, লুপব্যাক HTTP .gif URL, file:// .gif URL, অথবা স্থানীয় .gif পাথ লিখুন।',
@@ -5136,6 +5152,8 @@ const messages: TranslationMap = {
   'skills.meetingBots.platforms.teams': 'মাইক্রোসফট টিম',
   'skills.meetingBots.platforms.zoom': 'জুম',
   'skills.meetingBots.sendTo': 'পাঠান',
+  'skills.meetingBots.serverOverloaded':
+    'OpenHuman এই মুহূর্তে অত্যধিক চাপের মধ্যে রয়েছে। অনুগ্রহ করে কয়েক মিনিট পরে আবার চেষ্টা করুন।',
   'skills.meetingBots.soonSuffix': 'শীঘ্রই',
   'skills.meetingBots.starting': 'শুরু হচ্ছে…',
   'skills.meetingBots.recentCallsAriaLabel': 'সাম্প্রতিক মিটিং কল',
@@ -6231,7 +6249,11 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.title': 'প্রদানকারীর ক্রেডিট প্রয়োজন',
   'userErrors.insufficientCredits.body':
     'AI প্রদানকারীর ক্রেডিট শেষ। রিচার্জ করুন বা API কী বদলান।',
+  'userErrors.apiKeyMissing.title': 'API কী প্রয়োজন',
+  'userErrors.apiKeyMissing.body':
+    'আপনার AI প্রদানকারীর কোনো API কী সেট নেই। চালিয়ে যেতে প্রদানকারী সেটিংসে একটি যোগ করুন।',
   'userErrors.scope.chat': 'চ্যাট',
+  'userErrors.scope.cron': 'নির্ধারিত কাজ',
   // Agent World — Identity trading (confirm-before-spend + balance gate)
   'agentWorld.trading.amountLabel': 'পরিমাণ',
   'agentWorld.trading.networkLabel': 'নেটওয়ার্ক',
@@ -6263,6 +6285,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.amountTooManyDecimals': 'এই পরিমাণে অত্যধিক দশমিক স্থান রয়েছে।',
   'agentWorld.trading.amountMustBePositive': 'শূন্যের চেয়ে বড় একটি পরিমাণ লিখুন।',
   'agentWorld.trading.amountInvalid': 'একটি বৈধ পরিমাণ লিখুন।',
+
+  // Code block chrome
+  'codeBlock.copy': 'কপি করুন',
+  'codeBlock.copied': 'কপি হয়েছে!',
 };
 
 export default messages;

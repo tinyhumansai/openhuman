@@ -33,6 +33,23 @@ const MESSAGE_PROVIDERS = new Set([
   'twitter',
 ]);
 
+/**
+ * A `deep_link` / `deepLink` is set by the core triage pipeline, which derives
+ * it from untrusted inbound provider content. Callers feed the result straight
+ * to react-router `navigate()`, so accept it only when it is a relative in-app
+ * path: a single leading `/`, no protocol-relative `//`, no scheme, no
+ * backslash. This blocks `javascript:` / `http(s)://evil` / `//host` from
+ * reaching the router (HashRouter already contains most of these, but the
+ * allowlist keeps navigation strictly in-app). Unsafe values fall through to
+ * the provider/category default.
+ */
+function isSafeInAppPath(path: string): boolean {
+  // A single leading slash, no protocol-relative `//`, no backslash. Keeps the
+  // value a relative in-app route, so `javascript:` / `http(s)://evil` / `//host`
+  // can never reach react-router `navigate()`.
+  return path.startsWith('/') && path[1] !== '/' && path[1] !== '\\' && !path.includes('\\');
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Route resolvers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -46,9 +63,12 @@ const MESSAGE_PROVIDERS = new Set([
  *   3. `/notifications` fallback.
  */
 export function resolveIntegrationRoute(n: IntegrationNotification): string {
-  if (n.deep_link) {
+  if (n.deep_link && isSafeInAppPath(n.deep_link)) {
     log('[notification-router] integration id=%s explicit deep_link=%s', n.id, n.deep_link);
     return n.deep_link;
+  }
+  if (n.deep_link) {
+    log('[notification-router] integration id=%s ignored unsafe deep_link=%s', n.id, n.deep_link);
   }
 
   if (MESSAGE_PROVIDERS.has(n.provider)) {
@@ -73,9 +93,12 @@ export function resolveIntegrationRoute(n: IntegrationNotification): string {
  *   3. `/notifications` fallback.
  */
 export function resolveSystemRoute(item: NotificationItem): string {
-  if (item.deepLink) {
+  if (item.deepLink && isSafeInAppPath(item.deepLink)) {
     log('[notification-router] system id=%s explicit deepLink=%s', item.id, item.deepLink);
     return item.deepLink;
+  }
+  if (item.deepLink) {
+    log('[notification-router] system id=%s ignored unsafe deepLink=%s', item.id, item.deepLink);
   }
 
   switch (item.category) {

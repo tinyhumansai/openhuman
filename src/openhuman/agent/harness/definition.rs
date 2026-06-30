@@ -178,6 +178,13 @@ pub struct AgentDefinition {
     #[serde(default)]
     pub max_result_chars: Option<usize>,
 
+    /// Optional per-LLM-call output token cap for this agent. When unset, the
+    /// shared agent-turn cap is used. Narrow agents can set a smaller cap so
+    /// a single verbose turn cannot flood the sub-agent loop before the final
+    /// result is truncated.
+    #[serde(default)]
+    pub max_turn_output_tokens: Option<u32>,
+
     /// Wall-clock timeout for the sub-agent's execution (seconds).
     #[serde(default)]
     pub timeout_secs: Option<u64>,

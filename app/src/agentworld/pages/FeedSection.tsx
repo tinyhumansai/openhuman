@@ -12,7 +12,7 @@
  * - Like / unlike toggle with optimistic update and server reconcile
  * - Comment composer (adds comment, refetches detail via GraphQL)
  * - Inline post composer at the top of the feed (refetches feed on success)
- * - Delete post / delete comment (own content only, with window.confirm)
+ * - Delete post / delete comment (own content only, via an in-app ConfirmDialog)
  *
  * Pattern mirrors ExploreSection / MarketplaceSection: useState + useEffect
  * fetch, PanelScaffold wrapper, StatusBlock for loading/error/empty states.
@@ -31,6 +31,7 @@ import {
 } from '../../lib/agentworld/invokeApiClient';
 import { fetchWalletStatus } from '../../services/walletApi';
 import { apiClient } from '../AgentWorldShell';
+import ConfirmDialog from '../components/ConfirmDialog';
 
 const log = debug('agentworld:feed');
 
@@ -530,6 +531,25 @@ function CommentRow({
   postId: string;
   onCommentDeleted: () => void;
 }) {
+  // Drives the in-app confirm modal for comment deletion (#4197).
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const confirmDeleteComment = () => {
+    setDeleting(true);
+    void apiClient.feeds
+      .deleteComment(handle, postId, comment.commentId)
+      .then(({ ok }) => {
+        if (!ok) throw new Error('Comment deletion was not accepted by the backend');
+        onCommentDeleted();
+      })
+      .catch(err => console.error('[FeedSection] delete comment failed:', err))
+      .finally(() => {
+        setDeleting(false);
+        setConfirmingDelete(false);
+      });
+  };
+
   return (
     <div className="flex gap-3 py-3">
       {comment.author.avatarUrl ? (
@@ -550,14 +570,7 @@ function CommentRow({
           {myAgentId && comment.author.cryptoId === myAgentId && (
             <button
               type="button"
-              onClick={() => {
-                if (window.confirm('Delete this comment?')) {
-                  void apiClient.feeds
-                    .deleteComment(handle, postId, comment.commentId)
-                    .then(() => onCommentDeleted())
-                    .catch(err => console.error('[FeedSection] delete comment failed:', err));
-                }
-              }}
+              onClick={() => setConfirmingDelete(true)}
               className="text-xs text-content-faint hover:text-red-500
                          dark:hover:text-red-400">
               Delete
@@ -566,6 +579,18 @@ function CommentRow({
         </div>
         <p className="mt-0.5 text-sm text-content-secondary">{comment.body}</p>
       </div>
+      {confirmingDelete && (
+        <ConfirmDialog
+          title="Delete comment"
+          message="Delete this comment? This can't be undone."
+          confirmLabel="Delete"
+          busy={deleting}
+          onConfirm={confirmDeleteComment}
+          onCancel={() => {
+            if (!deleting) setConfirmingDelete(false);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -577,6 +602,10 @@ export default function FeedSection() {
   const [followState, setFollowState] = useState<Record<string, boolean>>({});
   const [followLoading, setFollowLoading] = useState<Record<string, boolean>>({});
   const [likeState, setLikeState] = useState<Record<string, { liked: boolean; count: number }>>({});
+  // Post pending deletion — drives the in-app confirm modal (#4197). `null` = no
+  // dialog open; `deletingPost` disables the buttons while the RPC is in flight.
+  const [postPendingDelete, setPostPendingDelete] = useState<GqlPost | null>(null);
+  const [deletingPost, setDeletingPost] = useState(false);
 
   const { agentId: myAgentId, configured: walletConfigured } = useWalletResolution();
 
@@ -707,17 +736,32 @@ export default function FeedSection() {
 
   // ── Delete post ────────────────────────────────────────────────────────────
 
+  // Open the in-app confirm modal; the actual delete runs in `confirmDeletePost`
+  // only after the user confirms (replaces the native window.confirm — #4197).
   const handleDeletePost = (post: GqlPost) => {
-    if (!window.confirm('Delete this post?')) return;
+    setPostPendingDelete(post);
+  };
+
+  const confirmDeletePost = () => {
+    const post = postPendingDelete;
+    if (!post) return;
+    setDeletingPost(true);
     void apiClient.feeds
       .deletePost(post.postId)
-      .then(() => {
-        void apiClient.graphql.homeFeed({ limit: 50, includeSelf: true }).then(result => {
+      .then(({ ok }) => {
+        if (!ok) throw new Error('Post deletion was not accepted by the backend');
+        // Return the refresh promise so its rejection reaches `.catch` (rather
+        // than resolving the delete as "done" before the feed is reloaded).
+        return apiClient.graphql.homeFeed({ limit: 50, includeSelf: true }).then(result => {
           const items = sortedHomeFeedItems(result);
           setFeedState({ status: 'ok', items });
         });
       })
-      .catch(err => console.error('[FeedSection] delete post failed:', err));
+      .catch(err => console.error('[FeedSection] delete post failed:', err))
+      .finally(() => {
+        setDeletingPost(false);
+        setPostPendingDelete(null);
+      });
   };
 
   // ── Refetch feed ───────────────────────────────────────────────────────────
@@ -807,6 +851,18 @@ export default function FeedSection() {
         <FeedComposer myAgentId={myAgentId} onPostCreated={refetchFeed} />
       )}
       {body}
+      {postPendingDelete && (
+        <ConfirmDialog
+          title="Delete post"
+          message="Delete this post? This can't be undone."
+          confirmLabel="Delete"
+          busy={deletingPost}
+          onConfirm={confirmDeletePost}
+          onCancel={() => {
+            if (!deletingPost) setPostPendingDelete(null);
+          }}
+        />
+      )}
     </PanelScaffold>
   );
 }

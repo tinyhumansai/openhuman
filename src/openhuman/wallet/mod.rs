@@ -40,6 +40,9 @@ pub use ops::{
     reveal_recovery_phrase, setup, status, RevealRecoveryPhraseResult, WalletAccount, WalletChain,
     WalletSetupParams, WalletSetupSource, WalletStatus, WALLET_NOT_CONFIGURED_MESSAGE,
 };
+/// Reduce an RPC URL to `scheme://host` for logging so private provider tokens
+/// embedded in the path/query never reach the logs.
+pub(crate) use rpc::redact_rpc_url;
 pub use schemas::{
     all_controller_schemas, all_registered_controllers, all_wallet_controller_schemas,
     all_wallet_registered_controllers, schemas, wallet_schemas,

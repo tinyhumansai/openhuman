@@ -139,6 +139,26 @@ impl OpenAiCompatEmbedder {
             }
         };
 
+        // The memory tree's on-disk format is fixed at [`EMBEDDING_DIM`]. Models
+        // that don't honour the OpenAI `dimensions` request param (everything
+        // outside `text-embedding-3-*`) return their own native length, so a
+        // config whose stored dimension isn't `EMBEDDING_DIM` can never satisfy
+        // the tree. Building the adapter anyway would only defer the failure to
+        // the first embed ("expected 1024, got N") — refuse it here with an
+        // actionable message instead (Codex review on #4056). `text-embedding-3-*`
+        // is exempt: we request `EMBEDDING_DIM` below and the server reduces to it.
+        if !crate::openhuman::embeddings::model_supports_dimensions(model)
+            && config.memory.embedding_dimensions != EMBEDDING_DIM
+        {
+            anyhow::bail!(
+                "embeddings provider '{provider}' (model '{model}') produces \
+                 {}-dimensional vectors, but the memory tree requires {EMBEDDING_DIM}. \
+                 Choose a {EMBEDDING_DIM}-dimension model — an OpenAI `text-embedding-3-*` \
+                 model, or a {EMBEDDING_DIM}-dim model such as `mxbai-embed-large` or `bge-large`.",
+                config.memory.embedding_dimensions
+            );
+        }
+
         let inner = crate::openhuman::embeddings::create_embedding_provider_with_credentials(
             slug,
             model,
@@ -328,5 +348,58 @@ mod tests {
             let got = OpenAiCompatEmbedder::try_from_config(&cfg).expect("no error");
             assert!(got.is_none(), "{p} must fall through, got Some");
         }
+    }
+
+    /// Codex review on #4056: a custom config whose stored dimension isn't the
+    /// tree's fixed [`EMBEDDING_DIM`] (and whose model can't reduce to it via the
+    /// OpenAI `dimensions` param) must be refused at construction with a clear,
+    /// actionable error — not built and then failed at the first embed with a raw
+    /// "expected 1024, got N". This is what keeps an auto-detected non-1024 custom
+    /// endpoint (which the embeddings RPC still accepts) out of the 1024-only tree.
+    #[test]
+    fn err_for_non_reducible_model_with_incompatible_dimension() {
+        let (_tmp, mut cfg) = cfg_with_provider("custom:https://embed.example/v1");
+        cfg.memory.embedding_model = "nomic-embed-text".to_string(); // not text-embedding-3-*
+        cfg.memory.embedding_dimensions = 768; // != EMBEDDING_DIM (1024)
+                                               // `expect_err` would require the Ok type (the embedder) to impl Debug,
+                                               // which it can't (boxed trait object) — match instead.
+        let err = match OpenAiCompatEmbedder::try_from_config(&cfg) {
+            Err(e) => e,
+            Ok(_) => panic!("768 != tree dim must error, got Ok"),
+        };
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("768") && msg.contains(&EMBEDDING_DIM.to_string()),
+            "error must name both the model's dim and the required dim: {msg}"
+        );
+    }
+
+    /// A non-reducible model that natively matches [`EMBEDDING_DIM`] still builds —
+    /// only an incompatible dimension is refused.
+    #[test]
+    fn some_for_non_reducible_model_at_tree_dimension() {
+        let (_tmp, mut cfg) = cfg_with_provider("custom:https://embed.example/v1");
+        cfg.memory.embedding_model = "mxbai-embed-large".to_string();
+        cfg.memory.embedding_dimensions = EMBEDDING_DIM; // 1024
+        let got = OpenAiCompatEmbedder::try_from_config(&cfg).expect("no error");
+        assert!(
+            got.is_some(),
+            "a 1024-native custom model must build the tree adapter"
+        );
+    }
+
+    /// `text-embedding-3-*` is exempt from the dimension guard: the adapter
+    /// requests `EMBEDDING_DIM` and the server reduces to it, so even a config
+    /// stored at a different dimension still builds.
+    #[test]
+    fn some_for_reducible_model_regardless_of_stored_dimension() {
+        let (_tmp, mut cfg) = cfg_with_provider("openai");
+        cfg.memory.embedding_model = "text-embedding-3-large".to_string();
+        cfg.memory.embedding_dimensions = 256; // reducible — tree still requests 1024
+        let got = OpenAiCompatEmbedder::try_from_config(&cfg).expect("no error");
+        assert!(
+            got.is_some(),
+            "reducible model must build regardless of stored dim"
+        );
     }
 }

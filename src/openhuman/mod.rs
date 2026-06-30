@@ -65,6 +65,7 @@ pub mod mcp_audit;
 pub mod mcp_client;
 pub mod mcp_registry;
 pub mod mcp_server;
+pub mod media_generation;
 pub mod meet;
 pub mod meet_agent;
 pub mod memory;
