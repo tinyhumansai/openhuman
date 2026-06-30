@@ -10,9 +10,8 @@ import { safeInvoke as invoke, isTauri } from '../../../utils/tauriCommands/comm
 import ChipTabs from '../../layout/ChipTabs';
 import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsSection } from '../controls';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 
 const log = debug('mcp-server-panel');
 
@@ -103,7 +102,6 @@ interface McpServerPanelProps {
 
 const McpServerPanel = ({ embedded = false }: McpServerPanelProps = {}) => {
   const { t } = useT();
-  const { navigateBack } = useSettingsNavigation();
 
   const [binaryInfo, setBinaryInfo] = useState<McpBinaryInfo | null>(null);
   const [binaryError, setBinaryError] = useState<string | null>(null);
@@ -169,12 +167,8 @@ const McpServerPanel = ({ embedded = false }: McpServerPanelProps = {}) => {
     { id: 'zed', label: t('settings.mcpServer.clientZed') },
   ];
 
-  return (
-    <PanelPage
-      className="z-10"
-      contentClassName=""
-      description={embedded ? undefined : t('settings.developerMenu.mcpServer.desc')}
-      leading={embedded ? undefined : <SettingsBackButton onBack={navigateBack} />}>
+  const body = (
+    <>
       {/* ----------------------------------------------------------------- */}
       {/* Section 1 — Available Tools                                        */}
       {/* ----------------------------------------------------------------- */}
@@ -183,13 +177,11 @@ const McpServerPanel = ({ embedded = false }: McpServerPanelProps = {}) => {
           title={t('settings.mcpServer.toolsSectionTitle')}
           description={t('settings.mcpServer.toolsSectionDesc')}>
           {MCP_TOOLS.map(tool => (
-            <div
-              key={tool.name}
-              className="flex items-start gap-3 px-4 py-2.5 bg-white dark:bg-neutral-900">
+            <div key={tool.name} className="flex items-start gap-3 px-4 py-3 bg-surface">
               <span className="font-mono text-xs text-primary-700 dark:text-primary-400 mt-0.5 shrink-0">
                 {tool.name}
               </span>
-              <span className="text-xs text-neutral-600 dark:text-neutral-400">
+              <span className="text-xs text-content-secondary dark:text-content-muted">
                 {tool.description}
               </span>
             </div>
@@ -224,17 +216,15 @@ const McpServerPanel = ({ embedded = false }: McpServerPanelProps = {}) => {
 
           {/* Config file path */}
           <div className="px-4 mt-3 mb-2 flex items-center gap-2">
-            <span className="text-xs text-neutral-500 dark:text-neutral-400 shrink-0">
+            <span className="text-xs text-content-muted shrink-0">
               {t('settings.mcpServer.configFilePath')}:
             </span>
-            <span className="text-xs font-mono text-neutral-700 dark:text-neutral-300 truncate">
-              {configPath}
-            </span>
+            <span className="text-xs font-mono text-content-secondary truncate">{configPath}</span>
           </div>
 
           {/* JSON snippet */}
-          <div className="mx-4 mb-3 rounded-xl overflow-hidden border border-neutral-200 dark:border-neutral-800">
-            <pre className="bg-neutral-50 dark:bg-neutral-900/60 px-4 py-3 text-xs font-mono text-neutral-800 dark:text-neutral-200 overflow-x-auto whitespace-pre leading-relaxed">
+          <div className="mx-4 mb-3 rounded-xl overflow-hidden border border-line">
+            <pre className="bg-surface-muted dark:bg-surface/60 px-4 py-3 text-xs font-mono text-content overflow-x-auto whitespace-pre leading-relaxed">
               {snippet}
             </pre>
           </div>
@@ -248,7 +238,7 @@ const McpServerPanel = ({ embedded = false }: McpServerPanelProps = {}) => {
             {isTauri() && (
               <Button
                 type="button"
-                variant="ghost"
+                variant="tertiary"
                 size="xs"
                 onClick={() => void handleOpenConfig()}>
                 {t('settings.mcpServer.openConfigFile')}
@@ -267,7 +257,19 @@ const McpServerPanel = ({ embedded = false }: McpServerPanelProps = {}) => {
           )}
         </SettingsSection>
       </div>
-    </PanelPage>
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <PanelPage className="z-10" contentClassName="">
+        {body}
+      </PanelPage>
+    );
+  }
+
+  return (
+    <SettingsPanel description={t('settings.developerMenu.mcpServer.desc')}>{body}</SettingsPanel>
   );
 };
 

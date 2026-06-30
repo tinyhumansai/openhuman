@@ -38,6 +38,11 @@ pub(super) struct AgentToolExecCtx<'a> {
     pub agent_definition_id: &'a str,
     pub prefer_markdown: bool,
     pub budget_bytes: usize,
+    /// Whether Stage 1a (native content-aware compaction) runs before the
+    /// byte budget. Sourced from `ContextManager::compaction_enabled`.
+    pub compaction_enabled: bool,
+    /// Agent-level TokenJuice profile for this session's tool results.
+    pub tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression,
     pub artifact_store: Option<&'a ToolResultArtifactStore>,
 }
 
@@ -64,12 +69,24 @@ pub(super) async fn run_agent_tool_call(
             uuid::Uuid::new_v4().simple()
         )
     });
+    // Resolve the tool (when visible) to compute the server-side human label
+    // + contextual detail once, so dynamic Composio/MCP tools never surface as
+    // raw snake_case. `None` when the tool isn't found → client formatter.
+    let (display_label, display_detail) = match ctx.tools.iter().find(|t| t.name() == call.name) {
+        Some(tool) => (
+            tool.display_label(&call.arguments),
+            tool.display_detail(&call.arguments),
+        ),
+        None => (None, None),
+    };
     progress
         .tool_started(
             &call_id,
             &call.name,
             &call.arguments,
             (iteration + 1) as u32,
+            display_label.as_deref(),
+            display_detail.as_deref(),
         )
         .await;
     log::info!("[agent] executing tool: {}", call.name);
@@ -226,6 +243,20 @@ pub(super) async fn run_agent_tool_call(
         (format!("Unknown tool: {}", call.name), false)
     };
 
+    // Stage 1a — content-aware compaction via the TokenJuice content router.
+    // Runs before the byte budget on the fresh tool output (never sent to the
+    // backend yet, so it's cache-safe like the budget below). Detects the
+    // content kind, routes to the matching compressor, and offloads the
+    // original to CCR (recoverable via `tokenjuice_retrieve`); only ever
+    // shrinks, otherwise passes the original through.
+    let raw_result = crate::openhuman::tokenjuice::compact_output_with_policy(
+        raw_result,
+        &call.name,
+        ctx.compaction_enabled,
+        ctx.tokenjuice_compression,
+    )
+    .await;
+
     // Per-result byte budget — the only cache-safe reduction stage (the full
     // body has never been sent to the backend). Oversized outputs are persisted
     // into the action workspace when possible, with truncation as fallback.
@@ -266,7 +297,7 @@ pub(super) async fn run_agent_tool_call(
             &call_id,
             &call.name,
             success,
-            result.chars().count(),
+            &result,
             elapsed_ms,
             (iteration + 1) as u32,
         )

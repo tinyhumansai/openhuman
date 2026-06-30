@@ -20,16 +20,16 @@
 use crate::openhuman::agent::host_runtime::RuntimeAdapter;
 use crate::openhuman::javascript::NodeBootstrap;
 use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult, ToolTimeout};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Default wall-clock budget for an npm invocation. `npm install` on a cold
-/// cache can legitimately take several minutes on slow networks.
-const NPM_TIMEOUT_SECS: u64 = 600;
-/// Absolute ceiling callers can request via `timeout_secs`.
+/// Absolute ceiling callers can request via `timeout_secs`. There is **no**
+/// default timeout — `npm install`/build steps on a cold cache or slow network
+/// legitimately take minutes and must not be hard-killed by a default cap
+/// (issue #4023). A deadline applies only when `timeout_secs` is supplied.
 const NPM_TIMEOUT_MAX_SECS: u64 = 1800;
 /// Output cap per stream (1 MB).
 const MAX_OUTPUT_BYTES: usize = 1_048_576;
@@ -129,7 +129,7 @@ impl Tool for NpmExecTool {
                 },
                 "timeout_secs": {
                     "type": "integer",
-                    "description": "Optional override for the default 600s timeout. Capped at 1800s."
+                    "description": "Optional wall-clock timeout (seconds) before npm is killed. No timeout by default — installs/builds run to completion. Capped at 1800s; 0 disables."
                 }
             },
             "required": ["subcommand"]
@@ -138,6 +138,13 @@ impl Tool for NpmExecTool {
 
     fn permission_level(&self) -> PermissionLevel {
         PermissionLevel::Execute
+    }
+
+    /// `npm_exec` runs installs/builds that legitimately take a long time, so it
+    /// runs unbounded unless the caller passes an explicit `timeout_secs`
+    /// (capped at [`NPM_TIMEOUT_MAX_SECS`]).
+    fn timeout_policy(&self, args: &serde_json::Value) -> ToolTimeout {
+        npm_timeout_policy(args)
     }
 
     /// npm subcommands run arbitrary scripts (`run`/`exec`/lifecycle hooks) →
@@ -186,11 +193,12 @@ impl Tool for NpmExecTool {
 
         let cwd_override = args.get("cwd").and_then(|v| v.as_str()).map(str::to_string);
 
-        let timeout_secs = args
-            .get("timeout_secs")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(NPM_TIMEOUT_SECS)
-            .min(NPM_TIMEOUT_MAX_SECS);
+        // No default deadline — only a caller-supplied `timeout_secs` (capped)
+        // bounds the run. `None` ⇒ run to completion.
+        let explicit_timeout = crate::openhuman::tool_timeout::explicit_call_timeout_duration(
+            args.get("timeout_secs").and_then(|v| v.as_u64()),
+            NPM_TIMEOUT_MAX_SECS,
+        );
 
         // Read-only mode performs no acts. npm runs arbitrary scripts, so it
         // must refuse here — it previously skipped the autonomy check entirely.
@@ -252,7 +260,7 @@ impl Tool for NpmExecTool {
             Some(crate::openhuman::agent::harness::definition::SandboxMode::Sandboxed)
         ) {
             return Ok(self
-                .run_sandboxed(&command, &cwd, &resolved.bin_dir, timeout_secs)
+                .run_sandboxed(&command, &cwd, &resolved.bin_dir, explicit_timeout)
                 .await);
         }
 
@@ -282,7 +290,12 @@ impl Tool for NpmExecTool {
             }
         }
 
-        let result = tokio::time::timeout(Duration::from_secs(timeout_secs), cmd.output()).await;
+        // Bounded only when the caller asked for a deadline; otherwise run to
+        // completion (no harness/tool timeout on long installs/builds).
+        let result = match explicit_timeout {
+            Some(timeout) => tokio::time::timeout(timeout, cmd.output()).await,
+            None => Ok(cmd.output().await),
+        };
 
         match result {
             Ok(Ok(output)) => {
@@ -311,13 +324,19 @@ impl Tool for NpmExecTool {
                         Ok(ToolResult::success(format!("{stdout}\n[stderr]\n{stderr}")))
                     }
                 } else {
-                    let err_msg = if stderr.is_empty() { stdout } else { stderr };
-                    Ok(ToolResult::error(err_msg))
+                    // Surface exit code + both streams so the agent can diagnose
+                    // the failure instead of re-running it (#4095).
+                    Ok(super::command_output::command_failure(
+                        output.status.code(),
+                        &stdout,
+                        &stderr,
+                    ))
                 }
             }
             Ok(Err(e)) => Ok(ToolResult::error(format!("Failed to execute npm: {e}"))),
             Err(_) => Ok(ToolResult::error(format!(
-                "npm_exec timed out after {timeout_secs}s and was killed"
+                "npm_exec timed out after {}s and was killed",
+                explicit_timeout.map(|d| d.as_secs()).unwrap_or(0)
             ))),
         }
     }
@@ -337,9 +356,18 @@ impl NpmExecTool {
         command: &str,
         cwd: &std::path::Path,
         bin_dir: &std::path::Path,
-        timeout_secs: u64,
+        timeout: Option<Duration>,
     ) -> ToolResult {
         use crate::openhuman::sandbox;
+
+        // Sandbox backends require a finite deadline. When the caller did not
+        // request one, use a generous effective-unbounded cap (24h) — long
+        // enough not to kill a legitimate install/build, finite enough to
+        // eventually reclaim a wedged sandbox process. The native path runs
+        // truly unbounded.
+        let effective = timeout.unwrap_or_else(|| {
+            Duration::from_secs(crate::openhuman::tool_timeout::SANDBOX_UNBOUNDED_CAP_SECS)
+        });
 
         // Load the live `RuntimeConfig` so `resolve_sandbox_policy` derives
         // the right backend (Docker / local / noop) from the operator's
@@ -388,19 +416,12 @@ impl NpmExecTool {
         };
         extra_env.insert("PATH".to_string(), prepended);
 
-        match sandbox::execute_in_sandbox(
-            &policy,
-            command,
-            cwd,
-            extra_env,
-            Duration::from_secs(timeout_secs),
-        )
-        .await
-        {
+        match sandbox::execute_in_sandbox(&policy, command, cwd, extra_env, effective).await {
             Ok(result) => {
                 if result.timed_out {
                     ToolResult::error(format!(
-                        "npm_exec timed out after {timeout_secs}s and was killed"
+                        "npm_exec timed out after {}s and was killed",
+                        effective.as_secs()
                     ))
                 } else if result.success() {
                     if result.stderr.is_empty() {
@@ -412,16 +433,27 @@ impl NpmExecTool {
                         ))
                     }
                 } else {
-                    let err_msg = if result.stderr.is_empty() {
-                        result.stdout
-                    } else {
-                        result.stderr
-                    };
-                    ToolResult::error(err_msg)
+                    super::command_output::command_failure(
+                        super::command_output::sandbox_exit_code(result.exit_code),
+                        &result.stdout,
+                        &result.stderr,
+                    )
                 }
             }
             Err(e) => ToolResult::error(format!("Sandbox execution failed: {e}")),
         }
+    }
+}
+
+/// Resolve the wall-clock policy for an `npm_exec` call from its args.
+///
+/// No `timeout_secs` (or `0`) ⇒ run unbounded; a positive value ⇒ enforce it,
+/// clamped to [`NPM_TIMEOUT_MAX_SECS`]. Extracted from
+/// [`NpmExecTool::timeout_policy`] so it is unit-testable without a bootstrap.
+fn npm_timeout_policy(args: &serde_json::Value) -> ToolTimeout {
+    match args.get("timeout_secs").and_then(|v| v.as_u64()) {
+        None | Some(0) => ToolTimeout::Unbounded,
+        Some(secs) => ToolTimeout::Secs(secs.min(NPM_TIMEOUT_MAX_SECS)),
     }
 }
 
@@ -484,6 +516,27 @@ mod tests {
         } else {
             "/etc"
         }
+    }
+
+    #[test]
+    fn npm_timeout_policy_unbounded_by_default() {
+        assert_eq!(npm_timeout_policy(&json!({})), ToolTimeout::Unbounded);
+        assert_eq!(
+            npm_timeout_policy(&json!({"timeout_secs": 0})),
+            ToolTimeout::Unbounded
+        );
+    }
+
+    #[test]
+    fn npm_timeout_policy_enforces_and_caps_explicit() {
+        assert_eq!(
+            npm_timeout_policy(&json!({"timeout_secs": 300})),
+            ToolTimeout::Secs(300)
+        );
+        assert_eq!(
+            npm_timeout_policy(&json!({"timeout_secs": 99999})),
+            ToolTimeout::Secs(NPM_TIMEOUT_MAX_SECS)
+        );
     }
 
     #[test]

@@ -12,11 +12,14 @@
 //! - `openhuman.memory_tree_search_entities` — fuzzy canonical-id lookup
 //! - `openhuman.memory_tree_drill_down`     — walk summary children
 //! - `openhuman.memory_tree_fetch_leaves`   — batch chunk hydration
+//! - `openhuman.memory_tree_cover_window`   — minimum-node cover of a window
 //!
 //! All tools share the [`types::RetrievalHit`] / [`types::QueryResponse`]
 //! shape so the LLM sees a uniform schema regardless of which tool ran.
 
+pub mod cover;
 pub mod drill_down;
+pub mod fast;
 pub mod fetch;
 pub mod rpc;
 pub mod schemas;
@@ -29,7 +32,9 @@ mod benchmarks;
 #[cfg(test)]
 mod integration_tests;
 
+pub use cover::cover_window;
 pub use drill_down::drill_down;
+pub use fast::{fast_retrieve, FastRetrieveOptions};
 pub use fetch::fetch_leaves;
 pub use schemas::{
     all_controller_schemas as all_retrieval_controller_schemas,

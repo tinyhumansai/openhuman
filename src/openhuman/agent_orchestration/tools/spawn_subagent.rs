@@ -133,6 +133,18 @@ impl Tool for SpawnSubagentTool {
                 "dedicated_thread": {
                     "type": "boolean",
                     "description": "Legacy compatibility flag. Delegations now always create a persistent worker thread when parent context is available, so this flag no longer gates thread creation."
+                },
+                "blocking": {
+                    "type": "boolean",
+                    "description": "Explicitly run the sub-agent inline and return its final output. Defaults to false; reusable async delegation is the default."
+                },
+                "task_key": {
+                    "type": "string",
+                    "description": "Optional deterministic identity key for reusable async delegation. Defaults to a normalized prompt/title."
+                },
+                "fresh": {
+                    "type": "boolean",
+                    "description": "When true, bypass reusable subagent matching and create a fresh durable worker."
                 }
             }
         })
@@ -183,6 +195,10 @@ impl Tool for SpawnSubagentTool {
         // worker thread. (#3049 supersedes the #1624 disable.)
         let dedicated_thread = args
             .get("dedicated_thread")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let blocking = args
+            .get("blocking")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
@@ -396,6 +412,31 @@ impl Tool for SpawnSubagentTool {
             }
         }
 
+        if !blocking {
+            let mut async_args = args;
+            if let Some(obj) = async_args.as_object_mut() {
+                obj.insert(
+                    "agent_id".to_string(),
+                    serde_json::Value::String(definition.id.clone()),
+                );
+                if obj.get("task_title").is_none() {
+                    let title =
+                        crate::openhuman::agent_orchestration::subagent_sessions::task_title_from_prompt(
+                            &prompt,
+                        );
+                    obj.insert("task_title".to_string(), serde_json::Value::String(title));
+                }
+            }
+            tracing::info!(
+                target: "spawn_subagent",
+                agent_id = %definition.id,
+                "[spawn_subagent] routing to reusable async sub-agent by default"
+            );
+            return super::spawn_async_subagent::SpawnAsyncSubagentTool::new()
+                .execute(async_args)
+                .await;
+        }
+
         // ── Publish SubagentSpawned event ──────────────────────────────
         let parent_session = current_parent()
             .map(|p| p.session_id.clone())
@@ -525,6 +566,9 @@ impl Tool for SpawnSubagentTool {
                                     elapsed_ms: outcome.elapsed.as_millis() as u64,
                                     iterations: outcome.iterations as u32,
                                     output_chars: outcome.output.chars().count(),
+                                    worktree_path: None,
+                                    changed_files: Vec::new(),
+                                    dirty_status: None,
                                 })
                                 .await;
                         }
@@ -814,6 +858,8 @@ mod tests {
             iterations: 3,
             mode: SubagentMode::Typed,
             status: SubagentRunStatus::Completed,
+            final_history: Vec::new(),
+            usage: Default::default(),
         }
     }
 
@@ -1017,6 +1063,32 @@ mod tests {
         assert!(result
             .output()
             .contains("unknown agent_id 'totally_made_up'"));
+    }
+
+    #[tokio::test]
+    async fn legacy_archetype_alias_is_forwarded_to_async_default_path() {
+        let _ = AgentDefinitionRegistry::init_global_builtins();
+        let tool = SpawnSubagentTool;
+        let result = tool
+            .execute(json!({
+                "archetype": "researcher",
+                "prompt": "research the reusable async default path",
+            }))
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        assert!(
+            result
+                .output()
+                .contains("spawn_async_subagent called outside of an agent turn"),
+            "{}",
+            result.output()
+        );
+        assert!(
+            !result.output().contains("agent_id is required"),
+            "{}",
+            result.output()
+        );
     }
 
     #[tokio::test]

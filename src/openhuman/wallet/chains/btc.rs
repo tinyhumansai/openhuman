@@ -541,12 +541,9 @@ mod tests {
     #[tokio::test]
     async fn execute_btc_quote_builds_psbt_signs_and_broadcasts() {
         let _guard = TEST_LOCK.lock();
-        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         reset_quote_store_for_tests();
         let temp = TempDir::new().unwrap();
-        setup_wallet_in(&temp).await.unwrap();
+        let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
 
         // Mock state: collect raw tx hex posted to /tx.
         let raw_txs: Arc<parking_lot::Mutex<Vec<String>>> =
@@ -630,12 +627,9 @@ mod tests {
     #[tokio::test]
     async fn execute_btc_quote_rejects_insufficient_utxos() {
         let _guard = TEST_LOCK.lock();
-        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         reset_quote_store_for_tests();
         let temp = TempDir::new().unwrap();
-        setup_wallet_in(&temp).await.unwrap();
+        let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
 
         // Empty UTXO set — must error.
         let app = Router::new().route(

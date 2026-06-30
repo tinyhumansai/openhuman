@@ -47,8 +47,8 @@ pub struct LocalAiConfig {
     /// serde and will be silently ignored on load (intentional forced reset).
     #[serde(default = "default_runtime_enabled")]
     pub runtime_enabled: bool,
-    /// Local provider identifier. Supported values are `ollama` and
-    /// `lm_studio`; unknown values normalize to `ollama` at runtime.
+    /// Local provider identifier. Supported values are `ollama`, `lm_studio`,
+    /// and `omlx`; unknown values normalize to `ollama` at runtime.
     #[serde(default = "default_provider")]
     pub provider: String,
     /// Optional provider base URL. For LM Studio this defaults to

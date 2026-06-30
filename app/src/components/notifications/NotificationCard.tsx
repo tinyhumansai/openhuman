@@ -1,5 +1,6 @@
 import { useT } from '../../lib/i18n/I18nContext';
 import type { IntegrationNotification } from '../../types/notifications';
+import Button from '../ui/Button';
 import NotificationBody from './NotificationBody';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -34,7 +35,7 @@ function providerBadgeClass(provider: string): string {
     case 'linkedin':
       return 'bg-sky-100 text-sky-700 border-sky-200';
     default:
-      return 'bg-stone-100 dark:bg-neutral-800 text-stone-700 dark:text-neutral-200 border-stone-200 dark:border-neutral-800';
+      return 'bg-surface-subtle text-content-secondary border-line';
   }
 }
 
@@ -70,8 +71,8 @@ const NotificationCard = ({ notification: n, onMarkRead, onNavigate, onDismiss }
 
   return (
     <div
-      className={`w-full p-3 border-b border-stone-100 dark:border-neutral-800 hover:bg-stone-50 dark:hover:bg-neutral-800/60 transition-colors duration-150 ${
-        isUnread ? 'bg-primary-50/30' : 'bg-white dark:bg-neutral-900'
+      className={`w-full p-3 border-b border-line-subtle hover:bg-surface-hover transition-colors duration-150 ${
+        isUnread ? 'bg-primary-50/30' : 'bg-surface'
       }`}>
       <div className="flex items-start gap-3">
         {/* Unread dot — reserve space so text stays aligned whether read or unread */}
@@ -124,29 +125,30 @@ const NotificationCard = ({ notification: n, onMarkRead, onNavigate, onDismiss }
               </span>
             )}
 
-            <span className="ml-auto text-[11px] text-stone-400 dark:text-neutral-500 flex-shrink-0">
+            <span className="ml-auto text-[11px] text-content-faint flex-shrink-0">
               {relativeTime(n.received_at)}
             </span>
           </div>
 
           {/* Title */}
-          <p className="text-sm font-medium text-stone-900 dark:text-neutral-100 truncate">
-            {n.title}
-          </p>
+          <p className="text-sm font-medium text-content truncate">{n.title}</p>
 
           {/* Body preview — `<openhuman-link>` tags render as pills */}
           {n.body && (
             <p
               data-testid="notification-card-body"
-              className="text-xs text-stone-500 dark:text-neutral-400 mt-0.5 line-clamp-2">
+              className="text-xs text-content-muted mt-0.5 line-clamp-2">
               <NotificationBody body={n.body} />
             </p>
           )}
         </div>
         {onDismiss && (
-          <button
+          <Button
+            iconOnly
+            variant="tertiary"
+            size="xs"
             onClick={() => onDismiss(n.id)}
-            className="mt-0.5 ml-1 flex-shrink-0 p-0.5 rounded hover:bg-stone-200 dark:hover:bg-neutral-800/60 text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 transition-colors"
+            className="mt-0.5 ml-1 flex-shrink-0 text-content-faint hover:text-content-secondary"
             aria-label={t('notifications.card.dismiss')}>
             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -156,7 +158,7 @@ const NotificationCard = ({ notification: n, onMarkRead, onNavigate, onDismiss }
                 d="M6 18L18 6M6 6l12 12"
               />
             </svg>
-          </button>
+          </Button>
         )}
       </div>
     </div>

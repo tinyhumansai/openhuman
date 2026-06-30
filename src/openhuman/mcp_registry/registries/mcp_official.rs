@@ -468,6 +468,12 @@ impl OfficialListResponse {
         let mut seen = std::collections::HashSet::new();
         self.servers
             .into_iter()
+            .filter(|env| {
+                // Drop servers that can't actually be installed (no hosted
+                // remote and no package) and ones the registry marks
+                // deprecated — both are noise in the catalog.
+                env.is_installable() && !env.is_deprecated()
+            })
             .filter_map(|env| {
                 if seen.insert(env.server.name.clone()) {
                     Some(env.server.into_summary())
@@ -515,8 +521,28 @@ struct OfficialMetadata {
 struct OfficialServerEnvelope {
     server: OfficialServer,
     #[serde(default, rename = "_meta")]
-    #[allow(dead_code)]
     meta: Option<Value>,
+}
+
+impl OfficialServerEnvelope {
+    /// A server is installable when it offers at least one way to connect: a
+    /// hosted remote or an installable package. A handful of registry entries
+    /// declare neither and can never be installed — they're catalog noise.
+    fn is_installable(&self) -> bool {
+        !self.server.remotes.is_empty() || !self.server.packages.is_empty()
+    }
+
+    /// `true` when the registry marks this version deprecated. The status lives
+    /// at `_meta["io.modelcontextprotocol.registry/official"].status`; absent
+    /// meta (e.g. legacy cache) is treated as not-deprecated.
+    fn is_deprecated(&self) -> bool {
+        self.meta
+            .as_ref()
+            .and_then(|m| m.get("io.modelcontextprotocol.registry/official"))
+            .and_then(|o| o.get("status"))
+            .and_then(Value::as_str)
+            == Some("deprecated")
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -566,6 +592,7 @@ impl OfficialServer {
             use_count: 0,
             is_deployed: !self.remotes.is_empty(),
             source: SOURCE_MCP_OFFICIAL.to_string(),
+            official: false, // tagged later by the registry dispatcher
             extra: std::collections::HashMap::new(),
         }
     }
@@ -1205,6 +1232,7 @@ mod tests {
                     "server": {
                         "name": "io.github.someuser/untitled-tool",
                         "description": "A server without a title field",
+                        "packages": [{ "registryType": "npm", "identifier": "untitled-tool" }],
                     },
                     "_meta": {}
                 }
@@ -1243,16 +1271,47 @@ mod tests {
     /// `into_summaries` — only the first occurrence survives.
     #[test]
     fn list_response_deduplicates_by_name() {
+        let pkg = json!([{ "registryType": "npm", "identifier": "dup" }]);
         let raw = json!({
             "servers": [
-                { "server": { "name": "io.github.x/dup", "title": "First" } },
-                { "server": { "name": "io.github.x/dup", "title": "Second" } },
+                { "server": { "name": "io.github.x/dup", "title": "First", "packages": pkg } },
+                { "server": { "name": "io.github.x/dup", "title": "Second", "packages": pkg } },
             ]
         });
         let parsed: OfficialListResponse = serde_json::from_value(raw).unwrap();
         let summaries = parsed.into_summaries();
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0].display_name, "First");
+    }
+
+    /// `into_summaries` drops servers that can't be installed (no remote, no
+    /// package) and ones the registry marks deprecated — catalog noise.
+    #[test]
+    fn list_response_filters_unusable_and_deprecated() {
+        let raw = json!({
+            "servers": [
+                {
+                    "server": { "name": "ok/installable",
+                        "packages": [{ "registryType": "npm", "identifier": "x" }] },
+                    "_meta": { "io.modelcontextprotocol.registry/official": { "status": "active" } }
+                },
+                // No remote and no package → unusable, dropped.
+                { "server": { "name": "bad/unusable", "title": "Nope" }, "_meta": {} },
+                // Installable but deprecated → dropped.
+                {
+                    "server": { "name": "old/deprecated",
+                        "remotes": [{ "url": "https://x.example/mcp" }] },
+                    "_meta": { "io.modelcontextprotocol.registry/official": { "status": "deprecated" } }
+                }
+            ]
+        });
+        let parsed: OfficialListResponse = serde_json::from_value(raw).unwrap();
+        let summaries = parsed.into_summaries();
+        let slugs: Vec<_> = summaries
+            .iter()
+            .map(|s| s.qualified_name.as_str())
+            .collect();
+        assert_eq!(slugs, vec!["ok/installable"]);
     }
 
     #[test]

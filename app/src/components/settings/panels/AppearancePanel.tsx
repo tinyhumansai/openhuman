@@ -7,16 +7,15 @@ import {
   type FontSize,
   setAgentMessageViewMode,
   setFontSize,
+  setHideAgentInsights,
   setTabBarLabels,
   setThemeMode,
   type TabBarLabels,
   type ThemeMode,
 } from '../../../store/themeSlice';
 import LanguageSelect from '../../LanguageSelect';
-import PanelPage from '../../layout/PanelPage';
-import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsRow, SettingsSection, SettingsSwitch } from '../controls';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 
 interface ModeOption {
   id: ThemeMode;
@@ -68,7 +67,6 @@ const SystemIcon = (
 
 const AppearancePanel = () => {
   const { t } = useT();
-  const { navigateBack } = useSettingsNavigation();
   const dispatch = useAppDispatch();
   const mode = useAppSelector(state => state.theme.mode);
   const fontSize = useAppSelector(state => state.theme.fontSize);
@@ -76,6 +74,7 @@ const AppearancePanel = () => {
   const agentMessageViewMode = useAppSelector(
     state => state.theme.agentMessageViewMode ?? 'bubbles'
   );
+  const hideAgentInsights = useAppSelector(state => state.theme.hideAgentInsights ?? false);
   const labelsAlwaysVisible = tabBarLabels === 'always';
   const assistantTextModeEnabled = agentMessageViewMode === 'text';
   const toggleTabBarLabels = () => {
@@ -85,6 +84,9 @@ const AppearancePanel = () => {
   const toggleAssistantTextMode = () => {
     const next: AgentMessageViewMode = assistantTextModeEnabled ? 'bubbles' : 'text';
     dispatch(setAgentMessageViewMode(next));
+  };
+  const toggleHideAgentInsights = () => {
+    dispatch(setHideAgentInsights(!hideAgentInsights));
   };
 
   // Build at render time so the labels follow the active locale; `t()` itself
@@ -139,188 +141,179 @@ const AppearancePanel = () => {
   ];
 
   return (
-    <PanelPage
-      className="z-10"
-      contentClassName=""
-      description={t('settings.appearance.menuDesc')}
-      leading={<SettingsBackButton onBack={navigateBack} />}>
-      <div className="p-4 space-y-4">
-        {/* ── Theme picker — intentional bespoke tile UI ─────────────── */}
-        <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-2 px-1">
-            {t('settings.appearance.themeHeading')}
-          </h3>
-          <div
-            className="bg-white dark:bg-neutral-900 rounded-xl border border-neutral-200 dark:border-neutral-800 overflow-hidden"
-            role="radiogroup"
-            aria-label={t('settings.appearance.themeAria')}>
-            {OPTIONS.map((opt, idx) => {
-              const selected = opt.id === mode;
-              return (
-                <button
-                  key={opt.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={selected}
-                  onClick={() => dispatch(setThemeMode(opt.id))}
-                  className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors focus:outline-none focus-visible:bg-primary-50 dark:bg-primary-500/10 dark:focus-visible:bg-primary-900/30 ${
-                    idx !== 0 ? 'border-t border-neutral-100 dark:border-neutral-800' : ''
-                  } ${
+    <SettingsPanel description={t('settings.appearance.menuDesc')}>
+      {/* ── Theme picker — intentional bespoke tile UI ─────────────── */}
+      <div>
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-content-faint mb-2 px-1">
+          {t('settings.appearance.themeHeading')}
+        </h3>
+        <div
+          className="bg-surface rounded-xl border border-line overflow-hidden"
+          role="radiogroup"
+          aria-label={t('settings.appearance.themeAria')}>
+          {OPTIONS.map((opt, idx) => {
+            const selected = opt.id === mode;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                onClick={() => dispatch(setThemeMode(opt.id))}
+                className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors focus:outline-none focus-visible:bg-primary-50 dark:focus-visible:bg-primary-900/30 ${
+                  idx !== 0 ? 'border-t border-line-subtle' : ''
+                } ${selected ? 'bg-primary-50 dark:bg-primary-500/10' : 'hover:bg-surface-hover'}`}>
+                <span
+                  className={`flex items-center justify-center w-9 h-9 rounded-lg ${
                     selected
-                      ? 'bg-primary-50 dark:bg-primary-500/10'
-                      : 'hover:bg-neutral-50 dark:hover:bg-neutral-800/60'
+                      ? 'bg-primary-500 text-content-inverted'
+                      : 'bg-surface-subtle text-content-secondary'
                   }`}>
-                  <span
-                    className={`flex items-center justify-center w-9 h-9 rounded-lg ${
-                      selected
-                        ? 'bg-primary-500 text-white'
-                        : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300'
-                    }`}>
-                    {opt.icon}
-                  </span>
-                  <span className="flex-1 min-w-0">
-                    <span className="block text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                      {opt.label}
-                    </span>
-                    <span className="block text-xs text-neutral-500 dark:text-neutral-400">
-                      {opt.description}
-                    </span>
-                  </span>
-                  {selected && (
-                    <svg
-                      className="w-5 h-5 text-primary-500"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                      aria-hidden>
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M5 13l4 4L19 7"
-                      />
-                    </svg>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-          <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed px-1 mt-2">
-            {t('settings.appearance.helperText')}
-          </p>
+                  {opt.icon}
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className="block text-sm font-medium text-content">{opt.label}</span>
+                  <span className="block text-xs text-content-muted">{opt.description}</span>
+                </span>
+                {selected && (
+                  <svg
+                    className="w-5 h-5 text-primary-500"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    aria-hidden>
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M5 13l4 4L19 7"
+                    />
+                  </svg>
+                )}
+              </button>
+            );
+          })}
         </div>
-
-        {/* ── Font size picker — intentional bespoke tile UI ─────────── */}
-        <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-2 px-1">
-            {t('settings.appearance.fontSizeHeading')}
-          </h3>
-          <div
-            className="bg-white dark:bg-neutral-900 rounded-xl border border-neutral-200 dark:border-neutral-800 overflow-hidden"
-            role="radiogroup"
-            aria-label={t('settings.appearance.fontSizeAria')}>
-            {FONT_SIZE_OPTIONS.map((opt, idx) => {
-              const selected = opt.id === fontSize;
-              return (
-                <button
-                  key={opt.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={selected}
-                  onClick={() => dispatch(setFontSize(opt.id))}
-                  className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors focus:outline-none focus-visible:bg-primary-50 dark:bg-primary-500/10 dark:focus-visible:bg-primary-900/30 ${
-                    idx !== 0 ? 'border-t border-neutral-100 dark:border-neutral-800' : ''
-                  } ${
-                    selected
-                      ? 'bg-primary-50 dark:bg-primary-500/10'
-                      : 'hover:bg-neutral-50 dark:hover:bg-neutral-800/60'
-                  }`}>
-                  <span
-                    className={`flex items-center justify-center w-9 h-9 rounded-lg ${
-                      selected
-                        ? 'bg-primary-500 text-white'
-                        : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300'
-                    }`}>
-                    <span className={`font-semibold leading-none ${opt.glyphClass}`} aria-hidden>
-                      A
-                    </span>
-                  </span>
-                  <span className="flex-1 min-w-0">
-                    <span className="block text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                      {opt.label}
-                    </span>
-                    <span className="block text-xs text-neutral-500 dark:text-neutral-400">
-                      {opt.description}
-                    </span>
-                  </span>
-                  {selected && (
-                    <svg
-                      className="w-5 h-5 text-primary-500"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                      aria-hidden>
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M5 13l4 4L19 7"
-                      />
-                    </svg>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-          <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed px-1 mt-2">
-            {t('settings.appearance.fontSizeHelperText')}
-          </p>
-        </div>
-
-        {/* ── Tab bar labels toggle ──────────────────────────────────── */}
-        <SettingsSection title={t('settings.appearance.tabBarHeading')}>
-          <SettingsRow
-            htmlFor="switch-tab-bar-labels"
-            label={t('settings.appearance.tabBarAlwaysShowLabels')}
-            description={t('settings.appearance.tabBarAlwaysShowLabelsDesc')}
-            control={
-              <SettingsSwitch
-                id="switch-tab-bar-labels"
-                checked={labelsAlwaysVisible}
-                onCheckedChange={toggleTabBarLabels}
-                aria-label={t('settings.appearance.tabBarAlwaysShowLabels')}
-              />
-            }
-          />
-        </SettingsSection>
-
-        {/* ── Chat display toggle ────────────────────────────────────── */}
-        <SettingsSection title={t('settings.appearance.chatHeading')}>
-          <SettingsRow
-            htmlFor="switch-assistant-text-mode"
-            label={t('settings.appearance.assistantTextMode')}
-            description={t('settings.appearance.assistantTextModeDesc')}
-            control={
-              <SettingsSwitch
-                id="switch-assistant-text-mode"
-                checked={assistantTextModeEnabled}
-                onCheckedChange={toggleAssistantTextMode}
-                aria-label={t('settings.appearance.assistantTextMode')}
-              />
-            }
-          />
-        </SettingsSection>
-
-        {/* ── Display language (moved from the old settings home list) ── */}
-        <SettingsSection title={t('settings.language')}>
-          <SettingsRow
-            label={t('settings.language')}
-            description={t('settings.languageDesc')}
-            control={<LanguageSelect ariaLabel={t('settings.language')} />}
-          />
-        </SettingsSection>
+        <p className="text-xs text-content-muted leading-relaxed px-1 mt-2">
+          {t('settings.appearance.helperText')}
+        </p>
       </div>
-    </PanelPage>
+
+      {/* ── Font size picker — intentional bespoke tile UI ─────────── */}
+      <div>
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-content-faint mb-2 px-1">
+          {t('settings.appearance.fontSizeHeading')}
+        </h3>
+        <div
+          className="bg-surface rounded-xl border border-line overflow-hidden"
+          role="radiogroup"
+          aria-label={t('settings.appearance.fontSizeAria')}>
+          {FONT_SIZE_OPTIONS.map((opt, idx) => {
+            const selected = opt.id === fontSize;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                onClick={() => dispatch(setFontSize(opt.id))}
+                className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors focus:outline-none focus-visible:bg-primary-50 dark:focus-visible:bg-primary-900/30 ${
+                  idx !== 0 ? 'border-t border-line-subtle' : ''
+                } ${selected ? 'bg-primary-50 dark:bg-primary-500/10' : 'hover:bg-surface-hover'}`}>
+                <span
+                  className={`flex items-center justify-center w-9 h-9 rounded-lg ${
+                    selected
+                      ? 'bg-primary-500 text-content-inverted'
+                      : 'bg-surface-subtle text-content-secondary'
+                  }`}>
+                  <span className={`font-semibold leading-none ${opt.glyphClass}`} aria-hidden>
+                    A
+                  </span>
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className="block text-sm font-medium text-content">{opt.label}</span>
+                  <span className="block text-xs text-content-muted">{opt.description}</span>
+                </span>
+                {selected && (
+                  <svg
+                    className="w-5 h-5 text-primary-500"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    aria-hidden>
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M5 13l4 4L19 7"
+                    />
+                  </svg>
+                )}
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-xs text-content-muted leading-relaxed px-1 mt-2">
+          {t('settings.appearance.fontSizeHelperText')}
+        </p>
+      </div>
+
+      {/* ── Tab bar labels toggle ──────────────────────────────────── */}
+      <SettingsSection title={t('settings.appearance.tabBarHeading')}>
+        <SettingsRow
+          htmlFor="switch-tab-bar-labels"
+          label={t('settings.appearance.tabBarAlwaysShowLabels')}
+          description={t('settings.appearance.tabBarAlwaysShowLabelsDesc')}
+          control={
+            <SettingsSwitch
+              id="switch-tab-bar-labels"
+              checked={labelsAlwaysVisible}
+              onCheckedChange={toggleTabBarLabels}
+              aria-label={t('settings.appearance.tabBarAlwaysShowLabels')}
+            />
+          }
+        />
+      </SettingsSection>
+
+      {/* ── Chat display toggle ────────────────────────────────────── */}
+      <SettingsSection title={t('settings.appearance.chatHeading')}>
+        <SettingsRow
+          htmlFor="switch-assistant-text-mode"
+          label={t('settings.appearance.assistantTextMode')}
+          description={t('settings.appearance.assistantTextModeDesc')}
+          control={
+            <SettingsSwitch
+              id="switch-assistant-text-mode"
+              checked={assistantTextModeEnabled}
+              onCheckedChange={toggleAssistantTextMode}
+              aria-label={t('settings.appearance.assistantTextMode')}
+            />
+          }
+        />
+        <SettingsRow
+          htmlFor="switch-hide-agent-insights"
+          label={t('settings.appearance.hideAgentInsights')}
+          description={t('settings.appearance.hideAgentInsightsDesc')}
+          control={
+            <SettingsSwitch
+              id="switch-hide-agent-insights"
+              checked={hideAgentInsights}
+              onCheckedChange={toggleHideAgentInsights}
+              aria-label={t('settings.appearance.hideAgentInsights')}
+            />
+          }
+        />
+      </SettingsSection>
+
+      {/* ── Display language (moved from the old settings home list) ── */}
+      <SettingsSection title={t('settings.language')}>
+        <SettingsRow
+          label={t('settings.language')}
+          description={t('settings.languageDesc')}
+          control={<LanguageSelect ariaLabel={t('settings.language')} />}
+        />
+      </SettingsSection>
+    </SettingsPanel>
   );
 };
 

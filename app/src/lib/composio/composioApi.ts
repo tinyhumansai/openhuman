@@ -49,10 +49,51 @@ function unwrapCliEnvelope<T>(value: unknown): T {
   return value as T;
 }
 
+/**
+ * Shorter-than-default per-call timeout the Connections page's loading
+ * state opts into for the two RPCs it waits on (`listToolkits` +
+ * `listConnections`).
+ *
+ * Both fetches are *non-critical on that surface*: the toolkit catalog has
+ * a 24h stale cache AND a hardcoded `KNOWN_COMPOSIO_TOOLKITS` fallback, so a
+ * slow or dead backend should degrade to the fallback fast rather than
+ * pinning the Connections grid on a loading skeleton. The skeleton window is
+ * bounded by the *slower* of these two calls (the hook clears `loading` only
+ * after `Promise.allSettled([getToolkitCatalog(), listConnections()])`
+ * settles — see `useComposioIntegrations` in ./hooks.ts), so BOTH must opt
+ * into the shorter budget. Without this the window stretches to the global
+ * `CORE_RPC_TIMEOUT_MS` (30s) on a cold cache against a down backend.
+ *
+ * It is deliberately **opt-in** via the `timeoutMs` option rather than the
+ * wrapper default: `listConnections` is also called by the GitHub repo
+ * picker, SmartIssuePicker, the add-memory-source dialog and the connect
+ * modal's poll loop, where a slow-but-successful 8–30s call must still be
+ * allowed to complete rather than being failed early (#4079 review).
+ */
+export const COMPOSIO_FETCH_TIMEOUT_MS = 8_000;
+
+/** Per-call options shared by the bounded read wrappers. */
+interface ComposioReadOptions {
+  /**
+   * Override the RPC timeout (ms). Omit to inherit the global
+   * `CORE_RPC_TIMEOUT_MS`. Pass `COMPOSIO_FETCH_TIMEOUT_MS` only from the
+   * Connections-page loading path (see the constant's doc comment).
+   */
+  timeoutMs?: number;
+}
+
 // ── Read operations ───────────────────────────────────────────────
 
-export async function listToolkits(): Promise<ComposioToolkitsResponse> {
-  const raw = await callCoreRpc<unknown>({ method: 'openhuman.composio_list_toolkits' });
+export async function listToolkits(
+  options?: ComposioReadOptions
+): Promise<ComposioToolkitsResponse> {
+  const raw = await callCoreRpc<unknown>({
+    method: 'openhuman.composio_list_toolkits',
+    // Timeout is opt-in: the Connections loading skeleton passes the shorter
+    // budget so the hardcoded fallback surfaces fast (#3933); other callers
+    // inherit the global default.
+    ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+  });
   return unwrapCliEnvelope<ComposioToolkitsResponse>(raw);
 }
 
@@ -74,8 +115,17 @@ export async function listAgentReadyToolkits(): Promise<ComposioAgentReadyToolki
   return unwrapCliEnvelope<ComposioAgentReadyToolkitsResponse>(raw);
 }
 
-export async function listConnections(): Promise<ComposioConnectionsResponse> {
-  const raw = await callCoreRpc<unknown>({ method: 'openhuman.composio_list_connections' });
+export async function listConnections(
+  options?: ComposioReadOptions
+): Promise<ComposioConnectionsResponse> {
+  const raw = await callCoreRpc<unknown>({
+    method: 'openhuman.composio_list_connections',
+    // Timeout is opt-in (see `listToolkits`): only the Connections loading
+    // path passes the shorter budget. Shared callers (repo/issue pickers,
+    // add-memory-source, connect-modal poll) inherit the global default so a
+    // slow-but-successful call still completes (#4079 review).
+    ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+  });
   return unwrapCliEnvelope<ComposioConnectionsResponse>(raw);
 }
 

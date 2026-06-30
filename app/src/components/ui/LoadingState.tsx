@@ -35,10 +35,8 @@ interface CenteredLoadingStateProps {
 export function CenteredLoadingState({ label, className }: CenteredLoadingStateProps) {
   return (
     <div className={`flex items-center justify-center py-8 ${className ?? ''}`}>
-      <Spinner className="w-5 h-5 text-stone-500 dark:text-neutral-400" />
-      {label ? (
-        <span className="ml-3 text-sm text-stone-500 dark:text-neutral-400">{label}</span>
-      ) : null}
+      <Spinner className="w-5 h-5 text-content-muted" />
+      {label ? <span className="ml-3 text-sm text-content-muted">{label}</span> : null}
     </div>
   );
 }

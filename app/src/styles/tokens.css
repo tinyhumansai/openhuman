@@ -1,0 +1,133 @@
+/*
+ * Canonical theme tokens — the single source of truth for every themeable
+ * colour and font in the app. See gitbooks/developing/theming.md.
+ *
+ * WHY CHANNEL FORMAT: each colour is stored as a space-separated RGB triple
+ * (e.g. `255 255 255`) rather than a hex string. `tailwind.config.js` wraps
+ * every token as `rgb(var(--token) / <alpha-value>)`, so Tailwind opacity
+ * modifiers keep working (`bg-surface/50`, `bg-primary-500/10`). A hex/var
+ * swap would silently break all ~640 opacity-suffixed utilities.
+ *
+ * HOW THEMING WORKS: a "theme" is just a set of values for these vars. The
+ * defaults below are the historical Light palette; `:root.dark` holds the
+ * historical Dark palette. `ThemeProvider` writes the active theme's values
+ * as inline `--token` vars on <html>, overriding both blocks at runtime — so
+ * presets and fully-custom user themes are the same mechanism.
+ *
+ * Values here are byte-identical to the previous --cmd and --color blocks and
+ * the tailwind.config.js palette hexes, so adopting tokens is colour-neutral
+ * until a user actually changes a theme.
+ */
+
+:root {
+  /* ---- Surfaces (backgrounds) ---- */
+  --surface: 255 255 255; /* cards / panels — "secondary background" (white) */
+  --surface-canvas: 245 245 245; /* app background — "primary background" (stone-100) */
+  --surface-muted: 250 250 250; /* inputs / subtle fills (stone-50) */
+  --surface-subtle: 245 245 245; /* recessed wells (stone-100) */
+  --surface-strong: 229 229 229; /* sunken / pressed (stone-200) */
+  --surface-hover: 240 240 240; /* hover fills — distinct from white surface so
+                                   hover reads on elevated cards, not just canvas */
+  --surface-overlay: 0 0 0; /* modal scrim (used with /40../70) */
+
+  /* ---- Text ---- */
+  --content: 23 23 23; /* primary text (stone-900) */
+  --content-secondary: 82 82 82; /* secondary text (stone-600) */
+  --content-muted: 115 115 115; /* muted/labels (stone-500) */
+  --content-faint: 163 163 163; /* faint/placeholder (stone-400) */
+  --content-inverted: 255 255 255; /* text over accent fills (white) */
+
+  /* ---- Borders ---- */
+  --line: 229 229 229; /* default hairline (stone-200) */
+  --line-strong: 212 212 212; /* stronger divider (stone-300) */
+  --line-subtle: 245 245 245; /* faintest divider (stone-100) */
+
+  /* ---- Accent palette: primary (Complementary Blue) ---- */
+  --primary-50: 239 246 255;
+  --primary-100: 219 234 254;
+  --primary-200: 191 219 254;
+  --primary-300: 147 197 253;
+  --primary-400: 96 165 250;
+  --primary-500: 47 110 244;
+  --primary-600: 37 99 235;
+  --primary-700: 29 78 216;
+  --primary-800: 30 64 175;
+  --primary-900: 30 58 138;
+  --primary-950: 23 37 84;
+
+  /* ---- Accent palette: sage (Success Green) ---- */
+  --sage-50: 240 253 244;
+  --sage-100: 220 252 231;
+  --sage-200: 187 247 208;
+  --sage-300: 134 239 172;
+  --sage-400: 74 222 128;
+  --sage-500: 52 199 89;
+  --sage-600: 22 163 74;
+  --sage-700: 21 128 61;
+  --sage-800: 22 101 52;
+  --sage-900: 20 83 45;
+  --sage-950: 5 46 22;
+
+  /* ---- Accent palette: amber (Alert Orange) ---- */
+  --amber-50: 255 251 235;
+  --amber-100: 254 243 199;
+  --amber-200: 253 230 138;
+  --amber-300: 252 211 77;
+  --amber-400: 251 191 36;
+  --amber-500: 232 167 40;
+  --amber-600: 217 119 6;
+  --amber-700: 180 83 9;
+  --amber-800: 146 64 14;
+  --amber-900: 120 53 15;
+  --amber-950: 69 26 3;
+
+  /* ---- Accent palette: coral (Error Red) ---- */
+  --coral-50: 254 242 242;
+  --coral-100: 254 226 226;
+  --coral-200: 254 202 202;
+  --coral-300: 252 165 165;
+  --coral-400: 248 113 113;
+  --coral-500: 239 68 68;
+  --coral-600: 220 38 38;
+  --coral-700: 185 28 28;
+  --coral-800: 153 27 27;
+  --coral-900: 127 29 29;
+  --coral-950: 69 10 10;
+
+  /* ---- Font roles ---- */
+  --font-title: 'Cabinet Grotesk', 'Inter', -apple-system, system-ui, sans-serif;
+  --font-heading: 'Inter', 'Cabinet Grotesk', -apple-system, system-ui, sans-serif;
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, 'Liberation Mono', Courier, monospace;
+  --font-serif: 'Newsreader', Georgia, Cambria, 'Times New Roman', Times, serif;
+}
+
+:root.dark {
+  /* ---- Surfaces ---- */
+  --surface: 23 23 23; /* neutral-900 */
+  --surface-canvas: 0 0 0; /* black (historical dark --color-background) */
+  --surface-muted: 38 38 38; /* neutral-800 */
+  --surface-subtle: 38 38 38; /* neutral-800 */
+  --surface-strong: 38 38 38; /* neutral-800 */
+  --surface-hover: 38 38 38; /* neutral-800 */
+  --surface-overlay: 0 0 0;
+
+  /* ---- Text ---- */
+  --content: 245 245 245; /* neutral-100 */
+  --content-secondary: 212 212 212; /* neutral-300 */
+  --content-muted: 163 163 163; /* neutral-400 */
+  --content-faint: 115 115 115; /* neutral-500 */
+  --content-inverted: 255 255 255;
+
+  /* ---- Borders ---- */
+  --line: 38 38 38; /* neutral-800 */
+  --line-strong: 64 64 64; /* neutral-700 */
+  --line-subtle: 38 38 38; /* neutral-800 */
+
+  /*
+   * Accent palettes intentionally inherit their `:root` values under dark mode:
+   * the historical design kept primary/sage/amber/coral identical across light
+   * and dark, varying only the shade chosen per component via `dark:` utilities.
+   * Custom themes may override these per theme.
+   */
+}

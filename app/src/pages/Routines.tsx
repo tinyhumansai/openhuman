@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import RoutineCard from '../components/routines/RoutineCard';
+import Button from '../components/ui/Button';
 import { useT } from '../lib/i18n/I18nContext';
 import {
   type CoreCronJob,
@@ -162,10 +163,11 @@ const Routines = () => {
       <div className="max-w-lg w-full mx-auto space-y-4">
         {/* Header */}
         <div className="flex items-center gap-3">
-          <button
-            type="button"
+          <Button
+            iconOnly
+            variant="tertiary"
+            size="sm"
             onClick={() => navigate('/home')}
-            className="p-1.5 rounded-lg text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 hover:bg-stone-100 dark:hover:bg-neutral-800 transition-colors"
             aria-label={t('common.back')}>
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -175,12 +177,10 @@ const Routines = () => {
                 d="M15 19l-7-7 7-7"
               />
             </svg>
-          </button>
+          </Button>
           <div>
-            <h1 className="text-lg font-bold text-stone-900 dark:text-neutral-100">
-              {t('routines.title')}
-            </h1>
-            <p className="text-xs text-stone-500 dark:text-neutral-400">{t('routines.subtitle')}</p>
+            <h1 className="text-lg font-bold text-content">{t('routines.title')}</h1>
+            <p className="text-xs text-content-muted">{t('routines.subtitle')}</p>
           </div>
         </div>
 
@@ -194,15 +194,13 @@ const Routines = () => {
         {/* Loading */}
         {loading && (
           <div className="flex justify-center py-12">
-            <div className="text-sm text-stone-400 dark:text-neutral-500">
-              {t('routines.loading')}
-            </div>
+            <div className="text-sm text-content-faint">{t('routines.loading')}</div>
           </div>
         )}
 
         {/* Empty state */}
         {!loading && jobs.length === 0 && !error && (
-          <div className="bg-white dark:bg-neutral-900 rounded-2xl border border-stone-200 dark:border-neutral-800 p-6 text-center space-y-3">
+          <div className="bg-surface rounded-2xl border border-line p-6 text-center space-y-3">
             <div className="mx-auto w-12 h-12 rounded-full bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center">
               <svg
                 className="w-6 h-6 text-primary-500"
@@ -218,12 +216,8 @@ const Routines = () => {
               </svg>
             </div>
             <div>
-              <p className="text-sm font-medium text-stone-700 dark:text-neutral-200">
-                {t('routines.empty')}
-              </p>
-              <p className="text-xs text-stone-400 dark:text-neutral-500 mt-1">
-                {t('routines.emptyHint')}
-              </p>
+              <p className="text-sm font-medium text-content-secondary">{t('routines.empty')}</p>
+              <p className="text-xs text-content-faint mt-1">{t('routines.emptyHint')}</p>
             </div>
           </div>
         )}
@@ -245,12 +239,9 @@ const Routines = () => {
         {/* Refresh */}
         {!loading && jobs.length > 0 && (
           <div className="flex justify-center pt-2">
-            <button
-              type="button"
-              onClick={() => void loadJobs()}
-              className="text-xs text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 transition-colors">
+            <Button variant="tertiary" size="xs" onClick={() => void loadJobs()}>
               {t('routines.refresh')}
-            </button>
+            </Button>
           </div>
         )}
       </div>

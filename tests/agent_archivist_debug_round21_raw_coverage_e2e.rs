@@ -20,6 +20,7 @@ use openhuman_core::openhuman::memory::{
     Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts,
 };
 use openhuman_core::openhuman::memory_store::{events, fts5, profile, segments};
+use openhuman_core::openhuman::tokenjuice::AgentTokenjuiceCompression;
 use openhuman_core::openhuman::tools::{PermissionLevel, Tool, ToolResult};
 use parking_lot::Mutex;
 use rusqlite::Connection;
@@ -252,9 +253,11 @@ fn definition(max_iterations: usize) -> AgentDefinition {
         max_iterations,
         iteration_policy: Default::default(),
         max_result_chars: None,
+        max_turn_output_tokens: None,
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,
         background: false,
+        tokenjuice_compression: AgentTokenjuiceCompression::Auto,
         subagents: Vec::new(),
         delegate_name: None,
         agent_tier: Default::default(),
@@ -277,6 +280,7 @@ fn parent_context(workspace: &Path, provider: Arc<ScriptedProvider>) -> ParentEx
         provider,
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(specs),
+        visible_tool_names: std::collections::HashSet::new(),
         model_name: "round21-parent-model".to_string(),
         temperature: 0.0,
         workspace_dir: workspace.to_path_buf(),

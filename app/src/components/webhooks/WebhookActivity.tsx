@@ -14,11 +14,11 @@ const METHOD_COLORS: Record<string, string> = {
 };
 
 function statusColor(code: number | null): string {
-  if (code === null) return 'text-stone-400';
+  if (code === null) return 'text-content-faint';
   if (code >= 200 && code < 300) return 'text-sage-600';
   if (code >= 400 && code < 500) return 'text-amber-600';
   if (code >= 500) return 'text-coral-600';
-  return 'text-stone-600';
+  return 'text-content-secondary';
 }
 
 function formatTime(ts: number): string {
@@ -34,33 +34,35 @@ export default function WebhookActivity({ activity }: WebhookActivityProps) {
   if (activity.length === 0) {
     return (
       <div className="space-y-3">
-        <h3 className="text-lg font-semibold text-stone-900">{t('webhooks.activity.title')}</h3>
-        <p className="text-sm text-stone-500 text-center py-6">{t('webhooks.activity.empty')}</p>
+        <h3 className="text-lg font-semibold text-content">{t('webhooks.activity.title')}</h3>
+        <p className="text-sm text-content-muted text-center py-6">
+          {t('webhooks.activity.empty')}
+        </p>
       </div>
     );
   }
 
   return (
     <div className="space-y-3">
-      <h3 className="text-lg font-semibold text-stone-900">
+      <h3 className="text-lg font-semibold text-content">
         {t('webhooks.activity.title')}{' '}
-        <span className="text-sm font-normal text-stone-400">({activity.length})</span>
+        <span className="text-sm font-normal text-content-faint">({activity.length})</span>
       </h3>
       <div className="space-y-1">
         {activity.map(entry => (
           <div
             key={entry.correlation_id}
-            className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-stone-50 transition-colors text-sm">
-            <span className="text-xs text-stone-400 font-mono w-20 shrink-0">
+            className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-surface-muted transition-colors text-sm">
+            <span className="text-xs text-content-faint font-mono w-20 shrink-0">
               {formatTime(entry.timestamp)}
             </span>
             <span
               className={`text-xs font-mono font-medium px-1.5 py-0.5 rounded w-14 text-center shrink-0 ${
-                METHOD_COLORS[entry.method] || 'text-stone-600 bg-stone-50'
+                METHOD_COLORS[entry.method] || 'text-content-secondary bg-surface-muted'
               }`}>
               {entry.method}
             </span>
-            <span className="text-stone-700 truncate flex-1 font-mono text-xs">
+            <span className="text-content-secondary truncate flex-1 font-mono text-xs">
               {entry.path || '/'}
             </span>
             <span
@@ -72,7 +74,7 @@ export default function WebhookActivity({ activity }: WebhookActivityProps) {
                 {entry.skill_id}
               </span>
             )}
-            <span className="text-xs text-stone-400 truncate max-w-[120px]">
+            <span className="text-xs text-content-faint truncate max-w-[120px]">
               {entry.tunnel_name}
             </span>
           </div>

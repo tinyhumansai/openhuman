@@ -171,7 +171,13 @@ impl TurnStateStore {
         let snapshots = self.list()?;
         let mut count = 0usize;
         for mut snapshot in snapshots {
-            if matches!(snapshot.lifecycle, TurnLifecycle::Interrupted) {
+            // Already-terminal snapshots are left as-is: `Interrupted` is
+            // idempotent, and `Completed` snapshots are intentionally kept so
+            // the processing panel can replay a finished turn after a reboot.
+            if matches!(
+                snapshot.lifecycle,
+                TurnLifecycle::Interrupted | TurnLifecycle::Completed
+            ) {
                 continue;
             }
             snapshot.lifecycle = TurnLifecycle::Interrupted;

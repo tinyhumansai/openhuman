@@ -38,7 +38,7 @@ pub(crate) trait TurnObserver: Send {
 
     /// Called once per provider response that carried a usage block, so the
     /// caller can accumulate its own token tally / transcript usage snapshot.
-    fn record_usage(&mut self, _model: &str, _usage: &UsageInfo) {}
+    fn record_usage(&mut self, _provider: &str, _model: &str, _usage: &UsageInfo) {}
 
     /// Called after the assistant message for this iteration is committed to
     /// the engine's working buffer. `response_text` is the raw provider text

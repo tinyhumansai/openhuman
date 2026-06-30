@@ -731,7 +731,7 @@ export function MicComposer({
                 setDeviceMenuOpen(open => !open);
               }}
               disabled={state !== 'idle'}
-              className="w-8 h-8 flex items-center justify-center rounded-full border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 hover:border-stone-300 dark:hover:border-neutral-600 transition-colors shadow-soft disabled:opacity-40 disabled:cursor-not-allowed">
+              className="w-8 h-8 flex items-center justify-center rounded-full border border-line bg-surface text-content-muted hover:text-content-secondary hover:border-line-strong dark:hover:border-neutral-600 transition-colors shadow-soft disabled:opacity-40 disabled:cursor-not-allowed">
               <svg
                 className="w-4 h-4"
                 fill="none"
@@ -771,7 +771,7 @@ export function MicComposer({
                       transform: 'translateX(-50%)',
                       zIndex: 99999,
                     }}
-                    className="w-64 rounded-xl border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 shadow-soft py-1">
+                    className="w-64 rounded-xl border border-line bg-surface shadow-soft py-1">
                     {devices.map(d => {
                       const selected = d.deviceId === selectedDeviceId;
                       return (
@@ -786,8 +786,8 @@ export function MicComposer({
                           }}
                           className={`w-full flex items-center gap-2 px-3 py-2 text-left text-xs transition-colors ${
                             selected
-                              ? 'bg-primary-50 dark:bg-primary-900/20 text-stone-900 dark:text-neutral-100'
-                              : 'text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800'
+                              ? 'bg-primary-50 dark:bg-primary-900/20 text-content'
+                              : 'text-content-secondary hover:bg-surface-hover'
                           }`}>
                           <span className="flex-1 min-w-0 truncate">{d.label}</span>
                           {selected && (
@@ -821,7 +821,7 @@ export function MicComposer({
             title={t('chat.switchToText')}
             onClick={onSwitchToText}
             disabled={state !== 'idle'}
-            className="w-8 h-8 flex items-center justify-center rounded-full border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 hover:border-stone-300 dark:hover:border-neutral-600 transition-colors shadow-soft disabled:opacity-40 disabled:cursor-not-allowed">
+            className="w-8 h-8 flex items-center justify-center rounded-full border border-line bg-surface text-content-muted hover:text-content-secondary hover:border-line-strong dark:hover:border-neutral-600 transition-colors shadow-soft disabled:opacity-40 disabled:cursor-not-allowed">
             <svg
               className="w-4 h-4"
               fill="none"
@@ -838,7 +838,7 @@ export function MicComposer({
             </svg>
           </button>
         )}
-        <span className="text-xs text-stone-500 dark:text-neutral-400 select-none">{label}</span>
+        <span className="text-xs text-content-muted select-none">{label}</span>
       </div>
     </div>
   );

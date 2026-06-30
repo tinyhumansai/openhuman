@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CatalogEntry } from '../../../services/api/skillRegistryApi';
@@ -108,9 +108,7 @@ const MOCK_CATALOG_ENTRY_WITH_META: CatalogEntry = {
 describe('SkillsExplorerTab', () => {
   beforeEach(async () => {
     const { workflowsApi } = await import('../../../services/api/workflowsApi');
-    const { skillRegistryApi } = await import(
-      '../../../services/api/skillRegistryApi'
-    );
+    const { skillRegistryApi } = await import('../../../services/api/skillRegistryApi');
     vi.mocked(workflowsApi.listWorkflows).mockReset();
     vi.mocked(workflowsApi.uninstallWorkflow).mockReset();
     vi.mocked(skillRegistryApi.browse).mockReset();
@@ -124,9 +122,7 @@ describe('SkillsExplorerTab', () => {
 
   it('defaults to registry view and shows catalog entries', async () => {
     const { workflowsApi } = await import('../../../services/api/workflowsApi');
-    const { skillRegistryApi } = await import(
-      '../../../services/api/skillRegistryApi'
-    );
+    const { skillRegistryApi } = await import('../../../services/api/skillRegistryApi');
     vi.mocked(workflowsApi.listWorkflows).mockResolvedValue([]);
     vi.mocked(skillRegistryApi.browse).mockResolvedValue([MOCK_CATALOG_ENTRY]);
 
@@ -140,9 +136,7 @@ describe('SkillsExplorerTab', () => {
 
   it('searches catalog via RPC when typing in search box', async () => {
     const { workflowsApi } = await import('../../../services/api/workflowsApi');
-    const { skillRegistryApi } = await import(
-      '../../../services/api/skillRegistryApi'
-    );
+    const { skillRegistryApi } = await import('../../../services/api/skillRegistryApi');
     vi.mocked(workflowsApi.listWorkflows).mockResolvedValue([]);
     vi.mocked(skillRegistryApi.browse).mockResolvedValue([MOCK_CATALOG_ENTRY]);
     vi.mocked(skillRegistryApi.search).mockResolvedValue([MOCK_DOCKER_ENTRY]);
@@ -159,9 +153,12 @@ describe('SkillsExplorerTab', () => {
     });
 
     // Wait for the debounce to fire and the RPC search to be called
-    await waitFor(() => {
-      expect(skillRegistryApi.search).toHaveBeenCalledWith('docker', undefined);
-    }, { timeout: 2000 });
+    await waitFor(
+      () => {
+        expect(skillRegistryApi.search).toHaveBeenCalledWith('docker', undefined);
+      },
+      { timeout: 2000 }
+    );
 
     await waitFor(() => {
       expect(screen.getByText('Docker Manager')).toBeInTheDocument();
@@ -199,9 +196,7 @@ describe('SkillsExplorerTab', () => {
   });
 
   it('shows error state on registry fetch failure', async () => {
-    const { skillRegistryApi } = await import(
-      '../../../services/api/skillRegistryApi'
-    );
+    const { skillRegistryApi } = await import('../../../services/api/skillRegistryApi');
     const { workflowsApi } = await import('../../../services/api/workflowsApi');
     vi.mocked(workflowsApi.listWorkflows).mockResolvedValue([]);
     vi.mocked(skillRegistryApi.browse).mockRejectedValue(new Error('Network error'));
@@ -288,10 +283,7 @@ describe('SkillsExplorerTab', () => {
 
   it('shows skill warnings when present', async () => {
     const { workflowsApi } = await import('../../../services/api/workflowsApi');
-    const skillWithWarning = {
-      ...MOCK_SKILL,
-      warnings: ['Missing required field: author'],
-    };
+    const skillWithWarning = { ...MOCK_SKILL, warnings: ['Missing required field: author'] };
     vi.mocked(workflowsApi.listWorkflows).mockResolvedValue([skillWithWarning]);
 
     render(<SkillsExplorerTab />);
@@ -304,19 +296,107 @@ describe('SkillsExplorerTab', () => {
 
   it('shows "Installed" badge for already-installed catalog entries', async () => {
     const { workflowsApi } = await import('../../../services/api/workflowsApi');
-    const { skillRegistryApi } = await import(
-      '../../../services/api/skillRegistryApi'
-    );
-    const installedSkill = { ...MOCK_SKILL, id: 'registry-skill-1' };
+    const { skillRegistryApi } = await import('../../../services/api/skillRegistryApi');
+    const catalogEntry = {
+      ...MOCK_CATALOG_ENTRY,
+      id: 'built-in/apple-notes',
+      name: 'Apple Notes',
+      docs_path: 'skills/apple-notes/SKILL.md',
+    };
+    const installedSkill = {
+      ...MOCK_SKILL,
+      id: 'apple-notes',
+      name: 'Apple Notes',
+      location: '/Users/test/.openhuman/skills/apple-notes/SKILL.md',
+    };
     vi.mocked(workflowsApi.listWorkflows).mockResolvedValue([installedSkill]);
-    vi.mocked(skillRegistryApi.browse).mockResolvedValue([MOCK_CATALOG_ENTRY]);
+    vi.mocked(skillRegistryApi.browse).mockResolvedValue([catalogEntry]);
 
     render(<SkillsExplorerTab />);
 
     await waitFor(() => {
-      expect(screen.getByText('Registry Skill')).toBeInTheDocument();
+      expect(screen.getByText('Apple Notes')).toBeInTheDocument();
     });
-    expect(screen.getByTestId('registry-tile-registry-skill-1')).toBeInTheDocument();
+    const tile = screen.getByTestId('registry-tile-built-in/apple-notes');
+    expect(within(tile).getByText('Installed')).toBeInTheDocument();
+    expect(
+      within(tile).queryByTestId('registry-install-built-in/apple-notes')
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(tile);
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Apple Notes').length).toBeGreaterThan(1);
+    });
+    expect(screen.queryByRole('button', { name: 'Install' })).not.toBeInTheDocument();
+  });
+
+  it('does not mark catalog entries installed by display name alone', async () => {
+    const { workflowsApi } = await import('../../../services/api/workflowsApi');
+    const { skillRegistryApi } = await import('../../../services/api/skillRegistryApi');
+    const catalogEntry = {
+      ...MOCK_CATALOG_ENTRY,
+      id: 'built-in/apple-notes',
+      name: 'Apple Notes',
+      docs_path: 'skills/apple-notes/SKILL.md',
+    };
+    const unrelatedInstalledSkill = {
+      ...MOCK_SKILL,
+      id: 'apple-notes-copy',
+      name: 'Apple Notes',
+      location: '/Users/test/.openhuman/skills/apple-notes-copy/SKILL.md',
+    };
+    vi.mocked(workflowsApi.listWorkflows).mockResolvedValue([unrelatedInstalledSkill]);
+    vi.mocked(skillRegistryApi.browse).mockResolvedValue([catalogEntry]);
+
+    render(<SkillsExplorerTab />);
+
+    const tile = await screen.findByTestId('registry-tile-built-in/apple-notes');
+    expect(within(tile).queryByText('Installed')).not.toBeInTheDocument();
+    expect(within(tile).getByTestId('registry-install-built-in/apple-notes')).toBeInTheDocument();
+  });
+
+  // #4150: a successful install must flip the card to "Installed" even when the
+  // refetched installed list does NOT map back to the catalog entry via the
+  // install-key heuristic — otherwise the card reverted to "Install" and the
+  // only signal of success was a fleeting toast.
+  it('marks a catalog entry installed on success even when the refetched list does not map back', async () => {
+    const { workflowsApi } = await import('../../../services/api/workflowsApi');
+    const { skillRegistryApi } = await import('../../../services/api/skillRegistryApi');
+    const catalogEntry = {
+      ...MOCK_CATALOG_ENTRY,
+      id: 'built-in/apple-notes',
+      name: 'Apple Notes',
+      docs_path: 'skills/apple-notes/SKILL.md',
+    };
+    // The installed list never resolves to anything that maps back to the entry
+    // (simulates a post-install id/location the heuristic can't match).
+    vi.mocked(workflowsApi.listWorkflows).mockResolvedValue([]);
+    vi.mocked(skillRegistryApi.browse).mockResolvedValue([catalogEntry]);
+    vi.mocked(skillRegistryApi.install).mockResolvedValue({
+      url: '',
+      stdout: '',
+      stderr: '',
+      newSkills: ['apple-notes'],
+    });
+
+    render(<SkillsExplorerTab />);
+
+    const installBtn = await screen.findByTestId('registry-install-built-in/apple-notes');
+    await act(async () => {
+      fireEvent.click(installBtn);
+    });
+
+    const tile = screen.getByTestId('registry-tile-built-in/apple-notes');
+    await waitFor(() => {
+      expect(within(tile).getByText('Installed')).toBeInTheDocument();
+    });
+    expect(skillRegistryApi.install).toHaveBeenCalledWith('built-in/apple-notes');
+    expect(
+      within(tile).queryByTestId('registry-install-built-in/apple-notes')
+    ).not.toBeInTheDocument();
   });
 
   it('has an install from URL button', async () => {
@@ -328,9 +408,7 @@ describe('SkillsExplorerTab', () => {
     await waitFor(() => {
       expect(screen.getByTestId('skill-install-from-url-btn')).toBeInTheDocument();
     });
-    expect(screen.getByTestId('skill-install-from-url-btn')).toHaveTextContent(
-      'Install from URL'
-    );
+    expect(screen.getByTestId('skill-install-from-url-btn')).toHaveTextContent('Install from URL');
   });
 
   it('shows "no results" when installed skills exist but search has no matches', async () => {
@@ -434,7 +512,7 @@ describe('SkillsExplorerTab', () => {
     // Dialog open — find the backdrop and click it
     await waitFor(() => {
       // The close button (×) should be visible
-      expect(screen.getByRole('button', { name: '' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /close/i })).toBeInTheDocument();
     });
 
     // Click the ×-close button inside the dialog header
@@ -500,9 +578,7 @@ describe('SkillsExplorerTab', () => {
       expect(skillRegistryApi.install).toHaveBeenCalledWith('registry-skill-1');
     });
     await waitFor(() => {
-      expect(onToast).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'success' })
-      );
+      expect(onToast).toHaveBeenCalledWith(expect.objectContaining({ type: 'success' }));
     });
   });
 
@@ -525,9 +601,7 @@ describe('SkillsExplorerTab', () => {
     });
 
     await waitFor(() => {
-      expect(onToast).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'error' })
-      );
+      expect(onToast).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
     });
   });
 
@@ -544,7 +618,9 @@ describe('SkillsExplorerTab', () => {
     // Source toggles are rendered as buttons with their source name text
     await waitFor(() => {
       const buttons = screen.getAllByRole('button');
-      const sourceButtons = buttons.filter(b => b.textContent === 'built-in' || b.textContent === 'ClawHub');
+      const sourceButtons = buttons.filter(
+        b => b.textContent === 'built-in' || b.textContent === 'ClawHub'
+      );
       expect(sourceButtons.length).toBe(2);
     });
   });
@@ -618,7 +694,12 @@ describe('SkillsExplorerTab', () => {
 
   it('displays SkillFormatBadge with fallback label for unknown format', async () => {
     const { workflowsApi } = await import('../../../services/api/workflowsApi');
-    const unknownFormatSkill = { ...MOCK_SKILL, id: 'unk-skill', name: 'Unknown Format Skill', sourceFormat: 'unknown-format' };
+    const unknownFormatSkill = {
+      ...MOCK_SKILL,
+      id: 'unk-skill',
+      name: 'Unknown Format Skill',
+      sourceFormat: 'unknown-format',
+    };
     vi.mocked(workflowsApi.listWorkflows).mockResolvedValue([unknownFormatSkill]);
 
     render(<SkillsExplorerTab />);
@@ -741,9 +822,9 @@ describe('SkillsExplorerTab', () => {
       expect(screen.getByText('Hermes Skill')).toBeInTheDocument();
     });
 
-    const allTiles = screen.getAllByRole('button').filter(
-      el => el.getAttribute('data-testid')?.startsWith('skill-explorer-tile')
-    );
+    const allTiles = screen
+      .getAllByRole('button')
+      .filter(el => el.getAttribute('data-testid')?.startsWith('skill-explorer-tile'));
     // Hermes should come first
     expect(allTiles[0]).toHaveAttribute('data-testid', 'skill-explorer-tile-hermes');
     expect(allTiles[1]).toHaveAttribute('data-testid', 'skill-explorer-tile-alpha');

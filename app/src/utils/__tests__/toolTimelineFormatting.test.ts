@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ToolTimelineEntry } from '../../store/chatRuntimeSlice';
-import { formatTimelineEntry, formatToolName } from '../toolTimelineFormatting';
+import type { PersistedTranscriptItem } from '../../types/turnState';
+import {
+  buildProcessingBlocks,
+  categorizeTool,
+  formatTimelineEntry,
+  formatToolName,
+  isKnownClientTool,
+  stripToolCallEnvelopes,
+  summarizeToolGroup,
+} from '../toolTimelineFormatting';
 
 function entry(overrides: Partial<ToolTimelineEntry>): ToolTimelineEntry {
   return { id: 'x', name: 'delegate_notion', round: 1, status: 'running', ...overrides };
@@ -243,5 +252,124 @@ describe('formatToolName', () => {
 
   it('falls back to humanized identifier for unknown tools', () => {
     expect(formatToolName('custom_fancy_tool')).toBe('Custom Fancy Tool');
+  });
+});
+
+describe('stripToolCallEnvelopes', () => {
+  it('removes a complete <tool_call>…</tool_call> envelope, keeping the prose', () => {
+    const out = stripToolCallEnvelopes(
+      'Searching now. <tool_call> {"name": "NOTION_SEARCH", "arguments": {"q": "x"}} </tool_call> done.'
+    );
+    expect(out).toContain('Searching now.');
+    expect(out).toContain('done.');
+    expect(out).not.toContain('tool_call');
+    expect(out).not.toContain('NOTION_SEARCH');
+  });
+
+  it('removes a trailing, still-streaming unclosed <tool_call>…', () => {
+    const out = stripToolCallEnvelopes('Let me check. <tool_call> {"name": "X", "argum');
+    expect(out.trim()).toBe('Let me check.');
+    expect(out).not.toContain('tool_call');
+  });
+
+  it('leaves text without an envelope untouched', () => {
+    expect(stripToolCallEnvelopes('just a normal sentence')).toBe('just a normal sentence');
+  });
+});
+
+describe('isKnownClientTool', () => {
+  it('recognizes built-ins and special agent rows', () => {
+    expect(isKnownClientTool('file_read')).toBe(true);
+    expect(isKnownClientTool('shell')).toBe(true);
+    expect(isKnownClientTool('subagent:researcher')).toBe(true);
+    expect(isKnownClientTool('delegate_to_integrations_agent')).toBe(true);
+  });
+
+  it('does not recognize dynamic Composio/MCP actions (server labels them)', () => {
+    expect(isKnownClientTool('GMAIL_SEND_EMAIL')).toBe(false);
+    expect(isKnownClientTool('composio_notion_create_page')).toBe(false);
+    expect(isKnownClientTool('some_random_mcp_tool')).toBe(false);
+  });
+});
+
+describe('summarizeToolGroup', () => {
+  it('uses the specific label for a single row', () => {
+    expect(summarizeToolGroup([entry({ name: 'file_read', argsBuffer: '{"path":"a.ts"}' })])).toBe(
+      'Reading file'
+    );
+  });
+
+  it('counts a homogeneous group', () => {
+    expect(
+      summarizeToolGroup([
+        entry({ id: 'a', name: 'file_read' }),
+        entry({ id: 'b', name: 'file_read' }),
+      ])
+    ).toBe('Read 2 files');
+  });
+
+  it('joins distinct category phrases for a mixed group', () => {
+    expect(
+      summarizeToolGroup([
+        entry({ id: 'a', name: 'file_write' }),
+        entry({ id: 'b', name: 'shell' }),
+        entry({ id: 'c', name: 'shell' }),
+      ])
+    ).toBe('Edited 1 file, ran 2 commands');
+  });
+});
+
+describe('categorizeTool', () => {
+  it('maps tools (incl. subagent-prefixed) to a category', () => {
+    expect(categorizeTool('grep')).toBe('search');
+    expect(categorizeTool('subagent:web_fetch')).toBe('fetch');
+    expect(categorizeTool('GMAIL_SEND_EMAIL')).toBe('other');
+  });
+});
+
+describe('buildProcessingBlocks', () => {
+  const tx = (over: Partial<PersistedTranscriptItem> & { kind: PersistedTranscriptItem['kind'] }) =>
+    ({ round: 1, seq: 0, ...over }) as PersistedTranscriptItem;
+
+  it('interleaves prose with grouped consecutive tool rows in seq order', () => {
+    const entries = [
+      entry({ id: 'c1', name: 'file_read' }),
+      entry({ id: 'c2', name: 'file_read' }),
+    ];
+    const transcript: PersistedTranscriptItem[] = [
+      tx({ kind: 'thinking', seq: 0, text: 'Let me look' }),
+      tx({ kind: 'narration', seq: 1, text: 'Reading the files' }),
+      tx({ kind: 'toolCall', seq: 2, callId: 'c1' }),
+      tx({ kind: 'toolCall', seq: 3, callId: 'c2' }),
+      tx({ kind: 'narration', seq: 4, text: 'Done' }),
+    ];
+    const blocks = buildProcessingBlocks(transcript, entries);
+    expect(blocks.map(b => b.kind)).toEqual(['thinking', 'narration', 'toolGroup', 'narration']);
+    const group = blocks[2];
+    if (group.kind !== 'toolGroup') throw new Error('expected toolGroup');
+    expect(group.summary).toBe('Read 2 files');
+    expect(group.entries).toHaveLength(2);
+  });
+
+  it('skips tool pointers with no matching entry', () => {
+    const blocks = buildProcessingBlocks([tx({ kind: 'toolCall', seq: 0, callId: 'missing' })], []);
+    expect(blocks).toHaveLength(0);
+  });
+
+  it('falls back to a single group when there is no transcript', () => {
+    const entries = [entry({ id: 'c1', name: 'shell' })];
+    const blocks = buildProcessingBlocks([], entries);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].kind).toBe('toolGroup');
+  });
+});
+
+describe('formatter null-safety (malformed / legacy snapshot guard)', () => {
+  it('does not throw on undefined input', () => {
+    // A snake_case (legacy) persisted transcript item yields undefined
+    // camelCase fields; the formatter must degrade, not crash the app.
+    expect(formatToolName(undefined)).toBe('');
+    expect(stripToolCallEnvelopes(undefined)).toBe('');
+    expect(stripToolCallEnvelopes(null)).toBe('');
   });
 });

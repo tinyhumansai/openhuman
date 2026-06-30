@@ -105,6 +105,24 @@ fn mark_all_interrupted_promotes_lifecycle_and_clears_active_fields() {
 }
 
 #[test]
+fn mark_all_interrupted_leaves_completed_snapshots_untouched() {
+    let dir = tempdir().expect("tempdir");
+    let store = TurnStateStore::new(dir.path().to_path_buf());
+    let mut state = sample_state("t");
+    // A finished turn is kept as `Completed` so its processing can be replayed;
+    // startup interrupted-marking must not flip it to `Interrupted`.
+    state.lifecycle = TurnLifecycle::Completed;
+    store.put(&state).expect("put");
+
+    let count = store
+        .mark_all_interrupted("2026-05-04T10:01:00Z")
+        .expect("mark");
+    assert_eq!(count, 0);
+    let loaded = store.get("t").expect("get").expect("present");
+    assert_eq!(loaded.lifecycle, TurnLifecycle::Completed);
+}
+
+#[test]
 fn clear_all_removes_corrupted_snapshots_too() {
     use std::io::Write as _;
     let dir = tempdir().expect("tempdir");

@@ -25,7 +25,7 @@ through a custom provider entry; this table is the first-class chip catalog.
 | `huggingface`       | Hugging Face      | `https://router.huggingface.co/v1`                        | bearer     | Shipped |
 | `nvidia`            | NVIDIA            | `https://integrate.api.nvidia.com/v1`                     | bearer     | Shipped |
 | `zai`               | Z.AI              | `https://api.z.ai/api/paas/v4`                            | bearer     | Shipped |
-| `minimax`           | MiniMax           | `https://api.minimax.io/anthropic`                        | anthropic  | Shipped |
+| `minimax`           | MiniMax           | `https://api.minimax.io/v1`                               | bearer     | Shipped |
 | `stepfun`           | StepFun           | `https://api.stepfun.ai/step_plan/v1`                     | bearer     | Shipped |
 | `kilocode`          | Kilo Code         | `https://api.kilo.ai/api/gateway`                         | bearer     | Shipped |
 | `deepinfra`         | DeepInfra         | `https://api.deepinfra.com/v1/openai`                     | bearer     | Shipped |
@@ -33,6 +33,7 @@ through a custom provider entry; this table is the first-class chip catalog.
 | `venice`            | Venice            | `https://api.venice.ai/api/v1`                            | bearer     | Shipped |
 | `vercel-ai-gateway` | Vercel AI Gateway | `https://ai-gateway.vercel.sh/v1`                         | bearer     | Shipped |
 | `sumopod`           | SumoPod           | `https://ai.sumopod.com/v1`                               | bearer     | Shipped |
+| `modelscope`        | ModelScope        | `https://api-inference.modelscope.cn/v1`                  | bearer     | Shipped |
 
 API keys are stored through the auth-profile store under `provider:<slug>`;
 they are not read from environment variables by the desktop Settings flow.

@@ -18,9 +18,9 @@ import {
   setPersonaDisplayName,
 } from '../../../store/personaSlice';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
 import { SettingsRow, SettingsSection, SettingsTextArea, SettingsTextField } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 
 const log = debug('persona:panel');
 
@@ -32,7 +32,7 @@ interface PersonaPanelProps {
 
 const PersonaPanel = ({ embedded = false }: PersonaPanelProps) => {
   const { t } = useT();
-  const { navigateBack, navigateToSettings, breadcrumbs } = useSettingsNavigation();
+  const { navigateToSettings } = useSettingsNavigation();
   const dispatch = useAppDispatch();
 
   const storedDisplayName = useAppSelector(selectPersonaDisplayName);
@@ -134,157 +134,145 @@ const PersonaPanel = ({ embedded = false }: PersonaPanelProps) => {
     }
   };
 
-  return (
-    <div className="z-10 relative">
-      {!embedded && (
-        <SettingsHeader
-          title={t('settings.persona.title')}
-          showBackButton={true}
-          onBack={navigateBack}
-          breadcrumbs={breadcrumbs}
+  const body = (
+    <>
+      {/* ── Identity ─────────────────────────────────────────────── */}
+      <SettingsSection title={t('settings.persona.identityHeading')}>
+        <SettingsRow
+          htmlFor="persona-display-name"
+          label={t('settings.persona.displayNameLabel')}
+          stacked
+          control={
+            <SettingsTextField
+              id="persona-display-name"
+              aria-label={t('settings.persona.displayNameLabel')}
+              data-testid="persona-display-name-input"
+              value={nameDraft}
+              maxLength={MAX_PERSONA_DISPLAY_NAME_LEN}
+              placeholder={t('settings.persona.displayNamePlaceholder')}
+              onChange={e => setNameDraft(e.target.value)}
+            />
+          }
         />
-      )}
+        <SettingsRow
+          htmlFor="persona-description"
+          label={t('settings.persona.descriptionLabel')}
+          stacked
+          control={
+            <SettingsTextArea
+              id="persona-description"
+              aria-label={t('settings.persona.descriptionLabel')}
+              data-testid="persona-description-input"
+              value={descriptionDraft}
+              maxLength={MAX_PERSONA_DESCRIPTION_LEN}
+              rows={3}
+              placeholder={t('settings.persona.descriptionPlaceholder')}
+              onChange={e => setDescriptionDraft(e.target.value)}
+            />
+          }
+        />
+        <div className="flex justify-end px-4 py-3">
+          <Button
+            type="button"
+            data-testid="persona-identity-save"
+            variant="primary"
+            size="xs"
+            onClick={onSaveIdentity}
+            disabled={!identityDirty}>
+            {t('common.save')}
+          </Button>
+        </div>
+      </SettingsSection>
+      <p className="text-xs text-content-muted leading-relaxed px-1">
+        {t('settings.persona.identityDesc')}
+      </p>
 
-      <div className="p-4 pt-2 space-y-5">
-        {/* ── Identity ─────────────────────────────────────────────── */}
-        <SettingsSection title={t('settings.persona.identityHeading')}>
-          <SettingsRow
-            htmlFor="persona-display-name"
-            label={t('settings.persona.displayNameLabel')}
-            stacked
-            control={
-              <SettingsTextField
-                id="persona-display-name"
-                aria-label={t('settings.persona.displayNameLabel')}
-                data-testid="persona-display-name-input"
-                value={nameDraft}
-                maxLength={MAX_PERSONA_DISPLAY_NAME_LEN}
-                placeholder={t('settings.persona.displayNamePlaceholder')}
-                onChange={e => setNameDraft(e.target.value)}
-              />
-            }
-          />
-          <SettingsRow
-            htmlFor="persona-description"
-            label={t('settings.persona.descriptionLabel')}
-            stacked
-            control={
-              <SettingsTextArea
-                id="persona-description"
-                aria-label={t('settings.persona.descriptionLabel')}
-                data-testid="persona-description-input"
-                value={descriptionDraft}
-                maxLength={MAX_PERSONA_DESCRIPTION_LEN}
-                rows={3}
-                placeholder={t('settings.persona.descriptionPlaceholder')}
-                onChange={e => setDescriptionDraft(e.target.value)}
-              />
-            }
-          />
-          <div className="flex justify-end px-4 py-3">
-            <Button
-              type="button"
-              data-testid="persona-identity-save"
-              variant="primary"
-              size="xs"
-              onClick={onSaveIdentity}
-              disabled={!identityDirty}>
-              {t('common.save')}
-            </Button>
-          </div>
-        </SettingsSection>
-        <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed px-1">
-          {t('settings.persona.identityDesc')}
-        </p>
-
-        {/* ── Personality (SOUL.md) ────────────────────────────────── */}
-        <SettingsSection title={t('settings.persona.soul.heading')}>
-          {soulLoading ? (
-            <div className="px-4 py-3">
-              <p className="text-sm text-neutral-500 dark:text-neutral-400">
-                {t('common.loading')}
-              </p>
-            </div>
-          ) : (
-            <>
-              <div className="px-4 py-3">
-                <SettingsTextArea
-                  aria-label={t('settings.persona.soul.editorLabel')}
-                  data-testid="persona-soul-editor"
-                  value={soulDraft}
-                  rows={12}
-                  spellCheck={false}
-                  className="font-mono text-xs leading-relaxed"
-                  onChange={e => setSoulDraft(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
-                <Button
-                  type="button"
-                  data-testid="persona-soul-save"
-                  variant="primary"
-                  size="xs"
-                  onClick={() => void onSaveSoul()}
-                  disabled={soulBusy || !soulDirty}>
-                  {t('common.save')}
-                </Button>
-                <Button
-                  type="button"
-                  data-testid="persona-soul-reset"
-                  variant="secondary"
-                  size="xs"
-                  onClick={() => void onResetSoul()}
-                  disabled={soulBusy || soulIsDefault}>
-                  {t('settings.persona.soul.reset')}
-                </Button>
-                {soulIsDefault && (
-                  <span
-                    data-testid="persona-soul-default-badge"
-                    className="text-[11px] text-neutral-500 dark:text-neutral-400">
-                    {t('settings.persona.soul.usingDefault')}
-                  </span>
-                )}
-              </div>
-            </>
-          )}
-          {soulError && (
-            <p
-              data-testid="persona-soul-error"
-              className="px-4 pb-3 text-xs text-coral-700 dark:text-coral-300">
-              {soulError}
-            </p>
-          )}
-        </SettingsSection>
-        <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed px-1">
-          {t('settings.persona.soul.desc')}
-        </p>
-
-        {/* ── Appearance & Voice (handled in Mascot settings) ──────── */}
-        <SettingsSection title={t('settings.persona.appearanceHeading')}>
+      {/* ── Personality (SOUL.md) ────────────────────────────────── */}
+      <SettingsSection title={t('settings.persona.soul.heading')}>
+        {soulLoading ? (
           <div className="px-4 py-3">
-            <button
-              type="button"
-              data-testid="persona-open-mascot"
-              onClick={() => navigateToSettings('personality#face')}
-              className="flex w-full items-center justify-between text-left text-sm text-neutral-800 dark:text-neutral-200 hover:text-primary-700 dark:hover:text-primary-300">
-              <span>{t('settings.persona.openMascotSettings')}</span>
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 5l7 7-7 7"
-                />
-              </svg>
-            </button>
+            <p className="text-sm text-content-muted">{t('common.loading')}</p>
           </div>
-        </SettingsSection>
-        <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed px-1">
-          {t('settings.persona.appearanceDesc')}
-        </p>
-      </div>
-    </div>
+        ) : (
+          <>
+            <div className="px-4 py-3">
+              <SettingsTextArea
+                aria-label={t('settings.persona.soul.editorLabel')}
+                data-testid="persona-soul-editor"
+                value={soulDraft}
+                rows={12}
+                spellCheck={false}
+                className="font-mono text-xs leading-relaxed"
+                onChange={e => setSoulDraft(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
+              <Button
+                type="button"
+                data-testid="persona-soul-save"
+                variant="primary"
+                size="xs"
+                onClick={() => void onSaveSoul()}
+                disabled={soulBusy || !soulDirty}>
+                {t('common.save')}
+              </Button>
+              <Button
+                type="button"
+                data-testid="persona-soul-reset"
+                variant="secondary"
+                size="xs"
+                onClick={() => void onResetSoul()}
+                disabled={soulBusy || soulIsDefault}>
+                {t('settings.persona.soul.reset')}
+              </Button>
+              {soulIsDefault && (
+                <span
+                  data-testid="persona-soul-default-badge"
+                  className="text-[11px] text-content-muted">
+                  {t('settings.persona.soul.usingDefault')}
+                </span>
+              )}
+            </div>
+          </>
+        )}
+        {soulError && (
+          <p
+            data-testid="persona-soul-error"
+            className="px-4 pb-3 text-xs text-coral-700 dark:text-coral-300">
+            {soulError}
+          </p>
+        )}
+      </SettingsSection>
+      <p className="text-xs text-content-muted leading-relaxed px-1">
+        {t('settings.persona.soul.desc')}
+      </p>
+
+      {/* ── Appearance & Voice (handled in Mascot settings) ──────── */}
+      <SettingsSection title={t('settings.persona.appearanceHeading')}>
+        <div className="px-4 py-3">
+          <button
+            type="button"
+            data-testid="persona-open-mascot"
+            onClick={() => navigateToSettings('personality#face')}
+            className="flex w-full items-center justify-between text-left text-sm text-content hover:text-primary-700 dark:hover:text-primary-300">
+            <span>{t('settings.persona.openMascotSettings')}</span>
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+        </div>
+      </SettingsSection>
+      <p className="text-xs text-content-muted leading-relaxed px-1">
+        {t('settings.persona.appearanceDesc')}
+      </p>
+    </>
   );
+
+  // Embedded inside the tabbed Personality & Face page: the parent owns the
+  // header, so render just the padded body.
+  if (embedded) return <div className="p-4 pt-2 space-y-5">{body}</div>;
+
+  return <SettingsPanel>{body}</SettingsPanel>;
 };
 
 export default PersonaPanel;

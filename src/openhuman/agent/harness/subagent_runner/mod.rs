@@ -42,7 +42,7 @@ pub use autonomous::{autonomous_iter_cap, with_autonomous_iter_cap};
 pub use ops::run_subagent;
 pub use types::{
     SubagentCheckpointData, SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome,
-    SubagentRunStatus,
+    SubagentRunStatus, SubagentUsage,
 };
 
 // Crate-internal re-exports: `agent::debug` calls the text-mode protocol

@@ -14,6 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 
 use crate::core::event_bus::{DomainEvent, EventHandler};
+use crate::openhuman::config::Config;
 use async_trait::async_trait;
 
 use super::types::{CoreNotificationCategory, CoreNotificationEvent};
@@ -46,9 +47,27 @@ pub fn publish_core_notification(event: CoreNotificationEvent) -> usize {
 }
 
 /// Subscribes to selected DomainEvent variants and translates each into a
-/// [`CoreNotificationEvent`]. Pure translation — no I/O, no locks.
+/// [`CoreNotificationEvent`], persisting it (#3805) and broadcasting it to any
+/// connected client.
+///
+/// `config` is `None` only in unit tests that exercise the pure translation /
+/// subscriber-name contract without a workspace on disk; in production it is
+/// always `Some`, so every core notification is durably stored before being
+/// broadcast and therefore survives an app-closed / disconnected window.
 #[derive(Default)]
-pub struct NotificationBridgeSubscriber;
+pub struct NotificationBridgeSubscriber {
+    config: Option<Config>,
+}
+
+impl NotificationBridgeSubscriber {
+    /// Construct a subscriber that persists notifications to the workspace
+    /// store backed by `config` before broadcasting them.
+    pub fn new(config: Config) -> Self {
+        Self {
+            config: Some(config),
+        }
+    }
+}
 
 fn now_ms() -> u64 {
     SystemTime::now()
@@ -169,6 +188,22 @@ pub fn event_to_notification(event: &DomainEvent) -> Option<CoreNotificationEven
                 actions: None,
             })
         }
+        DomainEvent::ProviderApiKeyRejected { provider, message } => Some(CoreNotificationEvent {
+            id: format!("provider-key-rejected:{}:{}", provider, ts),
+            category: CoreNotificationCategory::System,
+            title: "API key rejected".into(),
+            // `message` is already a pre-formatted, actionable string from
+            // `auth_error_registry::auth_error_message`.
+            body: message.clone(),
+            // Land the user on the AI-settings LLM tab, where the inline
+            // provider-error notice + key editor live. Must be the canonical
+            // `/connections?tab=llm` route: `/skills` is a back-compat
+            // redirect that drops the query and defaults to the Apps tab, so
+            // it would not surface the key editor.
+            deep_link: Some("/connections?tab=llm".into()),
+            timestamp_ms: ts,
+            actions: None,
+        }),
         _ => None,
     }
 }
@@ -186,6 +221,27 @@ impl EventHandler for NotificationBridgeSubscriber {
 
     async fn handle(&self, event: &DomainEvent) {
         if let Some(notification) = event_to_notification(event) {
+            // #3805: persist BEFORE broadcasting so the event is durable even
+            // when no client is currently subscribed (app closed / minimised /
+            // disconnected) — otherwise the broadcast send finds zero
+            // receivers and the notification is lost forever. Best-effort: a
+            // store failure must not suppress the live broadcast.
+            if let Some(config) = &self.config {
+                match super::store::insert_core_notification(config, &notification) {
+                    Ok(true) => log::debug!(
+                        "{LOG_PREFIX} persisted core notification id={}",
+                        notification.id
+                    ),
+                    Ok(false) => log::debug!(
+                        "{LOG_PREFIX} core notification id={} already persisted (dedup)",
+                        notification.id
+                    ),
+                    Err(err) => log::warn!(
+                        "{LOG_PREFIX} failed to persist core notification id={}: {err}",
+                        notification.id
+                    ),
+                }
+            }
             publish_core_notification(notification);
         }
     }
@@ -194,11 +250,11 @@ impl EventHandler for NotificationBridgeSubscriber {
 /// Register the notification bridge subscriber on the global event bus.
 /// Safe to call multiple times — each call produces a fresh subscription,
 /// but the caller (`register_domain_subscribers`) is Once-guarded.
-pub fn register_notification_bridge_subscriber() {
+pub fn register_notification_bridge_subscriber(config: Config) {
     use std::sync::Arc;
-    if let Some(handle) =
-        crate::core::event_bus::subscribe_global(Arc::new(NotificationBridgeSubscriber::default()))
-    {
+    if let Some(handle) = crate::core::event_bus::subscribe_global(Arc::new(
+        NotificationBridgeSubscriber::new(config),
+    )) {
         // SAFETY: intentional leak; handle's Drop would cancel the subscriber.
         std::mem::forget(handle);
         log::info!("{LOG_PREFIX} notification bridge subscriber registered");
@@ -228,6 +284,23 @@ mod tests {
         assert_eq!(n.category, CoreNotificationCategory::Agents);
         assert_eq!(n.title, "Cron job completed");
         assert!(n.body.contains("job-1"));
+    }
+
+    #[test]
+    fn provider_api_key_rejected_produces_system_notification() {
+        let ev = DomainEvent::ProviderApiKeyRejected {
+            provider: "openrouter".into(),
+            message: "openrouter rejected the API key (HTTP 401). Update your openrouter \
+                      API key in Settings → AI to restore it."
+                .into(),
+        };
+        let n = event_to_notification(&ev).expect("should produce notification");
+        assert_eq!(n.category, CoreNotificationCategory::System);
+        assert_eq!(n.title, "API key rejected");
+        assert!(n.body.contains("openrouter"));
+        assert!(n.body.contains("Settings"));
+        assert_eq!(n.deep_link.as_deref(), Some("/connections?tab=llm"));
+        assert!(n.id.starts_with("provider-key-rejected:openrouter:"));
     }
 
     #[test]

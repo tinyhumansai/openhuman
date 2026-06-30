@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Provider } from 'react-redux';
 import { describe, expect, it, vi } from 'vitest';
@@ -80,17 +80,67 @@ describe('SubagentActivityBlock', () => {
     );
     const calls = screen.getAllByTestId('subagent-tool-call');
     expect(calls).toHaveLength(3);
+    // Human labels + timing, with status as a tinted "Done" / "Failed" /
+    // "Running" tag instead of a bare ✓/✕ glyph or the raw lowercase word.
     expect(calls[0].textContent).toContain('Searching the web');
-    expect(calls[0].textContent).toContain('success');
+    expect(calls[0].textContent).toContain('Done');
     expect(calls[0].textContent).toContain('312ms');
     expect(calls[1].textContent).toContain('Composio Execute');
-    expect(calls[1].textContent).toContain('running');
-    expect(calls[1].textContent).toContain('·t2');
+    expect(calls[1].textContent).toContain('Running');
+    expect(calls[1].textContent).not.toContain('·t2');
     expect(calls[2].textContent).toContain('Reading file');
-    expect(calls[2].textContent).toContain('error');
+    expect(calls[2].textContent).toContain('Failed');
+    expect(calls[2].textContent).toContain('50ms');
   });
 
-  it('shows a live preview of streamed visible text (preferred over thinking)', () => {
+  it('labels cancelled / awaiting-user calls distinctly (not the green "Done" pill)', () => {
+    renderInStore(
+      <SubagentActivityBlock
+        subagent={{
+          taskId: 't',
+          agentId: 'researcher',
+          toolCalls: [
+            { callId: 'c1', toolName: 'web_search', status: 'cancelled', elapsedMs: 10 },
+            { callId: 'c2', toolName: 'file_read', status: 'awaiting_user' },
+          ],
+        }}
+      />
+    );
+    const calls = screen.getAllByTestId('subagent-tool-call');
+    expect(calls).toHaveLength(2);
+    // A cancelled / awaiting-user call must NOT read as a successful "Done" step.
+    expect(calls[0].textContent).toContain('Cancelled');
+    expect(calls[0].textContent).not.toContain('Done');
+    expect(calls[1].textContent).toContain('Awaiting input');
+    expect(calls[1].textContent).not.toContain('Done');
+  });
+
+  it('prefers the server-supplied label + contextual detail for a child tool call', () => {
+    renderInStore(
+      <SubagentActivityBlock
+        subagent={{
+          taskId: 't',
+          agentId: 'researcher',
+          toolCalls: [
+            {
+              callId: 'c1',
+              toolName: 'GMAIL_READ_MESSAGES',
+              status: 'success',
+              displayName: 'Reading messages',
+              detail: 'steven@gmail.com',
+            },
+          ],
+        }}
+      />
+    );
+    const row = screen.getByTestId('subagent-tool-call');
+    expect(row.textContent).toContain('Reading messages');
+    expect(row.textContent).toContain('steven@gmail.com');
+    // Never the raw snake_case slug.
+    expect(row.textContent).not.toContain('GMAIL_READ_MESSAGES');
+  });
+
+  it('renders every thought inline as quoted prose (reasoning + narration)', () => {
     renderInStore(
       <SubagentActivityBlock
         subagent={{
@@ -104,26 +154,97 @@ describe('SubagentActivityBlock', () => {
         }}
       />
     );
-    const preview = screen.getByTestId('subagent-preview');
-    expect(preview.textContent).toContain('Here is what I found so far');
-    // Visible text takes precedence, so the thinking tail is not shown.
-    expect(preview.textContent).not.toContain('pondering');
+    const thoughts = screen.getAllByTestId('subagent-thought');
+    // Both reasoning and visible narration surface as their own prose block —
+    // shown directly, with no "Thoughts" heading.
+    expect(thoughts).toHaveLength(2);
+    expect(thoughts[0].textContent).toContain('pondering the request');
+    expect(thoughts[0].textContent).not.toContain('Thoughts');
+    expect(thoughts[1].textContent).toContain('Here is what I found so far');
   });
 
-  it('falls back to the thinking tail while only reasoning has streamed', () => {
+  it('renders thoughts and tool calls interleaved in transcript order', () => {
     renderInStore(
       <SubagentActivityBlock
         subagent={{
           taskId: 't',
           agentId: 'researcher',
           toolCalls: [],
-          transcript: [{ kind: 'thinking', iteration: 1, text: 'I should search the web first' }],
+          transcript: [
+            { kind: 'thinking', iteration: 1, text: 'I should search the web first' },
+            { kind: 'tool', iteration: 1, callId: 'c1', toolName: 'web_search', status: 'success' },
+            { kind: 'text', iteration: 1, text: 'Found three relevant results' },
+          ],
         }}
       />
     );
-    expect(screen.getByTestId('subagent-preview').textContent).toContain(
-      'I should search the web first'
+    const rows = screen.getByTestId('subagent-transcript').children;
+    // Order is preserved: thought → tool → thought.
+    expect(rows[0]).toHaveAttribute('data-testid', 'subagent-thought');
+    expect(rows[0].textContent).toContain('I should search the web first');
+    expect(rows[1]).toHaveAttribute('data-testid', 'subagent-tool-call');
+    expect(rows[1].textContent).toContain('Searching the web');
+    expect(rows[2]).toHaveAttribute('data-testid', 'subagent-thought');
+    expect(rows[2].textContent).toContain('Found three relevant results');
+  });
+
+  it('shows a thought directly as prose — no heading, no collapse', () => {
+    renderInStore(
+      <SubagentActivityBlock
+        subagent={{
+          taskId: 't',
+          agentId: 'researcher',
+          toolCalls: [],
+          transcript: [{ kind: 'thinking', iteration: 1, text: 'weighing the options' }],
+        }}
+      />
     );
+    const thought = screen.getByTestId('subagent-thought');
+    // No collapsible <details>/<summary> and no "Thoughts" heading — the text
+    // is shown directly.
+    expect(thought.tagName).not.toBe('DETAILS');
+    expect(thought.querySelector('summary')).toBeNull();
+    expect(thought.textContent).toContain('weighing the options');
+    expect(thought.textContent).not.toContain('Thoughts');
+    expect(thought.textContent).not.toContain('💭');
+  });
+
+  it('strips a leaked <tool_call> envelope from the thought text', () => {
+    renderInStore(
+      <SubagentActivityBlock
+        subagent={{
+          taskId: 't',
+          agentId: 'researcher',
+          toolCalls: [],
+          transcript: [
+            {
+              kind: 'text',
+              iteration: 1,
+              text: 'I\'ll search your Notion for that. <tool_call> {"name": "NOTION_SEARCH", "arguments": {"query": "audit"}} </tool_call>',
+            },
+          ],
+        }}
+      />
+    );
+    const thought = screen.getByTestId('subagent-thought');
+    expect(thought.textContent).toContain("I'll search your Notion for that.");
+    // The raw tool-call envelope must not leak into the displayed prose.
+    expect(thought.textContent).not.toContain('tool_call');
+    expect(thought.textContent).not.toContain('NOTION_SEARCH');
+  });
+
+  it('skips an all-whitespace thought delta', () => {
+    renderInStore(
+      <SubagentActivityBlock
+        subagent={{
+          taskId: 't',
+          agentId: 'researcher',
+          toolCalls: [],
+          transcript: [{ kind: 'thinking', iteration: 1, text: '   \n  ' }],
+        }}
+      />
+    );
+    expect(screen.queryByTestId('subagent-thought')).toBeNull();
   });
 
   it('renders the view-processing button only when onView is provided', async () => {
@@ -144,6 +265,34 @@ describe('SubagentActivityBlock', () => {
     const btn = screen.getByTestId('subagent-view-processing');
     await userEvent.click(btn);
     expect(onView).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders the inline worktree block + actions when worktreePath is set (#3376)', () => {
+    renderInStore(
+      <SubagentActivityBlock
+        subagent={{
+          taskId: 't',
+          agentId: 'coder',
+          toolCalls: [],
+          worktreePath: '/r/.claude/worktrees/worker-a',
+          changedFiles: ['src/lib.rs'],
+          isDirty: true,
+        }}
+      />
+    );
+    const block = screen.getByTestId('subagent-worktree');
+    expect(block).toBeInTheDocument();
+    // Compact label shows the basename, not the full path.
+    expect(block).toHaveTextContent('worker-a');
+    expect(screen.getByTestId('worktree-actions')).toBeInTheDocument();
+    expect(screen.getByTestId('worktree-remove')).toBeInTheDocument();
+  });
+
+  it('omits the worktree block for a non-isolated subagent', () => {
+    renderInStore(
+      <SubagentActivityBlock subagent={{ taskId: 't', agentId: 'researcher', toolCalls: [] }} />
+    );
+    expect(screen.queryByTestId('subagent-worktree')).toBeNull();
   });
 });
 
@@ -178,6 +327,44 @@ describe('ToolTimelineBlock — agentic task insights surface', () => {
   it('renders nothing for an empty timeline', () => {
     const { container } = renderInStore(<ToolTimelineBlock entries={[]} />);
     expect(container.querySelector('[data-testid="agent-task-insights"]')).toBeNull();
+  });
+
+  it('renders the parent live response inside the panel under a Response heading', () => {
+    const entries: ToolTimelineEntry[] = [
+      { id: 'r', name: 'web_search', round: 1, status: 'running', argsBuffer: '{"query":"f1"}' },
+    ];
+    renderInStore(
+      <ToolTimelineBlock
+        entries={entries}
+        liveResponse="Let me check your Notion for that audit file."
+      />
+    );
+    const resp = screen.getByTestId('agent-live-response');
+    expect(resp.textContent).toContain('Response');
+    expect(resp.textContent).toContain('Let me check your Notion for that audit file.');
+  });
+
+  it('omits the Response block when there is no live response', () => {
+    const entries: ToolTimelineEntry[] = [
+      { id: 'r', name: 'web_search', round: 1, status: 'running' },
+    ];
+    renderInStore(<ToolTimelineBlock entries={entries} />);
+    expect(screen.queryByTestId('agent-live-response')).toBeNull();
+  });
+
+  it('strips a leaked <tool_call> envelope from the live response', () => {
+    const entries: ToolTimelineEntry[] = [
+      { id: 'r', name: 'web_search', round: 1, status: 'running' },
+    ];
+    renderInStore(
+      <ToolTimelineBlock
+        entries={entries}
+        liveResponse={'Searching now. <tool_call> {"name":"X"} </tool_call>'}
+      />
+    );
+    const resp = screen.getByTestId('agent-live-response');
+    expect(resp.textContent).toContain('Searching now.');
+    expect(resp.textContent).not.toContain('tool_call');
   });
 });
 
@@ -271,5 +458,76 @@ describe('ToolTimelineBlock — worker thread ref status propagation', () => {
     };
     renderInStore(<ToolTimelineBlock entries={[malformed]} />);
     expect(screen.queryByTestId('worker-thread-status-badge')).toBeNull();
+  });
+});
+
+describe('ToolTimelineBlock — compact chat mode (onViewDetails)', () => {
+  const entries: ToolTimelineEntry[] = [
+    // A finished step.
+    { id: 'tl-1', name: 'agent_prepare_context', round: 1, status: 'success', detail: 'fetch X' },
+    // The currently-running sub-agent (latest running).
+    {
+      id: 'sa-1',
+      name: 'subagent:researcher',
+      round: 1,
+      status: 'running',
+      subagent: {
+        taskId: 'task-1',
+        agentId: 'researcher',
+        toolCalls: [],
+        transcript: [{ kind: 'thinking', iteration: 1, text: 'pondering' }],
+      },
+    },
+  ];
+
+  it('collapses finished steps to a "View details" link but keeps the running step expanded inline', () => {
+    const onViewDetails = vi.fn();
+    renderInStore(<ToolTimelineBlock entries={entries} onViewDetails={onViewDetails} />);
+
+    // Only the finished step collapses to a "View details →" link.
+    const links = screen.getAllByTestId('view-details');
+    expect(links).toHaveLength(1);
+
+    // The currently-running sub-agent stays expanded inline in the main UI
+    // (its activity is visible) — and shows no "View details" link itself.
+    const activity = screen.getByTestId('subagent-activity');
+    expect(activity.textContent).toContain('pondering');
+
+    // Clicking the finished step's link opens the full-run panel.
+    fireEvent.click(links[0]);
+    expect(onViewDetails).toHaveBeenCalledTimes(1);
+  });
+
+  it('collapses an already-finished sub-agent (no longer running) to a "View details" link', () => {
+    const onViewDetails = vi.fn();
+    renderInStore(
+      <ToolTimelineBlock
+        entries={[
+          {
+            id: 'sa-done',
+            name: 'subagent:researcher',
+            round: 1,
+            status: 'success',
+            subagent: {
+              taskId: 'task-2',
+              agentId: 'researcher',
+              toolCalls: [],
+              transcript: [{ kind: 'thinking', iteration: 1, text: 'done thinking' }],
+            },
+          },
+        ]}
+        onViewDetails={onViewDetails}
+      />
+    );
+    // No running step → the finished sub-agent collapses (no inline activity).
+    expect(screen.getByTestId('view-details')).toBeInTheDocument();
+    expect(screen.queryByTestId('subagent-activity')).toBeNull();
+  });
+
+  it('still expands inline (no compact link) when onViewDetails is omitted (panel mode)', () => {
+    renderInStore(<ToolTimelineBlock entries={entries} expandAllRows />);
+    // Panel/expandable path: sub-agent activity is shown, no "View details" link.
+    expect(screen.getByTestId('subagent-activity')).toBeInTheDocument();
+    expect(screen.queryByTestId('view-details')).toBeNull();
   });
 });

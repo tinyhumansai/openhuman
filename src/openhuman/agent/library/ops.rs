@@ -143,10 +143,12 @@ mod tests {
             max_iterations: 8,
             iteration_policy: Default::default(),
             max_result_chars: None,
+            max_turn_output_tokens: None,
             timeout_secs: None,
             sandbox_mode: SandboxMode::ReadOnly,
             background: false,
             trigger_memory_agent: Default::default(),
+            tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression::Auto,
             subagents: vec![
                 SubagentEntry::AgentId("critic".to_string()),
                 SubagentEntry::Skills(SkillsWildcard {

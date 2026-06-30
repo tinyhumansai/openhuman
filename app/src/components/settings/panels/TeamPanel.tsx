@@ -7,25 +7,23 @@ import { teamApi } from '../../../services/api/teamApi';
 import { CoreRpcError } from '../../../services/coreRpcClient';
 import type { TeamWithRole } from '../../../types/team';
 import { sanitizeError } from '../../../utils/sanitize';
-import PanelPage from '../../layout/PanelPage';
 import { CenteredLoadingState, ErrorBanner } from '../../ui';
 import Button from '../../ui/Button';
-import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsBadge, SettingsSection, SettingsTextField } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
+import { teamErrorMessage } from './teamErrorMessage';
 
 const log = debug('core-rpc:error');
 
 const TeamPanel = () => {
   const { t } = useT();
-  const { navigateBack, navigateToTeamManagement } = useSettingsNavigation();
+  const { navigateToTeamManagement } = useSettingsNavigation();
   const { snapshot, teams, refresh, refreshTeams } = useCoreState();
   const user = snapshot.currentUser;
 
-  const [newTeamName, setNewTeamName] = useState('');
   const [joinCode, setJoinCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isCreating, setIsCreating] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
   const [isSwitching, setIsSwitching] = useState<string | null>(null);
   const [isLeaving, setIsLeaving] = useState<string | null>(null);
@@ -61,26 +59,6 @@ const TeamPanel = () => {
     });
   }, [refreshTeamsWithLoading]);
 
-  const handleCreateTeam = async () => {
-    const name = newTeamName.trim();
-    if (!name) return;
-    setIsCreating(true);
-    setError(null);
-    try {
-      await teamApi.createTeam(name);
-      setNewTeamName('');
-      await refreshTeamsWithLoading();
-    } catch (err) {
-      setError(
-        err && typeof err === 'object' && 'error' in err
-          ? String(err.error)
-          : t('team.failedToCreate')
-      );
-    } finally {
-      setIsCreating(false);
-    }
-  };
-
   const handleJoinTeam = async () => {
     const code = joinCode.trim();
     if (!code) return;
@@ -91,11 +69,7 @@ const TeamPanel = () => {
       setJoinCode('');
       await Promise.all([refresh(), refreshTeamsWithLoading()]);
     } catch (err) {
-      setError(
-        err && typeof err === 'object' && 'error' in err
-          ? String(err.error)
-          : t('team.invalidInviteCode')
-      );
+      setError(teamErrorMessage(err, t('team.invalidInviteCode')));
     } finally {
       setIsJoining(false);
     }
@@ -109,11 +83,7 @@ const TeamPanel = () => {
       await teamApi.switchTeam(teamId);
       await Promise.all([refresh(), refreshTeamsWithLoading()]);
     } catch (err) {
-      setError(
-        err && typeof err === 'object' && 'error' in err
-          ? String(err.error)
-          : t('team.failedToSwitch')
-      );
+      setError(teamErrorMessage(err, t('team.failedToSwitch')));
     } finally {
       setIsSwitching(null);
     }
@@ -134,11 +104,7 @@ const TeamPanel = () => {
       await Promise.all([refresh(), refreshTeamsWithLoading()]);
       setTeamToLeave(null);
     } catch (err) {
-      setError(
-        err && typeof err === 'object' && 'error' in err
-          ? String(err.error)
-          : t('team.failedToLeave')
-      );
+      setError(teamErrorMessage(err, t('team.failedToLeave')));
     } finally {
       setIsLeaving(null);
     }
@@ -188,27 +154,23 @@ const TeamPanel = () => {
         className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
           isActive
             ? 'border-primary-200 dark:border-primary-500/30 bg-primary-50 dark:bg-primary-500/10'
-            : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 hover:bg-neutral-50 dark:hover:bg-neutral-800/60'
+            : 'border-line bg-surface hover:bg-surface-hover'
         }`}>
         <div className="flex items-center gap-3 min-w-0 flex-1">
-          <div className="w-9 h-9 rounded-lg bg-neutral-100 dark:bg-neutral-800 flex items-center justify-center flex-shrink-0">
-            <span className="text-sm font-semibold text-neutral-600 dark:text-neutral-300">
+          <div className="w-9 h-9 rounded-lg bg-surface-subtle flex items-center justify-center flex-shrink-0">
+            <span className="text-sm font-semibold text-content-secondary">
               {team.name.charAt(0).toUpperCase()}
             </span>
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100 truncate">
-                {team.name}
-              </span>
+              <span className="text-sm font-medium text-content truncate">{team.name}</span>
               {roleBadge(role, team.createdBy)}
               {planBadge(team.subscription.plan)}
               {isActive && <SettingsBadge variant="success">{t('team.active')}</SettingsBadge>}
             </div>
             {team.isPersonal && (
-              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                {t('team.personalTeam')}
-              </p>
+              <p className="text-xs text-content-muted mt-0.5">{t('team.personalTeam')}</p>
             )}
           </div>
         </div>
@@ -236,7 +198,7 @@ const TeamPanel = () => {
           {canLeave && (
             <Button
               type="button"
-              variant="ghost"
+              variant="tertiary"
               size="xs"
               onClick={() => handleLeaveTeam(entry)}
               disabled={isLeaving === team._id}
@@ -250,122 +212,90 @@ const TeamPanel = () => {
   };
 
   return (
-    <PanelPage
-      className="z-10"
-      contentClassName=""
-      description={t('pages.settings.account.teamDesc')}
-      leading={<SettingsBackButton onBack={navigateBack} />}>
-      <div className="p-4 pt-2 space-y-5">
-        {error && <ErrorBanner message={error} />}
+    <SettingsPanel description={t('pages.settings.account.teamDesc')}>
+      {error && <ErrorBanner message={error} />}
 
-        {isLoading && teams.length === 0 && <CenteredLoadingState />}
+      {isLoading && teams.length === 0 && <CenteredLoadingState />}
 
-        {teams.length > 0 && (
-          <SettingsSection title={`${t('team.yourTeams')} (${teams.length})`}>
-            <div className="p-3 space-y-2">
-              {teams.map(entry => (
-                <TeamRow key={entry.team._id} entry={entry} />
-              ))}
-            </div>
-          </SettingsSection>
-        )}
-
-        <SettingsSection title={t('team.createNewTeam')}>
-          <div className="flex gap-2 px-4 py-3">
-            <SettingsTextField
-              className="flex-1"
-              value={newTeamName}
-              onChange={e => setNewTeamName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && void handleCreateTeam()}
-              placeholder={t('team.teamName')}
-              aria-label={t('team.teamName')}
-              inputSize="sm"
-            />
-            <Button
-              type="button"
-              variant="primary"
-              size="sm"
-              onClick={() => void handleCreateTeam()}
-              disabled={isCreating || !newTeamName.trim()}>
-              {isCreating ? t('team.creating') : t('common.create')}
-            </Button>
+      {teams.length > 0 && (
+        <SettingsSection title={`${t('team.yourTeams')} (${teams.length})`}>
+          <div className="p-3 space-y-2">
+            {teams.map(entry => (
+              <TeamRow key={entry.team._id} entry={entry} />
+            ))}
           </div>
         </SettingsSection>
+      )}
 
-        <SettingsSection title={t('team.joinExistingTeam')}>
-          <div className="flex gap-2 px-4 py-3">
-            <SettingsTextField
-              mono
-              className="flex-1"
-              value={joinCode}
-              onChange={e => setJoinCode(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && void handleJoinTeam()}
-              placeholder={t('team.inviteCode')}
-              aria-label={t('team.inviteCode')}
-              inputSize="sm"
-            />
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => void handleJoinTeam()}
-              disabled={isJoining || !joinCode.trim()}>
-              {isJoining ? t('team.joining') : t('team.join')}
-            </Button>
-          </div>
-        </SettingsSection>
+      <SettingsSection title={t('team.joinExistingTeam')}>
+        <p className="px-4 pt-3 text-xs text-content-muted">{t('team.personalAutoCreatedNote')}</p>
+        <div className="flex gap-2 px-4 py-3">
+          <SettingsTextField
+            mono
+            className="flex-1"
+            value={joinCode}
+            onChange={e => setJoinCode(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && void handleJoinTeam()}
+            placeholder={t('team.inviteCode')}
+            aria-label={t('team.inviteCode')}
+            inputSize="sm"
+          />
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => void handleJoinTeam()}
+            disabled={isJoining || !joinCode.trim()}>
+            {isJoining ? t('team.joining') : t('team.join')}
+          </Button>
+        </div>
+      </SettingsSection>
 
-        {teamToLeave && (
-          <div className="fixed inset-0 bg-neutral-900/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-full max-w-md border border-neutral-200 dark:border-neutral-800">
-              <h3 className="text-sm font-semibold text-neutral-800 dark:text-neutral-100 mb-4">
-                {t('team.leaveTeam')}
-              </h3>
+      {teamToLeave && (
+        <div className="fixed inset-0 bg-neutral-900/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-surface rounded-2xl p-6 w-full max-w-md border border-line">
+            <h3 className="text-sm font-semibold text-content mb-4">{t('team.leaveTeam')}</h3>
 
-              {error && (
-                <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">
-                  <p className="text-xs text-coral-400">{error}</p>
-                </div>
-              )}
+            {error && (
+              <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">
+                <p className="text-xs text-coral-400">{error}</p>
+              </div>
+            )}
 
-              <div className="space-y-4">
-                <div className="text-sm text-neutral-500 dark:text-neutral-400">
-                  <p>
-                    {t('team.confirmLeave')}{' '}
-                    <strong className="text-neutral-800 dark:text-neutral-100">
-                      {teamToLeave.team.name}
-                    </strong>
-                    ?
-                  </p>
-                  <p className="mt-2 text-amber-400">{t('team.leaveWarning')}</p>
-                </div>
+            <div className="space-y-4">
+              <div className="text-sm text-content-muted">
+                <p>
+                  {t('team.confirmLeave')}{' '}
+                  <strong className="text-content">{teamToLeave.team.name}</strong>?
+                </p>
+                <p className="mt-2 text-amber-400">{t('team.leaveWarning')}</p>
+              </div>
 
-                <div className="flex gap-2 pt-2">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="md"
-                    className="flex-1"
-                    onClick={() => setTeamToLeave(null)}
-                    disabled={isLeaving === teamToLeave.team._id}>
-                    {t('common.cancel')}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="md"
-                    className="flex-1 bg-amber-500 hover:bg-amber-600 text-white border-0 dark:bg-amber-500 dark:hover:bg-amber-600"
-                    onClick={() => void confirmLeaveTeam()}
-                    disabled={isLeaving === teamToLeave.team._id}>
-                    {isLeaving === teamToLeave.team._id ? t('team.leaving') : t('team.leaveTeam')}
-                  </Button>
-                </div>
+              <div className="flex gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="md"
+                  className="flex-1"
+                  onClick={() => setTeamToLeave(null)}
+                  disabled={isLeaving === teamToLeave.team._id}>
+                  {t('common.cancel')}
+                </Button>
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  size="md"
+                  className="flex-1 bg-amber-500 hover:bg-amber-600 text-content-inverted border-0 dark:bg-amber-500 dark:hover:bg-amber-600"
+                  onClick={() => void confirmLeaveTeam()}
+                  disabled={isLeaving === teamToLeave.team._id}>
+                  {isLeaving === teamToLeave.team._id ? t('team.leaving') : t('team.leaveTeam')}
+                </Button>
               </div>
             </div>
           </div>
-        )}
-      </div>
-    </PanelPage>
+        </div>
+      )}
+    </SettingsPanel>
   );
 };
 

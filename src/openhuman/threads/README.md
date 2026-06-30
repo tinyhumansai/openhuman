@@ -26,7 +26,7 @@ Conversation thread and message management. Owns the RPC surface and controller 
 | `src/openhuman/threads/turn_state/mod.rs` | Submodule export hub for in-flight turn snapshots. |
 | `src/openhuman/threads/turn_state/types.rs` | Wire/storage types: `TurnState`, `TurnLifecycle`, `TurnPhase`, `ToolTimelineEntry`/`Status`, `SubagentActivity`/`ToolCall`, and the get/list/clear request/response payloads. camelCase to mirror `chatRuntimeSlice.ts`. |
 | `src/openhuman/threads/turn_state/store.rs` | `TurnStateStore` — atomic per-thread JSON snapshot store (tempfile + persist + dir fsync), process-wide mutex; `put`/`get`/`delete`/`list`/`clear_all`/`mark_all_interrupted` plus free-fn wrappers. |
-| `src/openhuman/threads/turn_state/mirror.rs` | `TurnStateMirror` — translates `agent::progress::AgentProgress` events into `TurnState` mutations, flushing at iteration/tool boundaries; deletes snapshot on completion, flags `Interrupted` otherwise. |
+| `src/openhuman/threads/turn_state/mirror.rs` | `TurnStateMirror` — translates `agent::progress::AgentProgress` events into `TurnState` mutations (incl. the ordered narration/thinking/tool `transcript`), flushing at iteration/tool boundaries; on completion marks the snapshot `Completed` and **keeps** it (so the "View processing" panel can replay the finished turn), flags `Interrupted` if the bridge exits without `TurnCompleted`. |
 | `*_tests.rs` | Sibling test suites: `ops_tests.rs`, `schemas_tests.rs`, `turn_state/store_tests.rs`, `turn_state/mirror_tests.rs` (plus inline tests in `error.rs`, `title.rs`, `welcome_migration.rs`). |
 
 ## Public surface
@@ -63,7 +63,7 @@ Wired into the registry from `src/core/all.rs` (controllers + schemas extended w
 ## Persistence
 
 - **Threads + messages**: delegated to `memory::conversations` (JSONL store under the workspace), not owned here.
-- **Turn snapshots** (`turn_state/store.rs`): one JSON file per thread at `<workspace>/memory/conversations/turn_states/<hex(thread_id)>.json`. Whole-file atomic overwrite (tempfile → fsync → persist → best-effort dir fsync), serialized through a process-wide `parking_lot::Mutex`. File presence ⇒ turn was non-terminal at last write; a surviving snapshot on cold boot is marked `Interrupted`.
+- **Turn snapshots** (`turn_state/store.rs`): one JSON file per thread at `<workspace>/memory/conversations/turn_states/<hex(thread_id)>.json`. Whole-file atomic overwrite (tempfile → fsync → persist → best-effort dir fsync), serialized through a process-wide `parking_lot::Mutex`. A non-terminal file surviving cold boot is marked `Interrupted`; a `Completed` snapshot is intentionally retained (for processing replay) and skipped by startup interrupted-marking. The next turn on the thread overwrites it.
 - **Task board**: persisted by `agent::task_board::TaskBoardStore` under the workspace (this module only proxies).
 - **Migration marker**: `state/migrations/welcome_to_orchestrator_v1.done` guards the welcome migration.
 

@@ -10,10 +10,22 @@ struct ActiveUserState {
     user_id: String,
 }
 
+/// Returns the path to the active-user marker:
+/// `{default_openhuman_dir}/active_user.toml`.
+///
+/// This marker is **shared across all users** — it lives at the root
+/// `~/.openhuman` dir, not inside any per-user directory — so it records
+/// *which* user is currently active. Clearing one user's data must remove
+/// this marker (to sign that user out) without touching the sibling
+/// `users/<other>` directories.
+pub fn active_user_marker_path(default_openhuman_dir: &Path) -> PathBuf {
+    default_openhuman_dir.join(ACTIVE_USER_STATE_FILE)
+}
+
 /// Reads the active user id from `{default_openhuman_dir}/active_user.toml`.
 /// Returns `None` when the file does not exist, is empty, or cannot be parsed.
 pub fn read_active_user_id(default_openhuman_dir: &Path) -> Option<String> {
-    let path = default_openhuman_dir.join(ACTIVE_USER_STATE_FILE);
+    let path = active_user_marker_path(default_openhuman_dir);
     let contents = std::fs::read_to_string(&path).ok()?;
     let state: ActiveUserState = toml::from_str(&contents).ok()?;
     let id = state.user_id.trim().to_string();
@@ -77,7 +89,7 @@ pub fn write_active_user_id(default_openhuman_dir: &Path, user_id: &str) -> Resu
 /// Removes the active user marker.  After this, the next config load will
 /// use the default (unauthenticated) openhuman directory.
 pub fn clear_active_user(default_openhuman_dir: &Path) -> Result<()> {
-    let path = default_openhuman_dir.join(ACTIVE_USER_STATE_FILE);
+    let path = active_user_marker_path(default_openhuman_dir);
     if path.exists() {
         std::fs::remove_file(&path)
             .with_context(|| format!("Failed to remove active user state: {}", path.display()))?;

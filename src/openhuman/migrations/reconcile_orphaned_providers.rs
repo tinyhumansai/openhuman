@@ -11,6 +11,7 @@
 //! "openhuman"         → managed OpenHuman backend
 //! "ollama:<model>"    → local Ollama
 //! "lmstudio:<model>"  → local LM Studio
+//! "omlx:<model>"      → local OMLX
 //! "<slug>:<model>"    → the cloud_providers entry whose slug == <slug>
 //! ```
 //!
@@ -53,7 +54,8 @@
 
 use crate::openhuman::config::Config;
 use crate::openhuman::inference::provider::factory::{
-    LM_STUDIO_PROVIDER_PREFIX, OLLAMA_PROVIDER_PREFIX, PROVIDER_OPENHUMAN,
+    LM_STUDIO_PROVIDER_PREFIX, LOCAL_OPENAI_PROVIDER_PREFIX, MLX_PROVIDER_PREFIX,
+    OLLAMA_PROVIDER_PREFIX, OMLX_PROVIDER_PREFIX, PROVIDER_OPENHUMAN,
 };
 use std::collections::HashSet;
 
@@ -102,13 +104,18 @@ pub fn run(config: &mut Config) -> anyhow::Result<MigrationStats> {
         };
         let s = raw.trim();
 
-        // Managed sentinels and local providers resolve without a
-        // cloud_providers entry — leave them alone.
+        // Managed sentinels and factory-resolvable local providers (ollama:,
+        // lmstudio:, mlx:, omlx:, local-openai:) resolve without a
+        // cloud_providers entry — leave them alone. Keep this in sync with the
+        // local provider prefixes the factory accepts.
         if s.is_empty()
             || s == "cloud"
             || s == PROVIDER_OPENHUMAN
             || s.starts_with(OLLAMA_PROVIDER_PREFIX)
             || s.starts_with(LM_STUDIO_PROVIDER_PREFIX)
+            || s.starts_with(MLX_PROVIDER_PREFIX)
+            || s.starts_with(OMLX_PROVIDER_PREFIX)
+            || s.starts_with(LOCAL_OPENAI_PROVIDER_PREFIX)
         {
             continue;
         }
@@ -173,12 +180,13 @@ pub fn run(config: &mut Config) -> anyhow::Result<MigrationStats> {
 /// can't enforce this at compile time without a field-reflection macro, and a
 /// serde-based count guard doesn't work because the `Option<String>` fields
 /// default to `None` and are omitted from the serialized table.
-fn workload_fields(config: &mut Config) -> [(&'static str, &mut Option<String>); 9] {
+fn workload_fields(config: &mut Config) -> [(&'static str, &mut Option<String>); 10] {
     [
         ("chat", &mut config.chat_provider),
         ("reasoning", &mut config.reasoning_provider),
         ("agentic", &mut config.agentic_provider),
         ("coding", &mut config.coding_provider),
+        ("vision", &mut config.vision_provider),
         ("memory", &mut config.memory_provider),
         ("embeddings", &mut config.embeddings_provider),
         ("heartbeat", &mut config.heartbeat_provider),

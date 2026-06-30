@@ -2,7 +2,7 @@
 # Reusable E2E workflow — single source of truth for the desktop E2E recipe.
 #
 # Callers:
-#   - `.github/workflows/e2e.yml`     — PR/push, all-OS mega-flow gate.
+#   - `.github/workflows/e2e.yml`     — PR/push, all-OS selected-spec gate.
 #   - `.github/workflows/release-staging.yml`    — pretest gate, all 3 OS, full suite.
 #   - `.github/workflows/release-production.yml` — pretest gate, all 3 OS, full suite.
 #
@@ -50,17 +50,25 @@ on:
       full:
         description:
           When true, run the entire spec suite via `e2e-run-session.sh` (no
-          spec arg). When false, run the desktop full-flow lane only
-          (`mega-flow.spec.ts`). Releases set this to true.
+          spec arg). When false, run the selected desktop spec. Releases set
+          this to true.
         type: boolean
         default: false
+      spec_path:
+        description: Spec path to run when full is false.
+        type: string
+        default: test/e2e/specs/mega-flow.spec.ts
+      spec_label:
+        description: Log label for the selected spec when full is false.
+        type: string
+        default: mega-flow
 
 permissions:
   contents: read
   packages: read
 
 jobs:
-  # Mega-flow gate for PR/push (full=false). The full-suite path lives in
+  # Selected-spec gate for PR/push (full=false). The full-suite path lives in
   # `e2e-linux-full` below, which fans out across 4 parallel shards via
   # `e2e-run-all-flows.sh --suite=<list>`. Splitting the two prevents the
   # smoke job from paying matrix overhead for a 2-spec run.
@@ -115,7 +123,7 @@ jobs:
           path: |
             ~/.appium
             /usr/local/lib/node_modules/appium
-          key: appium3-chromium-${{ runner.os }}-v1
+          key: appium3-chromium-${{ runner.os }}-v2
 
       - name: Install JS dependencies
         run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
@@ -130,6 +138,9 @@ jobs:
           if ! command -v appium >/dev/null 2>&1; then
             bash scripts/ci-cancel-aware.sh npm install -g appium@3
           fi
+          # appium-chromium-driver is loaded from ~/.appium and imports the
+          # appium package from that tree at runtime.
+          bash scripts/ci-cancel-aware.sh npm install --prefix "$HOME/.appium" appium@3
           # `appium driver list --installed` can miss cached installs on some
           # Appium builds; install idempotently and ignore "already installed".
           bash scripts/ci-cancel-aware.sh appium driver install --source=npm appium-chromium-driver >/dev/null 2>&1 || true
@@ -137,12 +148,12 @@ jobs:
       - name: Build E2E app
         run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app test:e2e:build
 
-      - name: Run E2E (mega-flow)
+      - name: Run E2E (${{ inputs.spec_label }})
         if: ${{ !inputs.full }}
         run: |
           bash scripts/ci-cancel-aware.sh \
             xvfb-run -a --server-args="-screen 0 1280x960x24" \
-            bash app/scripts/e2e-run-session.sh test/e2e/specs/mega-flow.spec.ts mega-flow
+            bash app/scripts/e2e-run-session.sh "${{ inputs.spec_path }}" "${{ inputs.spec_label }}"
 
       - name: Upload E2E failure artifacts
         if: failure()
@@ -292,7 +303,7 @@ jobs:
           path: |
             ~/.appium
             /usr/local/lib/node_modules/appium
-          key: appium3-chromium-${{ runner.os }}-v1
+          key: appium3-chromium-${{ runner.os }}-v2
 
       - name: Install JS dependencies (for test harness only)
         run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
@@ -302,6 +313,7 @@ jobs:
           if ! command -v appium >/dev/null 2>&1; then
             bash scripts/ci-cancel-aware.sh npm install -g appium@3
           fi
+          bash scripts/ci-cancel-aware.sh npm install --prefix "$HOME/.appium" appium@3
           bash scripts/ci-cancel-aware.sh appium driver install --source=npm appium-chromium-driver >/dev/null 2>&1 || true
 
       - name: Download build artifact
@@ -475,7 +487,7 @@ jobs:
         with:
           path: |
             ~/.appium
-          key: appium3-chromium-${{ runner.os }}-v1
+          key: appium3-chromium-${{ runner.os }}-v2
 
       - name: Install JS dependencies
         run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
@@ -490,6 +502,9 @@ jobs:
           if ! command -v appium >/dev/null 2>&1; then
             bash scripts/ci-cancel-aware.sh npm install -g appium@3
           fi
+          # appium-chromium-driver is loaded from ~/.appium and imports the
+          # appium package from that tree at runtime.
+          bash scripts/ci-cancel-aware.sh npm install --prefix "$HOME/.appium" appium@3
           # `appium driver list --installed` can miss cached installs on some
           # Appium builds; install idempotently and ignore "already installed".
           bash scripts/ci-cancel-aware.sh appium driver install --source=npm appium-chromium-driver >/dev/null 2>&1 || true
@@ -506,9 +521,9 @@ jobs:
           codesign --verify --deep --verbose=2 \
             app/src-tauri/target/debug/bundle/macos/OpenHuman.app
 
-      - name: Run E2E (mega-flow)
+      - name: Run E2E (${{ inputs.spec_label }})
         run: |
-          bash scripts/ci-cancel-aware.sh bash app/scripts/e2e-run-session.sh test/e2e/specs/mega-flow.spec.ts mega-flow
+          bash scripts/ci-cancel-aware.sh bash app/scripts/e2e-run-session.sh "${{ inputs.spec_path }}" "${{ inputs.spec_label }}"
 
       # Artifact uploads intentionally omitted — see e2e-linux for the
       # reusable-workflow-is-also-used-by-releases rationale.
@@ -516,7 +531,11 @@ jobs:
   e2e-windows:
     if: inputs.run_windows && !inputs.full
     name: E2E (Windows / Appium Chromium)
-    runs-on: windows-latest
+    # Pin to 2022 for the CEF/Appium harness. As of June 2026,
+    # windows-latest resolves to Windows Server 2025 / VS 2026, where
+    # whisper-rs-sys' CMake build exits with 0xc0000142 before the harness can
+    # launch.
+    runs-on: windows-2022
     timeout-minutes: 30
     steps:
       - name: Checkout code
@@ -562,7 +581,7 @@ jobs:
         with:
           path: |
             ~/.appium
-          key: appium3-chromium-${{ runner.os }}-v1
+          key: appium3-chromium-${{ runner.os }}-v2
 
       - name: Install JS dependencies
         run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
@@ -579,6 +598,9 @@ jobs:
           if ! command -v appium >/dev/null 2>&1; then
             bash scripts/ci-cancel-aware.sh npm install -g appium@3
           fi
+          # appium-chromium-driver is loaded from ~/.appium and imports the
+          # appium package from that tree at runtime.
+          bash scripts/ci-cancel-aware.sh npm install --prefix "$HOME/.appium" appium@3
           # `appium driver list --installed` can miss cached installs on some
           # Appium builds; install idempotently and ignore "already installed".
           bash scripts/ci-cancel-aware.sh appium driver install --source=npm appium-chromium-driver >/dev/null 2>&1 || true
@@ -586,32 +608,29 @@ jobs:
       - name: Build E2E app
         run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app test:e2e:build
 
-      - name: Run E2E (mega-flow)
+      - name: Run E2E (${{ inputs.spec_label }})
         shell: bash
         run: |
-          bash scripts/ci-cancel-aware.sh bash app/scripts/e2e-run-session.sh test/e2e/specs/mega-flow.spec.ts mega-flow
+          bash scripts/ci-cancel-aware.sh bash app/scripts/e2e-run-session.sh "${{ inputs.spec_path }}" "${{ inputs.spec_label }}"
 
       # Artifact uploads intentionally omitted — see e2e-linux for the
       # reusable-workflow-is-also-used-by-releases rationale.
 
   # ---------------------------------------------------------------------------
-  # Full-suite macOS — sharded matrix mirroring e2e-linux-full.
+  # Full-suite macOS — build-once-then-fanout, mirroring build-linux-full.
+  #
+  # Previously e2e-macos-full was a 6-shard matrix where each shard restored an
+  # `actions/cache` of the .app bundle and rebuilt the full Tauri app on a cold
+  # cache. On a cold cache that means up to 6 parallel full Tauri builds (only
+  # the first shard to finish would populate the cache; the rest lose the race).
+  # `build-macos-full` now builds the .app once and uploads it as a per-run
+  # workflow artifact; the shards `needs:` it, download, adhoc-sign, and run.
   # ---------------------------------------------------------------------------
-  e2e-macos-full:
+  build-macos-full:
     if: inputs.run_macos && inputs.full
-    name: E2E (macOS full / ${{ matrix.shard.name }})
+    name: Build (macOS full)
     runs-on: macos-latest
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        shard:
-          - { name: foundation, suites: "auth,navigation,system" }
-          - { name: chat, suites: "chat,skills,journeys" }
-          - { name: providers, suites: "providers,notifications" }
-          - { name: webhooks, suites: "webhooks" }
-          - { name: connectors, suites: "connectors" }
-          - { name: commerce, suites: "payments,settings" }
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -662,13 +681,6 @@ jobs:
           restore-keys: |
             cef-aarch64-apple-darwin-
 
-      - name: Cache Appium global install
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.appium
-          key: appium3-chromium-${{ runner.os }}-v1
-
       - name: Install JS dependencies
         run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
 
@@ -677,31 +689,97 @@ jobs:
           touch .env
           touch app/.env
 
+      - name: Build E2E app
+        run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app test:e2e:build
+
+      - name: Package build artifact
+        run: |
+          # The macOS .app is self-contained (frontend assets + CEF Frameworks +
+          # the OpenHuman Helper.app are embedded by tauri-bundler), so the .app
+          # bundle alone is everything a shard needs. tar preserves the bundle's
+          # internal symlinks + executable bits; each shard re-signs after
+          # extraction (adhoc codesign is required on every runner regardless).
+          tar -czf e2e-build-macos.tar.gz \
+            -C app/src-tauri/target/debug/bundle/macos OpenHuman.app
+          ls -lh e2e-build-macos.tar.gz
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: e2e-build-macos-${{ github.run_id }}
+          path: e2e-build-macos.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+
+  e2e-macos-full:
+    if: inputs.run_macos && inputs.full
+    needs: build-macos-full
+    name: E2E (macOS full / ${{ matrix.shard.name }})
+    runs-on: macos-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - { name: foundation, suites: "auth,navigation,system" }
+          - { name: chat, suites: "chat,skills,journeys" }
+          - { name: providers, suites: "providers,notifications" }
+          - { name: webhooks, suites: "webhooks" }
+          - { name: connectors, suites: "connectors" }
+          - { name: commerce, suites: "payments,settings" }
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js 24.x
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24.x
+          cache: pnpm
+
+      - name: Cache Appium global install
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.appium
+          key: appium3-chromium-${{ runner.os }}-v2
+
+      - name: Install JS dependencies (for test harness only)
+        run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
+
       - name: Install Appium and chromium driver
         run: |
           if ! command -v appium >/dev/null 2>&1; then
             bash scripts/ci-cancel-aware.sh npm install -g appium@3
           fi
+          bash scripts/ci-cancel-aware.sh npm install --prefix "$HOME/.appium" appium@3
           bash scripts/ci-cancel-aware.sh appium driver install --source=npm appium-chromium-driver >/dev/null 2>&1 || true
 
-      # Binary cache — see Linux full job for the rationale. Mac caches the
-      # entire .app bundle (self-contained including frontend assets + CEF
-      # Frameworks/OpenHuman Helper.app embedded by tauri-bundler).
-      - name: Cache built E2E binary (macOS)
-        id: e2e-binary-cache
-        uses: actions/cache@v5
+      - name: Download build artifact
+        uses: actions/download-artifact@v5
         with:
-          path: |
-            app/src-tauri/target/debug/bundle/macos/OpenHuman.app
-          key: e2e-binary-${{ runner.os }}-${{ hashFiles('src/**/*.rs', 'app/src-tauri/src/**', 'app/src-tauri/build.rs', 'app/src-tauri/tauri.conf.json', 'Cargo.lock', 'app/src-tauri/Cargo.lock', 'app/src-tauri/vendor/tauri-cef/Cargo.lock', 'rust-toolchain.toml', 'app/src/**', 'app/index.html', 'app/vite.config.*', 'app/tailwind.config.*', 'app/postcss.config.*', 'app/package.json', 'pnpm-lock.yaml', 'app/scripts/e2e-build.sh') }}
+          name: e2e-build-macos-${{ github.run_id }}
+          path: .
 
-      - name: Build E2E app
-        if: steps.e2e-binary-cache.outputs.cache-hit != 'true'
-        run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app test:e2e:build
+      - name: Restore .app bundle into workspace
+        run: |
+          mkdir -p app/src-tauri/target/debug/bundle/macos
+          tar -xzf e2e-build-macos.tar.gz \
+            -C app/src-tauri/target/debug/bundle/macos
+          rm -f e2e-build-macos.tar.gz
+          ls -la app/src-tauri/target/debug/bundle/macos/OpenHuman.app | head
 
-      # Adhoc-sign runs unconditionally — codesign is idempotent and a
-      # restored .app bundle from cache also needs to be (re-)signed for
-      # macOS to load its dynamic frameworks on this runner.
+      # macOS rejects dynamic-framework loads from unsigned bundles — adhoc
+      # signing satisfies the loader without a real developer-ID cert. A
+      # bundle restored from the build artifact also needs (re-)signing on this
+      # runner; codesign is idempotent.
       - name: Adhoc-sign the .app bundle
         run: |
           codesign --force --deep --sign - \
@@ -744,23 +822,17 @@ jobs:
           fi
 
   # ---------------------------------------------------------------------------
-  # Full-suite Windows — sharded matrix mirroring e2e-linux-full.
+  # Full-suite Windows — build-once-then-fanout, mirroring build-linux-full.
+  # `build-windows-full` builds the .exe + frontend dist + CEF runtime once and
+  # uploads them as a per-run workflow artifact; the shards `needs:` it and
+  # download, instead of each shard rebuilding on a cold binary cache.
   # ---------------------------------------------------------------------------
-  e2e-windows-full:
+  build-windows-full:
     if: inputs.run_windows && inputs.full
-    name: E2E (Windows full / ${{ matrix.shard.name }})
-    runs-on: windows-latest
+    name: Build (Windows full)
+    # Keep the full-suite build on the same stable image as the smoke lane.
+    runs-on: windows-2022
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        shard:
-          - { name: foundation, suites: "auth,navigation,system" }
-          - { name: chat, suites: "chat,skills,journeys" }
-          - { name: providers, suites: "providers,notifications" }
-          - { name: webhooks, suites: "webhooks" }
-          - { name: connectors, suites: "connectors" }
-          - { name: commerce, suites: "payments,settings" }
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -791,25 +863,16 @@ jobs:
           key: e2e-windows-unified
 
       - name: Cache CEF binary distribution
-        id: cef-cache
         uses: actions/cache@v5
         with:
-          # ensure-tauri-cli.sh + e2e-build.sh both export
-          # CEF_PATH=$HOME/Library/Caches/tauri-cef regardless of OS; on
-          # Windows under Git Bash that resolves under the user profile and
-          # is the actual download target.
+          # ensure-tauri-cli.sh + e2e-build.sh export
+          # CEF_PATH=$HOME/Library/Caches/tauri-cef regardless of OS; under Git
+          # Bash on Windows that resolves under the user profile.
           path: |
             ~/Library/Caches/tauri-cef
           key: cef-x86_64-pc-windows-msvc-v2-${{ hashFiles('app/src-tauri/Cargo.toml') }}
           restore-keys: |
             cef-x86_64-pc-windows-msvc-v2-
-
-      - name: Cache Appium global install
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.appium
-          key: appium3-chromium-${{ runner.os }}-v1
 
       - name: Install JS dependencies
         run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
@@ -820,42 +883,110 @@ jobs:
           touch .env
           touch app/.env
 
+      - name: Build E2E app
+        run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app test:e2e:build
+
+      - name: Package build artifact
+        shell: bash
+        run: |
+          # Windows is NOT self-contained: the shard needs the .exe, the
+          # frontend dist, and the CEF runtime (exported via CEF_PATH at run
+          # time). Stage all three at the layout the shard restores into.
+          STAGE="$(mktemp -d)"
+          mkdir -p "$STAGE/repo/app/src-tauri/target/debug"
+          mkdir -p "$STAGE/repo/app/dist"
+          mkdir -p "$STAGE/home/Library/Caches"
+          cp -a app/src-tauri/target/debug/OpenHuman.exe "$STAGE/repo/app/src-tauri/target/debug/"
+          cp -a app/dist/. "$STAGE/repo/app/dist/"
+          cp -a "$HOME/Library/Caches/tauri-cef" "$STAGE/home/Library/Caches/tauri-cef"
+          tar -czf e2e-build-windows.tar.gz -C "$STAGE" repo home
+          ls -lh e2e-build-windows.tar.gz
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: e2e-build-windows-${{ github.run_id }}
+          path: e2e-build-windows.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+
+  e2e-windows-full:
+    if: inputs.run_windows && inputs.full
+    needs: build-windows-full
+    name: E2E (Windows full / ${{ matrix.shard.name }})
+    # Keep full-suite shards on the same stable image as the build job.
+    runs-on: windows-2022
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - { name: foundation, suites: "auth,navigation,system" }
+          - { name: chat, suites: "chat,skills,journeys" }
+          - { name: providers, suites: "providers,notifications" }
+          - { name: webhooks, suites: "webhooks" }
+          - { name: connectors, suites: "connectors" }
+          - { name: commerce, suites: "payments,settings" }
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js 24.x
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24.x
+          cache: pnpm
+
+      - name: Cache Appium global install
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.appium
+          key: appium3-chromium-${{ runner.os }}-v2
+
+      - name: Install JS dependencies (for test harness only)
+        run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
+
       - name: Install Appium and chromium driver
         shell: bash
         run: |
           if ! command -v appium >/dev/null 2>&1; then
             bash scripts/ci-cancel-aware.sh npm install -g appium@3
           fi
+          bash scripts/ci-cancel-aware.sh npm install --prefix "$HOME/.appium" appium@3
           bash scripts/ci-cancel-aware.sh appium driver install --source=npm appium-chromium-driver >/dev/null 2>&1 || true
 
-      # Binary cache — see Linux full job for rationale. Windows is built
-      # with --debug --no-bundle so the .exe + frontend dist are what the
-      # runner needs at launch. CEF runtime DLLs come from the dedicated
-      # CEF cache step above (now correctly pointing at the actual download
-      # location, ~/Library/Caches/tauri-cef).
-      - name: Cache built E2E binary (Windows)
-        id: e2e-binary-cache
-        uses: actions/cache@v5
+      - name: Download build artifact
+        uses: actions/download-artifact@v5
         with:
-          path: |
-            app/src-tauri/target/debug/OpenHuman.exe
-            app/dist
-          key: e2e-binary-${{ runner.os }}-${{ hashFiles('src/**/*.rs', 'app/src-tauri/src/**', 'app/src-tauri/build.rs', 'app/src-tauri/tauri.conf.json', 'Cargo.lock', 'app/src-tauri/Cargo.lock', 'app/src-tauri/vendor/tauri-cef/Cargo.lock', 'rust-toolchain.toml', 'app/src/**', 'app/index.html', 'app/vite.config.*', 'app/tailwind.config.*', 'app/postcss.config.*', 'app/package.json', 'pnpm-lock.yaml', 'app/scripts/e2e-build.sh') }}
+          name: e2e-build-windows-${{ github.run_id }}
+          path: .
 
-      # Skip the build only when BOTH the binary AND the CEF runtime caches
-      # hit (see Linux full job for the rationale).
-      - name: Build E2E app
-        if: steps.e2e-binary-cache.outputs.cache-hit != 'true' || steps.cef-cache.outputs.cache-hit != 'true'
-        run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app test:e2e:build
+      - name: Restore build artifact into workspace + $HOME
+        shell: bash
+        run: |
+          tar -xzf e2e-build-windows.tar.gz
+          mkdir -p app/src-tauri/target/debug app/dist "$HOME/Library/Caches"
+          cp -a repo/app/src-tauri/target/debug/OpenHuman.exe app/src-tauri/target/debug/
+          cp -a repo/app/dist/. app/dist/
+          cp -a home/Library/Caches/tauri-cef "$HOME/Library/Caches/"
+          rm -rf repo home e2e-build-windows.tar.gz
+          ls -la app/src-tauri/target/debug/OpenHuman.exe app/dist | head
 
       - name: Run E2E shard (${{ matrix.shard.name }} — suites=${{ matrix.shard.suites }})
         shell: bash
         env:
           E2E_BAIL_ON_FAILURE: ${{ vars.E2E_BAIL_ON_FAILURE || '' }}
         run: |
-          # See Linux shard — binary cache can skip the build that would have
-          # exported CEF_PATH. e2e-build.sh + ensure-tauri-cli.sh always
-          # download CEF to $HOME/Library/Caches/tauri-cef regardless of OS.
+          # e2e-build.sh + ensure-tauri-cli.sh always download CEF to
+          # $HOME/Library/Caches/tauri-cef regardless of OS.
           export CEF_PATH="$HOME/Library/Caches/tauri-cef"
           BAIL_FLAG=""
           if [[ "${E2E_BAIL_ON_FAILURE:-}" == "1" ]]; then

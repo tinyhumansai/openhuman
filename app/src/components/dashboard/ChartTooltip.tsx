@@ -23,8 +23,8 @@ const ChartTooltip = ({ title, rows, footer }: ChartTooltipProps) => (
   <div
     role="tooltip"
     data-testid="chart-tooltip"
-    className="rounded-lg border border-stone-200 dark:border-neutral-700 bg-white/95 dark:bg-neutral-900/95 backdrop-blur-sm shadow-soft px-3 py-2 text-xs text-stone-800 dark:text-neutral-100">
-    <div className="font-medium mb-1 text-stone-700 dark:text-neutral-200">{title}</div>
+    className="rounded-lg border border-line bg-surface/95 backdrop-blur-sm shadow-soft px-3 py-2 text-xs text-content">
+    <div className="font-medium mb-1 text-content-secondary">{title}</div>
     <ul className="space-y-0.5">
       {rows.map(row => (
         <li key={row.label} className="flex items-center gap-2">
@@ -35,13 +35,13 @@ const ChartTooltip = ({ title, rows, footer }: ChartTooltipProps) => (
               style={{ backgroundColor: row.color }}
             />
           )}
-          <span className="text-stone-500 dark:text-neutral-400">{row.label}</span>
+          <span className="text-content-muted">{row.label}</span>
           <span className="ml-auto tabular-nums font-medium">{row.value}</span>
         </li>
       ))}
     </ul>
     {footer && (
-      <div className="mt-1 pt-1 border-t border-stone-200/60 dark:border-neutral-800 text-[10px] text-stone-500 dark:text-neutral-400">
+      <div className="mt-1 pt-1 border-t border-line/60 dark:border-line text-[10px] text-content-muted">
         {footer}
       </div>
     )}

@@ -8,7 +8,7 @@ const RouteLoadingScreen = ({ label }: RouteLoadingScreenProps) => {
   const { t } = useT();
   return (
     <div className="h-full min-h-[280px] w-full flex items-center justify-center">
-      <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-4 py-3 text-sm text-stone-700 dark:text-neutral-200">
+      <div className="rounded-xl border border-line bg-surface px-4 py-3 text-sm text-content-secondary">
         {label ?? t('app.routeLoading.initializing')}
       </div>
     </div>

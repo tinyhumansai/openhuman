@@ -12,7 +12,7 @@ const PageBackButton = ({ label, onClick, trailingContent }: PageBackButtonProps
       <button
         type="button"
         onClick={onClick}
-        className="inline-flex items-center gap-2 rounded-full border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-4 py-2 text-sm font-semibold text-stone-700 dark:text-neutral-200 shadow-sm transition-colors hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800">
+        className="inline-flex items-center gap-2 rounded-full border border-line bg-surface px-4 py-2 text-sm font-semibold text-content-secondary shadow-sm transition-colors hover:bg-surface-hover dark:bg-surface-muted/60 dark:border-line-strong dark:bg-surface dark:text-neutral-200 dark:hover:bg-surface-muted">
         <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
         </svg>

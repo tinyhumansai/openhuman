@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { mcpClientsApi } from '../../../services/api/mcpClientsApi';
+import Button from '../../ui/Button';
 import { clearConfigChat } from './ConfigAssistantPanel';
 import ConfigHelpModal from './ConfigHelpModal';
 import ConnectAuthModal from './ConnectAuthModal';
@@ -220,7 +221,7 @@ const InstalledServerDetail = ({
           <img
             src={server.icon_url}
             alt=""
-            className="w-10 h-10 rounded shrink-0 object-contain bg-white dark:bg-neutral-900 border border-stone-100 dark:border-neutral-800"
+            className="w-10 h-10 rounded shrink-0 object-contain bg-surface border border-line-subtle"
           />
         ) : (
           <div className="w-10 h-10 rounded shrink-0 bg-primary-100 dark:bg-primary-500/20 flex items-center justify-center text-lg">
@@ -229,24 +230,31 @@ const InstalledServerDetail = ({
         )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="text-base font-semibold text-stone-900 dark:text-neutral-100">
-              {server.display_name}
-            </h3>
+            <h3 className="text-base font-semibold text-content">{server.display_name}</h3>
             <McpStatusBadge status={status} />
           </div>
           {server.description && (
-            <p className="text-xs text-stone-500 dark:text-neutral-400 mt-0.5">
-              {server.description}
-            </p>
+            <p className="text-xs text-content-muted mt-0.5">{server.description}</p>
           )}
-          <p className="text-[11px] text-stone-400 dark:text-neutral-500 mt-1 font-mono">
-            {server.qualified_name}
-          </p>
+          <p className="text-[11px] text-content-faint mt-1 font-mono">{server.qualified_name}</p>
         </div>
       </div>
 
-      {/* Error */}
-      {(error || connStatus?.last_error) && (
+      {/* Auth required — a graceful, actionable notice rather than the raw HTTP
+          401 string. The core reports `unauthorized` (no raw error) for a 401;
+          the Connect button below opens the auth modal, which probes the server
+          and offers browser sign-in or a token field as appropriate (#3719). */}
+      {status === 'unauthorized' && (
+        <div className="rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
+          {t('mcp.detail.authRequired')}
+        </div>
+      )}
+
+      {/* Error — a genuine (non-auth) connect failure. Suppressed entirely while
+          `unauthorized`: the amber notice above is the only message shown, so a
+          local action error (e.g. a reconfigure reconnect that re-hits the 401)
+          can't re-expose raw transport/auth text in this state (#3719). */}
+      {status !== 'unauthorized' && (error || connStatus?.last_error) && (
         <div className="rounded-lg border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-4 py-3 text-sm text-coral-700 dark:text-coral-300">
           {error ?? connStatus?.last_error}
         </div>
@@ -265,40 +273,40 @@ const InstalledServerDetail = ({
             core refuses connect calls on disabled servers. */}
         {server.enabled &&
           (status !== 'connected' ? (
-            <button
-              type="button"
+            <Button
+              variant="primary"
+              size="sm"
               disabled={busy || status === 'connecting'}
-              onClick={handleConnect}
-              className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50 transition-colors">
-              {status === 'connecting' ? t('mcp.detail.connecting') : t('mcp.detail.connect')}
-            </button>
+              onClick={handleConnect}>
+              {status === 'connecting'
+                ? t('mcp.detail.connecting')
+                : status === 'unauthorized'
+                  ? t('mcp.detail.authenticate')
+                  : t('mcp.detail.connect')}
+            </Button>
           ) : (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={handleDisconnect}
-              className="rounded-lg border border-stone-200 dark:border-neutral-700 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-600 disabled:opacity-50">
+            <Button variant="secondary" size="sm" disabled={busy} onClick={handleDisconnect}>
               {t('mcp.detail.disconnect')}
-            </button>
+            </Button>
           ))}
 
         {/* Enable / Disable toggle */}
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="sm"
           disabled={busy}
-          onClick={() => handleSetEnabled(!server.enabled)}
-          className="rounded-lg border border-stone-200 dark:border-neutral-700 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-600 disabled:opacity-50">
+          onClick={() => handleSetEnabled(!server.enabled)}>
           {server.enabled ? t('mcp.detail.disable') : t('mcp.detail.enable')}
-        </button>
+        </Button>
 
         {SHOW_CONFIG_ASSISTANT && (
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
             disabled={busy}
-            onClick={() => setShowAssistant(prev => !prev)}
-            className="rounded-lg border border-stone-200 dark:border-neutral-700 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-600 disabled:opacity-50">
+            onClick={() => setShowAssistant(prev => !prev)}>
             {showAssistant ? t('mcp.connectAuth.hideHelp') : t('mcp.connectAuth.howToGetToken')}
-          </button>
+          </Button>
         )}
 
         {confirmUninstall ? (
@@ -306,29 +314,31 @@ const InstalledServerDetail = ({
             <span className="text-xs text-coral-600 dark:text-coral-400 font-medium">
               {t('mcp.detail.confirmUninstall')}
             </span>
-            <button
-              type="button"
+            <Button
+              variant="primary"
+              tone="danger"
+              size="sm"
               disabled={busy}
-              onClick={handleUninstall}
-              className="rounded-lg bg-coral-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-coral-600 disabled:opacity-50">
+              onClick={handleUninstall}>
               {t('mcp.detail.confirmUninstallAction')}
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
               disabled={busy}
-              onClick={() => setConfirmUninstall(false)}
-              className="rounded-lg border border-stone-200 dark:border-neutral-700 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 disabled:opacity-50">
+              onClick={() => setConfirmUninstall(false)}>
               {t('common.cancel')}
-            </button>
+            </Button>
           </div>
         ) : (
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            tone="danger"
+            size="sm"
             disabled={busy}
-            onClick={() => setConfirmUninstall(true)}
-            className="rounded-lg border border-coral-200 dark:border-coral-500/30 px-3 py-1.5 text-xs font-medium text-coral-600 dark:text-coral-400 hover:bg-coral-50 dark:hover:bg-coral-500/10 disabled:opacity-50">
+            onClick={() => setConfirmUninstall(true)}>
             {t('mcp.detail.uninstall')}
-          </button>
+          </Button>
         )}
       </div>
 
@@ -336,9 +346,7 @@ const InstalledServerDetail = ({
       {visibleEnvKeys.length > 0 && (
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
-            <p className="text-xs font-medium text-stone-600 dark:text-neutral-400">
-              {t('mcp.detail.envVars')}
-            </p>
+            <p className="text-xs font-medium text-content-secondary">{t('mcp.detail.envVars')}</p>
             <button
               type="button"
               disabled={busy}
@@ -352,22 +360,20 @@ const InstalledServerDetail = ({
               {visibleEnvKeys.map(key => (
                 <span
                   key={key}
-                  className="px-2 py-0.5 text-[11px] font-mono rounded bg-stone-100 dark:bg-neutral-800 text-stone-600 dark:text-neutral-300 border border-stone-200 dark:border-neutral-700">
+                  className="px-2 py-0.5 text-[11px] font-mono rounded bg-surface-subtle text-content-secondary border border-line">
                   {key}
                 </span>
               ))}
             </div>
           )}
           {reconfigOpen && (
-            <div className="space-y-2 rounded-lg border border-stone-200 dark:border-neutral-800 p-3">
-              <p className="text-[11px] text-stone-500 dark:text-neutral-400">
-                {t('mcp.detail.reconfigureHint')}
-              </p>
+            <div className="space-y-2 rounded-lg border border-line p-3">
+              <p className="text-[11px] text-content-muted">{t('mcp.detail.reconfigureHint')}</p>
               {visibleEnvKeys.map(key => (
                 <div key={key} className="space-y-1">
                   <label
                     htmlFor={`reconfig-${key}`}
-                    className="block text-[11px] font-medium text-stone-600 dark:text-neutral-400">
+                    className="block text-[11px] font-medium text-content-secondary">
                     {key}
                   </label>
                   <div className="flex gap-2">
@@ -380,25 +386,22 @@ const InstalledServerDetail = ({
                       }
                       placeholder={t('mcp.install.enterValue').replace('{key}', key)}
                       disabled={busy}
-                      className="flex-1 rounded-lg border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-1.5 text-xs text-stone-800 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary-500/40 disabled:opacity-50"
+                      className="flex-1 rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-content placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary-500/40 disabled:opacity-50"
                     />
-                    <button
-                      type="button"
+                    <Button
+                      variant="secondary"
+                      size="xs"
                       onClick={() => setShowReconfig(prev => ({ ...prev, [key]: !prev[key] }))}
                       disabled={busy}
-                      className="shrink-0 rounded-lg border border-stone-200 dark:border-neutral-700 px-2 py-1 text-[11px] text-stone-500 dark:text-neutral-400 hover:border-stone-300 dark:hover:border-neutral-600 disabled:opacity-50">
+                      className="shrink-0">
                       {showReconfig[key] ? t('mcp.install.hide') : t('mcp.install.show')}
-                    </button>
+                    </Button>
                   </div>
                 </div>
               ))}
-              <button
-                type="button"
-                disabled={busy}
-                onClick={handleSaveReconfigure}
-                className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50 transition-colors">
+              <Button variant="primary" size="sm" disabled={busy} onClick={handleSaveReconfigure}>
                 {busy ? t('mcp.detail.reconfigureSaving') : t('mcp.detail.saveReconnect')}
-              </button>
+              </Button>
             </div>
           )}
         </div>
@@ -408,9 +411,7 @@ const InstalledServerDetail = ({
           When connected, each tool gets a "Try" button via `onTryTool`
           that opens the Tool Execution Playground modal below. */}
       <div className="space-y-1">
-        <p className="text-xs font-medium text-stone-600 dark:text-neutral-400">
-          {t('mcp.detail.tools')}
-        </p>
+        <p className="text-xs font-medium text-content-secondary">{t('mcp.detail.tools')}</p>
         <McpToolList
           tools={status === 'connected' ? tools : []}
           onTryTool={status === 'connected' ? setPlaygroundTool : undefined}

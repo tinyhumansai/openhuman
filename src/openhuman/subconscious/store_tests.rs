@@ -23,6 +23,24 @@ fn last_tick_at_upsert() {
 }
 
 #[test]
+fn baseline_checkpoint_id_round_trip() {
+    let conn = test_conn();
+    // Unset until the first tick establishes a baseline.
+    assert_eq!(get_baseline_checkpoint_id(&conn).unwrap(), None);
+    set_baseline_checkpoint_id(&conn, "ckpt_abc").unwrap();
+    assert_eq!(
+        get_baseline_checkpoint_id(&conn).unwrap(),
+        Some("ckpt_abc".to_string())
+    );
+    // Advancing the baseline replaces the previous id.
+    set_baseline_checkpoint_id(&conn, "ckpt_def").unwrap();
+    assert_eq!(
+        get_baseline_checkpoint_id(&conn).unwrap(),
+        Some("ckpt_def".to_string())
+    );
+}
+
+#[test]
 fn schema_ddl_creates_tables() {
     let conn = test_conn();
     let count: i32 = conn

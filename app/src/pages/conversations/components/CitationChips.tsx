@@ -23,13 +23,13 @@ export function CitationChips({ citations }: { citations: MessageCitation[] }) {
         return (
           <details key={citation.id} className="group">
             <summary
-              className="list-none cursor-pointer rounded-full border border-stone-300 dark:border-neutral-700 bg-stone-100 dark:bg-neutral-800 px-2 py-0.5 text-[10px] text-stone-600 dark:text-neutral-300 hover:bg-stone-200 dark:hover:bg-neutral-700"
+              className="list-none cursor-pointer rounded-full border border-line-strong bg-surface-subtle px-2 py-0.5 text-[10px] text-content-secondary hover:bg-surface-strong dark:hover:bg-neutral-700"
               aria-label={title}
               title={title}>
               {citation.namespace ?? citation.key}
               {scoreLabel}
             </summary>
-            <div className="mt-1 max-w-md rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-[11px] text-stone-600 dark:text-neutral-300 shadow-sm">
+            <div className="mt-1 max-w-md rounded-md border border-line bg-surface px-2 py-1 text-[11px] text-content-secondary shadow-sm">
               {citation.snippet}
             </div>
           </details>

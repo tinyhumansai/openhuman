@@ -46,6 +46,7 @@ impl AgentBuilder {
             omit_memory_md: None,
             payload_summarizer: None,
             trigger_memory_agent: None,
+            tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression::Full,
             tool_policy: None,
             archivist_hook: None,
             unified_compaction_enabled: true,
@@ -365,6 +366,15 @@ impl AgentBuilder {
         self
     }
 
+    /// Set the per-agent TokenJuice tool-output compression profile.
+    pub fn tokenjuice_compression(
+        mut self,
+        profile: crate::openhuman::tokenjuice::AgentTokenjuiceCompression,
+    ) -> Self {
+        self.tokenjuice_compression = profile;
+        self
+    }
+
     /// Validates the configuration and constructs a new `Agent` instance.
     ///
     /// This method is responsible for wiring together the provided components,
@@ -531,6 +541,7 @@ impl AgentBuilder {
             auto_save: self.auto_save.unwrap_or(false),
             last_memory_context: None,
             last_turn_citations: Vec::new(),
+            last_turn_usage_totals: None,
             history: Vec::new(),
             post_turn_hooks: self.post_turn_hooks,
             learning_enabled: self.learning_enabled,
@@ -577,15 +588,20 @@ impl AgentBuilder {
             omit_memory_md: self.omit_memory_md.unwrap_or(true),
             payload_summarizer: self.payload_summarizer,
             trigger_memory_agent: self.trigger_memory_agent.unwrap_or_default(),
+            tokenjuice_compression: self.tokenjuice_compression,
             tool_policy: self.tool_policy.unwrap_or_else(|| {
                 Arc::new(crate::openhuman::agent::tool_policy::AllowAllToolPolicy)
             }),
             last_seen_integrations_hash: 0,
             composio_integrations_rx: None,
+            skill_events_rx: None,
             announced_integrations: std::collections::HashSet::new(),
             pending_integration_announcement: Vec::new(),
             announced_mcp_servers: std::collections::HashSet::new(),
             pending_mcp_announcement: Vec::new(),
+            announced_skills: std::collections::HashSet::new(),
+            pending_skill_announcement: Vec::new(),
+            pending_skill_retraction: Vec::new(),
             archivist_hook: self.archivist_hook,
             synthesized_tool_names: std::collections::HashSet::new(),
             pending_synthesized_tools_mask: std::collections::HashSet::new(),

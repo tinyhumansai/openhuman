@@ -2,11 +2,14 @@ import { createAsyncThunk, createSlice, type PayloadAction } from '@reduxjs/tool
 import debug from 'debug';
 
 import { threadApi } from '../services/api/threadApi';
+import type { ThreadMessage } from '../types/thread';
 import type {
   AgentRun,
   PersistedSubagentActivity,
   PersistedSubagentToolCall,
+  PersistedSubagentTranscriptItem,
   PersistedToolTimelineEntry,
+  PersistedTranscriptItem,
   PersistedTurnState,
   TaskBoard,
 } from '../types/turnState';
@@ -14,7 +17,19 @@ import { resetUserScopedState } from './resetActions';
 
 const turnStateLog = debug('chatRuntime.turnState');
 
-export type ToolTimelineEntryStatus = 'running' | 'success' | 'error' | 'awaiting_user';
+/**
+ * Ordered item in the parent turn's processing transcript (narration /
+ * thinking / tool-call pointer). Same shape as the persisted wire type; the
+ * "View processing" panel renders these interleaved.
+ */
+export type ProcessingTranscriptItem = PersistedTranscriptItem;
+
+export type ToolTimelineEntryStatus =
+  | 'running'
+  | 'success'
+  | 'error'
+  | 'awaiting_user'
+  | 'cancelled';
 
 export interface InferenceStatus {
   phase: 'thinking' | 'tool_use' | 'subagent';
@@ -128,6 +143,14 @@ export type SubagentTranscriptItem =
       status: ToolTimelineEntryStatus;
       elapsedMs?: number;
       outputChars?: number;
+      /** Arguments the child invoked the tool with (set on start). */
+      args?: unknown;
+      /** The tool's actual output text (set on completion). */
+      result?: string;
+      /** Server-computed human label (from `Tool::display_label`), if any. */
+      displayName?: string;
+      /** Server-computed contextual detail (path / recipient / query). */
+      detail?: string;
     };
 
 /** One child tool call performed by a running sub-agent. */
@@ -143,6 +166,14 @@ export interface SubagentToolCallEntry {
   elapsedMs?: number;
   /** Character length of the tool result (set on completion). */
   outputChars?: number;
+  /** Arguments the child invoked the tool with (set on start). */
+  args?: unknown;
+  /** The tool's actual output text (set on completion). */
+  result?: string;
+  /** Server-computed human label (from `Tool::display_label`), if any. */
+  displayName?: string;
+  /** Server-computed contextual detail (path / recipient / query). */
+  detail?: string;
 }
 
 export interface ToolTimelineEntry {
@@ -183,6 +214,20 @@ export interface StreamingAssistantState {
  */
 export type InferenceTurnLifecycle = 'started' | 'streaming' | 'interrupted';
 
+/**
+ * Per-sub-agent token/cost contribution, accumulated across the session and
+ * keyed by the sub-agent archetype id (e.g. `researcher`). Drives the hover
+ * breakdown under the composer footer's cost/context cluster.
+ */
+export interface SubAgentUsage {
+  agentId: string;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  /** How many times this archetype was spawned across the session. */
+  runs: number;
+}
+
 /** Running per-session totals accumulated from `chat:done` events (#703). */
 export interface SessionTokenUsage {
   inputTokens: number;
@@ -191,6 +236,90 @@ export interface SessionTokenUsage {
   lastUpdated: number;
   lastTurnInputTokens: number;
   lastTurnOutputTokens: number;
+  /** Cached-input tokens accumulated across the session. */
+  cachedTokens: number;
+  /** Total USD cost accumulated across the session (parent + sub-agents). */
+  costUsd: number;
+  /**
+   * Most recent known model context window (tokens). `0` until a turn reports a
+   * real value; the UI falls back to a default when unknown.
+   */
+  contextWindow: number;
+  /** Last turn's input+output tokens — the context-window gauge numerator. */
+  lastTurnContextUsed: number;
+  /** Per-sub-agent spend for the session, keyed by archetype id. */
+  subAgents: Record<string, SubAgentUsage>;
+}
+
+/** A zeroed [SessionTokenUsage] bucket. */
+export function emptySessionTokenUsage(): SessionTokenUsage {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    turns: 0,
+    lastUpdated: 0,
+    lastTurnInputTokens: 0,
+    lastTurnOutputTokens: 0,
+    cachedTokens: 0,
+    costUsd: 0,
+    contextWindow: 0,
+    lastTurnContextUsed: 0,
+    subAgents: {},
+  };
+}
+
+/** Payload accepted by `recordChatTurnUsage` (and applied per turn). */
+export interface ChatTurnUsagePayload {
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens?: number;
+  costUsd?: number;
+  contextWindow?: number;
+  /** Thread the turn belongs to; routes the delta to that thread's bucket. */
+  threadId?: string;
+  subAgents?: Array<{
+    agentId: string;
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number;
+  }>;
+}
+
+const nonNeg = (n: number | undefined): number =>
+  typeof n === 'number' && Number.isFinite(n) ? Math.max(0, n) : 0;
+
+/** Fold one turn's usage delta into a bucket (mutates in place). */
+function applyTurnUsage(usage: SessionTokenUsage, payload: ChatTurnUsagePayload): void {
+  const inTok = nonNeg(payload.inputTokens);
+  const outTok = nonNeg(payload.outputTokens);
+  usage.inputTokens += inTok;
+  usage.outputTokens += outTok;
+  usage.cachedTokens += nonNeg(payload.cachedTokens);
+  usage.costUsd += nonNeg(payload.costUsd);
+  usage.turns += 1;
+  usage.lastUpdated = Date.now();
+  usage.lastTurnInputTokens = inTok;
+  usage.lastTurnOutputTokens = outTok;
+  usage.lastTurnContextUsed = inTok + outTok;
+  // Only overwrite the known context window when the turn reported a real value
+  // (>0); an unknown-window turn leaves the prior value intact.
+  const ctxWindow = nonNeg(payload.contextWindow);
+  if (ctxWindow > 0) usage.contextWindow = ctxWindow;
+  for (const sub of payload.subAgents ?? []) {
+    if (!sub || typeof sub.agentId !== 'string' || sub.agentId.length === 0) continue;
+    const existing = usage.subAgents[sub.agentId] ?? {
+      agentId: sub.agentId,
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: 0,
+      runs: 0,
+    };
+    existing.inputTokens += nonNeg(sub.inputTokens);
+    existing.outputTokens += nonNeg(sub.outputTokens);
+    existing.costUsd += nonNeg(sub.costUsd);
+    existing.runs += 1;
+    usage.subAgents[sub.agentId] = existing;
+  }
 }
 
 /**
@@ -207,6 +336,27 @@ export interface PendingApproval {
    * extracted from the event's redacted args for display. Empty if unavailable.
    */
   command?: string;
+  /**
+   * Toolkit slug carried on `composio_connect` requests (#3993). Present only
+   * when `toolName === 'composio_connect'`; the inline connect card uses it to
+   * run the OAuth handoff and poll for completion. The slug is a public
+   * identifier (not PII), so it survives arg redaction unchanged.
+   */
+  toolkit?: string;
+}
+
+/**
+ * A thread-scoped plan the orchestrator parked for interactive review (Codex/
+ * Claude plan mode). Surfaced from the `plan_review_request` socket event and
+ * resolved via the `openhuman.plan_review_decide` RPC. The parked agent turn
+ * blocks until the user approves / rejects / sends feedback.
+ */
+export interface PendingPlanReview {
+  requestId: string;
+  /** One-line summary of the plan. */
+  summary: string;
+  /** Ordered plan steps to display for review. */
+  steps: string[];
 }
 
 /**
@@ -262,6 +412,13 @@ interface ChatRuntimeState {
   inferenceStatusByThread: Record<string, InferenceStatus>;
   streamingAssistantByThread: Record<string, StreamingAssistantState>;
   /**
+   * Threads with an optimistic user send in flight, set the instant the user
+   * sends (before `addMessageLocal` resolves and before any streaming state
+   * exists). Lets global surfaces — e.g. the New Chat shortcut — tell a
+   * mid-send conversation apart from a genuinely-blank one.
+   */
+  pendingSendThreadIds: Record<string, true>;
+  /**
    * Live streams for concurrent PARALLEL (forked) turns on a thread, nested
    * `threadId -> requestId -> stream`. A separate lane from
    * `streamingAssistantByThread` (the single primary stream) so two same-thread
@@ -277,9 +434,19 @@ interface ChatRuntimeState {
    */
   parallelRequestThreads: Record<string, string>;
   toolTimelineByThread: Record<string, ToolTimelineEntry[]>;
+  /**
+   * Ordered narration/thinking/tool transcript per thread for the
+   * "View processing" panel — the interleaved Hermes-style record. Hydrated
+   * from the persisted turn-state snapshot (which is now KEPT on completion),
+   * so a settled / reloaded turn replays its full reasoning. Tool items point
+   * into `toolTimelineByThread` by `callId`. Empty/absent → panel falls back
+   * to the tool-only view.
+   */
+  processingByThread: Record<string, ProcessingTranscriptItem[]>;
   taskBoardByThread: Record<string, TaskBoard>;
   inferenceTurnLifecycleByThread: Record<string, InferenceTurnLifecycle>;
   pendingApprovalByThread: Record<string, PendingApproval>;
+  pendingPlanReviewByThread: Record<string, PendingPlanReview>;
   /**
    * Per-thread artifact ledger. Snapshots are upserted on
    * `artifact_ready` / `artifact_failed` socket events keyed on
@@ -287,8 +454,25 @@ interface ChatRuntimeState {
    * download / retry affordances (#2779).
    */
   artifactsByThread: Record<string, ArtifactSnapshot[]>;
+  /** Global, app-session-wide token usage (legacy aggregate). */
   sessionTokenUsage: SessionTokenUsage;
+  /**
+   * Per-thread token usage, keyed by thread id. Seeded from persisted
+   * transcripts via `hydrateThreadUsage` when a thread is opened, then kept live
+   * by `recordChatTurnUsage`. The composer footer reads the active thread's
+   * bucket so its totals reflect the selected thread, not the whole app session.
+   */
+  usageByThread: Record<string, SessionTokenUsage>;
   queueStatusByThread: Record<string, QueueStatus>;
+  /**
+   * Follow-up messages the user submitted while a turn was still streaming
+   * (queued via `queueMode: 'followup'`). The backend dispatches them as fresh
+   * turns once the current turn finishes; these entries are purely the
+   * optimistic UI surface so the user can see what they queued and clear it.
+   * Cleared per-thread on turn end (the queued texts then arrive as real
+   * messages on their dispatched turns).
+   */
+  queuedFollowupsByThread: Record<string, QueuedFollowup[]>;
 }
 
 /** Snapshot of the active-run queue depth per lane. */
@@ -300,25 +484,39 @@ export interface QueueStatus {
   total: number;
 }
 
+/** A follow-up message queued from the composer while a turn was streaming. */
+export interface QueuedFollowup {
+  /**
+   * The full user message, built exactly like a normal send (content +
+   * attachment metadata). It is persisted verbatim when the turn ends so the
+   * follow-up lands in the transcript identically to an interactive send.
+   * `message.id` doubles as the React key / removal handle.
+   */
+  message: ThreadMessage;
+  /**
+   * Display label for the pill — the message text, or the attachment file
+   * names for an attachments-only follow-up, so the row is never blank.
+   */
+  label: string;
+}
+
 const initialState: ChatRuntimeState = {
   inferenceStatusByThread: {},
   streamingAssistantByThread: {},
+  pendingSendThreadIds: {},
   parallelStreamsByThread: {},
   parallelRequestThreads: {},
   toolTimelineByThread: {},
+  processingByThread: {},
   taskBoardByThread: {},
   inferenceTurnLifecycleByThread: {},
   pendingApprovalByThread: {},
+  pendingPlanReviewByThread: {},
   artifactsByThread: {},
-  sessionTokenUsage: {
-    inputTokens: 0,
-    outputTokens: 0,
-    turns: 0,
-    lastUpdated: 0,
-    lastTurnInputTokens: 0,
-    lastTurnOutputTokens: 0,
-  },
+  sessionTokenUsage: emptySessionTokenUsage(),
+  usageByThread: {},
   queueStatusByThread: {},
+  queuedFollowupsByThread: {},
 };
 
 /**
@@ -349,7 +547,59 @@ function subagentToolCallFromPersisted(call: PersistedSubagentToolCall): Subagen
     iteration: call.iteration,
     elapsedMs: call.elapsedMs,
     outputChars: call.outputChars,
+    displayName: call.displayName,
+    detail: call.detail,
   };
+}
+
+/**
+ * Carry the live sub-agent prose (reasoning/narration) across a snapshot
+ * rehydration. Sub-agent streamed text/thinking is live-only — the persisted
+ * snapshot rebuilds a sub-agent transcript from its tool calls *without* the
+ * prose. So when a thread re-hydrates mid-turn (e.g. the user switches tabs
+ * and comes back), the snapshot rows would otherwise lose the inline thoughts.
+ * Match by sub-agent `taskId` (live and persisted rows use different entry
+ * ids) and graft the richer in-memory prose transcript onto the new rows.
+ */
+function preserveLiveSubagentProse(
+  existing: ToolTimelineEntry[] | undefined,
+  next: ToolTimelineEntry[]
+): ToolTimelineEntry[] {
+  if (!existing || existing.length === 0) return next;
+  const liveProse = new Map<string, SubagentTranscriptItem[]>();
+  for (const entry of existing) {
+    const tx = entry.subagent?.transcript;
+    if (entry.subagent && tx && tx.some(i => i.kind === 'text' || i.kind === 'thinking')) {
+      liveProse.set(entry.subagent.taskId, tx);
+    }
+  }
+  if (liveProse.size === 0) return next;
+  return next.map(entry => {
+    if (!entry.subagent) return entry;
+    const saved = liveProse.get(entry.subagent.taskId);
+    if (!saved) return entry;
+    // Clone the items so we don't reuse Immer drafts from the prior state.
+    return { ...entry, subagent: { ...entry.subagent, transcript: saved.map(i => ({ ...i })) } };
+  });
+}
+
+function subagentTranscriptItemFromPersisted(
+  item: PersistedSubagentTranscriptItem
+): SubagentTranscriptItem {
+  if (item.kind === 'tool') {
+    return {
+      kind: 'tool',
+      iteration: item.iteration,
+      callId: item.callId,
+      toolName: item.toolName,
+      status: item.status,
+      elapsedMs: item.elapsedMs,
+      outputChars: item.outputChars,
+      displayName: item.displayName,
+      detail: item.detail,
+    };
+  }
+  return { kind: item.kind, iteration: item.iteration, text: item.text };
 }
 
 function subagentActivityFromPersisted(activity: PersistedSubagentActivity): SubagentActivity {
@@ -366,19 +616,22 @@ function subagentActivityFromPersisted(activity: PersistedSubagentActivity): Sub
     elapsedMs: activity.elapsedMs,
     outputChars: activity.outputChars,
     toolCalls: activity.toolCalls.map(subagentToolCallFromPersisted),
-    // Streamed text/thinking is live-only and never persisted, so a
-    // rehydrated run can't replay the prose. Rebuild the transcript from
-    // the persisted tool calls (tool items only) so an interrupted run
-    // still shows its tool sequence in chronological order.
-    transcript: activity.toolCalls.map(call => ({
-      kind: 'tool' as const,
-      iteration: call.iteration,
-      callId: call.callId,
-      toolName: call.toolName,
-      status: call.status,
-      elapsedMs: call.elapsedMs,
-      outputChars: call.outputChars,
-    })),
+    // Prefer the persisted prose transcript (reasoning/narration interleaved
+    // with tools) so a settled / reloaded run replays its thoughts. Fall back
+    // to a tool-only rebuild for snapshots written before sub-agent prose was
+    // persisted (the `transcript` field is absent there).
+    transcript:
+      activity.transcript && activity.transcript.length > 0
+        ? activity.transcript.map(subagentTranscriptItemFromPersisted)
+        : activity.toolCalls.map(call => ({
+            kind: 'tool' as const,
+            iteration: call.iteration,
+            callId: call.callId,
+            toolName: call.toolName,
+            status: call.status,
+            elapsedMs: call.elapsedMs,
+            outputChars: call.outputChars,
+          })),
   };
 }
 
@@ -396,14 +649,55 @@ function toolTimelineFromPersisted(entry: PersistedToolTimelineEntry): ToolTimel
   };
 }
 
+/**
+ * Settle a rehydrated tool/subagent row that has no live event driver.
+ *
+ * A turn-state snapshot is a point-in-time mirror: a row left at the
+ * non-terminal `running` status was still in-flight when the snapshot was
+ * written. When the owning turn was *interrupted* (the core process that was
+ * driving it is gone — see `mark_all_interrupted`), no `subagent_done` /
+ * `chat_done` event will ever arrive to flip it terminal, so the row would
+ * pulse forever — the agent-name blink is driven by the row `status`
+ * (`agentNameTone(entry.status)`; `running` pulses, `cancelled` is muted &
+ * static). Settle the row to `cancelled` — terminal, muted, not pulsing —
+ * mirroring `markSubagentCancelled`.
+ *
+ * `running` is the only non-terminal value the persisted *row* status can carry
+ * (`PersistedToolStatus` is `running | success | error`), so that single guard
+ * catches every orphan.
+ *
+ * The nested `subagent.status` is a richer enum: a subagent that emitted
+ * `SubagentAwaitingUser` is persisted with the row `running` but
+ * `subagent.status = 'awaiting_user'`. Only settle a child that is *itself*
+ * still `running`; leaving `awaiting_user` (and any other non-running child)
+ * intact preserves the truthful "was waiting for the user" history — and the
+ * pulse is already stopped by the row-level `cancelled` above.
+ */
+function settleOrphanedTimelineEntry(entry: ToolTimelineEntry): ToolTimelineEntry {
+  if (entry.status !== 'running') return entry;
+  return {
+    ...entry,
+    status: 'cancelled',
+    subagent:
+      entry.subagent && entry.subagent.status === 'running'
+        ? { ...entry.subagent, status: 'cancelled' }
+        : entry.subagent,
+  };
+}
+
 function timelineStatusFromRun(status: AgentRun['status']): ToolTimelineEntryStatus {
   switch (status) {
     case 'completed':
       return 'success';
-    case 'failed':
     case 'cancelled':
-    case 'interrupted':
+      return 'cancelled';
+    case 'failed':
       return 'error';
+    case 'interrupted':
+      // Orphaned by a process exit (e.g. a detached subagent the core lost track
+      // of and settled on next boot) — terminal, but not a user-facing error.
+      // Render muted/static like `cancelled`, not alarming red.
+      return 'cancelled';
     case 'awaiting_user':
     case 'paused':
       return 'awaiting_user';
@@ -471,6 +765,14 @@ const chatRuntimeSlice = createSlice({
     clearStreamingAssistantForThread: (state, action: PayloadAction<{ threadId: string }>) => {
       delete state.streamingAssistantByThread[action.payload.threadId];
     },
+    /** Mark a thread as having an optimistic user send in flight. */
+    markThreadSendPending: (state, action: PayloadAction<{ threadId: string }>) => {
+      state.pendingSendThreadIds[action.payload.threadId] = true;
+    },
+    /** Clear the in-flight-send marker once the send settles (or fails). */
+    clearThreadSendPending: (state, action: PayloadAction<{ threadId: string }>) => {
+      delete state.pendingSendThreadIds[action.payload.threadId];
+    },
     /**
      * Register a parallel (forked) turn so its socket events route to the
      * parallel lane. Called when a `queueMode: 'parallel'` send is accepted.
@@ -513,6 +815,60 @@ const chatRuntimeSlice = createSlice({
     },
     clearToolTimelineForThread: (state, action: PayloadAction<{ threadId: string }>) => {
       delete state.toolTimelineByThread[action.payload.threadId];
+      delete state.processingByThread[action.payload.threadId];
+    },
+    /** Reset the live processing transcript at the start of a fresh turn so a
+     *  new turn's narration/steps don't append onto the previous turn's. */
+    clearProcessingForThread: (state, action: PayloadAction<{ threadId: string }>) => {
+      delete state.processingByThread[action.payload.threadId];
+    },
+    /**
+     * Append a streamed narration/thinking delta to the live processing
+     * transcript, coalescing into the trailing same-kind, same-round block so
+     * a paragraph stays one item. Mirrors the Rust mirror's accumulation so
+     * the live "View processing" panel matches the persisted one.
+     */
+    appendProcessingProse: (
+      state,
+      action: PayloadAction<{
+        threadId: string;
+        kind: 'narration' | 'thinking';
+        round: number;
+        delta: string;
+      }>
+    ) => {
+      const { threadId, kind, round, delta } = action.payload;
+      if (!delta) return;
+      const list = (state.processingByThread[threadId] ??= []);
+      const last = list[list.length - 1];
+      if (last && last.kind === kind && last.round === round) {
+        last.text += delta;
+        return;
+      }
+      list.push({ kind, round, seq: list.length, text: delta });
+    },
+    /** Record a tool call in the live processing transcript at its position. */
+    recordProcessingTool: (
+      state,
+      action: PayloadAction<{ threadId: string; round: number; callId: string }>
+    ) => {
+      const { threadId, round, callId } = action.payload;
+      const list = (state.processingByThread[threadId] ??= []);
+      if (list.some(i => i.kind === 'toolCall' && i.callId === callId)) return;
+      list.push({ kind: 'toolCall', round, seq: list.length, callId });
+    },
+    /**
+     * Optimistically mark a detached background sub-agent as cancelled after the
+     * user confirms a cancel via `openhuman.subagent_cancel`. The aborted run
+     * emits no terminal socket event, so without this the row would keep showing
+     * "running" forever. Located by the subagent's stable `taskId`.
+     */
+    markSubagentCancelled: (state, action: PayloadAction<{ threadId: string; taskId: string }>) => {
+      const { threadId, taskId } = action.payload;
+      const entry = state.toolTimelineByThread[threadId]?.find(e => e.subagent?.taskId === taskId);
+      if (!entry) return;
+      entry.status = 'cancelled';
+      if (entry.subagent) entry.subagent.status = 'cancelled';
     },
     /**
      * Append a streamed `subagent_text_delta` / `subagent_thinking_delta`
@@ -571,14 +927,27 @@ const chatRuntimeSlice = createSlice({
         callId: string;
         toolName: string;
         iteration?: number;
+        args?: unknown;
+        displayName?: string;
+        detail?: string;
       }>
     ) => {
-      const { threadId, rowId, callId, toolName, iteration } = action.payload;
+      const { threadId, rowId, callId, toolName, iteration, args, displayName, detail } =
+        action.payload;
       const entry = state.toolTimelineByThread[threadId]?.find(e => e.id === rowId);
       if (!entry?.subagent) return;
       const transcript = (entry.subagent.transcript ??= []);
       if (transcript.some(i => i.kind === 'tool' && i.callId === callId)) return;
-      transcript.push({ kind: 'tool', iteration, callId, toolName, status: 'running' });
+      transcript.push({
+        kind: 'tool',
+        iteration,
+        callId,
+        toolName,
+        status: 'running',
+        args,
+        displayName,
+        detail,
+      });
     },
     /**
      * Flip a transcript `tool` item to its terminal status when the child
@@ -594,15 +963,17 @@ const chatRuntimeSlice = createSlice({
         success: boolean;
         elapsedMs?: number;
         outputChars?: number;
+        result?: string;
       }>
     ) => {
-      const { threadId, rowId, callId, success, elapsedMs, outputChars } = action.payload;
+      const { threadId, rowId, callId, success, elapsedMs, outputChars, result } = action.payload;
       const entry = state.toolTimelineByThread[threadId]?.find(e => e.id === rowId);
       const item = entry?.subagent?.transcript?.find(i => i.kind === 'tool' && i.callId === callId);
       if (!item || item.kind !== 'tool') return;
       item.status = success ? 'success' : 'error';
       if (elapsedMs != null) item.elapsedMs = elapsedMs;
       if (outputChars != null) item.outputChars = outputChars;
+      if (result != null) item.result = result;
     },
     setTaskBoardForThread: (
       state,
@@ -622,6 +993,15 @@ const chatRuntimeSlice = createSlice({
     clearPendingApprovalForThread: (state, action: PayloadAction<{ threadId: string }>) => {
       delete state.pendingApprovalByThread[action.payload.threadId];
     },
+    setPendingPlanReviewForThread: (
+      state,
+      action: PayloadAction<{ threadId: string; review: PendingPlanReview }>
+    ) => {
+      state.pendingPlanReviewByThread[action.payload.threadId] = action.payload.review;
+    },
+    clearPendingPlanReviewForThread: (state, action: PayloadAction<{ threadId: string }>) => {
+      delete state.pendingPlanReviewByThread[action.payload.threadId];
+    },
     /**
      * Mark a producer-tool call as in-flight so the `ArtifactCard` can
      * render a spinner before any ready/failed event arrives. Caller
@@ -640,6 +1020,20 @@ const chatRuntimeSlice = createSlice({
       }>
     ) => {
       const { threadId, artifactId, kind, title } = action.payload;
+      // No-downgrade guard: a late `artifact_pending` (re-delivery, or a
+      // socket race) must never regress an artifact that already reached
+      // `ready` / `failed` back to a spinner. Only the regenerate flow
+      // (#3162) legitimately re-enters `in_progress`, and that reuses the
+      // id via a fresh pending event AFTER the failed state — which is
+      // allowed because the previous terminal state was `failed`, and a
+      // retry SHOULD show the spinner again. So: block downgrade only from
+      // `ready`; allow `failed -> in_progress` (an explicit retry).
+      const existing = (state.artifactsByThread[threadId] ?? []).find(
+        entry => entry.artifactId === artifactId
+      );
+      if (existing && existing.status === 'ready') {
+        return;
+      }
       const snapshot: ArtifactSnapshot = {
         artifactId,
         kind,
@@ -744,6 +1138,31 @@ const chatRuntimeSlice = createSlice({
     clearQueueStatusForThread: (state, action: PayloadAction<{ threadId: string }>) => {
       delete state.queueStatusByThread[action.payload.threadId];
     },
+    /** Append a follow-up the user queued while a turn was streaming. */
+    enqueueFollowup: (
+      state,
+      action: PayloadAction<{ threadId: string; message: ThreadMessage; label: string }>
+    ) => {
+      const { threadId, message, label } = action.payload;
+      const bucket = state.queuedFollowupsByThread[threadId] ?? [];
+      bucket.push({ message, label });
+      state.queuedFollowupsByThread[threadId] = bucket;
+    },
+    /** Drop a single queued follow-up by message id (e.g. the user removed it). */
+    removeFollowup: (state, action: PayloadAction<{ threadId: string; id: string }>) => {
+      const bucket = state.queuedFollowupsByThread[action.payload.threadId];
+      if (!bucket) return;
+      const next = bucket.filter(item => item.message.id !== action.payload.id);
+      if (next.length) {
+        state.queuedFollowupsByThread[action.payload.threadId] = next;
+      } else {
+        delete state.queuedFollowupsByThread[action.payload.threadId];
+      }
+    },
+    /** Drop all queued follow-ups for a thread (turn end / explicit clear). */
+    clearFollowupsForThread: (state, action: PayloadAction<{ threadId: string }>) => {
+      delete state.queuedFollowupsByThread[action.payload.threadId];
+    },
     beginInferenceTurn: (state, action: PayloadAction<{ threadId: string }>) => {
       state.inferenceTurnLifecycleByThread[action.payload.threadId] = 'started';
     },
@@ -754,6 +1173,10 @@ const chatRuntimeSlice = createSlice({
     },
     endInferenceTurn: (state, action: PayloadAction<{ threadId: string }>) => {
       delete state.inferenceTurnLifecycleByThread[action.payload.threadId];
+      // The turn finished, so any follow-ups queued behind it are now being
+      // dispatched by the backend — drop the optimistic pills; the queued
+      // texts reappear as real messages on their dispatched turns.
+      delete state.queuedFollowupsByThread[action.payload.threadId];
     },
     clearRuntimeForThread: (state, action: PayloadAction<{ threadId: string }>) => {
       delete state.inferenceStatusByThread[action.payload.threadId];
@@ -768,10 +1191,14 @@ const chatRuntimeSlice = createSlice({
         delete state.parallelStreamsByThread[action.payload.threadId];
       }
       delete state.toolTimelineByThread[action.payload.threadId];
+      delete state.processingByThread[action.payload.threadId];
       delete state.taskBoardByThread[action.payload.threadId];
       delete state.inferenceTurnLifecycleByThread[action.payload.threadId];
       delete state.pendingApprovalByThread[action.payload.threadId];
+      delete state.pendingPlanReviewByThread[action.payload.threadId];
       delete state.queueStatusByThread[action.payload.threadId];
+      delete state.queuedFollowupsByThread[action.payload.threadId];
+      delete state.pendingSendThreadIds[action.payload.threadId];
       // Note: artifactsByThread intentionally NOT cleared here. The
       // ArtifactCard renders inline in the message timeline, so the
       // snapshot needs to survive turn boundaries — historic artifacts
@@ -784,38 +1211,86 @@ const chatRuntimeSlice = createSlice({
       state.parallelStreamsByThread = {};
       state.parallelRequestThreads = {};
       state.toolTimelineByThread = {};
+      state.processingByThread = {};
       state.taskBoardByThread = {};
       state.inferenceTurnLifecycleByThread = {};
       state.pendingApprovalByThread = {};
+      state.pendingPlanReviewByThread = {};
       state.artifactsByThread = {};
       state.queueStatusByThread = {};
+      state.queuedFollowupsByThread = {};
+      state.pendingSendThreadIds = {};
     },
-    recordChatTurnUsage: (
+    recordChatTurnUsage: (state, action: PayloadAction<ChatTurnUsagePayload>) => {
+      // Fold into the global aggregate and, when the turn names a thread, into
+      // that thread's bucket (what the composer footer reads).
+      applyTurnUsage(state.sessionTokenUsage, action.payload);
+      const threadId = action.payload.threadId;
+      if (threadId) {
+        const bucket = state.usageByThread[threadId] ?? emptySessionTokenUsage();
+        applyTurnUsage(bucket, action.payload);
+        state.usageByThread[threadId] = bucket;
+      }
+    },
+    /**
+     * Seed a thread's usage bucket from persisted transcript totals (the
+     * `openhuman.threads_token_usage` RPC). Replaces the bucket so re-opening a
+     * thread reflects its on-disk history rather than starting at zero. Live
+     * turns then accumulate on top via `recordChatTurnUsage`.
+     */
+    hydrateThreadUsage: (
       state,
-      action: PayloadAction<{ inputTokens: number; outputTokens: number }>
+      action: PayloadAction<{
+        threadId: string;
+        inputTokens: number;
+        outputTokens: number;
+        cachedTokens: number;
+        costUsd: number;
+        turns: number;
+        contextWindow: number;
+        lastTurnInputTokens: number;
+        lastTurnOutputTokens: number;
+        subAgents?: Array<{
+          agentId: string;
+          inputTokens: number;
+          outputTokens: number;
+          costUsd: number;
+          runs: number;
+        }>;
+      }>
     ) => {
-      const inTok = Number.isFinite(action.payload.inputTokens)
-        ? Math.max(0, action.payload.inputTokens)
-        : 0;
-      const outTok = Number.isFinite(action.payload.outputTokens)
-        ? Math.max(0, action.payload.outputTokens)
-        : 0;
-      state.sessionTokenUsage.inputTokens += inTok;
-      state.sessionTokenUsage.outputTokens += outTok;
-      state.sessionTokenUsage.turns += 1;
-      state.sessionTokenUsage.lastUpdated = Date.now();
-      state.sessionTokenUsage.lastTurnInputTokens = inTok;
-      state.sessionTokenUsage.lastTurnOutputTokens = outTok;
+      const p = action.payload;
+      if (!p.threadId) return;
+      // Reconstruct the per-archetype sub-agent map from the persisted breakdown
+      // (read back from the thread's `__` sub-agent transcripts).
+      const subAgents: Record<string, SubAgentUsage> = {};
+      for (const s of p.subAgents ?? []) {
+        if (!s || typeof s.agentId !== 'string' || s.agentId.length === 0) continue;
+        subAgents[s.agentId] = {
+          agentId: s.agentId,
+          inputTokens: nonNeg(s.inputTokens),
+          outputTokens: nonNeg(s.outputTokens),
+          costUsd: nonNeg(s.costUsd),
+          runs: nonNeg(s.runs),
+        };
+      }
+      state.usageByThread[p.threadId] = {
+        inputTokens: nonNeg(p.inputTokens),
+        outputTokens: nonNeg(p.outputTokens),
+        cachedTokens: nonNeg(p.cachedTokens),
+        costUsd: nonNeg(p.costUsd),
+        turns: nonNeg(p.turns),
+        lastUpdated: Date.now(),
+        lastTurnInputTokens: nonNeg(p.lastTurnInputTokens),
+        lastTurnOutputTokens: nonNeg(p.lastTurnOutputTokens),
+        contextWindow: nonNeg(p.contextWindow),
+        lastTurnContextUsed: nonNeg(p.lastTurnInputTokens) + nonNeg(p.lastTurnOutputTokens),
+        subAgents,
+      };
     },
     resetSessionTokenUsage: state => {
-      state.sessionTokenUsage = {
-        inputTokens: 0,
-        outputTokens: 0,
-        turns: 0,
-        lastUpdated: 0,
-        lastTurnInputTokens: 0,
-        lastTurnOutputTokens: 0,
-      };
+      state.sessionTokenUsage = emptySessionTokenUsage();
+      state.usageByThread = {};
     },
     /**
      * Apply a persisted [TurnState] snapshot from the Rust core to the
@@ -830,22 +1305,39 @@ const chatRuntimeSlice = createSlice({
       const { snapshot } = action.payload;
       const threadId = snapshot.threadId;
 
-      state.inferenceTurnLifecycleByThread[threadId] = snapshot.lifecycle;
+      // `completed` is a settled turn, not an in-flight lifecycle — drop any
+      // stale in-flight marker rather than store it (the in-flight enum only
+      // covers started/streaming/interrupted).
+      if (snapshot.lifecycle === 'completed') {
+        delete state.inferenceTurnLifecycleByThread[threadId];
+      } else {
+        state.inferenceTurnLifecycleByThread[threadId] = snapshot.lifecycle;
+      }
       // Snapshots don't carry pending-approval payloads; drop any stale in-memory
       // approval so the card reflects the rehydrated core truth, not pre-drift state.
       delete state.pendingApprovalByThread[threadId];
+      // Likewise drop any stale parked plan review — its gate future cannot
+      // survive a rehydrate, so the card must not linger.
+      delete state.pendingPlanReviewByThread[threadId];
       if (snapshot.taskBoard) {
         state.taskBoardByThread[threadId] = snapshot.taskBoard;
       }
 
-      // Interrupted turns have no live driver — surface only the
-      // lifecycle so the UI renders a retry affordance instead of
-      // resurrecting a fake "live" inference status / streaming buffer
-      // from snapshot fields that may be stale.
-      if (snapshot.lifecycle === 'interrupted') {
+      // Terminal turns (interrupted = crashed mid-flight; completed = finished
+      // normally, snapshot kept for replay) have no live driver — surface only
+      // the lifecycle so the UI renders settled, not a fake "live" status /
+      // streaming buffer from stale snapshot fields. The processing transcript
+      // is still carried so "View processing" replays the full reasoning.
+      if (snapshot.lifecycle === 'interrupted' || snapshot.lifecycle === 'completed') {
         delete state.inferenceStatusByThread[threadId];
         delete state.streamingAssistantByThread[threadId];
-        state.toolTimelineByThread[threadId] = snapshot.toolTimeline.map(toolTimelineFromPersisted);
+        // Settle any in-flight rows so their agent names stop pulsing
+        // (no-op for an already-completed snapshot whose rows are terminal).
+        state.toolTimelineByThread[threadId] = preserveLiveSubagentProse(
+          state.toolTimelineByThread[threadId],
+          snapshot.toolTimeline.map(toolTimelineFromPersisted).map(settleOrphanedTimelineEntry)
+        );
+        state.processingByThread[threadId] = snapshot.transcript ?? [];
         return;
       }
 
@@ -871,7 +1363,11 @@ const chatRuntimeSlice = createSlice({
         delete state.streamingAssistantByThread[threadId];
       }
 
-      state.toolTimelineByThread[threadId] = snapshot.toolTimeline.map(toolTimelineFromPersisted);
+      state.toolTimelineByThread[threadId] = preserveLiveSubagentProse(
+        state.toolTimelineByThread[threadId],
+        snapshot.toolTimeline.map(toolTimelineFromPersisted)
+      );
+      state.processingByThread[threadId] = snapshot.transcript ?? [];
     },
     /**
      * Rebuild durable historical subagent rows from the run ledger. This is
@@ -904,11 +1400,17 @@ export const {
   clearInferenceStatusForThread,
   setStreamingAssistantForThread,
   clearStreamingAssistantForThread,
+  markThreadSendPending,
+  clearThreadSendPending,
   registerParallelRequest,
   setParallelStream,
   clearParallelRequest,
   setToolTimelineForThread,
   clearToolTimelineForThread,
+  clearProcessingForThread,
+  appendProcessingProse,
+  recordProcessingTool,
+  markSubagentCancelled,
   appendSubagentStreamDelta,
   recordSubagentTranscriptTool,
   resolveSubagentTranscriptTool,
@@ -916,6 +1418,8 @@ export const {
   clearTaskBoardForThread,
   setPendingApprovalForThread,
   clearPendingApprovalForThread,
+  setPendingPlanReviewForThread,
+  clearPendingPlanReviewForThread,
   upsertArtifactInProgressForThread,
   upsertArtifactReadyForThread,
   upsertArtifactFailedForThread,
@@ -923,12 +1427,16 @@ export const {
   removeArtifactForThread,
   setQueueStatusForThread,
   clearQueueStatusForThread,
+  enqueueFollowup,
+  removeFollowup,
+  clearFollowupsForThread,
   beginInferenceTurn,
   markInferenceTurnStreaming,
   endInferenceTurn,
   clearRuntimeForThread,
   clearAllChatRuntime,
   recordChatTurnUsage,
+  hydrateThreadUsage,
   resetSessionTokenUsage,
   hydrateRuntimeFromSnapshot,
   hydrateRuntimeFromRunLedger,

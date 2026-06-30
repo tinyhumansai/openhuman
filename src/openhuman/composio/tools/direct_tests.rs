@@ -346,7 +346,13 @@ fn build_execute_action_v3_request_drops_blank_optional_fields() {
 #[test]
 fn build_list_tool_schemas_v3_query_always_includes_limit() {
     let params = ComposioTool::build_list_tool_schemas_v3_query(&[], None);
-    assert_eq!(params, vec![("limit", "200".to_string())]);
+    assert_eq!(
+        params,
+        vec![
+            ("limit", "200".to_string()),
+            ("toolkit_versions", "latest".to_string()),
+        ]
+    );
 }
 
 #[test]
@@ -356,6 +362,7 @@ fn build_list_tool_schemas_v3_query_joins_toolkits_as_csv() {
         params,
         vec![
             ("limit", "200".to_string()),
+            ("toolkit_versions", "latest".to_string()),
             ("toolkits", "github,gmail".to_string()),
         ]
     );
@@ -373,6 +380,7 @@ fn build_list_tool_schemas_v3_query_emits_repeated_tags_params() {
         params,
         vec![
             ("limit", "200".to_string()),
+            ("toolkit_versions", "latest".to_string()),
             ("toolkits", "github".to_string()),
             ("tags", "stars".to_string()),
             ("tags", "repos".to_string()),
@@ -387,6 +395,7 @@ fn build_list_tool_schemas_v3_query_tags_without_toolkit_filter() {
         params,
         vec![
             ("limit", "200".to_string()),
+            ("toolkit_versions", "latest".to_string()),
             ("tags", "readOnlyHint".to_string()),
         ]
     );
@@ -402,6 +411,7 @@ fn build_list_tool_schemas_v3_query_trims_and_drops_blank_entries() {
         params,
         vec![
             ("limit", "200".to_string()),
+            ("toolkit_versions", "latest".to_string()),
             ("toolkits", "github".to_string()),
             ("tags", "stars".to_string()),
         ]
@@ -415,10 +425,24 @@ fn build_list_tool_schemas_v3_query_empty_tags_slice_is_no_filter() {
     let blank = ComposioTool::build_list_tool_schemas_v3_query(&["gmail"], Some(&["  "]));
     let expected = vec![
         ("limit", "200".to_string()),
+        ("toolkit_versions", "latest".to_string()),
         ("toolkits", "gmail".to_string()),
     ];
     assert_eq!(empty, expected);
     assert_eq!(blank, expected);
+}
+
+#[test]
+fn build_list_tool_schemas_v3_query_pins_toolkit_versions_latest() {
+    // #3932: without toolkit_versions, Composio v3 defaults to the pinned
+    // 00000000_00 snapshot, so any toolkit published after it (Outlook and
+    // every other post-launch toolkit) lists zero tools. `latest` keeps them
+    // visible.
+    let params = ComposioTool::build_list_tool_schemas_v3_query(&["outlook"], None);
+    assert!(
+        params.contains(&("toolkit_versions", "latest".to_string())),
+        "query must pin toolkit_versions=latest; got {params:?}"
+    );
 }
 
 // ── list_tool_schemas_v3 over HTTP (direct-mode tags reach the wire) ───────
@@ -474,11 +498,66 @@ async fn list_tool_schemas_v3_sends_repeated_tags_to_v3_tools_endpoint() {
     );
     assert!(query.contains("toolkits=github"), "query was: {query}");
     assert!(query.contains("limit=200"), "query was: {query}");
+    // #3932: post-launch toolkits are invisible without toolkit_versions=latest.
+    assert!(
+        query.contains("toolkit_versions=latest"),
+        "query was: {query}"
+    );
 
     // And the v3 envelope reshapes back into schema items.
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].slug, "GITHUB_STAR_A_REPOSITORY");
     assert_eq!(items[0].toolkit_slug.as_deref(), Some("github"));
+}
+
+#[tokio::test]
+async fn list_actions_v3_sends_toolkit_versions_latest_to_v3_tools_endpoint() {
+    use axum::{extract::RawQuery, routing::get, Json, Router};
+    use std::sync::Mutex;
+
+    // The legacy direct-mode discovery path (`list_actions` → `list_actions_v3`)
+    // builds its own query inline, separate from `build_list_tool_schemas_v3_query`,
+    // so it needs its own wire-level guard that toolkit_versions=latest reaches /tools.
+    let captured: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let sink = captured.clone();
+    let app = Router::new().route(
+        "/tools",
+        get(move |RawQuery(q): RawQuery| {
+            let sink = sink.clone();
+            async move {
+                *sink.lock().unwrap() = q;
+                Json(json!({
+                    "items": [{
+                        "slug": "OUTLOOK_SEND_EMAIL",
+                        "name": "Outlook Send Email",
+                        "toolkit": { "slug": "outlook" }
+                    }]
+                }))
+            }
+        }),
+    );
+    let base = start_mock_backend(app).await;
+
+    let tool = ComposioTool::new_with_v3_base("ck_test_direct", None, test_security(), base);
+    let actions = tool
+        .list_actions(Some("outlook"))
+        .await
+        .expect("direct v3 action listing should succeed against the mock");
+
+    let query = captured
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("mock server should have observed a query string");
+
+    assert!(
+        query.contains("toolkit_versions=latest"),
+        "post-launch toolkits (e.g. Outlook) need toolkit_versions=latest; query was: {query}"
+    );
+    assert!(query.contains("toolkits=outlook"), "query was: {query}");
+
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].name, "OUTLOOK_SEND_EMAIL");
 }
 
 // ── execute_action over HTTP (correct v3 path/slug/body reach the wire) ────

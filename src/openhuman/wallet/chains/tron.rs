@@ -542,12 +542,9 @@ mod tests {
     #[tokio::test]
     async fn execute_tron_quote_signs_and_broadcasts_native_transfer() {
         let _guard = TEST_LOCK.lock();
-        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         reset_quote_store_for_tests();
         let temp = TempDir::new().unwrap();
-        setup_wallet_in(&temp).await.unwrap();
+        let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
 
         let record = TronMockRecord::default();
         let addr = start_tron_mock(record.clone()).await;
@@ -597,12 +594,9 @@ mod tests {
     #[tokio::test]
     async fn execute_tron_quote_signs_and_broadcasts_trc20_transfer() {
         let _guard = TEST_LOCK.lock();
-        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         reset_quote_store_for_tests();
         let temp = TempDir::new().unwrap();
-        setup_wallet_in(&temp).await.unwrap();
+        let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
 
         let record = TronMockRecord::default();
         let addr = start_tron_mock(record.clone()).await;
@@ -651,12 +645,9 @@ mod tests {
     #[tokio::test]
     async fn execute_tron_quote_surfaces_node_rejection() {
         let _guard = TEST_LOCK.lock();
-        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         reset_quote_store_for_tests();
         let temp = TempDir::new().unwrap();
-        setup_wallet_in(&temp).await.unwrap();
+        let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
 
         // Custom mock returning result=false on broadcast.
         let app = Router::new()

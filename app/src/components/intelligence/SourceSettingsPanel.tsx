@@ -17,6 +17,7 @@ import {
   type SourceKind,
   updateMemorySource,
 } from '../../services/memorySourcesService';
+import Button from '../ui/Button';
 
 // Which limit fields are relevant per kind. Order determines display order.
 // Only caps that are actually enforced at sync time are surfaced — the
@@ -137,9 +138,9 @@ export function SourceSettingsPanel({
 
   return (
     <div
-      className="mt-2 ml-7 rounded-lg border border-stone-200 bg-stone-50 p-3 dark:border-neutral-700 dark:bg-neutral-800/60"
+      className="mt-2 ml-7 rounded-lg border border-line bg-surface-muted p-3"
       data-testid={`source-settings-panel-${source.id}`}>
-      <p className="mb-2 text-xs font-semibold text-stone-600 dark:text-neutral-300">
+      <p className="mb-2 text-xs font-semibold text-content-secondary">
         {t('memorySources.settings.title')}
       </p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -156,7 +157,7 @@ export function SourceSettingsPanel({
             <div key={field}>
               <label
                 htmlFor={`src-setting-${source.id}-${field}`}
-                className="mb-0.5 flex items-center gap-1.5 text-xs font-medium text-stone-600 dark:text-neutral-400">
+                className="mb-0.5 flex items-center gap-1.5 text-xs font-medium text-content-secondary">
                 {t(FIELD_LABEL_KEYS[field])}
                 {isMaxed && (
                   <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">
@@ -165,7 +166,7 @@ export function SourceSettingsPanel({
                 )}
                 {isUnlimited && (
                   <span
-                    className="inline-flex cursor-help text-stone-400 dark:text-neutral-500"
+                    className="inline-flex cursor-help text-content-faint"
                     title={unlimitedTooltip}
                     aria-label={unlimitedTooltip}>
                     <InfoIcon />
@@ -180,9 +181,9 @@ export function SourceSettingsPanel({
                 value={values[field] ?? ''}
                 onChange={e => handleChange(field, e.target.value)}
                 placeholder={t('memorySources.settings.unlimited')}
-                className="w-full rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-xs font-mono
-                           text-stone-800 placeholder:text-stone-400
-                           dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200
+                className="w-full rounded-md border border-line bg-surface px-2.5 py-1.5 text-xs font-mono
+                           text-content placeholder:text-stone-400
+                           dark:border-neutral-600 dark:bg-surface dark:text-neutral-200
                            dark:placeholder:text-neutral-500
                            focus:outline-none focus:ring-2 focus:ring-primary-200"
               />
@@ -191,16 +192,9 @@ export function SourceSettingsPanel({
         })}
       </div>
       <div className="mt-3 flex justify-end">
-        <button
-          type="button"
-          onClick={() => void handleSave()}
-          disabled={saving}
-          className="inline-flex items-center gap-1 rounded-md bg-primary-600 px-3 py-1.5
-                     text-xs font-semibold text-white shadow-sm transition-colors
-                     hover:bg-primary-500 disabled:cursor-not-allowed disabled:opacity-50
-                     focus:outline-none focus:ring-2 focus:ring-primary-200">
+        <Button variant="primary" size="sm" onClick={() => void handleSave()} disabled={saving}>
           {saving ? t('memorySources.settings.saving') : t('memorySources.settings.save')}
-        </button>
+        </Button>
       </div>
     </div>
   );

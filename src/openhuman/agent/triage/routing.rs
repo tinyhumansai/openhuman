@@ -14,9 +14,7 @@ use std::sync::Arc;
 use anyhow::Context;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::inference::provider::{
-    self, Provider, ProviderRuntimeOptions, INFERENCE_BACKEND_ID,
-};
+use crate::openhuman::inference::provider::{self, Provider, INFERENCE_BACKEND_ID};
 
 /// The concrete provider + metadata that [`crate::openhuman::agent::triage::evaluator::run_triage`]
 /// should use for this particular triage turn.
@@ -135,46 +133,110 @@ pub fn build_local_provider_with_config(config: &Config) -> Option<ResolvedProvi
     })
 }
 
+/// Whether a resolved provider string targets a local CLI delegate
+/// (`claude_agent_sdk` / `claude-code:<model>`). These carry their own auth and
+/// spawn a local process, so — like the local HTTP runtimes — they must never be
+/// the provider for a triage turn (#1257). Kept separate from
+/// `is_local_provider_string`, which only classifies the local HTTP runtimes.
+fn is_local_cli_route(provider_string: &str) -> bool {
+    use crate::openhuman::inference::provider::claude_code;
+    use crate::openhuman::inference::provider::factory::{
+        CLAUDE_AGENT_SDK_PREFIX, CLAUDE_AGENT_SDK_PROVIDER,
+    };
+    let s = provider_string.trim();
+    s == CLAUDE_AGENT_SDK_PROVIDER
+        || s.starts_with(CLAUDE_AGENT_SDK_PREFIX)
+        || s.starts_with(claude_code::PROVIDER_PREFIX)
+}
+
 // ── Provider builder ────────────────────────────────────────────────────
 
-/// Build the default remote routed backend provider. Same wiring as
-/// `inference::local::ops::agent_chat_simple` uses so we stay consistent with
-/// the existing direct-chat path.
+/// Build the remote provider for a triage turn, routed through the
+/// **`subconscious`** background workload so the Settings → AI → Advanced
+/// "Subconscious" provider control governs triage classification.
+///
+/// The managed model id comes from `make_openhuman_backend` →
+/// [`managed_tier_for_role`]`("subconscious")` (i.e. `chat-v1`), the same
+/// registry the subconscious tick and the agent harness use — NOT from
+/// `default_model`. So triage stays consistent with the tick: one place pins
+/// the managed model.
+///
+/// #1257 invariant — *triage never goes local*: when the resolved
+/// `subconscious_provider` is a local runtime (Ollama/LM Studio/MLX/…) or a
+/// BYOK-incomplete sentinel, we force the managed backend so a trigger never
+/// errors because a local model is down. Only a concrete BYOK **cloud** route is
+/// honoured as-is. A build failure also falls back to the managed backend.
 fn build_remote_provider(config: &Config) -> anyhow::Result<ResolvedProvider> {
-    let default_model = config
-        .default_model
-        .clone()
-        .unwrap_or_else(|| crate::openhuman::config::DEFAULT_MODEL.to_string());
-    let options = ProviderRuntimeOptions {
-        auth_profile_override: None,
-        openhuman_dir: config.config_path.parent().map(std::path::PathBuf::from),
-        secrets_encrypt: config.secrets.encrypt,
-        reasoning_enabled: config.runtime.reasoning_enabled,
+    use crate::openhuman::inference::local::profile::is_local_provider_string;
+    use crate::openhuman::inference::provider::factory::{
+        create_chat_provider_from_string, PROVIDER_OPENHUMAN,
     };
-    let provider_box = provider::create_routed_provider_with_options(
-        config.inference_url.as_deref(),
-        config.api_url.as_deref(),
-        config.api_key.as_deref(),
-        &config.reliability,
-        &config.model_routes,
-        default_model.as_str(),
-        &options,
-    )
-    .context("building routed remote provider for triage")?;
-    // `Box<dyn Provider>` → `Arc<dyn Provider>` is a single reallocation
-    // — the `Provider` trait is `Send + Sync` so this is type-safe.
-    let provider: Arc<dyn Provider> = Arc::from(provider_box);
-    tracing::debug!(
-        provider = %INFERENCE_BACKEND_ID,
-        model = %default_model,
-        "[triage::routing] resolved remote provider"
-    );
-    Ok(ResolvedProvider {
-        provider,
-        provider_name: INFERENCE_BACKEND_ID.to_string(),
-        model: default_model,
-        used_local: false,
-    })
+
+    let resolved = provider::provider_for_role("subconscious", config);
+    let r = resolved.trim();
+
+    // #1257: triage must never depend on a local model/CLI being up, and a
+    // half-configured BYOK route must not error a trigger — force the managed
+    // backend in all those cases. `is_local_provider_string` only covers the
+    // local HTTP runtimes (Ollama/LM Studio/MLX/local-openai), so the local CLI
+    // delegates (`claude_agent_sdk`, `claude-code:<model>`) are excluded
+    // explicitly here (Codex P2) — otherwise they'd be treated as BYOK cloud and
+    // triage could hang on an unauthenticated/missing CLI.
+    let force_managed = is_local_provider_string(r)
+        || is_local_cli_route(r)
+        || r == provider::BYOK_INCOMPLETE_SENTINEL;
+    let effective = if force_managed { PROVIDER_OPENHUMAN } else { r };
+    if force_managed {
+        tracing::info!(
+            resolved = %r,
+            "[triage::routing] subconscious workload not usable for triage (local/incomplete) — \
+             forcing managed backend (#1257: triage never goes local)"
+        );
+    }
+
+    // Build through the per-workload factory: managed routes resolve their model
+    // id via `make_openhuman_backend` → `managed_tier_for_role`, BYOK cloud routes
+    // via the slug's configured model.
+    let build = |provider_string: &str| -> anyhow::Result<ResolvedProvider> {
+        let (provider_box, model) =
+            create_chat_provider_from_string("subconscious", provider_string, config)?;
+        let provider: Arc<dyn Provider> = Arc::from(provider_box);
+        let provider_name = if provider_string == PROVIDER_OPENHUMAN {
+            INFERENCE_BACKEND_ID.to_string()
+        } else {
+            provider_string
+                .split(':')
+                .next()
+                .unwrap_or(provider_string)
+                .to_string()
+        };
+        Ok(ResolvedProvider {
+            provider,
+            provider_name,
+            model,
+            used_local: false,
+        })
+    };
+
+    match build(effective) {
+        Ok(rp) => {
+            tracing::debug!(
+                provider = %rp.provider_name,
+                model = %rp.model,
+                "[triage::routing] resolved remote provider via subconscious workload"
+            );
+            Ok(rp)
+        }
+        Err(err) => {
+            tracing::warn!(
+                resolved = %effective,
+                error = %err,
+                "[triage::routing] subconscious workload provider build failed — \
+                 falling back to managed backend"
+            );
+            build(PROVIDER_OPENHUMAN)
+        }
+    }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────

@@ -93,6 +93,15 @@ const notificationSlice = createSlice({
       const item = state.items.find(i => i.id === action.payload.id);
       if (item) item.read = true;
     },
+    // Drop the action buttons off a core notification once its prompt has been
+    // handled (e.g. a meeting auto-join join/skip succeeded). NotificationCenter
+    // only surfaces core items that still carry actions, so clearing them here
+    // removes the handled prompt from the actionable list and prevents a second
+    // click re-firing the same RPC (duplicate bot:join / always_join after skip).
+    clearNotificationActions(state, action: PayloadAction<{ id: string }>) {
+      const item = state.items.find(i => i.id === action.payload.id);
+      if (item) item.actions = undefined;
+    },
     markAllRead(state) {
       for (const item of state.items) item.read = true;
     },
@@ -186,6 +195,7 @@ export const selectUnreadCount = (items: NotificationItem[]): number =>
 export const {
   notificationReceived,
   markRead,
+  clearNotificationActions,
   markAllRead,
   clearAll,
   setPreference,

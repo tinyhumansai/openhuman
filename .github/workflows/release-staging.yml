@@ -248,9 +248,8 @@ jobs:
   # Phase 2b: Build the openhuman-core Docker image without pushing.
   # Mirrors the production `build-docker` job so a Dockerfile regression
   # surfaces on the staging cut — no GHCR push, no `:staging-*` tag
-  # pollution. `deploy-smoke.yml` already covers the build path on PRs
-  # that touch Dockerfile / src; this is the equivalent gate at the
-  # staging-tag boundary so a green staging cut means the next prod
+  # pollution. This is the Docker build gate at the staging-tag
+  # boundary so a green staging cut means the next prod
   # promotion's GHCR push will succeed too.
   # =========================================================================
   build-docker:

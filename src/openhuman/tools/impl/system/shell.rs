@@ -2,14 +2,12 @@ use crate::openhuman::agent::host_runtime::RuntimeAdapter;
 use crate::openhuman::javascript::NodeBootstrap;
 use crate::openhuman::runtime_python::PythonBootstrap;
 use crate::openhuman::security::{AuditLogger, CommandExecutionLog, GateDecision, SecurityPolicy};
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult, ToolTimeout};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// Maximum shell command execution time before kill.
-const SHELL_TIMEOUT_SECS: u64 = 60;
 /// Maximum output size in bytes (1MB).
 const MAX_OUTPUT_BYTES: usize = 1_048_576;
 /// Environment variables safe to pass to shell commands.
@@ -152,6 +150,22 @@ impl ShellTool {
         crate::openhuman::agent::harness::current_action_dir_override()
             .unwrap_or_else(|| self.security.action_dir.clone())
     }
+
+    /// The explicit wall-clock budget for this invocation, or `None` to run
+    /// unbounded.
+    ///
+    /// Shell commands run scripts — builds, test suites, solvers — that
+    /// legitimately take minutes, so there is **no** default timeout: a
+    /// deadline applies only when the caller passes `timeout_secs` (issue
+    /// #4023). A `0` explicitly disables it. Any positive value is clamped to
+    /// `1..=3600`. See
+    /// [`crate::openhuman::tool_timeout::explicit_call_timeout_duration`].
+    fn explicit_timeout(&self, requested: Option<u64>) -> Option<Duration> {
+        crate::openhuman::tool_timeout::explicit_call_timeout_duration(
+            requested,
+            crate::openhuman::tool_timeout::MAX_TIMEOUT_SECS,
+        )
+    }
 }
 
 #[async_trait]
@@ -182,6 +196,12 @@ impl Tool for ShellTool {
                     "type": "string",
                     "enum": ["read", "write", "network", "install", "destructive"],
                     "description": "Optional self-declared risk category for this command. Advisory and ESCALATE-ONLY: it can raise the approval requirement (e.g. flag a destructive command) but never lowers what the runtime determines."
+                },
+                "timeout_secs": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3600,
+                    "description": "Optional wall-clock timeout (seconds, 1..=3600) for this command before it is killed. Use a larger value for long-running work (builds, test suites, solvers). Omitted or out-of-range falls back to the configured tool timeout."
                 }
             },
             "required": ["command"]
@@ -195,6 +215,18 @@ impl Tool for ShellTool {
     /// the right move when it does.
     fn max_result_size_chars(&self) -> Option<usize> {
         Some(30_000)
+    }
+
+    /// Shell runs scripts that legitimately take a long time, so it runs
+    /// unbounded unless the caller passes an explicit `timeout_secs`. This
+    /// keeps the harness from hard-killing a long command at the global tool
+    /// timeout (issue #4023).
+    fn timeout_policy(&self, args: &serde_json::Value) -> ToolTimeout {
+        match args.get("timeout_secs").and_then(|v| v.as_u64()) {
+            // `0` (or absent) means "no deadline".
+            None | Some(0) => ToolTimeout::Unbounded,
+            Some(secs) => ToolTimeout::Secs(secs),
+        }
     }
 
     fn permission_level(&self) -> PermissionLevel {
@@ -227,8 +259,14 @@ impl Tool for ShellTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing 'command' parameter"))?;
 
+        // Optional per-call wall-clock budget. `None`/`0` ⇒ run unbounded;
+        // a positive value is clamped downstream by
+        // `tool_timeout::explicit_call_timeout_*`. Shell has no default deadline
+        // (issue #4023) — long scripts must run to completion.
+        let requested_timeout = args.get("timeout_secs").and_then(|v| v.as_u64());
+
         let start = Instant::now();
-        let (allowed, result) = self.run_with_security(command).await;
+        let (allowed, result) = self.run_with_security(command, requested_timeout).await;
         let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
         // `allowed` = passed the in-tool security checks. `approved` = the command
         // is Prompt-class (required human approval) and thus went through the
@@ -253,7 +291,11 @@ impl ShellTool {
     /// same gated execution path as the `shell` tool — all security
     /// checks (rate limits, path guards, approval gate routing) apply
     /// identically to workflow-triggered commands.
-    pub(crate) async fn run_with_security(&self, command: &str) -> (bool, ToolResult) {
+    pub(crate) async fn run_with_security(
+        &self,
+        command: &str,
+        requested_timeout: Option<u64>,
+    ) -> (bool, ToolResult) {
         // Read-only `Block` + the Option-2 structural guard. Approval for
         // Write / Network / Destructive already happened at the harness
         // `ApprovalGate` (see `external_effect_with_args`) before `execute()`
@@ -283,7 +325,7 @@ impl ShellTool {
             crate::openhuman::agent::harness::current_sandbox_mode(),
             Some(crate::openhuman::agent::harness::definition::SandboxMode::Sandboxed)
         ) {
-            return self.run_sandboxed(command).await;
+            return self.run_sandboxed(command, requested_timeout).await;
         }
 
         // Execute with timeout to prevent hanging commands.
@@ -343,8 +385,19 @@ impl ShellTool {
             }
         }
 
-        let result =
-            tokio::time::timeout(Duration::from_secs(SHELL_TIMEOUT_SECS), cmd.output()).await;
+        // No default deadline — only a caller-supplied `timeout_secs` bounds the
+        // run. `None` ⇒ run to completion (issue #4023).
+        let explicit_timeout = self.explicit_timeout(requested_timeout);
+        tracing::debug!(
+            timeout_secs = ?explicit_timeout.map(|d| d.as_secs()),
+            requested_timeout_secs = ?requested_timeout,
+            "[shell] starting command ({} timeout)",
+            if explicit_timeout.is_some() { "explicit" } else { "no" }
+        );
+        let result = match explicit_timeout {
+            Some(timeout) => tokio::time::timeout(timeout, cmd.output()).await,
+            None => Ok(cmd.output().await),
+        };
 
         let tool_result = match result {
             Ok(Ok(output)) => {
@@ -375,13 +428,16 @@ impl ShellTool {
                         ToolResult::success(format!("{stdout}\n[stderr]\n{stderr}"))
                     }
                 } else {
-                    let err_msg = if stderr.is_empty() { stdout } else { stderr };
-                    ToolResult::error(err_msg)
+                    // Surface the exit code AND both streams so the agent can
+                    // diagnose the failure (e.g. 127 missing dependency, 126
+                    // sandbox/permission wall) instead of looping on it (#4095).
+                    super::command_output::command_failure(output.status.code(), &stdout, &stderr)
                 }
             }
             Ok(Err(e)) => ToolResult::error(format!("Failed to execute command: {e}")),
             Err(_) => ToolResult::error(format!(
-                "Command timed out after {SHELL_TIMEOUT_SECS}s and was killed"
+                "Command timed out after {}s and was killed",
+                explicit_timeout.map(|d| d.as_secs()).unwrap_or(0)
             )),
         };
         (true, tool_result)
@@ -389,7 +445,11 @@ impl ShellTool {
 
     /// Execute a command through the sandbox backend. Called when the
     /// agent's `SandboxMode` is `Sandboxed`.
-    async fn run_sandboxed(&self, command: &str) -> (bool, ToolResult) {
+    async fn run_sandboxed(
+        &self,
+        command: &str,
+        requested_timeout: Option<u64>,
+    ) -> (bool, ToolResult) {
         use crate::openhuman::sandbox;
 
         let config = crate::openhuman::config::RuntimeConfig::default();
@@ -420,19 +480,34 @@ impl ShellTool {
             }
         }
 
+        // Sandbox backends require a finite deadline. Without an explicit
+        // `timeout_secs`, substitute the generous effective-unbounded cap so a
+        // long command isn't killed while still bounding a wedged sandbox.
+        let explicit_timeout = self.explicit_timeout(requested_timeout);
+        let effective = explicit_timeout.unwrap_or_else(|| {
+            Duration::from_secs(crate::openhuman::tool_timeout::SANDBOX_UNBOUNDED_CAP_SECS)
+        });
+        tracing::debug!(
+            timeout_secs = effective.as_secs(),
+            requested_timeout_secs = ?requested_timeout,
+            unbounded = explicit_timeout.is_none(),
+            "[shell] starting sandboxed command"
+        );
+
         match sandbox::execute_in_sandbox(
             &policy,
             command,
             &self.security.action_dir,
             extra_env,
-            Duration::from_secs(SHELL_TIMEOUT_SECS),
+            effective,
         )
         .await
         {
             Ok(result) => {
                 let tool_result = if result.timed_out {
                     ToolResult::error(format!(
-                        "Command timed out after {SHELL_TIMEOUT_SECS}s and was killed"
+                        "Command timed out after {}s and was killed",
+                        effective.as_secs()
                     ))
                 } else if result.success() {
                     if result.stderr.is_empty() {
@@ -444,12 +519,13 @@ impl ShellTool {
                         ))
                     }
                 } else {
-                    let err_msg = if result.stderr.is_empty() {
-                        result.stdout
-                    } else {
-                        result.stderr
-                    };
-                    ToolResult::error(err_msg)
+                    // Same exit-code + both-streams surfacing as the native path
+                    // (#4095); the sandbox `-1` sentinel renders as a signal.
+                    super::command_output::command_failure(
+                        super::command_output::sandbox_exit_code(result.exit_code),
+                        &result.stdout,
+                        &result.stderr,
+                    )
                 };
                 (true, tool_result)
             }
@@ -890,6 +966,61 @@ mod tests {
         assert!(result.is_error);
     }
 
+    /// Regression for the code_executor no-progress loop (#4095): a FAILED
+    /// command must surface its exit code AND both streams — never drop stdout
+    /// when stderr is present — so the agent can read *why* it failed instead of
+    /// re-running it blindly.
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn shell_failure_surfaces_exit_code_and_both_streams() {
+        let tool = ShellTool::new(
+            test_security(AutonomyLevel::Full),
+            test_runtime(),
+            test_audit(),
+        );
+        let result = tool
+            .execute(json!({
+                "command": "echo stdout-marker; echo stderr-marker 1>&2; exit 7"
+            }))
+            .await
+            .unwrap();
+        assert!(result.is_error, "non-zero exit must be an error result");
+        let out = result.output();
+        assert!(out.contains("exit code 7"), "exit code not surfaced: {out}");
+        assert!(
+            out.contains("stdout-marker"),
+            "stdout dropped on failure: {out}"
+        );
+        assert!(
+            out.contains("stderr-marker"),
+            "stderr dropped on failure: {out}"
+        );
+    }
+
+    /// A missing executable exits 127; the surfaced result must carry the code
+    /// and the actionable "command not found / missing dependency" hint so the
+    /// agent recognises the dependency wall and adapts instead of looping.
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn shell_missing_command_surfaces_127_with_dependency_hint() {
+        let tool = ShellTool::new(
+            test_security(AutonomyLevel::Full),
+            test_runtime(),
+            test_audit(),
+        );
+        let result = tool
+            .execute(json!({"command": "this_binary_does_not_exist_xyz --version"}))
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        let out = result.output().to_lowercase();
+        assert!(out.contains("127"), "exit code 127 not surfaced: {out}");
+        assert!(
+            out.contains("command not found"),
+            "missing-dependency hint absent: {out}"
+        );
+    }
+
     fn test_security_with_env_cmd() -> Arc<SecurityPolicy> {
         Arc::new(SecurityPolicy {
             autonomy: AutonomyLevel::Supervised,
@@ -1003,8 +1134,90 @@ mod tests {
     // ── §5.2 Shell timeout enforcement tests ─────────────────
 
     #[test]
-    fn shell_timeout_constant_is_reasonable() {
-        assert_eq!(SHELL_TIMEOUT_SECS, 60, "shell timeout must be 60 seconds");
+    fn shell_is_unbounded_by_default() {
+        let tool = ShellTool::new(
+            test_security(AutonomyLevel::Supervised),
+            test_runtime(),
+            test_audit(),
+        );
+
+        // No `timeout_secs` ⇒ no deadline. A long script must not be hard-killed.
+        assert_eq!(
+            tool.timeout_policy(&json!({"command": "make"})),
+            ToolTimeout::Unbounded
+        );
+        assert_eq!(tool.explicit_timeout(None), None);
+        // An explicit 0 disables the timeout too.
+        assert_eq!(
+            tool.timeout_policy(&json!({"command": "make", "timeout_secs": 0})),
+            ToolTimeout::Unbounded
+        );
+        assert_eq!(tool.explicit_timeout(Some(0)), None);
+    }
+
+    #[test]
+    fn shell_timeout_honors_explicit_per_call_value() {
+        let tool = ShellTool::new(
+            test_security(AutonomyLevel::Supervised),
+            test_runtime(),
+            test_audit(),
+        );
+
+        // An explicit in-range request is enforced verbatim.
+        assert_eq!(
+            tool.timeout_policy(&json!({"command": "make", "timeout_secs": 1800})),
+            ToolTimeout::Secs(1800)
+        );
+        assert_eq!(
+            tool.explicit_timeout(Some(1800)),
+            Some(Duration::from_secs(1800))
+        );
+
+        // Above the cap clamps down to MAX_TIMEOUT_SECS (3600).
+        assert_eq!(
+            tool.explicit_timeout(Some(9_999)),
+            Some(Duration::from_secs(
+                crate::openhuman::tool_timeout::MAX_TIMEOUT_SECS
+            ))
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn shell_per_call_timeout_kills_slow_command() {
+        let tool = ShellTool::new(
+            test_security(AutonomyLevel::Supervised),
+            test_runtime(),
+            test_audit(),
+        );
+
+        // `sleep 30` would survive any sane default, but a per-call 1s budget
+        // must kill it and report the per-call value in the error message.
+        let result = tool
+            .execute(json!({"command": "sleep 30", "timeout_secs": 1}))
+            .await
+            .unwrap();
+
+        assert!(result.is_error, "slow command should time out");
+        let text = result.text();
+        assert!(
+            text.contains("timed out after 1s"),
+            "timeout message should reflect the per-call budget, got: {text}"
+        );
+    }
+
+    #[test]
+    fn shell_schema_advertises_timeout_secs() {
+        let tool = ShellTool::new(
+            test_security(AutonomyLevel::Supervised),
+            test_runtime(),
+            test_audit(),
+        );
+        let schema = tool.parameters_schema();
+        let timeout = &schema["properties"]["timeout_secs"];
+        assert_eq!(timeout["type"], "integer");
+        assert_eq!(timeout["minimum"], 1);
+        assert_eq!(timeout["maximum"], 3600);
     }
 
     #[test]

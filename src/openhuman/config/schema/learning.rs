@@ -141,6 +141,17 @@ pub struct LearningConfig {
     /// to suppress all preference injection even for explicitly pinned entries.
     #[serde(default = "default_true")]
     pub explicit_preferences_enabled: bool,
+
+    /// Enable automatic enrichment of the long-term goals list
+    /// (`MEMORY_GOALS.md`) when the conversation context is summarized.
+    ///
+    /// When `true` (the default), a best-effort background `goals_agent`
+    /// run is fired after a segment recap so the user's durable goals stay
+    /// fresh. Set to `false` (or
+    /// `OPENHUMAN_LEARNING_GOALS_ENRICHMENT_ENABLED=0`) to only update the
+    /// goals list via explicit RPC/tools.
+    #[serde(default = "default_true")]
+    pub goals_enrichment_enabled: bool,
 }
 
 fn default_rebuild_interval_secs() -> u64 {
@@ -177,6 +188,7 @@ impl Default for LearningConfig {
             stm_recall_enabled: default_true(),
             unified_compaction_enabled: default_true(),
             explicit_preferences_enabled: default_true(),
+            goals_enrichment_enabled: default_true(),
         }
     }
 }

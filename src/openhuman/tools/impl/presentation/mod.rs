@@ -244,6 +244,25 @@ impl Tool for PresentationTool {
         .await
         .map_err(anyhow::Error::msg)?;
 
+        // Persist the verbatim args next to meta.json so a failed card's
+        // Retry can re-dispatch this exact spec deterministically (#3162).
+        // Best-effort: a write failure only forfeits future regeneration,
+        // it must not abort an otherwise-successful generation.
+        if let Err(err) = crate::openhuman::artifacts::store::save_artifact_args(
+            &self.workspace_dir,
+            &meta.id,
+            &args,
+        )
+        .await
+        {
+            tracing::warn!(
+                target: "presentation",
+                err = %err,
+                artifact_id = %meta.id,
+                "[presentation] failed to persist args.json; artifact will not be regenerable"
+            );
+        }
+
         let bytes = match engine::generate(&input, &resolved_images, GENERATION_TIMEOUT).await {
             Ok(bytes) => bytes,
             Err(err) => {

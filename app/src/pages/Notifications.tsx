@@ -1,8 +1,9 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import NotificationBody from '../components/notifications/NotificationBody';
 import NotificationCenter from '../components/notifications/NotificationCenter';
+import Button from '../components/ui/Button';
 import { useT } from '../lib/i18n/I18nContext';
 import { resolveSystemRoute } from '../lib/notificationRouter';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
@@ -14,6 +15,19 @@ import {
   type NotificationItem,
   selectUnreadCount,
 } from '../store/notificationSlice';
+
+// Canonical category order — drives the order chips appear in the filter row.
+const CATEGORY_ORDER: NotificationCategory[] = [
+  'messages',
+  'agents',
+  'skills',
+  'system',
+  'meetings',
+  'reminders',
+  'important',
+];
+
+type CategoryFilter = NotificationCategory | 'all';
 
 function formatTime(ts: number, t: (key: string) => string): string {
   const delta = Date.now() - ts;
@@ -32,6 +46,35 @@ const Notifications = () => {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const unread = useMemo(() => selectUnreadCount(items), [items]);
+  const [selectedCategory, setSelectedCategory] = useState<CategoryFilter>('all');
+
+  // Only offer chips for categories that actually appear in the feed — no dead chips.
+  const presentCategories = useMemo(
+    () => CATEGORY_ORDER.filter(c => items.some(item => item.category === c)),
+    [items]
+  );
+
+  // If the active filter's category drains out of the feed, fall back to All.
+  const activeCategory: CategoryFilter =
+    selectedCategory !== 'all' && !presentCategories.includes(selectedCategory)
+      ? 'all'
+      : selectedCategory;
+
+  // The derivation above keeps the current render correct, but the stored
+  // selection would otherwise stay stale — so if that category later reappears
+  // the filter would silently snap back to it. Reset the stored state to 'all'
+  // once a selected category leaves the feed so re-selection is always explicit.
+  useEffect(() => {
+    if (activeCategory !== selectedCategory) {
+      setSelectedCategory('all');
+    }
+  }, [activeCategory, selectedCategory]);
+
+  const filteredItems = useMemo(
+    () =>
+      activeCategory === 'all' ? items : items.filter(item => item.category === activeCategory),
+    [items, activeCategory]
+  );
 
   const categoryLabel = (category: NotificationCategory): string => {
     switch (category) {
@@ -62,48 +105,80 @@ const Notifications = () => {
       {/* Integration notifications — from connected accounts, scored by local AI */}
       <div
         data-testid="integration-notifications-section"
-        className="max-w-2xl mx-auto bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 overflow-hidden min-h-[200px]">
+        className="max-w-2xl mx-auto bg-surface rounded-2xl shadow-soft border border-line overflow-hidden min-h-[200px]">
         <NotificationCenter />
       </div>
 
       {/* Core-bridge notifications — system events */}
       <div
         data-testid="system-events-section"
-        className="max-w-2xl mx-auto bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 overflow-hidden">
-        <div className="flex items-center justify-between border-b border-stone-100 dark:border-neutral-800 px-4 py-3">
+        className="max-w-2xl mx-auto bg-surface rounded-2xl shadow-soft border border-line overflow-hidden">
+        <div className="flex items-center justify-between border-b border-line-subtle px-4 py-3">
           <div>
-            <h1 className="text-lg font-semibold text-stone-900 dark:text-neutral-100">
-              {t('alerts.title')}
-            </h1>
-            <p className="text-xs text-stone-500 dark:text-neutral-400">
+            <h1 className="text-lg font-semibold text-content">{t('alerts.title')}</h1>
+            <p className="text-xs text-content-muted">
               {unread > 0 ? `${unread} ${t('alerts.unread')}` : t('alerts.empty')}
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
+            <Button
+              variant="tertiary"
+              size="xs"
               onClick={() => dispatch(markAllRead())}
-              disabled={unread === 0}
-              className="text-xs font-medium text-stone-600 dark:text-neutral-400 hover:text-stone-900 dark:hover:text-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed">
+              disabled={unread === 0}>
               {t('alerts.markAllRead')}
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="tertiary"
+              size="xs"
               onClick={() => dispatch(clearAll())}
-              disabled={items.length === 0}
-              className="text-xs font-medium text-stone-600 dark:text-neutral-400 hover:text-stone-900 dark:hover:text-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed">
+              disabled={items.length === 0}>
               {t('common.clear')}
-            </button>
+            </Button>
           </div>
         </div>
 
-        {items.length === 0 ? (
-          <div className="px-6 py-16 text-center text-sm text-stone-500 dark:text-neutral-400">
-            {t('alerts.empty')}
+        {presentCategories.length > 0 && (
+          <div
+            data-testid="notification-category-filter"
+            className="flex flex-wrap items-center gap-2 border-b border-line-subtle px-4 py-2">
+            <button
+              type="button"
+              data-testid="notif-filter-chip-all"
+              aria-pressed={activeCategory === 'all'}
+              onClick={() => setSelectedCategory('all')}
+              className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                activeCategory === 'all'
+                  ? 'bg-primary-500 text-content-inverted'
+                  : 'bg-surface-subtle text-content-secondary hover:bg-surface-strong dark:hover:bg-neutral-700'
+              }`}>
+              {t('notifications.filterAll')}
+            </button>
+            {presentCategories.map(category => (
+              <button
+                key={category}
+                type="button"
+                data-testid={`notif-filter-chip-${category}`}
+                aria-pressed={activeCategory === category}
+                onClick={() => setSelectedCategory(category)}
+                className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                  activeCategory === category
+                    ? 'bg-primary-500 text-content-inverted'
+                    : 'bg-surface-subtle text-content-secondary hover:bg-surface-strong dark:hover:bg-neutral-700'
+                }`}>
+                {categoryLabel(category)}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {filteredItems.length === 0 ? (
+          <div className="px-6 py-16 text-center text-sm text-content-muted">
+            {activeCategory === 'all' ? t('alerts.empty') : t('notifications.filterEmpty')}
           </div>
         ) : (
-          <ul className="divide-y divide-stone-100 dark:divide-neutral-800">
-            {items.map(item => (
+          <ul className="divide-y divide-line-subtle dark:divide-neutral-800">
+            {filteredItems.map(item => (
               <li key={item.id} data-testid="notification-item">
                 {/* `role="button"` instead of a real `<button>` — the row body
                     contains `NotificationLinkPill` (also a `<button>`), and
@@ -123,10 +198,8 @@ const Notifications = () => {
                       handleClick(item);
                     }
                   }}
-                  className={`w-full text-left px-4 py-3 hover:bg-stone-50 dark:hover:bg-neutral-800/60 transition-colors ${
-                    item.read
-                      ? 'bg-white dark:bg-neutral-900'
-                      : 'bg-primary-50/30 dark:bg-primary-900/20'
+                  className={`w-full text-left px-4 py-3 hover:bg-surface-hover transition-colors ${
+                    item.read ? 'bg-surface' : 'bg-primary-50/30 dark:bg-primary-900/20'
                   }`}>
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
@@ -137,20 +210,20 @@ const Notifications = () => {
                             aria-label={t('alerts.unread')}
                           />
                         )}
-                        <span className="text-xs uppercase tracking-wide text-stone-400 dark:text-neutral-500">
+                        <span className="text-xs uppercase tracking-wide text-content-faint">
                           {categoryLabel(item.category)}
                         </span>
                       </div>
-                      <p className="mt-1 text-sm font-semibold text-stone-900 dark:text-neutral-100 truncate">
+                      <p className="mt-1 text-sm font-semibold text-content truncate">
                         {item.title}
                       </p>
                       <p
                         data-testid="notification-item-body"
-                        className="mt-0.5 text-sm text-stone-600 dark:text-neutral-300 line-clamp-2">
+                        className="mt-0.5 text-sm text-content-secondary line-clamp-2">
                         <NotificationBody body={item.body} />
                       </p>
                     </div>
-                    <span className="text-[11px] text-stone-400 dark:text-neutral-500 whitespace-nowrap">
+                    <span className="text-[11px] text-content-faint whitespace-nowrap">
                       {formatTime(item.timestamp, t)}
                     </span>
                   </div>

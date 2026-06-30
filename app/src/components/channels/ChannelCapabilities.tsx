@@ -9,7 +9,7 @@ const ChannelCapabilities = ({ capabilities }: ChannelCapabilitiesProps) => {
       {capabilities.map(cap => (
         <span
           key={cap}
-          className="px-1.5 py-0.5 text-[10px] rounded bg-stone-100 dark:bg-neutral-800 text-stone-500 dark:text-neutral-400 border border-stone-200 dark:border-neutral-800">
+          className="px-1.5 py-0.5 text-[10px] rounded bg-surface-subtle text-content-muted border border-line">
           {cap.replace(/_/g, ' ')}
         </span>
       ))}

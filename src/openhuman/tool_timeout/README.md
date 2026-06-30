@@ -31,7 +31,13 @@ Highest precedence first:
 - `env_override_active() -> bool` — `true` when `OPENHUMAN_TOOL_TIMEOUT_SECS` is set to a valid override (so UI changes are ignored). Surfaced to the settings panel.
 - `tool_execution_timeout_secs() -> u64` — effective timeout in seconds (read fresh each call).
 - `tool_execution_timeout_duration() -> Duration` — same effective value as a `Duration`.
-- Constants: `DEFAULT_TIMEOUT_SECS = 120`, `MIN_TIMEOUT_SECS = 1`, `MAX_TIMEOUT_SECS = 3600`, `ENV_VAR = "OPENHUMAN_TOOL_TIMEOUT_SECS"`.
+- `explicit_call_timeout_secs(requested: Option<u64>, cap: u64) -> Option<u64>` — resolve an **explicit** per-call timeout for an otherwise-unbounded scripting tool. `None`/`Some(0)` ⇒ `None` (run unbounded); any positive value clamps to `MIN_TIMEOUT_SECS..=cap`. Callers pass their own ceiling (`MAX_TIMEOUT_SECS` for `shell`, `1800` for `node_exec`/`npm_exec`).
+- `explicit_call_timeout_duration(requested: Option<u64>, cap: u64) -> Option<Duration>` — same as a `Duration`, `None` for unbounded.
+- Constants: `DEFAULT_TIMEOUT_SECS = 120`, `MIN_TIMEOUT_SECS = 1`, `MAX_TIMEOUT_SECS = 3600`, `SANDBOX_UNBOUNDED_CAP_SECS = 86_400`, `ENV_VAR = "OPENHUMAN_TOOL_TIMEOUT_SECS"`.
+
+## Scripting tools run unbounded (issue #4023)
+
+The global timeout governs **non-scripting** tools only — a hung network/MCP call must stay bounded. The scripting tools (`shell`, `node_exec`, `npm_exec`) instead run with **no** default deadline: a build / solver / test run legitimately takes minutes and must not be hard-killed. They expose a per-call `timeout_secs` argument and return [`Tool::timeout_policy`] → `ToolTimeout::Unbounded` when none is supplied, or `ToolTimeout::Secs(n)` when one is. The harness (`agent/harness/engine/tools.rs::resolve_tool_deadline`) maps `Unbounded` to "no `tokio::time::timeout` wrapper at all" and `Secs(n)` to a clamped deadline plus a small grace margin so the tool's own internal timeout (which actually kills the child) fires first. Sandbox backends, which require a finite deadline, substitute `SANDBOX_UNBOUNDED_CAP_SECS` (24h) for the unbounded case.
 
 ## Configuration
 
@@ -44,7 +50,8 @@ Highest precedence first:
 
 ## Used by
 
-- `src/openhuman/agent/harness/engine/tools.rs` — `run_one_tool` wraps every tool `execute()` in `tokio::time::timeout(tool_execution_timeout_duration(), …)` and logs `tool_execution_timeout_secs()`. This is the single per-tool-call enforcement point, reached by the main loop, the session executor, and the sub-agent inner loop.
+- `src/openhuman/agent/harness/engine/tools.rs` — `run_one_tool` wraps each tool `execute()` according to its [`Tool::timeout_policy`] (via `resolve_tool_deadline`): `Inherit` uses `tool_execution_timeout_secs()`; `Secs(n)` uses a clamped value plus grace; `Unbounded` runs with no deadline. This is the single per-tool-call enforcement point, reached by the main loop, the session executor, and the sub-agent inner loop.
+- `src/openhuman/tools/impl/system/{shell,node_exec,npm_exec}.rs` — scripting tools: unbounded by default, explicit `timeout_secs` via `explicit_call_timeout_*`.
 - `src/openhuman/agent/tools/delegate.rs` — bounds the delegated provider chat call with `tool_execution_timeout_secs`.
 - `src/openhuman/config/ops.rs` — `apply_agent_settings` calls `set_tool_timeout_secs` after persisting; `get_agent_settings` reports `effective_timeout_secs` / `env_override`.
 - `src/openhuman/channels/runtime/startup.rs` — seeds the runtime value from config at core boot.

@@ -54,7 +54,10 @@ test.describe('Top-level functional flows', () => {
     const card = page.getByTestId(`workflow-card-${id}`);
     await card.getByTitle('More actions').click();
     await page.getByTestId(`workflow-uninstall-${id}`).click();
-    await expect(page.getByRole('dialog')).toBeVisible();
+    // Workflows/automations now render inside the Settings modal (also
+    // role="dialog"), so target the uninstall confirm control specifically
+    // rather than a generic getByRole('dialog') that would match both.
+    await expect(page.getByTestId('uninstall-skill-confirm')).toBeVisible();
     await page.getByTestId('uninstall-skill-confirm').click();
     await expect(page.getByText(name)).toHaveCount(0, { timeout: 15_000 });
   });
@@ -94,9 +97,10 @@ test.describe('Top-level functional flows', () => {
   test('major top-level pages render actionable UI without blanking', async ({ page }) => {
     await bootAuthenticatedPage(page, 'pw-top-level-ui', '/home');
     const routes: Array<[string, RegExp]> = [
-      ['/home', /Ask your assistant anything|Start/],
+      // Home folded into the unified chat surface — /home redirects to /chat.
+      ['/home', /New Conversation|Threads/],
       ['/connections', /Composio Integrations|Composio|Channels|MCP Servers/],
-      ['/chat', /How can I help you today|No messages yet|Threads/],
+      ['/chat', /New Conversation|No messages yet|Threads/],
       ['/settings/notifications-hub', /Notifications/],
       ['/notifications', /Notifications|System Events/],
       ['/rewards', /Rewards|Referrals|Redeem/],

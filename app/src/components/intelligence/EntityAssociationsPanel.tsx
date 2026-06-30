@@ -4,6 +4,7 @@
  */
 import { useT } from '../../lib/i18n/I18nContext';
 import type { AssociationReport } from '../../lib/memory/entityAssociations';
+import Button from '../ui/Button';
 
 interface EntityAssociationsPanelProps {
   report: AssociationReport | null;
@@ -25,7 +26,7 @@ const EntityAssociationsPanel = ({
   const intro = (
     <div
       role="note"
-      className="rounded-lg border border-primary-200 dark:border-primary-500/30 bg-primary-50 dark:bg-primary-500/10 px-3 py-2 text-xs text-stone-700 dark:text-neutral-200">
+      className="rounded-lg border border-primary-200 dark:border-primary-500/30 bg-primary-50 dark:bg-primary-500/10 px-3 py-2 text-xs text-content-secondary">
       <p className="font-medium mb-1">{t('entityAssociations.title')}</p>
       <p>{t('entityAssociations.intro')}</p>
     </div>
@@ -44,14 +45,14 @@ const EntityAssociationsPanel = ({
             {[0, 1].map(i => (
               <div
                 key={i}
-                className="animate-pulse rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 h-16"
+                className="animate-pulse rounded-lg border border-line bg-surface-muted h-16"
               />
             ))}
           </div>
           {[0, 1, 2, 3].map(i => (
             <div
               key={i}
-              className="animate-pulse rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 h-10"
+              className="animate-pulse rounded-lg border border-line bg-surface-muted h-10"
             />
           ))}
         </div>
@@ -68,12 +69,9 @@ const EntityAssociationsPanel = ({
             {t('entityAssociations.errorPrefix')} {error}
           </p>
           {onRetry && (
-            <button
-              type="button"
-              onClick={onRetry}
-              className="mt-2 rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-600">
+            <Button variant="primary" size="sm" onClick={onRetry} className="mt-2">
               {t('entityAssociations.retry')}
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -85,12 +83,10 @@ const EntityAssociationsPanel = ({
       <div className="space-y-4">
         {intro}
         <div className="py-8 text-center">
-          <h3 className="text-sm font-semibold text-stone-700 dark:text-neutral-200">
+          <h3 className="text-sm font-semibold text-content-secondary">
             {t('entityAssociations.empty')}
           </h3>
-          <p className="mt-1 text-xs text-stone-500 dark:text-neutral-400">
-            {t('entityAssociations.emptyHint')}
-          </p>
+          <p className="mt-1 text-xs text-content-muted">{t('entityAssociations.emptyHint')}</p>
         </div>
       </div>
     );
@@ -106,15 +102,11 @@ const EntityAssociationsPanel = ({
           { label: t('entityAssociations.metricEntities'), value: report.entityCount },
           { label: t('entityAssociations.metricPairs'), value: report.pairCount },
         ].map(tile => (
-          <div
-            key={tile.label}
-            className="rounded-lg border border-stone-200 dark:border-neutral-800 p-3">
-            <div className="text-[10px] uppercase tracking-wider text-stone-400 dark:text-neutral-500">
+          <div key={tile.label} className="rounded-lg border border-line p-3">
+            <div className="text-[10px] uppercase tracking-wider text-content-faint">
               {tile.label}
             </div>
-            <div className="text-lg font-semibold tabular-nums text-stone-900 dark:text-neutral-100">
-              {tile.value}
-            </div>
+            <div className="text-lg font-semibold tabular-nums text-content">{tile.value}</div>
           </div>
         ))}
       </div>
@@ -123,21 +115,21 @@ const EntityAssociationsPanel = ({
       <section aria-labelledby="entity-associations-heading" className="space-y-1">
         <h3
           id="entity-associations-heading"
-          className="text-xs font-semibold uppercase tracking-wider text-stone-500 dark:text-neutral-400">
+          className="text-xs font-semibold uppercase tracking-wider text-content-muted">
           {t('entityAssociations.rankedHeading')}
         </h3>
         <ul className="space-y-1.5">
           {report.pairs.map(pair => (
             <li
               key={JSON.stringify([pair.a, pair.b])}
-              className="rounded-lg border border-stone-200 dark:border-neutral-800 px-3 py-2"
+              className="rounded-lg border border-line px-3 py-2"
               title={t('entityAssociations.pairTitle')
                 .replace('{jaccard}', String(pct(pair.jaccard)))
                 .replace('{shared}', String(pair.sharedCount))
                 .replace('{union}', String(pair.unionCount))}>
               <div className="flex items-center justify-between gap-2">
-                <p className="min-w-0 text-sm text-stone-800 dark:text-neutral-100 break-words">
-                  {pair.a} <span className="text-stone-400 dark:text-neutral-500">~</span> {pair.b}
+                <p className="min-w-0 text-sm text-content break-words">
+                  {pair.a} <span className="text-content-faint">~</span> {pair.b}
                 </p>
                 <span
                   title={
@@ -147,7 +139,7 @@ const EntityAssociationsPanel = ({
                   }
                   className={`shrink-0 inline-flex items-center rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider ${
                     pair.directlyLinked
-                      ? 'bg-stone-100 dark:bg-neutral-800 text-stone-500 dark:text-neutral-400'
+                      ? 'bg-surface-subtle text-content-muted'
                       : 'bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300'
                   }`}>
                   {pair.directlyLinked
@@ -156,16 +148,16 @@ const EntityAssociationsPanel = ({
                 </span>
               </div>
               <div className="mt-1 flex items-center gap-2 text-[11px] tabular-nums">
-                <div className="flex-1 h-2 rounded bg-stone-100 dark:bg-neutral-800 overflow-hidden">
+                <div className="flex-1 h-2 rounded bg-surface-subtle overflow-hidden">
                   <div
                     className="h-full bg-primary-400/70"
                     style={{ width: `${pct(pair.jaccard)}%` }}
                   />
                 </div>
-                <span className="w-10 shrink-0 text-right text-stone-500 dark:text-neutral-400">
+                <span className="w-10 shrink-0 text-right text-content-muted">
                   {pct(pair.jaccard)}%
                 </span>
-                <span className="w-20 shrink-0 text-right text-stone-400 dark:text-neutral-500">
+                <span className="w-20 shrink-0 text-right text-content-faint">
                   {t('entityAssociations.sharedLabel').replace(
                     '{shared}',
                     String(pair.sharedCount)
@@ -176,7 +168,7 @@ const EntityAssociationsPanel = ({
           ))}
         </ul>
         {report.truncated && (
-          <p className="text-center text-xs text-stone-400 dark:text-neutral-500">
+          <p className="text-center text-xs text-content-faint">
             {t('entityAssociations.truncated')
               .replace('{shown}', String(report.pairs.length))
               .replace('{total}', String(report.pairCount))}

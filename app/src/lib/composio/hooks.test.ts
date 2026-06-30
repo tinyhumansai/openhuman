@@ -8,8 +8,9 @@ const mockOpenhumanComposioGetMode = vi.fn();
 let sessionToken = 'jwt-abc';
 
 vi.mock('./composioApi', () => ({
-  listToolkits: () => mockListToolkits(),
-  listConnections: () => mockListConnections(),
+  COMPOSIO_FETCH_TIMEOUT_MS: 8_000,
+  listToolkits: (options?: { timeoutMs?: number }) => mockListToolkits(options),
+  listConnections: (options?: { timeoutMs?: number }) => mockListConnections(options),
   listAgentReadyToolkits: () => mockListAgentReadyToolkits(),
 }));
 
@@ -29,6 +30,9 @@ describe('useComposioIntegrations', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    // The toolkit catalog is now cached in localStorage (24h TTL); clear it
+    // so each test exercises the mocked fetch instead of a prior test's cache.
+    window.localStorage.clear();
     sessionToken = 'jwt-abc';
     mockOpenhumanComposioGetMode.mockResolvedValue({
       result: { mode: 'backend', api_key_set: true },
@@ -52,6 +56,46 @@ describe('useComposioIntegrations', () => {
     expect(result.current.connectionByToolkit.size).toBe(0);
     expect(result.current.connectionsByToolkit.size).toBe(0);
     expect(result.current.error).toBe('backend connection listing failed');
+  });
+
+  it('exposes the dynamic catalog keyed by canonical slug', async () => {
+    const { useComposioIntegrations } = await import('./hooks');
+
+    mockListToolkits.mockResolvedValue({
+      toolkits: ['gmail', 'googlecalendar'],
+      catalog: [
+        { slug: 'gmail', name: 'Gmail', logo: 'https://x/gmail.png', enabled: true },
+        // Alias slug must be canonicalized to googlecalendar.
+        { slug: 'google_calendar', name: 'Google Calendar', enabled: true },
+      ],
+    });
+    mockListConnections.mockResolvedValue({ connections: [] });
+
+    const { result } = renderHook(() => useComposioIntegrations(0));
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    expect(result.current.catalogByToolkit.get('gmail')?.name).toBe('Gmail');
+    expect(result.current.catalogByToolkit.get('gmail')?.logo).toBe('https://x/gmail.png');
+    expect(result.current.catalogByToolkit.get('googlecalendar')?.name).toBe('Google Calendar');
+  });
+
+  it('leaves the catalog empty when the core omits it (back-compat)', async () => {
+    const { useComposioIntegrations } = await import('./hooks');
+
+    mockListToolkits.mockResolvedValue({ toolkits: ['gmail'] });
+    mockListConnections.mockResolvedValue({ connections: [] });
+
+    const { result } = renderHook(() => useComposioIntegrations(0));
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    expect(result.current.toolkits).toEqual(['gmail']);
+    expect(result.current.catalogByToolkit.size).toBe(0);
   });
 
   it('groups connections by toolkit, sorts by status then createdAt', async () => {

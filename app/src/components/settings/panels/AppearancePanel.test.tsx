@@ -57,4 +57,16 @@ describe('<AppearancePanel /> font size', () => {
 
     expect(store.getState().theme.agentMessageViewMode).toBe('text');
   });
+
+  it('toggles hide-agent-thinking on and off', () => {
+    const { getByRole, store } = renderPanel('medium');
+    const toggle = getByRole('switch', { name: /settings\.appearance\.hideAgentInsights/ });
+
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    fireEvent.click(toggle);
+    expect(store.getState().theme.hideAgentInsights).toBe(true);
+
+    fireEvent.click(toggle);
+    expect(store.getState().theme.hideAgentInsights).toBe(false);
+  });
 });

@@ -272,6 +272,7 @@ mod tests {
                 extra_content: None,
             }],
             reasoning_content: None,
+            extra_metadata: None,
         }
     }
 

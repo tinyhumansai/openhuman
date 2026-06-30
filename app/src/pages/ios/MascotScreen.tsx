@@ -34,6 +34,7 @@ import {
   stopListening,
 } from 'tauri-plugin-ptt-api';
 
+import Button from '../../components/ui/Button';
 import { RiveMascot } from '../../features/human/Mascot';
 import { useHumanMascot } from '../../features/human/useHumanMascot';
 import { useT } from '../../lib/i18n/I18nContext';
@@ -93,7 +94,7 @@ const MascotChatTranscript: FC<TranscriptProps> = ({ messages }) => {
               ${
                 msg.role === 'user'
                   ? 'bg-[#4A83DD] text-white rounded-br-sm'
-                  : 'bg-white/10 text-white/90 rounded-bl-sm'
+                  : 'bg-surface/10 text-white/90 rounded-bl-sm'
               }
               ${msg.streaming ? 'animate-pulse' : ''}`}>
             {msg.text}
@@ -143,7 +144,7 @@ const PTTButton: FC<PTTButtonProps> = ({ active, partialText, ariaLabel, onDown,
                    ${
                      active
                        ? 'bg-[#4A83DD] border-[#4A83DD] scale-110'
-                       : 'bg-white/10 border-white/20 opacity-80'
+                       : 'bg-surface/10 border-white/20 opacity-80'
                    }`}>
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4z" fill="white" />
@@ -419,13 +420,9 @@ export const MascotScreen: FC = () => {
             {pairedLabel}
           </span>
         </div>
-        <button
-          type="button"
-          onClick={handleDisconnect}
-          className="px-3 py-1.5 rounded-lg text-xs text-red-400 border border-red-400/30
-                     active:opacity-70 transition-opacity">
+        <Button variant="secondary" tone="danger" size="sm" onClick={handleDisconnect}>
           {t('iosMascot.disconnect')}
-        </button>
+        </Button>
       </div>
 
       {/* Mascot canvas */}
@@ -460,7 +457,7 @@ export const MascotScreen: FC = () => {
             onChange={e => setInputText(e.target.value)}
             disabled={isSending}
             placeholder={isSending ? t('iosMascot.thinking') : t('iosMascot.typeMessage')}
-            className="flex-1 bg-white/10 text-white placeholder-white/30 rounded-xl
+            className="flex-1 bg-surface/10 text-white placeholder-white/30 rounded-xl
                        px-4 py-3 text-sm outline-none border border-white/10
                        focus:border-[#4A83DD]/60 transition-colors
                        disabled:opacity-50"

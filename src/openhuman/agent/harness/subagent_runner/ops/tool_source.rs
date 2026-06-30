@@ -30,6 +30,7 @@ pub(super) struct SubagentToolSource<'a> {
     pub(super) handoff_cache: Option<&'a ResultHandoffCache>,
     pub(super) policy: crate::openhuman::tools::policy::DefaultToolPolicy,
     pub(super) agent_id: String,
+    pub(super) tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression,
 }
 
 #[async_trait::async_trait]
@@ -70,8 +71,18 @@ impl super::super::super::engine::ToolSource for SubagentToolSource<'_> {
                 "[subagent_runner] tool not in allowlist for this sub-agent"
             );
             let iteration_u32 = (iteration + 1) as u32;
+            // Not-in-allowlist reject path: no resolved tool to label, so defer
+            // to the client formatter. (Allowed sub-agent calls run through the
+            // shared `run_one_tool`, which computes the label there.)
             progress
-                .tool_started(progress_call_id, &call.name, &call.arguments, iteration_u32)
+                .tool_started(
+                    progress_call_id,
+                    &call.name,
+                    &call.arguments,
+                    iteration_u32,
+                    None,
+                    None,
+                )
                 .await;
             let mut available: Vec<&str> = self.allowed_names.iter().map(|s| s.as_str()).collect();
             if let Some(resolver) = self.lazy_resolver.as_ref() {
@@ -86,14 +97,7 @@ impl super::super::super::engine::ToolSource for SubagentToolSource<'_> {
                 available.join(", ")
             );
             progress
-                .tool_completed(
-                    progress_call_id,
-                    &call.name,
-                    false,
-                    text.chars().count(),
-                    0,
-                    iteration_u32,
-                )
+                .tool_completed(progress_call_id, &call.name, false, &text, 0, iteration_u32)
                 .await;
             return super::super::super::engine::ToolRunResult {
                 text,
@@ -115,6 +119,7 @@ impl super::super::super::engine::ToolSource for SubagentToolSource<'_> {
             &self.policy,
             None,
             progress_call_id,
+            self.tokenjuice_compression,
         )
         .await;
 

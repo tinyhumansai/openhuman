@@ -9,6 +9,7 @@ import {
   openhumanClaudeCodeSetFullAccess,
   openhumanClaudeCodeSettings,
 } from '../../../../utils/tauriCommands/config';
+import Button from '../../../ui/Button';
 
 /**
  * Claude Code CLI connect control — the peer of the Codex connect button.
@@ -83,14 +84,14 @@ export function ClaudeCodeConnect({
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <button
-        type="button"
+      <Button
+        variant="secondary"
+        size="sm"
         onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-2 rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs font-medium text-stone-900 transition-colors hover:bg-stone-50 disabled:cursor-wait disabled:opacity-60 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800">
-        <LuKeyRound className="h-3.5 w-3.5" />
+        leadingIcon={<LuKeyRound className="h-3.5 w-3.5" />}>
         {t('settings.ai.claudeCode.button')}
-      </button>
-      <span className="text-xs text-stone-500 dark:text-neutral-400">
+      </Button>
+      <span className="text-xs text-content-muted">
         <InlineSummary connected={connected} auth={shownAuth} loading={authLoading} />
       </span>
 
@@ -264,37 +265,34 @@ function ClaudeCodeModal({
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
       onClick={onClose}>
       <div
-        className="w-full max-w-md rounded-2xl border border-stone-200 bg-white p-6 shadow-soft dark:border-neutral-800 dark:bg-neutral-900"
+        className="w-full max-w-md rounded-2xl border border-line bg-surface p-6 shadow-soft"
         onClick={e => e.stopPropagation()}>
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
-            <h3 className="text-base font-semibold text-stone-900 dark:text-neutral-100">
+            <h3 className="text-base font-semibold text-content">
               {t('settings.ai.claudeCode.modalTitle')}
             </h3>
-            <p className="mt-1 max-w-sm text-xs leading-5 text-stone-500 dark:text-neutral-400">
+            <p className="mt-1 max-w-sm text-xs leading-5 text-content-muted">
               {t('settings.ai.claudeCode.modalDescription')}
             </p>
           </div>
-          <button
-            type="button"
+          <Button
+            iconOnly
+            variant="tertiary"
+            size="xs"
             onClick={onClose}
-            aria-label={t('settings.ai.claudeCode.close')}
-            className="rounded-md p-1 text-stone-400 hover:bg-stone-100 hover:text-stone-700 dark:text-neutral-500 dark:hover:bg-neutral-800 dark:hover:text-neutral-200">
+            aria-label={t('settings.ai.claudeCode.close')}>
             <LuX className="h-4 w-4" />
-          </button>
+          </Button>
         </div>
 
         {/* Connection */}
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 px-3 py-2 dark:border-neutral-800">
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-line px-3 py-2">
           <div className="text-xs">
-            <div className="font-medium text-stone-900 dark:text-neutral-100">
-              {t('settings.ai.claudeCode.connection')}
-            </div>
+            <div className="font-medium text-content">{t('settings.ai.claudeCode.connection')}</div>
             <div
               className={
-                connected
-                  ? 'text-emerald-600 dark:text-emerald-400'
-                  : 'text-stone-500 dark:text-neutral-400'
+                connected ? 'text-emerald-600 dark:text-emerald-400' : 'text-content-muted'
               }>
               {connected
                 ? t('settings.ai.claudeCode.enabled')
@@ -302,15 +300,16 @@ function ClaudeCodeModal({
             </div>
           </div>
           {connected ? (
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              tone="danger"
+              size="sm"
               onClick={() => void onDisconnect()}
-              disabled={busy}
-              className="rounded-md border border-rose-300 px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-500/40 dark:text-rose-400 dark:hover:bg-rose-500/10">
+              disabled={busy}>
               {busy
                 ? t('settings.ai.claudeCode.disconnecting')
                 : t('settings.ai.claudeCode.disconnect')}
-            </button>
+            </Button>
           ) : (
             <button
               type="button"
@@ -323,35 +322,35 @@ function ClaudeCodeModal({
         </div>
 
         {/* Authentication */}
-        <div className="mt-3 rounded-lg border border-stone-200 px-3 py-2 dark:border-neutral-800">
+        <div className="mt-3 rounded-lg border border-line px-3 py-2">
           <div className="mb-1.5 flex items-center justify-between">
-            <span className="text-xs font-medium text-stone-900 dark:text-neutral-100">
+            <span className="text-xs font-medium text-content">
               {t('settings.ai.claudeCode.authentication')}
             </span>
-            <button
-              type="button"
+            <Button
+              variant="tertiary"
+              size="xs"
               onClick={() => void onRecheck()}
-              disabled={authLoading}
-              className="text-xs text-neutral-500 hover:text-neutral-900 disabled:opacity-50 dark:text-neutral-400 dark:hover:text-neutral-100">
+              disabled={authLoading}>
               {authLoading
                 ? t('settings.ai.claudeCode.checking')
                 : t('settings.ai.claudeCode.recheck')}
-            </button>
+            </Button>
           </div>
           <AuthDetail auth={auth} loading={authLoading} />
           <div className="mt-2">
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => void launchLogin()}
-              disabled={launching}
-              className="rounded-md border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800">
+              disabled={launching}>
               {launching
                 ? t('settings.ai.claudeCode.openingTerminal')
                 : auth?.source === 'none'
                   ? t('settings.ai.claudeCode.signIn')
                   : t('settings.ai.claudeCode.reconnect')}
-            </button>
-            <p className="mt-1.5 text-[11px] text-stone-500 dark:text-neutral-400">
+            </Button>
+            <p className="mt-1.5 text-[11px] text-content-muted">
               {t('settings.ai.claudeCode.loginHint')}
             </p>
             {launchError && (
@@ -363,13 +362,13 @@ function ClaudeCodeModal({
         </div>
 
         {/* Permissions — full access vs. the default acceptEdits posture. */}
-        <div className="mt-3 rounded-lg border border-stone-200 px-3 py-2 dark:border-neutral-800">
+        <div className="mt-3 rounded-lg border border-line px-3 py-2">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <div className="text-xs font-medium text-stone-900 dark:text-neutral-100">
+              <div className="text-xs font-medium text-content">
                 {t('settings.ai.claudeCode.fullAccess')}
               </div>
-              <p className="mt-0.5 text-[11px] leading-4 text-stone-500 dark:text-neutral-400">
+              <p className="mt-0.5 text-[11px] leading-4 text-content-muted">
                 {fullAccess
                   ? t('settings.ai.claudeCode.fullAccessOn')
                   : t('settings.ai.claudeCode.fullAccessOff')}
@@ -383,18 +382,16 @@ function ClaudeCodeModal({
               disabled={fullAccess === null || savingAccess}
               onClick={() => void toggleFullAccess(!fullAccess)}
               className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-50 ${
-                fullAccess
-                  ? 'bg-emerald-500 dark:bg-emerald-500'
-                  : 'bg-stone-300 dark:bg-neutral-700'
+                fullAccess ? 'bg-emerald-500 dark:bg-emerald-500' : 'bg-surface-strong'
               }`}>
               <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                className={`inline-block h-4 w-4 transform rounded-full bg-surface shadow transition-transform ${
                   fullAccess ? 'translate-x-4' : 'translate-x-0.5'
                 }`}
               />
             </button>
           </div>
-          <p className="mt-1.5 text-[11px] leading-4 text-stone-400 dark:text-neutral-500">
+          <p className="mt-1.5 text-[11px] leading-4 text-content-faint">
             {isMac()
               ? t('settings.ai.claudeCode.sandboxNoteMac')
               : t('settings.ai.claudeCode.sandboxNoteOther')}
@@ -416,7 +413,7 @@ function AuthDetail({ auth, loading }: { auth: ClaudeCodeAuthStatus | null; load
   const { t } = useT();
   if (!auth) {
     return (
-      <p className="text-xs text-neutral-500 dark:text-neutral-400">
+      <p className="text-xs text-content-muted">
         {loading
           ? t('settings.ai.claudeCode.checkingSignIn')
           : t('settings.ai.claudeCode.enableToCheck')}

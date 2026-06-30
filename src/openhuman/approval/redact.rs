@@ -20,9 +20,14 @@ use serde_json::{Map, Value};
 const SENSITIVE_KEYS: &[&str] = &[
     "body",
     "content",
+    "description",
+    "plaintext",
     "text",
     "message",
     "messages",
+    "coverletter",
+    "note",
+    "reason",
     "html",
     "html_body",
     "snippet",
@@ -44,6 +49,11 @@ const SENSITIVE_KEYS: &[&str] = &[
     "first_name",
     "last_name",
     "full_name",
+    "displayname",
+    "bio",
+    "avatar",
+    "links",
+    "tags",
     "channel_name",
     "user",
     "user_id",
@@ -58,6 +68,7 @@ const SENSITIVE_KEYS: &[&str] = &[
     "password",
     "authorization",
     "auth",
+    "code",
 ];
 
 /// Produce a redacted clone of `args` suitable for persistence /
@@ -172,6 +183,15 @@ fn match_home_prefix(s: &str) -> Option<usize> {
 /// the user knows *what* the agent wants to do without exposing the
 /// content.
 pub fn summarize_action(tool_name: &str, args: &Value) -> String {
+    // Friendly, human-readable summaries for tools whose approval card reads
+    // better as a sentence than a `key=value` dump (#3993). `entry_id` is a
+    // public catalog slug, not PII, so it is safe to surface verbatim.
+    if tool_name == "skill_registry_install" {
+        if let Some(id) = args.get("entry_id").and_then(|v| v.as_str()) {
+            return format!("Install the \"{id}\" skill to complete your task");
+        }
+    }
+
     let safe_fields: &[&str] = &[
         "action",
         "tool_slug",
@@ -219,6 +239,116 @@ mod tests {
             "got {:?}",
             red["body"]
         );
+    }
+
+    #[test]
+    fn plaintext_field_is_redacted_for_encrypted_dm_tools() {
+        let args = json!({
+            "recipient": "@alice",
+            "plaintext": "meet me at the usual spot",
+            "associatedData": { "topic": "tinyplace dm" }
+        });
+        let red = redact_args(&args);
+
+        assert!(
+            red["plaintext"]
+                .as_str()
+                .unwrap()
+                .starts_with("<redacted: string ("),
+            "got {:?}",
+            red["plaintext"]
+        );
+        assert!(
+            red["recipient"]
+                .as_str()
+                .unwrap()
+                .starts_with("<redacted: string ("),
+            "got {:?}",
+            red["recipient"]
+        );
+        assert_eq!(red["associatedData"]["topic"], "tinyplace dm");
+    }
+
+    #[test]
+    fn email_verification_code_is_redacted() {
+        let args = json!({
+            "cryptoId": "did:example:alice",
+            "email": "alice@example.test",
+            "code": "123456",
+        });
+        let red = redact_args(&args);
+
+        assert_eq!(red["cryptoId"], "did:example:alice");
+        assert!(
+            red["email"]
+                .as_str()
+                .unwrap()
+                .starts_with("<redacted: string ("),
+            "got {:?}",
+            red["email"]
+        );
+        assert!(
+            red["code"]
+                .as_str()
+                .unwrap()
+                .starts_with("<redacted: string ("),
+            "got {:?}",
+            red["code"]
+        );
+    }
+
+    #[test]
+    fn tinyplace_write_content_fields_are_redacted() {
+        let args = json!({
+            "title": "Build my thing",
+            "description": "Long private task brief",
+            "coverLetter": "I can do this because...",
+            "note": "Submission context",
+            "reason": "Dispute details",
+            "amount": "5",
+            "asset": "USDC"
+        });
+        let red = redact_args(&args);
+
+        for key in ["title", "description", "coverLetter", "note", "reason"] {
+            assert!(
+                red[key]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("<redacted: string ("),
+                "{key} was not redacted: {:?}",
+                red[key]
+            );
+        }
+        assert_eq!(red["amount"], "5");
+        assert_eq!(red["asset"], "USDC");
+    }
+
+    #[test]
+    fn tinyplace_profile_update_fields_are_redacted() {
+        let args = json!({
+            "cryptoId": "did:example:alice",
+            "update": {
+                "displayName": "Alice Example",
+                "bio": "Private bio",
+                "avatar": "https://example.test/avatar.png",
+                "links": ["https://example.test/private"],
+                "tags": ["private-tag"],
+                "actorType": "agent"
+            }
+        });
+        let red = redact_args(&args);
+        let update = red["update"].as_object().unwrap();
+
+        assert_eq!(red["cryptoId"], "did:example:alice");
+        for key in ["displayName", "bio", "avatar", "links", "tags"] {
+            assert!(
+                update[key].as_str().unwrap().starts_with("<redacted:"),
+                "{key} was not redacted: {:?}",
+                update[key]
+            );
+        }
+        assert_eq!(update["actorType"], "agent");
     }
 
     #[test]
@@ -321,6 +451,38 @@ mod tests {
         let args = json!({});
         let summary = summarize_action("pushover", &args);
         assert!(summary.contains("pushover"));
+        assert!(summary.contains("bytes"));
+    }
+
+    #[test]
+    fn summarize_action_skill_install_is_human_readable() {
+        let args = json!({ "entry_id": "notion" });
+        let summary = summarize_action("skill_registry_install", &args);
+        // Friendly sentence, not a key=value/byte dump (#3993).
+        assert_eq!(
+            summary,
+            "Install the \"notion\" skill to complete your task"
+        );
+        assert!(!summary.contains("bytes"));
+    }
+
+    #[test]
+    fn redact_preserves_toolkit_slug_for_connect_card() {
+        // The inline connect card (#3993) reads `toolkit` out of the redacted
+        // args to drive the OAuth handoff, so a non-sensitive slug must survive
+        // redaction verbatim while real PII alongside it is still scrubbed.
+        let args = json!({ "toolkit": "gmail", "body": "secret message" });
+        let redacted = redact_args(&args);
+        assert_eq!(redacted["toolkit"], json!("gmail"));
+        assert_ne!(redacted["body"], json!("secret message"));
+    }
+
+    #[test]
+    fn summarize_action_skill_install_without_entry_id_falls_back() {
+        let args = json!({});
+        let summary = summarize_action("skill_registry_install", &args);
+        // Missing slug → generic fallback so we never panic or mislabel.
+        assert!(summary.contains("skill_registry_install"));
         assert!(summary.contains("bytes"));
     }
 }

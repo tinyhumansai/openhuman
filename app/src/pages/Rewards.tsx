@@ -1,12 +1,13 @@
 import createDebug from 'debug';
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import EmptyStateCard from '../components/EmptyStateCard';
-import PillTabBar from '../components/PillTabBar';
+import ChipTabs from '../components/layout/ChipTabs';
 import RewardsCommunityTab from '../components/rewards/RewardsCommunityTab';
 import RewardsRedeemTab from '../components/rewards/RewardsRedeemTab';
 import RewardsReferralsTab from '../components/rewards/RewardsReferralsTab';
+import { settingsNavState } from '../components/settings/modal/settingsOverlay';
 import { useT } from '../lib/i18n/I18nContext';
 import { useCoreState } from '../providers/CoreStateProvider';
 import { rewardsApi } from '../services/api/rewardsApi';
@@ -30,6 +31,7 @@ function errorMessage(err: unknown): string {
 const Rewards = () => {
   const { t } = useT();
   const navigate = useNavigate();
+  const location = useLocation();
   const { snapshot: coreSnapshot } = useCoreState();
   const isLocalSession = isLocalSessionToken(coreSnapshot.sessionToken);
   const [selectedTab, setSelectedTab] = useState<RewardsTab>('rewards');
@@ -74,6 +76,22 @@ const Rewards = () => {
     };
   }, [isLocalSession, loadRewards]);
 
+  // After a Discord (or any) OAuth connect completes, the deep-link listener dispatches
+  // `oauth:success` — refresh the snapshot so the Discord connection / username updates live.
+  useEffect(() => {
+    if (isLocalSession) {
+      return;
+    }
+    const handleOAuthSuccess = () => {
+      log('oauth success event received; refreshing rewards snapshot');
+      void loadRewards();
+    };
+    window.addEventListener('oauth:success', handleOAuthSuccess);
+    return () => {
+      window.removeEventListener('oauth:success', handleOAuthSuccess);
+    };
+  }, [isLocalSession, loadRewards]);
+
   const handleTabChange = useCallback((next: RewardsTab) => {
     log('tab changed next=%s', next);
     setSelectedTab(next);
@@ -108,7 +126,7 @@ const Rewards = () => {
             title={t('rewards.title')}
             description={t('rewards.localUnavailable')}
             actionLabel={t('rewards.localUnavailableCta')}
-            onAction={() => navigate('/settings/account')}
+            onAction={() => navigate('/settings/account', settingsNavState(location))}
           />
         </div>
       </div>
@@ -118,15 +136,15 @@ const Rewards = () => {
   return (
     <div className="min-h-full px-4 pt-6 pb-10">
       <div className="mx-auto max-w-2xl space-y-4">
-        <PillTabBar
+        <ChipTabs<RewardsTab>
           items={[
-            { label: t('rewards.referrals'), value: 'referrals' },
-            { label: t('rewards.title'), value: 'rewards' },
-            { label: t('rewards.coupons'), value: 'redeem' },
+            { id: 'referrals', label: t('rewards.referrals') },
+            { id: 'rewards', label: t('rewards.title') },
+            { id: 'redeem', label: t('rewards.coupons') },
           ]}
-          selected={selectedTab}
+          value={selectedTab}
           onChange={handleTabChange}
-          activeClassName="border-primary-600 bg-primary-600 text-white"
+          className="flex flex-wrap gap-2 pb-1"
         />
 
         {selectedTab === 'referrals' ? (

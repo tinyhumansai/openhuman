@@ -84,16 +84,17 @@ const Welcome = () => {
   return (
     <div className="min-h-full flex flex-col items-center justify-center p-4">
       <div className="max-w-md w-full">
-        <div className="bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 p-8 animate-fade-up">
+        <div className="bg-surface rounded-2xl shadow-soft border border-line p-8 animate-fade-up">
           <div className="flex items-center justify-between mb-4">
             <div className="w-9" aria-hidden="true" />
             <div className="w-9" aria-hidden="true" />
-            <button
-              type="button"
+            <Button
+              iconOnly
+              variant="tertiary"
               onClick={toggleTheme}
               aria-label={isDark ? t('home.themeToggle.toLight') : t('home.themeToggle.toDark')}
               title={isDark ? t('home.themeToggle.toLight') : t('home.themeToggle.toDark')}
-              className="p-2 rounded-full text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 hover:bg-stone-100 dark:hover:bg-neutral-800/60 transition-colors">
+              className="rounded-full">
               {isDark ? (
                 <svg
                   className="w-5 h-5"
@@ -123,7 +124,7 @@ const Welcome = () => {
                   />
                 </svg>
               )}
-            </button>
+            </Button>
           </div>
           <div className="flex justify-center mb-6">
             <img
@@ -133,11 +134,9 @@ const Welcome = () => {
             />
           </div>
 
-          <h1 className="text-2xl font-bold text-stone-900 dark:text-neutral-100 text-center mb-2">
-            {t('welcome.title')}
-          </h1>
+          <h1 className="text-2xl font-bold text-content text-center mb-2">{t('welcome.title')}</h1>
 
-          <p className="text-sm text-stone-500 dark:text-neutral-400 text-center mb-6 leading-relaxed">
+          <p className="text-sm text-content-muted text-center mb-6 leading-relaxed">
             {t('welcome.subtitle')}
           </p>
 
@@ -148,11 +147,13 @@ const Welcome = () => {
               <p>{errorMessage}</p>
               {requiresAppDataReset ? (
                 <div className="mt-3 space-y-2">
-                  <button
-                    type="button"
+                  <Button
+                    variant="primary"
+                    tone="danger"
+                    size="sm"
                     onClick={handleClearAppData}
                     disabled={isClearingAppData}
-                    className="w-full rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60">
+                    className="w-full">
                     {isClearingAppData ? (
                       <span className="flex items-center justify-center gap-2">
                         <span className="h-3 w-3 animate-spin rounded-full border border-white border-t-transparent" />
@@ -161,7 +162,7 @@ const Welcome = () => {
                     ) : (
                       t('welcome.clearAppDataAndRestart')
                     )}
-                  </button>
+                  </Button>
                   <p className="text-[11px] leading-4 text-red-600/80">
                     {t('welcome.clearAppDataWarning')}
                   </p>
@@ -179,10 +180,8 @@ const Welcome = () => {
               aria-live="polite"
               aria-atomic="true"
               className="mb-5 flex flex-col items-center justify-center gap-3 py-2">
-              <div className="h-6 w-6 animate-spin rounded-full border-2 border-stone-300 dark:border-neutral-700 border-t-primary-500" />
-              <p className="text-sm font-medium text-stone-700 dark:text-neutral-200">
-                {t('welcome.signingIn')}
-              </p>
+              <div className="h-6 w-6 animate-spin rounded-full border-2 border-line-strong border-t-primary-500" />
+              <p className="text-sm font-medium text-content-secondary">{t('welcome.signingIn')}</p>
             </div>
           ) : (
             <>
@@ -198,7 +197,7 @@ const Welcome = () => {
                     />
                   ))}
               </div>
-              <p className="mt-5 text-center text-[11px] leading-5 text-stone-500 dark:text-neutral-500">
+              <p className="mt-5 text-center text-[11px] leading-5 text-content-muted dark:text-content-faint">
                 {t('welcome.termsIntro')}{' '}
                 <a
                   href={TERMS_OF_USE_URL}
@@ -208,7 +207,7 @@ const Welcome = () => {
                     event.preventDefault();
                     void openUrl(TERMS_OF_USE_URL);
                   }}
-                  className="font-medium text-stone-700 underline underline-offset-2 hover:text-stone-900 dark:text-neutral-300 dark:hover:text-neutral-100">
+                  className="font-medium text-content-secondary underline underline-offset-2 hover:text-content">
                   {t('welcome.termsOfUse')}
                 </a>{' '}
                 {t('welcome.termsJoiner')}{' '}
@@ -220,7 +219,7 @@ const Welcome = () => {
                     event.preventDefault();
                     void openUrl(PRIVACY_POLICY_URL);
                   }}
-                  className="font-medium text-stone-700 underline underline-offset-2 hover:text-stone-900 dark:text-neutral-300 dark:hover:text-neutral-100">
+                  className="font-medium text-content-secondary underline underline-offset-2 hover:text-content">
                   {t('welcome.privacyPolicy')}
                 </a>
                 {t('welcome.termsOutro')}

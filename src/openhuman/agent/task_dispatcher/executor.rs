@@ -227,6 +227,9 @@ pub(super) async fn run_autonomous(
                     response,
                     prompt,
                     &[],
+                    // Background/cron turns don't surface in the chat footer; their
+                    // token/cost spend is still captured by the global cost tracker.
+                    None,
                 )
                 .await;
             }

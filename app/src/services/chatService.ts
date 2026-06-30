@@ -28,6 +28,15 @@ export interface ChatToolCallEvent {
    * this id for end-to-end reconciliation.
    */
   tool_call_id?: string;
+  /**
+   * Server-computed human label for this call (e.g. "Reading messages"),
+   * set by the Rust `Tool::display_label`. Present for dynamic
+   * Composio/MCP/integration tools the client can't label itself; absent
+   * for built-ins the client formatter already handles.
+   */
+  tool_display_label?: string;
+  /** Server-computed contextual detail (e.g. "steven@gmail.com"). */
+  tool_display_detail?: string;
 }
 
 export interface ChatToolResultEvent {
@@ -42,13 +51,47 @@ export interface ChatToolResultEvent {
   tool_call_id?: string;
 }
 
+/** One sub-agent's token/cost contribution within a turn (hover breakdown). */
+export interface SubagentUsageWire {
+  task_id: string;
+  agent_id: string;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+}
+
+/**
+ * Holistic token/cost/context totals for a completed turn, carried on
+ * `chat_done`. Every numeric is a turn total (parent agent + any sub-agents);
+ * `subagents` breaks the same spend down per child. `context_window` is `0` when
+ * the core couldn't resolve the model's window.
+ */
+export interface TurnUsageWire {
+  input_tokens: number;
+  output_tokens: number;
+  cached_input_tokens: number;
+  cost_usd: number;
+  context_window: number;
+  subagents?: SubagentUsageWire[];
+}
+
 export interface ChatDoneEvent {
   thread_id: string;
   request_id?: string;
   full_response: string;
   rounds_used: number;
-  total_input_tokens: number;
-  total_output_tokens: number;
+  /**
+   * @deprecated Superseded by {@link ChatDoneEvent.usage}. The core no longer
+   * populates these flat fields; read token totals from `usage` instead.
+   */
+  total_input_tokens?: number;
+  /** @deprecated See {@link ChatDoneEvent.total_input_tokens}. */
+  total_output_tokens?: number;
+  /**
+   * Holistic token/cost/context usage for the turn (parent + sub-agents).
+   * Absent on synthetic done events that never ran a real turn.
+   */
+  usage?: TurnUsageWire | null;
   /** Emoji reaction decided by the local model (if any). */
   reaction_emoji?: string | null;
   /** Total segments when the response was split into bubbles by Rust. */
@@ -99,10 +142,12 @@ export interface ChatErrorEvent {
     | 'cancelled'
     | 'rate_limited'
     | 'auth_error'
+    | 'session_expired'
     | 'provider_error'
     | 'context_overflow'
     | 'model_unavailable'
     | 'payload_too_large'
+    | 'provider_request_rejected'
     | 'budget_exhausted';
   round: number | null;
 }
@@ -135,6 +180,22 @@ export interface ChatApprovalRequestEvent {
    * exact command/target from this so the user sees precisely what will run.
    */
   args?: Record<string, unknown>;
+}
+
+/**
+ * Interactive plan-review request: the orchestrator parked the live turn on a
+ * thread-scoped plan the user must review before execution (Codex/Claude plan
+ * mode). Resolved via the `openhuman.plan_review_decide` RPC. Bridged from the
+ * Rust `DomainEvent::PlanReviewRequested` by the web channel.
+ */
+export interface ChatPlanReviewRequestEvent {
+  thread_id: string;
+  client_id?: string;
+  request_id: string;
+  /** One-line summary of the plan. */
+  message: string;
+  /** `{ steps: string[] }` — the ordered plan items shown in the review card. */
+  args?: { steps?: string[] };
 }
 
 /**
@@ -186,6 +247,26 @@ export interface ArtifactFailedEvent {
   workspace_dir: string;
   /** Producer-supplied failure reason, already truncated. */
   error: string;
+}
+
+/**
+ * Emitted when `artifacts::store::create_artifact` reserves an artifact
+ * row (status `Pending`), before the producer has written any bytes
+ * (#3162). The chat runtime upserts an `in_progress` snapshot keyed on
+ * `artifact_id` so the `ArtifactCard` shows a spinner the moment the
+ * tool starts, then swaps in place when the matching `artifact_ready`
+ * / `artifact_failed` arrives. Backend half shipped in #3277.
+ */
+export interface ArtifactPendingEvent {
+  thread_id: string;
+  client_id?: string;
+  artifact_id: string;
+  kind: ArtifactKind;
+  title: string;
+  /** Absolute workspace root — see {@link ArtifactReadyEvent.workspace_dir}. */
+  workspace_dir: string;
+  /** Relative path under `<workspace>/artifacts/`, e.g. `<uuid>/deck.pptx`. */
+  path: string;
 }
 
 /** Emitted when the agent turn begins (before the first LLM call). */
@@ -252,6 +333,16 @@ export interface SubagentProgressDetail {
   worker_thread_id?: string;
   /** Human-readable display name from the agent registry. */
   display_name?: string;
+  /**
+   * Absolute path to the worker's isolated `git worktree` checkout (on
+   * `subagent_completed`, when the worker ran with `isolation = "worktree"`).
+   * Drives the inline worktree row's open/diff/remove actions (#3376).
+   */
+  worktree_path?: string;
+  /** Files (relative to the worktree root) the worker changed (on `subagent_completed`). */
+  changed_files?: string[];
+  /** Whether the worker's worktree had uncommitted changes (on `subagent_completed`). */
+  dirty_status?: boolean;
 }
 
 /** Extended payload for `subagent_spawned`. */
@@ -289,6 +380,16 @@ export interface ChatSubagentToolCallEvent {
   skill_id: string;
   /** Provider-assigned tool call id. */
   tool_call_id: string;
+  /**
+   * Full arguments the sub-agent invoked the tool with, so the processing
+   * drawer can show *what exactly* the child did. Absent for tools called
+   * with no/`null` arguments.
+   */
+  args?: unknown;
+  /** Server-computed human label for this child call (from `Tool::display_label`). */
+  tool_display_label?: string;
+  /** Server-computed contextual detail (path / recipient / query). */
+  tool_display_detail?: string;
   subagent?: SubagentProgressDetail;
 }
 
@@ -301,7 +402,11 @@ export interface ChatSubagentToolResultEvent {
   skill_id: string;
   tool_call_id: string;
   success: boolean;
-  /** Stringified JSON `{ output_chars, elapsed_ms }` matching `tool_result`. */
+  /**
+   * The child tool's actual output text, so the drawer can show what came
+   * back. Size/timing still arrive via `subagent.output_chars` /
+   * `subagent.elapsed_ms`.
+   */
   output?: string;
   subagent?: SubagentProgressDetail;
 }
@@ -406,6 +511,8 @@ export interface ChatEventListeners {
   onTaskBoardUpdated?: (event: ChatTaskBoardUpdatedEvent) => void;
   onProactiveMessage?: (event: ProactiveMessageEvent) => void;
   onApprovalRequest?: (event: ChatApprovalRequestEvent) => void;
+  onPlanReviewRequest?: (event: ChatPlanReviewRequestEvent) => void;
+  onArtifactPending?: (event: ArtifactPendingEvent) => void;
   onArtifactReady?: (event: ArtifactReadyEvent) => void;
   onArtifactFailed?: (event: ArtifactFailedEvent) => void;
   onDone?: (event: ChatDoneEvent) => void;
@@ -441,6 +548,8 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
     taskBoardUpdated: 'task_board_updated',
     proactiveMessage: 'proactive_message',
     approvalRequest: 'approval_request',
+    planReviewRequest: 'plan_review_request',
+    artifactPending: 'artifact_pending',
     artifactReady: 'artifact_ready',
     artifactFailed: 'artifact_failed',
     done: 'chat_done',
@@ -762,6 +871,16 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
     handlers.push([EVENTS.approvalRequest, cb]);
   }
 
+  if (listeners.onPlanReviewRequest) {
+    const cb = (payload: unknown) => {
+      const e = payload as ChatPlanReviewRequestEvent;
+      chatLog('%s thread_id=%s request_id=%s', EVENTS.planReviewRequest, e.thread_id, e.request_id);
+      listeners.onPlanReviewRequest?.(e);
+    };
+    socket.on(EVENTS.planReviewRequest, cb);
+    handlers.push([EVENTS.planReviewRequest, cb]);
+  }
+
   // Artifact lifecycle events (#2779). The Rust subscriber in
   // `channels/providers/web::ArtifactSurfaceSubscriber` packs the
   // artifact payload into the generic `args` field of the wire
@@ -797,6 +916,51 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
         : {};
     return { thread_id: env.thread_id, client_id, args };
   };
+
+  if (listeners.onArtifactPending) {
+    const cb = (payload: unknown) => {
+      const env = readEnvelope(payload);
+      if (!env) {
+        chatLog('%s — skipping malformed payload (bad envelope)', EVENTS.artifactPending);
+        return;
+      }
+      const { args } = env;
+      // Pending carries no size/path-on-disk yet — only identity + title.
+      if (
+        !isNonEmptyString(args.artifact_id) ||
+        !isValidArtifactKind(args.kind) ||
+        !isNonEmptyString(args.title) ||
+        !isNonEmptyString(args.workspace_dir) ||
+        !isNonEmptyString(args.path)
+      ) {
+        chatLog(
+          '%s thread_id=%s — skipping malformed payload (bad args)',
+          EVENTS.artifactPending,
+          env.thread_id
+        );
+        return;
+      }
+      const event: ArtifactPendingEvent = {
+        thread_id: env.thread_id,
+        client_id: env.client_id,
+        artifact_id: args.artifact_id,
+        kind: args.kind,
+        title: args.title,
+        workspace_dir: args.workspace_dir,
+        path: args.path,
+      };
+      chatLog(
+        '%s thread_id=%s artifact_id=%s kind=%s',
+        EVENTS.artifactPending,
+        event.thread_id,
+        event.artifact_id,
+        event.kind
+      );
+      listeners.onArtifactPending?.(event);
+    };
+    socket.on(EVENTS.artifactPending, cb);
+    handlers.push([EVENTS.artifactPending, cb]);
+  }
 
   if (listeners.onArtifactReady) {
     const cb = (payload: unknown) => {
@@ -1036,6 +1200,47 @@ export async function chatCancel(threadId: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Clear the run-queue (steer/followup/collect lanes) for a thread via core RPC.
+ * Used when the user dismisses queued follow-ups so the backend drops them
+ * instead of dispatching them after the current turn. Returns the number of
+ * dropped messages on success, or `null` when the RPC fails — the caller must
+ * distinguish these: on failure the backend queue is still intact and WILL
+ * dispatch the follow-ups, so the UI must keep the pills rather than hide them.
+ */
+export async function chatClearQueue(threadId: string): Promise<number | null> {
+  try {
+    const res = await callCoreRpc<{ dropped?: number }>({
+      method: 'openhuman.channel_web_queue_clear',
+      params: { thread_id: threadId },
+    });
+    return res?.dropped ?? 0;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Re-dispatch the producing tool for a failed artifact, reusing the same
+ * artifact id so the card swaps in place (#3162). Drives the failed-card
+ * Retry button: the core reloads the persisted creation args and re-runs
+ * the producer, routing the fresh pending/ready/failed events back to
+ * this thread + socket. Returns `true` when the RPC was accepted; the
+ * card's live state is then driven by the socket events, not this call.
+ */
+export async function aiRegenerate(artifactId: string, threadId: string): Promise<boolean> {
+  const socket = socketService.getSocket();
+  const clientId = socket?.id;
+  if (!clientId) {
+    throw new Error('Socket not connected — no client ID for event routing');
+  }
+  await callCoreRpc({
+    method: 'openhuman.ai_regenerate',
+    params: { artifact_id: artifactId, thread_id: threadId, client_id: clientId },
+  });
+  return true;
 }
 
 export function useRustChat(): boolean {

@@ -23,10 +23,10 @@ const SettingsSwitch = ({
     'motion-reduce:transition-none ' +
     'disabled:cursor-not-allowed disabled:opacity-50';
 
-  const trackColor = checked ? 'bg-primary-500' : 'bg-neutral-300 dark:bg-neutral-600';
+  const trackColor = checked ? 'bg-primary-500' : 'bg-surface-strong';
 
   const thumbBase =
-    'pointer-events-none inline-block h-[18px] w-[18px] transform rounded-full bg-white shadow-sm ring-0 ' +
+    'pointer-events-none inline-block h-[18px] w-[18px] transform rounded-full bg-surface shadow-sm ring-0 ' +
     'transition-transform duration-200 ease-in-out motion-reduce:transition-none';
 
   const thumbPosition = checked ? 'translate-x-[16px]' : 'translate-x-0';

@@ -23,8 +23,13 @@ vi.mock('react-router-dom', async importOriginal => {
   return { ...actual, useNavigate: () => mockNavigate };
 });
 
+const mockNavigateToSettings = vi.fn();
 vi.mock('../hooks/useSettingsNavigation', () => ({
-  useSettingsNavigation: () => ({ navigateBack: vi.fn(), breadcrumbs: [] }),
+  useSettingsNavigation: () => ({
+    navigateBack: vi.fn(),
+    navigateToSettings: mockNavigateToSettings,
+    breadcrumbs: [],
+  }),
 }));
 
 vi.mock('../SettingsHeader', () => ({
@@ -94,7 +99,9 @@ describe('AgentsPanel', () => {
     renderPanel();
     await waitFor(() => expect(screen.getByText('Researcher')).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: /New agent/ }));
-    expect(mockNavigate).toHaveBeenCalledWith('/settings/agents/new');
+    // Routes through useSettingsNavigation so the desktop modal backdrop is
+    // preserved; the hook prefixes `/settings/`.
+    expect(mockNavigateToSettings).toHaveBeenCalledWith('agents/new');
   });
 
   it('only offers Edit for custom agents and navigates to the edit page', async () => {
@@ -105,7 +112,7 @@ describe('AgentsPanel', () => {
     const editButtons = screen.getAllByRole('button', { name: /Edit/ });
     expect(editButtons).toHaveLength(1);
     fireEvent.click(editButtons[0]);
-    expect(mockNavigate).toHaveBeenCalledWith('/settings/agents/edit/finance');
+    expect(mockNavigateToSettings).toHaveBeenCalledWith('agents/edit/finance');
   });
 
   it('shows an error when loading fails', async () => {

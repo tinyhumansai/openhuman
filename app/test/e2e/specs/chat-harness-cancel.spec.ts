@@ -60,14 +60,23 @@ const EARLY_PIECES = ['one ', 'two '];
 const LATE_PIECES = ['five ', 'six.'];
 
 /**
- * The composer's mid-stream cancel button is a plain `<button>` with the
- * localized text "Cancel" rendered inside the chat scroll region. We
- * disambiguate from any "Cancel" inside a modal by requiring the button
- * to live OUTSIDE a `[role="dialog"]`/`[aria-modal]` ancestor. This is
- * cancel-spec-specific so it doesn't move into `helpers/chat-harness.ts`.
+ * Click the composer's mid-stream cancel control. In the text composer the Send
+ * button morphs into a Stop button (`data-testid="stop-generation-button"`)
+ * while a turn streams. The voice/mic composer modes keep a footer "Cancel"
+ * `<button>` instead; we fall back to that, disambiguating from any "Cancel"
+ * inside a modal by requiring the button to live OUTSIDE a
+ * `[role="dialog"]`/`[aria-modal]` ancestor. Cancel-spec-specific, so it does
+ * not move into `helpers/chat-harness.ts`.
  */
 async function clickComposerCancel(): Promise<boolean> {
   return (await browser.execute(() => {
+    const stop = document.querySelector<HTMLButtonElement>(
+      '[data-testid="stop-generation-button"]'
+    );
+    if (stop) {
+      stop.click();
+      return true;
+    }
     const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('button'));
     for (const b of buttons) {
       if ((b.textContent ?? '').trim() !== 'Cancel') continue;

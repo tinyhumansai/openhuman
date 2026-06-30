@@ -17,6 +17,7 @@ import {
   listProviderModels,
   loadAISettings,
   loadLocalProviderSnapshot,
+  loadProviderAuthErrors,
   localProvider,
   modelRegistryVision,
   OPENAI_CODEX_OAUTH_MISSING_AUTH_URL,
@@ -311,6 +312,26 @@ describe('loadAISettings', () => {
     expect(settings.cloudProviders[0].has_api_key).toBe(false);
   });
 
+  it('parses per-tier credits_bypass into creditsBypass, defaulting to false (#3767)', async () => {
+    mockAuthListProviderCredentials.mockResolvedValue(makeAuthProfileResult([]));
+
+    // Absent in an older snapshot → both tiers conservative false.
+    mockOpenhumanGetClientConfig.mockResolvedValue(makeClientConfigResult({}));
+    expect((await loadAISettings()).creditsBypass).toEqual({ chat: false, reasoning: false });
+
+    // Per-tier: chat true, reasoning absent → chat true, reasoning false.
+    mockOpenhumanGetClientConfig.mockResolvedValue(
+      makeClientConfigResult({ credits_bypass: { chat: true } })
+    );
+    expect((await loadAISettings()).creditsBypass).toEqual({ chat: true, reasoning: false });
+
+    // Both present.
+    mockOpenhumanGetClientConfig.mockResolvedValue(
+      makeClientConfigResult({ credits_bypass: { chat: true, reasoning: true } })
+    );
+    expect((await loadAISettings()).creditsBypass).toEqual({ chat: true, reasoning: true });
+  });
+
   it('sets has_api_key=true when a matching provider:<slug> profile is stored', async () => {
     mockOpenhumanGetClientConfig.mockResolvedValue(
       makeClientConfigResult({
@@ -584,6 +605,7 @@ describe('saveAISettings', () => {
         reasoning: { kind: 'cloud', providerSlug: 'openai', model: 'gpt-4o' },
         agentic: { kind: 'openhuman' },
         coding: { kind: 'openhuman' },
+        vision: { kind: 'openhuman' },
         memory: { kind: 'openhuman' },
 
         heartbeat: { kind: 'openhuman' },
@@ -591,6 +613,7 @@ describe('saveAISettings', () => {
         subconscious: { kind: 'openhuman' },
       },
       modelRegistry: [],
+      creditsBypass: { chat: false, reasoning: false },
       ...overrides,
     };
   }
@@ -671,6 +694,7 @@ describe('saveAISettings', () => {
         reasoning: { kind: 'openhuman' },
         agentic: { kind: 'openhuman' },
         coding: { kind: 'openhuman' },
+        vision: { kind: 'openhuman' },
         memory: { kind: 'openhuman' },
 
         heartbeat: { kind: 'openhuman' },
@@ -697,6 +721,7 @@ describe('saveAISettings', () => {
       routing: {
         ...makeSettings().routing,
         coding: { kind: 'cloud', providerSlug: 'openai', model: 'gpt-4o-mini' },
+        vision: { kind: 'cloud', providerSlug: 'openai', model: 'gpt-4o-mini' },
       },
     });
 
@@ -705,6 +730,7 @@ describe('saveAISettings', () => {
     const patch = mockOpenhumanUpdateModelSettings.mock.calls[0][0];
     expect(patch.cloud_providers).toBeDefined();
     expect(patch.coding_provider).toBe('openai:gpt-4o-mini');
+    expect(patch.vision_provider).toBe('openai:gpt-4o-mini');
   });
 
   it('sends model_registry when the vision flag changes', async () => {
@@ -715,7 +741,15 @@ describe('saveAISettings', () => {
     await saveAISettings(prev, next);
     const patch = mockOpenhumanUpdateModelSettings.mock.calls[0][0];
     expect(patch.model_registry).toEqual([
-      { id: 'my-llava', provider: 'openai', cost_per_1m_output: 0, vision: true },
+      {
+        id: 'my-llava',
+        provider: 'openai',
+        cost_per_1m_input: 0,
+        cost_per_1m_cached_input: 0,
+        cost_per_1m_output: 0,
+        context_window: 0,
+        vision: true,
+      },
     ]);
   });
 
@@ -727,12 +761,14 @@ describe('saveAISettings', () => {
       routing: {
         ...makeSettings().routing,
         coding: { kind: 'cloud', providerSlug: 'openai', model: 'gpt-4o-mini' },
+        vision: { kind: 'cloud', providerSlug: 'openai', model: 'gpt-4o-mini' },
       },
     });
     await saveAISettings(prev, next);
     const patch = mockOpenhumanUpdateModelSettings.mock.calls[0][0];
     expect(patch.model_registry).toBeUndefined();
     expect(patch.coding_provider).toBe('openai:gpt-4o-mini');
+    expect(patch.vision_provider).toBe('openai:gpt-4o-mini');
   });
 });
 
@@ -897,6 +933,55 @@ describe('listProviderModels', () => {
   });
 });
 
+describe('loadProviderAuthErrors', () => {
+  beforeEach(() => {
+    mockCallCoreRpc.mockReset();
+    mockIsTauri.mockReturnValue(true);
+  });
+
+  it('dispatches openhuman.inference_provider_auth_errors and returns the errors', async () => {
+    mockCallCoreRpc.mockResolvedValue({
+      result: {
+        errors: [
+          {
+            provider: 'openrouter',
+            status: 401,
+            message: 'openrouter rejected the API key (HTTP 401). Update it in Settings → AI.',
+            timestamp_ms: 1000,
+          },
+        ],
+      },
+    });
+
+    const errors = await loadProviderAuthErrors();
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.inference_provider_auth_errors',
+      params: {},
+    });
+    expect(errors).toHaveLength(1);
+    expect(errors[0].provider).toBe('openrouter');
+    expect(errors[0].status).toBe(401);
+  });
+
+  it('returns empty array when not running in Tauri', async () => {
+    mockIsTauri.mockReturnValue(false);
+
+    const errors = await loadProviderAuthErrors();
+
+    expect(errors).toEqual([]);
+    expect(mockCallCoreRpc).not.toHaveBeenCalled();
+  });
+
+  it('returns empty array when result has no errors field', async () => {
+    mockCallCoreRpc.mockResolvedValue({ result: {} });
+
+    const errors = await loadProviderAuthErrors();
+
+    expect(errors).toEqual([]);
+  });
+});
+
 describe('testProviderModel', () => {
   beforeEach(() => {
     mockCallCoreRpc.mockReset();
@@ -972,7 +1057,15 @@ describe('model registry vision helpers', () => {
   it('upsertModelRegistryVision adds, flips, and removes entries', () => {
     const added = upsertModelRegistryVision([], 'openai', 'my-llava', true);
     expect(added).toEqual([
-      { id: 'my-llava', provider: 'openai', cost_per_1m_output: 0, vision: true },
+      {
+        id: 'my-llava',
+        provider: 'openai',
+        cost_per_1m_input: 0,
+        cost_per_1m_cached_input: 0,
+        cost_per_1m_output: 0,
+        context_window: 0,
+        vision: true,
+      },
     ]);
     // vision:false removes the entry (absence ⇒ no vision).
     const removed = upsertModelRegistryVision(reg, 'openai', 'gpt-4o', false);

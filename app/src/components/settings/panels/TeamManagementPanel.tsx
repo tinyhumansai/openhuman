@@ -4,12 +4,11 @@ import { useParams } from 'react-router-dom';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
 import { teamApi } from '../../../services/api/teamApi';
-import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsBackButton from '../components/SettingsBackButton';
 import SettingsMenuItem from '../components/SettingsMenuItem';
 import { SettingsSection, SettingsTextField } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 
 const TeamManagementPanel = () => {
   const { t } = useT();
@@ -94,54 +93,46 @@ const TeamManagementPanel = () => {
 
   if (!teamEntry) {
     return (
-      <PanelPage
-        className="z-10"
-        contentClassName=""
-        description={t('pages.settings.account.teamDesc')}
-        leading={<SettingsBackButton onBack={navigateBack} />}>
+      <SettingsPanel
+        title={t('team.management')}
+        description={t('pages.settings.account.teamDesc')}>
         <div className="flex-1 flex items-center justify-center">
-          <p className="text-sm text-neutral-500 dark:text-neutral-400">{t('team.notFound')}</p>
+          <p className="text-sm text-content-muted">{t('team.notFound')}</p>
         </div>
-      </PanelPage>
+      </SettingsPanel>
     );
   }
 
   if (!isAdmin) {
     return (
-      <PanelPage
-        className="z-10"
-        contentClassName=""
-        description={t('pages.settings.account.teamDesc')}
-        leading={<SettingsBackButton onBack={navigateBack} />}>
+      <SettingsPanel
+        title={t('team.management')}
+        description={t('pages.settings.account.teamDesc')}>
         <div className="flex-1 flex items-center justify-center">
-          <p className="text-sm text-neutral-500 dark:text-neutral-400">{t('team.accessDenied')}</p>
+          <p className="text-sm text-content-muted">{t('team.accessDenied')}</p>
         </div>
-      </PanelPage>
+      </SettingsPanel>
     );
   }
 
   const { team } = teamEntry;
 
   return (
-    <PanelPage
-      className="z-10"
-      contentClassName=""
-      description={t('pages.settings.account.teamDesc')}
-      leading={<SettingsBackButton onBack={navigateBack} />}>
-      <div className="p-4 pt-2 space-y-5">
+    <SettingsPanel
+      title={t('team.manageTitle').replace('{name}', team.name)}
+      description={t('pages.settings.account.teamDesc')}>
+      <>
         {/* Team Info */}
         <SettingsSection>
           <div className="flex items-center gap-3 px-4 py-3">
-            <div className="w-10 h-10 rounded-lg bg-neutral-200 dark:bg-neutral-800 flex items-center justify-center">
-              <span className="text-sm font-semibold text-neutral-700 dark:text-neutral-200">
+            <div className="w-10 h-10 rounded-lg bg-surface-strong flex items-center justify-center">
+              <span className="text-sm font-semibold text-content-secondary">
                 {team.name.charAt(0).toUpperCase()}
               </span>
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
-                {team.name}
-              </h3>
-              <p className="text-xs text-neutral-500 dark:text-neutral-400">
+              <h3 className="text-sm font-semibold text-content">{team.name}</h3>
+              <p className="text-xs text-content-muted">
                 {t('team.planCreated')
                   .replace('{plan}', team.subscription.plan)
                   .replace('{date}', new Date(team.createdAt).toLocaleDateString())}
@@ -243,10 +234,8 @@ const TeamManagementPanel = () => {
         {/* Edit Team Modal */}
         {isEditModalOpen && (
           <div className="fixed inset-0 bg-neutral-900/40 flex items-center justify-center z-50 p-4">
-            <div className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-full max-w-md border border-neutral-200 dark:border-neutral-800">
-              <h3 className="text-sm font-semibold text-neutral-800 dark:text-neutral-100 mb-4">
-                {t('team.editSettings')}
-              </h3>
+            <div className="bg-surface rounded-2xl p-6 w-full max-w-md border border-line">
+              <h3 className="text-sm font-semibold text-content mb-4">{t('team.editSettings')}</h3>
 
               {error && (
                 <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">
@@ -256,7 +245,7 @@ const TeamManagementPanel = () => {
 
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-200 mb-2">
+                  <label className="block text-sm font-medium text-content-secondary mb-2">
                     {t('team.teamName')}
                   </label>
                   <SettingsTextField
@@ -298,10 +287,8 @@ const TeamManagementPanel = () => {
         {/* Delete Team Modal */}
         {isDeleteModalOpen && (
           <div className="fixed inset-0 bg-neutral-900/40 flex items-center justify-center z-50 p-4">
-            <div className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-full max-w-md border border-neutral-200 dark:border-neutral-800">
-              <h3 className="text-sm font-semibold text-neutral-800 dark:text-neutral-100 mb-4">
-                {t('team.delete')}
-              </h3>
+            <div className="bg-surface rounded-2xl p-6 w-full max-w-md border border-line">
+              <h3 className="text-sm font-semibold text-content mb-4">{t('team.delete')}</h3>
 
               {error && (
                 <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">
@@ -310,7 +297,7 @@ const TeamManagementPanel = () => {
               )}
 
               <div className="space-y-4">
-                <div className="text-sm text-neutral-500 dark:text-neutral-400">
+                <div className="text-sm text-content-muted">
                   <p>{t('team.confirmDelete').replace('{name}', teamEntry?.team.name ?? '')}</p>
                   <p className="mt-2 text-coral-400">{t('team.deleteWarning')}</p>
                 </div>
@@ -327,9 +314,10 @@ const TeamManagementPanel = () => {
                   </Button>
                   <Button
                     type="button"
-                    variant="danger"
+                    variant="primary"
+                    tone="danger"
                     size="md"
-                    className="flex-1 bg-coral-500 hover:bg-coral-600 text-white border-0 dark:bg-coral-500 dark:hover:bg-coral-600"
+                    className="flex-1"
                     onClick={() => void handleDeleteTeam()}
                     disabled={isDeleting}>
                     {isDeleting ? t('team.deleting') : t('team.delete')}
@@ -339,8 +327,8 @@ const TeamManagementPanel = () => {
             </div>
           </div>
         )}
-      </div>
-    </PanelPage>
+      </>
+    </SettingsPanel>
   );
 };
 

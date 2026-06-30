@@ -86,7 +86,12 @@ pub fn workflows_schemas(function: &str) -> ControllerSchema {
             namespace: "workflows",
             function: "list",
             description: "List SKILL.md and legacy skills discovered in the user home and workspace.",
-            inputs: vec![],
+            inputs: vec![FieldSchema {
+                name: "include_skills",
+                ty: TypeSchema::Bool,
+                comment: "When true, also include capability skills under the `skills/` roots (where registry installs land), not just `workflows/`-root automations. Defaults to false (automations-only view).",
+                required: false,
+            }],
             outputs: vec![FieldSchema {
                 name: "skills",
                 ty: TypeSchema::Array(Box::new(TypeSchema::Ref("WorkflowSummary"))),

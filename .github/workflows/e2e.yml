@@ -1,7 +1,9 @@
 ---
 # PR/push E2E gate.
 #
-# Desktop full-flow lane (mega-flow) across Linux, macOS, and Windows.
+# Desktop E2E lane across Linux, macOS, and Windows. Manual dispatch defaults
+# to mega-flow but can target a narrower spec, such as the Appium harness smoke
+# spec, without changing the reusable workflow recipe.
 # The browser-hosted Playwright suite lives in its own standalone workflow so
 # it can be run on demand without gating every push / PR.
 name: E2E
@@ -24,9 +26,17 @@ on:
       full:
         description:
           When true, run the entire spec suite (sharded). When false, run the
-          desktop full-flow lane only (mega-flow.spec.ts).
+          selected desktop spec only.
         type: boolean
         default: false
+      spec_path:
+        description: Spec path to run when full is false.
+        type: string
+        default: test/e2e/specs/mega-flow.spec.ts
+      spec_label:
+        description: Log label for the selected spec when full is false.
+        type: string
+        default: mega-flow
 
 permissions:
   contents: read
@@ -45,3 +55,5 @@ jobs:
       run_macos: ${{ inputs.run_macos }}
       run_windows: ${{ inputs.run_windows }}
       full: ${{ inputs.full }}
+      spec_path: ${{ inputs.spec_path }}
+      spec_label: ${{ inputs.spec_label }}

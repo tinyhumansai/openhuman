@@ -51,7 +51,7 @@ describe('HomeBanners', () => {
   it('opens the billing dashboard through openUrl from the promotional credits banner', () => {
     render(<PromotionalCreditsBanner promoCredits={12} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Get a subscription' }));
+    fireEvent.click(screen.getByRole('button', { name: /get a subscription/i }));
 
     expect(openUrl).toHaveBeenCalledWith('https://tinyhumans.ai/dashboard');
   });

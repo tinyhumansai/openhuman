@@ -62,18 +62,18 @@ const ScreenIntelligenceDebugPanelContent = ({
         </h3>
         <button
           onClick={handleRefreshStatus}
-          className="rounded-lg border border-stone-700 bg-stone-800/60 px-3 py-1 text-xs text-stone-300 dark:text-neutral-600 transition-colors hover:bg-stone-700/60">
+          className="rounded-lg border border-stone-700 bg-stone-800/60 px-3 py-1 text-xs text-content-faint dark:text-neutral-600 transition-colors hover:bg-stone-700/60">
           {t('common.refresh')}
         </button>
       </div>
 
       {/* Permissions */}
       <div className="rounded-xl border border-stone-700 bg-stone-900/50 p-3">
-        <h4 className="mb-2 text-xs font-medium uppercase tracking-wide text-stone-400 dark:text-neutral-500">
+        <h4 className="mb-2 text-xs font-medium uppercase tracking-wide text-content-faint">
           {t('intelligence.screenDebug.permissions')}
         </h4>
         {status?.platform_supported === false ? (
-          <p className="text-xs text-stone-500 dark:text-neutral-400">
+          <p className="text-xs text-content-muted">
             {t('intelligence.screenDebug.platformNotSupported')}
           </p>
         ) : (
@@ -96,16 +96,13 @@ const ScreenIntelligenceDebugPanelContent = ({
 
       {/* Session Status */}
       <div className="rounded-xl border border-stone-700 bg-stone-900/50 p-3">
-        <h4 className="mb-2 text-xs font-medium uppercase tracking-wide text-stone-400 dark:text-neutral-500">
+        <h4 className="mb-2 text-xs font-medium uppercase tracking-wide text-content-faint">
           {t('intelligence.screenDebug.session')}
         </h4>
-        <div className="space-y-1 text-xs text-stone-300 dark:text-neutral-600">
+        <div className="space-y-1 text-xs text-content-faint dark:text-neutral-600">
           <div className="flex justify-between">
             <span>{t('intelligence.screenDebug.active')}</span>
-            <span
-              className={
-                session?.active ? 'text-green-400' : 'text-stone-500 dark:text-neutral-400'
-              }>
+            <span className={session?.active ? 'text-green-400' : 'text-content-muted'}>
               {session?.active ? t('common.yes') : t('common.no')}
             </span>
           </div>
@@ -132,7 +129,7 @@ const ScreenIntelligenceDebugPanelContent = ({
 
       {/* Capture Test */}
       <div className="rounded-xl border border-stone-700 bg-stone-900/50 p-3">
-        <h4 className="mb-2 text-xs font-medium uppercase tracking-wide text-stone-400 dark:text-neutral-500">
+        <h4 className="mb-2 text-xs font-medium uppercase tracking-wide text-content-faint">
           {t('intelligence.screenDebug.captureTest')}
         </h4>
         <button
@@ -146,7 +143,7 @@ const ScreenIntelligenceDebugPanelContent = ({
 
         {captureTestResult && (
           <div className="space-y-2">
-            <div className="space-y-1 text-xs text-stone-300 dark:text-neutral-600">
+            <div className="space-y-1 text-xs text-content-faint dark:text-neutral-600">
               <div className="flex justify-between">
                 <span>{t('intelligence.screenDebug.status')}</span>
                 <span className={captureTestResult.ok ? 'text-green-400' : 'text-red-400'}>
@@ -211,7 +208,7 @@ const ScreenIntelligenceDebugPanelContent = ({
       {/* Recent Vision Summaries */}
       {recentVisionSummaries.length > 0 && (
         <div className="rounded-xl border border-stone-700 bg-stone-900/50 p-3">
-          <h4 className="mb-2 text-xs font-medium uppercase tracking-wide text-stone-400 dark:text-neutral-500">
+          <h4 className="mb-2 text-xs font-medium uppercase tracking-wide text-content-faint">
             {t('intelligence.screenDebug.recentVisionSummaries')}
           </h4>
           <div className="space-y-2">
@@ -219,7 +216,7 @@ const ScreenIntelligenceDebugPanelContent = ({
               <div
                 key={summary.id}
                 className="rounded-lg border border-stone-700/50 bg-stone-800/30 p-2 text-xs">
-                <div className="flex justify-between text-stone-400 dark:text-neutral-500">
+                <div className="flex justify-between text-content-faint">
                   <span>{summary.app_name ?? t('intelligence.screenDebug.unknown')}</span>
                   <span>
                     {new Date(summary.captured_at_ms).toLocaleTimeString()} &middot;{' '}
@@ -261,7 +258,7 @@ const PermissionDot = ({ label, value }: { label: string; value?: string }) => {
   return (
     <div className="flex items-center gap-1.5">
       <div className={`h-2 w-2 rounded-full ${color}`} />
-      <span className="text-stone-300 dark:text-neutral-600">{label}</span>
+      <span className="text-content-faint dark:text-neutral-600">{label}</span>
     </div>
   );
 };

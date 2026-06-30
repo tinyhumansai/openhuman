@@ -120,6 +120,12 @@ pub async fn summarise(
         user: body,
         temperature: 0.0,
         kind: "memory_tree::summarise",
+        // Left open-ended: the summariser's output budget varies by node
+        // level (up to ~20k tokens at root) and is enforced prompt-side, so
+        // a hard wire cap risks truncating a valid large summary. The 402
+        // precheck fix is scoped to extraction (TAURI-RUST-C62); revisit if
+        // the summarise path shows the same low-balance 402 shape.
+        max_tokens: None,
     };
 
     log::debug!(

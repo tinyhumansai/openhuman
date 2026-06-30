@@ -62,6 +62,7 @@ describe('skillRegistryApi', () => {
     expect(mockCallCoreRpc).toHaveBeenCalledWith({
       method: 'openhuman.skill_registry_search',
       params: { query: 'demo' },
+      timeoutMs: 120_000,
     });
     expect(result[0].id).toBe('demo');
   });
@@ -74,6 +75,7 @@ describe('skillRegistryApi', () => {
     expect(mockCallCoreRpc).toHaveBeenCalledWith({
       method: 'openhuman.skill_registry_search',
       params: { query: 'q', source: 'ClawHub', category: 'devops' },
+      timeoutMs: 120_000,
     });
   });
 
@@ -90,7 +92,10 @@ describe('skillRegistryApi', () => {
 
     const result = await skillRegistryApi.sources();
 
-    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: 'openhuman.skill_registry_sources' });
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.skill_registry_sources',
+      timeoutMs: 120_000,
+    });
     expect(result).toEqual(['built-in', 'ClawHub']);
   });
 
@@ -107,7 +112,10 @@ describe('skillRegistryApi', () => {
 
     const result = await skillRegistryApi.categories();
 
-    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: 'openhuman.skill_registry_categories' });
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.skill_registry_categories',
+      timeoutMs: 120_000,
+    });
     expect(result).toEqual(['productivity', 'devops']);
   });
 
@@ -140,6 +148,7 @@ describe('skillRegistryApi', () => {
     expect(mockCallCoreRpc).toHaveBeenCalledWith({
       method: 'openhuman.skill_registry_browse',
       params: { force_refresh: true },
+      timeoutMs: 120_000,
     });
   });
 
@@ -151,6 +160,7 @@ describe('skillRegistryApi', () => {
     expect(mockCallCoreRpc).toHaveBeenCalledWith({
       method: 'openhuman.skill_registry_browse',
       params: { force_refresh: false },
+      timeoutMs: 120_000,
     });
   });
 });

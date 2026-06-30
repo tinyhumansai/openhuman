@@ -326,18 +326,32 @@ impl VectorStore {
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
-        let mut scored: Vec<SearchResult> = rows
+        let scanned = rows.len();
+
+        // Score-only intermediate: keep metadata as the raw JSON string instead
+        // of parsing it here. We scan every vector in the namespace but return
+        // only `limit` rows, so parsing the metadata of all N candidates would
+        // throw away all but `limit` parses. Defer the parse until after the
+        // truncation below, where it runs `limit` times instead of N.
+        struct ScoredRow {
+            score: f64,
+            id: String,
+            namespace: String,
+            text: String,
+            meta_str: String,
+        }
+
+        let mut scored: Vec<ScoredRow> = rows
             .into_iter()
-            .map(|(id, ns, text, blob, meta_str)| {
+            .map(|(id, namespace, text, blob, meta_str)| {
                 let stored_vec = bytes_to_vec(&blob);
                 let score = cosine_similarity(query_vec, &stored_vec);
-                let metadata = serde_json::from_str(&meta_str).unwrap_or(serde_json::Value::Null);
-                SearchResult {
-                    id,
-                    namespace: ns,
-                    text,
+                ScoredRow {
                     score,
-                    metadata,
+                    id,
+                    namespace,
+                    text,
+                    meta_str,
                 }
             })
             .collect();
@@ -350,14 +364,37 @@ impl VectorStore {
         });
         scored.truncate(limit);
 
+        // Parse metadata only for the rows that survived truncation. Invalid
+        // JSON falls back to Null, but log it so data issues stay diagnosable.
+        let results: Vec<SearchResult> = scored
+            .into_iter()
+            .map(|row| {
+                let metadata = serde_json::from_str(&row.meta_str).unwrap_or_else(|err| {
+                    tracing::debug!(
+                        target: "embeddings.store",
+                        "[vector-store] invalid metadata json: id={}, ns={}, err={err}",
+                        row.id,
+                        row.namespace,
+                    );
+                    serde_json::Value::Null
+                });
+                SearchResult {
+                    id: row.id,
+                    namespace: row.namespace,
+                    text: row.text,
+                    score: row.score,
+                    metadata,
+                }
+            })
+            .collect();
+
         tracing::trace!(
             target: "embeddings.store",
-            "[vector-store] search_by_vector: ns={namespace}, scanned={}, returned={}",
-            scored.len() + scored.capacity() - scored.len(), // approximate total before truncate
-            scored.len()
+            "[vector-store] search_by_vector: ns={namespace}, scanned={scanned}, returned={}",
+            results.len()
         );
 
-        Ok(scored)
+        Ok(results)
     }
 
     // ── Delete / management ──────────────────────────────────

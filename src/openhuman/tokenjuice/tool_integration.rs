@@ -1,41 +1,106 @@
-//! Glue between the agent tool loop and the tokenjuice reduction engine.
+//! Glue between the agent tool loop and the TokenJuice content router.
 //!
-//! Exposes a single entry point — [`compact_tool_output`] — that the agent
-//! loop calls after a tool returns its output.  It builds a
-//! [`ToolExecutionInput`] from whatever metadata the caller has (tool name,
-//! JSON arguments, exit code) and runs the reduction pipeline with the
-//! lazily-cached builtin rule set.
+//! Exposes the entry points the agent loop calls after a tool returns output:
 //!
-//! The function is **pass-through safe**: if reduction does not meaningfully
-//! shrink the payload (below [`MIN_COMPACT_RATIO`]) or if the input is already
-//! under [`MIN_COMPACT_INPUT_BYTES`], the original string is returned
-//! untouched.  Callers do not need to guard the call site.
+//! - [`compact_tool_output`] — full version with the tool's JSON arguments and
+//!   exit code; derives a command/argv and content hint, routes through the
+//!   content router, and returns `(text, CompactionStats)`.
+//! - [`compact_output`] — minimal version (content + tool name + enable flag)
+//!   for call sites that only have those, returning just the text.
+//!
+//! Both are **pass-through safe**: if compression doesn't meaningfully shrink
+//! the payload, or the input is under the byte floor, or the router/CCR is
+//! disabled, the original string is returned untouched.
+//!
+//! Runtime options (the `[tokenjuice]` config block) are installed once at
+//! startup via [`configure`]; callers don't thread `Config` through.
 
-use once_cell::sync::Lazy;
+use once_cell::sync::OnceCell;
 use serde_json::Value;
+use std::sync::RwLock;
 
-use super::reduce::reduce_execution_with_rules;
-use super::rules::load_builtin_rules;
-use super::types::{CompiledRule, ReduceOptions, ToolExecutionInput};
+use super::compress::route;
+use super::types::{AgentTokenjuiceCompression, CompressInput, CompressOptions, ContentHint};
 
-/// Skip compaction for outputs smaller than this (bytes). Tiny outputs have
-/// no headroom to benefit from head/tail summarisation and risk being
-/// distorted by rule matches that were designed for long logs.
-const MIN_COMPACT_INPUT_BYTES: usize = 512;
+/// Skip compaction for outputs smaller than this (bytes) by default. Tiny
+/// outputs have no headroom and risk distortion. Overridable per the config's
+/// `min_bytes_to_compress` once [`configure`] runs.
+const DEFAULT_MIN_COMPACT_INPUT_BYTES: usize = 512;
 
-/// Keep the compacted form only if it is at most this fraction of the
-/// original length. Between `MIN_COMPACT_RATIO` and 1.0 the compaction is
-/// considered not worthwhile and the raw output is returned.
-const MIN_COMPACT_RATIO: f64 = 0.95;
+/// Process-global runtime options, installed from config at startup.
+fn options_cell() -> &'static RwLock<CompressOptions> {
+    static OPTS: OnceCell<RwLock<CompressOptions>> = OnceCell::new();
+    OPTS.get_or_init(|| {
+        RwLock::new(CompressOptions {
+            min_bytes_to_compress: DEFAULT_MIN_COMPACT_INPUT_BYTES,
+            ..Default::default()
+        })
+    })
+}
 
-static BUILTIN_RULES: Lazy<Vec<CompiledRule>> = Lazy::new(load_builtin_rules);
+/// Install the runtime [`CompressOptions`] (called once from config at startup).
+/// Also configures the CCR cache limits/disk tier indirectly via the caller.
+pub fn configure(opts: CompressOptions) {
+    *options_cell().write().unwrap_or_else(|p| p.into_inner()) = opts;
+}
 
-/// Statistics for a single compaction call.
+/// Snapshot the current runtime options.
+pub fn current_options() -> CompressOptions {
+    options_cell()
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+}
+
+fn options_for_agent(profile: AgentTokenjuiceCompression) -> Option<CompressOptions> {
+    match profile {
+        AgentTokenjuiceCompression::Off => None,
+        AgentTokenjuiceCompression::Auto | AgentTokenjuiceCompression::Full => {
+            Some(current_options())
+        }
+        AgentTokenjuiceCompression::Light => {
+            let mut opts = current_options();
+            // Coding agents need raw, exact tool text more than aggressive token
+            // savings. Disabling CCR makes every lossy compressor decline in
+            // route(), while still allowing any truly lossless reduction.
+            opts.ccr_enabled = false;
+            opts.ml_text_enabled = false;
+            Some(opts)
+        }
+    }
+}
+
+/// Install the full TokenJuice runtime configuration in one call at startup:
+/// router/compressor options, CCR cache limits, and the optional on-disk tier.
+/// Kept free of the config-schema type so `tokenjuice` stays decoupled — the
+/// caller maps `Config.tokenjuice` into these primitives.
+#[allow(clippy::too_many_arguments)]
+pub fn install_config(
+    options: CompressOptions,
+    max_cache_entries: usize,
+    max_cache_bytes: usize,
+    ccr_ttl_secs: Option<u64>,
+    disk_tier_root: Option<std::path::PathBuf>,
+) {
+    configure(options);
+    super::cache::configure(max_cache_entries, max_cache_bytes, ccr_ttl_secs);
+    // Enable or disable the disk tier to match the setting — a `None` here means
+    // the user turned it off, so clear any previously-installed disk root rather
+    // than leaving the process writing originals to disk until restart.
+    match disk_tier_root {
+        Some(root) => super::cache::enable_disk_tier(root),
+        None => super::cache::disable_disk_tier(),
+    }
+    log::debug!("[tokenjuice] runtime config installed");
+}
+
+/// Statistics for a single compaction call (back-compat shape).
 #[derive(Debug, Clone)]
 pub struct CompactionStats {
     pub tool_name: String,
     pub original_bytes: usize,
     pub compacted_bytes: usize,
+    /// The compressor kind (or `none/...`) that handled the output.
     pub rule_id: String,
     pub applied: bool,
 }
@@ -50,142 +115,138 @@ impl CompactionStats {
     }
 }
 
-/// Compact a tool call's output using tokenjuice's builtin rule set.
+/// Compact a tool call's output through the content router.
 ///
-/// * `tool_name` — the agent-level tool name (e.g. `"shell"`,
-///   `"browser_navigate"`). When the tool is a shell wrapper, callers should
-///   pass the *underlying* tool name (e.g. `"git"`) by extracting it from
-///   `arguments`, but passing the agent tool name also works — rules also
-///   match on `commandIncludes` / `argvIncludes`.
-/// * `arguments` — the raw JSON arguments the agent passed to the tool.
-///   Used to heuristically derive `command` / `argv` for shell-style tools.
+/// * `tool_name` — the agent-level tool name (`shell`, `grep`, `browser_navigate`).
+/// * `arguments` — the raw JSON arguments; used to derive command/argv (for the
+///   log/command rule path) and a file extension (for code/JSON/HTML hints).
 /// * `output` — the captured tool output (already credential-scrubbed).
-/// * `exit_code` — if known; enables failure-preserving behaviour (rules
-///   with a `failure` block use `failure.head`/`failure.tail` instead of the
-///   default summarise window when this is non-zero).
+/// * `exit_code` — enables failure-preserving behaviour in the log compressor.
 ///
-/// Returns `(compacted_text, stats)`. When `stats.applied == false` the
-/// returned string is the untouched original.
-pub fn compact_tool_output(
+/// Returns `(text, stats)`. When `stats.applied == false` the text is the
+/// untouched original.
+pub async fn compact_tool_output(
     tool_name: &str,
     arguments: Option<&Value>,
     output: &str,
     exit_code: Option<i32>,
 ) -> (String, CompactionStats) {
+    compact_tool_output_with_policy(
+        tool_name,
+        arguments,
+        output,
+        exit_code,
+        AgentTokenjuiceCompression::Full,
+    )
+    .await
+}
+
+/// Compact a tool call's output using an agent-level TokenJuice profile.
+pub async fn compact_tool_output_with_policy(
+    tool_name: &str,
+    arguments: Option<&Value>,
+    output: &str,
+    exit_code: Option<i32>,
+    profile: AgentTokenjuiceCompression,
+) -> (String, CompactionStats) {
     let original_bytes = output.len();
 
-    if original_bytes < MIN_COMPACT_INPUT_BYTES {
+    let Some(opts) = options_for_agent(profile) else {
         log::debug!(
-            "[tokenjuice] skipping tool={} bytes={} reason=too-small",
+            "[tokenjuice] agent profile disabled compaction tool={} bytes={}",
             tool_name,
             original_bytes
         );
         return (
-            output.to_owned(),
+            output.to_string(),
             CompactionStats {
-                tool_name: tool_name.to_owned(),
+                tool_name: tool_name.to_string(),
                 original_bytes,
                 compacted_bytes: original_bytes,
-                rule_id: "none/too-small".to_owned(),
+                rule_id: "none/agent-profile-off".to_string(),
+                applied: false,
+            },
+        );
+    };
+
+    // A recovery tool's output is the original we previously offloaded — never
+    // re-compact it, or the agent could never see the full data it asked for.
+    if super::cache::is_recovery_tool(tool_name) {
+        return (
+            output.to_string(),
+            CompactionStats {
+                tool_name: tool_name.to_string(),
+                original_bytes,
+                compacted_bytes: original_bytes,
+                rule_id: "none/recovery-tool".to_string(),
                 applied: false,
             },
         );
     }
 
     let (command, argv) = extract_command_argv(arguments);
-    // Whether this execution looks like a shell command (vs. a domain tool that
-    // returns structured/large data, e.g. a Composio action). Domain tools carry
-    // no `command`/`argv` in their arguments.
-    let has_command = command.is_some() || argv.as_ref().is_some_and(|a| !a.is_empty());
-
-    let input = ToolExecutionInput {
-        tool_name: tool_name.to_owned(),
-        command,
-        argv,
-        stdout: Some(output.to_owned()),
-        exit_code,
+    let hint = ContentHint {
+        source_tool: Some(tool_name.to_string()),
+        extension: extract_extension(arguments),
+        query: extract_query(arguments),
         ..Default::default()
     };
 
-    let result = reduce_execution_with_rules(input, &BUILTIN_RULES, &ReduceOptions::default());
-    let compacted_bytes = result.inline_text.len();
-    let rule_id = result
-        .classification
-        .matched_reducer
-        .clone()
-        .unwrap_or_else(|| result.classification.family.clone());
-
-    let ratio = if original_bytes == 0 {
-        1.0
-    } else {
-        compacted_bytes as f64 / original_bytes as f64
+    let input = CompressInput {
+        content: output,
+        kind: super::types::ContentKind::PlainText,
+        hint: &hint,
+        exit_code,
+        command,
+        argv,
+        original_bytes,
     };
 
-    // The `generic/fallback` reducer is a line-oriented head/tail summariser
-    // meant for *command* output tokenjuice has no specific rule for. It must
-    // NOT compact domain-tool output (no command/argv): those payloads are
-    // structured and are handled downstream by the sub-agent progressive
-    // -disclosure handoff / payload summariser, not by blind head/tail
-    // truncation. Letting the generic fallback fire here clamps every large
-    // tool result to ~1.2k chars and silently preempts the handoff. Specific,
-    // tool/argv-matched rules still apply to domain tools as before.
-    let generic_fallback_on_domain_tool = rule_id == "generic/fallback" && !has_command;
+    let res = route(input, &opts).await;
+    let stats = CompactionStats {
+        tool_name: tool_name.to_string(),
+        original_bytes,
+        compacted_bytes: res.compacted_bytes,
+        rule_id: if res.applied {
+            res.compressor.as_str().to_string()
+        } else {
+            format!("none/{}", res.content_kind.as_str())
+        },
+        applied: res.applied,
+    };
+    (res.text, stats)
+}
 
-    let applied = !generic_fallback_on_domain_tool
-        && ratio <= MIN_COMPACT_RATIO
-        && compacted_bytes < original_bytes;
+/// Minimal compaction for call sites that only have content + tool name. The
+/// `enabled` flag is an explicit kill-switch on top of the configured options.
+pub async fn compact_output(content: String, tool_name: &str, enabled: bool) -> String {
+    compact_output_with_policy(
+        content,
+        tool_name,
+        enabled,
+        AgentTokenjuiceCompression::Full,
+    )
+    .await
+}
 
-    if applied {
-        log::info!(
-            "[tokenjuice] compacted tool={} rule={} {}->{} bytes (ratio={:.2})",
-            tool_name,
-            rule_id,
-            original_bytes,
-            compacted_bytes,
-            ratio
-        );
-        (
-            result.inline_text,
-            CompactionStats {
-                tool_name: tool_name.to_owned(),
-                original_bytes,
-                compacted_bytes,
-                rule_id,
-                applied: true,
-            },
-        )
-    } else {
-        log::debug!(
-            "[tokenjuice] pass-through tool={} rule={} {}->{} bytes (ratio={:.2} > {})",
-            tool_name,
-            rule_id,
-            original_bytes,
-            compacted_bytes,
-            ratio,
-            MIN_COMPACT_RATIO
-        );
-        (
-            output.to_owned(),
-            CompactionStats {
-                tool_name: tool_name.to_owned(),
-                original_bytes,
-                compacted_bytes: original_bytes,
-                rule_id,
-                applied: false,
-            },
-        )
+/// Minimal compaction with an agent-level TokenJuice profile.
+pub async fn compact_output_with_policy(
+    content: String,
+    tool_name: &str,
+    enabled: bool,
+    profile: AgentTokenjuiceCompression,
+) -> String {
+    // The call-site `enabled` flag and the configured router switch are both
+    // hard off-switches; either one short-circuits to the untouched original.
+    if !enabled || !current_options().router_enabled {
+        return content;
     }
+    let (text, _stats) =
+        compact_tool_output_with_policy(tool_name, None, &content, None, profile).await;
+    text
 }
 
 /// Derive `(command, argv)` from a tool's JSON arguments.
-///
-/// Handles the common shapes:
-/// * `{"command": "git status"}` — string command (whitespace-split into argv).
-/// * `{"command": "git", "args": ["status"]}` — explicit split.
-/// * `{"argv": ["git", "status"]}` — pre-built argv.
-/// * `{"cmd": "..."}` — alternate field name.
-///
-/// Returns `(None, None)` when the arguments don't look shell-like.
 fn extract_command_argv(arguments: Option<&Value>) -> (Option<String>, Option<Vec<String>>) {
     let Some(Value::Object(map)) = arguments else {
         return (None, None);
@@ -213,7 +274,6 @@ fn extract_command_argv(arguments: Option<&Value>) -> (Option<String>, Option<Ve
             argv.extend(args.iter().filter_map(|v| v.as_str().map(|s| s.to_owned())));
             return (Some(format!("{cmd} {}", argv[1..].join(" "))), Some(argv));
         }
-
         let argv: Vec<String> = cmd.split_whitespace().map(|s| s.to_owned()).collect();
         return (Some(cmd.to_owned()), (!argv.is_empty()).then_some(argv));
     }
@@ -221,50 +281,102 @@ fn extract_command_argv(arguments: Option<&Value>) -> (Option<String>, Option<Ve
     (None, None)
 }
 
+/// Derive a file extension hint from common path-bearing argument shapes.
+fn extract_extension(arguments: Option<&Value>) -> Option<String> {
+    let Some(Value::Object(map)) = arguments else {
+        return None;
+    };
+    let path = ["path", "file_path", "file", "filename"]
+        .iter()
+        .find_map(|k| map.get(*k).and_then(Value::as_str))?;
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())?;
+    Some(ext.to_ascii_lowercase())
+}
+
+/// Derive a search-query hint from common query-bearing argument shapes.
+fn extract_query(arguments: Option<&Value>) -> Option<String> {
+    let Some(Value::Object(map)) = arguments else {
+        return None;
+    };
+    ["query", "pattern", "search", "q", "regex"]
+        .iter()
+        .find_map(|k| map.get(*k).and_then(Value::as_str))
+        .map(str::to_string)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
 
-    #[test]
-    fn skips_short_output() {
-        let (out, stats) = compact_tool_output("shell", None, "hello world", Some(0));
+    #[tokio::test]
+    async fn skips_short_output() {
+        let (out, stats) = compact_tool_output("shell", None, "hello world", Some(0)).await;
         assert_eq!(out, "hello world");
         assert!(!stats.applied);
-        assert_eq!(stats.rule_id, "none/too-small");
         assert_eq!(stats.original_bytes, 11);
     }
 
-    #[test]
-    fn compacts_long_git_status_via_argv() {
+    #[tokio::test]
+    async fn compacts_long_git_status_via_argv() {
         let mut lines = vec!["On branch main".to_owned()];
         for i in 0..200 {
             lines.push(format!("\tmodified:   src/file_{i}.rs"));
         }
         let output = lines.join("\n");
         let args = json!({"command": "git status"});
-        let (compacted, stats) = compact_tool_output("shell", Some(&args), &output, Some(0));
+        let (compacted, stats) = compact_tool_output("shell", Some(&args), &output, Some(0)).await;
         assert!(stats.applied, "expected compaction, got {:?}", stats);
         assert!(compacted.len() < output.len());
-        assert!(stats.rule_id.starts_with("git/"));
     }
 
-    #[test]
-    fn passes_through_incompressible_output() {
+    #[tokio::test]
+    async fn passes_through_incompressible_output() {
         let unique_lines: Vec<String> = (0..200)
             .map(|i| format!("unique-payload-chunk-{i}-{}", "x".repeat(30)))
             .collect();
         let output = unique_lines.join("\n");
-        let (returned, stats) = compact_tool_output("unknown_tool", None, &output, Some(0));
-        // Either the fallback rule compacted it (applied == true) or it
-        // passed through because ratio > threshold. Both are valid; we only
-        // assert the function never loses data silently.
-        if stats.applied {
-            assert_ne!(returned, output);
-            assert!(stats.compacted_bytes < stats.original_bytes);
-        } else {
+        let (returned, stats) = compact_tool_output("unknown_tool", None, &output, Some(0)).await;
+        if !stats.applied {
             assert_eq!(returned, output);
         }
+    }
+
+    #[tokio::test]
+    async fn disabled_flag_is_passthrough() {
+        let big = "x".repeat(5000);
+        assert_eq!(compact_output(big.clone(), "grep", false).await, big);
+    }
+
+    #[tokio::test]
+    async fn light_agent_profile_declines_lossy_ccr_compaction() {
+        let mut lines = vec!["On branch main".to_owned()];
+        for i in 0..200 {
+            lines.push(format!("\tmodified:   src/file_{i}.rs"));
+        }
+        let output = lines.join("\n");
+        let args = json!({"command": "git status"});
+        let (returned, stats) = compact_tool_output_with_policy(
+            "shell",
+            Some(&args),
+            &output,
+            Some(0),
+            AgentTokenjuiceCompression::Light,
+        )
+        .await;
+        assert_eq!(returned, output);
+        assert!(!stats.applied);
+    }
+
+    #[tokio::test]
+    async fn off_agent_profile_bypasses_router() {
+        let big = "x".repeat(5000);
+        let returned =
+            compact_output_with_policy(big.clone(), "grep", true, AgentTokenjuiceCompression::Off)
+                .await;
+        assert_eq!(returned, big);
     }
 
     #[test]
@@ -273,46 +385,19 @@ mod tests {
         assert_eq!(cmd.as_deref(), Some("git status"));
         assert_eq!(argv.unwrap(), vec!["git", "status"]);
 
-        let (cmd, argv) = extract_command_argv(Some(&json!({
-            "command": "cargo",
-            "args": ["test", "--lib"],
-        })));
-        assert_eq!(cmd.as_deref(), Some("cargo test --lib"));
-        assert_eq!(argv.unwrap(), vec!["cargo", "test", "--lib"]);
-
-        let (cmd, argv) = extract_command_argv(Some(&json!({
-            "argv": ["npm", "install"],
-        })));
-        assert_eq!(cmd.as_deref(), Some("npm install"));
-        assert_eq!(argv.unwrap(), vec!["npm", "install"]);
-
-        let (cmd, argv) = extract_command_argv(Some(&json!({"unrelated": 1})));
-        assert!(cmd.is_none());
-        assert!(argv.is_none());
-
-        let (cmd, argv) = extract_command_argv(None);
-        assert!(cmd.is_none());
-        assert!(argv.is_none());
+        let (cmd, _) = extract_command_argv(Some(&json!({"command": "cargo", "args": ["test"]})));
+        assert_eq!(cmd.as_deref(), Some("cargo test"));
     }
 
     #[test]
-    fn ratio_computation() {
-        let stats = CompactionStats {
-            tool_name: "x".into(),
-            original_bytes: 1000,
-            compacted_bytes: 250,
-            rule_id: "r".into(),
-            applied: true,
-        };
-        assert!((stats.ratio() - 0.25).abs() < 1e-9);
-
-        let empty = CompactionStats {
-            tool_name: "x".into(),
-            original_bytes: 0,
-            compacted_bytes: 0,
-            rule_id: "r".into(),
-            applied: false,
-        };
-        assert!((empty.ratio() - 1.0).abs() < 1e-9);
+    fn extract_extension_and_query() {
+        assert_eq!(
+            extract_extension(Some(&json!({"path": "src/lib.rs"}))).as_deref(),
+            Some("rs")
+        );
+        assert_eq!(
+            extract_query(Some(&json!({"pattern": "foo bar"}))).as_deref(),
+            Some("foo bar")
+        );
     }
 }

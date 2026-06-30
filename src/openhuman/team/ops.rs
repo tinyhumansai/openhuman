@@ -9,6 +9,9 @@
 //! receive a backend 401/403 surfaced verbatim as an RPC error string.
 //! API keys / JWTs are never written to logs.
 
+use std::sync::RwLock;
+use std::time::{Duration, Instant};
+
 use reqwest::{Method, Url};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -110,14 +113,92 @@ pub fn usage_budget_exhausted(data: &Value) -> bool {
         && (cycle_budget > 0.01 || cycle_spent > 0.01 || cycle_limit_7day > 0.01)
 }
 
+/// How long a managed-tool budget probe result is reused before re-fetching.
+///
+/// `ensure_budget_available` runs before **every** managed `post`/`get`, so a
+/// burst of managed tool calls in one agent turn would otherwise fire one
+/// `GET /teams/me/usage` round-trip *per call* — doubling the network cost of
+/// each managed integration request and re-fetching identical usage data. A
+/// short TTL collapses that burst to one probe while keeping the gate
+/// responsive: the backend remains the authoritative gate (it rejects spend
+/// once credits run out), so the worst case of a stale cache is a handful of
+/// extra calls within the window that the backend itself still blocks.
+const BUDGET_PROBE_TTL: Duration = Duration::from_secs(30);
+
+/// Process-global cache for the managed-tool budget probe.
+struct BudgetProbeCache {
+    /// `(fetched_at, exhausted)` of the last successful probe, if any.
+    inner: RwLock<Option<(Instant, bool)>>,
+}
+
+impl BudgetProbeCache {
+    const fn new() -> Self {
+        Self {
+            inner: RwLock::new(None),
+        }
+    }
+
+    /// Cached `exhausted` flag if the last probe is still within `ttl`.
+    fn get(&self, now: Instant, ttl: Duration) -> Option<bool> {
+        let guard = self.inner.read().unwrap_or_else(|e| e.into_inner());
+        guard.and_then(|(fetched_at, exhausted)| {
+            (now.duration_since(fetched_at) < ttl).then_some(exhausted)
+        })
+    }
+
+    /// Record a fresh probe result.
+    fn put(&self, now: Instant, exhausted: bool) {
+        let mut guard = self.inner.write().unwrap_or_else(|e| e.into_inner());
+        *guard = Some((now, exhausted));
+    }
+}
+
+static BUDGET_PROBE_CACHE: BudgetProbeCache = BudgetProbeCache::new();
+
 pub async fn managed_tool_budget_exhausted(config: &Config) -> bool {
-    match get_usage(config).await {
-        Ok(outcome) => usage_budget_exhausted(&outcome.value),
-        Err(err) => {
+    budget_exhausted_with_cache(&BUDGET_PROBE_CACHE, BUDGET_PROBE_TTL, || async {
+        match get_usage(config).await {
+            Ok(outcome) => Some(usage_budget_exhausted(&outcome.value)),
+            Err(err) => {
+                tracing::debug!(
+                    error = %err,
+                    "[budget-gate] usage probe failed; allowing managed tool to defer to backend"
+                );
+                None
+            }
+        }
+    })
+    .await
+}
+
+/// Cache-aware budget gate. Returns the cached `exhausted` flag when fresh;
+/// otherwise calls `fetch` and caches a successful result. A failed probe
+/// (`fetch` returns `None`) is **not** cached and reports "not exhausted" so
+/// the call defers to the backend gate — identical to the pre-cache behaviour.
+async fn budget_exhausted_with_cache<F, Fut>(
+    cache: &BudgetProbeCache,
+    ttl: Duration,
+    fetch: F,
+) -> bool
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Option<bool>>,
+{
+    if let Some(hit) = cache.get(Instant::now(), ttl) {
+        tracing::debug!(exhausted = hit, "[team] budget probe cache hit");
+        return hit;
+    }
+    match fetch().await {
+        Some(exhausted) => {
             tracing::debug!(
-                error = %err,
-                "[budget-gate] usage probe failed; allowing managed tool to defer to backend"
+                exhausted,
+                "[team] budget probe cache miss; caching fresh probe"
             );
+            cache.put(Instant::now(), exhausted);
+            exhausted
+        }
+        None => {
+            tracing::debug!("[team] budget probe failed; deferring to backend gate (not cached)");
             false
         }
     }
@@ -312,6 +393,101 @@ pub async fn revoke_invite(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn budget_cache_get_returns_none_when_empty() {
+        let cache = BudgetProbeCache::new();
+        assert_eq!(cache.get(Instant::now(), Duration::from_secs(30)), None);
+    }
+
+    #[test]
+    fn budget_cache_returns_value_within_ttl_and_expires_after() {
+        let cache = BudgetProbeCache::new();
+        let base = Instant::now();
+        cache.put(base, true);
+        // Within TTL → cached value.
+        assert_eq!(
+            cache.get(base + Duration::from_secs(5), Duration::from_secs(30)),
+            Some(true)
+        );
+        // Past TTL → miss (caller must re-probe).
+        assert_eq!(
+            cache.get(base + Duration::from_secs(31), Duration::from_secs(30)),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn cache_hit_skips_fetch() {
+        let cache = BudgetProbeCache::new();
+        cache.put(Instant::now(), true);
+        let calls = AtomicUsize::new(0);
+        let result = budget_exhausted_with_cache(&cache, Duration::from_secs(30), || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Some(false) }
+        })
+        .await;
+        assert!(result, "fresh cache value should be returned");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "fetch must be skipped on cache hit"
+        );
+    }
+
+    #[tokio::test]
+    async fn cache_miss_fetches_and_caches() {
+        let cache = BudgetProbeCache::new();
+        let calls = AtomicUsize::new(0);
+        // First call: empty cache → fetch runs and result is cached.
+        let first = budget_exhausted_with_cache(&cache, Duration::from_secs(30), || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Some(true) }
+        })
+        .await;
+        assert!(first);
+        // Second call: cache is now warm → fetch is skipped.
+        let second = budget_exhausted_with_cache(&cache, Duration::from_secs(30), || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Some(false) }
+        })
+        .await;
+        assert!(
+            second,
+            "second call should return the cached true, not the fresh false"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "only the first call should fetch"
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_probe_is_not_cached_and_defers_to_backend() {
+        let cache = BudgetProbeCache::new();
+        let calls = AtomicUsize::new(0);
+        // Probe failure (None) → returns false (defer to backend) and does not cache.
+        let first = budget_exhausted_with_cache(&cache, Duration::from_secs(30), || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { None }
+        })
+        .await;
+        assert!(!first, "failed probe defers to backend (not exhausted)");
+        // Next call must re-probe because the failure wasn't cached.
+        let second = budget_exhausted_with_cache(&cache, Duration::from_secs(30), || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Some(true) }
+        })
+        .await;
+        assert!(second);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "failed probe is re-fetched next time"
+        );
+    }
 
     #[test]
     fn build_api_path_encodes_reserved_characters_in_segments() {

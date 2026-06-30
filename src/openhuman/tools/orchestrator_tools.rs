@@ -276,10 +276,12 @@ mod tests {
             max_iterations: 8,
             iteration_policy: Default::default(),
             max_result_chars: None,
+            max_turn_output_tokens: None,
             timeout_secs: None,
             sandbox_mode: SandboxMode::None,
             background: false,
             trigger_memory_agent: Default::default(),
+            tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression::Auto,
             subagents: vec![],
             delegate_name: delegate_name.map(String::from),
             agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
@@ -448,7 +450,34 @@ mod tests {
         assert!(
             tool.description().contains("Polymarket") || tool.description().contains("Kalshi"),
             "synthesised tool description must surface the venue blurb so the LLM \
-             can route prediction-market intents to it"
+            can route prediction-market intents to it"
+        );
+    }
+
+    /// tiny.place should be exposed as one named worker route, not as
+    /// scattered direct tools on the chat-tier orchestrator.
+    #[test]
+    fn tinyplace_agent_subagent_synthesises_use_tinyplace_delegate() {
+        let mut orch = def("orchestrator", "test", None);
+        orch.subagents = vec![SubagentEntry::AgentId("tinyplace_agent".into())];
+        let mut reg = registry_with_targets();
+        reg.insert(def(
+            "tinyplace_agent",
+            "tiny.place specialist - handles jobs, proposals, escrow, messages, Agent Cards, and x402 payment challenges.",
+            Some("use_tinyplace"),
+        ));
+        let tools = collect_orchestrator_tools(&orch, &reg, &[]);
+        let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+        assert_eq!(
+            names,
+            vec!["use_tinyplace"],
+            "tinyplace_agent subagent entry must synthesise its stable \
+             delegate_name (`use_tinyplace`), not the default `delegate_tinyplace_agent`"
+        );
+        let tool = tools.iter().find(|t| t.name() == "use_tinyplace").unwrap();
+        assert!(
+            tool.description().contains("tiny.place") && tool.description().contains("x402"),
+            "synthesised tool description must surface tiny.place routing signal"
         );
     }
 

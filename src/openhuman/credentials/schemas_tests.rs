@@ -163,6 +163,7 @@ fn deserialize_params_parses_valid_object_into_struct() {
     assert_eq!(parsed.token, "abc");
     assert!(parsed.user_id.is_none());
     assert!(parsed.user.is_none());
+    assert_eq!(parsed.allow_pending_backend_validation, None);
 }
 
 #[test]
@@ -172,6 +173,15 @@ fn deserialize_params_honours_userid_alias() {
     m.insert("userId".into(), Value::String("u1".into()));
     let parsed: AuthStoreSessionParams = deserialize_params(m).unwrap();
     assert_eq!(parsed.user_id.as_deref(), Some("u1"));
+}
+
+#[test]
+fn deserialize_params_honours_allow_pending_backend_validation_alias() {
+    let mut m = Map::new();
+    m.insert("token".into(), Value::String("abc".into()));
+    m.insert("allowPendingBackendValidation".into(), Value::Bool(true));
+    let parsed: AuthStoreSessionParams = deserialize_params(m).unwrap();
+    assert_eq!(parsed.allow_pending_backend_validation, Some(true));
 }
 
 #[test]

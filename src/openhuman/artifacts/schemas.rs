@@ -11,6 +11,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("list_artifacts"),
         schemas("get_artifact"),
         schemas("delete_artifact"),
+        schemas("regenerate"),
     ]
 }
 
@@ -27,6 +28,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("delete_artifact"),
             handler: handle_delete_artifact,
+        },
+        RegisteredController {
+            schema: schemas("regenerate"),
+            handler: handle_regenerate,
         },
     ]
 }
@@ -171,6 +176,53 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "regenerate" => ControllerSchema {
+            namespace: "ai",
+            function: "regenerate",
+            description: "Re-run the producing tool for an existing artifact using its persisted creation args, reusing the same artifact id so the chat card swaps in place. Drives the failed-card Retry affordance (#3162).",
+            inputs: vec![
+                artifact_id_input("Identifier of the artifact to regenerate."),
+                FieldSchema {
+                    name: "thread_id",
+                    ty: TypeSchema::String,
+                    comment: "Chat thread to route the regenerated artifact's pending/ready/failed events to.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "client_id",
+                    ty: TypeSchema::String,
+                    comment: "Socket client id (web channel) to address the regenerated artifact's events to.",
+                    required: true,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Object {
+                    fields: vec![
+                        FieldSchema {
+                            name: "artifact_id",
+                            ty: TypeSchema::String,
+                            comment: "Identifier that was regenerated (unchanged — reused in place).",
+                            required: true,
+                        },
+                        FieldSchema {
+                            name: "regenerated",
+                            ty: TypeSchema::Bool,
+                            comment: "True when the producing tool was re-dispatched.",
+                            required: true,
+                        },
+                        FieldSchema {
+                            name: "is_error",
+                            ty: TypeSchema::Bool,
+                            comment: "True when the re-dispatched generation itself reported an error (the card is flipped to failed via socket regardless).",
+                            required: true,
+                        },
+                    ],
+                },
+                comment: "Regeneration ack payload.",
+                required: true,
+            }],
+        },
         _other => ControllerSchema {
             namespace: "ai",
             function: "unknown",
@@ -241,6 +293,24 @@ fn handle_delete_artifact(params: Map<String, Value>) -> ControllerFuture {
         to_json(
             crate::openhuman::artifacts::ops::ai_delete_artifact(&config, artifact_id.trim())
                 .await?,
+        )
+    })
+}
+
+fn handle_regenerate(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let artifact_id = read_required::<String>(&params, "artifact_id")?;
+        let thread_id = read_required::<String>(&params, "thread_id")?;
+        let client_id = read_required::<String>(&params, "client_id")?;
+        to_json(
+            crate::openhuman::artifacts::ops::ai_regenerate(
+                &config,
+                artifact_id.trim(),
+                thread_id.trim(),
+                client_id.trim(),
+            )
+            .await?,
         )
     })
 }
@@ -382,19 +452,46 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            vec!["list_artifacts", "get_artifact", "delete_artifact"]
+            vec![
+                "list_artifacts",
+                "get_artifact",
+                "delete_artifact",
+                "regenerate"
+            ]
         );
     }
 
     #[test]
     fn all_registered_controllers_has_handler_per_schema() {
         let controllers = all_registered_controllers();
-        assert_eq!(controllers.len(), 3);
+        assert_eq!(controllers.len(), 4);
         let names: Vec<_> = controllers.iter().map(|c| c.schema.function).collect();
         assert_eq!(
             names,
-            vec!["list_artifacts", "get_artifact", "delete_artifact"]
+            vec![
+                "list_artifacts",
+                "get_artifact",
+                "delete_artifact",
+                "regenerate"
+            ]
         );
+    }
+
+    #[test]
+    fn schemas_regenerate_requires_artifact_id_thread_and_client() {
+        let s = schemas("regenerate");
+        assert_eq!(s.function, "regenerate");
+        let input_names: Vec<_> = s.inputs.iter().map(|f| f.name).collect();
+        assert_eq!(input_names, vec!["artifact_id", "thread_id", "client_id"]);
+        assert!(s.inputs.iter().all(|f| f.required));
+        if let TypeSchema::Object { fields } = &s.outputs[0].ty {
+            let names: Vec<_> = fields.iter().map(|f| f.name).collect();
+            assert!(names.contains(&"artifact_id"));
+            assert!(names.contains(&"regenerated"));
+            assert!(names.contains(&"is_error"));
+        } else {
+            panic!("expected object output type");
+        }
     }
 
     // ── read_required ───────────────────────────────────────────────

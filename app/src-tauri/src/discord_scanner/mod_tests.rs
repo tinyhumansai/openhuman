@@ -331,3 +331,103 @@ async fn registry_forget_all_is_repeatable_noop_after_drain() {
     assert!(registry.started.lock().is_empty());
     assert_all_cancelled(tasks).await;
 }
+
+// ---------- attach target resolution (pin → strict → relaxed) ----------------
+
+fn page(id: &str, url: &str) -> crate::cdp::target::CdpTarget {
+    crate::cdp::target::CdpTarget {
+        id: id.to_string(),
+        kind: "page".to_string(),
+        url: url.to_string(),
+        title: String::new(),
+    }
+}
+
+const PFX: &str = "https://discord.com/";
+const FRAG: &str = "#openhuman-account-acct-1";
+
+#[test]
+fn resolve_strict_fragment_match_is_pinnable() {
+    let targets = vec![
+        page("t-other", "https://discord.com/channels/@me"),
+        page(
+            "t-1",
+            "https://discord.com/channels/@me#openhuman-account-acct-1",
+        ),
+    ];
+    let (t, strict) = super::resolve_page_target(&targets, PFX, FRAG, None).unwrap();
+    assert_eq!(t.id, "t-1");
+    assert!(
+        strict,
+        "strict fragment match must report strict=true so caller pins"
+    );
+}
+
+#[test]
+fn resolve_falls_back_to_relaxed_when_fragment_stripped() {
+    // Discord replaceState'd the hash away — only a prefix match remains.
+    let targets = vec![page("t-1", "https://discord.com/channels/@me/12345")];
+    let (t, strict) = super::resolve_page_target(&targets, PFX, FRAG, None).unwrap();
+    assert_eq!(t.id, "t-1");
+    assert!(
+        !strict,
+        "relaxed match must report strict=false so caller never pins it"
+    );
+}
+
+#[test]
+fn resolve_prefers_pinned_id_over_strict_sibling() {
+    // Pin already locked to t-1 (fragment since stripped); a sibling tab still
+    // carries a strict fragment — the pin must win to avoid cross-wiring.
+    let targets = vec![
+        page(
+            "t-2",
+            "https://discord.com/channels/@me#openhuman-account-acct-1",
+        ),
+        page("t-1", "https://discord.com/channels/@me/12345"),
+    ];
+    let (t, strict) = super::resolve_page_target(&targets, PFX, FRAG, Some("t-1")).unwrap();
+    assert_eq!(t.id, "t-1");
+    assert!(!strict);
+}
+
+#[test]
+fn resolve_ignores_stale_pin_and_recovers() {
+    // Pinned id no longer present (renderer crash → new target id). Resolution
+    // must skip the dead pin and fall through to strict/relaxed.
+    let targets = vec![page("t-new", "https://discord.com/channels/@me/9")];
+    let (t, strict) = super::resolve_page_target(&targets, PFX, FRAG, Some("t-gone")).unwrap();
+    assert_eq!(t.id, "t-new");
+    assert!(!strict);
+}
+
+#[test]
+fn resolve_none_when_no_prefix_target() {
+    let targets = vec![
+        page("t-1", "https://slack.com/client/x"),
+        crate::cdp::target::CdpTarget {
+            id: "iframe".to_string(),
+            kind: "iframe".to_string(),
+            url: "https://discord.com/channels/@me".to_string(),
+            title: String::new(),
+        },
+    ];
+    assert!(
+        super::resolve_page_target(&targets, PFX, FRAG, None).is_none(),
+        "no page-kind target under the prefix → None (non-page kinds excluded)"
+    );
+}
+
+#[test]
+fn resolve_rejects_pinned_target_that_navigated_off_prefix() {
+    // A pinned tab can keep its target id while navigating away from Discord.
+    // The pin branch must still honor url_prefix, so an off-prefix pinned page is
+    // rejected and resolution falls through to the real Discord page.
+    let targets = vec![
+        page("t-1", "https://example.com/somewhere-else"), // pinned id, off-prefix
+        page("t-2", "https://discord.com/channels/@me/9"), // real discord page
+    ];
+    let (t, strict) = super::resolve_page_target(&targets, PFX, FRAG, Some("t-1")).unwrap();
+    assert_eq!(t.id, "t-2");
+    assert!(!strict);
+}

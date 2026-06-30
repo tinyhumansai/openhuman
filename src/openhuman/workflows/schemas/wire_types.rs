@@ -15,8 +15,14 @@ use crate::openhuman::workflows::ops::{
 
 #[derive(Debug, Deserialize, Default)]
 pub(super) struct WorkflowsListParams {
-    // No params today. Kept as an empty struct so future filters (scope,
-    // search, etc.) can slot in without breaking older clients.
+    /// When `true`, also include capability skills (under the `skills/` roots)
+    /// in the listing — not just `workflows/`-root automations. The Skills
+    /// Explorer passes this so registry-installed skills (which land under
+    /// `~/.openhuman/skills/`) appear in its Installed tab and flip the catalog
+    /// Install button to Installed. Omitted (defaults `false`) by the
+    /// Automations UI, which keeps the automations-only view.
+    #[serde(default)]
+    pub(super) include_skills: bool,
 }
 
 #[derive(Debug, Deserialize)]

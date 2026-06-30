@@ -3,6 +3,7 @@ use serde_json::{Map, Value};
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::ControllerSchema;
 use crate::openhuman::config::rpc as config_rpc;
+use crate::openhuman::config::{AutoJoinPolicy, AutoSummarizePolicy};
 
 use super::helpers::{
     deserialize_params, to_json, ActivityLevelSettingsUpdate, AgentPathsUpdate,
@@ -11,8 +12,8 @@ use super::helpers::{
     MeetSettingsUpdate, MemorySettingsUpdate, MemorySyncSettingsUpdate, ModelSettingsUpdate,
     OnboardingCompletedSetParams, RuntimeSettingsUpdate, SandboxSettingsUpdate,
     ScreenIntelligenceSettingsUpdate, SearchSettingsUpdate, SetBrowserAllowAllParams,
-    VoiceServerSettingsUpdate, WorkspaceOnboardingFlagParams, WorkspaceOnboardingFlagSetParams,
-    DEFAULT_ONBOARDING_FLAG_NAME,
+    SuperContextSetParams, VoiceServerSettingsUpdate, WorkspaceOnboardingFlagParams,
+    WorkspaceOnboardingFlagSetParams, DEFAULT_ONBOARDING_FLAG_NAME,
 };
 use super::schema_defs::schemas;
 
@@ -43,6 +44,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("update_agent_paths"),
         schemas("get_onboarding_completed"),
         schemas("set_onboarding_completed"),
+        schemas("get_super_context_enabled"),
+        schemas("set_super_context_enabled"),
         schemas("get_dictation_settings"),
         schemas("update_dictation_settings"),
         schemas("get_voice_server_settings"),
@@ -165,6 +168,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("set_onboarding_completed"),
             handler: handle_set_onboarding_completed,
+        },
+        RegisteredController {
+            schema: schemas("get_super_context_enabled"),
+            handler: handle_get_super_context_enabled,
+        },
+        RegisteredController {
+            schema: schemas("set_super_context_enabled"),
+            handler: handle_set_super_context_enabled,
         },
         RegisteredController {
             schema: schemas("get_dictation_settings"),
@@ -369,6 +380,7 @@ fn handle_update_model_settings(params: Map<String, Value>) -> ControllerFuture 
             reasoning_provider: update.reasoning_provider,
             agentic_provider: update.agentic_provider,
             coding_provider: update.coding_provider,
+            vision_provider: update.vision_provider,
             memory_provider: update.memory_provider,
             embeddings_provider: update.embeddings_provider,
             heartbeat_provider: update.heartbeat_provider,
@@ -520,6 +532,7 @@ fn handle_update_local_ai_settings(params: Map<String, Value>) -> ControllerFutu
             usage_heartbeat: update.usage_heartbeat,
             usage_learning_reflection: update.usage_learning_reflection,
             usage_subconscious: update.usage_subconscious,
+            api_key: update.api_key,
         };
         to_json(config_rpc::load_and_apply_local_ai_settings(patch).await?)
     })
@@ -605,12 +618,46 @@ fn handle_update_meet_settings(params: Map<String, Value>) -> ControllerFuture {
                 return Err(err);
             }
         };
+        let auto_join_policy = match update.auto_join_policy.as_deref() {
+            Some("ask_each_time") => Some(AutoJoinPolicy::AskEachTime),
+            Some("always") => Some(AutoJoinPolicy::Always),
+            Some("never") => Some(AutoJoinPolicy::Never),
+            None => None,
+            Some(other) => {
+                log::warn!("[config][rpc] update_meet_settings invalid auto_join_policy: {other}");
+                return Err(format!(
+                    "invalid auto_join_policy: {other} (valid: ask_each_time, always, never)"
+                ));
+            }
+        };
+        let auto_summarize_policy = match update.auto_summarize_policy.as_deref() {
+            Some("ask") => Some(AutoSummarizePolicy::Ask),
+            Some("always") => Some(AutoSummarizePolicy::Always),
+            Some("never") => Some(AutoSummarizePolicy::Never),
+            None => None,
+            Some(other) => {
+                log::warn!(
+                    "[config][rpc] update_meet_settings invalid auto_summarize_policy: {other}"
+                );
+                return Err(format!(
+                    "invalid auto_summarize_policy: {other} (valid: ask, always, never)"
+                ));
+            }
+        };
         log::debug!(
-            "[config][rpc] update_meet_settings patch auto_orchestrator_handoff={:?}",
-            update.auto_orchestrator_handoff
+            "[config][rpc] update_meet_settings patch auto_orchestrator_handoff={:?} auto_join_policy={:?} auto_summarize_policy={:?} listen_only_default={:?} ingest_backend_transcripts={:?}",
+            update.auto_orchestrator_handoff,
+            auto_join_policy,
+            auto_summarize_policy,
+            update.listen_only_default,
+            update.ingest_backend_transcripts
         );
         let patch = config_rpc::MeetSettingsPatch {
             auto_orchestrator_handoff: update.auto_orchestrator_handoff,
+            auto_join_policy,
+            auto_summarize_policy,
+            listen_only_default: update.listen_only_default,
+            ingest_backend_transcripts: update.ingest_backend_transcripts,
         };
         match config_rpc::load_and_apply_meet_settings(patch).await {
             Ok(outcome) => {
@@ -638,10 +685,20 @@ fn handle_get_meet_settings(_params: Map<String, Value>) -> ControllerFuture {
         };
         let auto_orchestrator_handoff = config.meet.auto_orchestrator_handoff;
         log::debug!(
-            "[config][rpc] get_meet_settings ok auto_orchestrator_handoff={auto_orchestrator_handoff}"
+            "[config][rpc] get_meet_settings ok auto_orchestrator_handoff={auto_orchestrator_handoff} auto_join_policy={:?} auto_summarize_policy={:?} listen_only_default={} ingest_backend_transcripts={}",
+            config.meet.auto_join_policy,
+            config.meet.auto_summarize_policy,
+            config.meet.listen_only_default,
+            config.meet.ingest_backend_transcripts
         );
+        // Enums serialize via `#[serde(rename_all = "snake_case")]` →
+        // "ask_each_time"/"always"/"never" and "ask"/"always"/"never".
         let result = serde_json::json!({
             "auto_orchestrator_handoff": auto_orchestrator_handoff,
+            "auto_join_policy": config.meet.auto_join_policy,
+            "auto_summarize_policy": config.meet.auto_summarize_policy,
+            "listen_only_default": config.meet.listen_only_default,
+            "ingest_backend_transcripts": config.meet.ingest_backend_transcripts,
         });
         to_json(RpcOutcome::new(
             result,
@@ -782,6 +839,17 @@ fn handle_set_onboarding_completed(params: Map<String, Value>) -> ControllerFutu
     Box::pin(async move {
         let payload = deserialize_params::<OnboardingCompletedSetParams>(params)?;
         to_json(config_rpc::set_onboarding_completed(payload.value).await?)
+    })
+}
+
+fn handle_get_super_context_enabled(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async { to_json(config_rpc::get_super_context_enabled().await?) })
+}
+
+fn handle_set_super_context_enabled(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let payload = deserialize_params::<SuperContextSetParams>(params)?;
+        to_json(config_rpc::set_super_context_enabled(payload.value).await?)
     })
 }
 

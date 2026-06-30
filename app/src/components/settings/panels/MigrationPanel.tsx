@@ -9,9 +9,8 @@ import {
 } from '../../../utils/tauriCommands/core';
 import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsSection, SettingsSelect, SettingsTextField } from '../controls';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 
 const log = debug('migration-panel');
 
@@ -26,7 +25,6 @@ interface MigrationPanelProps {
 
 const MigrationPanel = ({ embedded = false }: MigrationPanelProps = {}) => {
   const { t } = useT();
-  const { navigateBack } = useSettingsNavigation();
 
   const [vendor, setVendor] = useState<Vendor>('openclaw');
   const [sourcePath, setSourcePath] = useState<string>('');
@@ -134,179 +132,151 @@ const MigrationPanel = ({ embedded = false }: MigrationPanelProps = {}) => {
 
   const reportToRender = appliedReport ?? previewReport;
 
-  return (
-    <PanelPage
-      className="z-10"
-      contentClassName=""
-      description={embedded ? undefined : t('pages.settings.account.migrationDesc')}
-      leading={embedded ? undefined : <SettingsBackButton onBack={navigateBack} />}>
-      <div className="max-w-3xl space-y-6 p-6">
-        <p className="text-sm text-neutral-600 dark:text-neutral-300">
-          {t('migration.description')}
-        </p>
+  const body = (
+    <>
+      <p className="text-sm text-content-secondary">{t('migration.description')}</p>
 
-        <SettingsSection>
-          <div className="p-4 space-y-4" data-testid="migration-form">
-            <div className="space-y-1">
-              <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-300">
-                {t('migration.vendorLabel')}
-              </label>
-              <SettingsSelect
-                aria-label={t('migration.vendorLabel')}
-                data-testid="migration-vendor-select"
-                value={vendor}
-                onChange={e => setVendor(e.target.value as Vendor)}
-                inputSize="sm"
-                className="w-full">
-                <option value="openclaw">{t('migration.vendor.openclaw')}</option>
-                <option value="hermes">{t('migration.vendor.hermes')}</option>
-              </SettingsSelect>
-            </div>
+      <SettingsSection>
+        <div className="p-4 space-y-5" data-testid="migration-form">
+          <div className="space-y-1">
+            <label className="block text-xs font-medium text-content-secondary">
+              {t('migration.vendorLabel')}
+            </label>
+            <SettingsSelect
+              aria-label={t('migration.vendorLabel')}
+              data-testid="migration-vendor-select"
+              value={vendor}
+              onChange={e => setVendor(e.target.value as Vendor)}
+              inputSize="sm"
+              className="w-full">
+              <option value="openclaw">{t('migration.vendor.openclaw')}</option>
+              <option value="hermes">{t('migration.vendor.hermes')}</option>
+            </SettingsSelect>
+          </div>
 
+          <div className="space-y-1">
+            <label className="block text-xs font-medium text-content-secondary">
+              {t('migration.sourceLabel')}
+            </label>
+            <SettingsTextField
+              data-testid="migration-source-input"
+              value={sourcePath}
+              onChange={e => setSourcePath(e.target.value)}
+              placeholder={
+                vendor === 'hermes'
+                  ? t('migration.sourcePlaceholderHermes')
+                  : t('migration.sourcePlaceholder')
+              }
+              aria-label={t('migration.sourceLabel')}
+              inputSize="sm"
+              className="w-full"
+            />
+            <p className="text-[11px] text-content-muted">{t('migration.sourceHint')}</p>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              data-testid="migration-preview-button"
+              onClick={() => void runPreview()}
+              disabled={isPreviewing || isApplying}>
+              {isPreviewing ? t('migration.previewRunning') : t('migration.previewAction')}
+            </Button>
+            <Button
+              type="button"
+              variant="tertiary"
+              size="sm"
+              data-testid="migration-apply-button"
+              onClick={() => void runApply()}
+              disabled={!canApply}
+              className="bg-amber-600 hover:bg-amber-700 text-content-inverted disabled:bg-amber-600/50">
+              {isApplying ? t('migration.applyRunning') : t('migration.applyAction')}
+            </Button>
+          </div>
+
+          <p className="text-[11px] text-content-muted">{t('migration.applyDisclaimer')}</p>
+        </div>
+      </SettingsSection>
+
+      {error != null && (
+        <div
+          data-testid="migration-error"
+          className="rounded-md border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-xs text-coral-700 dark:text-coral-300">
+          {error}
+        </div>
+      )}
+
+      {reportToRender != null && (
+        <section
+          data-testid={
+            appliedReport != null ? 'migration-report-applied' : 'migration-report-preview'
+          }
+          className="bg-surface rounded-lg border border-line p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-content">
+            {appliedReport != null
+              ? t('migration.reportTitleApplied')
+              : t('migration.reportTitlePreview')}
+          </h3>
+          <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-xs">
+            <dt className="text-content-muted">{t('migration.report.source')}</dt>
+            <dd className="text-content break-all" data-testid="migration-report-source">
+              {reportToRender.source_workspace}
+            </dd>
+            <dt className="text-content-muted">{t('migration.report.target')}</dt>
+            <dd className="text-content break-all" data-testid="migration-report-target">
+              {reportToRender.target_workspace}
+            </dd>
+            <dt className="text-content-muted">{t('migration.report.fromSqlite')}</dt>
+            <dd className="text-content">{reportToRender.stats.from_sqlite}</dd>
+            <dt className="text-content-muted">{t('migration.report.fromMarkdown')}</dt>
+            <dd className="text-content">{reportToRender.stats.from_markdown}</dd>
+            <dt className="text-content-muted">{t('migration.report.imported')}</dt>
+            <dd className="text-content" data-testid="migration-report-imported">
+              {reportToRender.stats.imported}
+            </dd>
+            <dt className="text-content-muted">{t('migration.report.skippedUnchanged')}</dt>
+            <dd className="text-content">{reportToRender.stats.skipped_unchanged}</dd>
+            <dt className="text-content-muted">{t('migration.report.renamedConflicts')}</dt>
+            <dd className="text-content">{reportToRender.stats.renamed_conflicts}</dd>
+          </dl>
+
+          {reportToRender.warnings.length > 0 && (
             <div className="space-y-1">
-              <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-300">
-                {t('migration.sourceLabel')}
-              </label>
-              <SettingsTextField
-                data-testid="migration-source-input"
-                value={sourcePath}
-                onChange={e => setSourcePath(e.target.value)}
-                placeholder={
-                  vendor === 'hermes'
-                    ? t('migration.sourcePlaceholderHermes')
-                    : t('migration.sourcePlaceholder')
-                }
-                aria-label={t('migration.sourceLabel')}
-                inputSize="sm"
-                className="w-full"
-              />
-              <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
-                {t('migration.sourceHint')}
+              <p className="text-xs font-medium text-content-secondary">
+                {t('migration.report.warnings')}
               </p>
+              <ul
+                data-testid="migration-report-warnings"
+                className="text-xs text-content-secondary list-disc list-inside space-y-0.5">
+                {reportToRender.warnings.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
             </div>
+          )}
 
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="primary"
-                size="sm"
-                data-testid="migration-preview-button"
-                onClick={() => void runPreview()}
-                disabled={isPreviewing || isApplying}>
-                {isPreviewing ? t('migration.previewRunning') : t('migration.previewAction')}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                data-testid="migration-apply-button"
-                onClick={() => void runApply()}
-                disabled={!canApply}
-                className="bg-amber-600 hover:bg-amber-700 text-white disabled:bg-amber-600/50">
-                {isApplying ? t('migration.applyRunning') : t('migration.applyAction')}
-              </Button>
-            </div>
+          <p className="text-[11px] text-content-muted">
+            {appliedReport != null
+              ? t('migration.report.appliedHint')
+              : t('migration.report.previewHint')}
+          </p>
+        </section>
+      )}
+    </>
+  );
 
-            <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
-              {t('migration.applyDisclaimer')}
-            </p>
-          </div>
-        </SettingsSection>
+  if (embedded) {
+    return (
+      <PanelPage className="z-10" contentClassName="">
+        <div className="space-y-5 p-6">{body}</div>
+      </PanelPage>
+    );
+  }
 
-        {error != null && (
-          <div
-            data-testid="migration-error"
-            className="rounded-md border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-xs text-coral-700 dark:text-coral-300">
-            {error}
-          </div>
-        )}
-
-        {reportToRender != null && (
-          <section
-            data-testid={
-              appliedReport != null ? 'migration-report-applied' : 'migration-report-preview'
-            }
-            className="bg-white dark:bg-neutral-900/40 rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 space-y-3">
-            <h3 className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
-              {appliedReport != null
-                ? t('migration.reportTitleApplied')
-                : t('migration.reportTitlePreview')}
-            </h3>
-            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-xs">
-              <dt className="text-neutral-500 dark:text-neutral-400">
-                {t('migration.report.source')}
-              </dt>
-              <dd
-                className="text-neutral-800 dark:text-neutral-100 break-all"
-                data-testid="migration-report-source">
-                {reportToRender.source_workspace}
-              </dd>
-              <dt className="text-neutral-500 dark:text-neutral-400">
-                {t('migration.report.target')}
-              </dt>
-              <dd
-                className="text-neutral-800 dark:text-neutral-100 break-all"
-                data-testid="migration-report-target">
-                {reportToRender.target_workspace}
-              </dd>
-              <dt className="text-neutral-500 dark:text-neutral-400">
-                {t('migration.report.fromSqlite')}
-              </dt>
-              <dd className="text-neutral-800 dark:text-neutral-100">
-                {reportToRender.stats.from_sqlite}
-              </dd>
-              <dt className="text-neutral-500 dark:text-neutral-400">
-                {t('migration.report.fromMarkdown')}
-              </dt>
-              <dd className="text-neutral-800 dark:text-neutral-100">
-                {reportToRender.stats.from_markdown}
-              </dd>
-              <dt className="text-neutral-500 dark:text-neutral-400">
-                {t('migration.report.imported')}
-              </dt>
-              <dd
-                className="text-neutral-800 dark:text-neutral-100"
-                data-testid="migration-report-imported">
-                {reportToRender.stats.imported}
-              </dd>
-              <dt className="text-neutral-500 dark:text-neutral-400">
-                {t('migration.report.skippedUnchanged')}
-              </dt>
-              <dd className="text-neutral-800 dark:text-neutral-100">
-                {reportToRender.stats.skipped_unchanged}
-              </dd>
-              <dt className="text-neutral-500 dark:text-neutral-400">
-                {t('migration.report.renamedConflicts')}
-              </dt>
-              <dd className="text-neutral-800 dark:text-neutral-100">
-                {reportToRender.stats.renamed_conflicts}
-              </dd>
-            </dl>
-
-            {reportToRender.warnings.length > 0 && (
-              <div className="space-y-1">
-                <p className="text-xs font-medium text-neutral-600 dark:text-neutral-300">
-                  {t('migration.report.warnings')}
-                </p>
-                <ul
-                  data-testid="migration-report-warnings"
-                  className="text-xs text-neutral-700 dark:text-neutral-300 list-disc list-inside space-y-0.5">
-                  {reportToRender.warnings.map((w, i) => (
-                    <li key={i}>{w}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
-              {appliedReport != null
-                ? t('migration.report.appliedHint')
-                : t('migration.report.previewHint')}
-            </p>
-          </section>
-        )}
-      </div>
-    </PanelPage>
+  return (
+    <SettingsPanel description={t('pages.settings.account.migrationDesc')}>{body}</SettingsPanel>
   );
 };
 

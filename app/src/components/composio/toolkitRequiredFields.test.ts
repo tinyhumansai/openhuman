@@ -12,7 +12,7 @@ describe('toolkitRequiredFields registry', () => {
     expect(fields).toHaveLength(1);
     expect(fields[0].key).toBe('org_name');
     expect(fields[0].suffix).toBe('.crm.dynamics.com');
-    expect(fields[0].placeholder).toBe('myorg');
+    expect(fields[0].placeholderKey).toBe('composio.connect.dynamicsOrgNamePlaceholder');
   });
 
   it('exposes the Jira subdomain field with the .atlassian.net suffix', () => {

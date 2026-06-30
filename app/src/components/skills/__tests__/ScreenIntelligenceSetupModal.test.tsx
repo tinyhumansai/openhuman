@@ -13,7 +13,17 @@ vi.mock('../../../features/screen-intelligence/useScreenIntelligenceState', () =
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<Record<string, unknown>>('react-router-dom');
-  return { ...actual, useNavigate: vi.fn(() => vi.fn()) };
+  return {
+    ...actual,
+    useNavigate: vi.fn(() => vi.fn()),
+    useLocation: () => ({
+      pathname: '/connections',
+      search: '',
+      hash: '',
+      state: null,
+      key: 'test',
+    }),
+  };
 });
 
 vi.mock('../../../utils/tauriCommands', async () => {

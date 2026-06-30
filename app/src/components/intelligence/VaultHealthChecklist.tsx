@@ -4,6 +4,7 @@ import { useT } from '../../lib/i18n/I18nContext';
 import type { ToastNotification } from '../../types/intelligence';
 import { openUrl, revealPath } from '../../utils/openUrl';
 import { memoryTreeVaultHealthCheck, type VaultHealthCheck } from '../../utils/tauriCommands';
+import Button from '../ui/Button';
 
 const OBSIDIAN_DOWNLOAD_URL = 'https://obsidian.md/download';
 
@@ -134,65 +135,63 @@ export function VaultHealthChecklist({ onToast, title }: VaultHealthChecklistPro
 
   return (
     <div
-      className="rounded-xl border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 p-4 space-y-3"
+      className="rounded-xl border border-line bg-surface p-4 space-y-3"
       data-testid="vault-health-checklist">
       <div className="flex items-start justify-between gap-2">
         <div>
-          <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-            {resolvedTitle}
-          </h3>
-          <p className="mt-1 text-xs text-stone-600 dark:text-neutral-300">
+          <h3 className="text-sm font-semibold text-content">{resolvedTitle}</h3>
+          <p className="mt-1 text-xs text-content-secondary">
             {t('vaultHealth.workspaceVault')} <code className="font-mono">memory_tree/content</code>
           </p>
         </div>
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="xs"
           onClick={() => {
             void runCheck();
           }}
           disabled={refreshing}
-          className="rounded-md border border-stone-300 dark:border-neutral-600 bg-white dark:bg-neutral-800 px-2.5 py-1 text-xs font-medium text-stone-700 dark:text-neutral-200 disabled:opacity-60"
           data-testid="vault-health-refresh">
           {refreshing ? t('vaultHealth.refreshing') : t('vaultHealth.refresh')}
-        </button>
+        </Button>
       </div>
 
       {health?.content_root_abs ? (
         <code
-          className="block break-all rounded-md bg-stone-100 dark:bg-neutral-800 px-2 py-1 text-[11px] text-stone-700 dark:text-neutral-200"
+          className="block break-all rounded-md bg-surface-subtle px-2 py-1 text-[11px] text-content-secondary"
           data-testid="vault-health-path">
           {health.content_root_abs}
         </code>
       ) : null}
 
       <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="sm"
           onClick={revealVault}
           disabled={!health?.content_root_abs}
-          className="rounded-md border border-stone-300 dark:border-neutral-600 bg-white dark:bg-neutral-800 px-3 py-1.5 text-xs font-semibold text-stone-700 dark:text-neutral-200 disabled:opacity-50"
           data-testid="vault-health-reveal">
           {t('vaultHealth.revealFolder')}
-        </button>
+        </Button>
         <button
           type="button"
           onClick={openObsidian}
           disabled={!health?.content_root_abs}
-          className="rounded-md border border-violet-300 dark:border-violet-500/40 bg-white dark:bg-neutral-800 px-3 py-1.5 text-xs font-semibold text-violet-700 dark:text-violet-300 disabled:opacity-50"
+          className="rounded-md border border-violet-300 dark:border-violet-500/40 bg-surface px-3 py-1.5 text-xs font-semibold text-violet-700 dark:text-violet-300 disabled:opacity-50"
           data-testid="vault-health-open-obsidian">
           {t('vaultHealth.openInObsidian')}
         </button>
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="sm"
           onClick={installObsidian}
-          className="rounded-md border border-stone-300 dark:border-neutral-600 bg-white dark:bg-neutral-800 px-3 py-1.5 text-xs font-semibold text-stone-700 dark:text-neutral-200"
           data-testid="vault-health-install-obsidian">
           {t('vaultHealth.installObsidian')}
-        </button>
+        </Button>
       </div>
 
       {loading ? (
-        <div className="h-16 rounded-md bg-stone-100 dark:bg-neutral-800 animate-pulse" />
+        <div className="h-16 rounded-md bg-surface-subtle animate-pulse" />
       ) : error ? (
         <div
           className="rounded-md border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-xs text-coral-700 dark:text-coral-300"
@@ -216,9 +215,7 @@ export function VaultHealthChecklist({ onToast, title }: VaultHealthChecklistPro
               {!item.ok ? <p className="mt-1 leading-relaxed">{item.recovery}</p> : null}
             </div>
           ))}
-          <p
-            className="text-[11px] text-stone-600 dark:text-neutral-300"
-            data-testid="vault-health-last-sync">
+          <p className="text-[11px] text-content-secondary" data-testid="vault-health-last-sync">
             {t('vaultHealth.lastSync')} {formatRelativeTime(health?.last_sync_ms ?? 0, t)}
           </p>
         </div>

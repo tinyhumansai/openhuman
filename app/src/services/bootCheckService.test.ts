@@ -56,3 +56,23 @@ describe('recoverPortConflict', () => {
     await expect(recoverPortConflict()).rejects.toThrow('IPC failure');
   });
 });
+
+describe('forceQuitPortOwner', () => {
+  it('calls the force_quit_port_owner Tauri command with the pid', async () => {
+    const fakeOutcome = { success: true, message: 'Core recovered on port 7789', new_port: 7789 };
+    invokeMock.mockResolvedValueOnce(fakeOutcome);
+
+    const { forceQuitPortOwner } = await import('./bootCheckService');
+    const result = await forceQuitPortOwner(4242);
+
+    expect(result).toEqual(fakeOutcome);
+    expect(invokeMock).toHaveBeenCalledWith('force_quit_port_owner', { pid: 4242 });
+  });
+
+  it('propagates errors from the Tauri command', async () => {
+    invokeMock.mockRejectedValueOnce(new Error('IPC failure'));
+
+    const { forceQuitPortOwner } = await import('./bootCheckService');
+    await expect(forceQuitPortOwner(1)).rejects.toThrow('IPC failure');
+  });
+});

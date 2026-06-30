@@ -1,5 +1,6 @@
 import { useT } from '../../../../lib/i18n/I18nContext';
 import type { AutocompleteStatus } from '../../../../utils/tauriCommands';
+import Button from '../../../ui/Button';
 
 interface AppFilterSectionProps {
   status: AutocompleteStatus | null;
@@ -39,11 +40,11 @@ const AppFilterSection = ({
   const { t } = useT();
   return (
     <>
-      <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 space-y-3">
-        <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+      <section className="rounded-2xl border border-line bg-surface p-4 space-y-3">
+        <h3 className="text-sm font-semibold text-content">
           {t('settings.autocomplete.appFilter.runtime')}
         </h3>
-        <div className="text-sm text-neutral-800 dark:text-neutral-200 space-y-1">
+        <div className="text-sm text-content space-y-1">
           <div>
             {t('settings.autocomplete.appFilter.platformSupported')}:{' '}
             {status?.platform_supported ? t('common.yes') : t('common.no')}
@@ -82,15 +83,11 @@ const AppFilterSection = ({
           </div>
         </div>
         <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={onRefreshStatus}
-            disabled={isLoading}
-            className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-800 px-3 py-2 text-sm text-neutral-800 dark:text-neutral-200 disabled:opacity-50">
+          <Button variant="secondary" size="md" onClick={onRefreshStatus} disabled={isLoading}>
             {isLoading
               ? t('settings.autocomplete.appFilter.refreshing')
               : t('settings.autocomplete.appFilter.refreshStatus')}
-          </button>
+          </Button>
           <button
             type="button"
             onClick={onStart}
@@ -98,38 +95,36 @@ const AppFilterSection = ({
             className="rounded-lg border border-green-500/60 bg-green-50 dark:bg-green-500/10 px-3 py-2 text-sm text-green-700 dark:text-green-300 disabled:opacity-50">
             {t('autocomplete.start')}
           </button>
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            tone="danger"
+            size="md"
             onClick={onStop}
-            disabled={!status?.running}
-            className="rounded-lg border border-red-500/60 bg-red-50 dark:bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-300 disabled:opacity-50">
+            disabled={!status?.running}>
             {t('autocomplete.stop')}
-          </button>
+          </Button>
         </div>
       </section>
 
-      <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 space-y-3">
-        <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+      <section className="rounded-2xl border border-line bg-surface p-4 space-y-3">
+        <h3 className="text-sm font-semibold text-content">
           {t('settings.autocomplete.appFilter.test')}
         </h3>
         <div className="space-y-1">
-          <div className="text-xs text-neutral-600 dark:text-neutral-300">
+          <div className="text-xs text-content-secondary">
             {t('settings.autocomplete.appFilter.contextOverride')}
           </div>
           <textarea
             value={contextOverride}
             onChange={event => onSetContextOverride(event.target.value)}
             rows={3}
-            className="w-full rounded border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 p-2 text-xs text-neutral-800 dark:text-neutral-200"
+            className="w-full rounded border border-line bg-surface-muted p-2 text-xs text-content"
           />
         </div>
         <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={onTestCurrent}
-            className="rounded-lg border border-primary-500/60 bg-primary-50 dark:bg-primary-500/10 px-3 py-2 text-sm text-primary-600 dark:text-primary-300">
+          <Button variant="primary" size="md" onClick={onTestCurrent}>
             {t('settings.autocomplete.appFilter.getSuggestion')}
-          </button>
+          </Button>
           <button
             type="button"
             onClick={onAcceptSuggestion}
@@ -144,25 +139,22 @@ const AppFilterSection = ({
           </button>
         </div>
         {focusDebug && (
-          <pre className="max-h-48 overflow-auto rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 p-2 text-xs text-neutral-800 dark:text-neutral-200">
+          <pre className="max-h-48 overflow-auto rounded-xl border border-line bg-surface-muted p-2 text-xs text-content">
             {focusDebug}
           </pre>
         )}
       </section>
 
-      <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 space-y-3">
+      <section className="rounded-2xl border border-line bg-surface p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+          <h3 className="text-sm font-semibold text-content">
             {t('settings.autocomplete.appFilter.liveLogs')}
           </h3>
-          <button
-            type="button"
-            onClick={onClearLogs}
-            className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-800 px-3 py-1.5 text-xs text-neutral-800 dark:text-neutral-200">
+          <Button variant="secondary" size="sm" onClick={onClearLogs}>
             {t('common.clear')}
-          </button>
+          </Button>
         </div>
-        <pre className="max-h-56 overflow-auto rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 p-2 text-xs text-neutral-800 dark:text-neutral-200">
+        <pre className="max-h-56 overflow-auto rounded-xl border border-line bg-surface-muted p-2 text-xs text-content">
           {logs.length > 0 ? logs.join('\n') : t('settings.autocomplete.appFilter.noLogs')}
         </pre>
       </section>

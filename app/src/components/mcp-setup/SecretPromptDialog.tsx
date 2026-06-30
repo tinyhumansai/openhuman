@@ -90,22 +90,22 @@ export function SecretPromptDialog() {
       aria-modal="true"
       aria-label={t('mcp.setup.secretDialog.title')}>
       <div
-        className="bg-white dark:bg-neutral-900 rounded-2xl max-w-md w-full shadow-large border border-stone-200 dark:border-neutral-800 animate-slide-up"
+        className="bg-surface rounded-2xl max-w-md w-full shadow-large border border-line animate-slide-up"
         onClick={e => e.stopPropagation()}>
         <form onSubmit={handleSubmit}>
           <div className="p-6 pb-4">
-            <h2 className="text-lg font-semibold text-stone-900 dark:text-neutral-100">
+            <h2 className="text-lg font-semibold text-content">
               {t('mcp.setup.secretDialog.title')}
             </h2>
-            <p className="text-sm text-stone-600 dark:text-neutral-300 mt-2">
+            <p className="text-sm text-content-secondary mt-2">
               {t('mcp.setup.secretDialog.bodyPrefix')}{' '}
-              <code className="px-1.5 py-0.5 rounded bg-stone-100 dark:bg-neutral-800 text-stone-900 dark:text-neutral-100 font-mono text-xs">
+              <code className="px-1.5 py-0.5 rounded bg-surface-subtle text-content font-mono text-xs">
                 {request.keyName}
               </code>
               {t('mcp.setup.secretDialog.bodySuffix')}
             </p>
             {request.prompt && (
-              <p className="text-sm text-stone-700 dark:text-neutral-200 mt-3 whitespace-pre-wrap">
+              <p className="text-sm text-content-secondary mt-3 whitespace-pre-wrap">
                 {request.prompt}
               </p>
             )}
@@ -114,7 +114,7 @@ export function SecretPromptDialog() {
           <div className="px-6 pb-2">
             <label
               htmlFor="mcp-setup-secret-input"
-              className="block text-xs font-medium text-stone-600 dark:text-neutral-400 mb-1">
+              className="block text-xs font-medium text-content-secondary mb-1">
               {t('mcp.setup.secretDialog.inputLabel')}
             </label>
             <div className="flex items-stretch gap-2">
@@ -127,7 +127,7 @@ export function SecretPromptDialog() {
                 value={value}
                 onChange={e => setValue(e.target.value)}
                 placeholder={t('mcp.setup.secretDialog.inputPlaceholder')}
-                className="flex-1 px-3 py-2 rounded-lg border border-stone-300 dark:border-neutral-700 bg-stone-50 dark:bg-neutral-800 text-stone-900 dark:text-neutral-100 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                className="flex-1 px-3 py-2 rounded-lg border border-line-strong bg-surface-muted text-content font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
                 autoFocus
                 disabled={submitting}
               />
@@ -135,11 +135,11 @@ export function SecretPromptDialog() {
                 type="button"
                 onClick={() => setReveal(v => !v)}
                 disabled={submitting}
-                className="px-3 py-2 text-xs font-medium text-stone-600 dark:text-neutral-300 rounded-lg border border-stone-300 dark:border-neutral-700 hover:bg-stone-100 dark:hover:bg-neutral-800">
+                className="px-3 py-2 text-xs font-medium text-content-secondary rounded-lg border border-line-strong hover:bg-surface-hover">
                 {reveal ? t('mcp.setup.secretDialog.hide') : t('mcp.setup.secretDialog.show')}
               </button>
             </div>
-            <p className="text-[11px] text-stone-500 dark:text-neutral-500 mt-2">
+            <p className="text-[11px] text-content-muted dark:text-content-faint mt-2">
               {t('mcp.setup.secretDialog.privacyNote')}
             </p>
             {error && (
@@ -149,18 +149,18 @@ export function SecretPromptDialog() {
             )}
           </div>
 
-          <div className="flex items-center justify-end gap-3 p-6 pt-4 border-t border-stone-200 dark:border-neutral-800">
+          <div className="flex items-center justify-end gap-3 p-6 pt-4 border-t border-line">
             <button
               type="button"
               onClick={handleCancel}
               disabled={submitting}
-              className="px-4 py-2 text-sm font-medium text-stone-600 dark:text-neutral-300 hover:text-stone-900 dark:hover:text-neutral-100 rounded-lg hover:bg-stone-100 dark:hover:bg-neutral-800 disabled:opacity-50">
+              className="px-4 py-2 text-sm font-medium text-content-secondary hover:text-content rounded-lg hover:bg-surface-hover disabled:opacity-50">
               {t('mcp.setup.secretDialog.cancel')}
             </button>
             <button
               type="submit"
               disabled={submitting || value.length === 0}
-              className="px-4 py-2 text-sm font-medium rounded-lg bg-primary-500 hover:bg-primary-600 text-white disabled:opacity-50">
+              className="px-4 py-2 text-sm font-medium rounded-lg bg-primary-500 hover:bg-primary-600 text-content-inverted disabled:opacity-50">
               {submitting
                 ? t('mcp.setup.secretDialog.submitting')
                 : t('mcp.setup.secretDialog.submit')}

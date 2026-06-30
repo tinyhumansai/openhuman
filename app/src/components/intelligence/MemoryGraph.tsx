@@ -42,6 +42,7 @@ import { useAppSelector } from '../../store/hooks';
 import { resolveTheme, type ThemeMode } from '../../store/themeSlice';
 import { type GraphEdge, type GraphMode, type GraphNode } from '../../utils/tauriCommands';
 import { openWorkspacePath, previewWorkspaceText } from '../../utils/tauriCommands/workspacePaths';
+import Button from '../ui/Button';
 import {
   CONTACT_COLOR,
   LEAF_COLOR,
@@ -531,7 +532,7 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGr
   if (nodes.length === 0) {
     return (
       <div
-        className="flex h-[640px] items-center justify-center rounded-lg border border-stone-100 dark:border-neutral-800 bg-stone-50/40 text-sm text-stone-500 dark:text-neutral-400"
+        className="flex h-[640px] items-center justify-center rounded-lg border border-line-subtle bg-surface-muted/40 text-sm text-content-muted"
         data-testid="memory-graph-empty">
         {emptyHint ?? (mode === 'contacts' ? t('graph.noContactMentions') : t('graph.noMemory'))}
       </div>
@@ -564,14 +565,14 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGr
 
   return (
     <div
-      className="memory-graph rounded-lg border border-stone-100 dark:border-neutral-800 bg-white dark:bg-neutral-900"
+      className="memory-graph rounded-lg border border-line-subtle bg-surface"
       onMouseLeave={() => setHovered(null)}>
-      <div className="flex items-center justify-between gap-4 border-b border-stone-100 dark:border-neutral-800 px-4 py-2">
-        <div className="flex items-center gap-3 text-xs text-stone-500 dark:text-neutral-400">
+      <div className="flex items-center justify-between gap-4 border-b border-line-subtle px-4 py-2">
+        <div className="flex items-center gap-3 text-xs text-content-muted">
           <span>
             {nodes.length} {t('graph.nodes')}
           </span>
-          <span className="text-stone-300 dark:text-neutral-600">·</span>
+          <span className="text-content-faint dark:text-neutral-600">·</span>
           <span>
             {sim.edges.length}{' '}
             {mode === 'tree' ? t('graph.parentChild') : t('graph.documentContact')}{' '}
@@ -582,7 +583,7 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGr
           {legend.map(item => (
             <span
               key={item.label}
-              className="flex items-center gap-1.5 text-xs text-stone-600 dark:text-neutral-300">
+              className="flex items-center gap-1.5 text-xs text-content-secondary">
               <span
                 className="inline-block h-2.5 w-2.5 rounded-full"
                 style={{ backgroundColor: item.color }}
@@ -590,13 +591,14 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGr
               {item.label}
             </span>
           ))}
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="xs"
             onClick={resetView}
             data-testid="memory-graph-reset-view"
-            className="rounded-md border border-stone-200 bg-white px-2 py-1 text-[11px] font-medium text-stone-600 shadow-sm hover:bg-stone-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800">
+            className="text-[11px] shadow-sm">
             {t('graph.resetView')}
-          </button>
+          </Button>
         </div>
       </div>
       {useWebGL ? (
@@ -698,7 +700,7 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGr
       )}
       {hovered && (
         <div
-          className="border-t border-stone-100 dark:border-neutral-800 bg-stone-50/70 dark:bg-neutral-900/70 px-4 py-2 text-xs text-stone-700 dark:text-neutral-200"
+          className="border-t border-line-subtle bg-surface-muted/70 dark:bg-surface/70 px-4 py-2 text-xs text-content-secondary"
           data-testid="memory-graph-tooltip">
           {hovered.kind === 'root' ? (
             <span className="font-medium text-violet-600 dark:text-violet-400">
@@ -711,29 +713,30 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGr
           ) : hovered.kind === 'summary' ? (
             <>
               <span className="font-mono">L{hovered.level ?? '?'}</span>
-              <span className="text-stone-400 dark:text-neutral-500"> · </span>
+              <span className="text-content-faint"> · </span>
               <span className="capitalize">{hovered.tree_kind}</span>
-              <span className="text-stone-400 dark:text-neutral-500"> · </span>
+              <span className="text-content-faint"> · </span>
               <span>{hovered.tree_scope}</span>
-              <span className="text-stone-400 dark:text-neutral-500"> · </span>
+              <span className="text-content-faint"> · </span>
               <span>
                 {hovered.child_count ?? 0} {t('graph.children')}
               </span>
               {hoveredSummaryPath && (
                 <>
-                  <span className="ml-3 break-all font-mono text-stone-400 dark:text-neutral-500">
+                  <span className="ml-3 break-all font-mono text-content-faint">
                     workspace:{hoveredSummaryPath}
                   </span>
-                  <button
-                    type="button"
+                  <Button
+                    variant="secondary"
+                    size="xs"
                     data-testid={`memory-graph-preview-${hovered.id}`}
                     disabled={previewingPath === hoveredSummaryPath}
                     onClick={() => void previewSummary(hovered)}
-                    className="ml-3 rounded-md border border-stone-200 bg-white px-2 py-1 text-[11px] font-medium text-stone-700 shadow-sm hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800">
+                    className="ml-3 text-[11px] shadow-sm">
                     {previewingPath === hoveredSummaryPath
                       ? t('migration.previewRunning')
                       : t('migration.previewAction')}
-                  </button>
+                  </Button>
                 </>
               )}
             </>
@@ -742,28 +745,26 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGr
               <span className="font-medium text-violet-700 dark:text-violet-300">
                 {hovered.label}
               </span>
-              <span className="ml-3 text-stone-400 dark:text-neutral-500">
+              <span className="ml-3 text-content-faint">
                 {t('graph.person')} · canonical id {hovered.id.slice(0, 12)}…
               </span>
             </>
           ) : (
             <>
               <span className="font-medium">{hovered.label || 'chunk'}</span>
-              <span className="ml-3 text-stone-400 dark:text-neutral-500">
-                {t('graph.document')}
-              </span>
+              <span className="ml-3 text-content-faint">{t('graph.document')}</span>
             </>
           )}
         </div>
       )}
       {preview && (
         <div
-          className="border-t border-stone-100 bg-white px-4 py-3 dark:border-neutral-800 dark:bg-neutral-950"
+          className="border-t border-line-subtle bg-surface px-4 py-3 dark:bg-surface-canvas"
           data-testid="memory-graph-preview">
-          <div className="mb-2 break-all font-mono text-[11px] text-stone-400 dark:text-neutral-500">
+          <div className="mb-2 break-all font-mono text-[11px] text-content-faint">
             workspace:{preview.path}
           </div>
-          <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-stone-50 p-3 text-xs text-stone-700 dark:bg-neutral-900 dark:text-neutral-200">
+          <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-surface-muted p-3 text-xs text-content-secondary">
             {preview.error || preview.contents}
             {preview.truncated ? '\n…' : ''}
           </pre>

@@ -85,6 +85,7 @@ use openhuman_core::openhuman::memory::{
     Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts,
 };
 use openhuman_core::openhuman::security::{AuditLogger, AutonomyLevel, SecurityPolicy};
+use openhuman_core::openhuman::tokenjuice::AgentTokenjuiceCompression;
 use openhuman_core::openhuman::tool_registry::ops::diagnostics_for_config;
 use openhuman_core::openhuman::tool_registry::{
     all_tool_registry_controller_schemas, all_tool_registry_registered_controllers,
@@ -252,6 +253,13 @@ impl Channel for CapturingChannel {
         "capture"
     }
 
+    // External channel exposes a proactive delivery target so the proactive
+    // router resolves a recipient for it (#3794 — recipient-less proactive sends
+    // are skipped for channels that return `None`).
+    fn proactive_target(&self) -> Option<String> {
+        Some("capture".to_string())
+    }
+
     async fn send(&self, message: &SendMessage) -> Result<()> {
         self.sent
             .lock()
@@ -290,10 +298,12 @@ fn coverage_agent_definition(
         max_iterations: 8,
         iteration_policy: Default::default(),
         max_result_chars: None,
+        max_turn_output_tokens: None,
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,
         background: false,
         trigger_memory_agent: Default::default(),
+        tokenjuice_compression: AgentTokenjuiceCompression::Auto,
         subagents: vec![],
         delegate_name: delegate_name.map(str::to_string),
         agent_tier: AgentTier::Worker,
@@ -774,6 +784,7 @@ async fn composio_agent_tools_cover_backend_discovery_markdown_and_execution_pat
             "composio_list_toolkits",
             "composio_list_connections",
             "composio_authorize",
+            "composio_connect",
             "composio_list_tools",
             "composio_execute",
         ]
@@ -2207,7 +2218,9 @@ async fn proactive_subscriber_routes_web_and_active_external_channel_without_net
     let sent = capture.sent.lock().expect("capture lock").clone();
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0].content, "send through active external channel");
-    assert_eq!(sent[0].recipient, "");
+    // Recipient is now resolved from the channel's proactive_target (#3794),
+    // rather than the previously-empty recipient.
+    assert_eq!(sent[0].recipient, "capture");
 
     subscriber.set_active_channel(Some("web".into()));
     subscriber

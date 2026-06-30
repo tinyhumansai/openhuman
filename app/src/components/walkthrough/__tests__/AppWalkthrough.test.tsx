@@ -9,7 +9,7 @@
  *  - AppWalkthrough does not render when already completed
  *  - AppWalkthrough restarts when walkthrough:restart event fires
  *  - Completing/skipping the tour calls markWalkthroughComplete (localStorage set)
- *  - createWalkthroughSteps: 9 steps, cross-page steps have before functions
+ *  - createWalkthroughSteps: current targets, cross-page steps have before functions
  *  - waitForTarget: resolves when element added, rejects on timeout
  *  - WalkthroughTooltip renders step title, content, and navigation buttons
  */
@@ -519,10 +519,10 @@ describe('WalkthroughTooltip', () => {
 // ── createWalkthroughSteps tests ──────────────────────────────────────────
 
 describe('createWalkthroughSteps', () => {
-  it('returns 10 steps', () => {
+  it('returns 13 steps', () => {
     const navigate = vi.fn();
     const steps = createWalkthroughSteps(navigate);
-    expect(steps).toHaveLength(10);
+    expect(steps).toHaveLength(13);
   });
 
   it('first step targets home-card', () => {
@@ -551,19 +551,18 @@ describe('createWalkthroughSteps', () => {
     const navigate = vi.fn();
     const steps = createWalkthroughSteps(navigate);
 
-    // Steps: 2=chat, 3=integrations, 4=channels, 5=activity, 6=settings, 7=home-return, 9=chat-welcome
-    const crossPageIndices = [2, 3, 4, 5, 6, 7, 9];
+    // Steps: 2=chat, 3=integrations, 4=channels, 5=settings, 6=chat-tab, 12=chat-welcome
+    const crossPageIndices = [2, 3, 4, 5, 6, 12];
     for (const idx of crossPageIndices) {
       expect(typeof steps[idx].before, `step[${idx}] should have a before fn`).toBe('function');
     }
   });
 
-  it('home-only steps do not have before functions', () => {
+  it('same-shell steps do not have before functions', () => {
     const navigate = vi.fn();
     const steps = createWalkthroughSteps(navigate);
 
-    // Steps: 0=home-card, 1=home-cta, 8=tab-notifications (step 9 now has a before hook)
-    const homeOnlyIndices = [0, 1, 8];
+    const homeOnlyIndices = [0, 1, 7, 8, 9, 10, 11];
     for (const idx of homeOnlyIndices) {
       expect(steps[idx].before, `step[${idx}] should not have a before fn`).toBeUndefined();
     }
@@ -573,10 +572,9 @@ describe('createWalkthroughSteps', () => {
     { idx: 2, route: '/chat', target: 'chat-agent-panel' },
     { idx: 3, route: '/connections', target: 'skills-grid' },
     { idx: 4, route: null, target: 'skills-channels' },
-    { idx: 5, route: '/activity', target: 'intelligence-header' },
-    { idx: 6, route: '/settings', target: 'settings-menu' },
-    { idx: 7, route: '/home', target: 'tab-chat' },
-    { idx: 9, route: '/chat', target: 'chat-agent-panel' },
+    { idx: 5, route: '/settings', target: 'settings-menu' },
+    { idx: 6, route: '/chat', target: 'tab-chat' },
+    { idx: 12, route: '/chat', target: 'chat-agent-panel' },
   ])('before hook for step $idx calls navigate("$route")', async ({ idx, route, target }) => {
     const navigate = vi.fn();
 
@@ -593,6 +591,30 @@ describe('createWalkthroughSteps', () => {
     } finally {
       document.body.removeChild(el);
     }
+  });
+
+  it('targets only current walkthrough anchors', () => {
+    const navigate = vi.fn();
+    const steps = createWalkthroughSteps(navigate);
+    const targets = steps.map(step => step.target);
+
+    expect(targets).toEqual([
+      '[data-walkthrough="home-card"]',
+      '[data-walkthrough="home-cta"]',
+      '[data-walkthrough="chat-agent-panel"]',
+      '[data-walkthrough="skills-grid"]',
+      '[data-walkthrough="skills-channels"]',
+      '[data-walkthrough="settings-menu"]',
+      '[data-walkthrough="tab-chat"]',
+      '[data-walkthrough="tab-human"]',
+      '[data-walkthrough="tab-brain"]',
+      '[data-walkthrough="tab-agent-world"]',
+      '[data-walkthrough="tab-connections"]',
+      '[data-walkthrough="tab-feedback"]',
+      '[data-walkthrough="chat-agent-panel"]',
+    ]);
+    expect(targets).not.toContain('[data-walkthrough="tab-activity"]');
+    expect(targets).not.toContain('[data-walkthrough="intelligence-header"]');
   });
 
   it('final step before hook creates thread and seeds welcome message', async () => {

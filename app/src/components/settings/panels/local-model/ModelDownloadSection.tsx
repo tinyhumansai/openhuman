@@ -122,30 +122,26 @@ const ModelDownloadSection = ({
     <>
       <SettingsSection title={t('settings.localModel.download.capabilityAssets')}>
         <div className="px-4 py-3 space-y-3">
-          <div className="text-xs text-neutral-500 dark:text-neutral-400">
+          <div className="text-xs text-content-muted">
             {t('settings.localModel.download.quantizationPref')} {assets?.quantization ?? 'q4'}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
             {capabilityCards.map(([labelKey, key, item]) => (
-              <div
-                key={key}
-                className="rounded-md border border-neutral-200 dark:border-neutral-800 p-2">
-                <div className="text-neutral-500 dark:text-neutral-400 text-xs uppercase tracking-wide">
+              <div key={key} className="rounded-md border border-line p-2">
+                <div className="text-content-muted text-xs uppercase tracking-wide">
                   {t(labelKey)}
                 </div>
-                <div className="text-neutral-800 dark:text-neutral-100 mt-1 break-all">
+                <div className="text-content mt-1 break-all">
                   {item?.id ?? t('settings.localModel.download.notAvailable')}
                 </div>
                 <div className={`text-xs mt-1 ${statusTone(item?.state ?? 'idle')}`}>
                   {statusLabel(item?.state ?? 'idle')}
                 </div>
                 {item?.path && (
-                  <div className="text-[10px] text-neutral-500 dark:text-neutral-400 mt-1 break-all">
-                    {item.path}
-                  </div>
+                  <div className="text-[10px] text-content-muted mt-1 break-all">{item.path}</div>
                 )}
                 {item?.provider === 'ollama' || item?.provider === 'lm_studio' ? (
-                  <div className="mt-2 text-[10px] text-neutral-500 dark:text-neutral-400">
+                  <div className="mt-2 text-[10px] text-content-muted">
                     {t('settings.localModel.download.manageExternal')}
                   </div>
                 ) : (
@@ -177,7 +173,7 @@ const ModelDownloadSection = ({
             aria-label={t('settings.localModel.download.testSummarization')}
           />
           <div className="flex items-center justify-between">
-            <div className="text-xs text-neutral-500 dark:text-neutral-400">
+            <div className="text-xs text-content-muted">
               {t('settings.localModel.download.summaryHelper')}
             </div>
             <Button
@@ -192,7 +188,7 @@ const ModelDownloadSection = ({
             </Button>
           </div>
           {summaryOutput && (
-            <pre className="whitespace-pre-wrap rounded-md bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-800 p-3 text-xs text-neutral-700 dark:text-neutral-200">
+            <pre className="whitespace-pre-wrap rounded-md bg-surface-muted border border-line p-3 text-xs text-content-secondary">
               {summaryOutput}
             </pre>
           )}
@@ -209,12 +205,12 @@ const ModelDownloadSection = ({
             aria-label={t('settings.localModel.download.testCustomPrompt')}
           />
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <label className="flex items-center gap-2 text-xs text-neutral-700 dark:text-neutral-200">
+            <label className="flex items-center gap-2 text-xs text-content-secondary">
               <input
                 type="checkbox"
                 checked={promptNoThink}
                 onChange={e => onSetPromptNoThink(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-primary-500 focus:ring-primary-500"
+                className="h-3.5 w-3.5 rounded border-line-strong bg-surface text-primary-500 focus:ring-primary-500"
               />
               {t('settings.localModel.download.noThinkMode')}
             </label>
@@ -237,7 +233,7 @@ const ModelDownloadSection = ({
           )}
           {promptError && <SettingsStatusLine saving={false} error={promptError} savingLabel="" />}
           {promptOutput && (
-            <pre className="whitespace-pre-wrap rounded-md bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-800 p-3 text-xs text-neutral-700 dark:text-neutral-200 max-h-64 overflow-auto">
+            <pre className="whitespace-pre-wrap rounded-md bg-surface-muted border border-line p-3 text-xs text-content-secondary max-h-64 overflow-auto">
               {promptOutput}
             </pre>
           )}
@@ -276,7 +272,7 @@ const ModelDownloadSection = ({
               : t('settings.localModel.download.runVisionTest')}
           </Button>
           {visionOutput && (
-            <pre className="whitespace-pre-wrap rounded-md bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-800 p-3 text-xs text-neutral-700 dark:text-neutral-200">
+            <pre className="whitespace-pre-wrap rounded-md bg-surface-muted border border-line p-3 text-xs text-content-secondary">
               {visionOutput}
             </pre>
           )}
@@ -303,7 +299,7 @@ const ModelDownloadSection = ({
               : t('settings.localModel.download.runEmbeddingTest')}
           </Button>
           {embeddingOutput && (
-            <div className="rounded-md bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-800 p-3 text-xs text-neutral-700 dark:text-neutral-200 space-y-1">
+            <div className="rounded-md bg-surface-muted border border-line p-3 text-xs text-content-secondary space-y-1">
               <div>
                 {t('settings.localModel.download.embeddingModel').replace(
                   '{modelId}',
@@ -346,7 +342,7 @@ const ModelDownloadSection = ({
               : t('settings.localModel.download.runTranscriptionTest')}
           </Button>
           {transcribeOutput && (
-            <div className="rounded-md bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-800 p-3 text-xs text-neutral-700 dark:text-neutral-200 space-y-2">
+            <div className="rounded-md bg-surface-muted border border-line p-3 text-xs text-content-secondary space-y-2">
               <div>
                 {t('settings.localModel.download.embeddingModel').replace(
                   '{modelId}',
@@ -354,7 +350,7 @@ const ModelDownloadSection = ({
                 )}
               </div>
               <div>
-                <span className="text-neutral-500 dark:text-neutral-400">
+                <span className="text-content-muted">
                   {t('settings.localModel.download.transcript')}
                 </span>
                 <pre className="whitespace-pre-wrap mt-1">{transcribeOutput.text}</pre>
@@ -390,7 +386,7 @@ const ModelDownloadSection = ({
               : t('settings.localModel.download.runTtsTest')}
           </Button>
           {ttsOutput && (
-            <div className="rounded-md bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-800 p-3 text-xs text-neutral-700 dark:text-neutral-200 space-y-1">
+            <div className="rounded-md bg-surface-muted border border-line p-3 text-xs text-content-secondary space-y-1">
               <div>
                 {t('settings.localModel.download.ttsVoice').replace(
                   '{voiceId}',

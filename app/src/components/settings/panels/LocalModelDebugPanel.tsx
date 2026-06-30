@@ -32,9 +32,7 @@ import {
   openhumanUpdateLocalAiSettings,
 } from '../../../utils/tauriCommands';
 import { openhumanGetConfig } from '../../../utils/tauriCommands/config';
-import PanelPage from '../../layout/PanelPage';
-import SettingsBackButton from '../components/SettingsBackButton';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 import ModelDownloadSection from './local-model/ModelDownloadSection';
 import ModelStatusSection from './local-model/ModelStatusSection';
 
@@ -51,15 +49,14 @@ const statusTone = (state: string): string => {
     case 'degraded':
       return 'text-amber-700 dark:text-amber-300';
     case 'disabled':
-      return 'text-neutral-500 dark:text-neutral-400';
+      return 'text-content-muted';
     default:
-      return 'text-neutral-700 dark:text-neutral-200';
+      return 'text-content-secondary';
   }
 };
 
 const LocalModelDebugPanel = () => {
   const { t } = useT();
-  const { navigateBack } = useSettingsNavigation();
 
   const [status, setStatus] = useState<LocalAiStatus | null>(null);
   const [assets, setAssets] = useState<LocalAiAssetsStatus | null>(null);
@@ -379,97 +376,91 @@ const LocalModelDebugPanel = () => {
   };
 
   return (
-    <PanelPage
-      className="z-10"
-      contentClassName=""
-      description={t('settings.developerMenu.localModelDebug.desc')}
-      leading={<SettingsBackButton onBack={navigateBack} />}>
-      <div className="p-4 space-y-4">
-        <ModelStatusSection
-          status={status}
-          downloads={downloads}
-          diagnostics={diagnostics}
-          isDiagnosticsLoading={isDiagnosticsLoading}
-          diagnosticsError={diagnosticsError}
-          statusError={statusError}
-          isTriggeringDownload={false}
-          bootstrapMessage=""
-          progress={progress}
-          isIndeterminateDownload={isIndeterminateDownload}
-          isInstalling={isInstalling}
-          isInstallError={isInstallError}
-          showErrorDetail={showErrorDetail}
-          ollamaPathInput=""
-          isSettingPath={false}
-          downloadedText={downloadedText}
-          speedText={speedText}
-          etaText={etaText}
-          statusTone={statusTone}
-          runtimeEnabled={runtimeEnabled}
-          ollamaBaseUrlInput={ollamaBaseUrlInput}
-          isTestingConnection={isTestingConnection}
-          connectionTestResult={connectionTestResult}
-          isSavingUrl={isSavingUrl}
-          savedOllamaBaseUrl={savedOllamaBaseUrl}
-          onRefreshStatus={() => void loadStatus()}
-          onTriggerDownload={() => {}}
-          onSetOllamaPath={() => {}}
-          onClearOllamaPath={() => {}}
-          onSetOllamaPathInput={() => {}}
-          onToggleErrorDetail={() => setShowErrorDetail(v => !v)}
-          onRunDiagnostics={() => void handleRunDiagnostics()}
-          onSetOllamaBaseUrlInput={setOllamaBaseUrlInput}
-          onTestConnection={() => void handleTestConnection()}
-          onSaveOllamaBaseUrl={() => void handleSaveOllamaBaseUrl()}
-          onResetOllamaBaseUrl={() => void handleResetOllamaBaseUrl()}
-        />
+    <SettingsPanel description={t('settings.developerMenu.localModelDebug.desc')}>
+      <ModelStatusSection
+        status={status}
+        downloads={downloads}
+        diagnostics={diagnostics}
+        isDiagnosticsLoading={isDiagnosticsLoading}
+        diagnosticsError={diagnosticsError}
+        statusError={statusError}
+        isTriggeringDownload={false}
+        bootstrapMessage=""
+        progress={progress}
+        isIndeterminateDownload={isIndeterminateDownload}
+        isInstalling={isInstalling}
+        isInstallError={isInstallError}
+        showErrorDetail={showErrorDetail}
+        ollamaPathInput=""
+        isSettingPath={false}
+        downloadedText={downloadedText}
+        speedText={speedText}
+        etaText={etaText}
+        statusTone={statusTone}
+        runtimeEnabled={runtimeEnabled}
+        ollamaBaseUrlInput={ollamaBaseUrlInput}
+        isTestingConnection={isTestingConnection}
+        connectionTestResult={connectionTestResult}
+        isSavingUrl={isSavingUrl}
+        savedOllamaBaseUrl={savedOllamaBaseUrl}
+        onRefreshStatus={() => void loadStatus()}
+        onTriggerDownload={() => {}}
+        onSetOllamaPath={() => {}}
+        onClearOllamaPath={() => {}}
+        onSetOllamaPathInput={() => {}}
+        onToggleErrorDetail={() => setShowErrorDetail(v => !v)}
+        onRunDiagnostics={() => void handleRunDiagnostics()}
+        onSetOllamaBaseUrlInput={setOllamaBaseUrlInput}
+        onTestConnection={() => void handleTestConnection()}
+        onSaveOllamaBaseUrl={() => void handleSaveOllamaBaseUrl()}
+        onResetOllamaBaseUrl={() => void handleResetOllamaBaseUrl()}
+      />
 
-        <ModelDownloadSection
-          assets={assets}
-          assetDownloadBusy={assetDownloadBusy}
-          statusTone={statusTone}
-          runtimeEnabled={runtimeEnabled}
-          onTriggerAssetDownload={capability => void triggerAssetDownload(capability)}
-          summaryInput={summaryInput}
-          summaryOutput={summaryOutput}
-          isSummaryLoading={isSummaryLoading}
-          onSetSummaryInput={setSummaryInput}
-          onRunSummaryTest={() => void runSummaryTest()}
-          promptInput={promptInput}
-          promptOutput={promptOutput}
-          promptError={promptError}
-          isPromptLoading={isPromptLoading}
-          promptNoThink={promptNoThink}
-          onSetPromptInput={setPromptInput}
-          onSetPromptNoThink={setPromptNoThink}
-          onRunPromptTest={() => void runPromptTest()}
-          visionPromptInput={visionPromptInput}
-          visionImageInput={visionImageInput}
-          visionOutput={visionOutput}
-          isVisionLoading={isVisionLoading}
-          onSetVisionPromptInput={setVisionPromptInput}
-          onSetVisionImageInput={setVisionImageInput}
-          onRunVisionTest={() => void runVisionTest()}
-          embeddingInput={embeddingInput}
-          embeddingOutput={embeddingOutput}
-          isEmbeddingLoading={isEmbeddingLoading}
-          onSetEmbeddingInput={setEmbeddingInput}
-          onRunEmbeddingTest={() => void runEmbeddingTest()}
-          audioPathInput={audioPathInput}
-          transcribeOutput={transcribeOutput}
-          isTranscribeLoading={isTranscribeLoading}
-          onSetAudioPathInput={setAudioPathInput}
-          onRunTranscribeTest={() => void runTranscribeTest()}
-          ttsInput={ttsInput}
-          ttsOutputPath={ttsOutputPath}
-          ttsOutput={ttsOutput}
-          isTtsLoading={isTtsLoading}
-          onSetTtsInput={setTtsInput}
-          onSetTtsOutputPath={setTtsOutputPath}
-          onRunTtsTest={() => void runTtsTest()}
-        />
-      </div>
-    </PanelPage>
+      <ModelDownloadSection
+        assets={assets}
+        assetDownloadBusy={assetDownloadBusy}
+        statusTone={statusTone}
+        runtimeEnabled={runtimeEnabled}
+        onTriggerAssetDownload={capability => void triggerAssetDownload(capability)}
+        summaryInput={summaryInput}
+        summaryOutput={summaryOutput}
+        isSummaryLoading={isSummaryLoading}
+        onSetSummaryInput={setSummaryInput}
+        onRunSummaryTest={() => void runSummaryTest()}
+        promptInput={promptInput}
+        promptOutput={promptOutput}
+        promptError={promptError}
+        isPromptLoading={isPromptLoading}
+        promptNoThink={promptNoThink}
+        onSetPromptInput={setPromptInput}
+        onSetPromptNoThink={setPromptNoThink}
+        onRunPromptTest={() => void runPromptTest()}
+        visionPromptInput={visionPromptInput}
+        visionImageInput={visionImageInput}
+        visionOutput={visionOutput}
+        isVisionLoading={isVisionLoading}
+        onSetVisionPromptInput={setVisionPromptInput}
+        onSetVisionImageInput={setVisionImageInput}
+        onRunVisionTest={() => void runVisionTest()}
+        embeddingInput={embeddingInput}
+        embeddingOutput={embeddingOutput}
+        isEmbeddingLoading={isEmbeddingLoading}
+        onSetEmbeddingInput={setEmbeddingInput}
+        onRunEmbeddingTest={() => void runEmbeddingTest()}
+        audioPathInput={audioPathInput}
+        transcribeOutput={transcribeOutput}
+        isTranscribeLoading={isTranscribeLoading}
+        onSetAudioPathInput={setAudioPathInput}
+        onRunTranscribeTest={() => void runTranscribeTest()}
+        ttsInput={ttsInput}
+        ttsOutputPath={ttsOutputPath}
+        ttsOutput={ttsOutput}
+        isTtsLoading={isTtsLoading}
+        onSetTtsInput={setTtsInput}
+        onSetTtsOutputPath={setTtsOutputPath}
+        onRunTtsTest={() => void runTtsTest()}
+      />
+    </SettingsPanel>
   );
 };
 

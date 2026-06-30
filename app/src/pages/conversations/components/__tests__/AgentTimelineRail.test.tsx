@@ -7,7 +7,7 @@ describe('agentNameTone', () => {
   it('pulses + mutes a running agent (in progress)', () => {
     const tone = agentNameTone('running');
     expect(tone).toContain('animate-pulse');
-    expect(tone).toContain('text-stone-400');
+    expect(tone).toContain('text-content-faint');
   });
 
   it('pulses an awaiting-user agent', () => {
@@ -17,7 +17,7 @@ describe('agentNameTone', () => {
   it('renders a done agent solid (no pulse)', () => {
     const tone = agentNameTone('success');
     expect(tone).not.toContain('animate-pulse');
-    expect(tone).toContain('text-stone-700');
+    expect(tone).toContain('text-content-secondary');
   });
 
   it('tints a failed agent with the error token', () => {
@@ -26,6 +26,12 @@ describe('agentNameTone', () => {
 
   it('treats an unknown status as in-progress', () => {
     expect(agentNameTone(undefined)).toContain('animate-pulse');
+  });
+
+  it('renders a cancelled agent muted and static (terminal, not pulsing)', () => {
+    const tone = agentNameTone('cancelled');
+    expect(tone).not.toContain('animate-pulse');
+    expect(tone).toContain('text-content-faint');
   });
 });
 

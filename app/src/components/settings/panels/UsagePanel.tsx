@@ -4,10 +4,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { type AISettings, loadAISettings } from '../../../services/api/aiSettingsApi';
 import CostDashboardPanel from '../../dashboard/CostDashboardPanel';
-import PanelPage from '../../layout/PanelPage';
-import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsStatusLine } from '../controls';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 import { BackgroundLoopControls } from './AIPanel';
 
 type TabId = 'costs' | 'background';
@@ -26,7 +24,6 @@ const hashToTab = (hash: string): TabId => (hash === '#background' ? 'background
  */
 const UsagePanel = () => {
   const { t } = useT();
-  const { navigateBack } = useSettingsNavigation();
   const location = useLocation();
   const navigate = useNavigate();
   // The router is the single source of truth for the active tab.
@@ -37,10 +34,8 @@ const UsagePanel = () => {
   };
 
   return (
-    <PanelPage<TabId>
-      className="z-10"
+    <SettingsPanel<TabId>
       description={t('settings.usage.menuDesc')}
-      leading={<SettingsBackButton onBack={navigateBack} />}
       tabsAriaLabel={t('settings.usage.title')}
       tabsTestIdPrefix="usage-tab"
       value={tab}
@@ -86,7 +81,7 @@ const BackgroundActivityTab = () => {
   }, []);
 
   return (
-    <div className="p-4 space-y-3" data-testid="usage-background-tab">
+    <div className="p-4 space-y-5" data-testid="usage-background-tab">
       <SettingsStatusLine saving={false} error={loadError} savingLabel="" />
       {snapshot ? (
         <BackgroundLoopControls
@@ -96,7 +91,7 @@ const BackgroundActivityTab = () => {
           cloudProviders={snapshot.cloudProviders}
         />
       ) : !loadError ? (
-        <div className="text-xs text-neutral-500 dark:text-neutral-400">{t('common.loading')}</div>
+        <div className="text-xs text-content-muted">{t('common.loading')}</div>
       ) : null}
     </div>
   );

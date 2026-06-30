@@ -1,12 +1,13 @@
-import type {
-  BotPermissionCheck,
-  ChannelAuthMode,
-  ChannelConnectionResult,
-  ChannelDefinition,
-  ChannelStatusEntry,
-  ChannelType,
-  DiscordGuild,
-  DiscordTextChannel,
+import {
+  type BotPermissionCheck,
+  type ChannelAuthMode,
+  type ChannelConnectionResult,
+  type ChannelDefinition,
+  type ChannelStatusEntry,
+  type ChannelType,
+  type DiscordGuild,
+  type DiscordTextChannel,
+  isChannelType,
 } from '../../types/channels';
 import { callCoreRpc } from '../coreRpcClient';
 
@@ -244,8 +245,27 @@ export const channelConnectionsApi = {
     return normalizePermissionCheck(result);
   },
 
-  /** Placeholder for default channel preference sync. */
+  /**
+   * Persist the default messaging channel to the core (issue #3712). The core
+   * stores it in `channels_config.active_channel` and applies it live, so the
+   * agent's proactive delivery follows the selection without a restart.
+   */
   updatePreferences: async (defaultMessagingChannel: ChannelType): Promise<void> => {
-    void defaultMessagingChannel;
+    await callCoreRpc({
+      method: 'openhuman.channels_set_default',
+      params: { channel: defaultMessagingChannel },
+    });
+  },
+
+  /** Read the core's persisted default messaging channel. */
+  getDefaultChannel: async (): Promise<ChannelType | null> => {
+    const result = await callCoreRpc<unknown>({
+      method: 'openhuman.channels_get_default',
+      params: {},
+    });
+    const record = expectObject<{ active_channel?: unknown }>(result, 'Channel get_default');
+    // Validate against known slugs so an unexpected core value can't leak into
+    // Redux/API consumers despite the `ChannelType | null` contract (#3794 review).
+    return isChannelType(record.active_channel) ? record.active_channel : null;
   },
 };

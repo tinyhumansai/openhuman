@@ -1204,6 +1204,7 @@ fn conversation_message_serialization_roundtrip() {
                 extra_content: None,
             }],
             reasoning_content: Some("thinking".into()),
+            extra_metadata: Some(serde_json::json!({ "source": "unit-test" })),
         },
         ConversationMessage::ToolResults(vec![ToolResultMessage {
             tool_call_id: "tc1".into(),
@@ -1227,16 +1228,19 @@ fn conversation_message_serialization_roundtrip() {
                     text: a_text,
                     tool_calls: a_calls,
                     reasoning_content: a_reasoning,
+                    extra_metadata: a_extra,
                 },
                 ConversationMessage::AssistantToolCalls {
                     text: b_text,
                     tool_calls: b_calls,
                     reasoning_content: b_reasoning,
+                    extra_metadata: b_extra,
                 },
             ) => {
                 assert_eq!(a_text, b_text);
                 assert_eq!(a_calls.len(), b_calls.len());
                 assert_eq!(a_reasoning, b_reasoning);
+                assert_eq!(a_extra, b_extra);
             }
             (ConversationMessage::ToolResults(a), ConversationMessage::ToolResults(b)) => {
                 assert_eq!(a.len(), b.len());
@@ -1331,6 +1335,7 @@ fn xml_dispatcher_converts_history_to_provider_messages() {
                 extra_content: None,
             }],
             reasoning_content: None,
+            extra_metadata: None,
         },
         ConversationMessage::ToolResults(vec![ToolResultMessage {
             tool_call_id: "tc1".into(),
@@ -1374,6 +1379,7 @@ fn native_dispatcher_converts_tool_results_to_tool_messages() {
                 },
             ],
             reasoning_content: None,
+            extra_metadata: None,
         },
         ConversationMessage::ToolResults(vec![
             ToolResultMessage {

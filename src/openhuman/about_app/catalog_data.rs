@@ -14,6 +14,22 @@ const DERIVED_TO_BACKEND: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
     destinations: &["OpenHuman backend", "TinyHumans Neocortex"],
 });
 
+// Vision sub-agent ships the attached image (raw pixels) to the managed
+// multimodal model for analysis.
+const IMAGE_TO_BACKEND: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Raw,
+    destinations: &["OpenHuman backend", "TinyHumans Neocortex"],
+});
+
+// Media generation sends the prompt (and any reference image URL) to GMI Cloud
+// via the OpenHuman backend; generated media is downloaded back to the device.
+const MEDIA_GEN_TO_BACKEND: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Raw,
+    destinations: &["OpenHuman backend", "GMI Cloud"],
+});
+
 const LOCAL_CREDENTIALS: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
     leaves_device: false,
     data_kind: PrivacyDataKind::Credentials,
@@ -58,6 +74,18 @@ const GITHUB_REPO_SOURCE: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
     leaves_device: true,
     data_kind: PrivacyDataKind::Metadata,
     destinations: &["GitHub API (api.github.com)"],
+});
+
+// Persona Pack fetches the published mascot manifest directly from GitHub raw
+// content, then downloads the selected runtime asset from the manifest's
+// declared file URL. The request is metadata-class (manifest and asset URLs),
+// but it does leave the device and bypasses the managed backend.
+const GITHUB_MASCOT_MANIFEST: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Metadata,
+    destinations: &[
+        "GitHub raw content (raw.githubusercontent.com) and manifest-declared mascot asset hosts",
+    ],
 });
 
 const SEARXNG_RAW_TO_CONFIGURED_INSTANCE: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
@@ -214,6 +242,16 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         privacy: None,
     },
     Capability {
+        id: "conversation.plan_review",
+        name: "Plan Review",
+        domain: "conversation",
+        category: CapabilityCategory::Conversation,
+        description: "Pause an interactive turn for review whenever the assistant proposes a thread-scoped plan (a multi-step to-do list with its objective). Review the whole plan once above the composer, then Approve to run it, Reject to discard it, or send feedback to have the assistant revise and re-propose — nothing executes until you approve. Background and scheduled runs are never gated.",
+        how_to: "Conversations > review the plan card above the composer when the assistant lays out a multi-step plan",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
         id: "conversation.background_monitors",
         name: "Background Monitors",
         domain: "conversation",
@@ -232,6 +270,36 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         how_to: "Human > ask the assistant to delegate work to sub-agents",
         status: CapabilityStatus::Beta,
         privacy: None,
+    },
+    Capability {
+        id: "intelligence.vision_subagent",
+        name: "Vision Sub-agent",
+        domain: "agent",
+        category: CapabilityCategory::Intelligence,
+        description: "Delegate image / screenshot understanding to a dedicated vision sub-agent — describe, OCR, read charts/diagrams, compare images, or locate UI elements. Rides the multimodal `vision-v1` tier so attached images are always analyzed.",
+        how_to: "Attach an image in chat, or ask the assistant to look at a screenshot / image file",
+        status: CapabilityStatus::Beta,
+        privacy: IMAGE_TO_BACKEND,
+    },
+    Capability {
+        id: "intelligence.image_generation",
+        name: "Image Generation",
+        domain: "agent",
+        category: CapabilityCategory::Intelligence,
+        description: "Delegate image creation to a dedicated image sub-agent — generate images from a text prompt, or edit/restyle reference images, using hosted GMI models (Seedream / SeedEdit). Results are saved to the workspace.",
+        how_to: "Ask the assistant to generate, draw, or edit an image",
+        status: CapabilityStatus::Beta,
+        privacy: MEDIA_GEN_TO_BACKEND,
+    },
+    Capability {
+        id: "intelligence.video_generation",
+        name: "Video Generation",
+        domain: "agent",
+        category: CapabilityCategory::Intelligence,
+        description: "Delegate short-video creation to a dedicated video sub-agent — text-to-video or animate a reference image using hosted GMI models (Seedance / Veo). Generation is asynchronous; the finished clip is saved to the workspace.",
+        how_to: "Ask the assistant to generate a video or animate an image",
+        status: CapabilityStatus::Beta,
+        privacy: MEDIA_GEN_TO_BACKEND,
     },
     Capability {
         id: "conversation.label_filter",
@@ -341,6 +409,45 @@ pub(super) const CAPABILITIES: &[Capability] = &[
             memory.tool_rule_put / memory.tool_rule_list / memory.tool_rule_delete (RPC).",
         status: CapabilityStatus::Beta,
         privacy: LOCAL_RAW,
+    },
+    Capability {
+        id: "intelligence.long_term_goals",
+        name: "Long-term Goals",
+        domain: "intelligence",
+        category: CapabilityCategory::Intelligence,
+        description: "An editable list of the assistant's durable long-term goals for working with \
+            you, stored locally in MEMORY_GOALS.md (capped ~500 tokens). A background goals agent \
+            keeps the list fresh: it runs when the conversation context is summarized, and on first \
+            run populates initial goals from context. Items can be added/edited/deleted explicitly \
+            via RPC or agent tools.",
+        how_to: "Automatic — refreshed on context summarization. Manage via \
+            memory_goals.list / memory_goals.add / memory_goals.edit / memory_goals.delete / \
+            memory_goals.reflect (RPC), or the goals_* agent tools.",
+        status: CapabilityStatus::Beta,
+        // Enrichment runs a cloud agentic model, so goal/context text can leave
+        // the device during a reflect pass (CRUD/storage stays local).
+        privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
+        id: "conversation.thread_goal",
+        name: "Thread Goal",
+        domain: "conversation",
+        category: CapabilityCategory::Conversation,
+        description: "A single, thread-scoped goal (Codex-style \"completion contract\") the \
+            assistant keeps pursuing across turns, interrupts, resumes, and budget boundaries — \
+            distinct from the long-term goals list and the per-thread task board. Stored locally \
+            (one goal per thread), with a lifecycle (active/paused/budget_limited/complete) and an \
+            optional token budget. The active goal is injected into context each turn; the context \
+            scout proposes a goal on a fresh thread (only if none is set) and the orchestrator can \
+            set/refine it. When enabled, idle threads can autonomously continue toward the goal.",
+        how_to: "Set/edit via the goal chip above the composer in Conversations, or the \
+            thread_goals.* RPC (get/set/complete/pause/resume/clear); the assistant manages it via \
+            the goal_set / goal_get / goal_complete tools. Autonomous continuation is opt-in via \
+            heartbeat.goal_continuation_enabled.",
+        status: CapabilityStatus::Beta,
+        // Goal CRUD/storage is local; autonomous continuation (opt-in) runs a
+        // cloud agentic model, so objective/context can leave the device then.
+        privacy: DERIVED_TO_BACKEND,
     },
     Capability {
         id: "intelligence.memory_tree_retrieval",
@@ -504,6 +611,16 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         privacy: DERIVED_TO_BACKEND,
     },
     Capability {
+        id: "intelligence.workflow_orchestration",
+        name: "Workflow Orchestration",
+        domain: "workflow_runs",
+        category: CapabilityCategory::Intelligence,
+        description: "Run declarative multi-agent workflows such as parallel research with cross-checking: a question is decomposed into angles, researched in parallel, adversarially cross-checked, and synthesized into one cited report. Watch each phase progress with its child agent results, stop or resume a run, and read the final synthesis. High-cost / high-concurrency runs require explicit approval before starting.",
+        how_to: "Intelligence > Orchestration > pick a workflow and Start",
+        status: CapabilityStatus::Beta,
+        privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
         id: "intelligence.agent_library",
         name: "Agents Library",
         domain: "intelligence",
@@ -512,6 +629,16 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         how_to: "Intelligence > Agent Tasks > Agents Library",
         status: CapabilityStatus::Beta,
         privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
+        id: "intelligence.worktree_manager",
+        name: "Agent Worktrees",
+        domain: "intelligence",
+        category: CapabilityCategory::Intelligence,
+        description: "Inspect and clean up the isolated git worktrees that parallel sub-agents check out under <repo>/.claude/worktrees. Each row shows the worktree's branch, dirty state, and changed files, plus a cross-worktree overlap warning when two workers touched the same file. Open, diff, or remove a worktree (a dirty worktree requires an explicit discard confirmation; the worker branch is preserved).",
+        how_to: "Intelligence > Worktrees",
+        status: CapabilityStatus::Beta,
+        privacy: None,
     },
     Capability {
         id: "intelligence.slack_memory_ingest",
@@ -1237,7 +1364,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         description: "Personalize the assistant as one identity: set a display name and description, edit or reset the SOUL.md personality prompt, and reach mascot avatar and voice settings — all from a single Persona surface.",
         how_to: "Settings > Persona",
         status: CapabilityStatus::Beta,
-        privacy: None,
+        privacy: GITHUB_MASCOT_MANIFEST,
     },
     Capability {
         id: "settings.manage_privacy_analytics",

@@ -16,12 +16,11 @@ import { APP_ENVIRONMENT } from '../../../utils/config';
 // TAURI-REACT-6 — into a rejected Promise so the existing `.catch(...)` /
 // try/catch handlers see it as a normal IPC failure.
 import { safeInvoke as invoke, isTauri } from '../../../utils/tauriCommands/common';
-import PanelPage from '../../layout/PanelPage';
 import { resetWalkthrough } from '../../walkthrough/AppWalkthrough';
-import SettingsBackButton from '../components/SettingsBackButton';
 import SettingsMenuItem from '../components/SettingsMenuItem';
 import { SettingsSection } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -237,6 +236,22 @@ const modelsDebugGroup: DevGroup = {
             strokeLinejoin="round"
             strokeWidth={2}
             d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
+          />
+        </svg>
+      ),
+    },
+    {
+      id: 'agentbox',
+      titleKey: 'settings.agentbox.title',
+      descriptionKey: 'settings.agentbox.desc',
+      route: 'agentbox',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"
           />
         </svg>
       ),
@@ -466,7 +481,7 @@ const CoreModeBadge = () => {
     return (
       <div className="px-4 py-3 rounded-xl border border-primary-300 dark:border-primary-500/40 bg-primary-50 dark:bg-primary-500/10">
         <div className="flex items-center gap-2">
-          <span className="px-2 py-0.5 rounded-full bg-primary-600 text-white text-[11px] font-medium">
+          <span className="px-2 py-0.5 rounded-full bg-primary-600 text-content-inverted text-[11px] font-medium">
             {t('devOptions.local')}
           </span>
           <span className="text-sm font-semibold text-primary-900 dark:text-primary-200">
@@ -483,7 +498,7 @@ const CoreModeBadge = () => {
   return (
     <div className="px-4 py-3 rounded-xl border border-sage-300 dark:border-sage-500/40 bg-sage-50 dark:bg-sage-500/10">
       <div className="flex items-center gap-2">
-        <span className="px-2 py-0.5 rounded-full bg-sage-600 text-white text-[11px] font-medium">
+        <span className="px-2 py-0.5 rounded-full bg-sage-600 text-content-inverted text-[11px] font-medium">
           {t('devOptions.cloud')}
         </span>
         <span className="text-sm font-semibold text-sage-900 dark:text-sage-200">
@@ -544,7 +559,7 @@ const SentryTestRow = () => {
         <button
           onClick={onClick}
           disabled={status.kind === 'sending'}
-          className="shrink-0 px-3 py-1.5 rounded-md bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium transition-colors disabled:opacity-60">
+          className="shrink-0 px-3 py-1.5 rounded-md bg-amber-600 hover:bg-amber-500 text-content-inverted text-xs font-medium transition-colors disabled:opacity-60">
           {status.kind === 'sending' ? t('devOptions.sending') : t('devOptions.sendTestEvent')}
         </button>
       </div>
@@ -595,19 +610,13 @@ const LogsFolderRow = () => {
   if (!isTauri()) return null;
 
   return (
-    <div className="px-4 py-3 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60">
+    <div className="px-4 py-3 rounded-xl border border-line bg-surface-muted">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-            {t('devOptions.appLogs')}
-          </div>
-          <div className="text-xs text-neutral-700 dark:text-neutral-300 mt-0.5">
-            {t('devOptions.appLogsDesc')}
-          </div>
+          <div className="text-sm font-semibold text-content">{t('devOptions.appLogs')}</div>
+          <div className="text-xs text-content-secondary mt-0.5">{t('devOptions.appLogsDesc')}</div>
           {path && (
-            <div className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-1 font-mono truncate">
-              {path}
-            </div>
+            <div className="text-[11px] text-content-muted mt-1 font-mono truncate">{path}</div>
           )}
         </div>
         <button
@@ -635,7 +644,7 @@ const LogsFolderRow = () => {
 const DeveloperOptionsPanel = () => {
   const { t } = useT();
   const navigate = useNavigate();
-  const { navigateToSettings, navigateBack } = useSettingsNavigation();
+  const { navigateToSettings } = useSettingsNavigation();
   const showSentryTest = APP_ENVIRONMENT === 'staging';
 
   // Trailing actions (restart tour) that don't fit cleanly in any group
@@ -660,13 +669,9 @@ const DeveloperOptionsPanel = () => {
   };
 
   return (
-    <PanelPage
-      className="z-10"
-      contentClassName=""
-      description={t('settings.developerDiagnosticsDesc')}
-      leading={<SettingsBackButton onBack={navigateBack} />}>
+    <SettingsPanel description={t('settings.developerDiagnosticsDesc')}>
       {/* Debug-only sub-sections */}
-      <div className="p-4 pt-2 space-y-3">
+      <div className="space-y-3">
         {DEV_GROUPS.map(group => (
           <div key={group.labelKey} data-testid={`dev-group-${group.labelKey.split('.').pop()}`}>
             <SettingsSection title={t(group.labelKey)}>
@@ -703,12 +708,12 @@ const DeveloperOptionsPanel = () => {
 
       {/* Diagnostics callouts live outside the menu card so the spacing
           and alignment don't clash with the SettingsMenuItem rows. */}
-      <div className="px-4 pt-2 pb-5 flex flex-col gap-3">
+      <div className="pt-2 pb-5 flex flex-col gap-3">
         <CoreModeBadge />
         <LogsFolderRow />
         {showSentryTest && <SentryTestRow />}
       </div>
-    </PanelPage>
+    </SettingsPanel>
   );
 };
 

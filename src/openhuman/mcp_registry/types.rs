@@ -179,6 +179,11 @@ pub enum ServerStatus {
     Disconnected,
     Connecting,
     Connected,
+    /// Connect failed specifically because the server returned HTTP 401 — the
+    /// server is reachable but needs authentication (OAuth sign-in or an API
+    /// token). Distinct from `Error` so the UI can offer a re-auth path instead
+    /// of a raw failure (#3719).
+    Unauthorized,
     Error,
     Disabled,
 }
@@ -189,6 +194,7 @@ impl ServerStatus {
             Self::Disconnected => "disconnected",
             Self::Connecting => "connecting",
             Self::Connected => "connected",
+            Self::Unauthorized => "unauthorized",
             Self::Error => "error",
             Self::Disabled => "disabled",
         }
@@ -233,6 +239,12 @@ pub struct SmitheryServerSummary {
     /// originating upstream.
     #[serde(default)]
     pub source: String,
+    /// `true` when this is the canonical first-party server for a well-known
+    /// service (exact `qualified_name` match in `super::curation`). The UI
+    /// badges it "Official"; everything else is shown without a badge. Set by
+    /// the dispatcher; never trusted from the wire.
+    #[serde(default)]
+    pub official: bool,
     /// Raw extra fields preserved for future use.
     #[serde(flatten, default)]
     pub extra: std::collections::HashMap<String, Value>,
@@ -322,6 +334,7 @@ mod tests {
         assert_eq!(ServerStatus::Connected.as_str(), "connected");
         assert_eq!(ServerStatus::Disconnected.as_str(), "disconnected");
         assert_eq!(ServerStatus::Connecting.as_str(), "connecting");
+        assert_eq!(ServerStatus::Unauthorized.as_str(), "unauthorized");
         assert_eq!(ServerStatus::Error.as_str(), "error");
         assert_eq!(ServerStatus::Disabled.as_str(), "disabled");
     }
@@ -493,6 +506,7 @@ mod tests {
             use_count: 10,
             is_deployed: true,
             source: "mcp_official".to_string(),
+            official: false,
             extra: Default::default(),
         };
         let v = serde_json::to_value(&s).unwrap();

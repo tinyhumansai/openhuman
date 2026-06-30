@@ -7,6 +7,7 @@ import {
   PromotionalCreditsBanner,
   UsageLimitBanner,
 } from '../components/home/HomeBanners';
+import Button from '../components/ui/Button';
 import { useUsageState } from '../hooks/useUsageState';
 import { useUser } from '../hooks/useUser';
 import { useT } from '../lib/i18n/I18nContext';
@@ -130,6 +131,14 @@ const Home = () => {
 
   return (
     <div className="min-h-full flex flex-col items-center justify-center p-4">
+      {/* Welcome title */}
+      <h1 className="min-h-[3.5rem] text-32l font-bold text-content text-center">
+        {typedWelcome}
+        <span aria-hidden="true" className="ml-0.5 inline-block text-primary-500 animate-pulse">
+          |
+        </span>
+      </h1>
+
       <div className="max-w-md w-full">
         {shouldShowBudgetCompletedMessage && (
           <UsageLimitBanner
@@ -159,21 +168,20 @@ const Home = () => {
         {/* Main card — data-walkthrough target for step 1 */}
         <div
           data-walkthrough="home-card"
-          className="bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 p-6 animate-fade-up">
+          className="bg-surface rounded-2xl shadow-soft border border-line p-6 animate-fade-up">
           {/* Header row: version centered, theme toggle right-aligned.
               The empty left spacer matches the toggle's width so the version
               stays visually centered. */}
           <div className="flex items-center justify-between mb-4">
             <div className="w-9" aria-hidden="true" />
-            <span className="text-xs text-center text-stone-400 dark:text-neutral-500">
-              v{APP_VERSION}
-            </span>
-            <button
-              type="button"
+            <span className="text-xs text-center text-content-faint">v{APP_VERSION}</span>
+            <Button
+              iconOnly
+              variant="tertiary"
               onClick={toggleTheme}
               aria-label={isDark ? t('home.themeToggle.toLight') : t('home.themeToggle.toDark')}
               title={isDark ? t('home.themeToggle.toLight') : t('home.themeToggle.toDark')}
-              className="p-2 rounded-full text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 hover:bg-stone-100 dark:hover:bg-neutral-800/60 transition-colors">
+              className="rounded-full">
               {isDark ? (
                 <svg
                   className="w-5 h-5"
@@ -203,16 +211,8 @@ const Home = () => {
                   />
                 </svg>
               )}
-            </button>
+            </Button>
           </div>
-
-          {/* Welcome title */}
-          <h1 className="min-h-[3.5rem] text-32l font-bold text-stone-900 dark:text-neutral-100 text-center">
-            {typedWelcome}
-            <span aria-hidden="true" className="ml-0.5 inline-block text-primary-500 animate-pulse">
-              |
-            </span>
-          </h1>
 
           {/* Connection status */}
           <div className="flex justify-center mb-3">
@@ -222,7 +222,7 @@ const Home = () => {
           {/* Description — copy mirrors the active blocking state so the
               user never sees a "connected" message while the pill shows a
               failure. (#1527) */}
-          <p className="text-sm text-stone-500 dark:text-neutral-400 text-center mb-6 leading-relaxed">
+          <p className="text-sm text-content-muted text-center mb-6 leading-relaxed">
             {statusCopy}
           </p>
 
@@ -234,7 +234,7 @@ const Home = () => {
               <button
                 onClick={handleRestartCore}
                 disabled={isRestartingCore}
-                className="w-full py-3 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-medium rounded-xl transition-colors duration-200">
+                className="w-full py-3 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-content-inverted font-medium rounded-xl transition-colors duration-200">
                 {isRestartingCore ? t('home.restartingCore') : t('home.restartCore')}
               </button>
               {restartError && (
@@ -244,32 +244,34 @@ const Home = () => {
           )}
 
           {/* CTA button — data-walkthrough target for step 2 */}
-          <button
+          <Button
             data-walkthrough="home-cta"
+            variant="primary"
+            size="lg"
             onClick={handleStartCooking}
             disabled={blocking === 'core-unreachable' || blocking === 'internet-offline'}
-            className="w-full py-3 bg-primary-500 hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-xl transition-colors duration-200">
+            className="w-full">
             {t('home.askAssistant')}
-          </button>
+          </Button>
         </div>
 
         <DiscordBanner />
 
         {/* Next steps — compact directory of where to go next */}
-        {/* <div className="mt-3 bg-white rounded-2xl shadow-soft border border-stone-200 p-4">
-          <div className="text-[11px] uppercase tracking-wide text-stone-400 mb-2">Next steps</div>
-          <div className="divide-y divide-stone-100">
+        {/* <div className="mt-3 bg-surface rounded-2xl shadow-soft border border-line p-4">
+          <div className="text-[11px] uppercase tracking-wide text-content-faint mb-2">Next steps</div>
+          <div className="divide-y divide-line-subtle">
             <button
               onClick={() => navigate('/connections')}
-              className="w-full flex items-center justify-between py-2.5 text-left hover:bg-stone-50 rounded-md px-2 -mx-2 transition-colors">
+              className="w-full flex items-center justify-between py-2.5 text-left hover:bg-surface-muted rounded-md px-2 -mx-2 transition-colors">
               <div>
-                <div className="text-sm font-medium text-stone-900">Connect your services</div>
-                <div className="text-xs text-stone-500">
+                <div className="text-sm font-medium text-content">Connect your services</div>
+                <div className="text-xs text-content-muted">
                   Give your assistant access to Gmail, Calendar, and more.
                 </div>
               </div>
               <svg
-                className="w-4 h-4 text-stone-400"
+                className="w-4 h-4 text-content-faint"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24">
@@ -283,15 +285,15 @@ const Home = () => {
             </button>
             <button
               onClick={() => navigate('/rewards')}
-              className="w-full flex items-center justify-between py-2.5 text-left hover:bg-stone-50 rounded-md px-2 -mx-2 transition-colors">
+              className="w-full flex items-center justify-between py-2.5 text-left hover:bg-surface-muted rounded-md px-2 -mx-2 transition-colors">
               <div>
-                <div className="text-sm font-medium text-stone-900">Earn rewards</div>
-                <div className="text-xs text-stone-500">
+                <div className="text-sm font-medium text-content">Earn rewards</div>
+                <div className="text-xs text-content-muted">
                   Unlock credits by using OpenHuman and completing milestones.
                 </div>
               </div>
               <svg
-                className="w-4 h-4 text-stone-400"
+                className="w-4 h-4 text-content-faint"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24">
@@ -305,15 +307,15 @@ const Home = () => {
             </button>
             <button
               onClick={() => navigate('/invites')}
-              className="w-full flex items-center justify-between py-2.5 text-left hover:bg-stone-50 rounded-md px-2 -mx-2 transition-colors">
+              className="w-full flex items-center justify-between py-2.5 text-left hover:bg-surface-muted rounded-md px-2 -mx-2 transition-colors">
               <div>
-                <div className="text-sm font-medium text-stone-900">Invite a friend</div>
-                <div className="text-xs text-stone-500">
+                <div className="text-sm font-medium text-content">Invite a friend</div>
+                <div className="text-xs text-content-muted">
                   Share an invite — both of you get credits.
                 </div>
               </div>
               <svg
-                className="w-4 h-4 text-stone-400"
+                className="w-4 h-4 text-content-faint"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24">

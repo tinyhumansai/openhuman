@@ -666,12 +666,25 @@ impl CoreProcessHandle {
     }
 }
 
+/// A non-OpenHuman process holding the core RPC port. Surfaced to the frontend
+/// so the user can see what to free, and so the consent-gated force-quit knows
+/// which pid the user agreed to terminate.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PortOwner {
+    pub pid: u32,
+    pub name: String,
+}
+
 /// Result returned to the frontend after a port-conflict auto-recovery attempt.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RecoveryOutcome {
     pub success: bool,
     pub message: String,
     pub new_port: Option<u16>,
+    /// Set when recovery failed because a foreign process still holds the port.
+    /// `None` on success or when the owner can't be identified (e.g. a kernel
+    /// reservation), in which case the frontend offers guidance, not a kill.
+    pub foreign_owner: Option<PortOwner>,
 }
 
 impl CoreProcessHandle {
@@ -707,16 +720,112 @@ impl CoreProcessHandle {
                     success: true,
                     message: format!("Core recovered on port {new_port}"),
                     new_port: Some(new_port),
+                    foreign_owner: None,
                 }
             }
             Err(err) => {
-                log::warn!("[core_process] recover_port_conflict: recovery failed: {err}");
+                // Reaping stale OpenHuman processes didn't free the port, so a
+                // foreign process is holding it. Identify it (name + pid) so the
+                // frontend can surface it and offer a consent-gated force-quit.
+                let port = self.preferred_port;
+                let foreign_owner = tokio::task::spawn_blocking(move || identify_port_owner(port))
+                    .await
+                    .unwrap_or(None);
+                log::warn!(
+                    "[core_process] recover_port_conflict: recovery failed: {err}; foreign_owner={foreign_owner:?}"
+                );
                 RecoveryOutcome {
                     success: false,
                     message: format!("Recovery failed: {err}"),
                     new_port: None,
+                    foreign_owner,
                 }
             }
+        }
+    }
+
+    /// Terminate the foreign process the user consented to (the pid surfaced in
+    /// the prior [`RecoveryOutcome::foreign_owner`]), then restart the core.
+    ///
+    /// Re-validates that `expected_pid` still owns the port immediately before
+    /// killing — closing the PID-reuse window and refusing if the owner changed,
+    /// the port is already free, or the owner is OpenHuman's own process.
+    pub async fn force_quit_port_owner(&self, expected_pid: u32) -> RecoveryOutcome {
+        let port = self.preferred_port;
+        let self_pid = std::process::id();
+        log::info!("[core_process] force_quit_port_owner: port {port} expected_pid {expected_pid}");
+
+        let current = tokio::task::spawn_blocking(move || find_pid_on_port(port))
+            .await
+            .unwrap_or(None);
+        let pid = match validate_kill_target(current, expected_pid, self_pid) {
+            Ok(pid) => pid,
+            Err(reason) => {
+                log::warn!("[core_process] force_quit_port_owner: refused: {reason}");
+                return RecoveryOutcome {
+                    success: false,
+                    message: reason,
+                    new_port: None,
+                    foreign_owner: None,
+                };
+            }
+        };
+
+        // Best-effort: a TERM failure is non-fatal because the escalation below
+        // re-validates ownership and force-kills if the process is still there.
+        if let Err(err) =
+            tokio::task::spawn_blocking(move || crate::process_kill::kill_pid_term(pid))
+                .await
+                .unwrap_or_else(|e| Err(format!("SIGTERM task panicked: {e}")))
+        {
+            log::debug!(
+                "[core_process] force_quit_port_owner: SIGTERM pid {pid} (best-effort): {err}"
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Re-validate before escalating: a bare `== Some(pid)` would SIGKILL a
+        // different process that reused the pid and rebound the port within the
+        // grace window, and would skip the self/protected-pid guards.
+        let still = tokio::task::spawn_blocking(move || find_pid_on_port(port))
+            .await
+            .unwrap_or(None);
+        if validate_kill_target(still, pid, self_pid).is_ok() {
+            if let Err(err) =
+                tokio::task::spawn_blocking(move || crate::process_kill::kill_pid_force(pid))
+                    .await
+                    .unwrap_or_else(|e| Err(format!("force-kill task panicked: {e}")))
+            {
+                log::warn!("[core_process] force_quit_port_owner: force-kill pid {pid}: {err}");
+                return RecoveryOutcome {
+                    success: false,
+                    message: format!("Could not terminate pid {pid}: {err}"),
+                    new_port: None,
+                    foreign_owner: None,
+                };
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+
+        match self.ensure_running().await {
+            Ok(()) => {
+                let new_port = self.port();
+                log::info!(
+                    "[core_process] force_quit_port_owner: core recovered on port {new_port}"
+                );
+                RecoveryOutcome {
+                    success: true,
+                    message: format!("Core recovered on port {new_port}"),
+                    new_port: Some(new_port),
+                    foreign_owner: None,
+                }
+            }
+            Err(err) => RecoveryOutcome {
+                success: false,
+                message: format!("Recovery failed after terminating pid {pid}: {err}"),
+                new_port: None,
+                foreign_owner: None,
+            },
         }
     }
 }
@@ -836,8 +945,11 @@ fn is_expected_port_clash(reason: &str) -> bool {
 
 #[cfg(unix)]
 fn find_pid_on_port(port: u16) -> Option<u32> {
+    // Single port-qualified selector: `-iTCP:<port>` ANDs protocol+port. Two
+    // separate `-i` flags (`-iTCP -i:<port>`) are ORed by lsof and would match
+    // any TCP listener — risking returning an unrelated process as the owner.
     let output = std::process::Command::new("lsof")
-        .args(["-nP", "-iTCP", &format!("-i:{port}"), "-sTCP:LISTEN", "-t"])
+        .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-t"])
         .output()
         .ok()?;
     if !output.status.success() {
@@ -901,6 +1013,99 @@ fn parse_netstat_pid(stdout: &str, port: u16) -> Option<u32> {
         }
     }
     None
+}
+
+/// Identify the process currently holding `port`, resolving its pid (via
+/// [`find_pid_on_port`]) to a human-readable name. Returns `None` when the
+/// port is free or owned by an unidentifiable (e.g. kernel-reserved) holder.
+fn identify_port_owner(port: u16) -> Option<PortOwner> {
+    let pid = find_pid_on_port(port)?;
+    // Empty when the name can't be resolved — the frontend already shows the
+    // pid, so a `"PID <n>"` fallback here would render as "PID n (PID n)".
+    let name = process_name(pid).unwrap_or_default();
+    Some(PortOwner { pid, name })
+}
+
+#[cfg(windows)]
+fn process_name(pid: u32) -> Option<String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let output = std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_tasklist_name(&String::from_utf8_lossy(&output.stdout))
+}
+
+#[cfg(unix)]
+fn process_name(pid: u32) -> Option<String> {
+    let output = std::process::Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "comm="])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_ps_comm(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Pure parse of `tasklist /FO CSV /NH`: the image name is the first quoted
+/// CSV field (`"chrome.exe","1234",...`). The "no tasks" sentinel and any
+/// non-CSV line yield `None`.
+#[allow(dead_code)] // exercised only on windows builds
+fn parse_tasklist_name(stdout: &str) -> Option<String> {
+    let line = stdout.lines().map(str::trim).find(|l| !l.is_empty())?;
+    let name = line.strip_prefix('"')?.split('"').next()?.trim();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
+}
+
+/// Pure parse of `ps -p <pid> -o comm=`: a single line, reduced to its
+/// trailing path component so a full executable path collapses to a file name.
+#[allow(dead_code)] // exercised only on unix builds
+fn parse_ps_comm(stdout: &str) -> Option<String> {
+    let line = stdout.lines().map(str::trim).find(|l| !l.is_empty())?;
+    let name = line.rsplit(['/', '\\']).next().unwrap_or(line).trim();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
+}
+
+/// Decide whether the consent-gated force-quit may proceed. `current_owner` is
+/// the pid `find_pid_on_port` reports right before the kill; `expected_pid` is
+/// the owner the user was shown and agreed to terminate. Returns the pid to
+/// kill, or the reason the kill must be refused.
+fn validate_kill_target(
+    current_owner: Option<u32>,
+    expected_pid: u32,
+    self_pid: u32,
+) -> Result<u32, String> {
+    match current_owner {
+        None => Err("the port is no longer held by any process".to_string()),
+        Some(pid) if pid == self_pid => Err(format!(
+            "refusing to terminate OpenHuman's own process (pid {pid})"
+        )),
+        // Defense-in-depth: low/kernel pids are never legitimate port owners and
+        // must never be signalled, even if one slipped past `find_pid_on_port`.
+        // 0 — `kill(0, sig)` broadcasts to the caller's whole process group on
+        // Unix; 1 — init/launchd; 4 — Windows NT kernel.
+        Some(pid) if pid <= 1 || pid == 4 => {
+            Err(format!("refusing to terminate protected pid {pid}"))
+        }
+        Some(pid) if pid != expected_pid => Err(format!(
+            "port owner changed (was pid {expected_pid}, now pid {pid}); not terminating"
+        )),
+        Some(pid) => Ok(pid),
+    }
 }
 
 #[cfg(test)]

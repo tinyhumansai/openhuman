@@ -5,9 +5,7 @@ import type { ToastNotification } from '../../../types/intelligence';
 import { MemorySourcesRegistry } from '../../intelligence/MemorySourcesRegistry';
 import { SyncAuditPanel } from '../../intelligence/SyncAuditPanel';
 import { ToastContainer } from '../../intelligence/Toast';
-import PanelPage from '../../layout/PanelPage';
-import SettingsBackButton from '../components/SettingsBackButton';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 
 /**
  * Data Sync — top-level Settings → Account page (#3301).
@@ -23,7 +21,6 @@ import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
  */
 const MemorySyncPanel = () => {
   const { t } = useT();
-  const { navigateBack } = useSettingsNavigation();
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
 
   const addToast = useCallback((toast: Omit<ToastNotification, 'id'>) => {
@@ -36,25 +33,17 @@ const MemorySyncPanel = () => {
   };
 
   return (
-    <PanelPage
-      className="z-10"
-      contentClassName=""
-      description={t('settings.dataSync.menuDesc')}
-      leading={<SettingsBackButton onBack={navigateBack} />}>
-      <div className="p-4 space-y-4">
-        <p className="text-sm text-neutral-500 dark:text-neutral-400">
-          {t('settings.dataSync.description')}
-        </p>
-        <MemorySourcesRegistry onToast={addToast} />
-        <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
-          <h3 className="mb-2 text-sm font-semibold text-neutral-800 dark:text-neutral-100">
-            {t('sync.auditTitle', 'Sync History')}
-          </h3>
-          <SyncAuditPanel />
-        </div>
+    <SettingsPanel description={t('settings.dataSync.menuDesc')}>
+      <p className="text-sm text-content-muted">{t('settings.dataSync.description')}</p>
+      <MemorySourcesRegistry onToast={addToast} />
+      <div className="rounded-lg border border-line bg-surface p-4">
+        <h3 className="mb-2 text-sm font-semibold text-content">
+          {t('sync.auditTitle', 'Sync History')}
+        </h3>
+        <SyncAuditPanel />
       </div>
       <ToastContainer notifications={toasts} onRemove={removeToast} />
-    </PanelPage>
+    </SettingsPanel>
   );
 };
 

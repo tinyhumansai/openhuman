@@ -196,6 +196,13 @@ fn telegram_definition() -> ChannelDefinition {
                         placeholder: "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11",
                     },
                     FieldRequirement {
+                        key: "chat_id",
+                        label: "Chat ID",
+                        field_type: "string",
+                        required: false,
+                        placeholder: "Optional: default chat for outbound messages",
+                    },
+                    FieldRequirement {
                         key: "allowed_users",
                         label: "Allowed Users",
                         field_type: "string",
@@ -246,6 +253,14 @@ fn discord_definition() -> ChannelDefinition {
                         field_type: "string",
                         required: false,
                         placeholder: "Optional: default channel for outbound messages",
+                    },
+                    FieldRequirement {
+                        key: "allowed_users",
+                        label: "Allowed Users",
+                        field_type: "string",
+                        required: false,
+                        placeholder:
+                            "Comma-separated Discord user IDs, or * for everyone (blank = everyone)",
                     },
                 ],
                 auth_action: None,

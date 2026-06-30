@@ -4,6 +4,44 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) const DEFAULT_OLLAMA_BASE_URL: &str = "http://localhost:11434";
 
+/// Hosts that serve the public Ollama website / model registry — never a local
+/// or self-hosted Ollama API server. Pointing the base URL at one makes every
+/// `/api/tags` poll hit ollama.com (HTTP 429 from its rate limiter), floods
+/// Sentry with `list_models: non-success response`, and sends pointless traffic
+/// to Ollama Inc. (TAURI-RUST-A3T).
+///
+/// Matched **exactly** (no suffix match) so a user's own self-hosted server at
+/// e.g. `ollama.mycompany.com` is unaffected.
+fn is_ollama_registry_host(host: &str) -> bool {
+    matches!(
+        host.trim()
+            .trim_end_matches('.')
+            .to_ascii_lowercase()
+            .as_str(),
+        "ollama.com" | "www.ollama.com" | "ollama.ai" | "www.ollama.ai" | "registry.ollama.ai"
+    )
+}
+
+/// Returns `url` unless its host is a public Ollama registry host
+/// ([`is_ollama_registry_host`]), in which case it logs a warning and falls back
+/// to [`DEFAULT_OLLAMA_BASE_URL`]. This heals stale config/env values that
+/// already target ollama.com (set before validation rejected it), so the
+/// diagnostics poller stops hitting the website on the next launch.
+fn reject_registry_host_or_default(url: String) -> String {
+    let is_registry = reqwest::Url::parse(&url)
+        .ok()
+        .and_then(|u| u.host_str().map(is_ollama_registry_host))
+        .unwrap_or(false);
+    if is_registry {
+        log::warn!(
+            "[local_ai] ignoring Ollama base URL {} (public website/registry, not a local server) — falling back to {DEFAULT_OLLAMA_BASE_URL}",
+            redact_ollama_base_url(&url)
+        );
+        return DEFAULT_OLLAMA_BASE_URL.to_string();
+    }
+    url
+}
+
 /// Rewrite unspecified bind addresses (`0.0.0.0`, `[::]`) to their loopback
 /// equivalents (`127.0.0.1`, `[::1]`).  Ollama's default `OLLAMA_HOST` is
 /// `0.0.0.0:11434` — a valid *server-side* bind address but an invalid
@@ -46,7 +84,9 @@ pub(crate) fn ollama_base_url() -> String {
     if let Ok(url) = std::env::var("OPENHUMAN_OLLAMA_BASE_URL") {
         let trimmed = url.trim();
         if !trimmed.is_empty() {
-            return normalize_unspecified_host(trimmed.trim_end_matches('/'));
+            return reject_registry_host_or_default(normalize_unspecified_host(
+                trimmed.trim_end_matches('/'),
+            ));
         }
     }
 
@@ -59,7 +99,7 @@ pub(crate) fn ollama_base_url() -> String {
                 format!("http://{trimmed}")
             };
             log::debug!("[local_ai] ollama_base_url: using OLLAMA_HOST -> {url}");
-            return normalize_unspecified_host(&url);
+            return reject_registry_host_or_default(normalize_unspecified_host(&url));
         }
     }
 
@@ -81,7 +121,7 @@ pub(crate) fn ollama_base_url_from_config(config: &crate::openhuman::config::Con
     if let Some(ref url) = config.local_ai.base_url {
         let trimmed = url.trim().trim_end_matches('/');
         if !trimmed.is_empty() {
-            let normalized = normalize_unspecified_host(trimmed);
+            let normalized = reject_registry_host_or_default(normalize_unspecified_host(trimmed));
             log::debug!(
                 "[local_ai] ollama_base_url_from_config: using config base_url -> {}",
                 redact_ollama_base_url(&normalized)
@@ -119,6 +159,18 @@ pub(crate) fn validate_ollama_url(raw: &str) -> Result<String, String> {
 
     if parsed.host_str().map(|h| h.is_empty()).unwrap_or(true) {
         return Err("URL must have a non-empty host".to_string());
+    }
+
+    if parsed
+        .host_str()
+        .map(is_ollama_registry_host)
+        .unwrap_or(false)
+    {
+        return Err(
+            "ollama.com is the Ollama website, not a local server. Enter your local Ollama \
+             address (e.g. http://localhost:11434) or your own server's URL."
+                .to_string(),
+        );
     }
 
     if !parsed.username().is_empty() || parsed.password().is_some() {
@@ -967,6 +1019,94 @@ mod tests {
             validate_ollama_url("http://[::]:11434"),
             Ok("http://[::1]:11434".to_string())
         );
+    }
+
+    // ── public Ollama registry-host rejection (TAURI-RUST-A3T) ─────────
+
+    #[test]
+    fn is_ollama_registry_host_matches_public_hosts_case_insensitively() {
+        for host in [
+            "ollama.com",
+            "OLLAMA.COM",
+            "www.ollama.com",
+            "ollama.ai",
+            "www.ollama.ai",
+            "registry.ollama.ai",
+            "ollama.com.", // trailing FQDN dot
+        ] {
+            assert!(is_ollama_registry_host(host), "expected reject: {host}");
+        }
+    }
+
+    #[test]
+    fn is_ollama_registry_host_allows_self_hosted_and_loopback() {
+        // No suffix match: a user's own subdomain must NOT be blocked.
+        for host in [
+            "localhost",
+            "127.0.0.1",
+            "ollama.mycompany.com",
+            "my-ollama.lan",
+            "remote-ollama.example.com",
+            "notollama.com",
+        ] {
+            assert!(!is_ollama_registry_host(host), "expected allow: {host}");
+        }
+    }
+
+    #[test]
+    fn validate_ollama_url_rejects_public_registry_hosts() {
+        // The bug: ollama.com is the website/registry, not a local server.
+        // `/api/tags` against it returns HTTP 429 and floods Sentry.
+        for url in [
+            "https://ollama.com",
+            "http://ollama.com",
+            "https://ollama.com/",
+            "https://www.ollama.com:443",
+            "https://ollama.ai",
+            "https://registry.ollama.ai",
+        ] {
+            let err = validate_ollama_url(url).unwrap_err();
+            assert!(
+                err.contains("ollama.com is the Ollama website"),
+                "expected website rejection for {url}, got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_ollama_url_still_accepts_self_hosted_subdomain() {
+        assert_eq!(
+            validate_ollama_url("https://ollama.mycompany.com:11434"),
+            Ok("https://ollama.mycompany.com:11434".to_string())
+        );
+    }
+
+    #[test]
+    fn ollama_base_url_from_config_heals_registry_host_to_default() {
+        // Existing users who saved ollama.com before validation rejected it
+        // must stop hitting the website on the next launch.
+        let _lock = test_lock();
+        let _g = OllamaEnvGuard::clear();
+        let config = make_config_with_base_url(Some("https://ollama.com"));
+        assert_eq!(
+            ollama_base_url_from_config(&config),
+            DEFAULT_OLLAMA_BASE_URL
+        );
+    }
+
+    #[test]
+    fn ollama_base_url_heals_registry_host_from_env_override() {
+        let _lock = test_lock();
+        let _g = OllamaEnvGuard::set("https://ollama.com");
+        assert_eq!(ollama_base_url(), DEFAULT_OLLAMA_BASE_URL);
+    }
+
+    #[test]
+    fn ollama_base_url_heals_registry_host_from_ollama_host() {
+        let _lock = test_lock();
+        let _g1 = OllamaEnvGuard::clear();
+        let _g2 = OllamaEnvGuard::set_var(OLLAMA_HOST_VAR, "ollama.com");
+        assert_eq!(ollama_base_url(), DEFAULT_OLLAMA_BASE_URL);
     }
 
     // ── redact_ollama_base_url ────────────────────────────────────────

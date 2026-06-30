@@ -16,6 +16,7 @@ import {
   deleteArtifact,
   downloadArtifact,
   revealArtifactInFileManager,
+  saveArtifactViaDialog,
 } from '../artifactDownloadService';
 import { callCoreRpc } from '../coreRpcClient';
 
@@ -295,5 +296,77 @@ describe('revealArtifactInFileManager', () => {
     const ok = await revealArtifactInFileManager('/Users/me/Downloads/deck.pptx');
     expect(ok).toBe(false);
     warn.mockRestore();
+  });
+});
+
+describe('saveArtifactViaDialog (#3162)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    hoisted.isTauri.mockReturnValue(true);
+  });
+
+  const resolveOk = () =>
+    vi
+      .mocked(callCoreRpc)
+      .mockResolvedValueOnce({
+        absolute_path: '/ws/artifacts/a-1/deck.pptx',
+        meta: { id: 'a-1', title: 'Deck' },
+      } as never);
+
+  it('returns NOT_DESKTOP outside Tauri', async () => {
+    hoisted.isTauri.mockReturnValueOnce(false);
+    const outcome = await saveArtifactViaDialog('a-1', 'Deck', 'pptx');
+    expect(outcome).toEqual({
+      ok: false,
+      code: 'NOT_DESKTOP',
+      error: expect.stringContaining('desktop'),
+    });
+    expect(callCoreRpc).not.toHaveBeenCalled();
+  });
+
+  it('saves to the user-chosen path and returns it', async () => {
+    resolveOk();
+    hoisted.invoke.mockResolvedValueOnce('/Users/me/Desktop/Deck.pptx');
+    const outcome = await saveArtifactViaDialog('a-1', 'Deck', 'pptx');
+    expect(outcome).toEqual({ ok: true, path: '/Users/me/Desktop/Deck.pptx' });
+    expect(hoisted.invoke).toHaveBeenCalledWith('save_artifact_via_dialog', {
+      sourcePath: '/ws/artifacts/a-1/deck.pptx',
+      suggestedFilename: 'Deck.pptx',
+    });
+  });
+
+  it('treats a null result (dialog dismissed) as CANCELLED, not an error', async () => {
+    resolveOk();
+    hoisted.invoke.mockResolvedValueOnce(null);
+    const outcome = await saveArtifactViaDialog('a-1', 'Deck', 'pptx');
+    expect(outcome).toEqual({ ok: false, code: 'CANCELLED', error: expect.any(String) });
+  });
+
+  it('falls back to the Downloads copy when the dialog is unavailable', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // First resolve (dialog path) → invoke throws; fallback re-resolves
+    // then invokes the Downloads command successfully.
+    resolveOk();
+    hoisted.invoke.mockRejectedValueOnce(new Error('no portal'));
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({
+      absolute_path: '/ws/artifacts/a-1/deck.pptx',
+      meta: { id: 'a-1', title: 'Deck' },
+    } as never);
+    hoisted.invoke.mockResolvedValueOnce('/Users/me/Downloads/Deck.pptx');
+
+    const outcome = await saveArtifactViaDialog('a-1', 'Deck', 'pptx');
+    expect(outcome).toEqual({ ok: true, path: '/Users/me/Downloads/Deck.pptx' });
+    expect(hoisted.invoke).toHaveBeenNthCalledWith(2, 'download_artifact_to_downloads', {
+      sourcePath: '/ws/artifacts/a-1/deck.pptx',
+      filename: 'Deck.pptx',
+    });
+    warn.mockRestore();
+  });
+
+  it('propagates resolve failures without showing a dialog', async () => {
+    vi.mocked(callCoreRpc).mockRejectedValueOnce(new Error('rpc down'));
+    const outcome = await saveArtifactViaDialog('a-1', 'Deck', 'pptx');
+    expect(outcome).toEqual({ ok: false, code: 'RESOLVE_FAILED', error: 'rpc down' });
+    expect(hoisted.invoke).not.toHaveBeenCalled();
   });
 });

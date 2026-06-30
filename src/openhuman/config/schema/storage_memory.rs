@@ -331,11 +331,18 @@ pub struct MemoryTreeConfig {
     #[serde(default = "default_llm_backend")]
     pub llm_backend: LlmBackend,
 
-    /// Model identifier used when `llm_backend = "cloud"`. Routed through the
-    /// OpenHuman backend's chat-completions surface.
+    /// **Deprecated / inert.** Formerly the model identifier for managed
+    /// (`llm_backend = "cloud"`) summarization. The managed summarization tier is
+    /// now fixed at `summarization-v1`
+    /// ([`crate::openhuman::inference::provider::factory::summarization_tier_model`])
+    /// and this field is no longer consumed — the hosted backend serves exactly
+    /// one tier for this workload. Kept for config back-compat (existing
+    /// `config.toml` / `OPENHUMAN_MEMORY_TREE_CLOUD_LLM_MODEL` still parse without
+    /// error). To run summarization on a different model, point `memory_provider`
+    /// at a BYOK/local provider instead, where the model rides in the provider
+    /// string.
     ///
     /// Defaults to [`DEFAULT_CLOUD_LLM_MODEL`] (`summarization-v1`).
-    /// Env override: `OPENHUMAN_MEMORY_TREE_CLOUD_LLM_MODEL`.
     #[serde(default = "default_cloud_llm_model")]
     pub cloud_llm_model: Option<String>,
 
@@ -357,6 +364,20 @@ pub struct MemoryTreeConfig {
     /// memory content will be sent to an external service.
     #[serde(default)]
     pub cloud_summarization_opt_in: bool,
+
+    /// Enable the spaCy NER sidecar used by the deterministic (E2GraphRAG)
+    /// retriever to extract entities from a query. When `true` (default), the
+    /// managed Python runtime provisions spaCy on first use and serves entity
+    /// extraction over stdio. When `false` — or whenever Python/spaCy is
+    /// unavailable — query-entity extraction falls back to the in-Rust
+    /// regex+LLM extractor (`score::extract`). Env override:
+    /// `OPENHUMAN_MEMORY_TREE_SPACY_ENABLED`.
+    #[serde(default = "default_memory_tree_spacy_enabled")]
+    pub spacy_enabled: bool,
+}
+
+fn default_memory_tree_spacy_enabled() -> bool {
+    true
 }
 
 /// Returns `None` so that existing installs that never opted into Phase 4
@@ -459,6 +480,7 @@ impl Default for MemoryTreeConfig {
             cloud_llm_model: default_cloud_llm_model(),
             smart_walk_model: None,
             cloud_summarization_opt_in: false,
+            spacy_enabled: default_memory_tree_spacy_enabled(),
         }
     }
 }

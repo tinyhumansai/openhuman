@@ -7,8 +7,6 @@
 //! [`crate::openhuman::agent::debug`] can mirror the live runner
 //! byte-for-byte instead of carrying its own drifting copies.
 
-use std::collections::HashSet;
-
 use super::super::definition::{PromptSource, ToolScope};
 use super::types::SubagentRunError;
 use crate::openhuman::context::prompt::PromptContext;
@@ -105,6 +103,14 @@ pub(crate) fn build_text_mode_tool_instructions(_specs: &[ToolSpec]) -> String {
 /// * every synthesised per-archetype `delegate_*` tool
 ///   ([`crate::openhuman::tools::orchestrator_tools::collect_orchestrator_tools`]
 ///   emits `delegate_researcher`, `delegate_planner`, …).
+/// * custom delegate names that intentionally do not use the `delegate_*`
+///   prefix, currently `use_tinyplace`.
+/// * `agent_prepare_context` — the context-scout entry point. It reads the
+///   *parent's* visible catalog/session via `current_parent()`, which inside a
+///   nested run is still the top-level orchestrator (the runner does not
+///   install a child-scoped parent context). A wildcard or named sub-agent
+///   calling it would therefore scout against the orchestrator's surface, not
+///   its own. Context preparation is a top-level concern only.
 ///
 /// Kept as a tight prefix/exact match rather than a registry lookup so
 /// the strip is cheap to run inside [`super::ops::run_typed_mode`]'s
@@ -112,7 +118,10 @@ pub(crate) fn build_text_mode_tool_instructions(_specs: &[ToolSpec]) -> String {
 /// this function and the corresponding generator in
 /// `orchestrator_tools.rs` together.
 pub(super) fn is_subagent_spawn_tool(name: &str) -> bool {
-    name == "spawn_subagent" || name.starts_with("delegate_")
+    name == "spawn_subagent"
+        || name.starts_with("delegate_")
+        || name == "use_tinyplace"
+        || name == "agent_prepare_context"
 }
 
 /// Returns indices into `parent_tools` for the tools the sub-agent may
@@ -133,7 +142,6 @@ pub(crate) fn filter_tool_indices(
     disallowed: &[String],
     skill_filter: Option<&str>,
 ) -> Vec<usize> {
-    let disallow_set: HashSet<&str> = disallowed.iter().map(|s| s.as_str()).collect();
     let skill_prefix = skill_filter.map(|s| format!("{s}__"));
 
     parent_tools
@@ -141,8 +149,17 @@ pub(crate) fn filter_tool_indices(
         .enumerate()
         .filter(|(_, tool)| {
             let name = tool.name();
-            if disallow_set.contains(name) {
+            if disallowed_tool_matches(disallowed, name) {
                 return false;
+            }
+            // The CCR recovery tool is advertised to any agent that has a tool
+            // surface — compaction applies to its tool output, so the retrieve
+            // footer must be actionable regardless of scope/skill filters (an
+            // explicit `disallow` above still wins). A deliberately tool-less
+            // agent (`Named([])`, e.g. the payload summarizer) runs no tools,
+            // produces no compacted output, and so stays tool-less.
+            if crate::openhuman::tokenjuice::is_recovery_tool(name) {
+                return !matches!(scope, ToolScope::Named(allowed) if allowed.is_empty());
             }
             if let Some(prefix) = skill_prefix.as_deref() {
                 if !name.starts_with(prefix) {
@@ -156,6 +173,99 @@ pub(crate) fn filter_tool_indices(
         })
         .map(|(i, _)| i)
         .collect()
+}
+
+pub(crate) fn disallowed_tool_matches(disallowed: &[String], name: &str) -> bool {
+    disallowed.iter().any(|entry| {
+        if let Some(prefix) = entry.strip_suffix('*') {
+            name.starts_with(prefix)
+        } else {
+            entry == name
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_tinyplace_delegate_is_treated_as_spawn_tool() {
+        assert!(is_subagent_spawn_tool("spawn_subagent"));
+        assert!(is_subagent_spawn_tool("delegate_researcher"));
+        assert!(is_subagent_spawn_tool("use_tinyplace"));
+        // Context scouting is top-level only — never visible to sub-agents
+        // (incl. wildcard agents), which would otherwise scout the wrong
+        // parent context. See #3949 review.
+        assert!(is_subagent_spawn_tool("agent_prepare_context"));
+        assert!(!is_subagent_spawn_tool("tinyplace_directory_resolve"));
+    }
+}
+
+#[cfg(test)]
+mod recovery_visibility_tests {
+    use super::*;
+    use crate::openhuman::tokenjuice::LEGACY_RETRIEVE_TOOL_NAME as RECOVERY_TOOL_NAME;
+    use crate::openhuman::tools::{CurrentTimeTool, RetrieveToolOutputTool};
+
+    fn tools() -> Vec<Box<dyn crate::openhuman::tools::Tool>> {
+        vec![
+            Box::new(CurrentTimeTool::new()),
+            Box::new(RetrieveToolOutputTool::new()),
+        ]
+    }
+
+    fn names(idx: &[usize], tools: &[Box<dyn crate::openhuman::tools::Tool>]) -> Vec<String> {
+        idx.iter().map(|&i| tools[i].name().to_string()).collect()
+    }
+
+    #[test]
+    fn named_scope_still_includes_recovery_tool() {
+        let t = tools();
+        // Named scope allow-lists only current_time — recovery tool not listed.
+        let idx = filter_tool_indices(
+            &t,
+            &ToolScope::Named(vec!["current_time".into()]),
+            &[],
+            None,
+        );
+        let got = names(&idx, &t);
+        assert!(got.contains(&"current_time".to_string()));
+        assert!(
+            got.contains(&RECOVERY_TOOL_NAME.to_string()),
+            "recovery tool must survive Named scope: {got:?}"
+        );
+    }
+
+    #[test]
+    fn tool_less_agent_stays_tool_less() {
+        // A deliberately tool-less agent (e.g. the payload summarizer,
+        // ToolScope::Named([])) runs no tools and produces no compacted output,
+        // so it must NOT be handed the recovery tool — it stays empty.
+        let t = tools();
+        let idx = filter_tool_indices(&t, &ToolScope::Named(vec![]), &[], None);
+        assert!(idx.is_empty(), "empty scope must yield zero tools: {idx:?}");
+    }
+
+    #[test]
+    fn skill_filter_still_includes_recovery_tool() {
+        let t = tools();
+        // A skill-restricted subagent (only `foo__*` tools) must still get it.
+        let idx = filter_tool_indices(&t, &ToolScope::Wildcard, &[], Some("foo"));
+        assert!(names(&idx, &t).contains(&RECOVERY_TOOL_NAME.to_string()));
+    }
+
+    #[test]
+    fn explicit_disallow_still_wins() {
+        let t = tools();
+        let idx = filter_tool_indices(
+            &t,
+            &ToolScope::Wildcard,
+            &[RECOVERY_TOOL_NAME.to_string()],
+            None,
+        );
+        assert!(!names(&idx, &t).contains(&RECOVERY_TOOL_NAME.to_string()));
+    }
 }
 
 // ── Prompt loading ──────────────────────────────────────────────────────

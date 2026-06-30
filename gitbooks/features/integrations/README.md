@@ -59,9 +59,14 @@ Three integrations are special. OpenHuman uses them to _talk back_ to you, not j
 
 Set your default under **Settings → Automation & Channels → Messaging Channels**. The active route status shows which channel is currently in use. Telegram offers two credential modes: connect via OpenHuman (one-click, encrypted) or provide your own credentials for maximum control.
 
-## Skills
+## Beyond the curated catalog: MCP & Skills
 
-Beyond third-party services, OpenHuman has **skills**, small sandboxed modules that run inside the app, fetch external data, run on a schedule, transform information, and respond to events. Each runs with enforced resource limits. Skills install from the Skills tab and integrate with the same Memory Tree as everything else.
+The 118+ OAuth connectors are the curated path. Beyond them, OpenHuman opens up the wider open-tooling ecosystem:
+
+* **MCP servers** — a built-in registry browses thousands of [Model Context Protocol](https://modelcontextprotocol.io) servers (Smithery + the official registry) that install locally as new agent tools.
+* **Skills** — a browsable, ~90,000-entry catalog of `SKILL.md` capability bundles aggregated from HermesHub, ClawHub, LobeHub and more. (Note: the old in-app skills runtime has been removed; Skills are now a metadata catalog you install from the Skills tab.)
+
+See [MCP Servers & Skills](mcp-and-skills.md) for the full picture.
 
 ## Native voice and tools
 

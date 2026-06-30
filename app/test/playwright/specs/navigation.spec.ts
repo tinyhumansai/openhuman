@@ -14,8 +14,9 @@ interface RouteEntry {
 //   /skills      → /connections (Phase 2)
 //   /activity    → /settings/notifications (Phase 6)
 //   /intelligence → /settings/notifications (Phase 6)
+//   /home        → /chat (Home folded into the unified two-panel chat surface)
 const ROUTES: RouteEntry[] = [
-  { route: '/home' },
+  { route: '/home', expectedHash: '/chat' }, // back-compat redirect (Home → chat)
   { route: '/human' }, // first-class route again (no longer redirects to /chat)
   { route: '/chat' },
   { route: '/connections' },
@@ -23,7 +24,10 @@ const ROUTES: RouteEntry[] = [
   { route: '/activity', expectedHash: '/settings/notifications' }, // back-compat redirect
   { route: '/intelligence', expectedHash: '/settings/notifications' }, // back-compat redirect
   { route: '/rewards' },
-  { route: '/settings' },
+  // Desktop Settings is a modal overlay (the backgroundLocation pattern): the
+  // /settings index redirects to the first panel and the modal renders on top
+  // of the /chat fallback backdrop.
+  { route: '/settings', expectedHash: '/settings/account' },
 ];
 
 test.describe('Navigation', () => {

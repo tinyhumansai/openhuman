@@ -2,10 +2,16 @@ use anyhow::{Context, Result};
 use rusqlite::params;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_store::chunks::store::with_connection;
+use crate::openhuman::memory_store::chunks::store::{
+    delete_chunks_by_source, delete_orphaned_source_tree, with_connection,
+};
+use crate::openhuman::memory_store::chunks::types::SourceKind;
 use crate::rpc::RpcOutcome;
 
-use super::types::{FlushNowResponse, FlushSourceTreeResponse, ResetTreeResponse, WipeAllResponse};
+use super::types::{
+    DeleteSourceResponse, FlushNowResponse, FlushSourceTreeResponse, ResetTreeResponse,
+    WipeAllResponse,
+};
 
 // ── wipe_all ─────────────────────────────────────────────────────────────
 
@@ -342,6 +348,80 @@ pub async fn flush_now_rpc(config: &Config) -> Result<RpcOutcome<FlushNowRespons
     let log = format!(
         "memory_tree::read: flush_now enqueued={} stale_buffers={}",
         resp.enqueued, resp.stale_buffers
+    );
+    Ok(RpcOutcome::single_log(resp, log))
+}
+
+// ── delete_source ──────────────────────────────────────────────────────────
+
+/// Fully delete one document source by its **exact** `source_id`.
+///
+/// Unlike [`super::entities::delete_chunk_rpc`] (which removes a single chunk and
+/// leaves the source tree intact), this wraps
+/// [`delete_chunks_by_source`] so the whole logical source is purged: every
+/// chunk plus its score / entity-index / embedding / reembed-skip side rows and
+/// chunk content files, the ingest dedup gate, and — when the source becomes
+/// fully orphaned — its source summary tree via `delete_tree_cascade_tx`
+/// (summaries, summary embeddings + reembed-skip, tree-keyed entity-index,
+/// buffers, the tree row, and summary content files). This prevents stale
+/// summaries of a deleted note/event/meeting from resurfacing in semantic
+/// recall.
+///
+/// Matching is **exact** (never a prefix), so sibling sources sharing a prefix
+/// are untouched. Idempotent: an unknown `source_id` removes nothing and returns
+/// `deleted = false`.
+///
+/// Legacy cleanup: a source whose chunks were already removed earlier by the
+/// per-chunk path keeps a now-stale summary tree (which `delete_chunks_by_source`
+/// won't touch, since it only cascades trees for chunks it deletes in the same
+/// call). After the chunk delete we therefore also run
+/// [`delete_orphaned_source_tree`], which cascades the source-scoped tree and
+/// clears the bare + versioned (`{source_id}@{version_ms}`) ingest gates iff zero
+/// chunks remain — so calling delete_source over such a source finishes the job.
+///
+/// Scope: this deletes the exact document source and its **source-scoped** orphan
+/// tree. It intentionally does NOT tear down shared collection / `path_scope`
+/// trees (e.g. Notion `notion:{connection}`), which may summarise many documents;
+/// per-document pruning inside a shared collection summary is out of scope here.
+pub async fn delete_source_rpc(
+    config: &Config,
+    source_id: String,
+) -> Result<RpcOutcome<DeleteSourceResponse>, String> {
+    let source_id = source_id.trim().to_string();
+    if source_id.is_empty() {
+        return Err("delete_source: source_id must be a non-empty string".to_string());
+    }
+    let cfg = config.clone();
+    let id = source_id.clone();
+    let (chunks_removed, tree_cleaned) =
+        tokio::task::spawn_blocking(move || -> Result<(usize, bool)> {
+            // Exact-match document delete; cascade logic lives in the store.
+            let removed = delete_chunks_by_source(&cfg, SourceKind::Document, &id)
+                .context("delete_chunks_by_source during delete_source")?;
+            // Finish off any legacy partial delete: cascade a now-orphaned tree
+            // (no-op when chunks were just deleted — the tree is already gone —
+            // or when there is no stale tree).
+            let tree_cleaned = delete_orphaned_source_tree(&cfg, SourceKind::Document, &id)
+                .context("delete_orphaned_source_tree during delete_source")?;
+            Ok((removed, tree_cleaned))
+        })
+        .await
+        .map_err(|e| format!("delete_source join error: {e}"))?
+        .map_err(|e| format!("delete_source: {e:#}"))?;
+
+    let resp = DeleteSourceResponse {
+        // `deleted` is true if we removed chunks OR cleaned a stale orphaned tree
+        // (the legacy-cleanup case has chunks_removed == 0 but still did work).
+        deleted: chunks_removed > 0 || tree_cleaned,
+        chunks_removed: chunks_removed as u64,
+    };
+    let log = format!(
+        // Redact the source id: it can embed user-linked identifiers.
+        "memory_tree::read: delete_source source_id_hash={} deleted={} chunks_removed={} tree_cleaned={}",
+        crate::openhuman::memory::util::redact::redact(&source_id),
+        resp.deleted,
+        resp.chunks_removed,
+        tree_cleaned
     );
     Ok(RpcOutcome::single_log(resp, log))
 }

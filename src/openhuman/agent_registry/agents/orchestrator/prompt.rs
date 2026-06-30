@@ -97,10 +97,12 @@ fn render_installed_skills(skills: &[Workflow]) -> String {
     );
     let mut out = String::from(
         "## Installed Skills\n\n\
-         The following skills are installed locally. Run them with `run_workflow` \
-         (pass the skill's id as `workflow_id`). Use `describe_workflow` for full \
-         details. Use `skill_registry_browse` / `skill_registry_search` to find \
-         and install new skills.\n\n",
+         The following skills are installed locally. Run one with `run_skill` \
+         (name the skill and what you want done); it loads and runs the skill in an \
+         isolated worker and returns only the result, plus a `## Handoff Plan` for any \
+         step the worker couldn't perform — execute those steps yourself under the \
+         approval gate. Use `describe_workflow` for full details. Use \
+         `skill_registry_browse` / `skill_registry_search` to find and install new skills.\n\n",
     );
     for skill in skills {
         let id = if skill.dir_name.is_empty() {
@@ -331,6 +333,37 @@ mod tests {
     use super::*;
     use crate::openhuman::context::prompt::{LearnedContextData, ToolCallFormat};
     use std::collections::HashSet;
+
+    #[test]
+    fn render_installed_skills_lists_skills_and_steers_to_run_skill() {
+        let skills = vec![
+            Workflow {
+                dir_name: "ascii-art".into(),
+                description: "ASCII art via pyfiglet".into(),
+                ..Default::default()
+            },
+            // dir_name empty -> id falls back to name; empty description ->
+            // "(no description)".
+            Workflow {
+                name: "no-dir".into(),
+                ..Default::default()
+            },
+        ];
+        let out = render_installed_skills(&skills);
+        assert!(out.contains("## Installed Skills"));
+        assert!(
+            out.contains("run_skill"),
+            "catalogue must steer to run_skill"
+        );
+        assert!(out.contains("Handoff Plan"));
+        assert!(out.contains("- **ascii-art**: ASCII art via pyfiglet"));
+        assert!(out.contains("- **no-dir**: (no description)"));
+    }
+
+    #[test]
+    fn render_installed_skills_empty_is_omitted() {
+        assert_eq!(render_installed_skills(&[]), "");
+    }
 
     fn ctx_with<'a>(integrations: &'a [ConnectedIntegration]) -> PromptContext<'a> {
         use std::sync::OnceLock;

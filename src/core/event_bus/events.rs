@@ -130,6 +130,21 @@ pub enum DomainEvent {
         reason: Option<String>,
     },
 
+    // ── Subconscious orchestrator ───────────────────────────────────────
+    /// A subconscious trigger finished gate evaluation (promote or drop).
+    /// Observability only — lets dashboards see ingestion volume and the
+    /// gate's promote/drop ratio without reading logs.
+    SubconsciousTriggerProcessed {
+        /// Trigger source family (`cron` / `user_message` / …).
+        source: String,
+        /// Gate decision (`promote` / `drop`).
+        decision: String,
+        /// Whether the trigger was promoted into the long-lived session.
+        promoted: bool,
+        /// Gate evaluation latency in milliseconds.
+        latency_ms: u64,
+    },
+
     // ── Run Queue ──────────────────────────────────────────────────────
     /// A message was queued into the active-run queue instead of interrupting.
     RunQueueMessageQueued {
@@ -193,6 +208,26 @@ pub enum DomainEvent {
         /// Human-readable explanation with an actionable fix,
         /// e.g. `"Local embedding model unreachable — falling back to cloud
         /// embeddings. Run \`ollama pull bge-m3\` to fix."`.
+        message: String,
+    },
+
+    /// A BYO (bring-your-own-key) chat provider rejected the configured API
+    /// key with `401` / `403` — the third-party key is invalid or revoked.
+    ///
+    /// Published by `inference::provider::ops::http_error::
+    /// log_byo_provider_auth_failure` (once per failure episode, via the
+    /// `auth_error_registry` latch — the underlying 401 repeats per retry).
+    /// The same rejection demotes the raw error from Sentry (it's
+    /// unactionable user-state), so this event is what keeps it visible to
+    /// the user: the notification bridge turns it into a core notification,
+    /// and the AI-settings panel reads the registry snapshot to render an
+    /// inline provider-error notice. The `message` field is a pre-formatted,
+    /// actionable string safe to show as-is.
+    ProviderApiKeyRejected {
+        /// Provider slug, e.g. `"openrouter"`.
+        provider: String,
+        /// Human-readable, actionable explanation (update the key in
+        /// Settings → AI). See `auth_error_registry::auth_error_message`.
         message: String,
     },
 
@@ -269,6 +304,12 @@ pub enum DomainEvent {
         added: usize,
         removed: usize,
         modified: usize,
+    },
+    /// Read markers were committed for one or more sources, acknowledging
+    /// their current diffs as consumed.
+    MemoryDiffMarkedRead {
+        source_ids: Vec<String>,
+        snapshot_ids: Vec<String>,
     },
 
     // ── Channels ────────────────────────────────────────────────────────
@@ -392,6 +433,11 @@ pub enum DomainEvent {
         success: bool,
         elapsed_ms: u64,
     },
+    /// The set of installed skills/workflows changed (install / uninstall /
+    /// create). Lets a live agent session refresh its `## Installed Skills`
+    /// catalogue mid-conversation instead of waiting for a restart. `reason`
+    /// is a short tag for logs (e.g. `"install"`, `"uninstall"`, `"create"`).
+    WorkflowsChanged { reason: String },
 
     // ── Tools ───────────────────────────────────────────────────────────
     /// A tool execution started.
@@ -442,6 +488,32 @@ pub enum DomainEvent {
         request_id: String,
         tool_name: String,
         /// `"approve_once"`, `"approve_always_for_tool"`, or `"deny"`.
+        decision: String,
+    },
+
+    // ── Plan review (interactive plan-mode gate) ────────────────────────
+    /// An interactive turn parked on a thread-scoped plan the user must
+    /// review before execution. Published by
+    /// [`crate::openhuman::plan_review::gate::PlanReviewGate::request_review`]
+    /// and bridged to the web channel as a `plan_review_request` socket event.
+    PlanReviewRequested {
+        /// Unique id correlating the decision back to the parked turn.
+        request_id: String,
+        /// Chat thread the parked turn belongs to (routing). `None` for
+        /// non-chat callers (which auto-approve and never park here).
+        thread_id: Option<String>,
+        /// Socket.IO client id (room) to surface the review to, when known.
+        client_id: Option<String>,
+        /// One-line description of the plan.
+        summary: String,
+        /// Ordered plan steps shown in the review card.
+        steps: Vec<String>,
+    },
+    /// User resolved a parked plan review. Published after the gate's parked
+    /// future wakes. `decision` is `"approve"` / `"reject"` / `"revise"`
+    /// (revise feedback is user content and is intentionally omitted).
+    PlanReviewDecided {
+        request_id: String,
         decision: String,
     },
 
@@ -909,6 +981,20 @@ pub enum DomainEvent {
     },
     /// A component restart was observed.
     HealthRestarted { component: String },
+    /// A one-time harness-init step changed state (pending → running → done /
+    /// failed / skipped). Surfaced to the frontend initialization screen.
+    HarnessInitProgress {
+        step_id: String,
+        state: String,
+        message: Option<String>,
+        percent: Option<u8>,
+    },
+    /// The harness-init run reached a terminal state. `failed_required` is true
+    /// only when a *required* step failed (no required steps today).
+    HarnessInitCompleted {
+        overall: String,
+        failed_required: bool,
+    },
 
     // ── Keyring ─────────────────────────────────────────────────────────
     /// The OS keyring is unavailable and no user consent for local fallback
@@ -982,6 +1068,17 @@ pub enum DomainEvent {
         reason: String,
     },
 
+    // ── Thread goals ──────────────────────────────────────────────────
+    /// A thread's goal was created, replaced, or transitioned state
+    /// (active/paused/budget_limited/complete). Drives the desktop goal chip.
+    ThreadGoalUpdated {
+        thread_id: String,
+        goal_id: String,
+        status: String,
+    },
+    /// A thread's goal was cleared (deleted).
+    ThreadGoalCleared { thread_id: String },
+
     // ── Backend Meet Bot ──────────────────────────────────────────────
     /// Backend gmeet bot successfully joined the meeting.
     BackendMeetJoined {
@@ -1026,11 +1123,44 @@ pub enum DomainEvent {
         recent_transcript: Vec<BackendMeetTurn>,
         timestamp_ms: u64,
     },
+    /// Core asked the backend bot to speak into the call (`bot:speak`).
+    /// Published for observability after the Socket.IO emit succeeds.
+    BackendMeetSpeak {
+        text: String,
+        correlation_id: Option<String>,
+    },
+    /// An approval was parked during a live-meeting orchestrator turn
+    /// (issue #3513). The meeting bus speaks the prompt into the call;
+    /// the decision arrives by voice ("Hey Tiny, approve") or the
+    /// standard thread approval card — first response wins.
+    InCallApprovalRequested {
+        request_id: String,
+        tool_name: String,
+        action_summary: String,
+        correlation_id: Option<String>,
+    },
     /// A Google Calendar event with a Meet link was detected and the
     /// auto-join policy is "ask" — the UI should prompt the user.
     MeetAutoJoinPrompt {
         meet_url: String,
         event_title: String,
+    },
+    /// A new meeting session was created (Pending) after a calendar Meet
+    /// link was detected and the auto-join prompt was surfaced (issue #3507).
+    MeetingSessionCreated {
+        meeting_id: String,
+        meet_url: String,
+        title: String,
+        /// Origin of the session: "calendar" | "manual" | "api".
+        source: String,
+    },
+    /// Auto-join was triggered for a meeting — either policy == Always or the
+    /// user clicked a join action on the auto-join prompt (issue #3507).
+    MeetingAutoJoinTriggered {
+        meeting_id: String,
+        meet_url: String,
+        listen_only: bool,
+        correlation_id: String,
     },
     /// Reserved for PR-4: a post-meeting summary was generated from the
     /// transcript (action items, key decisions, etc.).
@@ -1038,6 +1168,26 @@ pub enum DomainEvent {
         thread_id: String,
         correlation_id: Option<String>,
         summary: String,
+    },
+    /// A JSON message arrived on a tinyplace WebSocket stream.
+    /// Published by the stream manager's recv loop. Carries the raw
+    /// server-sent JSON value (inbox item, conversation message, etc.)
+    /// so the Socket.IO bridge can forward it to the renderer.
+    TinyPlaceStreamMessage {
+        /// Stream identifier (e.g. `"inbox"`, `"conversation:abc123"`).
+        stream_id: String,
+        /// Stream kind for routing.
+        kind: String,
+        /// The raw JSON message from the tinyplace server.
+        message: serde_json::Value,
+    },
+    /// A tinyplace WebSocket stream changed lifecycle status.
+    /// Published by the stream manager on connect, disconnect, and failure.
+    TinyPlaceStreamStatusChanged {
+        /// Stream identifier.
+        stream_id: String,
+        /// New status: `"connecting"`, `"connected"`, `"disconnected"`, `"failed"`.
+        status: String,
     },
 }
 
@@ -1078,7 +1228,8 @@ impl DomainEvent {
             | Self::MemoryIngestionCompleted { .. }
             | Self::DocumentCanonicalized { .. }
             | Self::MemoryDiffSnapshotTaken { .. }
-            | Self::MemoryDiffComputed { .. } => "memory",
+            | Self::MemoryDiffComputed { .. }
+            | Self::MemoryDiffMarkedRead { .. } => "memory",
 
             Self::CacheRebuilt { .. } => "learning",
 
@@ -1098,7 +1249,8 @@ impl DomainEvent {
             Self::WorkflowLoaded { .. }
             | Self::WorkflowStopped { .. }
             | Self::WorkflowStartFailed { .. }
-            | Self::WorkflowExecuted { .. } => "workflow",
+            | Self::WorkflowExecuted { .. }
+            | Self::WorkflowsChanged { .. } => "workflow",
 
             Self::ToolExecutionStarted { .. } | Self::ToolExecutionCompleted { .. } => "tool",
 
@@ -1144,11 +1296,13 @@ impl DomainEvent {
             | Self::AutonomyConfigChanged
             | Self::AgentPathsChanged
             | Self::HealthChanged { .. }
-            | Self::HealthRestarted { .. } => "system",
+            | Self::HealthRestarted { .. }
+            | Self::HarnessInitProgress { .. }
+            | Self::HarnessInitCompleted { .. } => "system",
 
             Self::KeyringConsentRequired | Self::KeyringDecryptFailed { .. } => "keyring",
 
-            Self::SessionExpired { .. } => "auth",
+            Self::SessionExpired { .. } | Self::ProviderApiKeyRejected { .. } => "auth",
 
             Self::TaskSourceFetched { .. }
             | Self::TaskSourceTaskIngested { .. }
@@ -1156,12 +1310,18 @@ impl DomainEvent {
 
             Self::TaskPlanAwaitingApproval { .. } | Self::TaskRunReclaimed { .. } => "agent",
 
+            Self::ThreadGoalUpdated { .. } | Self::ThreadGoalCleared { .. } => "agent",
+
+            Self::SubconsciousTriggerProcessed { .. } => "subconscious",
+
             Self::Voice(_) => "voice",
 
             Self::ApprovalRequested { .. }
             | Self::ApprovalDecided { .. }
             | Self::ApprovalGateOverrideIgnored { .. }
             | Self::ApprovalGateDisabled { .. } => "approval",
+
+            Self::PlanReviewRequested { .. } | Self::PlanReviewDecided { .. } => "plan_review",
 
             Self::ArtifactReady { .. }
             | Self::ArtifactFailed { .. }
@@ -1181,8 +1341,16 @@ impl DomainEvent {
             | Self::BackendMeetTranscript { .. }
             | Self::BackendMeetError { .. }
             | Self::BackendMeetInCallRequest { .. }
+            | Self::BackendMeetSpeak { .. }
+            | Self::InCallApprovalRequested { .. }
             | Self::MeetAutoJoinPrompt { .. }
+            | Self::MeetingSessionCreated { .. }
+            | Self::MeetingAutoJoinTriggered { .. }
             | Self::MeetingSummaryGenerated { .. } => "agent_meetings",
+
+            Self::TinyPlaceStreamMessage { .. } | Self::TinyPlaceStreamStatusChanged { .. } => {
+                "tinyplace"
+            }
         }
     }
 
@@ -1200,6 +1368,7 @@ impl DomainEvent {
             Self::AgentOrchestrationCompleted { .. } => "AgentOrchestrationCompleted",
             Self::AgentOrchestrationFailed { .. } => "AgentOrchestrationFailed",
             Self::AgentOrchestrationClosed { .. } => "AgentOrchestrationClosed",
+            Self::SubconsciousTriggerProcessed { .. } => "SubconsciousTriggerProcessed",
             Self::RunQueueMessageQueued { .. } => "RunQueueMessageQueued",
             Self::RunQueueMessageDelivered { .. } => "RunQueueMessageDelivered",
             Self::RunQueueFollowupDispatched { .. } => "RunQueueFollowupDispatched",
@@ -1215,6 +1384,7 @@ impl DomainEvent {
             Self::DocumentCanonicalized { .. } => "DocumentCanonicalized",
             Self::MemoryDiffSnapshotTaken { .. } => "MemoryDiffSnapshotTaken",
             Self::MemoryDiffComputed { .. } => "MemoryDiffComputed",
+            Self::MemoryDiffMarkedRead { .. } => "MemoryDiffMarkedRead",
             Self::CacheRebuilt { .. } => "CacheRebuilt",
             Self::ChannelInboundMessage { .. } => "ChannelInboundMessage",
             Self::ChannelMessageReceived { .. } => "ChannelMessageReceived",
@@ -1231,6 +1401,7 @@ impl DomainEvent {
             Self::WorkflowStopped { .. } => "WorkflowStopped",
             Self::WorkflowStartFailed { .. } => "WorkflowStartFailed",
             Self::WorkflowExecuted { .. } => "WorkflowExecuted",
+            Self::WorkflowsChanged { .. } => "WorkflowsChanged",
             Self::ToolExecutionStarted { .. } => "ToolExecutionStarted",
             Self::ToolExecutionCompleted { .. } => "ToolExecutionCompleted",
             Self::WebhookIncomingRequest { .. } => "WebhookIncomingRequest",
@@ -1270,11 +1441,15 @@ impl DomainEvent {
             Self::AgentPathsChanged => "AgentPathsChanged",
             Self::HealthChanged { .. } => "HealthChanged",
             Self::HealthRestarted { .. } => "HealthRestarted",
+            Self::HarnessInitProgress { .. } => "HarnessInitProgress",
+            Self::HarnessInitCompleted { .. } => "HarnessInitCompleted",
             Self::KeyringConsentRequired => "KeyringConsentRequired",
             Self::KeyringDecryptFailed { .. } => "KeyringDecryptFailed",
             Self::SessionExpired { .. } => "SessionExpired",
             Self::ApprovalRequested { .. } => "ApprovalRequested",
             Self::ApprovalDecided { .. } => "ApprovalDecided",
+            Self::PlanReviewRequested { .. } => "PlanReviewRequested",
+            Self::PlanReviewDecided { .. } => "PlanReviewDecided",
             Self::ApprovalGateOverrideIgnored { .. } => "ApprovalGateOverrideIgnored",
             Self::ApprovalGateDisabled { .. } => "ApprovalGateDisabled",
             Self::ArtifactReady { .. } => "ArtifactReady",
@@ -1287,11 +1462,14 @@ impl DomainEvent {
             Self::McpSetupSecretRequested { .. } => "McpSetupSecretRequested",
             Self::McpToolRejected { .. } => "McpToolRejected",
             Self::EmbeddingModelUnhealthy { .. } => "EmbeddingModelUnhealthy",
+            Self::ProviderApiKeyRejected { .. } => "ProviderApiKeyRejected",
             Self::TaskSourceFetched { .. } => "TaskSourceFetched",
             Self::TaskSourceTaskIngested { .. } => "TaskSourceTaskIngested",
             Self::TaskSourceFetchFailed { .. } => "TaskSourceFetchFailed",
             Self::TaskPlanAwaitingApproval { .. } => "TaskPlanAwaitingApproval",
             Self::TaskRunReclaimed { .. } => "TaskRunReclaimed",
+            Self::ThreadGoalUpdated { .. } => "ThreadGoalUpdated",
+            Self::ThreadGoalCleared { .. } => "ThreadGoalCleared",
             Self::BackendMeetJoined { .. } => "BackendMeetJoined",
             Self::BackendMeetLeft { .. } => "BackendMeetLeft",
             Self::BackendMeetReply { .. } => "BackendMeetReply",
@@ -1299,8 +1477,14 @@ impl DomainEvent {
             Self::BackendMeetTranscript { .. } => "BackendMeetTranscript",
             Self::BackendMeetError { .. } => "BackendMeetError",
             Self::BackendMeetInCallRequest { .. } => "BackendMeetInCallRequest",
+            Self::BackendMeetSpeak { .. } => "BackendMeetSpeak",
+            Self::InCallApprovalRequested { .. } => "InCallApprovalRequested",
             Self::MeetAutoJoinPrompt { .. } => "MeetAutoJoinPrompt",
+            Self::MeetingSessionCreated { .. } => "MeetingSessionCreated",
+            Self::MeetingAutoJoinTriggered { .. } => "MeetingAutoJoinTriggered",
             Self::MeetingSummaryGenerated { .. } => "MeetingSummaryGenerated",
+            Self::TinyPlaceStreamMessage { .. } => "TinyPlaceStreamMessage",
+            Self::TinyPlaceStreamStatusChanged { .. } => "TinyPlaceStreamStatusChanged",
             Self::Voice(_) => "Voice",
         }
     }

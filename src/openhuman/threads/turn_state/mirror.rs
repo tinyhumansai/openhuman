@@ -18,8 +18,8 @@ use crate::openhuman::agent::progress::AgentProgress;
 
 use super::store::TurnStateStore;
 use super::types::{
-    SubagentActivity, SubagentToolCall, ToolTimelineEntry, ToolTimelineStatus, TurnLifecycle,
-    TurnPhase, TurnState,
+    SubagentActivity, SubagentToolCall, SubagentTranscriptItem, ToolTimelineEntry,
+    ToolTimelineStatus, TranscriptItem, TurnLifecycle, TurnPhase, TurnState,
 };
 
 const MIRROR_LOG_PREFIX: &str = "[threads:turn_state:mirror]";
@@ -32,6 +32,10 @@ pub struct TurnStateMirror {
     /// Set to `true` once we observe `TurnCompleted` so `finish` knows
     /// to delete the snapshot rather than mark it interrupted.
     turn_completed: bool,
+    /// Monotonic ordering key for [`TranscriptItem`]s. Round alone can't
+    /// order narration vs thinking vs tool calls *within* one iteration, so
+    /// every transcript push stamps and increments this.
+    next_seq: u32,
 }
 
 impl TurnStateMirror {
@@ -49,6 +53,7 @@ impl TurnStateMirror {
             store,
             state,
             turn_completed: false,
+            next_seq: 0,
         };
         mirror.flush();
         mirror
@@ -80,11 +85,17 @@ impl TurnStateMirror {
                 call_id,
                 tool_name,
                 iteration,
+                display_label,
+                display_detail,
                 ..
             } => {
                 self.state.lifecycle = TurnLifecycle::Streaming;
                 self.state.phase = Some(TurnPhase::ToolUse);
                 self.state.active_tool = Some(tool_name.clone());
+                // Record the tool row in the ordered transcript so the
+                // processing panel can interleave it between narration /
+                // thinking at the position it actually occurred.
+                self.push_transcript_tool(*iteration, call_id);
                 // `ToolCallArgsDelta` may have already created a
                 // synthetic placeholder for this `call_id` before the
                 // start event arrived. Reuse it (filling in `name` /
@@ -100,6 +111,14 @@ impl TurnStateMirror {
                     existing.name = tool_name.clone();
                     existing.round = *iteration;
                     existing.status = ToolTimelineStatus::Running;
+                    // Only overwrite with a present server value so an
+                    // args-delta placeholder's fields aren't clobbered to None.
+                    if display_label.is_some() {
+                        existing.display_name = display_label.clone();
+                    }
+                    if display_detail.is_some() {
+                        existing.detail = display_detail.clone();
+                    }
                 } else {
                     self.state.tool_timeline.push(ToolTimelineEntry {
                         id: call_id.clone(),
@@ -107,8 +126,8 @@ impl TurnStateMirror {
                         round: *iteration,
                         status: ToolTimelineStatus::Running,
                         args_buffer: None,
-                        display_name: None,
-                        detail: None,
+                        display_name: display_label.clone(),
+                        detail: display_detail.clone(),
                         source_tool_name: None,
                         subagent: None,
                     });
@@ -172,6 +191,7 @@ impl TurnStateMirror {
                         output_chars: None,
                         worker_thread_id: worker_thread_id.clone(),
                         tool_calls: Vec::new(),
+                        transcript: Vec::new(),
                     }),
                 });
                 self.flush();
@@ -234,6 +254,8 @@ impl TurnStateMirror {
                 call_id,
                 tool_name,
                 iteration,
+                display_label,
+                display_detail,
                 ..
             } => {
                 if let Some(entry) = self.find_subagent_entry_mut(task_id) {
@@ -245,10 +267,28 @@ impl TurnStateMirror {
                             iteration: Some(*iteration),
                             elapsed_ms: None,
                             output_chars: None,
+                            display_name: display_label.clone(),
+                            detail: display_detail.clone(),
+                        });
+                        // Mirror the call into the ordered transcript so the
+                        // rehydrated thoughts interleave it at the right spot.
+                        activity.transcript.push(SubagentTranscriptItem::Tool {
+                            iteration: Some(*iteration),
+                            call_id: call_id.clone(),
+                            tool_name: tool_name.clone(),
+                            status: ToolTimelineStatus::Running,
+                            elapsed_ms: None,
+                            output_chars: None,
+                            display_name: display_label.clone(),
+                            detail: display_detail.clone(),
                         });
                     }
                 }
-                false
+                // Flush at sub-agent tool boundaries so prose streamed since the
+                // last boundary reaches disk (the parent is blocked on the
+                // spawn tool, so its own flushes don't fire mid sub-agent run).
+                self.flush();
+                true
             }
             AgentProgress::SubagentToolCallCompleted {
                 task_id,
@@ -260,33 +300,59 @@ impl TurnStateMirror {
             } => {
                 if let Some(entry) = self.find_subagent_entry_mut(task_id) {
                     if let Some(activity) = entry.subagent.as_mut() {
+                        let status = if *success {
+                            ToolTimelineStatus::Success
+                        } else {
+                            ToolTimelineStatus::Error
+                        };
                         if let Some(call) = activity
                             .tool_calls
                             .iter_mut()
                             .rev()
                             .find(|c| c.call_id == *call_id)
                         {
-                            call.status = if *success {
-                                ToolTimelineStatus::Success
-                            } else {
-                                ToolTimelineStatus::Error
-                            };
+                            call.status = status;
                             call.elapsed_ms = Some(*elapsed_ms);
                             call.output_chars = Some(*output_chars);
                         }
+                        // Keep the transcript's Tool item in lockstep so the
+                        // rehydrated row shows the terminal status + timing.
+                        if let Some(SubagentTranscriptItem::Tool {
+                            status: tx_status,
+                            elapsed_ms: tx_elapsed,
+                            output_chars: tx_output,
+                            ..
+                        }) = activity
+                            .transcript
+                            .iter_mut()
+                            .rev()
+                            .find(|item| matches!(item, SubagentTranscriptItem::Tool { call_id: c, .. } if c == call_id))
+                        {
+                            *tx_status = status;
+                            *tx_elapsed = Some(*elapsed_ms);
+                            *tx_output = Some(*output_chars);
+                        }
                     }
                 }
+                self.flush();
+                true
+            }
+            AgentProgress::SubagentTextDelta {
+                task_id,
+                delta,
+                iteration,
+                ..
+            } => {
+                self.push_subagent_prose(task_id, *iteration, delta, false);
                 false
             }
-            AgentProgress::SubagentTextDelta { .. }
-            | AgentProgress::SubagentThinkingDelta { .. } => {
-                // Sub-agent streaming text/thinking is display-only: it is
-                // rendered live in the parent thread's subagent transcript
-                // but intentionally **not** persisted to the turn-state
-                // snapshot. The child's final assistant text lands in the
-                // thread on completion, so replaying partial deltas after a
-                // reconnect would add weight without value. Acknowledge
-                // without mutating the snapshot or flushing.
+            AgentProgress::SubagentThinkingDelta {
+                task_id,
+                delta,
+                iteration,
+                ..
+            } => {
+                self.push_subagent_prose(task_id, *iteration, delta, true);
                 false
             }
             AgentProgress::TaskBoardUpdated { board } => {
@@ -294,12 +360,14 @@ impl TurnStateMirror {
                 self.flush();
                 true
             }
-            AgentProgress::TextDelta { delta, .. } => {
+            AgentProgress::TextDelta { delta, iteration } => {
                 self.state.streaming_text.push_str(delta);
+                self.push_transcript_narration(*iteration, delta);
                 false
             }
-            AgentProgress::ThinkingDelta { delta, .. } => {
+            AgentProgress::ThinkingDelta { delta, iteration } => {
                 self.state.thinking.push_str(delta);
+                self.push_transcript_thinking(*iteration, delta);
                 false
             }
             AgentProgress::ToolCallArgsDelta {
@@ -337,12 +405,16 @@ impl TurnStateMirror {
             }
             AgentProgress::TurnCompleted { .. } => {
                 self.turn_completed = true;
-                if let Err(err) = self.store.delete(&self.state.thread_id) {
-                    log::warn!(
-                        "{MIRROR_LOG_PREFIX} failed to delete snapshot for thread={}: {err}",
-                        self.state.thread_id
-                    );
-                }
+                // Keep the snapshot (don't delete) so a reloaded / cold-booted
+                // client can replay this turn's processing transcript via
+                // `getTurnState`. Mark it `Completed` and quiesce the live
+                // fields so the UI renders it settled (no spinner / retry),
+                // and startup interrupted-marking leaves it alone.
+                self.state.lifecycle = TurnLifecycle::Completed;
+                self.state.phase = None;
+                self.state.active_tool = None;
+                self.state.active_subagent = None;
+                self.flush();
                 true
             }
             AgentProgress::TurnCostUpdated { .. } => {
@@ -379,6 +451,73 @@ impl TurnStateMirror {
         }
     }
 
+    /// Append a visible-narration delta to the transcript, coalescing into
+    /// the trailing [`TranscriptItem::Narration`] when it's the most recent
+    /// item and from the same round — so a streamed paragraph stays one item
+    /// instead of one-per-token. A new round (or any intervening thinking /
+    /// tool item) starts a fresh narration block.
+    fn push_transcript_narration(&mut self, round: u32, delta: &str) {
+        if let Some(TranscriptItem::Narration { round: r, text, .. }) =
+            self.state.transcript.last_mut()
+        {
+            if *r == round {
+                text.push_str(delta);
+                return;
+            }
+        }
+        let seq = self.next_seq();
+        self.state.transcript.push(TranscriptItem::Narration {
+            round,
+            seq,
+            text: delta.to_string(),
+        });
+    }
+
+    /// Append a hidden-reasoning delta to the transcript, with the same
+    /// coalescing rule as [`Self::push_transcript_narration`].
+    fn push_transcript_thinking(&mut self, round: u32, delta: &str) {
+        if let Some(TranscriptItem::Thinking { round: r, text, .. }) =
+            self.state.transcript.last_mut()
+        {
+            if *r == round {
+                text.push_str(delta);
+                return;
+            }
+        }
+        let seq = self.next_seq();
+        self.state.transcript.push(TranscriptItem::Thinking {
+            round,
+            seq,
+            text: delta.to_string(),
+        });
+    }
+
+    /// Record a tool call in the transcript at the point it occurred, as a
+    /// pointer into [`TurnState::tool_timeline`] (the row's status/label live
+    /// there). Skips a duplicate if the same `call_id` was already recorded
+    /// (e.g. a start event after an args-delta placeholder).
+    fn push_transcript_tool(&mut self, round: u32, call_id: &str) {
+        let already = self.state.transcript.iter().any(
+            |item| matches!(item, TranscriptItem::ToolCall { call_id: c, .. } if c == call_id),
+        );
+        if already {
+            return;
+        }
+        let seq = self.next_seq();
+        self.state.transcript.push(TranscriptItem::ToolCall {
+            round,
+            seq,
+            call_id: call_id.to_string(),
+        });
+    }
+
+    /// Return the next monotonic transcript ordering key and advance it.
+    fn next_seq(&mut self) -> u32 {
+        let seq = self.next_seq;
+        self.next_seq = self.next_seq.saturating_add(1);
+        seq
+    }
+
     fn find_subagent_entry_mut(&mut self, task_id: &str) -> Option<&mut ToolTimelineEntry> {
         let needle = format!("subagent:{task_id}");
         self.state
@@ -386,6 +525,55 @@ impl TurnStateMirror {
             .iter_mut()
             .rev()
             .find(|entry| entry.id == needle)
+    }
+
+    /// Append a sub-agent prose delta (narration when `is_thinking == false`,
+    /// reasoning otherwise) to that sub-agent's transcript, coalescing into the
+    /// trailing same-kind, same-iteration item so a streamed paragraph stays
+    /// one entry (mirrors the frontend `appendSubagentStreamDelta`). Mutate-
+    /// only (no flush) — high-frequency like the parent's `TextDelta`; the
+    /// accumulated prose is persisted at the next sub-agent tool boundary.
+    fn push_subagent_prose(
+        &mut self,
+        task_id: &str,
+        iteration: u32,
+        delta: &str,
+        is_thinking: bool,
+    ) {
+        let Some(entry) = self.find_subagent_entry_mut(task_id) else {
+            return;
+        };
+        let Some(activity) = entry.subagent.as_mut() else {
+            return;
+        };
+        match activity.transcript.last_mut() {
+            Some(SubagentTranscriptItem::Thinking {
+                iteration: it,
+                text,
+            }) if is_thinking && *it == Some(iteration) => {
+                text.push_str(delta);
+                return;
+            }
+            Some(SubagentTranscriptItem::Text {
+                iteration: it,
+                text,
+            }) if !is_thinking && *it == Some(iteration) => {
+                text.push_str(delta);
+                return;
+            }
+            _ => {}
+        }
+        activity.transcript.push(if is_thinking {
+            SubagentTranscriptItem::Thinking {
+                iteration: Some(iteration),
+                text: delta.to_string(),
+            }
+        } else {
+            SubagentTranscriptItem::Text {
+                iteration: Some(iteration),
+                text: delta.to_string(),
+            }
+        });
     }
 
     #[cfg(test)]

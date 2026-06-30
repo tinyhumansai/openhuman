@@ -13,8 +13,10 @@ import {
   LuWrench,
   LuX,
 } from 'react-icons/lu';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
+import { settingsNavState } from '../../../components/settings/modal/settingsOverlay';
+import Button from '../../../components/ui/Button';
 import { useT } from '../../../lib/i18n/I18nContext';
 import type { TaskBoard, TaskBoardCard, TaskBoardCardStatus } from '../../../types/turnState';
 import {
@@ -197,7 +199,7 @@ export function TaskKanbanBoard({
     <div className="py-3">
       {!hideHeader && (
         <div className="mb-2 flex items-center justify-between gap-3">
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-content-muted">
             {t(headerTitleKey)}
           </h4>
           <div className="flex items-center gap-2">
@@ -206,14 +208,12 @@ export function TaskKanbanBoard({
                 type="button"
                 aria-expanded={sourceControlsOpen}
                 onClick={() => setSourceControlsOpen(open => !open)}
-                className="inline-flex items-center gap-1 rounded-md border border-stone-200 px-2 py-1 text-[10px] font-medium text-stone-600 hover:bg-stone-50 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800">
+                className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-[10px] font-medium text-content-secondary hover:bg-surface-hover">
                 <LuDatabase className="h-3 w-3" />
                 {t('conversations.taskKanban.sourcesButton')}
               </button>
             )}
-            <span className="text-[10px] text-stone-400 dark:text-neutral-500">
-              {board.cards.length}
-            </span>
+            <span className="text-[10px] text-content-faint">{board.cards.length}</span>
           </div>
         </div>
       )}
@@ -229,19 +229,17 @@ export function TaskKanbanBoard({
           return (
             <section
               key={column.status}
-              className={`min-w-0 rounded-lg bg-stone-50 dark:bg-neutral-800/60 p-2 ${accentClass} ${
+              className={`min-w-0 rounded-lg bg-surface-muted p-2 ${accentClass} ${
                 isDragTarget ? 'ring-2 ring-ocean-400 bg-ocean-50/30 dark:bg-ocean-500/5' : ''
               }`}
               onDragOver={canMoveCards ? e => handleDragOver(e, column.status) : undefined}
               onDragLeave={canMoveCards ? handleDragLeave : undefined}
               onDrop={canMoveCards ? e => handleDrop(e, column.status) : undefined}>
               <div className="mb-2 flex items-center justify-between gap-2">
-                <h5 className="truncate text-[11px] font-medium text-stone-600 dark:text-neutral-300">
+                <h5 className="truncate text-[11px] font-medium text-content-secondary">
                   {t(column.labelKey)}
                 </h5>
-                <span className="text-[10px] text-stone-400 dark:text-neutral-500">
-                  {cards.length}
-                </span>
+                <span className="text-[10px] text-content-faint">{cards.length}</span>
               </div>
               {/* "Needs your input" banner at top of Blocked column */}
               {isBlockedColumn && cards.length > 0 && (
@@ -251,7 +249,7 @@ export function TaskKanbanBoard({
               )}
               <div className="space-y-2">
                 {cards.length === 0 ? (
-                  <p className="py-2 text-center text-[10px] text-stone-400 dark:text-neutral-600">
+                  <p className="py-2 text-center text-[10px] text-content-faint dark:text-neutral-600">
                     {t('conversations.taskKanban.emptyColumn')}
                   </p>
                 ) : (
@@ -328,11 +326,11 @@ function TaskBoardArticle({
     <article
       draggable={isDraggable}
       onDragStart={isDraggable ? handleDragStart : undefined}
-      className={`rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2.5 py-2 shadow-sm transition-opacity ${
+      className={`rounded-lg border border-line bg-surface px-2.5 py-2 shadow-sm transition-opacity ${
         mutating ? 'opacity-50' : 'opacity-100'
       } ${isDraggable ? 'cursor-grab active:cursor-grabbing' : ''}`}>
       <div className="flex items-start gap-2">
-        <p className="min-w-0 flex-1 break-words text-xs font-medium leading-snug text-stone-800 dark:text-neutral-100">
+        <p className="min-w-0 flex-1 break-words text-xs font-medium leading-snug text-content">
           {card.title}
         </p>
         {card.sessionThreadId && onViewSession ? (
@@ -359,7 +357,7 @@ function TaskBoardArticle({
               title={t('chat.approval.deny')}
               disabled={disabled}
               onClick={() => onDecidePlan(card, false)}
-              className="rounded-md border border-stone-200 px-1.5 py-0.5 text-[10px] font-medium text-stone-600 transition-colors hover:bg-stone-100 disabled:opacity-40 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800">
+              className="rounded-md border border-line px-1.5 py-0.5 text-[10px] font-medium text-content-secondary transition-colors hover:bg-surface-hover disabled:opacity-40">
               {t('chat.approval.deny')}
             </button>
           </div>
@@ -383,7 +381,7 @@ function TaskBoardArticle({
               aria-label={t('conversations.taskKanban.moveLeft')}
               disabled={disabled || columnStatus === 'todo'}
               onClick={() => onMove(card, -1)}
-              className="flex h-7 w-7 items-center justify-center rounded-md text-stone-400 dark:text-neutral-500 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 disabled:opacity-25">
+              className="flex h-7 w-7 items-center justify-center rounded-md text-content-faint transition-colors hover:bg-surface-hover dark:bg-surface-muted hover:text-content-secondary dark:text-neutral-200 disabled:opacity-25">
               <LuArrowLeft className="h-4 w-4" />
             </button>
             <button
@@ -392,7 +390,7 @@ function TaskBoardArticle({
               aria-label={t('conversations.taskKanban.moveRight')}
               disabled={disabled || columnStatus === 'done'}
               onClick={() => onMove(card, 1)}
-              className="flex h-7 w-7 items-center justify-center rounded-md text-stone-400 dark:text-neutral-500 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 disabled:opacity-25">
+              className="flex h-7 w-7 items-center justify-center rounded-md text-content-faint transition-colors hover:bg-surface-hover dark:bg-surface-muted hover:text-content-secondary dark:text-neutral-200 disabled:opacity-25">
               <LuArrowRight className="h-4 w-4" />
             </button>
           </div>
@@ -406,7 +404,7 @@ function TaskBoardArticle({
           </span>
         )}
         {card.allowedTools && card.allowedTools.length > 0 && (
-          <span className="inline-flex items-center gap-1 rounded-md bg-stone-100 px-1.5 py-0.5 text-[10px] text-stone-600 dark:bg-neutral-800 dark:text-neutral-300">
+          <span className="inline-flex items-center gap-1 rounded-md bg-surface-subtle px-1.5 py-0.5 text-[10px] text-content-secondary">
             <LuWrench className="h-3 w-3" />
             {card.allowedTools.length}
           </span>
@@ -423,7 +421,7 @@ function TaskBoardArticle({
             target="_blank"
             rel="noreferrer"
             title={t('conversations.taskKanban.source.openExternal')}
-            className="inline-flex items-center gap-1 rounded-md bg-stone-100 px-1.5 py-0.5 text-[10px] text-stone-600 hover:bg-stone-200 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700">
+            className="inline-flex items-center gap-1 rounded-md bg-surface-subtle px-1.5 py-0.5 text-[10px] text-content-secondary hover:bg-surface-strong dark:hover:bg-neutral-700">
             <LuExternalLink className="h-3 w-3" />
             {t('conversations.taskKanban.source.openExternalShort')}
           </a>
@@ -464,14 +462,12 @@ function TaskBoardArticle({
         )}
       </div>
       {card.objective && (
-        <p className="mt-1 break-words text-[11px] leading-snug text-stone-500 dark:text-neutral-400">
+        <p className="mt-1 break-words text-[11px] leading-snug text-content-muted">
           {card.objective}
         </p>
       )}
       {card.notes && (
-        <p className="mt-1 break-words text-[11px] leading-snug text-stone-500 dark:text-neutral-400">
-          {card.notes}
-        </p>
+        <p className="mt-1 break-words text-[11px] leading-snug text-content-muted">{card.notes}</p>
       )}
       {/* Blocker text: always shown for blocked cards (column or status) */}
       {card.blocker && (card.status === 'blocked' || columnStatus === 'blocked') && (
@@ -592,6 +588,7 @@ function formatSyncNotice(outcomes: FetchOutcome[], t: (key: string) => string):
 function TaskSourceControls({ disabled, compact }: { disabled: boolean; compact: boolean }) {
   const { t } = useT();
   const navigate = useNavigate();
+  const location = useLocation();
   const [loading, setLoading] = useState(true);
   const [sources, setSources] = useState<TaskSource[]>([]);
   const [status, setStatus] = useState<TaskSourcesStatus | null>(null);
@@ -687,14 +684,14 @@ function TaskSourceControls({ disabled, compact }: { disabled: boolean; compact:
   };
 
   return (
-    <section className="mb-3 rounded-lg border border-stone-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-900">
+    <section className="mb-3 rounded-lg border border-line bg-surface p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
-          <h5 className="text-xs font-semibold text-stone-800 dark:text-neutral-100">
+          <h5 className="text-xs font-semibold text-content">
             {t('conversations.taskKanban.sources.title')}
           </h5>
           {!compact && status && (
-            <p className="text-[11px] text-stone-500 dark:text-neutral-400">
+            <p className="text-[11px] text-content-muted">
               {status.enabled
                 ? t('conversations.taskKanban.sources.statusEnabled')
                 : t('settings.taskSources.disabledBanner')}
@@ -704,7 +701,7 @@ function TaskSourceControls({ disabled, compact }: { disabled: boolean; compact:
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => navigate('/settings/integrations')}
+            onClick={() => navigate('/settings/integrations', settingsNavState(location))}
             className="text-[11px] font-medium text-ocean-600 hover:text-ocean-700 dark:text-ocean-300 dark:hover:text-ocean-200">
             {t('conversations.taskKanban.sources.manage')}
           </button>
@@ -712,7 +709,7 @@ function TaskSourceControls({ disabled, compact }: { disabled: boolean; compact:
             type="button"
             disabled={disabled || loading || busyKey !== null || sources.length === 0}
             onClick={() => void syncSources()}
-            className="inline-flex items-center gap-1 rounded-md border border-stone-200 px-2 py-1 text-[11px] font-medium text-stone-600 hover:bg-stone-50 disabled:opacity-40 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800">
+            className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-[11px] font-medium text-content-secondary hover:bg-surface-hover disabled:opacity-40">
             <LuRefreshCw className="h-3 w-3" />
             {busyKey === 'sync'
               ? t('settings.taskSources.syncing')
@@ -723,7 +720,7 @@ function TaskSourceControls({ disabled, compact }: { disabled: boolean; compact:
             aria-label={t('settings.taskSources.refresh')}
             disabled={loading}
             onClick={() => void load()}
-            className="flex h-7 w-7 items-center justify-center rounded-md border border-stone-200 text-stone-500 hover:bg-stone-50 disabled:opacity-40 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800">
+            className="flex h-7 w-7 items-center justify-center rounded-md border border-line text-content-muted hover:bg-surface-hover disabled:opacity-40 dark:text-content-secondary">
             <LuRefreshCw className="h-3.5 w-3.5" />
           </button>
         </div>
@@ -739,25 +736,19 @@ function TaskSourceControls({ disabled, compact }: { disabled: boolean; compact:
         </p>
       )}
       {loading ? (
-        <p className="mt-2 text-[11px] text-stone-400 dark:text-neutral-500">
-          {t('common.loading')}
-        </p>
+        <p className="mt-2 text-[11px] text-content-faint">{t('common.loading')}</p>
       ) : sources.length === 0 ? (
-        <p className="mt-2 text-[11px] text-stone-400 dark:text-neutral-500">
-          {t('settings.taskSources.empty')}
-        </p>
+        <p className="mt-2 text-[11px] text-content-faint">{t('settings.taskSources.empty')}</p>
       ) : (
         <ul className="mt-3 grid gap-2 sm:grid-cols-2">
           {sources.map(source => (
-            <li
-              key={source.id}
-              className="min-w-0 rounded-lg border border-stone-200 px-2.5 py-2 dark:border-neutral-800">
+            <li key={source.id} className="min-w-0 rounded-lg border border-line px-2.5 py-2">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="truncate text-xs font-medium text-stone-800 dark:text-neutral-100">
+                  <p className="truncate text-xs font-medium text-content">
                     {source.name || providerLabel(source.provider, t)}
                   </p>
-                  <p className="truncate text-[11px] text-stone-500 dark:text-neutral-400">
+                  <p className="truncate text-[11px] text-content-muted">
                     {providerLabel(source.provider, t)}
                     {source.target === 'agent_todo_proactive'
                       ? ` · ${t('settings.taskSources.proactive')}`
@@ -768,7 +759,7 @@ function TaskSourceControls({ disabled, compact }: { disabled: boolean; compact:
                   className={`flex-none rounded-md px-1.5 py-0.5 text-[10px] ${
                     source.enabled
                       ? 'bg-sage-50 text-sage-700 dark:bg-sage-500/10 dark:text-sage-200'
-                      : 'bg-stone-100 text-stone-500 dark:bg-neutral-800 dark:text-neutral-400'
+                      : 'bg-surface-subtle text-content-muted'
                   }`}>
                   {source.enabled
                     ? t('settings.taskSources.statusEnabled')
@@ -780,7 +771,7 @@ function TaskSourceControls({ disabled, compact }: { disabled: boolean; compact:
                   type="button"
                   disabled={disabled || busyKey !== null}
                   onClick={() => void fetchSource(source)}
-                  className="inline-flex items-center gap-1 rounded-md border border-stone-200 px-2 py-1 text-[11px] font-medium text-stone-600 hover:bg-stone-50 disabled:opacity-40 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800">
+                  className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-[11px] font-medium text-content-secondary hover:bg-surface-hover disabled:opacity-40">
                   <LuRefreshCw className="h-3 w-3" />
                   {busyKey === `fetch:${source.id}`
                     ? t('settings.taskSources.fetching')
@@ -790,7 +781,7 @@ function TaskSourceControls({ disabled, compact }: { disabled: boolean; compact:
                   type="button"
                   disabled={disabled || busyKey !== null}
                   onClick={() => void toggleSource(source)}
-                  className="rounded-md border border-stone-200 px-2 py-1 text-[11px] font-medium text-stone-600 hover:bg-stone-50 disabled:opacity-40 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800">
+                  className="rounded-md border border-line px-2 py-1 text-[11px] font-medium text-content-secondary hover:bg-surface-hover disabled:opacity-40">
                   {source.enabled
                     ? t('settings.taskSources.disable')
                     : t('settings.taskSources.enable')}
@@ -863,23 +854,23 @@ function TaskBriefDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4 py-6">
-      <section className="max-h-full w-full max-w-xl overflow-y-auto rounded-lg border border-stone-200 bg-white p-4 shadow-xl dark:border-neutral-800 dark:bg-neutral-900">
+      <section className="max-h-full w-full max-w-xl overflow-y-auto rounded-lg border border-line bg-surface p-4 shadow-xl">
         <div className="mb-3 flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-[11px] font-semibold uppercase text-stone-400 dark:text-neutral-500">
+            <p className="text-[11px] font-semibold uppercase text-content-faint">
               {t('conversations.taskKanban.briefTitle')}
             </p>
-            <h3 className="break-words text-base font-semibold text-stone-900 dark:text-neutral-50">
-              {card.title}
-            </h3>
+            <h3 className="break-words text-base font-semibold text-content">{card.title}</h3>
           </div>
-          <button
-            type="button"
+          <Button
+            iconOnly
+            variant="tertiary"
+            size="sm"
             aria-label={t('conversations.taskKanban.closeBrief')}
             onClick={onClose}
-            className="flex h-7 w-7 flex-none items-center justify-center rounded-md text-stone-500 hover:bg-stone-100 hover:text-stone-800 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100">
+            className="flex-none">
             <LuX className="h-4 w-4" />
-          </button>
+          </Button>
         </div>
 
         {source && <SourceBrief source={source} />}
@@ -887,24 +878,24 @@ function TaskBriefDialog({
         {editable ? (
           <div className="space-y-3 text-sm">
             <label className="block">
-              <span className="mb-1 block text-xs font-semibold text-stone-500 dark:text-neutral-400">
+              <span className="mb-1 block text-xs font-semibold text-content-muted">
                 {t('conversations.taskKanban.field.title')}
               </span>
               <input
                 value={title}
                 onChange={e => setTitle(e.target.value)}
-                className="w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-sm text-stone-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-50"
+                className="w-full rounded-md border border-line bg-surface px-2 py-1.5 text-sm text-content dark:bg-surface-canvas"
               />
             </label>
             <div className="grid gap-3 sm:grid-cols-3">
               <label className="block">
-                <span className="mb-1 block text-xs font-semibold text-stone-500 dark:text-neutral-400">
+                <span className="mb-1 block text-xs font-semibold text-content-muted">
                   {t('conversations.taskKanban.field.status')}
                 </span>
                 <select
                   value={status}
                   onChange={e => setStatus(e.target.value as TaskBoardCardStatus)}
-                  className="w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-sm text-stone-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-50">
+                  className="w-full rounded-md border border-line bg-surface px-2 py-1.5 text-sm text-content dark:bg-surface-canvas">
                   {(COLUMN_STATUSES.includes(status)
                     ? COLUMN_STATUSES
                     : [status, ...COLUMN_STATUSES]
@@ -921,13 +912,13 @@ function TaskBriefDialog({
                 onChange={setAssignedAgent}
               />
               <label className="block">
-                <span className="mb-1 block text-xs font-semibold text-stone-500 dark:text-neutral-400">
+                <span className="mb-1 block text-xs font-semibold text-content-muted">
                   {t('conversations.taskKanban.field.approval')}
                 </span>
                 <select
                   value={approvalMode}
                   onChange={e => setApprovalMode(e.target.value)}
-                  className="w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-sm text-stone-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-50">
+                  className="w-full rounded-md border border-line bg-surface px-2 py-1.5 text-sm text-content dark:bg-surface-canvas">
                   <option value="">{t('conversations.taskKanban.approval.default')}</option>
                   <option value="required">
                     {t('conversations.taskKanban.approval.required')}
@@ -975,29 +966,19 @@ function TaskBriefDialog({
             />
             <div className="flex items-center justify-between gap-2 pt-1">
               {deletable ? (
-                <button
-                  type="button"
-                  onClick={handleDelete}
-                  className="rounded-md border border-coral-200 px-3 py-1.5 text-xs font-medium text-coral-600 hover:bg-coral-50 dark:border-coral-500/30 dark:text-coral-300 dark:hover:bg-coral-500/10">
+                <Button variant="secondary" tone="danger" size="sm" onClick={handleDelete}>
                   {t('conversations.taskKanban.deleteCard')}
-                </button>
+                </Button>
               ) : (
                 <span />
               )}
               <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="rounded-md border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-600 hover:bg-stone-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800">
+                <Button variant="secondary" size="sm" onClick={onClose}>
                   {t('common.cancel')}
-                </button>
-                <button
-                  type="button"
-                  onClick={save}
-                  disabled={!title.trim()}
-                  className="rounded-md bg-ocean-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-ocean-700 disabled:opacity-50">
+                </Button>
+                <Button variant="primary" size="sm" onClick={save} disabled={!title.trim()}>
                   {t('conversations.taskKanban.saveChanges')}
-                </button>
+                </Button>
               </div>
             </div>
           </div>
@@ -1048,12 +1029,9 @@ function TaskBriefDialog({
             />
             {deletable && (
               <div className="flex justify-end pt-1">
-                <button
-                  type="button"
-                  onClick={handleDelete}
-                  className="rounded-md border border-coral-200 px-3 py-1.5 text-xs font-medium text-coral-600 hover:bg-coral-50 dark:border-coral-500/30 dark:text-coral-300 dark:hover:bg-coral-500/10">
+                <Button variant="secondary" tone="danger" size="sm" onClick={handleDelete}>
                   {t('conversations.taskKanban.deleteCard')}
-                </button>
+                </Button>
               </div>
             )}
           </div>
@@ -1119,10 +1097,7 @@ function SourceBriefField({
   return (
     <div className="min-w-0">
       <dt className="text-[11px] font-semibold text-sky-700 dark:text-sky-200">{label}</dt>
-      <dd
-        className={`mt-0.5 break-words text-xs text-stone-800 dark:text-neutral-100 ${
-          mono ? 'font-mono' : ''
-        }`}>
+      <dd className={`mt-0.5 break-words text-xs text-content ${mono ? 'font-mono' : ''}`}>
         {value}
       </dd>
     </div>
@@ -1140,13 +1115,11 @@ function BriefInput({
 }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-semibold text-stone-500 dark:text-neutral-400">
-        {label}
-      </span>
+      <span className="mb-1 block text-xs font-semibold text-content-muted">{label}</span>
       <input
         value={value}
         onChange={e => onChange(e.target.value)}
-        className="w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-sm text-stone-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-50"
+        className="w-full rounded-md border border-line bg-surface px-2 py-1.5 text-sm text-content dark:bg-surface-canvas"
       />
     </label>
   );
@@ -1163,14 +1136,12 @@ function BriefTextarea({
 }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-semibold text-stone-500 dark:text-neutral-400">
-        {label}
-      </span>
+      <span className="mb-1 block text-xs font-semibold text-content-muted">{label}</span>
       <textarea
         value={value}
         onChange={e => onChange(e.target.value)}
         rows={3}
-        className="w-full resize-y rounded-md border border-stone-200 bg-white px-2 py-1.5 text-sm text-stone-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-50"
+        className="w-full resize-y rounded-md border border-line bg-surface px-2 py-1.5 text-sm text-content dark:bg-surface-canvas"
       />
     </label>
   );
@@ -1190,11 +1161,11 @@ function BriefText({
   if (!value) return null;
   return (
     <div>
-      <h4 className="mb-1 text-xs font-semibold text-stone-500 dark:text-neutral-400">{label}</h4>
+      <h4 className="mb-1 text-xs font-semibold text-content-muted">{label}</h4>
       <p
         className={`break-words text-sm ${
           mono ? 'font-mono' : ''
-        } ${tone === 'danger' ? 'text-coral-600' : 'text-stone-800 dark:text-neutral-100'}`}>
+        } ${tone === 'danger' ? 'text-coral-600' : 'text-content'}`}>
         {value}
       </p>
     </div>
@@ -1216,11 +1187,11 @@ function BriefList({
   const List = ordered ? 'ol' : 'ul';
   return (
     <div>
-      <h4 className="mb-1 text-xs font-semibold text-stone-500 dark:text-neutral-400">{label}</h4>
+      <h4 className="mb-1 text-xs font-semibold text-content-muted">{label}</h4>
       <List
         className={`space-y-1 ${
           ordered ? 'list-decimal' : 'list-disc'
-        } list-inside text-sm text-stone-800 dark:text-neutral-100 ${mono ? 'font-mono' : ''}`}>
+        } list-inside text-sm text-content ${mono ? 'font-mono' : ''}`}>
         {values.map((value, index) => (
           <li key={index} className="break-words">
             {value}

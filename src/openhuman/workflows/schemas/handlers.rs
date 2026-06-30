@@ -12,8 +12,9 @@ use serde_json::{Map, Value};
 use crate::core::all::ControllerFuture;
 use crate::openhuman::skill_runtime::spawn_workflow_run_background;
 use crate::openhuman::workflows::ops::{
-    create_workflow, discover_automations, install_workflow_from_url, is_workspace_trusted,
-    read_workflow_resource, uninstall_workflow, CreateWorkflowParams, UninstallWorkflowParams,
+    create_workflow, discover_automations, discover_workflows, install_workflow_from_url,
+    is_workspace_trusted, read_workflow_resource, uninstall_workflow, CreateWorkflowParams,
+    UninstallWorkflowParams,
 };
 use crate::openhuman::workflows::{registry, run_log};
 use crate::rpc::RpcOutcome;
@@ -30,22 +31,31 @@ use super::wire_types::{
 
 pub(super) fn handle_workflows_list(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let _ = deserialize_params::<WorkflowsListParams>(params)?;
-        tracing::debug!("[workflows][rpc] list automations");
+        let params = deserialize_params::<WorkflowsListParams>(params)?;
+        let include_skills = params.include_skills;
+        tracing::debug!(include_skills, "[workflows][rpc] list automations");
         let workspace = resolve_workspace_dir().await;
         let trusted = is_workspace_trusted(&workspace);
         let home = dirs::home_dir();
-        // Automations list shows only `workflows/`-root task templates — not the
-        // capability skills under `skills/` roots, which the agent harness still
-        // loads via `discover_workflows` / `load_workflow_metadata`.
-        let automations = discover_automations(home.as_deref(), Some(workspace.as_path()), trusted);
+        // Default: automations-only (`workflows/` roots) so capability skills
+        // don't masquerade as task templates in the Automations UI. The Skills
+        // Explorer passes `include_skills=true` to also surface `skills/`-root
+        // installs (registry installs land there) in its Installed tab. Either
+        // way the agent harness loads both via `discover_workflows` /
+        // `load_workflow_metadata`.
+        let listed = if include_skills {
+            discover_workflows(home.as_deref(), Some(workspace.as_path()), trusted)
+        } else {
+            discover_automations(home.as_deref(), Some(workspace.as_path()), trusted)
+        };
         tracing::debug!(
-            count = automations.len(),
+            count = listed.len(),
+            include_skills,
             workspace = %workspace.display(),
             trusted,
             "[workflows][rpc] list result"
         );
-        let summaries = automations.into_iter().map(WorkflowSummary::from).collect();
+        let summaries = listed.into_iter().map(WorkflowSummary::from).collect();
         to_json(RpcOutcome::new(
             WorkflowsListResult {
                 workflows: summaries,

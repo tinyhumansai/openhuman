@@ -1,12 +1,16 @@
 /**
- * IntelligenceTeamsTab — the agent-team coordination surface (#3374 PR2).
+ * IntelligenceTeamsTab — the agent-team coordination surface (#3374).
  *
- * Read-only window onto the durable team ledger (PR1, #3546). It lists the
- * teams an agent has spawned, and — for a selected team — renders treatment "A":
- * a {@link TeamHeader} identity strip, the {@link TeamTaskBoard} of owned tasks,
- * and an always-visible {@link TeamActivityRail} of teammate messages. The
- * board/rail sit in a grid that collapses the rail under the board on narrow
- * widths.
+ * A window onto the durable team ledger (PR1, #3546). It lists the teams an
+ * agent has spawned, and — for a selected team — renders a {@link TeamHeader}
+ * identity strip, the {@link TeamTaskBoard} of owned tasks, and an
+ * always-visible {@link TeamActivityRail} of teammate messages. The board/rail
+ * sit in a grid that collapses the rail under the board on narrow widths.
+ *
+ * PR4 makes it interactive on an active team: the lead/user can message a named
+ * teammate (composer in the rail) and start a teammate live on its next
+ * claimable task (the play affordance on each member chip), both wired through
+ * {@link agentTeamApi}. A non-`started` outcome surfaces as a transient notice.
  *
  * Most users will see the EMPTY state first: a team only exists once an agent
  * spawns coordinated sub-agents, so "no teams yet" is the common first view and
@@ -28,6 +32,7 @@ import {
   type TeamMessage,
   type TeamView,
 } from '../../services/api/agentTeamApi';
+import Button from '../ui/Button';
 import { TeamActivityRail } from './TeamActivityRail';
 import { TeamHeader } from './TeamHeader';
 import { TeamTaskBoard } from './TeamTaskBoard';
@@ -49,6 +54,11 @@ export default function IntelligenceTeamsTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [startingMemberId, setStartingMemberId] = useState<string | null>(null);
+  // Transient feedback for a member-start outcome (blocked / already claimed /
+  // nothing claimable) or a send/start error — distinct from the fatal `error`.
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
   const mountedRef = useRef(true);
   // Mirrors `view` for reads inside the poll interval without making the poll
   // effect depend on `view` (which would rebuild the interval every tick).
@@ -107,6 +117,18 @@ export default function IntelligenceTeamsTab() {
     setView(null);
     viewRef.current = null;
     setMessages([]);
+    // Reset transient per-team feedback so a notice from the team we just left
+    // doesn't leak onto the next team opened.
+    setActionNotice(null);
+    setStartingMemberId(null);
+  }, []);
+
+  // Select a team, clearing any transient notice from a previously viewed team
+  // so stale feedback doesn't carry across navigation.
+  const selectTeam = useCallback((teamId: string) => {
+    setActionNotice(null);
+    setStartingMemberId(null);
+    setSelectedId(teamId);
   }, []);
 
   // Mount fetch of the team list (mirrors IntelligenceAgentWorkTab's 0ms
@@ -157,9 +179,68 @@ export default function IntelligenceTeamsTab() {
     }
   }, [selectedId, fetchDetail, fetchTeams]);
 
+  // Send a message as the lead (fromMemberId omitted) to a teammate or the
+  // whole team, then refresh so the new message appears in the rail.
+  const handleSend = useCallback(
+    async (toMemberId: string | null, content: string) => {
+      if (!selectedId) return;
+      setSending(true);
+      setActionNotice(null);
+      try {
+        await agentTeamApi.messageMember({
+          teamId: selectedId,
+          toMemberId: toMemberId ?? undefined,
+          content,
+        });
+        await fetchDetail(selectedId);
+      } catch (err) {
+        if (mountedRef.current) {
+          setActionNotice(err instanceof Error ? err.message : String(err));
+        }
+        // Re-throw so the composer's onSend rejects and keeps the unsent draft.
+        // Swallowing here would resolve handleSend as success and TeamActivityRail
+        // would clear the draft text on a failed send.
+        throw err;
+      } finally {
+        if (mountedRef.current) setSending(false);
+      }
+    },
+    [selectedId, fetchDetail]
+  );
+
+  // Start a live run for a member (auto-picks the member's next claimable task).
+  // A non-`started` outcome is surfaced as a transient notice; either way we
+  // refresh so the board/roster reflect the new state.
+  const handleStartMember = useCallback(
+    async (memberId: string) => {
+      if (!selectedId) return;
+      setStartingMemberId(memberId);
+      setActionNotice(null);
+      try {
+        const outcome = await agentTeamApi.startMember({ teamId: selectedId, memberId });
+        if (outcome.kind === 'blocked') {
+          // Name the unmet dependency ids so the user knows what to finish
+          // first (t() does not interpolate — compose at the call site).
+          const base = t('intelligence.teams.action.blocked');
+          setActionNotice(outcome.unmet.length ? `${base}: ${outcome.unmet.join(', ')}` : base);
+        } else if (outcome.kind !== 'started') {
+          setActionNotice(t(`intelligence.teams.action.${outcome.kind}`));
+        }
+        await fetchDetail(selectedId);
+      } catch (err) {
+        if (mountedRef.current) {
+          setActionNotice(err instanceof Error ? err.message : String(err));
+        }
+      } finally {
+        if (mountedRef.current) setStartingMemberId(null);
+      }
+    },
+    [selectedId, fetchDetail, t]
+  );
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-10 text-stone-400 dark:text-neutral-500">
+      <div className="flex items-center justify-center py-10 text-content-faint">
         <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-ocean-500 border-t-transparent" />
         <span className="text-sm">{t('intelligence.teams.loading')}</span>
       </div>
@@ -180,17 +261,11 @@ export default function IntelligenceTeamsTab() {
   if (teams.length === 0) {
     return (
       <div className="space-y-4">
-        <p className="text-xs text-stone-400 dark:text-neutral-500">
-          {t('intelligence.teams.subtitle')}
-        </p>
-        <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-stone-200 py-12 text-center dark:border-neutral-800">
-          <LuUsers className="h-6 w-6 text-stone-300 dark:text-neutral-600" />
-          <p className="text-sm text-stone-500 dark:text-neutral-400">
-            {t('intelligence.teams.empty')}
-          </p>
-          <p className="max-w-sm text-xs text-stone-400 dark:text-neutral-500">
-            {t('intelligence.teams.emptyHint')}
-          </p>
+        <p className="text-xs text-content-faint">{t('intelligence.teams.subtitle')}</p>
+        <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-line py-12 text-center">
+          <LuUsers className="h-6 w-6 text-content-faint dark:text-neutral-600" />
+          <p className="text-sm text-content-muted">{t('intelligence.teams.empty')}</p>
+          <p className="max-w-sm text-xs text-content-faint">{t('intelligence.teams.emptyHint')}</p>
         </div>
       </div>
     );
@@ -202,24 +277,44 @@ export default function IntelligenceTeamsTab() {
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-2">
           {teams.length > 1 ? (
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="xs"
               onClick={deselect}
-              className="inline-flex items-center gap-1 rounded-md border border-stone-200 px-2 py-1 text-[11px] font-medium text-stone-600 hover:bg-stone-50 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800">
-              <LuArrowLeft className="h-3 w-3" />
+              leadingIcon={<LuArrowLeft className="h-3 w-3" />}
+              className="gap-1 text-[11px]">
               {t('intelligence.teams.backToList')}
-            </button>
+            </Button>
           ) : (
             <span />
           )}
           <RefreshButton refreshing={refreshing} onClick={() => void refresh()} t={t} />
         </div>
 
-        <TeamHeader team={view.team} members={view.members} taskCount={view.tasks.length} />
+        <TeamHeader
+          team={view.team}
+          members={view.members}
+          taskCount={view.tasks.length}
+          onStartMember={
+            view.team.status === 'active' ? memberId => void handleStartMember(memberId) : undefined
+          }
+          startingMemberId={startingMemberId}
+        />
+
+        {actionNotice && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+            {actionNotice}
+          </div>
+        )}
 
         <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_300px]">
           <TeamTaskBoard tasks={view.tasks} members={view.members} />
-          <TeamActivityRail messages={messages} members={view.members} />
+          <TeamActivityRail
+            messages={messages}
+            members={view.members}
+            onSend={view.team.status === 'active' ? handleSend : undefined}
+            sending={sending}
+          />
         </div>
       </div>
     );
@@ -229,23 +324,21 @@ export default function IntelligenceTeamsTab() {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-xs text-stone-400 dark:text-neutral-500">
-          {t('intelligence.teams.subtitle')}
-        </p>
+        <p className="text-xs text-content-faint">{t('intelligence.teams.subtitle')}</p>
         <RefreshButton refreshing={refreshing} onClick={() => void refresh()} t={t} />
       </div>
-      <ul className="divide-y divide-stone-100 overflow-hidden rounded-xl border border-stone-200 bg-white dark:divide-neutral-800 dark:border-neutral-800 dark:bg-neutral-900">
+      <ul className="divide-y divide-line-subtle overflow-hidden rounded-xl border border-line bg-surface dark:divide-neutral-800">
         {teams.map(team => (
           <li key={team.id}>
             <button
               type="button"
-              onClick={() => setSelectedId(team.id)}
-              className="flex w-full items-center justify-between gap-3 p-3 text-left hover:bg-stone-50 dark:hover:bg-neutral-800/60">
+              onClick={() => selectTeam(team.id)}
+              className="flex w-full items-center justify-between gap-3 p-3 text-left hover:bg-surface-hover">
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-stone-800 dark:text-neutral-100">
+                <p className="truncate text-sm font-medium text-content">
                   {team.summary?.trim() || team.leadAgentId}
                 </p>
-                <p className="truncate text-[11px] text-stone-500 dark:text-neutral-400">
+                <p className="truncate text-[11px] text-content-muted">
                   {t('intelligence.teams.header.lead')}{' '}
                   <span className="font-mono">{team.leadAgentId}</span>
                 </p>
@@ -254,7 +347,7 @@ export default function IntelligenceTeamsTab() {
                 className={`flex-none rounded-md px-1.5 py-0.5 text-[10px] ${
                   team.status === 'active'
                     ? 'bg-sage-50 text-sage-700 dark:bg-sage-500/10 dark:text-sage-300'
-                    : 'bg-stone-100 text-stone-500 dark:bg-neutral-800 dark:text-neutral-400'
+                    : 'bg-surface-subtle text-content-muted'
                 }`}>
                 {team.status === 'active'
                   ? t('intelligence.teams.status.active')
@@ -278,13 +371,14 @@ function RefreshButton({
   t: (key: string) => string;
 }) {
   return (
-    <button
-      type="button"
+    <Button
+      variant="secondary"
+      size="xs"
       disabled={refreshing}
       onClick={onClick}
-      className="inline-flex items-center gap-1 rounded-md border border-stone-200 px-2 py-1 text-[11px] font-medium text-stone-600 hover:bg-stone-50 disabled:opacity-40 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800">
-      <LuRefreshCw className={`h-3 w-3 ${refreshing ? 'animate-spin' : ''}`} />
+      leadingIcon={<LuRefreshCw className={`h-3 w-3 ${refreshing ? 'animate-spin' : ''}`} />}
+      className="gap-1 text-[11px]">
       {t('intelligence.teams.refresh')}
-    </button>
+    </Button>
   );
 }

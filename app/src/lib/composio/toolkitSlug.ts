@@ -7,6 +7,8 @@ const TOOLKIT_ALIASES: Record<string, string> = {
 };
 
 export function canonicalizeComposioToolkitSlug(slug: string): string {
-  const key = slug.toLowerCase();
+  // `.trim()` keeps this in sync with the Rust `canonicalize_toolkit_slug`
+  // (src/openhuman/composio/tools.rs) so a stray-whitespace slug can't diverge.
+  const key = slug.trim().toLowerCase();
   return TOOLKIT_ALIASES[key] ?? key;
 }

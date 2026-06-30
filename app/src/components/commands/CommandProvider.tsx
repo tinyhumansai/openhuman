@@ -1,10 +1,15 @@
-import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-import { registerGlobalActions } from '../../lib/commands/globalActions';
+import { type GlobalActionHandlers, registerGlobalActions } from '../../lib/commands/globalActions';
 import { hotkeyManager } from '../../lib/commands/hotkeyManager';
 import { registry } from '../../lib/commands/registry';
 import { ScopeContext } from '../../lib/commands/ScopeContext';
+import { useAppDispatch } from '../../store/hooks';
+import { toggleSidebar } from '../../store/layoutSlice';
+import { APP_SHELL_LAYOUT_ID } from '../layout/shell/RootShellLayout';
+import { useNewChat } from '../layout/shell/useNewChat';
+import KeyboardShortcutsModal from '../shortcuts/KeyboardShortcutsModal';
 import CommandPalette from './CommandPalette';
 
 let instanceCount = 0;
@@ -15,8 +20,31 @@ interface Props {
 
 export default function CommandProvider({ children }: Props) {
   const navigate = useNavigate();
+  const dispatch = useAppDispatch();
+  const newChat = useNewChat();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [globalFrame, setGlobalFrame] = useState<symbol | null>(null);
+
+  // Latest handlers held in a ref so the registration effect runs exactly once
+  // (on mount) — `useHomeNav`'s callback changes as the route/threads change,
+  // and re-running the effect would tear down and rebuild the whole hotkey
+  // frame on every navigation.
+  const handlersRef = useRef<GlobalActionHandlers>(null as unknown as GlobalActionHandlers);
+  handlersRef.current = {
+    navigate: path => navigate(path),
+    newChat,
+    toggleSidebar: () => dispatch(toggleSidebar({ id: APP_SHELL_LAYOUT_ID })),
+    // The two overlays are mutually exclusive: opening one dismisses the other.
+    openPalette: () => {
+      setShortcutsOpen(false);
+      setPaletteOpen(o => !o);
+    },
+    openShortcuts: () => {
+      setPaletteOpen(false);
+      setShortcutsOpen(o => !o);
+    },
+  };
 
   useEffect(() => {
     instanceCount += 1;
@@ -26,25 +54,27 @@ export default function CommandProvider({ children }: Props) {
     hotkeyManager.init();
     const frame = hotkeyManager.pushFrame('global', 'root');
     registry.setActiveStack(hotkeyManager.getStackSymbols());
-    const disposeGlobalActions = registerGlobalActions(navigate, frame);
-    const paletteBinding = hotkeyManager.bind(frame, {
-      shortcut: 'mod+k',
-      handler: () => {
-        setPaletteOpen(o => !o);
-      },
-      allowInInput: true,
-      id: 'meta.open-palette',
-    });
+
+    // Stable indirection: registered handlers always call through to the latest
+    // ref value, so closures captured at registration time stay current.
+    const stableHandlers: GlobalActionHandlers = {
+      navigate: path => handlersRef.current.navigate(path),
+      newChat: () => handlersRef.current.newChat(),
+      toggleSidebar: () => handlersRef.current.toggleSidebar(),
+      openPalette: () => handlersRef.current.openPalette(),
+      openShortcuts: () => handlersRef.current.openShortcuts(),
+    };
+    const disposeGlobalActions = registerGlobalActions(stableHandlers, frame);
     setGlobalFrame(frame);
 
     return () => {
       disposeGlobalActions();
-      hotkeyManager.unbind(frame, paletteBinding);
       hotkeyManager.popFrame(frame);
       registry.setActiveStack(hotkeyManager.getStackSymbols());
       instanceCount -= 1;
     };
-  }, [navigate]);
+    // Mount-once: handlers are reached via `handlersRef`, not deps.
+  }, []);
 
   useEffect(() => {
     if (!globalFrame) return;
@@ -61,6 +91,7 @@ export default function CommandProvider({ children }: Props) {
     <ScopeContext.Provider value={value}>
       {children}
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+      <KeyboardShortcutsModal open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
     </ScopeContext.Provider>
   );
 }

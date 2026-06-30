@@ -174,6 +174,6 @@ describe('IntelligenceAgentsTab', () => {
         })
       )
     );
-    expect(hoisted.navigate).toHaveBeenCalledWith('/chat');
+    expect(hoisted.navigate).toHaveBeenCalledWith('/chat/thread-agent-task');
   });
 });

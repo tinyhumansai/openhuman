@@ -67,6 +67,7 @@ fn native_request_emits_thread_id_when_present() {
         stream_options: None,
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert_eq!(
@@ -86,6 +87,7 @@ fn native_request_emits_thread_id_when_present() {
         stream_options: None,
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let json_no_thread = serde_json::to_value(&req_no_thread).unwrap();
     assert!(
@@ -107,6 +109,7 @@ fn native_request_serializes_frequency_penalty_only_when_set() {
         stream_options: None,
         options: None,
         frequency_penalty: Some(0.3),
+        max_tokens: None,
     };
     let json = serde_json::to_value(&base).unwrap();
     assert_eq!(
@@ -124,6 +127,107 @@ fn native_request_serializes_frequency_penalty_only_when_set() {
     assert!(
         json_none.get("frequency_penalty").is_none(),
         "absent frequency_penalty must be omitted so providers that reject it are unaffected"
+    );
+}
+
+#[test]
+fn native_request_serializes_max_tokens_only_when_set() {
+    // A set cap must reach the wire as OpenAI `max_tokens` so a credit-metered
+    // provider prices the request against a realistic output budget rather than
+    // the model's full window (TAURI-RUST-C62).
+    let with_cap = super::NativeChatRequest {
+        model: "anthropic/claude-fable-5".to_string(),
+        messages: Vec::new(),
+        temperature: Some(0.0),
+        stream: Some(false),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: None,
+        options: None,
+        frequency_penalty: None,
+        max_tokens: Some(8192),
+    };
+    let json = serde_json::to_value(&with_cap).unwrap();
+    assert_eq!(
+        json.get("max_tokens").and_then(serde_json::Value::as_u64),
+        Some(8192),
+        "a set max_tokens must be forwarded so the provider's balance pre-flight is bounded"
+    );
+
+    let no_cap = super::NativeChatRequest {
+        max_tokens: None,
+        ..with_cap
+    };
+    let json_none = serde_json::to_value(&no_cap).unwrap();
+    assert!(
+        json_none.get("max_tokens").is_none(),
+        "absent max_tokens must be omitted so open-ended generations are unaffected"
+    );
+}
+
+#[test]
+fn agent_turn_cap_reaches_the_wire() {
+    // The agent turns now set `max_tokens: Some(AGENT_TURN_MAX_OUTPUT_TOKENS)`
+    // (#4005); assert that exact cap serializes onto the wire so a careless edit
+    // to the const — or a regression to `None` on the agent path — fails CI and
+    // can't silently restore the full-window reservation that 402s low-balance
+    // BYO users (TAURI-RUST-C62).
+    let cap = crate::openhuman::inference::provider::AGENT_TURN_MAX_OUTPUT_TOKENS;
+    assert!(
+        (8192..=32768).contains(&cap),
+        "agent cap must stay well above realistic turns yet below the model's full output window; got {cap}"
+    );
+    let req = super::NativeChatRequest {
+        model: "anthropic/claude-fable-5".to_string(),
+        messages: Vec::new(),
+        temperature: Some(0.0),
+        stream: Some(false),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: None,
+        options: None,
+        frequency_penalty: None,
+        max_tokens: Some(cap),
+    };
+    let json = serde_json::to_value(&req).unwrap();
+    assert_eq!(
+        json.get("max_tokens").and_then(serde_json::Value::as_u64),
+        Some(u64::from(cap)),
+        "the agent-turn cap must be forwarded as OpenAI max_tokens"
+    );
+}
+
+#[test]
+fn responses_request_serializes_max_output_tokens_only_when_set() {
+    // The Responses-API branch must carry the cap as `max_output_tokens` so a
+    // capped request isn't silently uncapped when responses_api_primary is on
+    // (TAURI-RUST-C62).
+    let with_cap = super::compatible_types::ResponsesRequest {
+        model: "gpt-x".to_string(),
+        input: vec![],
+        instructions: None,
+        stream: Some(false),
+        store: Some(false),
+        max_output_tokens: Some(8192),
+    };
+    let json = serde_json::to_value(&with_cap).unwrap();
+    assert_eq!(
+        json.get("max_output_tokens")
+            .and_then(serde_json::Value::as_u64),
+        Some(8192),
+        "a set cap must reach the Responses API as max_output_tokens"
+    );
+
+    let no_cap = super::compatible_types::ResponsesRequest {
+        max_output_tokens: None,
+        ..with_cap
+    };
+    let json_none = serde_json::to_value(&no_cap).unwrap();
+    assert!(
+        json_none.get("max_output_tokens").is_none(),
+        "absent cap must be omitted"
     );
 }
 
@@ -248,6 +352,7 @@ async fn streaming_chat_frequency_penalty_rejection_not_reported_to_sentry() {
         }),
         options: None,
         frequency_penalty: Some(super::compatible_repeat::CHAT_FREQUENCY_PENALTY),
+        max_tokens: None,
     };
     let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(8);
 
@@ -264,6 +369,183 @@ async fn streaming_chat_frequency_penalty_rejection_not_reported_to_sentry() {
     assert!(
         transport.fetch_and_clear_events().is_empty(),
         "a self-healed frequency_penalty rejection must not be reported to Sentry"
+    );
+}
+
+/// Verbatim TAURI-RUST-5MV body — ollama.com hosted-inference 500 envelope.
+const OLLAMA_CLOUD_500_WIRE_BODY: &str =
+    r#"{"error":"Internal Server Error (ref: df512dcb-d915-493b-8f2d-e8d3dfa640c1)"}"#;
+
+/// TAURI-RUST-5MV: ollama.com hosted-inference 500 on the non-streaming native
+/// path must be demoted (no Sentry event) and surface the actionable message,
+/// while still propagating as `Err` so reliable-provider retry/fallback runs.
+#[tokio::test]
+async fn native_chat_ollama_cloud_500_demoted_and_actionable() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(500).set_body_string(OLLAMA_CLOUD_500_WIRE_BODY))
+        .mount(&mock_server)
+        .await;
+
+    let transport = TestTransport::new();
+    let sentry_options = sentry::ClientOptions {
+        dsn: Some("https://public@sentry.invalid/1".parse().unwrap()),
+        transport: Some(Arc::new(transport.clone())),
+        ..Default::default()
+    };
+    let sentry_hub = Arc::new(sentry::Hub::new(
+        Some(Arc::new(sentry_options.into())),
+        Arc::new(Default::default()),
+    ));
+    let _sentry_guard = sentry::HubSwitchGuard::new(sentry_hub);
+
+    let provider =
+        OpenAiCompatibleProvider::new("ollama", &mock_server.uri(), None, AuthStyle::None);
+    let messages = vec![ChatMessage {
+        id: None,
+        role: "user".to_string(),
+        content: "hello".to_string(),
+        extra_metadata: None,
+    }];
+    let err = provider
+        .chat(
+            super::super::ChatRequest {
+                messages: &messages,
+                tools: None,
+                stream: None,
+                max_tokens: None,
+            },
+            "minimax-m3:cloud",
+            0.7,
+        )
+        .await
+        .expect_err("ollama cloud 500 must still propagate as Err to drive retry/fallback");
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Ollama cloud is temporarily unavailable") && msg.contains("minimax-m3:cloud"),
+        "expected actionable message, got: {msg}"
+    );
+    assert!(
+        !msg.contains("ref:"),
+        "opaque ref body must be replaced: {msg}"
+    );
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "ollama cloud 500 must be demoted, not reported to Sentry"
+    );
+}
+
+/// TAURI-RUST-5MV: same demotion on the streaming native path.
+#[tokio::test]
+async fn streaming_chat_ollama_cloud_500_demoted_and_actionable() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(500).set_body_string(OLLAMA_CLOUD_500_WIRE_BODY))
+        .mount(&mock_server)
+        .await;
+
+    let transport = TestTransport::new();
+    let sentry_options = sentry::ClientOptions {
+        dsn: Some("https://public@sentry.invalid/1".parse().unwrap()),
+        transport: Some(Arc::new(transport.clone())),
+        ..Default::default()
+    };
+    let sentry_hub = Arc::new(sentry::Hub::new(
+        Some(Arc::new(sentry_options.into())),
+        Arc::new(Default::default()),
+    ));
+    let _sentry_guard = sentry::HubSwitchGuard::new(sentry_hub);
+
+    let provider =
+        OpenAiCompatibleProvider::new("ollama", &mock_server.uri(), None, AuthStyle::None);
+    let request = NativeChatRequest {
+        model: "minimax-m3:cloud".to_string(),
+        messages: vec![NativeMessage {
+            role: "user".to_string(),
+            content: Some("hello".into()),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        temperature: Some(0.7),
+        stream: Some(true),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: Some(super::compatible_types::OpenAiStreamOptions {
+            include_usage: true,
+        }),
+        options: None,
+        frequency_penalty: None,
+        max_tokens: None,
+    };
+    let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(8);
+
+    let err = provider
+        .stream_native_chat(None, &request, &delta_tx, 0)
+        .await
+        .expect_err("ollama cloud 500 must still propagate as Err to drive retry/fallback");
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Ollama cloud is temporarily unavailable") && msg.contains("minimax-m3:cloud"),
+        "expected actionable message, got: {msg}"
+    );
+    assert!(
+        !msg.contains("ref:"),
+        "opaque ref body must be replaced: {msg}"
+    );
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "ollama cloud 500 must be demoted, not reported to Sentry"
+    );
+}
+
+/// TAURI-RUST-5MV: the shared `api_error` helper demotes the same body and
+/// returns the actionable message (covers `chat_with_system` / `chat_with_history`
+/// callers that funnel through it).
+#[tokio::test]
+async fn api_error_ollama_cloud_500_demoted_and_actionable() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(500).set_body_string(OLLAMA_CLOUD_500_WIRE_BODY))
+        .mount(&mock_server)
+        .await;
+
+    let transport = TestTransport::new();
+    let sentry_options = sentry::ClientOptions {
+        dsn: Some("https://public@sentry.invalid/1".parse().unwrap()),
+        transport: Some(Arc::new(transport.clone())),
+        ..Default::default()
+    };
+    let sentry_hub = Arc::new(sentry::Hub::new(
+        Some(Arc::new(sentry_options.into())),
+        Arc::new(Default::default()),
+    ));
+    let _sentry_guard = sentry::HubSwitchGuard::new(sentry_hub);
+
+    let response = reqwest::Client::new()
+        .post(mock_server.uri())
+        .send()
+        .await
+        .expect("mock request");
+    let err = super::super::api_error("ollama", response).await;
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Ollama cloud is temporarily unavailable"),
+        "expected actionable message, got: {msg}"
+    );
+    assert!(
+        !msg.contains("ref:"),
+        "opaque ref body must be replaced: {msg}"
+    );
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "ollama cloud 500 must be demoted, not reported to Sentry"
     );
 }
 
@@ -287,6 +569,7 @@ fn streaming_request_sets_stream_options_include_usage() {
         }),
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert_eq!(
@@ -310,6 +593,7 @@ fn non_streaming_request_omits_stream_options() {
         stream_options: None,
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert!(
@@ -333,6 +617,7 @@ fn ollama_options_num_ctx_serializes_correctly() {
             num_ctx: Some(32768),
         }),
         frequency_penalty: None,
+        max_tokens: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert_eq!(
@@ -355,6 +640,7 @@ fn ollama_options_none_is_omitted() {
         stream_options: None,
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert!(
@@ -776,6 +1062,191 @@ async fn responses_api_primary_posts_directly_to_responses() {
     assert_eq!(text, "hello from responses");
 }
 
+/// TAURI-RUST-EWD: the Codex/ChatGPT OAuth Responses endpoint rejects
+/// `max_output_tokens` (400 `Unsupported parameter: max_output_tokens`). The
+/// memory-extraction cap (`ChatRequest::max_tokens`) must therefore be dropped
+/// on the wire for `/backend-api/codex/responses`. The exact `body_json`
+/// matcher omits the field, so a request that still carried it would fail to
+/// match the mock and the call would error — i.e. a match positively proves the
+/// omission.
+#[tokio::test]
+async fn codex_responses_omits_max_output_tokens() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/backend-api/codex/responses"))
+        .and(body_json(serde_json::json!({
+            "model": "gpt-5.5",
+            "input": [{
+                "role": "user",
+                "content": [{"type": "input_text", "text": "hello"}]
+            }],
+            "stream": true,
+            "store": false
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n\
+             data: {\"type\":\"response.completed\",\"response\":{\"output_text\":\"ok\"}}\n\n\
+             data: [DONE]\n\n",
+        ))
+        .mount(&server)
+        .await;
+
+    let provider = OpenAiCompatibleProvider::new(
+        "openai",
+        &format!("{}/backend-api/codex", server.uri()),
+        Some("oauth-access-token"),
+        AuthStyle::Bearer,
+    )
+    .with_responses_api_primary();
+
+    let messages = [ChatMessage::user("hello")];
+    let request = crate::openhuman::inference::provider::traits::ChatRequest {
+        messages: &messages,
+        tools: None,
+        stream: None,
+        // A bounded cap (memory extraction) that the Codex endpoint rejects.
+        max_tokens: Some(256),
+    };
+    let resp = provider.chat(request, "gpt-5.5", 0.0).await.unwrap();
+    assert_eq!(resp.text.as_deref(), Some("ok"));
+}
+
+/// A non-Codex Responses backend (`/v1/responses`) must still receive the cap —
+/// the omission is endpoint-specific, not a blanket drop (guards against
+/// silently uncapping memory extraction on real `/v1/responses`, TAURI-RUST-C62).
+#[tokio::test]
+async fn standard_responses_keeps_max_output_tokens() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .and(body_json(serde_json::json!({
+            "model": "gpt-5.4",
+            "input": [{
+                "role": "user",
+                "content": [{"type": "input_text", "text": "hello"}]
+            }],
+            "stream": false,
+            "store": false,
+            "max_output_tokens": 256
+        })))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(r#"{"output_text":"ok","output":[]}"#),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = OpenAiCompatibleProvider::new(
+        "openai",
+        &format!("{}/v1", server.uri()),
+        Some("sk-test"),
+        AuthStyle::Bearer,
+    )
+    .with_responses_api_primary();
+
+    let messages = [ChatMessage::user("hello")];
+    let request = crate::openhuman::inference::provider::traits::ChatRequest {
+        messages: &messages,
+        tools: None,
+        stream: None,
+        max_tokens: Some(256),
+    };
+    let resp = provider.chat(request, "gpt-5.4", 0.0).await.unwrap();
+    assert_eq!(resp.text.as_deref(), Some("ok"));
+}
+
+/// The reactive strip-and-retry defends Responses backends we don't match by
+/// URL: a 400 whose body flags `max_output_tokens` as unsupported triggers one
+/// retry with the field removed, which then succeeds. Exact-body matchers are
+/// mutually exclusive on `max_output_tokens`, so the result is deterministic
+/// regardless of mock precedence.
+#[tokio::test]
+async fn responses_strips_max_output_tokens_and_retries_on_400() {
+    let server = MockServer::start().await;
+    let input = serde_json::json!([{
+        "role": "user",
+        "content": [{"type": "input_text", "text": "hello"}]
+    }]);
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .and(body_json(serde_json::json!({
+            "model": "gpt-5.5",
+            "input": input.clone(),
+            "stream": false,
+            "store": false,
+            "max_output_tokens": 256
+        })))
+        .respond_with(
+            ResponseTemplate::new(400)
+                .set_body_string(r#"{"detail":"Unsupported parameter: max_output_tokens"}"#),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .and(body_json(serde_json::json!({
+            "model": "gpt-5.5",
+            "input": input.clone(),
+            "stream": false,
+            "store": false
+        })))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(r#"{"output_text":"recovered","output":[]}"#),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = OpenAiCompatibleProvider::new(
+        "strict-responses",
+        &format!("{}/v1", server.uri()),
+        Some("sk-test"),
+        AuthStyle::Bearer,
+    )
+    .with_responses_api_primary();
+
+    let messages = [ChatMessage::user("hello")];
+    let request = crate::openhuman::inference::provider::traits::ChatRequest {
+        messages: &messages,
+        tools: None,
+        stream: None,
+        max_tokens: Some(256),
+    };
+    let resp = provider.chat(request, "gpt-5.5", 0.0).await.unwrap();
+    assert_eq!(resp.text.as_deref(), Some("recovered"));
+}
+
+#[test]
+fn err_indicates_max_output_tokens_unsupported_matches_codex_body() {
+    assert!(
+        OpenAiCompatibleProvider::err_indicates_max_output_tokens_unsupported(
+            r#"{"detail":"Unsupported parameter: max_output_tokens"}"#
+        )
+    );
+    assert!(
+        !OpenAiCompatibleProvider::err_indicates_max_output_tokens_unsupported(
+            r#"{"detail":"rate limit exceeded"}"#
+        )
+    );
+    // A different unsupported parameter must not trip the max_output_tokens strip.
+    assert!(
+        !OpenAiCompatibleProvider::err_indicates_max_output_tokens_unsupported(
+            r#"{"detail":"Unsupported parameter: temperature"}"#
+        )
+    );
+    // An invalid-*value* error (cap out of the model's allowed range) must NOT
+    // strip the cap — that would silently uncap the request. Surface it instead.
+    assert!(
+        !OpenAiCompatibleProvider::err_indicates_max_output_tokens_unsupported(
+            r#"{"detail":"Invalid value for max_output_tokens: must be <= 4096"}"#
+        )
+    );
+    assert!(
+        !OpenAiCompatibleProvider::err_indicates_max_output_tokens_unsupported(
+            r#"{"detail":"max_output_tokens exceeds the maximum allowed for this model"}"#
+        )
+    );
+}
+
 #[test]
 fn blank_required_key_counts_as_missing() {
     let p = OpenAiCompatibleProvider::new(
@@ -862,12 +1333,45 @@ fn build_responses_prompt_preserves_multi_turn_history() {
     assert_eq!(input[1].role, "assistant");
     assert_eq!(input[1].content[0].kind, "output_text");
     assert_eq!(input[1].content[0].text, "ack 1");
+    // A `tool` turn normalizes to the `assistant` role, so its content part
+    // MUST be `output_text` — the Responses API rejects `input_text` on an
+    // assistant item (Sentry TAURI-RUST-8FQ / GH #3624).
     assert_eq!(input[2].role, "assistant");
-    assert_eq!(input[2].content[0].kind, "input_text");
+    assert_eq!(input[2].content[0].kind, "output_text");
     assert_eq!(input[2].content[0].text, "{\"result\":\"ok\"}");
     assert_eq!(input[3].role, "user");
     assert_eq!(input[3].content[0].kind, "input_text");
     assert_eq!(input[3].content[0].text, "step 2");
+}
+
+/// Regression for Sentry TAURI-RUST-8FQ / GH #3624: the Responses API only
+/// accepts `output_text`/`refusal` for assistant items. `normalize_responses_role`
+/// folds `tool` into `assistant`, so the content kind must follow the normalized
+/// role — never the raw one. No assistant-role item may carry `input_text`.
+#[test]
+fn build_responses_prompt_tool_role_uses_output_text() {
+    let messages = vec![
+        ChatMessage::assistant("calling a tool"),
+        ChatMessage::tool("{\"result\":\"ok\"}"),
+        ChatMessage::user("thanks"),
+    ];
+
+    let (_instructions, input) = build_responses_prompt(&messages);
+
+    // The tool turn folds to assistant and must carry output_text.
+    assert_eq!(input[1].role, "assistant");
+    assert_eq!(input[1].content[0].kind, "output_text");
+
+    // Invariant: an assistant-role item never carries input_text.
+    for item in &input {
+        if item.role == "assistant" {
+            assert_eq!(
+                item.content[0].kind, "output_text",
+                "assistant-role item must use output_text, got {}",
+                item.content[0].kind
+            );
+        }
+    }
 }
 
 #[tokio::test]
@@ -878,6 +1382,7 @@ async fn chat_via_responses_requires_non_system_message() {
             Some("test-key"),
             &[ChatMessage::system("policy")],
             "gpt-test",
+            None,
         )
         .await
         .expect_err("system-only fallback payload should fail");
@@ -936,6 +1441,7 @@ async fn streaming_chat_config_rejection_propagates_error_without_sentry_report(
         }),
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(8);
 
@@ -950,6 +1456,73 @@ async fn streaming_chat_config_rejection_propagates_error_without_sentry_report(
     assert!(
         transport.fetch_and_clear_events().is_empty(),
         "provider config-rejection must not be reported to Sentry"
+    );
+}
+
+#[tokio::test]
+async fn streaming_chat_byo_auth_failure_propagates_error_without_sentry_report() {
+    // Guardrail for #3671 (TAURI-RUST-DHM): a missing/invalid BYO API key on a
+    // non-backend custom provider returns 401 with an auth-error body. The
+    // error must still propagate to the caller, but it must NOT page Sentry —
+    // memory-tree extraction + memory jobs retry through the broken credential
+    // and previously flooded Sentry with thousands of identical events.
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(401).set_body_string(
+            r#"{"error":{"message":"Invalid or missing API key","type":"authentication_error"}}"#,
+        ))
+        .mount(&mock_server)
+        .await;
+
+    let transport = TestTransport::new();
+    let sentry_options = sentry::ClientOptions {
+        dsn: Some("https://public@sentry.invalid/1".parse().unwrap()),
+        transport: Some(Arc::new(transport.clone())),
+        ..Default::default()
+    };
+    let sentry_hub = Arc::new(sentry::Hub::new(
+        Some(Arc::new(sentry_options.into())),
+        Arc::new(Default::default()),
+    ));
+    let _sentry_guard = sentry::HubSwitchGuard::new(sentry_hub);
+
+    // `kiro` is the exact (user-named) custom provider from the Sentry report.
+    let provider = OpenAiCompatibleProvider::new("kiro", &mock_server.uri(), None, AuthStyle::None);
+    let request = NativeChatRequest {
+        model: "claude-sonnet-4.5".to_string(),
+        messages: vec![NativeMessage {
+            role: "user".to_string(),
+            content: Some("hello".into()),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        temperature: Some(0.7),
+        stream: Some(true),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: Some(super::compatible_types::OpenAiStreamOptions {
+            include_usage: true,
+        }),
+        options: None,
+        frequency_penalty: None,
+        max_tokens: None,
+    };
+    let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(8);
+
+    let err = provider
+        .stream_native_chat(None, &request, &delta_tx, 0)
+        .await
+        .expect_err("401 BYO auth failure must still propagate as Err");
+    assert!(
+        err.to_string().contains("streaming API error"),
+        "err: {err}"
+    );
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "BYO provider auth failure must not be reported to Sentry"
     );
 }
 
@@ -1366,6 +1939,50 @@ fn convert_messages_for_native_tool_call_without_extra_content_stays_none() {
         .is_none());
 }
 
+/// INVARIANT (TAURI-RUST-4PK / 4PJ): a PARALLEL multi-`functionCall` assistant
+/// turn reloaded from history must echo a non-empty `thought_signature` on
+/// EVERY part of the rebuilt outbound payload — not just the first. The stored
+/// JSON here is the exact shape `build_native_assistant_history` now emits (per
+/// the writer-side test in `agent::harness::parse_tests`). Before the fix the
+/// writer dropped `extra_content`, so a reloaded multi-call turn went out with
+/// missing signatures and Gemini 400'd ("Function call is missing a
+/// thought_signature in functionCall parts"). Covers both the non-stream and
+/// streaming paths since both persist through the single native history writer.
+#[test]
+fn convert_messages_for_native_echoes_signature_on_every_parallel_call() {
+    let stored = r#"{"content":"on it","tool_calls":[
+        {"id":"call_a","name":"shell","arguments":"{}","extra_content":{"google":{"thought_signature":"SIG_A"}}},
+        {"id":"call_b","name":"read","arguments":"{}","extra_content":{"google":{"thought_signature":"SIG_B"}}}
+    ]}"#;
+    let input = vec![
+        ChatMessage::assistant(stored),
+        ChatMessage::tool(r#"{"tool_call_id":"call_a","content":"done"}"#),
+        ChatMessage::tool(r#"{"tool_call_id":"call_b","content":"done"}"#),
+    ];
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+    let tool_calls = converted[0]
+        .tool_calls
+        .as_ref()
+        .expect("assistant tool_calls survive the reload");
+    assert_eq!(tool_calls.len(), 2, "both parallel calls survive");
+
+    let wire = serde_json::to_value(tool_calls).unwrap();
+    for (idx, expected) in ["SIG_A", "SIG_B"].iter().enumerate() {
+        let sig = wire
+            .pointer(&format!("/{idx}/extra_content/google/thought_signature"))
+            .and_then(|v| v.as_str());
+        assert_eq!(
+            sig,
+            Some(*expected),
+            "functionCall part {idx} must echo its own thought_signature on the wire"
+        );
+        assert!(
+            sig.is_some_and(|s| !s.is_empty()),
+            "functionCall part {idx} thought_signature must be non-empty"
+        );
+    }
+}
+
 /// Streaming: Gemini sends the thought_signature in the tool-call delta's
 /// `extra_content` on the first chunk. The accumulator must preserve it onto the
 /// aggregated tool call so it reaches history (TAURI-RUST-4PK).
@@ -1401,6 +2018,7 @@ async fn streaming_tool_call_captures_extra_content() {
         }),
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(64);
     let resp = provider
@@ -1461,6 +2079,7 @@ async fn streaming_empty_continuation_id_does_not_clobber_tool_call_id() {
         }),
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(64);
     let resp = provider
@@ -1515,6 +2134,7 @@ async fn streaming_parallel_tool_calls_preserve_ids_against_empty_continuations(
         }),
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(64);
     let resp = provider
@@ -1573,6 +2193,7 @@ async fn streaming_omitted_continuation_id_preserves_tool_call_id() {
         }),
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(64);
     let resp = provider
@@ -2583,6 +3204,52 @@ fn reasoning_and_reasoning_content_both_present_in_stream_delta_does_not_error()
     );
 }
 
+/// Regression for Sentry TAURI-RUST-85R: NVIDIA's OpenAI-compat endpoint returns
+/// `reasoning_content` TWICE in the same message object for some thinking models
+/// (e.g. `stepfun-ai/step-3.7-flash`). The derived `Shadow` struct strict-rejected
+/// the repeated key with `duplicate field \`reasoning_content\``, dropping the
+/// whole completion (2,037 events). The map-fold deserializer tolerates it —
+/// the last non-null copy wins.
+#[test]
+fn duplicate_reasoning_content_key_does_not_error() {
+    let json = r#"{"choices":[{"message":{"content":null,"reasoning_content":"first cot","reasoning_content":"second cot"}}]}"#;
+    let resp: ApiChatResponse = serde_json::from_str(json)
+        .expect("a repeated reasoning_content key must parse without a duplicate-field error");
+    assert_eq!(
+        resp.choices[0].message.reasoning_content.as_deref(),
+        Some("second cot"),
+        "the last non-null reasoning_content copy wins"
+    );
+}
+
+/// A repeated `reasoning_content` whose second copy is `null` must not clobber
+/// the real first value — the CoT has to survive to be replayed verbatim.
+#[test]
+fn duplicate_reasoning_content_key_null_second_copy_keeps_value() {
+    let json = r#"{"choices":[{"message":{"content":null,"reasoning_content":"real cot","reasoning_content":null}}]}"#;
+    let resp: ApiChatResponse = serde_json::from_str(json)
+        .expect("a repeated reasoning_content key must parse without a duplicate-field error");
+    assert_eq!(
+        resp.choices[0].message.reasoning_content.as_deref(),
+        Some("real cot"),
+        "a null second copy must not clobber the real value"
+    );
+}
+
+/// Same duplicate-key regression on the streaming delta path (TAURI-RUST-85R
+/// also hits the native stream parser at `compatible_stream_native.rs`).
+#[test]
+fn duplicate_reasoning_content_key_in_stream_delta_does_not_error() {
+    let json = r#"{"choices":[{"delta":{"reasoning_content":"first cot","reasoning_content":"second cot"},"finish_reason":null}]}"#;
+    let chunk: StreamChunkResponse = serde_json::from_str(json)
+        .expect("a repeated reasoning_content key must parse without a duplicate-field error");
+    assert_eq!(
+        chunk.choices[0].delta.reasoning_content.as_deref(),
+        Some("second cot"),
+        "the last non-null reasoning_content copy wins"
+    );
+}
+
 /// End-to-end: a tool-call turn whose reasoning arrived under the `reasoning`
 /// alias must still be surfaced by `parse_native_response` so the agent loop
 /// can replay it on the follow-up request (the issue #3094 failure path).
@@ -2710,6 +3377,67 @@ fn custom_openai_provider_has_no_responses_fallback() {
     assert!(
         !p.supports_responses_fallback,
         "custom_openai must not attempt the /v1/responses fallback"
+    );
+}
+
+#[test]
+fn responses_404_disables_fallback_for_endpoint() {
+    // TAURI-RUST-FJZ: a custom slug (factory can't classify it, so the static
+    // fallback flag is ON) whose endpoint 404s on `/responses` must stop
+    // attempting that fallback once the route is known-missing — routing to
+    // chat-completions only. Use a unique base_url; the cache is process-global.
+    let base_url = "https://responses-404-test.example.com/v1";
+    let p =
+        OpenAiCompatibleProvider::new("nous-portal", base_url, Some("sk-test"), AuthStyle::Bearer);
+    assert!(
+        p.responses_fallback_active(),
+        "a fresh custom slug starts with the fallback enabled"
+    );
+
+    super::mark_responses_api_unsupported(base_url);
+
+    assert!(
+        super::responses_api_known_unsupported(base_url),
+        "the endpoint is recorded as Responses-incapable after a 404"
+    );
+    assert!(
+        !p.responses_fallback_active(),
+        "the fallback is disabled once `/responses` has 404'd for this endpoint"
+    );
+
+    // A provider for a different endpoint is unaffected.
+    let other = OpenAiCompatibleProvider::new(
+        "nous-portal",
+        "https://responses-404-test.example.com/v2",
+        Some("sk-test"),
+        AuthStyle::Bearer,
+    );
+    assert!(
+        other.responses_fallback_active(),
+        "the cache is keyed per-endpoint, not globally"
+    );
+}
+
+#[test]
+fn responses_404_route_vs_model_disambiguation() {
+    // A generic "route missing" 404 → this endpoint has no Responses API.
+    assert!(OpenAiCompatibleProvider::responses_404_indicates_missing_route("404 Not Found"));
+    assert!(
+        OpenAiCompatibleProvider::responses_404_indicates_missing_route(
+            "<html><body>404 page not found</body></html>"
+        )
+    );
+    // A model/deployment-specific 404 → the route exists; keep the fallback so
+    // we don't poison the cache for other models on a Responses-capable endpoint.
+    assert!(
+        !OpenAiCompatibleProvider::responses_404_indicates_missing_route(
+            r#"{"error":{"message":"model 'gpt-x' not found","code":"model_not_found"}}"#
+        )
+    );
+    assert!(
+        !OpenAiCompatibleProvider::responses_404_indicates_missing_route(
+            r#"{"error":{"message":"The API deployment for this resource does not exist"}}"#
+        )
     );
 }
 
@@ -3447,5 +4175,459 @@ async fn effective_context_window_lmstudio_falls_back_when_native_unavailable() 
     assert_eq!(
         p.effective_context_window("unknown-local-model").await,
         Some(8_192)
+    );
+}
+
+/// Verbatim TAURI-RUST-4QF DeepSeek 402 body. The demote arms key on the
+/// "insufficient balance" phrase via `body_indicates_insufficient_credits`, so
+/// pinning the exact wire shape makes a provider wording drift fail CI rather
+/// than silently re-flood Sentry (23,970 events from 17 BYO users).
+const DEEPSEEK_4QF_402_BODY: &str = r#"{"error":{"message":"Insufficient Balance","type":"unknown_error","param":null,"code":"invalid_request_error"}}"#;
+
+/// Build a Sentry hub backed by a `TestTransport` and install it for the
+/// current scope, returning the transport so the test can assert no events
+/// were captured. Mirrors the inline setup used by the other
+/// `*_not_reported_to_sentry` guards above.
+fn install_test_sentry_hub() -> (Arc<TestTransport>, sentry::HubSwitchGuard) {
+    let transport = TestTransport::new();
+    let options = sentry::ClientOptions {
+        dsn: Some("https://public@sentry.invalid/1".parse().unwrap()),
+        transport: Some(Arc::new(transport.clone())),
+        ..Default::default()
+    };
+    let hub = Arc::new(sentry::Hub::new(
+        Some(Arc::new(options.into())),
+        Arc::new(Default::default()),
+    ));
+    let guard = sentry::HubSwitchGuard::new(hub);
+    (transport, guard)
+}
+
+#[tokio::test]
+async fn chat_with_system_insufficient_balance_402_not_reported_to_sentry() {
+    // TAURI-RUST-4QF: a BYO DeepSeek account out of balance 402s on every agent
+    // turn. The non-streaming `chat_with_system` path (operation=chat_completions
+    // in the Sentry tags) must still propagate the error, but must NOT page
+    // Sentry — the user's own provider balance is exhausted, no local lever.
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(402).set_body_string(DEEPSEEK_4QF_402_BODY))
+        .mount(&mock_server)
+        .await;
+
+    let (transport, _guard) = install_test_sentry_hub();
+
+    let provider = make_provider("deepseek", &mock_server.uri(), Some("byo-key"));
+    let err = provider
+        .chat_with_system(None, "hello", "deepseek-v4-flash", 0.7)
+        .await
+        .expect_err("a 402 insufficient-balance must still propagate as Err");
+    assert!(err.to_string().contains("402"), "err: {err}");
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "an exhausted BYO balance 402 must not be reported to Sentry"
+    );
+}
+
+#[tokio::test]
+async fn chat_with_history_insufficient_balance_402_not_reported_to_sentry() {
+    // Same 402 user-state reached through `chat_with_history`, which routes its
+    // non-2xx through the shared `api_error` helper. Guards the api_error arm.
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(402).set_body_string(DEEPSEEK_4QF_402_BODY))
+        .mount(&mock_server)
+        .await;
+
+    let (transport, _guard) = install_test_sentry_hub();
+
+    let provider = make_provider("deepseek", &mock_server.uri(), Some("byo-key"));
+    let err = provider
+        .chat_with_history(&[ChatMessage::user("hello")], "deepseek-v4-flash", 0.0)
+        .await
+        .expect_err("a 402 insufficient-balance must still propagate as Err");
+    assert!(err.to_string().contains("402"), "err: {err}");
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "an exhausted BYO balance 402 (api_error path) must not be reported to Sentry"
+    );
+}
+
+#[tokio::test]
+async fn streaming_chat_insufficient_balance_402_not_reported_to_sentry() {
+    // The streaming entry (`stream_native_chat`, operation=streaming_chat) has
+    // its own non-2xx cascade. A 402 insufficient-balance there must demote too.
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(402).set_body_string(DEEPSEEK_4QF_402_BODY))
+        .mount(&mock_server)
+        .await;
+
+    let (transport, _guard) = install_test_sentry_hub();
+
+    let provider =
+        OpenAiCompatibleProvider::new("deepseek", &mock_server.uri(), None, AuthStyle::None);
+    let request = NativeChatRequest {
+        model: "deepseek-v4-flash".to_string(),
+        messages: vec![NativeMessage {
+            role: "user".to_string(),
+            content: Some("hello".into()),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        temperature: Some(0.7),
+        stream: Some(true),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: Some(super::compatible_types::OpenAiStreamOptions {
+            include_usage: true,
+        }),
+        options: None,
+        frequency_penalty: None,
+        max_tokens: None,
+    };
+    let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(8);
+
+    let err = provider
+        .stream_native_chat(None, &request, &delta_tx, 0)
+        .await
+        .expect_err("a 402 insufficient-balance must still propagate as Err");
+    assert!(
+        err.to_string().contains("streaming API error"),
+        "err: {err}"
+    );
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "an exhausted BYO balance 402 (streaming path) must not be reported to Sentry"
+    );
+}
+
+#[tokio::test]
+async fn responses_api_insufficient_balance_402_not_reported_to_sentry() {
+    // The responses-API path (`chat_via_responses`, operation=responses_api) is
+    // reached when the provider is configured responses-primary. A 402
+    // insufficient-balance there must demote, not page Sentry. This path is
+    // awaited inline, so the TestTransport assertion is authoritative.
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(402).set_body_string(DEEPSEEK_4QF_402_BODY))
+        .mount(&mock_server)
+        .await;
+
+    let (transport, _guard) = install_test_sentry_hub();
+
+    let provider = OpenAiCompatibleProvider::new(
+        "deepseek",
+        &mock_server.uri(),
+        Some("byo-key"),
+        AuthStyle::Bearer,
+    )
+    .with_responses_api_primary();
+    let err = provider
+        .chat_with_history(&[ChatMessage::user("hello")], "deepseek-v4-flash", 0.0)
+        .await
+        .expect_err("a 402 insufficient-balance must still propagate as Err");
+    // The responses-API error message is `<provider> Responses API error: <body>`
+    // — note it carries NO "(402" status token, so the message-keyed before_send
+    // net (#3913, `is_insufficient_credits_message`) would MISS it. Only the
+    // status-based source arm here catches it, which the empty-transport
+    // assertion below proves.
+    assert!(
+        err.to_string().contains("Insufficient Balance"),
+        "err: {err}"
+    );
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "an exhausted BYO balance 402 (responses_api path) must not be reported to Sentry"
+    );
+}
+
+#[tokio::test]
+async fn stream_chat_with_system_insufficient_balance_402_propagates_error() {
+    // Exercises the `stream_chat_with_system` (operation=stream_chat) 402
+    // insufficient-balance demote arm. The streaming work runs in a detached
+    // tokio task whose Sentry hub is NOT the test hub, so a TestTransport
+    // assertion would be vacuous here; instead assert the error still
+    // propagates as a terminal Provider chunk (the demote arm and the report
+    // fallback bail the same message, so this guards line execution + error
+    // shape). The Sentry-suppression behavior for this exact body is proven by
+    // the inline-awaited native/api tests above and the
+    // `detects_insufficient_balance_402_family` predicate test.
+    use crate::openhuman::inference::provider::traits::{StreamError, StreamOptions};
+    use futures_util::StreamExt;
+
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(402).set_body_string(DEEPSEEK_4QF_402_BODY))
+        .mount(&mock_server)
+        .await;
+
+    let provider =
+        OpenAiCompatibleProvider::new("deepseek", &mock_server.uri(), None, AuthStyle::None);
+    let mut stream = provider.stream_chat_with_system(
+        None,
+        "hello",
+        "deepseek-v4-flash",
+        0.7,
+        StreamOptions::new(true),
+    );
+    let mut terminal: Option<String> = None;
+    while let Some(item) = stream.next().await {
+        if let Err(StreamError::Provider(msg)) = item {
+            terminal = Some(msg);
+        }
+    }
+    let msg = terminal.expect("a 402 must yield a terminal Provider error chunk");
+    assert!(
+        msg.contains("402") && msg.contains("Insufficient Balance"),
+        "msg: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn stream_chat_with_history_insufficient_balance_402_propagates_error() {
+    // Sibling of the above for `stream_chat_with_history`
+    // (operation=stream_chat_history). Same detached-task caveat — asserts the
+    // 402 path executes and propagates as a terminal Provider error chunk.
+    use crate::openhuman::inference::provider::traits::{StreamError, StreamOptions};
+    use futures_util::StreamExt;
+
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(402).set_body_string(DEEPSEEK_4QF_402_BODY))
+        .mount(&mock_server)
+        .await;
+
+    let provider =
+        OpenAiCompatibleProvider::new("deepseek", &mock_server.uri(), None, AuthStyle::None);
+    let mut stream = provider.stream_chat_with_history(
+        &[ChatMessage::user("hello")],
+        "deepseek-v4-flash",
+        0.7,
+        StreamOptions::new(true),
+    );
+    let mut terminal: Option<String> = None;
+    while let Some(item) = stream.next().await {
+        if let Err(StreamError::Provider(msg)) = item {
+            terminal = Some(msg);
+        }
+    }
+    let msg = terminal.expect("a 402 must yield a terminal Provider error chunk");
+    assert!(
+        msg.contains("402") && msg.contains("Insufficient Balance"),
+        "msg: {msg}"
+    );
+}
+
+// ----------------------------------------------------------
+// Prompt-cache capability model (#3939)
+// ----------------------------------------------------------
+
+#[test]
+fn prompt_cache_caps_openai_style_for_known_slugs() {
+    for slug in ["openai", "openrouter", "gmi"] {
+        let caps = super::prompt_cache_for_compatible_slug(slug);
+        assert!(
+            caps.automatic_prefix_cache,
+            "{slug} should advertise automatic prefix cache"
+        );
+        assert!(
+            caps.usage_reports_cached_input,
+            "{slug} should report cached input tokens"
+        );
+        assert!(
+            !caps.explicit_cache_control,
+            "OpenAI-compatible chat API has no cache-control field"
+        );
+        assert!(
+            !caps.cache_key_grouping,
+            "thread/session grouping is OpenHuman-backend-only"
+        );
+    }
+}
+
+#[test]
+fn prompt_cache_caps_match_slug_family_variants() {
+    // Case-insensitive, leading-segment family match so renamed/suffixed slugs
+    // still resolve to the verified family.
+    for slug in ["OpenAI", "openai:gpt-5.1", "openai/responses", "openai-eu"] {
+        let caps = super::prompt_cache_for_compatible_slug(slug);
+        assert!(
+            caps.automatic_prefix_cache && caps.usage_reports_cached_input,
+            "{slug} should resolve to the openai family"
+        );
+    }
+}
+
+#[test]
+fn prompt_cache_caps_conservative_for_unknown_or_custom_slugs() {
+    // Custom / local / unverified providers must not advertise caching — they
+    // get the all-false default so we never send or assume unsupported behaviour.
+    let conservative =
+        crate::openhuman::inference::provider::traits::PromptCacheCapabilities::default();
+    for slug in ["custom_openai", "lmstudio", "deepseek", "mystery-proxy", ""] {
+        assert_eq!(
+            super::prompt_cache_for_compatible_slug(slug),
+            conservative,
+            "{slug} must stay conservative"
+        );
+    }
+}
+
+#[test]
+fn compatible_provider_declares_prompt_cache_from_its_slug() {
+    let conservative =
+        crate::openhuman::inference::provider::traits::PromptCacheCapabilities::default();
+
+    let openai = make_provider("openai", "https://api.openai.com", Some("k"));
+    let caps = openai.prompt_cache_capabilities();
+    assert!(
+        caps.automatic_prefix_cache && caps.usage_reports_cached_input,
+        "openai provider must advertise OpenAI-style caching"
+    );
+
+    let custom = make_provider("custom_openai", "https://proxy.example", Some("k"));
+    assert_eq!(
+        custom.prompt_cache_capabilities(),
+        conservative,
+        "unknown custom provider must stay conservative"
+    );
+}
+
+#[test]
+fn extract_usage_normalizes_openai_cached_prompt_tokens() {
+    // Regression: an OpenAI-compatible usage block carrying cached prefix tokens
+    // (`prompt_tokens_details.cached_tokens`) must normalize into
+    // `UsageInfo.cached_input_tokens` so cached-prefix cost accounting is exact.
+    let json = r#"{
+        "choices":[{"message":{"role":"assistant","content":"hi"}}],
+        "usage":{"prompt_tokens":1000,"completion_tokens":20,"total_tokens":1020,
+                 "prompt_tokens_details":{"cached_tokens":768}}
+    }"#;
+    let resp: ApiChatResponse = serde_json::from_str(json).expect("parse api response");
+    let usage = OpenAiCompatibleProvider::extract_usage(&resp).expect("usage present");
+    assert_eq!(usage.input_tokens, 1000);
+    assert_eq!(usage.output_tokens, 20);
+    assert_eq!(
+        usage.cached_input_tokens, 768,
+        "cached prefix tokens must be normalized into cached_input_tokens"
+    );
+}
+
+#[test]
+fn extract_usage_defaults_cached_tokens_to_zero_when_absent() {
+    // A provider that omits cache details must yield cached_input_tokens = 0,
+    // keeping cost accounting coherent (full prompt charged at the input rate).
+    let json = r#"{
+        "choices":[{"message":{"role":"assistant","content":"hi"}}],
+        "usage":{"prompt_tokens":500,"completion_tokens":10,"total_tokens":510}
+    }"#;
+    let resp: ApiChatResponse = serde_json::from_str(json).expect("parse api response");
+    let usage = OpenAiCompatibleProvider::extract_usage(&resp).expect("usage present");
+    assert_eq!(usage.cached_input_tokens, 0);
+    assert_eq!(usage.input_tokens, 500);
+}
+
+/// Minimal valid Responses SSE body so the Codex OAuth streamed-aggregate
+/// path returns `Ok("hi")`.
+const CODEX_RESPONSES_SSE_OK: &str =
+    "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n\
+     data: {\"type\":\"response.completed\",\"response\":{\"output_text\":\"hi\"}}\n\n\
+     data: [DONE]\n";
+
+/// TAURI-RUST-AHX: the ChatGPT-OAuth Codex Responses endpoint
+/// (`chatgpt.com/backend-api/codex/responses`) rejects the `auto` model
+/// sentinel with a 400 (`The 'auto' model is not supported when using Codex
+/// with a ChatGPT account.`). `chat_via_responses` must remap `auto` to a
+/// concrete Codex-class model before the request leaves, so the provider
+/// never sees `auto`.
+#[tokio::test]
+async fn codex_oauth_responses_remaps_auto_model() {
+    let mock_server = MockServer::start().await;
+
+    // Codex OAuth base-URL shape: the path carries `backend-api/codex`, so
+    // `is_codex_oauth_responses` fires and `responses_url()` resolves to
+    // `<base>/responses`.
+    let base_url = format!("{}/backend-api/codex", mock_server.uri());
+
+    Mock::given(method("POST"))
+        .and(path("/backend-api/codex/responses"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(CODEX_RESPONSES_SSE_OK))
+        .mount(&mock_server)
+        .await;
+
+    let provider = make_provider("openai", &base_url, Some("oauth-access-token"));
+    let messages = vec![ChatMessage {
+        id: None,
+        role: "user".to_string(),
+        content: "hello".to_string(),
+        extra_metadata: None,
+    }];
+
+    let out = provider
+        .chat_via_responses(Some("oauth-access-token"), &messages, "auto", None)
+        .await
+        .expect("codex oauth responses call should succeed");
+    assert_eq!(out, "hi");
+
+    // The model on the wire must be a concrete Codex-class model, never `auto`.
+    let requests = mock_server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1, "expected exactly one responses request");
+    let body: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+    let sent_model = body
+        .get("model")
+        .and_then(|m| m.as_str())
+        .unwrap_or_default();
+    assert_ne!(
+        sent_model, "auto",
+        "auto sentinel must not leak to the Codex OAuth endpoint"
+    );
+    assert_eq!(
+        sent_model,
+        super::super::openai_codex::OPENAI_CODEX_MODEL_HINTS[0],
+        "auto must be remapped to the preferred concrete Codex model"
+    );
+}
+
+/// Scope guard for TAURI-RUST-AHX: only the `auto` sentinel is remapped — a
+/// concrete model the user pinned must pass through to the Codex OAuth
+/// endpoint untouched.
+#[tokio::test]
+async fn codex_oauth_responses_preserves_concrete_model() {
+    let mock_server = MockServer::start().await;
+    let base_url = format!("{}/backend-api/codex", mock_server.uri());
+
+    Mock::given(method("POST"))
+        .and(path("/backend-api/codex/responses"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(CODEX_RESPONSES_SSE_OK))
+        .mount(&mock_server)
+        .await;
+
+    let provider = make_provider("openai", &base_url, Some("oauth-access-token"));
+    let messages = vec![ChatMessage {
+        id: None,
+        role: "user".to_string(),
+        content: "hello".to_string(),
+        extra_metadata: None,
+    }];
+
+    provider
+        .chat_via_responses(Some("oauth-access-token"), &messages, "gpt-5.3-codex", None)
+        .await
+        .expect("codex oauth responses call should succeed");
+
+    let requests = mock_server.received_requests().await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+    assert_eq!(
+        body.get("model").and_then(|m| m.as_str()),
+        Some("gpt-5.3-codex"),
+        "a concrete pinned model must not be remapped"
     );
 }

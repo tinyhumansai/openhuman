@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import Markdown, { defaultUrlTransform } from 'react-markdown';
 import rehypeKatex from 'rehype-katex';
+import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 
 import { OPENHUMAN_LINK_EVENT } from '../../../components/OpenhumanLinkModal';
@@ -16,7 +17,8 @@ import {
   parseBubbleSegments,
 } from '../utils/format';
 
-const MATH_REMARK_PLUGINS = [remarkMath];
+const GFM_REMARK_PLUGINS = [remarkGfm];
+const MATH_REMARK_PLUGINS = [remarkGfm, remarkMath];
 const MATH_REHYPE_PLUGINS = [rehypeKatex];
 const EMPTY_PLUGINS: [] = [];
 type ParsedMarkdownTable = NonNullable<ReturnType<typeof parseMarkdownTable>>;
@@ -99,7 +101,7 @@ export function BubbleMarkdown({
       <Markdown
         urlTransform={transformMarkdownUrl}
         components={{ a: MarkdownAnchor }}
-        remarkPlugins={hasMath ? MATH_REMARK_PLUGINS : EMPTY_PLUGINS}
+        remarkPlugins={hasMath ? MATH_REMARK_PLUGINS : GFM_REMARK_PLUGINS}
         rehypePlugins={hasMath ? MATH_REHYPE_PLUGINS : EMPTY_PLUGINS}>
         {rendered}
       </Markdown>
@@ -111,11 +113,11 @@ export function TableCellMarkdown({ content }: { content: string }) {
   const hasMath = hasLatexContent(content);
   const rendered = hasMath ? normalizeLatexDelimiters(content) : content;
   return (
-    <div className="prose prose-sm dark:prose-invert max-w-none text-sm text-stone-700 dark:text-neutral-200 prose-p:my-0 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-code:text-xs prose-code:text-primary-700 dark:prose-code:text-primary-300 prose-a:text-primary-500 prose-strong:text-stone-900 dark:prose-strong:text-neutral-100 prose-headings:text-sm prose-headings:font-semibold [&_li::marker]:text-stone-700 dark:[&_li::marker]:text-neutral-300 [&_ul]:my-0 [&_ol]:my-0 [&_ul]:pl-0 [&_ol]:pl-0 [&_ul]:list-inside [&_ol]:list-inside [&_li]:pl-0 [&_li_p]:inline [&_li_p]:m-0">
+    <div className="prose prose-sm dark:prose-invert max-w-none text-sm text-content-secondary prose-p:my-0 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-code:text-xs prose-code:text-primary-700 dark:prose-code:text-primary-300 prose-a:text-primary-500 prose-strong:text-stone-900 dark:prose-strong:text-neutral-100 prose-headings:text-sm prose-headings:font-semibold [&_li::marker]:text-stone-700 dark:[&_li::marker]:text-neutral-300 [&_ul]:my-0 [&_ol]:my-0 [&_ul]:pl-0 [&_ol]:pl-0 [&_ul]:list-inside [&_ol]:list-inside [&_li]:pl-0 [&_li_p]:inline [&_li_p]:m-0">
       <Markdown
         urlTransform={transformMarkdownUrl}
         components={{ a: MarkdownAnchor }}
-        remarkPlugins={hasMath ? MATH_REMARK_PLUGINS : EMPTY_PLUGINS}
+        remarkPlugins={hasMath ? MATH_REMARK_PLUGINS : GFM_REMARK_PLUGINS}
         rehypePlugins={hasMath ? MATH_REHYPE_PLUGINS : EMPTY_PLUGINS}>
         {rendered}
       </Markdown>
@@ -133,13 +135,13 @@ function AgentMarkdownTable({
   return (
     <div className={className}>
       <div className="overflow-x-auto">
-        <table className="w-max min-w-full border-collapse text-left text-sm text-stone-800 dark:text-neutral-100">
-          <thead className="bg-stone-100 dark:bg-neutral-800/90">
+        <table className="w-max min-w-full border-collapse text-left text-sm text-content">
+          <thead className="bg-surface-subtle dark:bg-surface-muted/90">
             <tr>
               {table.headers.map(header => (
                 <th
                   key={header}
-                  className="max-w-[25vw] border-b border-stone-200 dark:border-neutral-800 px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.08em] text-stone-500 dark:text-neutral-400">
+                  className="max-w-[25vw] border-b border-line px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.08em] text-content-muted">
                   {header}
                 </th>
               ))}
@@ -153,7 +155,7 @@ function AgentMarkdownTable({
                 {row.map((cell, cellIndex) => (
                   <td
                     key={`${rowIndex}:${cellIndex}:${cell}`}
-                    className="max-w-[25vw] border-t border-stone-200 dark:border-neutral-800 px-4 py-3 align-top text-sm text-stone-700 dark:text-neutral-200">
+                    className="max-w-[25vw] border-t border-line px-4 py-3 align-top text-sm text-content-secondary">
                     <TableCellMarkdown content={cell} />
                   </td>
                 ))}
@@ -190,7 +192,7 @@ export function AgentMessageBubble({
     return (
       <AgentMarkdownTable
         table={table}
-        className={`w-full max-w-full overflow-hidden border border-stone-200 dark:border-neutral-800 bg-white/90 dark:bg-neutral-900/90 shadow-sm ${bubbleChrome}`}
+        className={`w-full max-w-full overflow-hidden border border-line bg-surface/90 shadow-sm ${bubbleChrome}`}
       />
     );
   }
@@ -199,7 +201,7 @@ export function AgentMessageBubble({
     <>
       {textContent && (
         <div
-          className={`bg-stone-200 dark:bg-neutral-800/80 px-4 py-2.5 text-stone-900 dark:text-neutral-100 ${bubbleChrome}`}>
+          className={`bg-surface-strong dark:bg-surface-muted/80 px-4 py-2.5 text-content ${bubbleChrome}`}>
           <BubbleMarkdown content={textContent} />
         </div>
       )}
@@ -231,9 +233,7 @@ export function AgentMessageText({ content }: { content: string }) {
   const table = parseMarkdownTable(textContent);
 
   return (
-    <div
-      className="w-full min-w-0 px-1 py-1 text-stone-900 dark:text-neutral-100"
-      data-testid="agent-message-text">
+    <div className="w-full min-w-0 px-1 py-1 text-content" data-testid="agent-message-text">
       {table ? (
         <AgentMarkdownTable table={table} className="w-full max-w-full overflow-hidden" />
       ) : (

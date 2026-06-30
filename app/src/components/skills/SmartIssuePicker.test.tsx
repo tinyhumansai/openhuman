@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import SmartIssuePicker from './SmartIssuePicker';
@@ -79,5 +79,49 @@ describe('SmartIssuePicker', () => {
       // Component should render without throwing
       expect(screen.getByRole('combobox')).toBeInTheDocument();
     });
+  });
+
+  it('loads branches and patches target_branch after selecting a repo', async () => {
+    mockListConnections.mockResolvedValue({
+      connections: [{ toolkit: 'github', status: 'ACTIVE', username: 'testuser' }],
+    });
+    // Key responses by the composio tool name so extra/initial calls don't
+    // desync a strict once-sequence.
+    mockExecute.mockImplementation((tool: string) => {
+      if (tool === 'GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER') {
+        return Promise.resolve({
+          successful: true,
+          data: [
+            {
+              full_name: 'testuser/myrepo',
+              name: 'myrepo',
+              owner: { login: 'testuser' },
+              private: false,
+              default_branch: 'main',
+            },
+          ],
+        });
+      }
+      if (tool === 'GITHUB_GET_A_REPOSITORY') {
+        return Promise.resolve({ successful: true, data: { fork: false, default_branch: 'main' } });
+      }
+      if (tool === 'GITHUB_LIST_BRANCHES') {
+        return Promise.resolve({ successful: true, data: [{ name: 'main' }, { name: 'dev' }] });
+      }
+      return Promise.resolve({ successful: true, data: [] });
+    });
+
+    const onPatchInputs = vi.fn();
+    render(<SmartIssuePicker values={{}} onPatchInputs={onPatchInputs} />);
+
+    const repoSelect = await screen.findByRole('combobox');
+    await waitFor(() => expect(mockExecute).toHaveBeenCalled());
+
+    fireEvent.change(repoSelect, { target: { value: 'testuser/myrepo' } });
+
+    // Branch load resolves and patches the default branch.
+    await waitFor(() =>
+      expect(onPatchInputs).toHaveBeenCalledWith(expect.objectContaining({ target_branch: 'main' }))
+    );
   });
 });

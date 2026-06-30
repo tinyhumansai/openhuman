@@ -15,7 +15,10 @@ const MOCK_RESPONSE = {
     {
       id: 'deepseek-v3',
       provider: 'SiliconFlow',
+      cost_per_1m_input: 0.14,
+      cost_per_1m_cached_input: 0.014,
       cost_per_1m_output: 0.33,
+      context_window: 128_000,
       vision: false,
       quality_score: 4,
       hallucination_rate: 0.03,
@@ -69,6 +72,18 @@ describe('ModelHealthPanel', () => {
     });
     expect(screen.getByText('qwen-2.5-8b')).toBeTruthy();
     expect(screen.getByText('bad-model')).toBeTruthy();
+  });
+
+  it('shows context window and input/output pricing', async () => {
+    await mockRpc(MOCK_RESPONSE);
+    renderWithProviders(<ModelHealthPanel />);
+    await waitFor(() => {
+      expect(screen.getByText('deepseek-v3')).toBeTruthy();
+    });
+    // Context window rendered as a compact token-count label next to provider.
+    expect(screen.getByText(/128K ctx/)).toBeTruthy();
+    // Cost cell shows "input / output" when input pricing is present.
+    expect(screen.getByText(/\$0\.14 \/ \$0\.33/)).toBeTruthy();
   });
 
   it('shows correct status badges', async () => {

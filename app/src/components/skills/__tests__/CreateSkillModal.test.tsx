@@ -21,7 +21,9 @@ vi.mock('../../../services/api/workflowsApi', () => ({
   workflowsApi: {
     createWorkflow: vi.fn(),
     updateWorkflow: vi.fn(),
-    describeWorkflow: vi.fn().mockResolvedValue({ id: 'e', name: 'e', when_to_use: '', inputs: [] }),
+    describeWorkflow: vi
+      .fn()
+      .mockResolvedValue({ id: 'e', name: 'e', when_to_use: '', inputs: [] }),
   },
 }));
 
@@ -115,11 +117,7 @@ describe('CreateSkillModal', () => {
     });
 
     expect(vi.mocked(workflowsApi.createWorkflow)).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'My Skill',
-        description: 'does stuff',
-        scope: 'user',
-      })
+      expect.objectContaining({ name: 'My Skill', description: 'does stuff', scope: 'user' })
     );
     expect(onCreated).toHaveBeenCalledWith(created);
   });

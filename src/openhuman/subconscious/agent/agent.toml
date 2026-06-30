@@ -1,11 +1,11 @@
 id = "subconscious"
 display_name = "Subconscious Agent"
-when_to_use = "Background awareness loop — periodically wakes up, reviews the user's situation report and context, maintains a persistent scratchpad of observations, and delegates deeper research when in aggressive mode."
+when_to_use = "Background awareness loop — periodically wakes, is handed a diff of how the user's world changed plus prepared context, then decides what to act on: records follow-ups on the global to-do board, evolves long-term goals, notifies the user, or delegates deeper work."
 temperature = 0.4
 max_iterations = 30
 sandbox_mode = "read_only"
-# Background coordinator: simple mode only edits scratchpad, but aggressive
-# mode may delegate bounded deep work through the explicit subagent policy.
+# Background coordinator: it writes internal continuity (global to-dos + goals)
+# and may delegate bounded deep work through the explicit subagent policy.
 agent_tier = "reasoning"
 omit_identity = false
 omit_memory_context = false
@@ -24,9 +24,22 @@ allowlist = [
 ]
 
 [tools]
+# Stages 1-2 (memory_diff, agent_prepare_context) are run in code by the engine
+# and handed to this agent as the prompt; the agent retains them for an optional
+# narrower re-check. Its real job is the decide/act stage:
+#   - update_task   → record/advance follow-ups on the user's global to-do board
+#                     (the "user-tasks" board) — this is the continuity store that
+#                     replaced the old scratchpad.
+#   - goals_*       → evolve the user's long-term goals as their world shifts.
+#   - notify_user   → surface something time-sensitive to the user.
+#   - spawn_async_subagent → delegate deeper research / multi-step work.
 named = [
-    "scratchpad_add",
-    "scratchpad_edit",
-    "scratchpad_remove",
-    "spawn_subagent",
+    "memory_diff",
+    "agent_prepare_context",
+    "notify_user",
+    "update_task",
+    "goals_list",
+    "goals_add",
+    "goals_edit",
+    "spawn_async_subagent",
 ]

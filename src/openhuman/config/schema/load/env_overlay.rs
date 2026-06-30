@@ -118,6 +118,32 @@ impl Config {
             }
         }
 
+        if let Some(flag) = env.get_any(&["OPENHUMAN_SHELL_HIDE_WINDOW", "SHELL_HIDE_WINDOW"]) {
+            let normalized = flag.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => {
+                    self.shell.hide_window = true;
+                    tracing::debug!(
+                        value = %flag,
+                        "[config][shell] OPENHUMAN_SHELL_HIDE_WINDOW applied: hide_window=true"
+                    );
+                }
+                "0" | "false" | "no" | "off" => {
+                    self.shell.hide_window = false;
+                    tracing::debug!(
+                        value = %flag,
+                        "[config][shell] OPENHUMAN_SHELL_HIDE_WINDOW applied: hide_window=false"
+                    );
+                }
+                _ => tracing::warn!(
+                    value = %flag,
+                    "[config][shell] OPENHUMAN_SHELL_HIDE_WINDOW unrecognized value ignored; \
+                     keeping current hide_window={}",
+                    self.shell.hide_window
+                ),
+            }
+        }
+
         self.apply_search_env(env);
         self.apply_proxy_env(env);
         self.apply_runtime_env(env);
@@ -395,6 +421,93 @@ impl Config {
         if let Some(command) = env.get("OPENHUMAN_RUNTIME_PYTHON_PREFERRED_COMMAND") {
             self.runtime_python.preferred_command = command.trim().to_string();
         }
+
+        // --- TokenJuice content router -------------------------------------
+        if let Some(flag) = env.get("OPENHUMAN_TOKENJUICE_ENABLED") {
+            if let Some(v) = parse_env_bool("OPENHUMAN_TOKENJUICE_ENABLED", &flag) {
+                self.tokenjuice.router_enabled = v;
+            }
+        }
+        if let Some(flag) = env.get("OPENHUMAN_TOKENJUICE_CCR_ENABLED") {
+            if let Some(v) = parse_env_bool("OPENHUMAN_TOKENJUICE_CCR_ENABLED", &flag) {
+                self.tokenjuice.ccr_enabled = v;
+            }
+        }
+        if let Some(flag) = env.get("OPENHUMAN_TOKENJUICE_CCR_DISK_ENABLED") {
+            if let Some(v) = parse_env_bool("OPENHUMAN_TOKENJUICE_CCR_DISK_ENABLED", &flag) {
+                self.tokenjuice.ccr_disk_enabled = v;
+            }
+        }
+        if let Some(flag) = env.get("OPENHUMAN_TOKENJUICE_SEARCH_ENABLED") {
+            if let Some(v) = parse_env_bool("OPENHUMAN_TOKENJUICE_SEARCH_ENABLED", &flag) {
+                self.tokenjuice.search_enabled = v;
+            }
+        }
+        if let Some(flag) = env.get("OPENHUMAN_TOKENJUICE_CODE_ENABLED") {
+            if let Some(v) = parse_env_bool("OPENHUMAN_TOKENJUICE_CODE_ENABLED", &flag) {
+                self.tokenjuice.code_enabled = v;
+            }
+        }
+        if let Some(flag) = env.get("OPENHUMAN_TOKENJUICE_HTML_ENABLED") {
+            if let Some(v) = parse_env_bool("OPENHUMAN_TOKENJUICE_HTML_ENABLED", &flag) {
+                self.tokenjuice.html_enabled = v;
+            }
+        }
+        if let Some(s) = env.get("OPENHUMAN_TOKENJUICE_MAX_CACHE_ENTRIES") {
+            if let Ok(v) = s.trim().parse::<usize>() {
+                self.tokenjuice.max_cache_entries = v;
+            }
+        }
+        if let Some(s) = env.get("OPENHUMAN_TOKENJUICE_MAX_CACHE_BYTES") {
+            if let Ok(v) = s.trim().parse::<usize>() {
+                self.tokenjuice.max_cache_bytes = v;
+            }
+        }
+        if let Some(s) = env.get("OPENHUMAN_TOKENJUICE_CCR_TTL_SECS") {
+            if let Ok(v) = s.trim().parse::<u64>() {
+                self.tokenjuice.ccr_ttl_secs = Some(v);
+            }
+        }
+        if let Some(s) = env.get("OPENHUMAN_TOKENJUICE_CCR_MIN_TOKENS") {
+            if let Ok(v) = s.trim().parse::<usize>() {
+                self.tokenjuice.ccr_min_tokens = v;
+            }
+        }
+        // ML plain-text compressor (Kompress).
+        if let Some(flag) = env.get("OPENHUMAN_TOKENJUICE_ML_COMPRESSION_ENABLED") {
+            if let Some(v) = parse_env_bool("OPENHUMAN_TOKENJUICE_ML_COMPRESSION_ENABLED", &flag) {
+                self.tokenjuice.ml_compression_enabled = v;
+            }
+        }
+        if let Some(m) = env.get("OPENHUMAN_TOKENJUICE_ML_MODEL_ID") {
+            let t = m.trim();
+            if !t.is_empty() {
+                self.tokenjuice.ml_model_id = t.to_string();
+            }
+        }
+        if let Some(d) = env.get("OPENHUMAN_TOKENJUICE_ML_DEVICE") {
+            let t = d.trim();
+            if !t.is_empty() {
+                self.tokenjuice.ml_device = t.to_string();
+            }
+        }
+        if let Some(r) = env.get("OPENHUMAN_TOKENJUICE_ML_TARGET_RATIO") {
+            if let Ok(v) = r.trim().parse::<f64>() {
+                if (0.0..=1.0).contains(&v) {
+                    self.tokenjuice.ml_target_ratio = v;
+                }
+            }
+        }
+        if let Some(s) = env.get("OPENHUMAN_TOKENJUICE_ML_SIDECAR_IDLE_TIMEOUT_SECS") {
+            if let Ok(v) = s.trim().parse::<u64>() {
+                self.tokenjuice.ml_sidecar_idle_timeout_secs = v;
+            }
+        }
+        if let Some(s) = env.get("OPENHUMAN_TOKENJUICE_ML_MAX_INPUT_CHARS") {
+            if let Ok(v) = s.trim().parse::<usize>() {
+                self.tokenjuice.ml_max_input_chars = v;
+            }
+        }
     }
 
     fn apply_observability_env<E: super::env::EnvLookup + ?Sized>(&mut self, env: &E) {
@@ -466,6 +579,14 @@ impl Config {
             match normalized.as_str() {
                 "1" | "true" | "yes" | "on" => self.learning.explicit_preferences_enabled = true,
                 "0" | "false" | "no" | "off" => self.learning.explicit_preferences_enabled = false,
+                _ => {}
+            }
+        }
+        if let Some(flag) = env.get("OPENHUMAN_LEARNING_GOALS_ENRICHMENT_ENABLED") {
+            let normalized = flag.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => self.learning.goals_enrichment_enabled = true,
+                "0" | "false" | "no" | "off" => self.learning.goals_enrichment_enabled = false,
                 _ => {}
             }
         }
@@ -658,6 +779,11 @@ impl Config {
                 self.memory_tree.cloud_summarization_opt_in = val;
             }
         }
+        if let Some(raw) = env.get("OPENHUMAN_MEMORY_TREE_SPACY_ENABLED") {
+            if let Some(val) = parse_env_bool("OPENHUMAN_MEMORY_TREE_SPACY_ENABLED", &raw) {
+                self.memory_tree.spacy_enabled = val;
+            }
+        }
     }
 
     fn apply_update_env<E: super::env::EnvLookup + ?Sized>(&mut self, env: &E) {
@@ -787,10 +913,36 @@ impl Config {
                 self.context.tool_result_budget_bytes = n;
             }
         }
+        // Kill-switch for native tool-output compaction (Stage 1a). On by
+        // default; `OPENHUMAN_COMPACTION=0` disables it for a support/A-B
+        // bisect. Accepts the canonical short name and the namespaced form.
+        if let Some(flag) = env
+            .get("OPENHUMAN_COMPACTION")
+            .or_else(|| env.get("OPENHUMAN_CONTEXT_COMPACTION_ENABLED"))
+        {
+            match flag.trim().to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => self.context.compaction_enabled = true,
+                "0" | "false" | "no" | "off" => self.context.compaction_enabled = false,
+                _ => {}
+            }
+        }
         if let Some(model) = env.get("OPENHUMAN_CONTEXT_SUMMARIZER_MODEL") {
             let model = model.trim();
             if !model.is_empty() {
                 self.context.summarizer_model = Some(model.to_string());
+            }
+        }
+        // "Super context" — harness-driven first-turn context collection.
+        // On by default; `OPENHUMAN_SUPER_CONTEXT=0` opts out. Accepts
+        // the canonical short name and the namespaced form.
+        if let Some(flag) = env
+            .get("OPENHUMAN_SUPER_CONTEXT")
+            .or_else(|| env.get("OPENHUMAN_CONTEXT_SUPER_CONTEXT_ENABLED"))
+        {
+            match flag.trim().to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => self.context.super_context_enabled = true,
+                "0" | "false" | "no" | "off" => self.context.super_context_enabled = false,
+                _ => {}
             }
         }
 

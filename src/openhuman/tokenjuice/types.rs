@@ -301,6 +301,296 @@ pub struct CompactResult {
     pub classification: ClassificationResult,
 }
 
+/// Per-agent TokenJuice profile.
+///
+/// `Auto` is resolved by the agent definition layer. TokenJuice itself treats
+/// `Auto` like `Full` so non-agent callers keep the global `[tokenjuice]`
+/// behaviour unless they explicitly pass a narrower profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentTokenjuiceCompression {
+    /// Let the agent definition/runtime choose. Coding agents resolve this to
+    /// [`Self::Light`]; other agents resolve to [`Self::Full`].
+    #[default]
+    Auto,
+    /// Use the process-global TokenJuice configuration unchanged.
+    Full,
+    /// Keep only non-lossy reductions; disables CCR-backed lossy compaction.
+    Light,
+    /// Bypass TokenJuice for this agent's tool results.
+    Off,
+}
+
+impl AgentTokenjuiceCompression {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Full => "full",
+            Self::Light => "light",
+            Self::Off => "off",
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Content Router (TokenJuice 2.0) — content-kind detection + compressor dispatch
+// ---------------------------------------------------------------------------
+
+/// The kind of content a blob holds, as decided by the detector. Drives which
+/// [`crate::openhuman::tokenjuice::compressors::Compressor`] the router picks.
+///
+/// Inspired by Headroom's content router: each kind has a specialised
+/// compressor tuned to preserve the signal that kind carries (errors in logs,
+/// changed hunks in diffs, signatures in code, …).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ContentKind {
+    /// JSON array/object payload → tabular SmartCrusher.
+    Json,
+    /// Source code → AST/heuristic signature keeper.
+    Code,
+    /// Build / test / lint log → keep failures, drop passing noise.
+    Log,
+    /// grep / ripgrep style `path:line:content` matches → relevance rank.
+    Search,
+    /// Unified git diff / patch → keep changed hunks, collapse context.
+    Diff,
+    /// HTML document → strip markup to readable text.
+    Html,
+    /// Anything else → ML text compressor (if enabled) or pass-through.
+    PlainText,
+}
+
+impl ContentKind {
+    /// Stable lower-case label for logs / RPC / stats.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ContentKind::Json => "json",
+            ContentKind::Code => "code",
+            ContentKind::Log => "log",
+            ContentKind::Search => "search",
+            ContentKind::Diff => "diff",
+            ContentKind::Html => "html",
+            ContentKind::PlainText => "plain_text",
+        }
+    }
+}
+
+/// A caller-supplied prior about a blob's content, so the detector doesn't have
+/// to work from scratch. Any field may be `None`; the detector resolves what it
+/// can and falls back to structural heuristics. An `explicit` kind is a hard
+/// override and skips detection entirely.
+#[derive(Debug, Clone, Default)]
+pub struct ContentHint {
+    /// MIME type if known (`text/html`, `application/json`, …).
+    pub mime: Option<String>,
+    /// File extension without the dot (`rs`, `ts`, `py`, `json`, `html`, `diff`).
+    pub extension: Option<String>,
+    /// The agent-level tool that produced the content (`grep`, `run_tests`, …).
+    pub source_tool: Option<String>,
+    /// A search/query string associated with the content, when known (used by
+    /// the search compressor to rank matches by query-term density).
+    pub query: Option<String>,
+    /// Hard override — when set, detection returns this kind verbatim.
+    pub explicit: Option<ContentKind>,
+}
+
+impl ContentHint {
+    /// Convenience: a hint carrying only the producing tool name.
+    pub fn for_tool(tool_name: impl Into<String>) -> Self {
+        Self {
+            source_tool: Some(tool_name.into()),
+            ..Default::default()
+        }
+    }
+}
+
+/// Which compressor actually produced an output. Recorded in stats / logs so a
+/// human (or the debug controller) can see what the router chose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CompressorKind {
+    /// JSON array→table crusher.
+    SmartCrusher,
+    /// AST/heuristic code-signature keeper.
+    Code,
+    /// Log keep-failures compressor (and the rule engine for command output).
+    Log,
+    /// Search relevance ranker.
+    Search,
+    /// Unified-diff context collapser.
+    Diff,
+    /// HTML→text extractor.
+    Html,
+    /// ML (Python/ModernBERT) plain-text compressor.
+    MlText,
+    /// Line-oriented head/tail fallback.
+    Generic,
+    /// No compressor fired — pass-through.
+    None,
+}
+
+impl CompressorKind {
+    /// Stable lower-case label for stats / logs / RPC.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CompressorKind::SmartCrusher => "smartcrusher",
+            CompressorKind::Code => "code",
+            CompressorKind::Log => "log",
+            CompressorKind::Search => "search",
+            CompressorKind::Diff => "diff",
+            CompressorKind::Html => "html",
+            CompressorKind::MlText => "ml_text",
+            CompressorKind::Generic => "generic",
+            CompressorKind::None => "none",
+        }
+    }
+}
+
+/// Input handed to a [`crate::openhuman::tokenjuice::compressors::Compressor`].
+/// Borrows the content to avoid copies on the hot path.
+#[derive(Debug, Clone)]
+pub struct CompressInput<'a> {
+    /// The raw content to compress.
+    pub content: &'a str,
+    /// The detected (or hinted) content kind.
+    pub kind: ContentKind,
+    /// The original caller hint (carries `query`, `source_tool`, argv-derived
+    /// command for the log/command path, …).
+    pub hint: &'a ContentHint,
+    /// Process exit code if this is command output — enables failure-preserving
+    /// behaviour in the log compressor.
+    pub exit_code: Option<i32>,
+    /// Derived shell command (joined argv) for the log/command rule path, if any.
+    pub command: Option<String>,
+    /// Derived argv for the log/command rule path, if any.
+    pub argv: Option<Vec<String>>,
+    /// Original byte length (== `content.len()`; cached for convenience).
+    pub original_bytes: usize,
+}
+
+/// Output of a compressor. `text` is the compacted body **without** any CCR
+/// retrieval footer — the router ([`crate::openhuman::tokenjuice::compress`])
+/// adds the marker after offloading the original.
+#[derive(Debug, Clone)]
+pub struct CompressOutput {
+    /// The compacted body.
+    pub text: String,
+    /// True when data was dropped (vs. a faithful reformat). Changes the footer
+    /// wording and whether the original is mandatory for fidelity.
+    pub lossy: bool,
+    /// Which compressor produced this.
+    pub kind: CompressorKind,
+    /// Optional named counts (e.g. error/warning tallies).
+    pub facts: Option<HashMap<String, usize>>,
+}
+
+impl CompressOutput {
+    /// A faithful reformat — every value preserved, only layout changed.
+    pub fn reformatted(text: String, kind: CompressorKind) -> Self {
+        Self {
+            text,
+            lossy: false,
+            kind,
+            facts: None,
+        }
+    }
+
+    /// A lossy view — data was dropped; the original must be offloaded for recovery.
+    pub fn lossy(text: String, kind: CompressorKind) -> Self {
+        Self {
+            text,
+            lossy: true,
+            kind,
+            facts: None,
+        }
+    }
+}
+
+/// Knobs for the router and compressors, built by the caller from the
+/// `[tokenjuice]` config block. TokenJuice stays decoupled from the config
+/// schema crate by taking this plain struct rather than `Config`.
+#[derive(Debug, Clone)]
+pub struct CompressOptions {
+    /// Master switch — when false, [`crate::openhuman::tokenjuice::compress_content`]
+    /// is a pass-through.
+    pub router_enabled: bool,
+    /// Whether to offload originals to CCR and emit retrieval markers.
+    pub ccr_enabled: bool,
+    /// Per-compressor toggles.
+    pub search_enabled: bool,
+    pub code_enabled: bool,
+    pub html_enabled: bool,
+    /// Whether the ML plain-text compressor may be used (further gated at
+    /// runtime by Python/runtime_python_server availability).
+    pub ml_text_enabled: bool,
+    /// Outputs below this many bytes are never compressed.
+    pub min_bytes_to_compress: usize,
+    /// CCR only fires (offload original + lossy compression) when the input is
+    /// estimated to be at least this many tokens. Below it, the result passes
+    /// through (lossless reformats may still apply without offload). Lets small
+    /// tool results skip the cache entirely.
+    pub ccr_min_tokens: usize,
+    /// Maximum inline character count for the generic/rule fallback path.
+    pub max_inline_chars: Option<usize>,
+}
+
+impl Default for CompressOptions {
+    fn default() -> Self {
+        Self {
+            router_enabled: true,
+            ccr_enabled: true,
+            search_enabled: true,
+            code_enabled: true,
+            html_enabled: true,
+            ml_text_enabled: false,
+            min_bytes_to_compress: 2048,
+            ccr_min_tokens: 500,
+            max_inline_chars: None,
+        }
+    }
+}
+
+/// The result of the universal [`crate::openhuman::tokenjuice::compress_content`]
+/// entry point: the compacted text (with any CCR footer already appended), plus
+/// metadata for callers/stats.
+#[derive(Debug, Clone)]
+pub struct CompressedOutput {
+    /// Final text to inline into context (includes the retrieval footer when lossy).
+    pub text: String,
+    /// The detected content kind.
+    pub content_kind: ContentKind,
+    /// Which compressor fired (`None` ⇒ pass-through).
+    pub compressor: CompressorKind,
+    /// Whether the output dropped data.
+    pub lossy: bool,
+    /// True if the router actually changed the content.
+    pub applied: bool,
+    /// CCR token for the offloaded original, if one was stored.
+    pub ccr_token: Option<String>,
+    /// Original byte length.
+    pub original_bytes: usize,
+    /// Compacted byte length (of `text`).
+    pub compacted_bytes: usize,
+}
+
+impl CompressedOutput {
+    /// Build a pass-through result that didn't change `content`.
+    pub fn passthrough(content: String, kind: ContentKind) -> Self {
+        let len = content.len();
+        Self {
+            text: content,
+            content_kind: kind,
+            compressor: CompressorKind::None,
+            lossy: false,
+            applied: false,
+            ccr_token: None,
+            original_bytes: len,
+            compacted_bytes: len,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // RuleFixture — used by integration tests
 // ---------------------------------------------------------------------------

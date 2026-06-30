@@ -508,6 +508,46 @@ mod tests {
     }
 
     #[test]
+    fn write_embedder_routes_to_lmstudio_local_endpoint() {
+        // #3781 regression at the factory/seal level: a configured local
+        // OpenAI-compatible embeddings backend (LM Studio at localhost:1234,
+        // registered as a `cloud_providers` slug) must drive bucket sealing —
+        // the same way the LLM extractor already resolves the `lmstudio` slug —
+        // and NOT fall through to the managed cloud budget (which 400s with
+        // "Insufficient budget" and fails the seal job unrecoverably).
+        use crate::openhuman::config::schema::cloud_providers::CloudProviderCreds;
+        use crate::openhuman::memory_tree::health::{
+            current_degraded_state, mark_semantic_recall_degraded, FailureCode,
+        };
+        let _guard = degraded_flag_lock();
+        mark_semantic_recall_degraded(FailureCode::EmbeddingsUnconfigured);
+        let (_tmp, mut cfg) = test_config();
+        cfg.memory_tree.embedding_endpoint = None;
+        cfg.memory_tree.embedding_model = None;
+        cfg.embeddings_provider = None; // top-level workload routing: unset
+        cfg.memory.embedding_provider = "lmstudio".to_string();
+        cfg.memory.embedding_model = "bge-m3".to_string();
+        cfg.cloud_providers = vec![CloudProviderCreds {
+            id: "p_lmstudio".to_string(),
+            slug: "lmstudio".to_string(),
+            endpoint: "http://localhost:1234/v1".to_string(),
+            ..Default::default()
+        }];
+        let e = build_write_embedder(&cfg)
+            .expect("factory must not error")
+            .expect("lmstudio backend → Some(embedder), must NOT fall through to cloud");
+        assert_eq!(
+            e.name(),
+            "custom",
+            "must route to the local OpenAI-compatible endpoint, not the managed backend"
+        );
+        assert!(
+            !current_degraded_state().semantic_recall,
+            "a usable local provider must clear the degraded flag"
+        );
+    }
+
+    #[test]
     fn read_embedder_routes_to_openai_when_memory_provider_is_openai() {
         // Same FR-015 routing, read path (`build_embedder_from_config`).
         let (_tmp, mut cfg) = test_config();

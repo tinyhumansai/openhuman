@@ -120,6 +120,16 @@ pub struct ContextManager {
     /// markdown instead of JSON — significantly cheaper in the model
     /// context window. See [`ContextConfig::prefer_markdown_tool_output`].
     prefer_markdown_tool_output: bool,
+    /// When `true`, native tool-output compaction (Stage 1a) runs in
+    /// `Agent::execute_tool_call` before the byte cap. On by default; the
+    /// kill-switch lives here so every caller reads one source of truth.
+    /// See [`ContextConfig::compaction_enabled`].
+    compaction_enabled: bool,
+    /// When `true`, the harness runs a mandatory first-turn context
+    /// collection pass before the orchestrator LLM runs. Read once at
+    /// session construction so it only affects newly started threads.
+    /// See [`ContextConfig::super_context_enabled`].
+    super_context_enabled: bool,
 }
 
 impl ContextManager {
@@ -161,6 +171,8 @@ impl ContextManager {
             enabled: config.enabled,
             tool_result_budget_bytes: config.tool_result_budget_bytes,
             prefer_markdown_tool_output: config.prefer_markdown_tool_output,
+            compaction_enabled: config.compaction_enabled,
+            super_context_enabled: config.super_context_enabled,
         }
     }
 
@@ -176,6 +188,29 @@ impl ContextManager {
     /// history.
     pub fn tool_result_budget_bytes(&self) -> usize {
         self.tool_result_budget_bytes
+    }
+
+    /// Whether native tool-output compaction (Stage 1a) is enabled. Agents
+    /// read this when a tool returns to decide whether to content-aware
+    /// compress the result before the byte cap and before it enters history.
+    pub fn compaction_enabled(&self) -> bool {
+        self.compaction_enabled
+    }
+
+    /// Whether "super context" is enabled — i.e. whether the harness
+    /// should run a mandatory read-only context-collection pass on the
+    /// first turn of a new thread before the orchestrator LLM runs.
+    /// Read by `Agent::turn`. See [`ContextConfig::super_context_enabled`].
+    pub fn super_context_enabled(&self) -> bool {
+        self.super_context_enabled
+    }
+
+    /// Force-disable the first-turn super-context pass for this session,
+    /// regardless of the config default. Used by non-interactive orchestrator
+    /// builds (e.g. read-only model-council jurors) where a scout pass would add
+    /// an unexpected LLM call and perturb deterministic call sequences.
+    pub fn set_super_context_enabled(&mut self, enabled: bool) {
+        self.super_context_enabled = enabled;
     }
 
     // ─── Budget tracking ──────────────────────────────────────────
@@ -248,7 +283,9 @@ impl ContextManager {
     /// the inference backend's prefix cache picks up the stable prefix
     /// automatically, so no boundary marker is emitted.
     pub fn build_system_prompt(&self, ctx: &PromptContext<'_>) -> Result<String> {
-        self.default_prompt_builder.build(ctx)
+        let prompt = self.default_prompt_builder.build(ctx)?;
+        self.warn_if_cache_unstable(&prompt);
+        Ok(prompt)
     }
 
     /// Assemble the system prompt via a caller-supplied builder.
@@ -263,7 +300,19 @@ impl ContextManager {
         builder: &SystemPromptBuilder,
         ctx: &PromptContext<'_>,
     ) -> Result<String> {
-        builder.build(ctx)
+        let prompt = builder.build(ctx)?;
+        self.warn_if_cache_unstable(&prompt);
+        Ok(prompt)
+    }
+
+    /// Cache-aligner (Stage 1a sibling, warn-only): flag volatile tokens in
+    /// the cache-hot system prompt that would silently break the provider
+    /// KV-cache prefix. Never mutates the prompt. Gated on the compaction
+    /// kill-switch so disabling compaction also silences this diagnostic.
+    fn warn_if_cache_unstable(&self, prompt: &str) {
+        if self.compaction_enabled {
+            crate::openhuman::agent::harness::compaction::cache_align::warn_if_volatile(prompt);
+        }
     }
 
     // ─── Reduction ─────────────────────────────────────────────────

@@ -238,6 +238,14 @@ const SCHEMA_DDL: &str = "
         key   TEXT PRIMARY KEY,
         value REAL NOT NULL
     );
+
+    -- Text-valued engine state (the REAL-typed `subconscious_state` above can't
+    -- hold ids). Used for the memory_diff baseline checkpoint id the structured
+    -- tick diffs against.
+    CREATE TABLE IF NOT EXISTS subconscious_state_text (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
 ";
 
 #[cfg(test)]
@@ -246,6 +254,7 @@ pub(crate) const SCHEMA_DDL_FOR_TESTS: &str = SCHEMA_DDL;
 // ── Engine state KV ──────────────────────────────────────────────────────────
 
 const STATE_KEY_LAST_TICK_AT: &str = "last_tick_at";
+const STATE_KEY_BASELINE_CHECKPOINT_ID: &str = "baseline_checkpoint_id";
 
 pub fn get_last_tick_at(conn: &Connection) -> Result<f64> {
     let value: Option<f64> = conn
@@ -262,6 +271,28 @@ pub fn set_last_tick_at(conn: &Connection, value: f64) -> Result<()> {
     conn.execute(
         "INSERT OR REPLACE INTO subconscious_state (key, value) VALUES (?1, ?2)",
         rusqlite::params![STATE_KEY_LAST_TICK_AT, value],
+    )?;
+    Ok(())
+}
+
+/// The memory_diff checkpoint the structured tick diffs against — i.e. the
+/// snapshot of "the agent's world" captured at the end of the previous tick.
+/// `None` until the first tick establishes a baseline.
+pub fn get_baseline_checkpoint_id(conn: &Connection) -> Result<Option<String>> {
+    let value: Option<String> = conn
+        .query_row(
+            "SELECT value FROM subconscious_state_text WHERE key = ?1",
+            [STATE_KEY_BASELINE_CHECKPOINT_ID],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(value)
+}
+
+pub fn set_baseline_checkpoint_id(conn: &Connection, checkpoint_id: &str) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO subconscious_state_text (key, value) VALUES (?1, ?2)",
+        rusqlite::params![STATE_KEY_BASELINE_CHECKPOINT_ID, checkpoint_id],
     )?;
     Ok(())
 }

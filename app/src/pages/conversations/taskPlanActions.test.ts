@@ -8,8 +8,8 @@ vi.mock('../../services/api/threadApi', () => ({
   threadApi: { decidePlan: (...args: unknown[]) => mockDecidePlan(...args) },
 }));
 
-function card(): TaskBoardCard {
-  return { id: 'c1', title: 'T', status: 'awaiting_approval', order: 0, updatedAt: '' };
+function card(id = 'c1'): TaskBoardCard {
+  return { id, title: 'T', status: 'awaiting_approval', order: 0, updatedAt: '' };
 }
 
 const t = (key: string) => key;

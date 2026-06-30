@@ -33,6 +33,9 @@ function randBetween(min: number, max: number): number {
   return min + Math.random() * (max - min);
 }
 
+/** Bundled default mascot, served by Vite from `public/`. */
+export const DEFAULT_MASCOT_SRC = '/tiny_mascot.riv';
+
 export interface RiveMascotProps {
   face?: MascotFace;
   size?: number | string;
@@ -46,6 +49,15 @@ export interface RiveMascotProps {
    *  ambient poses (thinking, sipping coffee, dancing, …) to feel alive.
    *  Off by default so small previews / frame producers stay still. */
   idlePoseRotation?: boolean;
+  /** Override the bundled mascot with a URL to a different `.riv` file.
+   *  Ignored when `buffer` is supplied. */
+  src?: string;
+  /** Render a `.riv` already loaded into memory (e.g. a version-cached custom
+   *  mascot from the backend). Takes precedence over `src`. */
+  buffer?: ArrayBuffer;
+  /** State-machine name inside the `.riv`. Custom mascots are authored against
+   *  the same `MascotSM` convention by default. */
+  stateMachine?: string;
 }
 
 const RIVE_LAYOUT = new Layout({ fit: Fit.Contain });
@@ -57,10 +69,16 @@ export const RiveMascot: FC<RiveMascotProps> = ({
   secondaryColor,
   visemeCode = 'sil',
   idlePoseRotation = false,
+  src = DEFAULT_MASCOT_SRC,
+  buffer,
+  stateMachine = MASCOT_STATE_MACHINE,
 }) => {
+  // `buffer` (an in-memory custom mascot) wins over `src` (a URL). Passing only
+  // one of the two to useRive keeps the runtime from racing both loaders.
+  const riveSource = buffer ? { buffer } : { src };
   const { rive, RiveComponent } = useRive({
-    src: '/tiny_mascot.riv',
-    stateMachines: MASCOT_STATE_MACHINE,
+    ...riveSource,
+    stateMachines: stateMachine,
     autoplay: true,
     layout: RIVE_LAYOUT,
   });

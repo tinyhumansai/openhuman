@@ -107,13 +107,14 @@ describe('OAuthProviderButton (Twitter) — rendering', () => {
 
   it('has neutral light background styling', () => {
     renderTwitterButton();
-    expect(screen.getByRole('button', { name: /twitter/i })).toHaveClass('bg-white');
+    // Migrated to the themeable surface token (was bg-white dark:bg-neutral-900).
+    expect(screen.getByRole('button', { name: /twitter/i })).toHaveClass('bg-surface');
   });
 
   it('has dark text', () => {
     const { container } = renderTwitterButton();
     const label = container.querySelector('span');
-    expect(label).toHaveClass('text-gray-900');
+    expect(label).toHaveClass('text-content');
   });
 });
 

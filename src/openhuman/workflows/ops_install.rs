@@ -104,8 +104,10 @@ pub struct InstallWorkflowFromUrlOutcome {
 /// * Frontmatter is validated — `name` and `description` are required per
 ///   the agentskills.io spec.
 /// * The slug is derived from `metadata.id` when present, otherwise the
-///   sanitized `name` field. Collision with an existing directory is fatal
-///   (no silent overwrite).
+///   sanitized `name` field. If the target directory already contains a
+///   `SKILL.md`, the install is treated as an idempotent success and reports
+///   that the skill is already installed. Other directory collisions remain
+///   fatal, and existing files are never silently overwritten.
 /// * Write is atomic: `SKILL.md.tmp` in the target dir, then `rename` on
 ///   success.
 ///
@@ -115,6 +117,15 @@ pub struct InstallWorkflowFromUrlOutcome {
 pub async fn install_workflow_from_url(
     workspace_dir: &Path,
     params: InstallWorkflowFromUrlParams,
+) -> Result<InstallWorkflowFromUrlOutcome, String> {
+    let home = dirs::home_dir();
+    install_workflow_from_url_with_home(workspace_dir, params, home.as_deref()).await
+}
+
+pub(crate) async fn install_workflow_from_url_with_home(
+    workspace_dir: &Path,
+    params: InstallWorkflowFromUrlParams,
+    home: Option<&Path>,
 ) -> Result<InstallWorkflowFromUrlOutcome, String> {
     let raw_url = params.url.trim().to_string();
     validate_install_url(&raw_url)?;
@@ -148,10 +159,9 @@ pub async fn install_workflow_from_url(
         "[skills] install_workflow_from_url: entry"
     );
 
-    let home = dirs::home_dir();
     let trusted_before = is_workspace_trusted(workspace_dir);
     let before: std::collections::HashSet<String> =
-        discover_workflows_inner(home.as_deref(), Some(workspace_dir), trusted_before)
+        discover_workflows_inner(home, Some(workspace_dir), trusted_before)
             .into_iter()
             .map(|s| s.name)
             .collect();
@@ -186,25 +196,29 @@ pub async fn install_workflow_from_url(
 
     let status = response.status();
     if !status.is_success() {
-        let status_str = status.as_u16().to_string();
-        let msg = format!(
-            "fetch failed: {fetch_url} returned status {}",
-            status.as_u16()
-        );
-        let report_msg = format!(
-            "fetch failed: {redacted_fetch_url} returned status {}",
-            status.as_u16()
-        );
-        crate::core::observability::report_error(
-            report_msg.as_str(),
-            "skills",
-            "install_fetch",
-            &[
-                ("url", redacted_fetch_url.as_str()),
-                ("status", status_str.as_str()),
-                ("failure", "non_2xx"),
-            ],
-        );
+        let code = status.as_u16();
+        let msg = format!("fetch failed: {fetch_url} returned status {code}");
+        // A 4xx (esp. 404/410) means the requested SKILL.md is gone or the URL
+        // is wrong — expected user/catalog input state, surfaced to the UI as
+        // "skill not found". Don't page Sentry for it (TAURI-RUST-CGE: ~1,446
+        // events / 72 users on `openhuman@0.57.53`, almost all 404). Keep
+        // reporting 5xx — a genuine remote failure is still Sentry-actionable.
+        // The `Err(msg)` return is unchanged in both cases so the UI always
+        // surfaces the failure.
+        if !status.is_client_error() {
+            let status_str = code.to_string();
+            let report_msg = format!("fetch failed: {redacted_fetch_url} returned status {code}");
+            crate::core::observability::report_error(
+                report_msg.as_str(),
+                "skills",
+                "install_fetch",
+                &[
+                    ("url", redacted_fetch_url.as_str()),
+                    ("status", status_str.as_str()),
+                    ("failure", "non_2xx"),
+                ],
+            );
+        }
         return Err(msg);
     }
 
@@ -256,16 +270,36 @@ pub async fn install_workflow_from_url(
     // a `<ws>/.openhuman/trust` marker and would render the install invisible to the
     // skills list until the user opts the workspace into trust.
     let skills_root = home
-        .as_deref()
         .ok_or_else(|| "write failed: unable to resolve home directory".to_string())?
         .join(".openhuman")
         .join("skills");
     let target_dir = skills_root.join(&slug);
     if target_dir.exists() {
-        return Err(format!(
-            "skill already installed as {slug:?} at {}",
-            target_dir.display()
-        ));
+        let target_file = target_dir.join(SKILL_MD);
+        if !target_file.is_file() {
+            return Err(format!(
+                "skill install target already exists but has no {SKILL_MD}: {}",
+                target_dir.display()
+            ));
+        }
+
+        tracing::info!(
+            raw_url = %redacted_raw_url,
+            fetch_url = %redacted_fetch_url,
+            slug = %slug,
+            target = %target_file.display(),
+            "[skills] install_workflow_from_url: already installed"
+        );
+
+        return Ok(InstallWorkflowFromUrlOutcome {
+            url: raw_url,
+            stdout: format!(
+                "Skill {slug:?} is already installed at {}",
+                target_file.display()
+            ),
+            stderr: parse_warnings.join("\n"),
+            new_skills: Vec::new(),
+        });
     }
 
     std::fs::create_dir_all(&target_dir).map_err(|e| {
@@ -319,7 +353,7 @@ pub async fn install_workflow_from_url(
     }
 
     let trusted_after = is_workspace_trusted(workspace_dir);
-    let after = discover_workflows_inner(home.as_deref(), Some(workspace_dir), trusted_after);
+    let after = discover_workflows_inner(home, Some(workspace_dir), trusted_after);
     let new_skills: Vec<String> = after
         .into_iter()
         .map(|s| s.name)
@@ -341,6 +375,14 @@ pub async fn install_workflow_from_url(
         target_file.display()
     );
     let stderr = parse_warnings.join("\n");
+
+    // Notify live agent sessions so they refresh their `## Installed Skills`
+    // catalogue mid-conversation (see `Agent::refresh_workflows`).
+    let _ = crate::core::event_bus::publish_global(
+        crate::core::event_bus::DomainEvent::WorkflowsChanged {
+            reason: "install".to_string(),
+        },
+    );
 
     Ok(InstallWorkflowFromUrlOutcome {
         url: raw_url,
@@ -507,6 +549,14 @@ pub fn uninstall_workflow(
     );
     std::fs::remove_dir_all(&canonical_candidate)
         .map_err(|e| format!("remove {} failed: {e}", canonical_candidate.display()))?;
+
+    // Notify live agent sessions to drop the removed skill from their
+    // `## Installed Skills` catalogue (see `Agent::refresh_workflows`).
+    let _ = crate::core::event_bus::publish_global(
+        crate::core::event_bus::DomainEvent::WorkflowsChanged {
+            reason: "uninstall".to_string(),
+        },
+    );
 
     Ok(UninstallWorkflowOutcome {
         name: trimmed,
@@ -817,4 +867,61 @@ fn is_private_v6(ip: &Ipv6Addr) -> bool {
         return true;
     }
     false
+}
+
+#[cfg(test)]
+mod install_fetch_tests {
+    use super::*;
+    use axum::{http::StatusCode, Router};
+    use tempfile::TempDir;
+
+    /// Spawn a throwaway local HTTP server whose every route answers with
+    /// `status`. Returns its `http://127.0.0.1:<port>` base.
+    async fn spawn_status(status: StatusCode) -> String {
+        let app = Router::new().fallback(move || async move { status });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://127.0.0.1:{}", addr.port())
+    }
+
+    /// TAURI-RUST-CGE: a non-2xx skill-install fetch always returns the
+    /// user-facing `Err` (so the UI surfaces "skill not found" / the failure),
+    /// for both a 4xx (which is NOT reported to Sentry) and a 5xx (which is).
+    /// Exercises both branches of the non-2xx handling; the report-suppression
+    /// polarity itself is asserted by `is_skills_install_client_error_event` in
+    /// observability. Uses the local-HTTP install escape hatch so the loopback
+    /// mock passes URL validation.
+    #[tokio::test]
+    async fn non_2xx_install_fetch_returns_err_for_4xx_and_5xx() {
+        let _env = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        std::env::set_var(ALLOW_LOCAL_HTTP_ENV, "1");
+
+        let tmp = TempDir::new().unwrap();
+
+        for status in [StatusCode::NOT_FOUND, StatusCode::INTERNAL_SERVER_ERROR] {
+            let base = spawn_status(status).await;
+            let url = format!("{base}/skill.md");
+            let err = install_workflow_from_url_with_home(
+                tmp.path(),
+                InstallWorkflowFromUrlParams {
+                    url,
+                    timeout_secs: Some(5),
+                },
+                None,
+            )
+            .await
+            .expect_err("a non-2xx fetch must return Err so the UI surfaces it");
+            assert!(
+                err.contains(&format!("returned status {}", status.as_u16())),
+                "error must surface the status to the UI: {err}"
+            );
+        }
+
+        std::env::remove_var(ALLOW_LOCAL_HTTP_ENV);
+    }
 }

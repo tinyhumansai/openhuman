@@ -132,8 +132,8 @@ fn resolve_connected_toolkits(
     slug: &str,
     live_connected: Option<&[String]>,
 ) -> (bool, Vec<String>) {
+    let mut allowed: Vec<String> = snapshot.iter().map(|(slug, _)| slug.clone()).collect();
     if snapshot.iter().any(|(known_slug, _)| known_slug == slug) {
-        let allowed = snapshot.iter().map(|(slug, _)| slug.clone()).collect();
         return (true, allowed);
     }
     if let Some(live) = live_connected {
@@ -141,10 +141,7 @@ fn resolve_connected_toolkits(
             return (true, live.to_vec());
         }
     }
-    (
-        false,
-        snapshot.iter().map(|(slug, _)| slug.clone()).collect(),
-    )
+    (false, allowed)
 }
 
 #[async_trait]

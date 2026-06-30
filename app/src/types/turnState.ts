@@ -5,7 +5,7 @@
  * to surface interrupted turns left behind by a previous core process.
  */
 
-export type PersistedTurnLifecycle = 'started' | 'streaming' | 'interrupted';
+export type PersistedTurnLifecycle = 'started' | 'streaming' | 'interrupted' | 'completed';
 
 export type PersistedTurnPhase = 'thinking' | 'tool_use' | 'subagent';
 
@@ -59,7 +59,44 @@ export interface PersistedSubagentToolCall {
   iteration?: number;
   elapsedMs?: number;
   outputChars?: number;
+  /** Server-computed human label for this child call (from `Tool::display_label`). */
+  displayName?: string;
+  /** Server-computed contextual detail (path / recipient / query). */
+  detail?: string;
 }
+
+/**
+ * One ordered item in the parent turn's processing transcript — the
+ * interleaved record of narration, reasoning, and tool calls used to render
+ * the "View processing" panel (mirrors the Rust `TranscriptItem`). `seq` is a
+ * monotonic per-turn ordering key; a `toolCall` item points at a row in
+ * {@link PersistedTurnState.toolTimeline} by `callId`.
+ */
+export type PersistedTranscriptItem =
+  | { kind: 'narration'; round: number; seq: number; text: string }
+  | { kind: 'thinking'; round: number; seq: number; text: string }
+  | { kind: 'toolCall'; round: number; seq: number; callId: string };
+
+/**
+ * One ordered item in a sub-agent's processing transcript (mirrors the Rust
+ * `SubagentTranscriptItem`). Unlike the parent transcript there is no `seq` —
+ * order is the array order. Persisting these lets the inline sub-agent thoughts
+ * survive a settled turn / reload.
+ */
+export type PersistedSubagentTranscriptItem =
+  | { kind: 'thinking'; iteration?: number; text: string }
+  | { kind: 'text'; iteration?: number; text: string }
+  | {
+      kind: 'tool';
+      iteration?: number;
+      callId: string;
+      toolName: string;
+      status: PersistedToolStatus;
+      elapsedMs?: number;
+      outputChars?: number;
+      displayName?: string;
+      detail?: string;
+    };
 
 export interface PersistedSubagentActivity {
   taskId: string;
@@ -75,6 +112,10 @@ export interface PersistedSubagentActivity {
   /** Persistent worker sub-thread id backing this delegation (camelCase from core). */
   workerThreadId?: string;
   toolCalls: PersistedSubagentToolCall[];
+  /** Ordered reasoning/narration/tool transcript for this sub-agent — what the
+   *  inline thoughts render from. Absent on snapshots written before this
+   *  field; the UI then falls back to rebuilding tool-only items. */
+  transcript?: PersistedSubagentTranscriptItem[];
 }
 
 export interface PersistedToolTimelineEntry {
@@ -101,6 +142,9 @@ export interface PersistedTurnState {
   streamingText: string;
   thinking: string;
   toolTimeline: PersistedToolTimelineEntry[];
+  /** Ordered narration/thinking/tool transcript for the processing panel.
+   *  Absent on snapshots written before this field. */
+  transcript?: PersistedTranscriptItem[];
   taskBoard?: TaskBoard | null;
   startedAt: string;
   updatedAt: string;

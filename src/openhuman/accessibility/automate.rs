@@ -657,13 +657,17 @@ impl AutomateBackend for RealBackend {
     }
 
     async fn decide(&self, system: &str, user: &str) -> Result<String, String> {
-        // Fast tier: the `memory` role maps to `memory_provider` — a cheap,
-        // quick model class. A dedicated `automation` provider knob is a
-        // follow-up (see plan §5); routing through `memory` keeps M1 free of
-        // Config-schema churn while still keeping the chat model out of the loop.
-        let (provider, model) =
-            crate::openhuman::inference::provider::create_chat_provider("memory", &self.config)
-                .map_err(|e| format!("fast-model provider unavailable: {e}"))?;
+        // Fast tier: the canonical `summarization` hint maps to `memory_provider`
+        // (the Settings "Memory" routing row) — a cheap, quick model class, and on
+        // the managed backend the dedicated `summarization-v1` tier. A dedicated
+        // `automation` provider knob is a follow-up (see plan §5); routing through
+        // `summarization` keeps M1 free of Config-schema churn while still keeping
+        // the chat model out of the loop.
+        let (provider, model) = crate::openhuman::inference::provider::create_chat_provider(
+            "summarization",
+            &self.config,
+        )
+        .map_err(|e| format!("fast-model provider unavailable: {e}"))?;
         provider
             .chat_with_system(Some(system), user, &model, 0.0)
             .await

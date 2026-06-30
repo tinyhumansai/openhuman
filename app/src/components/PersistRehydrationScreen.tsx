@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useT } from '../lib/i18n/I18nContext';
 import { persistor } from '../store';
 import RouteLoadingScreen from './RouteLoadingScreen';
+import Button from './ui/Button';
 
 const persistWarn = debug('persist:warn');
 
@@ -54,21 +55,15 @@ function PersistRehydrationScreen() {
   };
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center bg-canvas-50 dark:bg-neutral-950 p-6">
-      <div className="max-w-sm w-full space-y-4 rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 shadow-soft text-center">
-        <p className="text-sm font-medium text-stone-900 dark:text-neutral-100">
-          {t('app.persistRehydration.heading')}
-        </p>
-        <p className="text-xs text-stone-500 dark:text-neutral-400 leading-relaxed">
+    <div className="fixed inset-0 flex items-center justify-center bg-canvas-50 dark:bg-surface-canvas p-6">
+      <div className="max-w-sm w-full space-y-4 rounded-xl border border-line bg-surface p-6 shadow-soft text-center">
+        <p className="text-sm font-medium text-content">{t('app.persistRehydration.heading')}</p>
+        <p className="text-xs text-content-muted leading-relaxed">
           {t('app.persistRehydration.body')}
         </p>
-        <button
-          type="button"
-          onClick={handleReset}
-          disabled={resetting}
-          className="w-full rounded-xl bg-primary-500 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60">
+        <Button onClick={handleReset} disabled={resetting} className="w-full">
           {resetting ? t('app.persistRehydration.resetting') : t('app.persistRehydration.resetCta')}
-        </button>
+        </Button>
       </div>
     </div>
   );

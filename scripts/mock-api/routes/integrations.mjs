@@ -146,15 +146,31 @@ export function handleIntegrations(ctx) {
     const inputs = Array.isArray(parsedBody?.input)
       ? parsedBody.input
       : [parsedBody?.input ?? ""];
+    // Honor the OpenAI `dimensions` parameter when present (the embeddings
+    // client sends it for `text-embedding-3-*` models). The save-time
+    // verification probe validates `vector.len() == configured dims`, so the
+    // returned vector must match the requested size; default to 4 for callers
+    // that don't request a specific size.
+    const requestedDims =
+      Number.isInteger(parsedBody?.dimensions) && parsedBody.dimensions > 0
+        ? parsedBody.dimensions
+        : 4;
     const data = inputs.map((input, index) => {
       const text = String(input ?? "");
-      // Keep the vector tiny but deterministic so callers that cache /
-      // compare embeddings can still observe stable output.
+      // Keep the vector deterministic so callers that cache / compare
+      // embeddings can still observe stable output: the first components keep
+      // the original `[basis, basis/10, basis/100, 1]` pattern, padded to the
+      // requested length.
       const basis = text.length || index + 1;
+      const seed = [basis, basis / 10, basis / 100, 1];
+      const embedding = Array.from(
+        { length: requestedDims },
+        (_, i) => seed[i] ?? 0,
+      );
       return {
         object: "embedding",
         index,
-        embedding: [basis, basis / 10, basis / 100, 1],
+        embedding,
       };
     });
     json(res, 200, {
@@ -334,11 +350,23 @@ export function handleIntegrations(ctx) {
     /^\/agent-integrations\/composio\/tools\/?(\?.*)?$/.test(url)
   ) {
     // Parse toolkits and tags from the query string.
-    const qs = url.includes("?") ? new URLSearchParams(url.split("?")[1]) : new URLSearchParams();
+    const qs = url.includes("?")
+      ? new URLSearchParams(url.split("?")[1])
+      : new URLSearchParams();
     const toolkitsParam = qs.get("toolkits") ?? "";
     const tagsParam = qs.get("tags") ?? "";
-    const requestedToolkits = toolkitsParam ? toolkitsParam.split(",").map(t => t.trim().toLowerCase()).filter(Boolean) : [];
-    const requestedTags = tagsParam ? tagsParam.split(",").map(t => t.trim().toLowerCase()).filter(Boolean) : [];
+    const requestedToolkits = toolkitsParam
+      ? toolkitsParam
+          .split(",")
+          .map((t) => t.trim().toLowerCase())
+          .filter(Boolean)
+      : [];
+    const requestedTags = tagsParam
+      ? tagsParam
+          .split(",")
+          .map((t) => t.trim().toLowerCase())
+          .filter(Boolean)
+      : [];
 
     // Allow tests to inject per-tag tool lists via
     //   composioToolsByTag_<tag>  (e.g. "composioToolsByTag_stars")
@@ -373,9 +401,11 @@ export function handleIntegrations(ctx) {
       // Filter by toolkits when requested and the knob returns a list with a
       // "function.name" slug we can match (e.g. "GITHUB_*").
       if (requestedToolkits.length > 0 && tools.length > 0) {
-        tools = tools.filter(t => {
+        tools = tools.filter((t) => {
           const name = (t?.function?.name ?? t?.name ?? "").toUpperCase();
-          return requestedToolkits.some(tk => name.startsWith(tk.toUpperCase() + "_"));
+          return requestedToolkits.some((tk) =>
+            name.startsWith(tk.toUpperCase() + "_"),
+          );
         });
       }
     }

@@ -7,6 +7,7 @@ import { useMemo } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { type CentralityResult, findBridges } from '../../lib/memory/graphCentrality';
+import Button from '../ui/Button';
 
 const MAX_ROWS = 25;
 
@@ -41,7 +42,7 @@ const GraphCentralityPanel = ({ result, loading, error, onRetry }: GraphCentrali
   const intro = (
     <div
       role="note"
-      className="rounded-lg border border-primary-200 dark:border-primary-500/30 bg-primary-50 dark:bg-primary-500/10 px-3 py-2 text-xs text-stone-700 dark:text-neutral-200">
+      className="rounded-lg border border-primary-200 dark:border-primary-500/30 bg-primary-50 dark:bg-primary-500/10 px-3 py-2 text-xs text-content-secondary">
       <p className="font-medium mb-1">{t('graphCentrality.title')}</p>
       <p>{t('graphCentrality.intro')}</p>
     </div>
@@ -60,14 +61,14 @@ const GraphCentralityPanel = ({ result, loading, error, onRetry }: GraphCentrali
             {[0, 1, 2].map(i => (
               <div
                 key={i}
-                className="animate-pulse rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 h-16"
+                className="animate-pulse rounded-lg border border-line bg-surface-muted h-16"
               />
             ))}
           </div>
           {[0, 1, 2, 3].map(i => (
             <div
               key={i}
-              className="animate-pulse rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 h-8"
+              className="animate-pulse rounded-lg border border-line bg-surface-muted h-8"
             />
           ))}
         </div>
@@ -84,12 +85,9 @@ const GraphCentralityPanel = ({ result, loading, error, onRetry }: GraphCentrali
             {t('graphCentrality.errorPrefix')} {error}
           </p>
           {onRetry && (
-            <button
-              type="button"
-              onClick={onRetry}
-              className="mt-2 rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-600">
+            <Button variant="primary" size="sm" onClick={onRetry} className="mt-2">
               {t('graphCentrality.retry')}
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -101,12 +99,10 @@ const GraphCentralityPanel = ({ result, loading, error, onRetry }: GraphCentrali
       <div className="space-y-4">
         {intro}
         <div className="py-8 text-center">
-          <h3 className="text-sm font-semibold text-stone-700 dark:text-neutral-200">
+          <h3 className="text-sm font-semibold text-content-secondary">
             {t('graphCentrality.empty')}
           </h3>
-          <p className="mt-1 text-xs text-stone-500 dark:text-neutral-400">
-            {t('graphCentrality.emptyHint')}
-          </p>
+          <p className="mt-1 text-xs text-content-muted">{t('graphCentrality.emptyHint')}</p>
         </div>
       </div>
     );
@@ -126,19 +122,15 @@ const GraphCentralityPanel = ({ result, loading, error, onRetry }: GraphCentrali
           { label: t('graphCentrality.metricConnections'), value: result.edgeCount },
           { label: t('graphCentrality.metricClusters'), value: result.componentCount },
         ].map(tile => (
-          <div
-            key={tile.label}
-            className="rounded-lg border border-stone-200 dark:border-neutral-800 p-3">
-            <div className="text-[10px] uppercase tracking-wider text-stone-400 dark:text-neutral-500">
+          <div key={tile.label} className="rounded-lg border border-line p-3">
+            <div className="text-[10px] uppercase tracking-wider text-content-faint">
               {tile.label}
             </div>
-            <div className="text-lg font-semibold tabular-nums text-stone-900 dark:text-neutral-100">
-              {tile.value}
-            </div>
+            <div className="text-lg font-semibold tabular-nums text-content">{tile.value}</div>
           </div>
         ))}
       </div>
-      <p className="text-[11px] text-stone-500 dark:text-neutral-400">
+      <p className="text-[11px] text-content-muted">
         {t('graphCentrality.clustersCaption')
           .replace('{components}', String(result.componentCount))
           .replace('{largest}', String(largestCluster))}
@@ -155,11 +147,11 @@ const GraphCentralityPanel = ({ result, loading, error, onRetry }: GraphCentrali
       <section aria-labelledby="graph-centrality-heading" className="space-y-1">
         <h3
           id="graph-centrality-heading"
-          className="text-xs font-semibold uppercase tracking-wider text-stone-500 dark:text-neutral-400">
+          className="text-xs font-semibold uppercase tracking-wider text-content-muted">
           {t('graphCentrality.rankedHeading')}
         </h3>
         <table className="w-full text-left text-[11px] tabular-nums">
-          <thead className="text-stone-400 dark:text-neutral-500">
+          <thead className="text-content-faint">
             <tr>
               <th scope="col" className="w-8 py-1 pr-2 font-medium">
                 {t('graphCentrality.colRank')}
@@ -177,9 +169,9 @@ const GraphCentralityPanel = ({ result, loading, error, onRetry }: GraphCentrali
           </thead>
           <tbody>
             {rows.map((node, i) => (
-              <tr key={node.id} className="border-t border-stone-100 dark:border-neutral-800/60">
-                <td className="py-1 pr-2 text-stone-400 dark:text-neutral-500">{i + 1}</td>
-                <td className="py-1 pr-2 text-stone-800 dark:text-neutral-100 break-words">
+              <tr key={node.id} className="border-t border-line-subtle dark:border-line/60">
+                <td className="py-1 pr-2 text-content-faint">{i + 1}</td>
+                <td className="py-1 pr-2 text-content break-words">
                   {node.id}
                   {bridgeIds.has(node.id) && (
                     <span
@@ -191,19 +183,19 @@ const GraphCentralityPanel = ({ result, loading, error, onRetry }: GraphCentrali
                 </td>
                 <td className="py-1 pr-2">
                   <div className="flex items-center gap-2">
-                    <div className="flex-1 h-2 rounded bg-stone-100 dark:bg-neutral-800 overflow-hidden">
+                    <div className="flex-1 h-2 rounded bg-surface-subtle overflow-hidden">
                       <div
                         className="h-full bg-primary-400/70"
                         style={{ width: `${(node.pageRank / maxRank) * 100}%` }}
                       />
                     </div>
-                    <span className="w-12 shrink-0 text-right text-stone-500 dark:text-neutral-400">
+                    <span className="w-12 shrink-0 text-right text-content-muted">
                       {node.pageRank.toFixed(3)}
                     </span>
                   </div>
                 </td>
                 <td
-                  className="py-1 text-right text-stone-500 dark:text-neutral-400"
+                  className="py-1 text-right text-content-muted"
                   title={t('graphCentrality.degreeTitle')
                     .replace('{in}', String(node.inDegree))
                     .replace('{out}', String(node.outDegree))}

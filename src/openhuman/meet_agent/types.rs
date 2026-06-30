@@ -160,6 +160,27 @@ pub struct ListCallsResponse {
     pub count: usize,
 }
 
+/// Inputs to `openhuman.meet_agent_get_call_detail`.
+///
+/// Loads the transcript + generated summary for a single completed call so the
+/// recent-calls panel can expand a row without bloating the list payload.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GetCallDetailRequest {
+    /// request_id of the call. Matches the `request_id` field of the
+    /// `MeetCallRecord` rows returned by `list_calls`.
+    pub request_id: String,
+}
+
+/// Outputs from `openhuman.meet_agent_get_call_detail`.
+#[derive(Debug, Clone, Serialize)]
+pub struct GetCallDetailResponse {
+    pub ok: bool,
+    /// The persisted detail, or `null` when none exists for this call (older
+    /// calls recorded before the feature, or a best-effort detail write that
+    /// failed). The UI degrades to "no transcript yet" in that case.
+    pub detail: Option<super::store::MeetCallDetail>,
+}
+
 /// Inputs to `openhuman.meet_agent_stop_session`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct StopSessionRequest {

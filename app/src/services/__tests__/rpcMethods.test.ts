@@ -82,6 +82,13 @@ describe('rpcMethods catalog', () => {
       );
     });
 
+    test('dotted tool_registry.diagnostics resolves to the canonical method (#3294)', () => {
+      expect(normalizeRpcMethod('tool_registry.diagnostics')).toBe(
+        CORE_RPC_METHODS.toolRegistryDiagnostics
+      );
+      expect(CORE_RPC_METHODS.toolRegistryDiagnostics).toBe('openhuman.tool_registry_diagnostics');
+    });
+
     test('canonical mcp_clients_installed_list passes through unchanged', () => {
       expect(normalizeRpcMethod('openhuman.mcp_clients_installed_list')).toBe(
         'openhuman.mcp_clients_installed_list'
@@ -110,6 +117,17 @@ describe('rpcMethods catalog', () => {
       expect(normalizeRpcMethod('openhuman.health_system_info')).toBe(
         'openhuman.health_system_info'
       );
+    });
+  });
+
+  describe('channels legacy alias resolution (Sentry OPENHUMAN-CORE-1Y / OPENHUMAN-CORE-1Z)', () => {
+    test('dotted channel list aliases resolve to channels_list', () => {
+      expect(normalizeRpcMethod('channels.list')).toBe(CORE_RPC_METHODS.channelsList);
+      expect(normalizeRpcMethod('openhuman.channels.list')).toBe(CORE_RPC_METHODS.channelsList);
+    });
+
+    test('canonical channels_list passes through unchanged', () => {
+      expect(normalizeRpcMethod('openhuman.channels_list')).toBe('openhuman.channels_list');
     });
   });
 
@@ -144,7 +162,15 @@ describe('rpcMethods catalog', () => {
         'utf8'
       ),
       fs.readFileSync(
+        path.resolve(__dirname, '../../../../src/openhuman/tool_registry/schemas.rs'),
+        'utf8'
+      ),
+      fs.readFileSync(
         path.resolve(__dirname, '../../../../src/openhuman/health/schemas.rs'),
+        'utf8'
+      ),
+      fs.readFileSync(
+        path.resolve(__dirname, '../../../../src/openhuman/channels/controllers/schemas.rs'),
         'utf8'
       ),
     ].join('\n');
@@ -165,7 +191,11 @@ describe('rpcMethods catalog', () => {
                 ? 'mcp_clients'
                 : methodRoot.startsWith('health_')
                   ? 'health'
-                  : 'config';
+                  : methodRoot.startsWith('channels_')
+                    ? 'channels'
+                    : methodRoot.startsWith('tool_registry_')
+                      ? 'tool_registry'
+                      : 'config';
       const fnName = methodRoot.slice(`${namespace}_`.length);
       expect(schemaSources).toContain(`namespace: "${namespace}"`);
       expect(schemaSources).toContain(`function: "${fnName}"`);

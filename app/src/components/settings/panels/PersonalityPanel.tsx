@@ -1,9 +1,7 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { useT } from '../../../lib/i18n/I18nContext';
-import PanelPage from '../../layout/PanelPage';
-import SettingsBackButton from '../components/SettingsBackButton';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 import MascotPanel from './MascotPanel';
 import PersonaPanel from './PersonaPanel';
 
@@ -22,7 +20,6 @@ const hashToTab = (hash: string): TabId => (hash === '#face' ? 'face' : 'persona
  */
 const PersonalityPanel = () => {
   const { t } = useT();
-  const { navigateBack } = useSettingsNavigation();
   const location = useLocation();
   const navigate = useNavigate();
   // The router is the single source of truth for the active tab.
@@ -33,10 +30,8 @@ const PersonalityPanel = () => {
   };
 
   return (
-    <PanelPage<TabId>
-      className="z-10"
+    <SettingsPanel<TabId>
       description={t('settings.personalityFace.menuDesc')}
-      leading={<SettingsBackButton onBack={navigateBack} />}
       tabsAriaLabel={t('settings.personalityFace.title')}
       tabsTestIdPrefix="personality-tab"
       value={tab}

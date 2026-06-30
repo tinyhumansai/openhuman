@@ -18,6 +18,10 @@ pub(super) struct SubagentObserver {
     pub(super) task_id: String,
     pub(super) force_text_mode: bool,
     pub(super) usage: AggregatedUsage,
+    /// Provenance + usage of the sub-agent's most recent provider call. Persisted
+    /// onto the transcript's last assistant message (carries provider + model so
+    /// per-thread usage reads can price the sub-agent at its actual model).
+    pub(super) last_turn_usage: Option<transcript::TurnUsage>,
 }
 
 impl SubagentObserver {
@@ -70,7 +74,17 @@ impl SubagentObserver {
         let now = chrono::Utc::now().to_rfc3339();
         let meta = transcript::TranscriptMeta {
             agent_name: self.agent_id.clone(),
+            agent_id: Some(self.agent_id.clone()),
+            agent_type: Some("subagent".to_string()),
             dispatcher: "native".into(),
+            provider: self
+                .last_turn_usage
+                .as_ref()
+                .map(|usage| usage.provider.clone()),
+            model: self
+                .last_turn_usage
+                .as_ref()
+                .map(|usage| usage.model.clone()),
             created: now.clone(),
             updated: now,
             turn_count: 1,
@@ -79,8 +93,11 @@ impl SubagentObserver {
             cached_input_tokens: self.usage.cached_input_tokens,
             charged_amount_usd: self.usage.charged_amount_usd,
             thread_id: crate::openhuman::inference::provider::thread_context::current_thread_id(),
+            task_id: Some(self.task_id.clone()),
         };
-        if let Err(err) = transcript::write_transcript(&path, history, &meta, None) {
+        if let Err(err) =
+            transcript::write_transcript(&path, history, &meta, self.last_turn_usage.as_ref())
+        {
             tracing::debug!(
                 agent_id = %self.agent_id,
                 error = %err,
@@ -94,26 +111,64 @@ impl SubagentObserver {
 impl super::super::super::engine::TurnObserver for SubagentObserver {
     fn record_usage(
         &mut self,
-        _model: &str,
+        provider: &str,
+        model: &str,
         usage: &crate::openhuman::inference::provider::UsageInfo,
     ) {
         self.usage.input_tokens += usage.input_tokens;
         self.usage.output_tokens += usage.output_tokens;
         self.usage.cached_input_tokens += usage.cached_input_tokens;
-        self.usage.charged_amount_usd += usage.charged_amount_usd;
+        // Effective per-call cost: backend-charged when present, else the
+        // per-model catalog estimate (#4124) — so a sub-agent on a BYO/local
+        // provider that bills no charge still contributes a priced cost to the
+        // parent turn's net total. `charged_amount_usd` here is the *net cost*,
+        // matching the parent adapter's convention.
+        let call_cost = crate::openhuman::agent::cost::call_cost_usd(model, usage);
+        self.usage.charged_amount_usd += call_cost;
+        // Mirror the parent adapter: feed every sub-agent provider call into the
+        // global cost tracker so the cost dashboard/summary reflects delegated
+        // spend (previously sub-agent tokens were invisible to it). The per-turn
+        // rollup into the UI footer happens separately via `turn_subagent_usage`.
+        crate::openhuman::cost::record_provider_usage(model, usage);
+        // Provenance for the transcript's last assistant message (#4134): keeps
+        // the provider + model so per-thread usage reads can price the sub-agent
+        // at its actual model.
+        self.last_turn_usage = Some(transcript::TurnUsage {
+            provider: provider.to_string(),
+            model: model.to_string(),
+            usage: transcript::MessageUsage {
+                input: usage.input_tokens,
+                output: usage.output_tokens,
+                cached_input: usage.cached_input_tokens,
+                context_window: usage.context_window,
+                cost_usd: call_cost,
+            },
+            ts: chrono::Utc::now().to_rfc3339(),
+            reasoning_content: None,
+            tool_calls: Vec::new(),
+            iteration: 0,
+        });
     }
 
     async fn on_assistant(
         &mut self,
         _display_text: &str,
         response_text: &str,
-        _reasoning_content: Option<&str>,
-        _native_tool_calls: &[crate::openhuman::inference::provider::ToolCall],
+        reasoning_content: Option<&str>,
+        native_tool_calls: &[crate::openhuman::inference::provider::ToolCall],
         parsed_calls: &[super::super::super::parse::ParsedToolCall],
         iteration: usize,
         is_final: bool,
     ) {
         let tool_calls = parsed_calls.len();
+        if let Some(ref mut usage) = self.last_turn_usage {
+            usage.reasoning_content = reasoning_content
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string);
+            usage.tool_calls = native_tool_calls.to_vec();
+            usage.iteration = (iteration + 1) as u32;
+        }
         let extra = if is_final {
             serde_json::json!({
                 "scope": "worker_thread",

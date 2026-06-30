@@ -4,19 +4,17 @@ import ScreenIntelligenceDebugPanel from '../../../components/intelligence/Scree
 import { useScreenIntelligenceState } from '../../../features/screen-intelligence/useScreenIntelligenceState';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { isTauri, openhumanUpdateScreenIntelligenceSettings } from '../../../utils/tauriCommands';
-import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import Input from '../../ui/Input';
-import SettingsBackButton from '../components/SettingsBackButton';
 import {
   SettingsCheckbox,
   SettingsEmptyState,
+  SettingsNumberField,
   SettingsRow,
   SettingsSection,
   SettingsStatusLine,
   SettingsTextArea,
 } from '../controls';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 
 const DebugSection = ({
   state,
@@ -33,9 +31,9 @@ const DebugSection = ({
         <button
           type="button"
           onClick={() => setIsOpen(prev => !prev)}
-          className="flex w-full items-center justify-between text-sm font-semibold text-neutral-800 dark:text-neutral-100">
+          className="flex w-full items-center justify-between text-sm font-semibold text-content">
           <span>{t('screenAwareness.debug.debugAndDiagnostics')}</span>
-          <span className="text-xs text-neutral-500 dark:text-neutral-400">
+          <span className="text-xs text-content-muted">
             {isOpen ? t('screenAwareness.debug.collapse') : t('screenAwareness.debug.expand')}
           </span>
         </button>
@@ -47,7 +45,6 @@ const DebugSection = ({
 
 const ScreenAwarenessDebugPanel = () => {
   const { t } = useT();
-  const { navigateBack } = useSettingsNavigation();
   const {
     status,
     lastError,
@@ -118,31 +115,27 @@ const ScreenAwarenessDebugPanel = () => {
   };
 
   return (
-    <PanelPage
-      className="z-10"
-      contentClassName=""
-      description={t('settings.developerMenu.screenAwareness.desc')}
-      leading={<SettingsBackButton onBack={navigateBack} />}>
-      <div className="max-w-2xl mx-auto w-full p-4 space-y-4">
+    <SettingsPanel description={t('settings.developerMenu.screenAwareness.desc')}>
+      <>
         {/* Advanced policy settings */}
         <SettingsSection title={t('screenAwareness.debug.policyTitle')}>
           <div className="px-4 py-3 space-y-3">
-            <label className="flex items-center justify-between rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 px-3 py-2">
-              <span className="text-sm text-neutral-800 dark:text-neutral-200">
-                {t('screenAwareness.debug.baselineFps')}
-              </span>
-              <Input
-                type="number"
-                inputSize="sm"
-                min={0.2}
-                max={30}
-                step={0.1}
-                value={baselineFps}
-                onChange={event => setBaselineFps(event.target.value)}
-                className="w-24"
-                aria-label={t('screenAwareness.debug.baselineFps')}
-              />
-            </label>
+            <SettingsRow
+              htmlFor="screen-baseline-fps"
+              label={t('screenAwareness.debug.baselineFps')}
+              control={
+                <SettingsNumberField
+                  id="screen-baseline-fps"
+                  min={0.2}
+                  max={30}
+                  step={0.1}
+                  value={baselineFps}
+                  onChange={setBaselineFps}
+                  onCommit={() => {}}
+                  aria-label={t('screenAwareness.debug.baselineFps')}
+                />
+              }
+            />
 
             <SettingsRow
               htmlFor="screen-use-vision-model"
@@ -171,7 +164,7 @@ const ScreenAwarenessDebugPanel = () => {
             />
 
             <div className="space-y-1">
-              <div className="text-xs text-neutral-500 dark:text-neutral-400">
+              <div className="text-xs text-content-muted">
                 {t('screenAwareness.debug.allowlist')}
               </div>
               <SettingsTextArea
@@ -183,7 +176,7 @@ const ScreenAwarenessDebugPanel = () => {
             </div>
 
             <div className="space-y-1">
-              <div className="text-xs text-neutral-500 dark:text-neutral-400">
+              <div className="text-xs text-content-muted">
                 {t('screenAwareness.debug.denylist')}
               </div>
               <SettingsTextArea
@@ -208,7 +201,7 @@ const ScreenAwarenessDebugPanel = () => {
 
         {/* Session stats */}
         <SettingsSection title={t('screenAwareness.debug.sessionStats')}>
-          <div className="px-4 py-3 text-sm text-neutral-500 dark:text-neutral-400 space-y-1">
+          <div className="px-4 py-3 text-sm text-content-muted space-y-1">
             <div>
               {t('screenAwareness.debug.framesEphemeral')}: {status?.session.frames_in_memory ?? 0}
             </div>
@@ -253,15 +246,13 @@ const ScreenAwarenessDebugPanel = () => {
                 {recentVisionSummaries.map(summary => (
                   <div
                     key={summary.id}
-                    className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3 text-xs">
-                    <div className="text-neutral-500 dark:text-neutral-400">
+                    className="rounded-xl border border-line bg-surface p-3 text-xs">
+                    <div className="text-content-muted">
                       {new Date(summary.captured_at_ms).toLocaleTimeString()} ·{' '}
                       {summary.app_name ?? t('screenAwareness.debug.unknownApp')}
                       {summary.window_title ? ` · ${summary.window_title}` : ''}
                     </div>
-                    <div className="mt-1 text-neutral-800 dark:text-neutral-100">
-                      {summary.actionable_notes}
-                    </div>
+                    <div className="mt-1 text-content">{summary.actionable_notes}</div>
                   </div>
                 ))}
               </div>
@@ -293,8 +284,8 @@ const ScreenAwarenessDebugPanel = () => {
 
         {/* Error notice */}
         {lastError && <SettingsStatusLine saving={false} error={lastError} savingLabel="" />}
-      </div>
-    </PanelPage>
+      </>
+    </SettingsPanel>
   );
 };
 

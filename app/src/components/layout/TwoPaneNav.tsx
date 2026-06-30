@@ -24,7 +24,7 @@ interface TwoPaneNavProps {
 /**
  * Vertical, grouped tab navigation for the sidebar pane of a
  * {@link TwoPanelLayout} — the left-rail counterpart to a horizontal
- * PillTabBar, styled to match the settings sidebar (title header, labelled
+ * ChipTabs row, styled to match the settings sidebar (title header, labelled
  * sub-groups, icon + label rows). The list scrolls independently below the
  * optional fixed header.
  */
@@ -43,7 +43,7 @@ export default function TwoPaneNav({
           <div key={group.label ?? `__group-${groupIndex}`}>
             {group.label && (
               <div className="px-2 pb-0.5 pt-2.5">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-stone-500 dark:text-neutral-400">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-content-muted">
                   {group.label}
                 </span>
               </div>
@@ -60,14 +60,12 @@ export default function TwoPaneNav({
                       onClick={() => onSelect(item.value)}
                       className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors ${
                         active
-                          ? 'bg-stone-100 font-medium text-stone-900 dark:bg-neutral-800 dark:text-neutral-100'
-                          : 'text-stone-600 hover:bg-stone-50 hover:text-stone-900 dark:text-neutral-300 dark:hover:bg-neutral-800/60 dark:hover:text-neutral-100'
+                          ? 'bg-surface-subtle font-medium text-content'
+                          : 'text-content-secondary hover:bg-surface-hover hover:text-content'
                       }`}>
                       <span
                         className={`shrink-0 ${
-                          active
-                            ? 'text-primary-600 dark:text-primary-400'
-                            : 'text-stone-400 dark:text-neutral-500'
+                          active ? 'text-primary-600 dark:text-primary-400' : 'text-content-faint'
                         }`}>
                         {item.icon ?? null}
                       </span>

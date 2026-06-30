@@ -316,6 +316,7 @@ async fn models_handler(State(_state): State<AppState>) -> Response {
         config.reasoning_provider.as_deref(),
         config.agentic_provider.as_deref(),
         config.coding_provider.as_deref(),
+        config.vision_provider.as_deref(),
         config.memory_provider.as_deref(),
         config.embeddings_provider.as_deref(),
         config.heartbeat_provider.as_deref(),

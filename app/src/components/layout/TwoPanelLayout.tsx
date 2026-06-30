@@ -103,8 +103,7 @@ export interface TwoPanelLayoutProps {
 }
 
 /** Default card look shared by both panes. */
-export const DEFAULT_PANE_CLASS =
-  'bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800';
+export const DEFAULT_PANE_CLASS = 'bg-surface rounded-2xl shadow-soft border border-line';
 
 const DEFAULT_MIN_WIDTH = 180;
 const DEFAULT_MAX_WIDTH = 480;
@@ -279,7 +278,7 @@ export default function TwoPanelLayout({
               seamless
                 ? // Flush hairline seam: 1px visible line, wider invisible hit
                   // area, highlights on hover/focus.
-                  'group relative w-px flex-shrink-0 cursor-col-resize select-none self-stretch bg-stone-200 dark:bg-neutral-800 focus:outline-none'
+                  'group relative w-px flex-shrink-0 cursor-col-resize select-none self-stretch bg-surface-strong focus:outline-none'
                 : `group relative flex flex-shrink-0 cursor-col-resize select-none items-center justify-center self-stretch focus:outline-none ${
                     // Tighter gutter between panes when there's no visible handle.
                     showDividerHandle ? 'mx-1 w-3' : 'mx-0 w-1.5'
@@ -316,7 +315,7 @@ export default function TwoPanelLayout({
           onClick={() => dispatch(setSidebarVisible({ id, visible: true }))}
           title={t('layout.showSidebar')}
           aria-label={t('layout.showSidebar')}
-          className="flex-shrink-0 w-6 self-stretch flex items-center justify-center text-stone-400 dark:text-neutral-500 hover:text-primary-500 hover:bg-stone-50 dark:hover:bg-neutral-800/60 transition-colors">
+          className="flex-shrink-0 w-6 self-stretch flex items-center justify-center text-content-faint hover:text-primary-500 hover:bg-surface-hover transition-colors">
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
           </svg>

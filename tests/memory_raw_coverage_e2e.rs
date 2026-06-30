@@ -611,7 +611,10 @@ fn threads_turn_state_store_skips_corrupt_entries_and_marks_interrupted() {
                 iteration: Some(1),
                 elapsed_ms: Some(20),
                 output_chars: Some(64),
+                display_name: None,
+                detail: None,
             }],
+            transcript: vec![],
         }),
     });
     let second = TurnState::started("thread-b", "req-b", 2, "2026-05-29T12:01:00Z");

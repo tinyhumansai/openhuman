@@ -109,18 +109,16 @@ export function TeamTaskBoard({ tasks, members }: TeamTaskBoardProps) {
         return (
           <section
             key={column.status}
-            className={`min-w-0 rounded-lg bg-stone-50 p-2 dark:bg-neutral-800/60 ${accentClass}`}>
+            className={`min-w-0 rounded-lg bg-surface-muted p-2 ${accentClass}`}>
             <div className="mb-2 flex items-center justify-between gap-2">
-              <h5 className="truncate text-[11px] font-medium text-stone-600 dark:text-neutral-300">
+              <h5 className="truncate text-[11px] font-medium text-content-secondary">
                 {t(column.labelKey)}
               </h5>
-              <span className="text-[10px] text-stone-400 dark:text-neutral-500">
-                {cards.length}
-              </span>
+              <span className="text-[10px] text-content-faint">{cards.length}</span>
             </div>
             <div className="space-y-2">
               {cards.length === 0 ? (
-                <p className="py-2 text-center text-[10px] text-stone-400 dark:text-neutral-600">
+                <p className="py-2 text-center text-[10px] text-content-faint dark:text-neutral-600">
                   {t('intelligence.teams.emptyColumn')}
                 </p>
               ) : (
@@ -163,13 +161,11 @@ function TeamTaskCard({
   return (
     <article
       style={borderStyle}
-      className="rounded-lg border border-stone-200 bg-white px-2.5 py-2 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
-      <p className="break-words text-xs font-medium leading-snug text-stone-800 dark:text-neutral-100">
-        {task.title}
-      </p>
+      className="rounded-lg border border-line bg-surface px-2.5 py-2 shadow-sm">
+      <p className="break-words text-xs font-medium leading-snug text-content">{task.title}</p>
 
       {showClaimer && (
-        <p className="mt-0.5 text-[10px] text-stone-500 dark:text-neutral-400">
+        <p className="mt-0.5 text-[10px] text-content-muted">
           {t('intelligence.teams.pickedUpBy').replace('{name}', claimer.name)}
         </p>
       )}
@@ -187,7 +183,7 @@ function TeamTaskCard({
             <span className="truncate">{owner.name}</span>
           </span>
         ) : (
-          <span className="rounded bg-stone-100 px-1.5 py-0.5 text-[10px] italic text-stone-400 dark:bg-neutral-800 dark:text-neutral-500">
+          <span className="rounded bg-surface-subtle px-1.5 py-0.5 text-[10px] italic text-content-faint">
             {t('intelligence.teams.unclaimed')}
           </span>
         )}
@@ -195,7 +191,7 @@ function TeamTaskCard({
         {unmet > 0 && (
           <span
             title={t('intelligence.teams.depLockTitle').replace('{count}', String(unmet))}
-            className="inline-flex items-center gap-1 rounded bg-stone-100 px-1.5 py-0.5 text-[10px] text-stone-600 dark:bg-neutral-800 dark:text-neutral-300">
+            className="inline-flex items-center gap-1 rounded bg-surface-subtle px-1.5 py-0.5 text-[10px] text-content-secondary">
             <LuLock className="h-2.5 w-2.5" />
             {unmet}
           </span>
@@ -212,7 +208,7 @@ function TeamTaskCard({
       </div>
 
       {task.objective && (
-        <p className="mt-1 break-words text-[11px] leading-snug text-stone-500 dark:text-neutral-400">
+        <p className="mt-1 break-words text-[11px] leading-snug text-content-muted">
           {task.objective}
         </p>
       )}
@@ -224,9 +220,7 @@ function GateBadge({ gateStatus, gateReason }: { gateStatus: string; gateReason?
   const { t } = useT();
   // Defensive mapping: an unseen gate string must render as a neutral chip
   // showing its raw value, never crash or vanish.
-  const style =
-    GATE_STYLE[gateStatus] ??
-    'bg-stone-100 text-stone-600 dark:bg-neutral-800 dark:text-neutral-300';
+  const style = GATE_STYLE[gateStatus] ?? 'bg-surface-subtle text-content-secondary';
   const label = GATE_LABEL_KEY[gateStatus]
     ? t(GATE_LABEL_KEY[gateStatus])
     : t('intelligence.teams.gate.label').replace('{status}', gateStatus);

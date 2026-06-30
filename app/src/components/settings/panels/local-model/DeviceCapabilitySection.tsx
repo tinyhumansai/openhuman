@@ -6,6 +6,7 @@ import {
   openhumanLocalAiApplyPreset,
   type PresetsResponse,
 } from '../../../../utils/tauriCommands';
+import Button from '../../../ui/Button';
 
 interface DeviceCapabilitySectionProps {
   presetsData: PresetsResponse | null;
@@ -77,12 +78,12 @@ const DeviceCapabilitySection = ({
 
   return (
     <section className="space-y-3">
-      <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+      <h3 className="text-sm font-semibold text-content">
         {t('settings.localModel.deviceCapability.modelTier')}
       </h3>
 
       {presetsLoading && !presetsData && (
-        <div className="bg-stone-50 dark:bg-neutral-800/60 rounded-lg border border-stone-200 dark:border-neutral-800 p-4 text-sm text-stone-500 dark:text-neutral-400 animate-pulse">
+        <div className="bg-surface-muted rounded-lg border border-line p-4 text-sm text-content-muted animate-pulse">
           {t('settings.localModel.deviceCapability.loadingDeviceInfo')}
         </div>
       )}
@@ -93,22 +94,22 @@ const DeviceCapabilitySection = ({
       )}
 
       {presetsData?.device && (
-        <div className="bg-stone-50 dark:bg-neutral-800/60 rounded-lg border border-stone-200 dark:border-neutral-800 p-3">
+        <div className="bg-surface-muted rounded-lg border border-line p-3">
           <div className="grid grid-cols-3 gap-3 text-xs">
             <div>
-              <div className="text-stone-500 dark:text-neutral-400 uppercase tracking-wide">
+              <div className="text-content-muted uppercase tracking-wide">
                 {t('settings.localModel.deviceCapability.ram')}
               </div>
-              <div className="text-stone-800 dark:text-neutral-100 mt-0.5 font-medium">
+              <div className="text-content mt-0.5 font-medium">
                 {formatRamGb(presetsData.device.total_ram_bytes)}
               </div>
             </div>
             <div>
-              <div className="text-stone-500 dark:text-neutral-400 uppercase tracking-wide">
+              <div className="text-content-muted uppercase tracking-wide">
                 {t('settings.localModel.deviceCapability.cpu')}
               </div>
               <div
-                className="text-stone-800 dark:text-neutral-100 mt-0.5 font-medium truncate"
+                className="text-content mt-0.5 font-medium truncate"
                 title={presetsData.device.cpu_brand}>
                 {t('settings.localModel.deviceCapability.cores').replace(
                   '{count}',
@@ -117,11 +118,11 @@ const DeviceCapabilitySection = ({
               </div>
             </div>
             <div>
-              <div className="text-stone-500 dark:text-neutral-400 uppercase tracking-wide">
+              <div className="text-content-muted uppercase tracking-wide">
                 {t('settings.localModel.deviceCapability.gpu')}
               </div>
               <div
-                className="text-stone-800 dark:text-neutral-100 mt-0.5 font-medium truncate"
+                className="text-content mt-0.5 font-medium truncate"
                 title={presetsData.device.gpu_description ?? undefined}>
                 {presetsData.device.has_gpu
                   ? (presetsData.device.gpu_description ??
@@ -175,15 +176,16 @@ const DeviceCapabilitySection = ({
               )}
               <div className="flex items-center gap-2 pt-1">
                 {onTriggerOllamaInstall && (
-                  <button
-                    type="button"
+                  <Button
+                    variant="primary"
+                    tone="danger"
+                    size="sm"
                     onClick={onTriggerOllamaInstall}
-                    disabled={isTriggeringInstall}
-                    className="px-3 py-1.5 text-xs rounded-md bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white font-medium">
+                    disabled={isTriggeringInstall}>
                     {isTriggeringInstall
                       ? t('settings.localModel.deviceCapability.retrying')
                       : t('settings.localModel.deviceCapability.retryInstall')}
-                  </button>
+                  </Button>
                 )}
                 <a
                   href="https://ollama.com"
@@ -226,11 +228,11 @@ const DeviceCapabilitySection = ({
             className={`w-full text-left rounded-lg border p-3 transition-colors ${
               isDisabledActive
                 ? 'border-primary-400 bg-primary-50 dark:bg-primary-500/10'
-                : 'border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800'
+                : 'border-line bg-surface-muted hover:bg-surface-hover dark:bg-surface-muted'
             } ${applying !== null ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                <span className="text-sm font-semibold text-content">
                   {t('settings.localModel.deviceCapability.disabled')}
                 </span>
                 {isDisabledActive && (
@@ -244,9 +246,9 @@ const DeviceCapabilitySection = ({
                   </span>
                 )}
               </div>
-              <span className="text-xs text-stone-500 dark:text-neutral-400">0 GB</span>
+              <span className="text-xs text-content-muted">0 GB</span>
             </div>
-            <div className="text-xs text-stone-500 dark:text-neutral-400 mt-1">
+            <div className="text-xs text-content-muted mt-1">
               {t('settings.localModel.deviceCapability.disabledDesc')}
             </div>
           </button>
@@ -267,26 +269,24 @@ const DeviceCapabilitySection = ({
                 className={`w-full text-left rounded-lg border p-3 transition-colors ${
                   isCurrent
                     ? 'border-primary-400 bg-primary-50 dark:bg-primary-500/10'
-                    : 'border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800'
+                    : 'border-line bg-surface-muted hover:bg-surface-hover dark:bg-surface-muted'
                 } ${
                   locked
-                    ? 'opacity-50 cursor-not-allowed hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60'
+                    ? 'opacity-50 cursor-not-allowed hover:bg-surface-hover dark:bg-surface-muted/60'
                     : applying !== null && !isApplying
                       ? 'opacity-60 cursor-not-allowed'
                       : 'cursor-pointer'
                 }`}>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-                      {preset.label}
-                    </span>
+                    <span className="text-sm font-semibold text-content">{preset.label}</span>
                     {isCurrent && (
                       <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-300 uppercase tracking-wide">
                         {t('settings.localModel.deviceCapability.active')}
                       </span>
                     )}
                     {isApplying && (
-                      <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-stone-100 dark:bg-neutral-800 text-stone-500 dark:text-neutral-400 uppercase tracking-wide">
+                      <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-surface-subtle text-content-muted uppercase tracking-wide">
                         {t('settings.localModel.deviceCapability.applying')}
                       </span>
                     )}
@@ -296,14 +296,12 @@ const DeviceCapabilitySection = ({
                       </span>
                     )}
                   </div>
-                  <span className="text-xs text-stone-500 dark:text-neutral-400">
+                  <span className="text-xs text-content-muted">
                     ~{Number(preset.approx_download_gb).toFixed(1)} GB
                   </span>
                 </div>
-                <div className="text-xs text-stone-400 dark:text-neutral-500 mt-1">
-                  {preset.description}
-                </div>
-                <div className="text-[10px] text-stone-500 dark:text-neutral-400 mt-1">
+                <div className="text-xs text-content-faint mt-1">{preset.description}</div>
+                <div className="text-[10px] text-content-muted mt-1">
                   {t('settings.localModel.deviceCapability.presetDetails')
                     .replace('{chatModel}', preset.chat_model_id)
                     .replace(

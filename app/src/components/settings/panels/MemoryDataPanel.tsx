@@ -8,6 +8,7 @@ import { VaultHealthChecklist } from '../../intelligence/VaultHealthChecklist';
 import PanelPage from '../../layout/PanelPage';
 import MemoryWindowControl from '../components/MemoryWindowControl';
 import SettingsBackButton from '../components/SettingsBackButton';
+import { SettingsSection } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 interface MemoryDataPanelProps {
@@ -54,38 +55,35 @@ const MemoryDataPanel = ({ embedded = false }: MemoryDataPanelProps = {}) => {
       contentClassName=""
       description={embedded ? undefined : t('devOptions.memoryInspectionDesc')}
       leading={embedded ? undefined : <SettingsBackButton onBack={navigateBack} />}>
-      <div className={embedded ? 'space-y-4' : 'p-4 space-y-4'}>
-        <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
-            {t('memoryData.howItWorks')}
-          </h3>
-          <dl className="space-y-2.5">
+      <div className={embedded ? 'space-y-5' : 'p-4 space-y-5'}>
+        <SettingsSection title={t('memoryData.howItWorks')}>
+          <dl className="space-y-2.5 px-4 py-3">
             <div>
-              <dt className="text-xs font-semibold text-neutral-800 dark:text-neutral-100">
+              <dt className="text-xs font-semibold text-content">
                 {t('memoryData.workspaceVault')}
               </dt>
-              <dd className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
+              <dd className="text-xs leading-relaxed text-content-muted">
                 {t('memoryData.workspaceVaultDesc')}
               </dd>
             </div>
             <div>
-              <dt className="text-xs font-semibold text-neutral-800 dark:text-neutral-100">
+              <dt className="text-xs font-semibold text-content">
                 {t('memoryData.connectedSources')}
               </dt>
-              <dd className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
+              <dd className="text-xs leading-relaxed text-content-muted">
                 {t('memoryData.connectedSourcesDesc')}
               </dd>
             </div>
             <div>
-              <dt className="text-xs font-semibold text-neutral-800 dark:text-neutral-100">
+              <dt className="text-xs font-semibold text-content">
                 {t('memoryData.internalFiles')}
               </dt>
-              <dd className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
+              <dd className="text-xs leading-relaxed text-content-muted">
                 {t('memoryData.internalFilesDesc')}
               </dd>
             </div>
           </dl>
-        </section>
+        </SettingsSection>
         <VaultHealthChecklist onToast={addToast} title={t('vaultHealth.setupTitle')} />
         <MemoryWindowControl onError={handleWindowError} onSaved={handleWindowSaved} />
         <MemoryWorkspace onToast={addToast} />

@@ -207,7 +207,7 @@ fn openai_codex_models_url_includes_client_version_query() {
     let url = append_query_param(
         "https://chatgpt.com/backend-api/codex/models",
         "client_version",
-        openai_codex_client_version(),
+        &openai_codex_client_version(),
     );
     let parsed = reqwest::Url::parse(&url).expect("url");
 
@@ -682,12 +682,37 @@ mod context_window_exceeded_suppression {
     }
 
     #[test]
+    fn classifies_lmstudio_n_keep_exceeds_n_ctx_body() {
+        // TAURI-RUST-6V0: LM Studio / llama.cpp reject a prompt whose
+        // un-evictable prefix (`n_keep`) is larger than the model's loaded
+        // context (`n_ctx`). The user loaded the model with too small a
+        // context length; the remediation lives in the user's local server,
+        // so the matcher must demote this from Sentry. Verbatim wire body.
+        let body = "lmstudio API error (400 Bad Request): {\"error\":\"The number of tokens to keep from the initial prompt is greater than the context length (n_keep: 10978 >= n_ctx: 8192). Try to load the model with a larger context length, or provide a shorter input.\"}";
+        assert!(
+            is_context_window_exceeded_message(body),
+            "LM Studio n_keep >= n_ctx body must classify as context-window overflow"
+        );
+        // Both anchors fire independently: the `greater than the context
+        // length` phrase AND the paired `n_keep`/`n_ctx` diagnostic.
+        assert!(is_context_window_exceeded_message(
+            "request rejected: prompt is greater than the context length of the loaded model"
+        ));
+        assert!(is_context_window_exceeded_message(
+            "n_keep: 9000 >= n_ctx: 4096"
+        ));
+    }
+
+    #[test]
     fn does_not_match_unrelated_bodies() {
         for body in [
             "rate limit exceeded, retry after 30s",
             "Invalid request: model not found",
             "Insufficient budget",
             "tool call exceeded the allowed budget",
+            // Only one of the paired n_keep/n_ctx tokens present — must NOT
+            // match (guards the paired-anchor arm against bare n_ctx logging).
+            "loaded model with n_ctx: 8192 and 32 layers",
         ] {
             assert!(
                 !is_context_window_exceeded_message(body),
@@ -923,13 +948,14 @@ fn parse_models_response_distinguishes_missing_data_field_from_wrong_type() {
     // shape (`object` + `data` keys both present, but `data` isn't an
     // array). The error MUST NOT say "missing" — it must surface the
     // actual JSON type so triage knows what shape the provider sent.
+    // `null` is deliberately excluded here — it is a valid empty catalog,
+    // not a wrong type (see `parse_models_response_treats_null_data_as_empty_list`).
     for (label, value) in [
         (
             "object",
             serde_json::json!({"object":"error","message":"boom"}),
         ),
         ("string", serde_json::json!("models go here")),
-        ("null", serde_json::Value::Null),
         ("bool", serde_json::json!(true)),
         ("number", serde_json::json!(42)),
     ] {
@@ -942,6 +968,71 @@ fn parse_models_response_distinguishes_missing_data_field_from_wrong_type() {
         assert!(
             err.contains(label),
             "wrong-type error must name the actual JSON kind ({label}): {err}"
+        );
+    }
+}
+
+#[test]
+fn parse_models_response_treats_null_data_as_empty_list() {
+    // TAURI-RUST-874 / TAURI-RUST-875: Ollama's OpenAI-compatible
+    // `/v1/models` null-encodes the catalog (`{"object":"list","data":null}`)
+    // when no models are pulled. A null `data`/`models` field is a valid empty
+    // model list, not a malformed envelope — it MUST parse to an empty Vec
+    // instead of manufacturing a hard error that floods Sentry.
+    let data_null = serde_json::json!({ "object": "list", "data": serde_json::Value::Null });
+    let models = parse_models_response(&data_null)
+        .expect("null `data` must parse as an empty catalog, not an error");
+    assert!(
+        models.is_empty(),
+        "null `data` must yield an empty model list, got {models:?}"
+    );
+
+    // The sibling `models` key (Codex-shaped envelope) gets the same treatment.
+    let models_null = serde_json::json!({ "object": "list", "models": serde_json::Value::Null });
+    let models = parse_models_response(&models_null)
+        .expect("null `models` must parse as an empty catalog, not an error");
+    assert!(
+        models.is_empty(),
+        "null `models` must yield an empty model list, got {models:?}"
+    );
+
+    // A bare success envelope with no `object` field still null-encodes an
+    // empty catalog (treated as success — `object` absent ⇒ not an error).
+    let object_absent = serde_json::json!({ "data": serde_json::Value::Null });
+    let models = parse_models_response(&object_absent)
+        .expect("null `data` with no `object` field must parse as an empty catalog");
+    assert!(
+        models.is_empty(),
+        "null `data` (object absent) must yield an empty model list, got {models:?}"
+    );
+}
+
+#[test]
+fn parse_models_response_rejects_null_data_on_error_envelope() {
+    // Codex P2 (PR #4157): an HTTP-200 error body such as
+    // `{"object":"error","data":null}` ALSO null-encodes `data`. The
+    // null-as-empty short-circuit MUST NOT swallow it as a successful empty
+    // catalog — that would hide provider/endpoint failures from the UI and
+    // Sentry. A non-"list" `object` with null `data` falls through to the
+    // descriptive malformed/error-envelope error, which surfaces `object`.
+    for field in ["data", "models"] {
+        let body = serde_json::json!({ "object": "error", field: serde_json::Value::Null });
+        let err = match parse_models_response(&body) {
+            Ok(models) => panic!(
+                "null `{field}` on an error envelope must fail, not return empty (got {models:?})"
+            ),
+            Err(err) => err,
+        };
+        assert!(
+            !err.contains("missing"),
+            "error-envelope null `{field}` must not say `missing`: {err}"
+        );
+        // Tighten on the surfaced `object` value, not the literal "error
+        // envelope" prose, so the assertion proves the provider error is
+        // actually carried through to triage.
+        assert!(
+            err.contains(r#""object" = "error""#),
+            "error-envelope null `{field}` must surface `\"object\" = \"error\"`: {err}"
         );
     }
 }
@@ -1080,6 +1171,170 @@ fn is_backend_auth_failure_only_matches_openhuman_backend_401_403() {
             "{provider} 403 must reach Sentry as actionable BYO-key error"
         );
     }
+}
+
+/// `is_byo_provider_auth_failure_http` demotes a non-backend provider's
+/// 401/403 from Sentry when the body looks like a missing/invalid BYO API
+/// key (TAURI-RUST-DHM: a `kiro` custom provider with no key flooded Sentry
+/// with 5,636 identical events from one user via the memory-tree retry loop).
+/// The gate is provider-scoped (backend keeps its SessionExpired branch) and
+/// body-shape-anchored (a non-auth 401, e.g. quota / geo-block, still reports).
+#[test]
+fn byo_provider_auth_failure_demotes_authentication_error_bodies() {
+    use reqwest::StatusCode;
+
+    // The exact kiro 401 envelope from the Sentry report.
+    let kiro_body =
+        r#"{"error":{"message":"Invalid or missing API key","type":"authentication_error"}}"#;
+    assert!(is_byo_provider_auth_failure_http(
+        "kiro",
+        StatusCode::UNAUTHORIZED,
+        kiro_body
+    ));
+    // 403 with the same envelope is demoted too.
+    assert!(is_byo_provider_auth_failure_http(
+        "kiro",
+        StatusCode::FORBIDDEN,
+        kiro_body
+    ));
+
+    // Every recognised auth-key marker across the BYO providers in Sentry.
+    for body in [
+        r#"{"error":{"type":"authentication_error"}}"#,
+        r#"{"error":{"code":"invalid_api_key","message":"Incorrect API key provided"}}"#,
+        "Invalid API key",
+        "invalid or missing api key",
+        "missing api key",
+        r#"{"message":"no api key supplied"}"#,
+        "invalid authentication",
+    ] {
+        assert!(
+            is_byo_provider_auth_failure_http("custom_openai", StatusCode::UNAUTHORIZED, body),
+            "BYO auth body must be demoted: {body}"
+        );
+    }
+}
+
+/// The backend keeps its `is_backend_auth_failure` → SessionExpired branch:
+/// a backend 401 with an auth-error body must NOT be swallowed here, or the
+/// session-expiry reauth path (and its existing test) would silently break.
+#[test]
+fn byo_provider_auth_failure_excludes_openhuman_backend() {
+    use reqwest::StatusCode;
+    let backend = crate::openhuman::inference::provider::openhuman_backend::PROVIDER_LABEL;
+    let body = r#"{"error":{"type":"authentication_error"}}"#;
+    assert!(!is_byo_provider_auth_failure_http(
+        backend,
+        StatusCode::UNAUTHORIZED,
+        body
+    ));
+    assert!(!is_byo_provider_auth_failure_http(
+        backend,
+        StatusCode::FORBIDDEN,
+        body
+    ));
+}
+
+/// Body-shape anchoring: a 401/403 whose body is NOT an auth-key envelope
+/// (quota, geo-block, opaque gateway text) still reaches Sentry — the gate
+/// keys on the body, not the bare status. And a non-401/403 status with an
+/// auth-ish body is out of scope (handled by the budget / config-rejection
+/// branches or the status gate).
+#[test]
+fn byo_provider_auth_failure_is_body_and_status_scoped() {
+    use reqwest::StatusCode;
+
+    // 401/403 without an auth-key envelope — still actionable, must report.
+    for body in [
+        r#"{"error":{"message":"Access denied for your region","type":"forbidden"}}"#,
+        r#"{"error":{"message":"Quota exceeded for this account"}}"#,
+        "Unauthorized",
+    ] {
+        assert!(
+            !is_byo_provider_auth_failure_http("custom_openai", StatusCode::UNAUTHORIZED, body),
+            "non-auth-envelope body must stay reportable: {body}"
+        );
+    }
+
+    // Auth-shaped body on a non-401/403 status is out of this predicate's scope.
+    for status in [
+        StatusCode::BAD_REQUEST,
+        StatusCode::TOO_MANY_REQUESTS,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        StatusCode::NOT_FOUND,
+    ] {
+        assert!(
+            !is_byo_provider_auth_failure_http(
+                "custom_openai",
+                status,
+                r#"{"error":{"type":"authentication_error"}}"#
+            ),
+            "status {status} with auth body must not be demoted here"
+        );
+    }
+}
+
+/// End-to-end through `api_error`: a non-backend 401 with an auth-error body
+/// returns the sanitized provider error (so the chat/UI surface is unchanged)
+/// while the BYO-auth branch demotes it from Sentry. Exercises the wired-in
+/// cascade, not just the predicate in isolation.
+#[tokio::test]
+async fn api_error_byo_auth_failure_returns_message_via_demoted_branch() {
+    let http_response = axum::http::Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .body(
+            r#"{"error":{"message":"Invalid or missing API key","type":"authentication_error"}}"#
+                .to_string(),
+        )
+        .expect("build 401 response");
+    let response = reqwest::Response::from(http_response);
+
+    let err = api_error("kiro", response).await;
+    let msg = err.to_string();
+    assert!(
+        msg.contains("kiro API error (401"),
+        "error must still carry the provider/status prefix for the UI: {msg}"
+    );
+    assert!(
+        msg.to_ascii_lowercase()
+            .contains("invalid or missing api key"),
+        "sanitized upstream body must propagate to the caller: {msg}"
+    );
+}
+
+/// End-to-end through `api_error`: a 500-wrapped monthly-quota refusal (the
+/// Kiro IDE proxy nests its 402 / `MONTHLY_REQUEST_COUNT` inside a 500
+/// envelope, TAURI-RUST-C9A) returns the sanitized provider error to the UI
+/// while routing through the quota-exhausted demote branch — *before* the
+/// `should_report_provider_http_failure(500)` status gate that would otherwise
+/// page once per memory-extraction retry.
+#[tokio::test]
+async fn api_error_monthly_quota_returns_message_via_demoted_branch() {
+    let body = "{\"error\":{\"message\":\"HTTP 402 from Kiro IDE: \
+        {\\\"message\\\":\\\"You have reached the limit.\\\",\
+        \\\"reason\\\":\\\"MONTHLY_REQUEST_COUNT\\\"}\",\"type\":\"server_error\"}}";
+    let http_response = axum::http::Response::builder()
+        .status(StatusCode::INTERNAL_SERVER_ERROR)
+        .body(body.to_string())
+        .expect("build 500 response");
+    let response = reqwest::Response::from(http_response);
+
+    let err = api_error("kiro", response).await;
+    let msg = err.to_string();
+    assert!(
+        msg.contains("kiro API error (500"),
+        "error must still carry the provider/status prefix for the UI: {msg}"
+    );
+    assert!(
+        msg.contains("MONTHLY_REQUEST_COUNT"),
+        "sanitized upstream quota body must propagate to the caller: {msg}"
+    );
+    // The body must classify as quota-exhausted so the demote branch — not the
+    // 500 status gate — handles it.
+    assert!(is_provider_quota_exhausted(body));
+    assert!(should_report_provider_http_failure(
+        StatusCode::INTERNAL_SERVER_ERROR
+    ));
 }
 
 /// `publish_backend_session_expired` must emit a `SessionExpired` event on

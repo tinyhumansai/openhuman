@@ -10,11 +10,9 @@ import {
   openhumanUpdateAgentPaths,
   openhumanUpdateAutonomySettings,
 } from '../../../utils/tauriCommands';
-import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsStatusLine, SettingsTextField } from '../controls';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 
 // Installs are always *available* but never silent: every `install_tool` call
 // is routed through the approval gate, so the user is asked to Approve/Deny
@@ -30,7 +28,6 @@ interface PresetOption {
 
 const PermissionsPanel = () => {
   const { t } = useT();
-  const { navigateBack } = useSettingsNavigation();
 
   // Tier presets — built inside the component so titles/descriptions resolve
   // through `t()` (i18n). Order matters: it's the display order.
@@ -190,11 +187,8 @@ const PermissionsPanel = () => {
   };
 
   return (
-    <PanelPage
-      className="z-10"
-      contentClassName=""
-      leading={<SettingsBackButton onBack={navigateBack} />}>
-      <div className="p-4 space-y-6">
+    <SettingsPanel>
+      <div className="space-y-5">
         {!isTauri() && (
           <p className="text-sm text-coral-600 dark:text-coral-300">
             {t('settings.agentAccess.desktopOnly')}
@@ -202,52 +196,47 @@ const PermissionsPanel = () => {
         )}
 
         {isLoading ? (
-          <p className="text-sm text-neutral-500 dark:text-neutral-400">
-            {t('settings.agentAccess.loading')}
-          </p>
+          <p className="text-sm text-content-muted">{t('settings.agentAccess.loading')}</p>
         ) : (
           <>
             {/* Access mode presets — intentional bespoke card UI; kept as-is. */}
             <section className="space-y-2">
-              <h2 className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
+              <h2 className="text-sm font-semibold text-content">
                 {t('settings.permissions.accessMode')}
               </h2>
-              <p className="text-xs text-neutral-500 dark:text-neutral-400">
+              <p className="text-xs text-content-muted">
                 {t('settings.permissions.accessModeDesc')}
               </p>
               <div className="grid gap-2">
                 {presets.map(p => (
-                  <button
+                  <Button
                     key={p.id}
                     type="button"
+                    variant="tertiary"
                     onClick={() => selectTier(p.id)}
                     data-testid={`permissions-preset-${p.id}`}
-                    className={`text-left rounded-lg border p-3 transition ${
+                    className={`!inline-block h-auto w-full !justify-start text-left rounded-lg border p-3 transition ${
                       level === p.id
                         ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/10'
-                        : 'border-neutral-200 dark:border-neutral-800 hover:border-primary-300 dark:hover:border-primary-500'
+                        : 'border-line hover:border-primary-300 dark:hover:border-primary-500'
                     }`}>
                     <div className="flex items-center gap-2">
                       <span
                         className={`inline-block w-3 h-3 rounded-full border ${
                           level === p.id
                             ? 'bg-primary-500 border-primary-500'
-                            : 'border-neutral-300 dark:border-neutral-700'
+                            : 'border-line-strong'
                         }`}
                       />
-                      <span className="font-medium text-neutral-800 dark:text-neutral-100">
-                        {p.title}
-                      </span>
+                      <span className="font-medium text-content">{p.title}</span>
                       {p.id === 'supervised' && (
-                        <span className="text-xs text-neutral-500 dark:text-neutral-400">
+                        <span className="text-xs text-content-muted">
                           {t('settings.agentAccess.defaultTag')}
                         </span>
                       )}
                     </div>
-                    <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-                      {p.description}
-                    </p>
-                  </button>
+                    <p className="mt-1 text-xs text-content-muted">{p.description}</p>
+                  </Button>
                 ))}
                 {level === 'full' && (
                   <p className="rounded border border-coral/40 bg-coral/5 dark:bg-coral/10 p-2 text-xs text-coral-600 dark:text-coral-300">
@@ -259,16 +248,14 @@ const PermissionsPanel = () => {
 
             {/* Folders the assistant can use */}
             <section className="space-y-2">
-              <h2 className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
+              <h2 className="text-sm font-semibold text-content">
                 {t('settings.permissions.folders')}
               </h2>
-              <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                {t('settings.permissions.foldersDesc')}
-              </p>
-              <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 px-3 py-2">
+              <p className="text-xs text-content-muted">{t('settings.permissions.foldersDesc')}</p>
+              <div className="rounded-lg border border-line px-3 py-2">
                 <div className="flex items-center gap-2">
                   <span className="inline-block w-2 h-2 rounded-full bg-sage-500" />
-                  <span className="text-xs font-medium text-neutral-800 dark:text-neutral-100">
+                  <span className="text-xs font-medium text-content">
                     {t('settings.agentAccess.actionSandbox')}
                   </span>
                   <span className="text-xs text-sage-600 dark:text-sage-400">
@@ -318,18 +305,19 @@ const PermissionsPanel = () => {
                 ) : (
                   <div className="mt-0.5 flex items-center gap-2">
                     <p
-                      className="text-xs text-neutral-500 dark:text-neutral-400 font-mono"
+                      className="text-xs text-content-muted font-mono"
                       data-testid="permissions-action-dir">
                       {agentPaths?.action_dir ?? '~/OpenHuman/projects'}
                     </p>
                     {!actionDirEnvLocked && (
-                      <button
-                        type="button"
-                        className="text-xs font-medium text-ocean hover:underline"
+                      <Button
+                        variant="tertiary"
+                        size="xs"
+                        className="text-ocean hover:underline"
                         onClick={startEditActionDir}
                         data-testid="permissions-action-dir-edit">
                         {t('settings.agentAccess.actionDir.edit')}
-                      </button>
+                      </Button>
                     )}
                   </div>
                 )}
@@ -343,7 +331,7 @@ const PermissionsPanel = () => {
                 {actionDirSaved && !actionDirEditing && (
                   <p className="text-xs text-sage-600 dark:text-sage-400">{actionDirSaved}</p>
                 )}
-                <p className="text-xs text-neutral-500 dark:text-neutral-500 mt-0.5">
+                <p className="text-xs text-content-muted dark:text-content-faint mt-0.5">
                   {t('settings.agentAccess.actionSandboxDesc')}
                 </p>
               </div>
@@ -359,7 +347,7 @@ const PermissionsPanel = () => {
           </>
         )}
       </div>
-    </PanelPage>
+    </SettingsPanel>
   );
 };
 

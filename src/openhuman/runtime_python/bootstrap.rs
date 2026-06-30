@@ -129,7 +129,11 @@ impl PythonBootstrap {
             empty_to_none(&self.config.managed_release_tag),
         )
         .await?;
-        let dist = select_distribution(&release, &self.config.minimum_version)?;
+        let dist = select_distribution(
+            &release,
+            &self.config.minimum_version,
+            &self.config.maximum_version,
+        )?;
         let install_dir = cache_root.join(dist.install_dir_name());
         let _install_lock = acquire_install_lock(&install_dir).await?;
 

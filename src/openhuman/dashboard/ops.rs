@@ -28,7 +28,10 @@ pub fn model_health(config: &Config) -> Result<RpcOutcome<ModelHealthResponse>, 
         .map(|entry| ModelHealthEntry {
             id: entry.id.clone(),
             provider: entry.provider.clone(),
+            cost_per_1m_input: entry.cost_per_1m_input,
+            cost_per_1m_cached_input: entry.cost_per_1m_cached_input,
             cost_per_1m_output: entry.cost_per_1m_output,
+            context_window: entry.context_window,
             vision: entry.vision,
             // Placeholder metrics — see module-level docs.
             quality_score: None,
@@ -70,12 +73,14 @@ mod tests {
                 provider: "SiliconFlow".to_string(),
                 cost_per_1m_output: 0.33,
                 vision: false,
+                ..Default::default()
             },
             crate::openhuman::config::schema::ModelRegistryEntry {
                 id: "qwen-2.5-8b".to_string(),
                 provider: "OpenRouter".to_string(),
                 cost_per_1m_output: 0.09,
                 vision: true,
+                ..Default::default()
             },
         ];
         cfg

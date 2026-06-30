@@ -281,6 +281,25 @@ describe('workflowsApi.listWorkflows', () => {
     expect(result[0].platforms).toEqual([]);
     expect(result[1].sourceFormat).toBe('legacy');
   });
+
+  it('omits params by default (automations-only view)', async () => {
+    const { callCoreRpc } = await import('../../coreRpcClient');
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({ workflows: [] });
+    await workflowsApi.listWorkflows();
+    const call = vi.mocked(callCoreRpc).mock.calls[0][0];
+    expect(call.method).toBe('openhuman.workflows_list');
+    expect(call.params).toBeUndefined();
+  });
+
+  it('passes include_skills when includeSkills is set', async () => {
+    const { callCoreRpc } = await import('../../coreRpcClient');
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({ workflows: [] });
+    await workflowsApi.listWorkflows({ includeSkills: true });
+    expect(callCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.workflows_list',
+      params: { include_skills: true },
+    });
+  });
 });
 
 describe('workflowsApi.readWorkflowResource', () => {

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { balanceNetworkLabel } from '../../../../features/wallet/walletDisplay';
 import { useT } from '../../../../lib/i18n/I18nContext';
 import type { BalanceInfo } from '../../../../services/walletApi';
+import Button from '../../../ui/Button';
 import { ModalShell } from '../../../ui/ModalShell';
 
 interface ReceiveModalProps {
@@ -48,10 +49,10 @@ const ReceiveModal = ({ balance, onClose }: ReceiveModalProps) => {
       title={t('walletBalances.receive')}
       subtitle={networkLabel}>
       <div className="flex flex-col items-center gap-4">
-        <p className="text-xs text-stone-500 dark:text-neutral-400 text-center leading-relaxed">
+        <p className="text-xs text-content-muted text-center leading-relaxed">
           {t('walletReceive.scanHint')}
         </p>
-        <div className="rounded-xl bg-white p-3 border border-stone-200" data-testid="receive-qr">
+        <div className="rounded-xl bg-surface p-3 border border-line" data-testid="receive-qr">
           <QRCodeSVG
             value={balance.address}
             size={180}
@@ -61,21 +62,22 @@ const ReceiveModal = ({ balance, onClose }: ReceiveModalProps) => {
           />
         </div>
         <div className="w-full">
-          <span className="block text-[11px] font-medium text-stone-500 dark:text-neutral-400 mb-1">
+          <span className="block text-[11px] font-medium text-content-muted mb-1">
             {t('walletReceive.addressLabel').replace('{network}', networkLabel)}
           </span>
-          <div className="flex items-center gap-2 rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
+          <div className="flex items-center gap-2 rounded-xl border border-line bg-surface-muted px-3 py-2">
             <span
-              className="font-mono text-xs text-stone-700 dark:text-neutral-200 break-all"
+              className="font-mono text-xs text-content-secondary break-all"
               data-testid="receive-address">
               {balance.address}
             </span>
-            <button
-              type="button"
+            <Button
+              variant="tertiary"
+              size="xs"
               onClick={() => void handleCopy()}
-              className="shrink-0 text-xs font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors">
+              className="shrink-0 text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300">
               {copied ? t('common.copied') : t('walletBalances.copyAddress')}
-            </button>
+            </Button>
           </div>
         </div>
         <div className="w-full rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 p-3">

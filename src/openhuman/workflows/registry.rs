@@ -189,7 +189,21 @@ pub fn load_workflows(workspace_dir: &Path) -> Vec<WorkflowDefinition> {
         let Some(dir) = skill_md.parent() else {
             continue;
         };
-        if let Some(def) = load_workflow_definition(dir, &wf.name, &wf.description) {
+        // Build the runnable id from the on-disk slug (`dir_name`) so it matches
+        // the `WorkflowSummary.id` shown in lists, the id the orchestrator prompt
+        // tells the agent to run, and the slug uninstall resolves against — all
+        // of which key on `dir_name`. A SKILL.md-only install whose frontmatter
+        // `name` differs from its install slug (e.g. `name: My Cool Workflow` in
+        // `my-cool-workflow/`) would otherwise build `definition.id` from the
+        // name and be unresolvable by `workflows_describe` / `workflows_run`
+        // ("unknown skill"). Falls back to `name` for legacy `Workflow` values
+        // that predate `dir_name`. (#3987 codex review.)
+        let slug = if wf.dir_name.is_empty() {
+            wf.name.as_str()
+        } else {
+            wf.dir_name.as_str()
+        };
+        if let Some(def) = load_workflow_definition(dir, slug, &wf.description) {
             workflows.push(def);
         }
     }
@@ -339,6 +353,33 @@ mod tests {
             PromptSource::Inline(p) => assert!(p.contains("Fix it.")),
             other => panic!("expected inline prompt, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn skill_md_only_install_resolves_by_dir_slug_not_frontmatter_name() {
+        // Regression (#3987 codex review): a SKILL.md-only install whose
+        // frontmatter `name` differs from its install slug must resolve via the
+        // dir slug — the id surfaced in the list summary / orchestrator prompt /
+        // uninstall — not the frontmatter name. Before the fix, `definition.id`
+        // was built from `wf.name` ("My Cool Workflow"), so `get_workflow`
+        // (keyed on the slug) returned None → "unknown skill".
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path().join("skills").join("my-cool-workflow");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("SKILL.md"),
+            "---\nname: My Cool Workflow\ndescription: does cool things\n---\n\n# Body\n",
+        )
+        .unwrap();
+
+        let resolved = get_workflow(tmp.path(), "my-cool-workflow")
+            .expect("SKILL.md-only install must resolve by its dir slug");
+        assert_eq!(resolved.definition.id, "my-cool-workflow");
+        // And NOT by the frontmatter name.
+        assert!(
+            get_workflow(tmp.path(), "My Cool Workflow").is_none(),
+            "frontmatter name must not be the runnable id"
+        );
     }
 
     #[test]

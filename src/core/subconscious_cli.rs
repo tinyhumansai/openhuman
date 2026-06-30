@@ -3,7 +3,6 @@
 //! Usage:
 //!   openhuman subconscious tick [--workspace <path>] [--mode simple|aggressive] [--verbose]
 //!   openhuman subconscious status [--workspace <path>]
-//!   openhuman subconscious scratchpad [--workspace <path>]
 
 use anyhow::{anyhow, Result};
 use std::path::PathBuf;
@@ -17,7 +16,6 @@ pub fn run_subconscious_command(args: &[String]) -> Result<()> {
     match args[0].as_str() {
         "tick" => run_tick(&args[1..]),
         "status" => run_status(&args[1..]),
-        "scratchpad" | "pad" => run_scratchpad(&args[1..]),
         other => Err(anyhow!(
             "unknown subconscious subcommand '{other}'. Run `openhuman subconscious --help`."
         )),
@@ -143,9 +141,9 @@ fn run_tick(args: &[String]) -> Result<()> {
             return Err(anyhow!("provider unavailable: {reason}"));
         }
 
-        // Create engine and run tick
-        let memory = crate::openhuman::memory::global::client_if_ready();
-        let engine = crate::openhuman::subconscious::SubconsciousEngine::new(&config, memory);
+        // Create engine and run tick. The engine pulls its own memory_diff /
+        // context state from the workspace — no memory client to pass in.
+        let engine = crate::openhuman::subconscious::SubconsciousEngine::new(&config);
 
         eprintln!("[subconscious] running tick...");
         let result = engine
@@ -159,12 +157,15 @@ fn run_tick(args: &[String]) -> Result<()> {
         );
 
         if flags.verbose {
-            // Print scratchpad state after tick
-            let entries = crate::openhuman::subconscious::scratchpad::load(&config.workspace_dir)
-                .unwrap_or_default();
-            if !entries.is_empty() {
-                eprintln!("\n[subconscious] scratchpad after tick:");
-                println!("{}", serde_json::to_string_pretty(&entries)?);
+            // Print the world baseline the next tick will diff against.
+            let baseline = crate::openhuman::subconscious::store::with_connection(
+                &config.workspace_dir,
+                crate::openhuman::subconscious::store::get_baseline_checkpoint_id,
+            )
+            .unwrap_or(None);
+            match baseline {
+                Some(id) => eprintln!("[subconscious] world baseline checkpoint: {id}"),
+                None => eprintln!("[subconscious] no world baseline established yet"),
             }
         }
 
@@ -215,32 +216,6 @@ fn run_status(args: &[String]) -> Result<()> {
     })
 }
 
-// ── scratchpad ─────────────────────────────────────────────────────────────
-
-fn run_scratchpad(args: &[String]) -> Result<()> {
-    let workspace = parse_workspace_flag(args)?;
-
-    let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(async {
-        let mut config = crate::openhuman::config::Config::load_or_init()
-            .await
-            .map_err(|e| anyhow!("config load failed: {e}"))?;
-        if let Some(ws) = workspace {
-            config.workspace_dir = ws;
-        }
-
-        let entries = crate::openhuman::subconscious::scratchpad::load(&config.workspace_dir)
-            .map_err(|e| anyhow!("failed to read scratchpad: {e}"))?;
-
-        if entries.is_empty() {
-            eprintln!("(scratchpad empty)");
-        } else {
-            println!("{}", serde_json::to_string_pretty(&entries)?);
-        }
-        Ok(())
-    })
-}
-
 // ── helpers ────────────────────────────────────────────────────────────────
 
 fn parse_workspace_flag(args: &[String]) -> Result<Option<PathBuf>> {
@@ -272,12 +247,11 @@ fn print_help() {
 Commands:
   tick          Run a single subconscious tick (synchronous, waits for completion)
   status        Show current subconscious engine status
-  scratchpad    Dump the persistent scratchpad
 
 Tick options:
   --mode <simple|aggressive>   Override the subconscious mode
   --workspace <path>           Override workspace directory
-  --verbose, -v                Print scratchpad after tick
+  --verbose, -v                Print the world baseline checkpoint after tick
 
 Common options:
   --workspace <path>           Override workspace directory

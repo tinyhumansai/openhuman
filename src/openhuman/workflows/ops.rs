@@ -50,7 +50,9 @@ pub(crate) use super::ops_create::{create_workflow_inner, slugify_workflow_name}
 #[cfg(test)]
 pub(crate) use super::ops_discover::discover_workflows_inner;
 #[cfg(test)]
-pub(crate) use super::ops_install::{derive_install_slug, normalize_install_url};
+pub(crate) use super::ops_install::{
+    derive_install_slug, install_workflow_from_url_with_home, normalize_install_url,
+};
 #[cfg(test)]
 pub(crate) use super::ops_types::{
     MAX_NAME_LEN, RESOURCE_DIRS, SKILL_MD, TRUST_MARKER, WORKFLOW_MD, WORKFLOW_TOML,

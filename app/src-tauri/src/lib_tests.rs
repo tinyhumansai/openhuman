@@ -314,11 +314,22 @@ fn platform_os_is_macos_on_macos_build() {
 }
 
 #[test]
-fn platform_cef_gpu_workarounds_disable_linux_gpu_path() {
+fn platform_cef_gpu_workarounds_force_swiftshader_on_linux() {
     let mut args = Vec::new();
     append_platform_cef_gpu_workarounds(&mut args, "linux", "x86_64", None);
 
-    assert!(args.contains(&("--disable-gpu", None)));
+    // #4193: the GPU process must NOT be killed outright — `--disable-gpu`
+    // takes every WebGL surface (the Tiny Place world renderer) down with it.
+    assert!(
+        !args.contains(&("--disable-gpu", None)),
+        "--disable-gpu kills WebGL and must not be set, got: {args:?}"
+    );
+    // Instead the GPU process is pinned to ANGLE/SwiftShader software GL, which
+    // keeps WebGL available while still avoiding the #1697 hardware-EGL abort.
+    assert!(args.contains(&("--use-gl", Some("angle"))));
+    assert!(args.contains(&("--use-angle", Some("swiftshader"))));
+    assert!(args.contains(&("--enable-unsafe-swiftshader", None)));
+    // Page compositing stays on the CPU exactly as before.
     assert!(args.contains(&("--disable-gpu-compositing", None)));
 }
 
@@ -391,6 +402,13 @@ fn platform_cef_gpu_workarounds_skip_linux_disable_when_force_gpu_set() {
         !args.contains(&("--disable-gpu-compositing", None)),
         "OPENHUMAN_FORCE_GPU=1 must suppress --disable-gpu-compositing, got: {args:?}"
     );
+    // With hardware acceleration opted in, the SwiftShader software-GL fallback
+    // must NOT be forced either — otherwise WebGL would still be stuck on the
+    // software rasteriser despite the override.
+    assert!(
+        !args.contains(&("--use-angle", Some("swiftshader"))),
+        "OPENHUMAN_FORCE_GPU=1 must not force SwiftShader, got: {args:?}"
+    );
 }
 
 #[test]
@@ -402,6 +420,101 @@ fn platform_cef_gpu_workarounds_force_gpu_does_not_affect_intel_macos_path() {
     append_platform_cef_gpu_workarounds(&mut args, "macos", "x86_64", Some("1"));
 
     assert_eq!(args, vec![("--disable-gpu-compositing", None)]);
+}
+
+// -------------------------------------------------------------------------
+// #3554 — never forward --time-ticks-at-unix-epoch to CEF (wrong system time)
+// -------------------------------------------------------------------------
+
+#[test]
+fn time_ticks_flag_matches_any_dash_and_casing_form() {
+    for flag in [
+        "--time-ticks-at-unix-epoch",
+        "-time-ticks-at-unix-epoch",
+        "time-ticks-at-unix-epoch",
+        "--Time-Ticks-At-Unix-Epoch",
+    ] {
+        assert!(
+            is_time_ticks_at_unix_epoch_flag(flag),
+            "{flag:?} should be recognised as the time-ticks switch"
+        );
+    }
+}
+
+#[test]
+fn time_ticks_flag_does_not_match_unrelated_flags() {
+    for flag in [
+        "--disable-gpu",
+        "--use-mock-keychain",
+        "--time-zone",
+        "--enable-features",
+    ] {
+        assert!(
+            !is_time_ticks_at_unix_epoch_flag(flag),
+            "{flag:?} must not be treated as the time-ticks switch"
+        );
+    }
+}
+
+#[test]
+fn strip_time_ticks_removes_negative_value_and_keeps_the_rest() {
+    // The corrupt value reported in #3554, alongside flags we must preserve.
+    let mut args = vec![
+        ("--use-mock-keychain", None),
+        ("--time-ticks-at-unix-epoch", Some("-1780937467390432")),
+        ("--disable-gpu", None),
+    ];
+    strip_time_ticks_at_unix_epoch(&mut args);
+
+    assert_eq!(
+        args,
+        vec![("--use-mock-keychain", None), ("--disable-gpu", None)],
+        "the corrupt time-ticks switch must be removed; everything else kept"
+    );
+}
+
+#[test]
+fn strip_time_ticks_removes_inline_value_form() {
+    // The critical bypass case: when the value is carried inline as
+    // `--flag=value` (a single token) rather than as a separate value, the
+    // matcher must still recognise and strip it.
+    let mut args = vec![
+        ("--use-mock-keychain", None),
+        ("--time-ticks-at-unix-epoch=-1780937467390432", None),
+        ("--disable-gpu", None),
+    ];
+    strip_time_ticks_at_unix_epoch(&mut args);
+
+    assert_eq!(
+        args,
+        vec![("--use-mock-keychain", None), ("--disable-gpu", None)],
+        "the inline time-ticks switch must be removed; everything else kept"
+    );
+}
+
+#[test]
+fn strip_time_ticks_removes_the_flag_regardless_of_value() {
+    // Even a non-negative value is dropped: OpenHuman must let Chromium
+    // compute the clock origin rather than anchor it from the shell.
+    let mut args = vec![
+        ("--time-ticks-at-unix-epoch", Some("1780937467390432")),
+        ("--time-ticks-at-unix-epoch", None),
+    ];
+    strip_time_ticks_at_unix_epoch(&mut args);
+
+    assert!(
+        args.is_empty(),
+        "all time-ticks variants must be stripped, got: {args:?}"
+    );
+}
+
+#[test]
+fn strip_time_ticks_is_a_noop_without_the_flag() {
+    let mut args = vec![("--use-mock-keychain", None), ("--disable-gpu", None)];
+    let expected = args.clone();
+    strip_time_ticks_at_unix_epoch(&mut args);
+
+    assert_eq!(args, expected, "unrelated args must be left untouched");
 }
 
 /// On an Intel macOS build the ARCH constant must equal "x86_64".

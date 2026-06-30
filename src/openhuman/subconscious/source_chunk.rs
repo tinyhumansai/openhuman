@@ -130,9 +130,8 @@ fn resolve_one(config: &crate::openhuman::config::Config, raw: &str) -> SourceCh
     }
 }
 
-/// Look up a sealed summary by id. Mirrors the read pattern in
-/// [`crate::openhuman::subconscious::situation_report::summaries`] but
-/// fetches a single row instead of the recent-summaries window. The
+/// Look up a sealed summary by id. Fetches a single `mem_tree_summaries` row.
+/// The
 /// resolved `content` is truncated to [`PREVIEW_MAX_CHARS`] so the
 /// reflection row stays bounded; full content remains queryable from
 /// `mem_tree_summaries` if a future feature needs it.

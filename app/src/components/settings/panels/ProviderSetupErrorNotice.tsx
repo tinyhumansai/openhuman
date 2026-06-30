@@ -114,7 +114,7 @@ export const ProviderSetupErrorNotice = ({ error }: { error: string }) => {
           <summary className="cursor-pointer text-[11px] font-medium text-red-700 dark:text-red-200">
             {t('providerSetup.error.technicalDetails')}
           </summary>
-          <pre className="mt-1 max-h-32 max-w-full overflow-auto whitespace-pre-wrap break-words rounded border border-red-200/70 dark:border-red-500/30 bg-white/70 dark:bg-neutral-950/40 p-2 font-mono text-[11px] leading-relaxed text-red-800 dark:text-red-200 [overflow-wrap:anywhere]">
+          <pre className="mt-1 max-h-32 max-w-full overflow-auto whitespace-pre-wrap break-words rounded border border-red-200/70 dark:border-red-500/30 bg-surface/70 p-2 font-mono text-[11px] leading-relaxed text-red-800 dark:text-red-200 [overflow-wrap:anywhere]">
             {details}
           </pre>
         </details>

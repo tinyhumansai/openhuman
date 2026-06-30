@@ -13,11 +13,10 @@ import {
   fetchWalletStatus,
   type WalletChain,
 } from '../../../services/walletApi';
-import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsEmptyState, SettingsSection } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 import ReceiveModal from './wallet/ReceiveModal';
 import SendCryptoModal from './wallet/SendCryptoModal';
 
@@ -36,8 +35,7 @@ const CHAIN_BADGE_CLASS: Record<string, string> = {
 };
 
 const badgeClassFor = (chain: WalletChain): string =>
-  CHAIN_BADGE_CLASS[chain] ??
-  'bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300';
+  CHAIN_BADGE_CLASS[chain] ?? 'bg-surface-subtle text-content-secondary';
 
 // The rows rendered as placeholders before the wallet is set up, mirroring the
 // configured layout (one EVM row per displayed network + BTC/Solana/Tron) so
@@ -116,7 +114,7 @@ const BalanceRow = ({ balance, onSend, onReceive }: BalanceRowProps) => {
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-neutral-700 dark:text-neutral-200 truncate">
+            <span className="text-xs font-medium text-content-secondary truncate">
               {networkLabel}
             </span>
             {balance.providerStatus !== 'ready' && (
@@ -127,14 +125,17 @@ const BalanceRow = ({ balance, onSend, onReceive }: BalanceRowProps) => {
           </div>
           {/* Address + copy button */}
           <div className="flex items-center gap-1.5 min-w-0">
-            <span className="font-mono text-[11px] text-neutral-500 dark:text-neutral-400 truncate">
+            <span className="font-mono text-[11px] text-content-muted truncate">
               {truncateAddress(balance.address)}
             </span>
-            <button
+            <Button
               type="button"
+              iconOnly
+              variant="tertiary"
+              size="sm"
               onClick={() => void handleCopyAddress()}
               aria-label={t('walletBalances.copyAddress')}
-              className="shrink-0 text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300 transition-colors">
+              className="shrink-0 text-content-faint hover:text-content-secondary dark:hover:text-content-secondary">
               {copied ? (
                 <svg
                   className="w-3.5 h-3.5 text-sage-500"
@@ -158,7 +159,7 @@ const BalanceRow = ({ balance, onSend, onReceive }: BalanceRowProps) => {
                   />
                 </svg>
               )}
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -166,12 +167,10 @@ const BalanceRow = ({ balance, onSend, onReceive }: BalanceRowProps) => {
         <div className="text-right shrink-0">
           <span
             title={t('walletBalances.rawBalance').replace('{raw}', balance.raw)}
-            className="text-sm font-medium text-neutral-800 dark:text-neutral-100 font-mono">
+            className="text-sm font-medium text-content font-mono">
             {balance.formatted}
           </span>
-          <span className="ml-1 text-xs text-neutral-500 dark:text-neutral-400">
-            {balance.assetSymbol}
-          </span>
+          <span className="ml-1 text-xs text-content-muted">{balance.assetSymbol}</span>
         </div>
       </div>
 
@@ -225,20 +224,18 @@ const ChainPlaceholderRow = ({
         {balanceBadge({ chain, evmNetwork })}
       </span>
       <div className="min-w-0">
-        <span className="block text-xs font-medium text-neutral-400 dark:text-neutral-500 truncate">
+        <span className="block text-xs font-medium text-content-faint truncate">
           {balanceNetworkLabel({ chain, evmNetwork })}
         </span>
-        <span className="font-mono text-[11px] text-neutral-400 dark:text-neutral-500 truncate">
+        <span className="font-mono text-[11px] text-content-faint truncate">
           {t('walletBalances.notSetUp')}
         </span>
       </div>
       <div className="flex-1" />
       <div className="text-right shrink-0">
         {/* Em dash placeholder — punctuation, not translatable copy. */}
-        <span className="text-sm font-medium text-neutral-400 dark:text-neutral-500 font-mono">
-          —
-        </span>
-        <span className="ml-1 text-xs text-neutral-400 dark:text-neutral-500">{symbol}</span>
+        <span className="text-sm font-medium text-content-faint font-mono">—</span>
+        <span className="ml-1 text-xs text-content-faint">{symbol}</span>
       </div>
     </div>
   );
@@ -250,7 +247,7 @@ const ChainPlaceholderRow = ({
 
 const WalletBalancesPanel = () => {
   const { t } = useT();
-  const { navigateBack, navigateToSettings } = useSettingsNavigation();
+  const { navigateToSettings } = useSettingsNavigation();
 
   const [balances, setBalances] = useState<BalanceInfo[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -309,7 +306,7 @@ const WalletBalancesPanel = () => {
   const renderContent = () => {
     if (loading) {
       return (
-        <div className="flex items-center justify-center gap-2 py-10 text-neutral-500 dark:text-neutral-400">
+        <div className="flex items-center justify-center gap-2 py-10 text-content-muted">
           <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
             <circle
               className="opacity-25"
@@ -389,16 +386,17 @@ const WalletBalancesPanel = () => {
                 <p className="text-xs text-amber-700 dark:text-amber-300 leading-relaxed">
                   {t('walletBalances.setupHint')}
                 </p>
-                <button
+                <Button
                   type="button"
+                  variant="tertiary"
                   onClick={() => navigateToSettings('recovery-phrase')}
-                  className="mt-2 text-xs font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors">
+                  className="mt-2 text-xs font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300">
                   {t('walletBalances.setupCta')}
-                </button>
+                </Button>
               </div>
             </div>
           </div>
-          <div className="divide-y divide-neutral-100 dark:divide-neutral-800">
+          <div className="divide-y divide-line-subtle dark:divide-neutral-800">
             {PLACEHOLDER_ROWS.map(row => (
               <ChainPlaceholderRow
                 key={`${row.chain}-${row.evmNetwork ?? 'native'}`}
@@ -415,9 +413,9 @@ const WalletBalancesPanel = () => {
     if (balances !== null && balances.length === 0) {
       return (
         <div className="px-4 py-8 text-center">
-          <div className="w-12 h-12 rounded-full bg-neutral-100 dark:bg-neutral-800 flex items-center justify-center mx-auto mb-3">
+          <div className="w-12 h-12 rounded-full bg-surface-subtle flex items-center justify-center mx-auto mb-3">
             <svg
-              className="w-6 h-6 text-neutral-400 dark:text-neutral-500"
+              className="w-6 h-6 text-content-faint"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -436,7 +434,7 @@ const WalletBalancesPanel = () => {
 
     if (balances && balances.length > 0) {
       return (
-        <div className="divide-y divide-neutral-100 dark:divide-neutral-800">
+        <div className="divide-y divide-line-subtle dark:divide-neutral-800">
           {balances.map(balance => (
             <BalanceRow
               key={balanceKey(balance)}
@@ -453,15 +451,12 @@ const WalletBalancesPanel = () => {
   };
 
   return (
-    <PanelPage
-      className="z-10"
-      contentClassName=""
+    <SettingsPanel
       description={t('pages.settings.account.walletBalancesDesc')}
-      leading={<SettingsBackButton onBack={navigateBack} />}
       action={
         <Button
           type="button"
-          variant="ghost"
+          variant="tertiary"
           size="sm"
           onClick={() => void loadBalances()}
           disabled={loading}
@@ -482,9 +477,7 @@ const WalletBalancesPanel = () => {
           {t('walletBalances.refresh')}
         </Button>
       }>
-      <div className="mx-4 mb-4">
-        <SettingsSection>{renderContent()}</SettingsSection>
-      </div>
+      <SettingsSection>{renderContent()}</SettingsSection>
 
       {sendTarget && (
         <SendCryptoModal
@@ -496,7 +489,7 @@ const WalletBalancesPanel = () => {
       {receiveTarget && (
         <ReceiveModal balance={receiveTarget} onClose={() => setReceiveTarget(null)} />
       )}
-    </PanelPage>
+    </SettingsPanel>
   );
 };
 

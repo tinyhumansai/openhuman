@@ -67,7 +67,17 @@ vi.mock('../../../store/hooks', () => ({
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
-  return { ...actual, useNavigate: () => hoisted.navigate };
+  return {
+    ...actual,
+    useNavigate: () => hoisted.navigate,
+    useLocation: () => ({
+      pathname: '/intelligence',
+      search: '',
+      hash: '',
+      state: null,
+      key: 'test',
+    }),
+  };
 });
 
 // Stub the composer so we can drive its `onCreated` callback without
@@ -276,7 +286,7 @@ describe('IntelligenceTasksTab', () => {
     // "Manage sources" jumps to the merged Integrations settings page
     // (task-sources was folded into /settings/integrations).
     fireEvent.click(screen.getByText('Manage sources'));
-    expect(hoisted.navigate).toHaveBeenCalledWith('/settings/integrations');
+    expect(hoisted.navigate).toHaveBeenCalledWith('/settings/integrations', expect.anything());
   });
 
   test('refines a source task and approves it into the personal agent board', async () => {
@@ -432,9 +442,7 @@ describe('IntelligenceTasksTab', () => {
     await waitFor(() => expect(screen.getByText('Worked card')).toBeInTheDocument());
     fireEvent.click(screen.getByText('stub-view-session'));
 
-    expect(hoisted.navigate).toHaveBeenCalledWith('/chat', {
-      state: { openThreadId: 'task-session-99' },
-    });
+    expect(hoisted.navigate).toHaveBeenCalledWith('/chat/task-session-99');
   });
 
   test('renders persisted agent boards from the turn-state list', async () => {

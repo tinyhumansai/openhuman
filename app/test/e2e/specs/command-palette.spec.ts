@@ -64,6 +64,25 @@ async function dispatchKey(
   }
 }
 
+// Close an overlay via Escape, escalating to a document-targeted synthetic
+// event as a last resort. ModalShell's `useEscapeKey` binds to `document`, so a
+// `window`-dispatched fallback would miss it — dispatch on `document` directly.
+async function closeOverlayWithEscape(el: WebdriverIO.Element, timeoutMsg: string): Promise<void> {
+  try {
+    await browser.keys('Escape');
+  } catch {
+    await dispatchKey('Escape');
+  }
+  try {
+    await browser.waitUntil(async () => !(await el.isExisting()), { timeout: 3000 });
+  } catch {
+    await browser.execute(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    await browser.waitUntil(async () => !(await el.isExisting()), { timeout: 3000, timeoutMsg });
+  }
+}
+
 describe('Command palette', () => {
   before(async () => {
     // CommandProvider is mounted inside the auth-gated provider chain.
@@ -203,5 +222,55 @@ describe('Command palette', () => {
         timeoutMsg: 'palette did not close — hotkey stack may be corrupted',
       });
     }
+  });
+
+  it('opens the keyboard-shortcuts help via mod+/ and lists grouped shortcuts', async () => {
+    // `mod+/` is allowed even while an input is focused, so it reliably opens
+    // the help directory regardless of where focus currently sits.
+    let list = await browser.$('[data-testid="keyboard-shortcuts-list"]');
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await dispatchKey('/', MOD_KEY);
+      list = await browser.$('[data-testid="keyboard-shortcuts-list"]');
+      try {
+        await list.waitForExist({ timeout: 3000 });
+        break;
+      } catch {
+        if (attempt === 2) throw new Error('Shortcuts help did not open after 3 mod+/ attempts');
+      }
+    }
+
+    // The directory renders live from the command registry — assert a couple of
+    // the new global actions and a group heading are present.
+    for (const label of ['New Chat', 'Toggle Sidebar', 'Navigation']) {
+      const found = await browser.execute((lbl: string) => {
+        const root = document.querySelector('[data-testid="keyboard-shortcuts-list"]');
+        return !!root && (root.textContent ?? '').includes(lbl);
+      }, label);
+      expect(found).toBe(true);
+    }
+
+    // Esc closes the overlay (ModalShell's useEscapeKey).
+    await closeOverlayWithEscape(list, 'shortcuts help did not close on Escape');
+  });
+
+  it('opens the keyboard-shortcuts help via the ? key', async () => {
+    // `?` must NOT fire while a text field is focused (so users can still type
+    // a literal "?"), so blur first to emulate pressing it from app chrome.
+    await browser.execute(() => (document.activeElement as HTMLElement | null)?.blur?.());
+
+    let list = await browser.$('[data-testid="keyboard-shortcuts-list"]');
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await dispatchKey('?');
+      list = await browser.$('[data-testid="keyboard-shortcuts-list"]');
+      try {
+        await list.waitForExist({ timeout: 3000 });
+        break;
+      } catch {
+        if (attempt === 2) throw new Error('Shortcuts help did not open after 3 ? attempts');
+      }
+    }
+    expect(await list.isExisting()).toBe(true);
+
+    await closeOverlayWithEscape(list, 'shortcuts help did not close');
   });
 });

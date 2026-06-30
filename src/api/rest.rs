@@ -96,6 +96,69 @@ fn parse_message_path(path: &str) -> Option<(&str, &str)> {
 
 const CLIENT_VERSION_HEADER_MAX_LEN: usize = 64;
 
+/// Max bytes of the `body_shape` key-name list echoed into the `authed_json`
+/// report. Bounded so a body with pathologically many keys can't bloat the
+/// event; truncation is UTF-8-safe.
+const BACKEND_API_BODY_SHAPE_MAX_BYTES: usize = 120;
+
+/// PII-safe classification of a non-2xx response body for telemetry.
+///
+/// `report_error`'s message is written to the core/Tauri daily logs BEFORE any
+/// Sentry `before_send` scrubbing, and that scrubber only catches a few
+/// secret-shaped patterns — so the raw body must never be echoed (a non-2xx body
+/// can carry emails / profile JSON / OAuth errors / nonstandard token fields).
+/// We emit only the SHAPE: for a JSON object, the count of top-level keys plus
+/// the sorted subset that look like schema field names; otherwise a coarse
+/// label. Even key NAMES are response-controlled (a foreign backend could return
+/// `{"jo@example.com": 1}`), so only keys matching a conservative ASCII-identifier
+/// shape are echoed — everything else is counted as `redacted` and never logged.
+/// The surviving names are enough to identify which backend/gateway produced a
+/// response — the `TAURI-RUST-8C` case (a 91-byte body matching no route this
+/// backend emits), where our canonical envelope is `{success,error,errorCode}`
+/// and a foreign gateway/proxy is not.
+fn backend_api_body_shape(body: &str) -> String {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return "empty".to_string();
+    }
+    match serde_json::from_str::<Value>(trimmed) {
+        Ok(Value::Object(map)) => {
+            let total = map.len();
+            let mut safe: Vec<&str> = map
+                .keys()
+                .map(String::as_str)
+                .filter(|k| is_schema_like_key(k))
+                .collect();
+            safe.sort_unstable();
+            let redacted = total - safe.len();
+            // `safe` keys are ASCII identifiers, so the join is ASCII and the
+            // truncation can only ever land on a byte boundary — but route it
+            // through the UTF-8-safe truncator regardless (defence-in-depth).
+            let keys = crate::openhuman::util::truncate_at_byte_boundary(
+                &safe.join(","),
+                BACKEND_API_BODY_SHAPE_MAX_BYTES,
+            );
+            format!("object(keys={total},safe=[{keys}],redacted={redacted})")
+        }
+        Ok(Value::Array(_)) => "array".to_string(),
+        Ok(_) => "scalar".to_string(),
+        Err(_) => "non_json".to_string(),
+    }
+}
+
+/// A JSON key safe to echo into telemetry: a short ASCII identifier (the shape
+/// of a schema field name). Anything else — non-ASCII, punctuation like `@`,
+/// whitespace, or overlong — is treated as response-controlled data and excluded
+/// so `body_shape` can never leak an email/UUID/free-text used as a key.
+fn is_schema_like_key(key: &str) -> bool {
+    const MAX_KEY_LEN: usize = 40;
+    !key.is_empty()
+        && key.len() <= MAX_KEY_LEN
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+}
+
 fn sanitize_client_version(raw: &str) -> Option<String> {
     let sanitized: String = raw
         .trim()
@@ -272,9 +335,8 @@ struct LoginTokenConsumeEnvelope {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct LoginTokenConsumeData {
-    jwt_token: String,
+    jwt: String,
 }
 
 /// Decrypted OAuth token payload for handing off tokens to a local service or skill.
@@ -423,17 +485,21 @@ impl BackendOAuthClient {
         let token = login_token.trim();
         anyhow::ensure!(!token.is_empty(), "login token is required");
 
+        // Backend serves `POST /auth/login-token/consume` with the token in a JSON
+        // body `{ token, audience? }` and returns `{ success, data: { jwt } }`
+        // (see backend `routes/auth.ts`). The legacy
+        // `telegram/login-tokens/{token}/consume` path-param route was removed, so
+        // the old call 404'd and Telegram/OAuth-token login could never complete
+        // (WIRING_GAPS_AUDIT C1/C2).
         let url = self
             .base
-            .join(&format!(
-                "telegram/login-tokens/{}/consume",
-                urlencoding::encode(token)
-            ))
+            .join("auth/login-token/consume")
             .context("build login-token consume URL")?;
 
         let resp = self
             .client
             .post(url)
+            .json(&serde_json::json!({ "token": token }))
             .send()
             .await
             .context("consume login token")?;
@@ -450,11 +516,8 @@ impl BackendOAuthClient {
             anyhow::bail!("consume login token unsuccessful: {text}");
         }
 
-        let jwt = env.data.jwt_token.trim().to_string();
-        anyhow::ensure!(
-            !jwt.is_empty(),
-            "consume login token response missing jwtToken"
-        );
+        let jwt = env.data.jwt.trim().to_string();
+        anyhow::ensure!(!jwt.is_empty(), "consume login token response missing jwt");
         Ok(jwt)
     }
 
@@ -672,12 +735,26 @@ impl BackendOAuthClient {
                     url.path(),
                 );
             } else {
+                // Enrich the report with the two fields triage needs to pin a
+                // non-2xx's origin: the outbound `host` and a PII-safe `body_shape`
+                // (top-level JSON key names only — never values; see
+                // `backend_api_body_shape`). `report_error` previously logged only
+                // `response_body_len`, leaving us blind when a client hits a
+                // non-canonical backend (custom BACKEND_URL / proxy / foreign
+                // host) — TAURI-RUST-8C: 12k `GET /teams/me/usage` 404s from one
+                // user whose 91-byte body matched no route this backend emits,
+                // un-diagnosable because neither host nor shape was captured.
+                // `host_str()` carries no scheme/path/query/token. Telemetry only
+                // — the error still propagates below (no suppression).
+                let host = url.host_str().unwrap_or("");
+                let body_shape = backend_api_body_shape(&text);
                 crate::core::observability::report_error(
                     format!(
-                        "{} {} failed ({status}); response_body_len={}",
+                        "{} {} failed ({status}); response_body_len={}; body_shape={}",
                         method.as_str(),
                         url.path(),
-                        text.len()
+                        text.len(),
+                        body_shape,
                     )
                     .as_str(),
                     "backend_api",
@@ -685,6 +762,7 @@ impl BackendOAuthClient {
                     &[
                         ("method", method.as_str()),
                         ("path", url.path()),
+                        ("host", host),
                         ("status", status_str.as_str()),
                         ("failure", "non_2xx"),
                     ],

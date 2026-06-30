@@ -143,6 +143,7 @@ impl ToolSource for RegistryToolSource<'_> {
             self.tool_policy,
             self.payload_summarizer,
             progress_call_id,
+            crate::openhuman::tokenjuice::AgentTokenjuiceCompression::Full,
         )
         .await
     }

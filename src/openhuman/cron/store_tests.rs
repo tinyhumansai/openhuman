@@ -104,6 +104,102 @@ fn due_jobs_filters_by_timestamp_and_enabled() {
 }
 
 #[test]
+fn enabling_stale_disabled_job_refreshes_next_run() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    // Daily 7 AM job, then disable it (mimics a seeded opt-in morning briefing).
+    let job = add_job(&config, "0 7 * * *", "echo briefing").unwrap();
+    update_job(
+        &config,
+        &job.id,
+        CronJobPatch {
+            enabled: Some(false),
+            ..CronJobPatch::default()
+        },
+    )
+    .unwrap();
+
+    // Force a stale next_run in the past, as if the user onboarded before the
+    // job's first scheduled fire and only opted in later (hours or days after).
+    let stale = Utc::now() - ChronoDuration::hours(2);
+    with_connection(&config, |conn| {
+        conn.execute(
+            "UPDATE cron_jobs SET next_run = ?1 WHERE id = ?2",
+            params![stale.to_rfc3339(), job.id],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+
+    // Opt in: disabled -> enabled, with the schedule unchanged.
+    let enabled = update_job(
+        &config,
+        &job.id,
+        CronJobPatch {
+            enabled: Some(true),
+            ..CronJobPatch::default()
+        },
+    )
+    .unwrap();
+
+    assert!(enabled.enabled);
+    assert!(
+        enabled.next_run > Utc::now(),
+        "enabling a job with a stale next_run must refresh it to the future, got {}",
+        enabled.next_run
+    );
+    assert!(
+        due_jobs(&config, Utc::now()).unwrap().is_empty(),
+        "freshly opted-in job must not fire immediately on enable"
+    );
+}
+
+#[test]
+fn enabling_job_with_future_next_run_preserves_it() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    let job = add_job(&config, "0 7 * * *", "echo briefing").unwrap();
+    update_job(
+        &config,
+        &job.id,
+        CronJobPatch {
+            enabled: Some(false),
+            ..CronJobPatch::default()
+        },
+    )
+    .unwrap();
+
+    // A future next_run is still valid and must be left untouched on enable.
+    let future = Utc::now() + ChronoDuration::hours(3);
+    with_connection(&config, |conn| {
+        conn.execute(
+            "UPDATE cron_jobs SET next_run = ?1 WHERE id = ?2",
+            params![future.to_rfc3339(), job.id],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+
+    let enabled = update_job(
+        &config,
+        &job.id,
+        CronJobPatch {
+            enabled: Some(true),
+            ..CronJobPatch::default()
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        enabled.next_run.to_rfc3339(),
+        future.to_rfc3339(),
+        "enabling a job whose next_run is in the future must not reschedule it"
+    );
+}
+
+#[test]
 fn due_jobs_respects_scheduler_max_tasks_limit() {
     let tmp = TempDir::new().unwrap();
     let mut config = test_config(&tmp);

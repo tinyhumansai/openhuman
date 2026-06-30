@@ -266,9 +266,9 @@ test.describe('MCP Tab — Table View & Filtering', () => {
 
   test('renders search bar and filter chips', async ({ page }) => {
     await expect(page.locator('input[type="search"]')).toBeVisible();
-    await expect(page.getByRole('button', { name: /^All$/ })).toBeVisible();
-    await expect(page.getByRole('button', { name: /Installed/ })).toBeVisible();
-    await expect(page.getByRole('button', { name: /Registry/ })).toBeVisible();
+    await expect(page.getByRole('tab', { name: /^All$/ })).toBeVisible();
+    await expect(page.getByRole('tab', { name: /Installed/ })).toBeVisible();
+    await expect(page.getByRole('tab', { name: /Registry/ })).toBeVisible();
   });
 
   test('displays installed servers with status dot and Manage action', async ({ page }) => {
@@ -286,7 +286,7 @@ test.describe('MCP Tab — Table View & Filtering', () => {
   });
 
   test('filter "Installed" hides registry rows', async ({ page }) => {
-    await page.getByRole('button', { name: /Installed/ }).click();
+    await page.getByRole('tab', { name: /Installed/ }).click();
     const rows = page.locator('table tbody tr');
     const count = await rows.count();
     expect(count).toBeGreaterThan(0);
@@ -296,7 +296,7 @@ test.describe('MCP Tab — Table View & Filtering', () => {
   });
 
   test('filter "Registry" hides installed rows', async ({ page }) => {
-    await page.getByRole('button', { name: /Registry/ }).click();
+    await page.getByRole('tab', { name: /Registry/ }).click();
     const rows = page.locator('table tbody tr');
     const count = await rows.count();
     expect(count).toBeGreaterThan(0);
@@ -306,7 +306,7 @@ test.describe('MCP Tab — Table View & Filtering', () => {
   });
 
   test('already-installed servers are excluded from registry rows', async ({ page }) => {
-    await page.getByRole('button', { name: /Registry/ }).click();
+    await page.getByRole('tab', { name: /Registry/ }).click();
     const rows = page.locator('table tbody tr');
     const count = await rows.count();
     for (let i = 0; i < count; i++) {
@@ -452,7 +452,7 @@ test.describe('MCP Tab — Manage & Uninstall Lifecycle', () => {
 
     await expect(page.locator('table')).toBeVisible({ timeout: 10_000 });
 
-    await page.getByRole('button', { name: /Installed/ }).click();
+    await page.getByRole('tab', { name: /Installed/ }).click();
     const removedRow = page.locator('table tbody tr', {
       has: page.locator('td:first-child:has-text("Memory Server")'),
     });
@@ -477,9 +477,11 @@ test.describe('MCP Tab — Empty & Edge States', () => {
     await setupMockRpc(page, state);
     await navigateToMcpTab(page);
 
-    await page.getByRole('button', { name: /Installed/ }).click();
-    const emptyMsg = page.locator('text=/no.*servers|no.*installed/i');
-    await expect(emptyMsg).toBeVisible({ timeout: 5_000 });
+    await page.getByRole('tab', { name: /Installed/ }).click();
+    // Target the empty-state element directly: a broad `text=/no.*servers/i`
+    // locator also matches ancestor containers (the root shell wraps the panel),
+    // tripping Playwright strict mode.
+    await expect(page.getByTestId('mcp-installed-empty')).toBeVisible({ timeout: 10_000 });
   });
 
   test('search with no results shows no-results message', async ({ page }) => {
@@ -504,8 +506,8 @@ test.describe('MCP Tab — Empty & Edge States', () => {
     await navigateToMcpTab(page);
     await page.locator('input[type="search"]').fill('xyznonexistent999');
 
-    // Wait for the no-results state to appear rather than using a fixed delay
-    const noResults = page.locator('text=/no.*results|no.*found|no.*servers/i');
-    await expect(noResults).toBeVisible({ timeout: 5_000 });
+    // Target the catalog empty-state element directly — a broad text regex also
+    // matches the root-shell ancestor container and trips strict mode.
+    await expect(page.getByTestId('mcp-catalog-empty')).toBeVisible({ timeout: 10_000 });
   });
 });

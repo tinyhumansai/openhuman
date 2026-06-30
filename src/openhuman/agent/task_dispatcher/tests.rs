@@ -221,20 +221,26 @@ fn poller_agent_only_returns_none_when_all_unassigned() {
 
 #[test]
 fn approval_gate_respects_global_and_per_card_optout() {
-    // Global off → never park.
+    // Unset → follow the global default.
     assert!(!requires_plan_approval(false, None));
-    assert!(!requires_plan_approval(
+    assert!(requires_plan_approval(true, None));
+    // Explicit `Required` always parks — even when the global default is off
+    // (the interactive plan-review gate stamps `Required`).
+    assert!(requires_plan_approval(
         false,
         Some(&TaskApprovalMode::Required)
     ));
-    // Global on → park, unless the card opts out via NotRequired.
-    assert!(requires_plan_approval(true, None));
     assert!(requires_plan_approval(
         true,
         Some(&TaskApprovalMode::Required)
     ));
+    // Explicit `NotRequired` never parks, regardless of the global default.
     assert!(!requires_plan_approval(
         true,
+        Some(&TaskApprovalMode::NotRequired)
+    ));
+    assert!(!requires_plan_approval(
+        false,
         Some(&TaskApprovalMode::NotRequired)
     ));
 }

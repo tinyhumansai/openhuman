@@ -3,9 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import UnifiedSkillCard from './SkillCard';
 
-vi.mock('../../lib/i18n/I18nContext', () => ({
-  useT: () => ({ t: (key: string) => key }),
-}));
+vi.mock('../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (key: string) => key }) }));
 
 describe('UnifiedSkillCard stable test hooks', () => {
   it('renders row and primary action test ids', () => {

@@ -11,9 +11,7 @@ import {
   openhumanAutocompleteStop,
   openhumanGetConfig,
 } from '../../../utils/tauriCommands';
-import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsBackButton from '../components/SettingsBackButton';
 import {
   SettingsNumberField,
   SettingsRow,
@@ -24,6 +22,7 @@ import {
   SettingsTextArea,
 } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 
 const DEFAULT_CONFIG: AutocompleteConfig = {
   enabled: false,
@@ -70,7 +69,7 @@ const parseAutocompleteConfig = (raw: unknown): AutocompleteConfig => {
 
 const AutocompletePanel = () => {
   const { t } = useT();
-  const { navigateBack, navigateToSettings } = useSettingsNavigation();
+  const { navigateToSettings } = useSettingsNavigation();
   const [status, setStatus] = useState<AutocompleteStatus | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -217,181 +216,180 @@ const AutocompletePanel = () => {
   };
 
   return (
-    <PanelPage
-      className="z-10"
-      contentClassName=""
-      leading={<SettingsBackButton onBack={navigateBack} />}>
-      <div className="p-4 pt-2 space-y-5">
-        {/* ── Settings ──────────────────────────────────────────────── */}
-        <SettingsSection title={t('autocomplete.settings')}>
-          <SettingsRow
-            label={t('common.enabled')}
-            control={
-              <SettingsSwitch
-                id="autocomplete-enabled"
-                checked={enabled}
-                onCheckedChange={setEnabled}
-                aria-label={t('common.enabled')}
-              />
-            }
-          />
-
-          <SettingsRow
-            label={t('autocomplete.acceptWithTab')}
-            control={
-              <SettingsSwitch
-                id="autocomplete-accept-with-tab"
-                checked={acceptWithTab}
-                onCheckedChange={setAcceptWithTab}
-                aria-label={t('autocomplete.acceptWithTab')}
-              />
-            }
-          />
-
-          <SettingsRow
-            htmlFor="autocomplete-style-preset"
-            label={t('autocomplete.stylePreset')}
-            control={
-              <SettingsSelect
-                id="autocomplete-style-preset"
-                value={stylePreset}
-                onChange={e => setStylePreset(e.target.value)}>
-                <option value="balanced">{t('autocomplete.style.balanced')}</option>
-                <option value="concise">{t('autocomplete.style.concise')}</option>
-                <option value="formal">{t('autocomplete.style.formal')}</option>
-                <option value="casual">{t('autocomplete.style.casual')}</option>
-                <option value="custom">{t('autocomplete.style.custom')}</option>
-              </SettingsSelect>
-            }
-          />
-
-          <SettingsRow
-            htmlFor="autocomplete-disabled-apps"
-            label={t('autocomplete.disabledApps')}
-            stacked
-            control={
-              <SettingsTextArea
-                id="autocomplete-disabled-apps"
-                value={disabledAppsText}
-                onChange={e => setDisabledAppsText(e.target.value)}
-                rows={3}
-              />
-            }
-          />
-
-          <SettingsRow
-            label={t('autocomplete.debounceMs')}
-            control={
-              <SettingsNumberField
-                id="autocomplete-debounce-ms-field"
-                value={debounceMs}
-                onChange={setDebounceMs}
-                onCommit={() => void saveConfig()}
-                unit="ms"
-                min={0}
-                max={5000}
-                aria-label={t('autocomplete.debounceMs')}
-                data-testid="autocomplete-debounce-ms"
-              />
-            }
-          />
-
-          <SettingsRow
-            label={t('autocomplete.maxChars')}
-            control={
-              <SettingsNumberField
-                id="autocomplete-max-chars-field"
-                value={maxChars}
-                onChange={setMaxChars}
-                onCommit={() => void saveConfig()}
-                unit={t('autocomplete.chars')}
-                min={1}
-                max={8192}
-                aria-label={t('autocomplete.maxChars')}
-                data-testid="autocomplete-max-chars"
-              />
-            }
-          />
-
-          <SettingsRow
-            label={t('autocomplete.overlayTtlMs')}
-            control={
-              <SettingsNumberField
-                id="autocomplete-overlay-ttl-ms-field"
-                value={overlayTtlMs}
-                onChange={setOverlayTtlMs}
-                onCommit={() => void saveConfig()}
-                unit="ms"
-                min={0}
-                max={30000}
-                aria-label={t('autocomplete.overlayTtlMs')}
-                data-testid="autocomplete-overlay-ttl-ms"
-              />
-            }
-          />
-
-          <div className="flex items-center gap-2 px-4 py-3">
-            <Button
-              type="button"
-              variant="primary"
-              size="sm"
-              onClick={() => void saveConfig()}
-              disabled={isSaving || !configLoaded}>
-              {isSaving ? t('autocomplete.saving') : t('autocomplete.saveSettings')}
-            </Button>
-          </div>
-        </SettingsSection>
-
-        {/* ── Runtime ────────────────────────────────────────────────── */}
-        <SettingsSection title={t('autocomplete.runtime')}>
-          <div className="px-4 py-3 text-sm text-neutral-600 dark:text-neutral-300 space-y-1">
-            <div>
-              {t('autocomplete.running')}: {status?.running ? t('common.yes') : t('common.no')}
-            </div>
-            <div>
-              {t('common.enabled')}: {status?.enabled ? t('common.yes') : t('common.no')}
-            </div>
-          </div>
-          <div className="flex gap-2 px-4 pb-3">
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => void start()}
-              disabled={!configLoaded || !status?.platform_supported || Boolean(status?.running)}>
-              {t('autocomplete.start')}
-            </Button>
-            <Button
-              type="button"
-              variant="danger"
-              size="sm"
-              onClick={() => void stop()}
-              disabled={!status?.running}>
-              {t('autocomplete.stop')}
-            </Button>
-          </div>
-        </SettingsSection>
-
-        {/* ── Status messages ─────────────────────────────────────────── */}
-        <SettingsStatusLine
-          saving={isSaving}
-          savedNote={message}
-          error={error}
-          savingLabel={t('autocomplete.saving')}
+    <SettingsPanel>
+      {/* ── Settings ──────────────────────────────────────────────── */}
+      <SettingsSection title={t('autocomplete.settings')}>
+        <SettingsRow
+          label={t('common.enabled')}
+          control={
+            <SettingsSwitch
+              id="autocomplete-enabled"
+              checked={enabled}
+              onCheckedChange={setEnabled}
+              aria-label={t('common.enabled')}
+            />
+          }
         />
 
-        {/* ── Advanced link ────────────────────────────────────────────── */}
-        <button
-          type="button"
-          onClick={() => navigateToSettings('autocomplete-debug')}
-          className="flex items-center gap-1.5 text-xs text-neutral-400 dark:text-neutral-500 hover:text-neutral-600 dark:hover:text-neutral-300 transition-colors">
-          {t('autocomplete.advancedSettings')}
+        <SettingsRow
+          label={t('autocomplete.acceptWithTab')}
+          control={
+            <SettingsSwitch
+              id="autocomplete-accept-with-tab"
+              checked={acceptWithTab}
+              onCheckedChange={setAcceptWithTab}
+              aria-label={t('autocomplete.acceptWithTab')}
+            />
+          }
+        />
+
+        <SettingsRow
+          htmlFor="autocomplete-style-preset"
+          label={t('autocomplete.stylePreset')}
+          control={
+            <SettingsSelect
+              id="autocomplete-style-preset"
+              value={stylePreset}
+              onChange={e => setStylePreset(e.target.value)}>
+              <option value="balanced">{t('autocomplete.style.balanced')}</option>
+              <option value="concise">{t('autocomplete.style.concise')}</option>
+              <option value="formal">{t('autocomplete.style.formal')}</option>
+              <option value="casual">{t('autocomplete.style.casual')}</option>
+              <option value="custom">{t('autocomplete.style.custom')}</option>
+            </SettingsSelect>
+          }
+        />
+
+        <SettingsRow
+          htmlFor="autocomplete-disabled-apps"
+          label={t('autocomplete.disabledApps')}
+          stacked
+          control={
+            <SettingsTextArea
+              id="autocomplete-disabled-apps"
+              value={disabledAppsText}
+              onChange={e => setDisabledAppsText(e.target.value)}
+              rows={3}
+            />
+          }
+        />
+
+        <SettingsRow
+          label={t('autocomplete.debounceMs')}
+          control={
+            <SettingsNumberField
+              id="autocomplete-debounce-ms-field"
+              value={debounceMs}
+              onChange={setDebounceMs}
+              onCommit={() => void saveConfig()}
+              unit="ms"
+              min={0}
+              max={5000}
+              aria-label={t('autocomplete.debounceMs')}
+              data-testid="autocomplete-debounce-ms"
+            />
+          }
+        />
+
+        <SettingsRow
+          label={t('autocomplete.maxChars')}
+          control={
+            <SettingsNumberField
+              id="autocomplete-max-chars-field"
+              value={maxChars}
+              onChange={setMaxChars}
+              onCommit={() => void saveConfig()}
+              unit={t('autocomplete.chars')}
+              min={1}
+              max={8192}
+              aria-label={t('autocomplete.maxChars')}
+              data-testid="autocomplete-max-chars"
+            />
+          }
+        />
+
+        <SettingsRow
+          label={t('autocomplete.overlayTtlMs')}
+          control={
+            <SettingsNumberField
+              id="autocomplete-overlay-ttl-ms-field"
+              value={overlayTtlMs}
+              onChange={setOverlayTtlMs}
+              onCommit={() => void saveConfig()}
+              unit="ms"
+              min={0}
+              max={30000}
+              aria-label={t('autocomplete.overlayTtlMs')}
+              data-testid="autocomplete-overlay-ttl-ms"
+            />
+          }
+        />
+
+        <div className="flex items-center gap-2 px-4 py-3">
+          <Button
+            type="button"
+            variant="primary"
+            size="sm"
+            onClick={() => void saveConfig()}
+            disabled={isSaving || !configLoaded}>
+            {isSaving ? t('autocomplete.saving') : t('autocomplete.saveSettings')}
+          </Button>
+        </div>
+      </SettingsSection>
+
+      {/* ── Runtime ────────────────────────────────────────────────── */}
+      <SettingsSection title={t('autocomplete.runtime')}>
+        <div className="px-4 py-3 text-sm text-content-secondary space-y-1">
+          <div>
+            {t('autocomplete.running')}: {status?.running ? t('common.yes') : t('common.no')}
+          </div>
+          <div>
+            {t('common.enabled')}: {status?.enabled ? t('common.yes') : t('common.no')}
+          </div>
+        </div>
+        <div className="flex gap-2 px-4 pb-3">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => void start()}
+            disabled={!configLoaded || !status?.platform_supported || Boolean(status?.running)}>
+            {t('autocomplete.start')}
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            tone="danger"
+            size="sm"
+            onClick={() => void stop()}
+            disabled={!status?.running}>
+            {t('autocomplete.stop')}
+          </Button>
+        </div>
+      </SettingsSection>
+
+      {/* ── Status messages ─────────────────────────────────────────── */}
+      <SettingsStatusLine
+        saving={isSaving}
+        savedNote={message}
+        error={error}
+        savingLabel={t('autocomplete.saving')}
+      />
+
+      {/* ── Advanced link ────────────────────────────────────────────── */}
+      <Button
+        type="button"
+        variant="tertiary"
+        size="xs"
+        onClick={() => navigateToSettings('autocomplete-debug')}
+        trailingIcon={
           <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
           </svg>
-        </button>
-      </div>
-    </PanelPage>
+        }>
+        {t('autocomplete.advancedSettings')}
+      </Button>
+    </SettingsPanel>
   );
 };
 

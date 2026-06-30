@@ -21,7 +21,7 @@
 
 use serde_json::{json, Value};
 
-use super::CdpConn;
+use crate::cdp::CdpConn;
 
 /// CDP-known origin for the Slack web app.
 const ORIGIN: &str = "https://app.slack.com";

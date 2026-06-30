@@ -16,9 +16,9 @@ const SettingsSelect = forwardRef<HTMLSelectElement, SettingsSelectProps>(
     const sizeClass = inputSize === 'sm' ? 'h-8 pl-2.5' : 'h-9 pl-3';
 
     const classes = [
-      'block border border-neutral-300 dark:border-neutral-700',
-      'bg-white dark:bg-neutral-900',
-      'text-neutral-900 dark:text-neutral-100',
+      'block border border-line-strong',
+      'bg-surface',
+      'text-content',
       'text-sm rounded-lg',
       'focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20',
       'transition-colors duration-150',

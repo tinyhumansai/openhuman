@@ -19,10 +19,7 @@ const SettingsListItem = ({
   mono = false,
   'data-testid': testId,
 }: SettingsListItemProps) => {
-  const labelClass = [
-    'text-xs text-neutral-800 dark:text-neutral-100 truncate',
-    mono ? 'font-mono' : '',
-  ]
+  const labelClass = ['text-xs text-content truncate', mono ? 'font-mono' : '']
     .filter(Boolean)
     .join(' ');
 
@@ -35,7 +32,7 @@ const SettingsListItem = ({
       {onRemove && (
         <Button
           type="button"
-          variant="ghost"
+          variant="tertiary"
           size="xs"
           onClick={onRemove}
           aria-label={removeLabel}

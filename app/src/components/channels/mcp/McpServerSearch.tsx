@@ -28,14 +28,14 @@ const McpServerSearch = ({ value, onChange }: McpServerSearchProps) => {
         onChange={e => onChange(e.target.value)}
         placeholder={t('mcp.installed.search.placeholder')}
         aria-label={t('mcp.installed.search.inputAria')}
-        className="w-full rounded-lg border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-1.5 pr-7 text-xs text-stone-800 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-primary-400"
+        className="w-full rounded-lg border border-line bg-surface px-3 py-1.5 pr-7 text-xs text-content placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-primary-400"
       />
       {hasValue && (
         <button
           type="button"
           onClick={() => onChange('')}
           aria-label={t('mcp.installed.search.clearAria')}
-          className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-stone-400 hover:text-stone-700 dark:text-neutral-500 dark:hover:text-neutral-200 transition-colors">
+          className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-content-faint hover:text-content-secondary transition-colors">
           <svg
             className="w-3 h-3"
             fill="none"

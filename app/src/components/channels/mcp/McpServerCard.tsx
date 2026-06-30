@@ -22,12 +22,12 @@ const McpServerCard = ({ server, onSelect }: McpServerCardProps) => {
     <button
       type="button"
       onClick={() => onSelect(server.qualified_name)}
-      className="w-full text-left rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3 flex items-start gap-3 hover:border-primary-300 dark:hover:border-primary-500/40 hover:bg-stone-100/50 dark:hover:bg-neutral-800 transition-colors cursor-pointer">
+      className="w-full text-left rounded-lg border border-line bg-surface-muted p-3 flex items-start gap-3 hover:border-primary-300 dark:hover:border-primary-500/40 hover:bg-surface-subtle/50 dark:hover:bg-surface-muted transition-colors cursor-pointer">
       {server.icon_url ? (
         <img
           src={server.icon_url}
           alt=""
-          className="w-8 h-8 rounded shrink-0 object-contain bg-white dark:bg-neutral-900"
+          className="w-8 h-8 rounded shrink-0 object-contain bg-surface"
         />
       ) : (
         <div className="w-8 h-8 rounded shrink-0 bg-primary-100 dark:bg-primary-500/20 flex items-center justify-center text-sm">
@@ -35,13 +35,9 @@ const McpServerCard = ({ server, onSelect }: McpServerCardProps) => {
         </div>
       )}
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-stone-900 dark:text-neutral-100 truncate">
-          {server.display_name}
-        </p>
+        <p className="text-sm font-medium text-content truncate">{server.display_name}</p>
         {server.description && (
-          <p className="text-xs text-stone-500 dark:text-neutral-400 line-clamp-4 mt-0.5">
-            {server.description}
-          </p>
+          <p className="text-xs text-content-muted line-clamp-4 mt-0.5">{server.description}</p>
         )}
       </div>
     </button>

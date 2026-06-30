@@ -74,6 +74,7 @@ async fn config_secrets_create_master_key_in_keyring_on_fresh_install() {
         channels_config: openhuman_core::openhuman::config::schema::ChannelsConfig {
             telegram: Some(TelegramConfig {
                 bot_token: "fresh-tg-secret".into(),
+                chat_id: None,
                 allowed_users: vec!["bob".into()],
                 stream_mode: StreamMode::default(),
                 draft_update_interval_ms: 1000,

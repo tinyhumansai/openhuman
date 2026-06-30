@@ -6,12 +6,10 @@ import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
 import { teamApi } from '../../../services/api/teamApi';
 import { sanitizeError } from '../../../utils/sanitize';
-import PanelPage from '../../layout/PanelPage';
 import { CenteredLoadingState, ErrorBanner, InlineLoadingStatus, Spinner } from '../../ui';
 import Button from '../../ui/Button';
-import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsBadge, SettingsEmptyState, SettingsSection } from '../controls';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 
 const log = debug('core-rpc:error');
 
@@ -19,7 +17,6 @@ const TeamInvitesPanel = () => {
   const { t } = useT();
   const { teamId } = useParams<{ teamId: string }>();
   const location = useLocation();
-  const { navigateBack } = useSettingsNavigation();
   const { snapshot, teams, teamInvitesById, refreshTeamInvites } = useCoreState();
   const user = snapshot.currentUser;
 
@@ -119,12 +116,8 @@ const TeamInvitesPanel = () => {
   };
 
   return (
-    <PanelPage
-      className="z-10"
-      contentClassName=""
-      description={t('pages.settings.account.teamDesc')}
-      leading={<SettingsBackButton onBack={navigateBack} />}>
-      <div className="p-4 pt-2 space-y-5">
+    <SettingsPanel title={t('team.invites')} description={t('pages.settings.account.teamDesc')}>
+      <>
         {error && <ErrorBanner message={error} />}
 
         {/* Generate button */}
@@ -177,7 +170,7 @@ const TeamInvitesPanel = () => {
                 return (
                   <li
                     key={invite._id}
-                    className={`px-4 py-3 border-b border-neutral-100 dark:border-neutral-800 last:border-b-0 ${
+                    className={`px-4 py-3 border-b border-line-subtle last:border-b-0 ${
                       isInactive ? 'opacity-60' : ''
                     }`}>
                     <div className="flex items-center justify-between mb-2">
@@ -186,8 +179,8 @@ const TeamInvitesPanel = () => {
                         <code
                           className={`text-sm font-mono px-2 py-1 rounded-lg ${
                             isInactive
-                              ? 'text-neutral-500 dark:text-neutral-400 bg-neutral-100 dark:bg-neutral-800'
-                              : 'text-neutral-800 dark:text-neutral-100 bg-neutral-200 dark:bg-neutral-800'
+                              ? 'text-content-muted bg-surface-subtle'
+                              : 'text-content bg-surface-strong'
                           }`}>
                           {invite.code}
                         </code>
@@ -204,7 +197,7 @@ const TeamInvitesPanel = () => {
                         {/* Copy */}
                         <Button
                           type="button"
-                          variant="ghost"
+                          variant="tertiary"
                           size="xs"
                           onClick={() => void handleCopy(invite.code, invite._id)}
                           disabled={status !== 'active'}
@@ -241,12 +234,12 @@ const TeamInvitesPanel = () => {
                         {isAdmin && status === 'active' && (
                           <Button
                             type="button"
-                            variant="ghost"
+                            variant="tertiary"
                             size="xs"
                             onClick={() => handleRevoke(invite._id, invite.code)}
                             disabled={revokingId === invite._id}
                             aria-label={t('invites.revokeAria')}
-                            className="text-neutral-500 dark:text-neutral-400 hover:text-coral-400 hover:bg-coral-500/10">
+                            className="text-content-muted hover:text-coral-400 hover:bg-coral-500/10">
                             <svg
                               className="w-4 h-4"
                               fill="none"
@@ -263,7 +256,7 @@ const TeamInvitesPanel = () => {
                         )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-3 text-xs text-neutral-500 dark:text-neutral-400">
+                    <div className="flex items-center gap-3 text-xs text-content-muted">
                       <span>
                         {t('invites.uses')
                           .replace('{current}', String(invite.currentUses))
@@ -292,8 +285,8 @@ const TeamInvitesPanel = () => {
         {/* Revoke Invite Confirmation Modal */}
         {inviteToRevoke && (
           <div className="fixed inset-0 bg-neutral-900/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-full max-w-md border border-neutral-200 dark:border-neutral-800">
-              <h3 className="text-sm font-semibold text-neutral-800 dark:text-neutral-100 mb-4">
+            <div className="bg-surface rounded-2xl p-6 w-full max-w-md border border-line">
+              <h3 className="text-sm font-semibold text-content mb-4">
                 {t('invites.revokeTitle')}
               </h3>
 
@@ -304,10 +297,10 @@ const TeamInvitesPanel = () => {
               )}
 
               <div className="space-y-4">
-                <div className="text-sm text-neutral-500 dark:text-neutral-400">
+                <div className="text-sm text-content-muted">
                   <p>
                     {t('invites.revokePromptPrefix')}{' '}
-                    <code className="text-neutral-800 dark:text-neutral-100 bg-neutral-100 dark:bg-neutral-800 px-1.5 py-0.5 rounded font-mono text-xs">
+                    <code className="text-content bg-surface-subtle px-1.5 py-0.5 rounded font-mono text-xs">
                       {inviteToRevoke.code}
                     </code>
                     ?
@@ -327,9 +320,10 @@ const TeamInvitesPanel = () => {
                   </Button>
                   <Button
                     type="button"
-                    variant="danger"
+                    variant="primary"
+                    tone="danger"
                     size="md"
-                    className="flex-1 bg-coral-500 hover:bg-coral-600 text-white border-0 dark:bg-coral-500 dark:hover:bg-coral-600"
+                    className="flex-1"
                     onClick={() => void confirmRevokeInvite()}
                     disabled={revokingId === inviteToRevoke.id}>
                     {revokingId === inviteToRevoke.id
@@ -341,8 +335,8 @@ const TeamInvitesPanel = () => {
             </div>
           </div>
         )}
-      </div>
-    </PanelPage>
+      </>
+    </SettingsPanel>
   );
 };
 

@@ -6,7 +6,7 @@
  * Intelligence setup modal.
  */
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { useCoreState } from '../../providers/CoreStateProvider';
@@ -14,6 +14,8 @@ import {
   openhumanAutocompleteSetStyle,
   openhumanAutocompleteStart,
 } from '../../utils/tauriCommands/autocomplete';
+import { settingsNavState } from '../settings/modal/settingsOverlay';
+import Button from '../ui/Button';
 import {
   SetupNotice,
   SetupSettingRow,
@@ -29,6 +31,7 @@ interface Props {
 
 export default function AutocompleteSetupModal({ onClose }: Props) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { t } = useT();
   const { snapshot, refresh } = useCoreState();
   const status = snapshot.runtime.autocomplete;
@@ -58,7 +61,7 @@ export default function AutocompleteSetupModal({ onClose }: Props) {
 
   const handleGoToSettings = () => {
     onClose();
-    navigate('/settings/autocomplete');
+    navigate('/settings/autocomplete', settingsNavState(location));
   };
 
   return (
@@ -85,7 +88,7 @@ export default function AutocompleteSetupModal({ onClose }: Props) {
       {/* ─── Enable step ─── */}
       {step === 'enable' && (
         <div className="space-y-4">
-          <p className="text-xs text-stone-500 dark:text-neutral-400 leading-relaxed">
+          <p className="text-xs text-content-muted leading-relaxed">
             {t('skills.setup.autocomplete.description')}
           </p>
 
@@ -107,15 +110,16 @@ export default function AutocompleteSetupModal({ onClose }: Props) {
 
           {enableError && <SetupNotice tone="coral">{enableError}</SetupNotice>}
 
-          <button
-            type="button"
+          <Button
+            variant="primary"
+            size="lg"
             onClick={() => void handleEnable()}
             disabled={isEnabling || (status !== null && !status.platform_supported)}
-            className="w-full rounded-xl bg-primary-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-50 transition-colors">
+            className="w-full">
             {isEnabling
               ? t('skills.setup.autocomplete.enabling')
               : t('skills.setup.autocomplete.enableBtn')}
-          </button>
+          </Button>
         </div>
       )}
 

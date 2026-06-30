@@ -295,6 +295,78 @@ fn search_by_vector_limit_zero() {
         .is_empty());
 }
 
+/// Metadata is parsed only for rows that survive truncation, so the parse
+/// must align with the post-sort order — each returned row must carry its
+/// own metadata, and dropped rows must not appear. This pins the deferred
+/// parse against an off-by-one or mis-zipped mapping after sort/truncate.
+#[test]
+fn search_by_vector_returns_metadata_of_surviving_rows() {
+    let store = fake_store(3);
+    store
+        .insert_with_vector("near", "ns", "t", &[1.0, 0.0, 0.0], json!({"tag": "near"}))
+        .unwrap();
+    store
+        .insert_with_vector("mid", "ns", "t", &[0.7, 0.7, 0.0], json!({"tag": "mid"}))
+        .unwrap();
+    store
+        .insert_with_vector("far", "ns", "t", &[0.0, 0.0, 1.0], json!({"tag": "far"}))
+        .unwrap();
+
+    let results = store.search_by_vector("ns", &[1.0, 0.0, 0.0], 2).unwrap();
+
+    assert_eq!(results.len(), 2, "limit should drop the least similar row");
+    assert_eq!(results[0].id, "near");
+    assert_eq!(results[1].id, "mid");
+    assert!(
+        results.iter().all(|hit| hit.id != "far"),
+        "the truncated row must not leak into the results"
+    );
+    // The deferred parse must attach each row's own metadata, not a neighbour's.
+    for hit in &results {
+        assert_eq!(
+            hit.metadata.get("tag").and_then(|v| v.as_str()),
+            Some(hit.id.as_str()),
+            "metadata tag should match the row id for {}",
+            hit.id
+        );
+    }
+}
+
+/// A row with corrupt metadata JSON (e.g. a hand-edited or partially written
+/// DB) must not break the search — the deferred parse falls back to `Null`
+/// rather than dropping the row or erroring. Inserted raw because
+/// `insert_with_vector` always serializes valid JSON.
+#[test]
+fn search_by_vector_falls_back_to_null_on_invalid_metadata() {
+    let store = fake_store(3);
+    {
+        let conn = store.conn.lock();
+        conn.execute(
+            "INSERT INTO vectors (id, namespace, text, embedding, metadata, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                "bad",
+                "ns",
+                "t",
+                vec_to_bytes(&[1.0, 0.0, 0.0]),
+                "{not valid json",
+                0.0_f64,
+                0.0_f64
+            ],
+        )
+        .unwrap();
+    }
+
+    let results = store.search_by_vector("ns", &[1.0, 0.0, 0.0], 5).unwrap();
+
+    assert_eq!(results.len(), 1, "the row must still be returned");
+    assert_eq!(results[0].id, "bad");
+    assert!(
+        results[0].metadata.is_null(),
+        "invalid metadata json must fall back to Null"
+    );
+}
+
 #[test]
 fn search_by_vector_scores_correct() {
     let store = fake_store(3);

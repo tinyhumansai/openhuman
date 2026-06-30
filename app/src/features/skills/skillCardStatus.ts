@@ -14,7 +14,7 @@ export function offlineStatus(label = 'Offline', ctaLabel = 'Enable'): SkillCard
     connectionStatus: 'offline',
     statusDot: 'bg-stone-400',
     statusLabel: label,
-    statusColor: 'text-stone-500',
+    statusColor: 'text-content-muted',
     ctaLabel,
     ctaVariant: 'sage',
   };
@@ -73,7 +73,7 @@ export function enabledStatus(): SkillCardStatusDescriptor {
     connectionStatus: 'disconnected',
     statusDot: 'bg-stone-400',
     statusLabel: 'Enabled',
-    statusColor: 'text-stone-400',
+    statusColor: 'text-content-faint',
     ctaLabel: 'Manage',
     ctaVariant: 'primary',
   };

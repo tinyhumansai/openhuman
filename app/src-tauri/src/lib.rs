@@ -3,7 +3,9 @@
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 compile_error!("src-tauri host supports desktop (Windows/macOS/Linux) only. Mobile lives in app/src-tauri-mobile.");
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod app_update;
+// Artifact export commands (#2779, #3162) — both cross-platform
+// (macOS/Windows/Linux): native Save-As dialog (rfd) + Downloads copy.
 mod artifact_commands;
 mod cdp;
 // macOS/Linux only: depends on the `nix` crate (a `cfg(unix)` dependency) and
@@ -57,6 +59,7 @@ mod ptt_overlay;
 mod reset_reboot_schedule;
 mod screen_capture;
 mod slack_scanner;
+mod stderr_panic_hook;
 mod telegram_scanner;
 mod webview_accounts;
 mod webview_apis;
@@ -306,6 +309,24 @@ async fn recover_port_conflict(
     Ok(outcome)
 }
 
+/// Terminate the foreign process holding the core RPC port, after the user
+/// consented to the specific pid surfaced by `recover_port_conflict`.
+#[tauri::command]
+async fn force_quit_port_owner(
+    pid: u32,
+    state: tauri::State<'_, core_process::CoreProcessHandle>,
+) -> Result<core_process::RecoveryOutcome, String> {
+    log::info!("[core] force_quit_port_owner: command invoked for pid {pid}");
+    let _guard = state.inner().restart_lock().await;
+    let outcome = state.inner().force_quit_port_owner(pid).await;
+    log::debug!(
+        "[core] force_quit_port_owner: result success={} message={}",
+        outcome.success,
+        outcome.message
+    );
+    Ok(outcome)
+}
+
 /// Start the embedded core process on demand.
 ///
 /// Called by the BootCheckGate (Local mode) before the version check.  The
@@ -516,33 +537,65 @@ async fn apply_app_update(
     log::debug!("[app-update] acquired core restart lock");
     state.inner().shutdown().await;
 
-    let progress_app = app.clone();
-    let install_app = app.clone();
-    let download_result = update
-        .download_and_install(
-            move |chunk_length, content_length| {
-                let payload = serde_json::json!({
-                    "chunk": chunk_length,
-                    "total": content_length,
-                });
-                let _ = progress_app.emit("app-update:progress", payload);
-            },
-            move || {
-                log::info!("[app-update] download complete — installing");
-                let _ = install_app.emit("app-update:status", "installing");
-            },
-        )
-        .await;
+    // Bounded retry on transient download failures (Sentry TAURI-RUST-4JR). The
+    // core stays shut down across attempts (the restart lock is held above); we
+    // only revive it on the terminal give-up. A `Reqwest` error is always
+    // download-phase — `download_and_install` verifies + installs strictly after
+    // a complete download — so retrying never re-runs a partial install.
+    let mut attempt: u32 = 1;
+    loop {
+        let progress_app = app.clone();
+        let install_app = app.clone();
+        let download_result = update
+            .download_and_install(
+                move |chunk_length, content_length| {
+                    let payload = serde_json::json!({
+                        "chunk": chunk_length,
+                        "total": content_length,
+                    });
+                    let _ = progress_app.emit("app-update:progress", payload);
+                },
+                move || {
+                    log::info!("[app-update] download complete — installing");
+                    let _ = install_app.emit("app-update:status", "installing");
+                },
+            )
+            .await;
 
-    if let Err(e) = download_result {
-        log::error!("[app-update] download/install failed: {e}");
-        // Same recovery as `install_app_update`: the .app wasn't swapped,
-        // so revive the in-process core we shut down above.
-        if let Err(start_err) = state.inner().ensure_running().await {
-            log::error!("[app-update] failed to restart core after apply error: {start_err}");
+        match download_result {
+            Ok(()) => break,
+            Err(e) => {
+                let transient = app_update::is_transient_updater_err(&e);
+                match app_update::classify(attempt, app_update::MAX_DOWNLOAD_ATTEMPTS, transient) {
+                    app_update::RetryDecision::Retry => {
+                        log::warn!(
+                            "[app-update] download/install attempt {}/{} failed (transient): {e} — retrying",
+                            attempt,
+                            app_update::MAX_DOWNLOAD_ATTEMPTS
+                        );
+                        tokio::time::sleep(app_update::backoff_for(attempt)).await;
+                        attempt += 1;
+                        // Keep core down; re-assert downloading status for the next pass.
+                        let _ = app.emit("app-update:status", "downloading");
+                    }
+                    app_update::RetryDecision::GiveUp => {
+                        log::error!(
+                            "[app-update] download/install failed after {} attempt(s): {e}",
+                            attempt
+                        );
+                        // Same recovery as `install_app_update`: the .app wasn't
+                        // swapped, so revive the in-process core we shut down above.
+                        if let Err(start_err) = state.inner().ensure_running().await {
+                            log::error!(
+                                "[app-update] failed to restart core after apply error: {start_err}"
+                            );
+                        }
+                        let _ = app.emit("app-update:status", "error");
+                        return Err(format!("download_and_install failed: {e}"));
+                    }
+                }
+            }
         }
-        let _ = app.emit("app-update:status", "error");
-        return Err(format!("download_and_install failed: {e}"));
     }
 
     log::info!("[app-update] install complete — relaunching");
@@ -630,28 +683,60 @@ async fn download_app_update(
     log::info!("[app-update] downloading {} (background)", new_version);
     let _ = app.emit("app-update:status", "downloading");
 
-    let progress_app = app.clone();
-    let download_result = update
-        .download(
-            move |chunk_length, content_length| {
-                let payload = serde_json::json!({
-                    "chunk": chunk_length,
-                    "total": content_length,
-                });
-                let _ = progress_app.emit("app-update:progress", payload);
-            },
-            || {
-                log::info!("[app-update] download complete — staging for install");
-            },
-        )
-        .await;
+    // Bounded retry: a single transient mid-stream HTTP failure on the large
+    // bundle download otherwise aborts the whole update (Sentry TAURI-RUST-4JR).
+    // Retry only the network class; surface fatal/exhausted errors as before.
+    let bytes = {
+        let mut attempt: u32 = 1;
+        loop {
+            let progress_app = app.clone();
+            let download_result = update
+                .download(
+                    move |chunk_length, content_length| {
+                        let payload = serde_json::json!({
+                            "chunk": chunk_length,
+                            "total": content_length,
+                        });
+                        let _ = progress_app.emit("app-update:progress", payload);
+                    },
+                    || {
+                        log::info!("[app-update] download complete — staging for install");
+                    },
+                )
+                .await;
 
-    let bytes = match download_result {
-        Ok(b) => b,
-        Err(e) => {
-            log::error!("[app-update] download failed: {e}");
-            let _ = app.emit("app-update:status", "error");
-            return Err(format!("download failed: {e}"));
+            match download_result {
+                Ok(b) => break b,
+                Err(e) => {
+                    let transient = app_update::is_transient_updater_err(&e);
+                    match app_update::classify(
+                        attempt,
+                        app_update::MAX_DOWNLOAD_ATTEMPTS,
+                        transient,
+                    ) {
+                        app_update::RetryDecision::Retry => {
+                            log::warn!(
+                                "[app-update] download attempt {}/{} failed (transient): {e} — retrying",
+                                attempt,
+                                app_update::MAX_DOWNLOAD_ATTEMPTS
+                            );
+                            tokio::time::sleep(app_update::backoff_for(attempt)).await;
+                            attempt += 1;
+                            // Re-assert status so a stale "error" never lingers; the
+                            // next attempt's progress callback resets the bar.
+                            let _ = app.emit("app-update:status", "downloading");
+                        }
+                        app_update::RetryDecision::GiveUp => {
+                            log::error!(
+                                "[app-update] download failed after {} attempt(s): {e}",
+                                attempt
+                            );
+                            let _ = app.emit("app-update:status", "error");
+                            return Err(format!("download failed: {e}"));
+                        }
+                    }
+                }
+            }
         }
     };
 
@@ -1924,21 +2009,37 @@ fn append_platform_cef_gpu_workarounds(
 ) {
     // Issue #1697: on Arch/Manjaro-family Linux systems, the AppImage can
     // abort during CEF GPU process startup when EGL context creation fails
-    // before Chromium's own fallback path gets a usable renderer. Disable the
-    // hardware GPU path on Linux so packaged builds can still launch via
-    // software compositing. Users with working GPU stacks can opt back into
-    // hardware acceleration via `OPENHUMAN_FORCE_GPU=1` — required for the
-    // Rive mascot on the Human tab and any other WebGL2 surface to render.
+    // before Chromium's own fallback path gets a usable renderer.
+    //
+    // The original workaround disabled the GPU path with `--disable-gpu`, but
+    // that shuts the GPU process down entirely — and with it every WebGL
+    // surface. That regressed Tiny Place (#4193): the world renderer needs a
+    // WebGL2 context, so on every packaged Linux build it failed to initialise
+    // and the world page showed a black screen with "Could not start the world
+    // renderer" (the Rive mascot on the Human tab is collateral damage too).
+    //
+    // Instead of killing the GPU process, pin it to ANGLE's SwiftShader
+    // software backend. SwiftShader is a pure-software rasteriser that needs no
+    // hardware EGL/driver, so it still sidesteps the #1697 EGL-context abort,
+    // while giving WebGL surfaces a working (software) context to render into.
+    // `--disable-gpu-compositing` is preserved so page compositing stays on the
+    // CPU exactly as before; only the lethal `--disable-gpu` is dropped.
+    // `--enable-unsafe-swiftshader` is required because Chromium gates
+    // SwiftShader-backed WebGL behind it (the "unsafe" label is about software
+    // perf, not security). Users with working GPU stacks can still opt into
+    // hardware acceleration via `OPENHUMAN_FORCE_GPU=1`.
     if os == "linux" {
         if cef_force_gpu_enabled(force_gpu_override) {
             log::info!(
-                "[cef-startup] OPENHUMAN_FORCE_GPU set — skipping --disable-gpu / --disable-gpu-compositing (issue #1697). If the app fails to launch with a GPU process abort, unset the env var."
+                "[cef-startup] OPENHUMAN_FORCE_GPU set — skipping SwiftShader software-GL fallback (issue #1697). If the app fails to launch with a GPU process abort, unset the env var."
             );
         } else {
-            args.push(("--disable-gpu", None));
+            args.push(("--use-gl", Some("angle")));
+            args.push(("--use-angle", Some("swiftshader")));
+            args.push(("--enable-unsafe-swiftshader", None));
             args.push(("--disable-gpu-compositing", None));
             log::info!(
-                "[cef-startup] Linux detected: adding --disable-gpu and --disable-gpu-compositing (issue #1697); set OPENHUMAN_FORCE_GPU=1 to re-enable hardware compositing (needed for WebGL2 surfaces like the Rive mascot)"
+                "[cef-startup] Linux detected: forcing ANGLE/SwiftShader software GL so WebGL surfaces (Tiny Place world renderer, Rive mascot) render without the crash-prone hardware GPU process (issues #1697/#4193); set OPENHUMAN_FORCE_GPU=1 for hardware acceleration"
             );
         }
     }
@@ -1991,6 +2092,46 @@ fn append_platform_cef_gpu_workarounds(
             );
         }
     }
+}
+
+/// Whether a CEF command-line flag is `--time-ticks-at-unix-epoch` (in any
+/// dash/casing form, with or without an inline `=<value>` suffix). See
+/// [`strip_time_ticks_at_unix_epoch`] for why we care.
+fn is_time_ticks_at_unix_epoch_flag(flag: &str) -> bool {
+    let name = flag.trim_start_matches('-');
+    // Chromium switches can carry their value inline (`--flag=value`); compare
+    // only the switch name so the inline form can't slip past the guard.
+    let name = name.split_once('=').map_or(name, |(n, _)| n);
+    name.eq_ignore_ascii_case("time-ticks-at-unix-epoch")
+}
+
+/// Issue #3554: `--time-ticks-at-unix-epoch` carries the monotonic-clock
+/// origin (in microseconds) that CEF child processes — renderer / GPU /
+/// utility — use to map Chromium's `TimeTicks` onto wall-clock time. Chromium
+/// derives this value itself when it spawns each child, and it must stay
+/// consistent with the host clock.
+///
+/// OpenHuman must never inject this switch into the CEF command line: a stale
+/// or negative value (e.g. the `-1780937467390432` reported in #3554) pins the
+/// renderer's internal clock ~56 years before the Unix epoch, which surfaces
+/// as a wrong "Current Date & Time" in the app. The CEF command line is
+/// assembled from several sources (the static list here plus any
+/// `RuntimeInitAttribute::CommandLineArgs` contributed elsewhere), so strip the
+/// flag from the final list as a guard and let Chromium compute the origin
+/// locally for each process.
+fn strip_time_ticks_at_unix_epoch(args: &mut Vec<CefCommandLineArg>) {
+    args.retain(|(flag, value)| {
+        if is_time_ticks_at_unix_epoch_flag(flag) {
+            log::warn!(
+                "[cef-startup] dropping OpenHuman-supplied --time-ticks-at-unix-epoch{} so \
+                 Chromium computes the clock origin locally (issue #3554)",
+                value.map(|v| format!("={v}")).unwrap_or_default()
+            );
+            false
+        } else {
+            true
+        }
+    });
 }
 
 /// Linux only: replace Xlib's default error handler with a logging no-op.
@@ -2061,6 +2202,18 @@ fn install_silent_x_error_handler() {
 fn install_silent_x_error_handler() {}
 
 pub fn run() {
+    // Neutralise a broken inherited stderr *pipe* BEFORE any `eprintln!` can
+    // fire. On Windows, when the GUI process inherits an stderr pipe whose
+    // parent end later closes, the next stdlib stderr write fails with a
+    // broken-pipe errno and `std::io::stdio::print_to` raises
+    // `panic!("failed printing to stderr: …")` on the main thread, aborting the
+    // app over an external condition (Sentry TAURI-RUST-F). Redirecting that
+    // pipe to NUL makes the write succeed (discarded) instead of panicking. A
+    // panic hook cannot fix this — it runs during unwinding and cannot stop the
+    // abort — so the cure is at the write path. No-op on non-Windows / when
+    // stderr is a console or file. See `stderr_panic_hook`.
+    stderr_panic_hook::neutralize_broken_parent_stderr();
+
     // Must run before any GTK/CEF code that could trigger X calls — otherwise
     // Xlib's default handler calls exit(1) on the first BadWindow and we never
     // reach this line. See helper doc above for the full reasoning.
@@ -2223,6 +2376,40 @@ pub fn run() {
                 );
                 return None;
             }
+            // Drop provider insufficient-credits 402s — the user's own BYO
+            // account (e.g. OpenRouter) is out of balance, a billing state
+            // OpenHuman has no lever over once the request already caps
+            // max_tokens. The core binary's main.rs before_send already
+            // filters these; since #1061 the core runs in-process inside this
+            // shell, so the cron `agent_job` retries-exhausted report (and any
+            // other compatible-provider path) lands in THIS Sentry client and
+            // must be filtered identically. Closes the #3617 drift that wired
+            // the filter only into the standalone-CLI chain (TAURI-RUST-514 /
+            // -C62).
+            if openhuman_core::core::observability::is_insufficient_credits_event(&event) {
+                // Metadata-only log shape — `event.message` carries the raw
+                // provider 402 body which CLAUDE.md forbids from local logs.
+                log::debug!(
+                    "[sentry-insufficient-credits-filter] dropping insufficient-credits 402 event_id={:?}",
+                    event.event_id
+                );
+                return None;
+            }
+            // Drop provider monthly-quota exhausted events — the user's
+            // third-party plan has spent its allotment (e.g. Kiro
+            // `MONTHLY_REQUEST_COUNT`, sometimes wrapped in a 500 envelope so
+            // the 402-gated credits filter above misses it). No local lever;
+            // mirrors the core binary's main.rs before_send chain
+            // (TAURI-RUST-C9A: 9k events from a single quota-capped user).
+            if openhuman_core::core::observability::is_quota_exhausted_event(&event) {
+                // Metadata-only log shape — `event.message` carries the raw
+                // provider body which CLAUDE.md forbids from local logs.
+                log::debug!(
+                    "[sentry-quota-exhausted-filter] dropping monthly-quota event_id={:?}",
+                    event.event_id
+                );
+                return None;
+            }
             // Strip server_name (hostname) to avoid leaking machine identity.
             event.server_name = None;
             // Attach the cached account uid so Sentry can count unique users
@@ -2264,6 +2451,15 @@ pub fn run() {
             scope.set_tag("os_version", ver);
         }
     });
+
+    // Install the panic hook *after* `sentry::init` so `take_hook()` captures
+    // Sentry's panic integration as its chain target. The hook ALWAYS chains to
+    // the previous hook for every panic — it never swallows, so no crash is ever
+    // hidden from Sentry. The actual broken-pipe-on-stderr abort is prevented at
+    // the write path by `neutralize_broken_parent_stderr()` (called at the top of
+    // `run()`); this hook only adds a diagnostic breadcrumb for that family. See
+    // `stderr_panic_hook` for the full rationale (Sentry TAURI-RUST-F).
+    stderr_panic_hook::install();
 
     // Optional smoke trigger for verifying the Sentry pipeline end-to-end.
     // Run with `OPENHUMAN_TAURI_SENTRY_TEST=panic` to fire a panic, or
@@ -2474,16 +2670,14 @@ pub fn run() {
         // mock; `password-store=basic` is the equivalent for the password
         // manager. Both are no-ops on Windows/Linux, so safe to always set.
         //
-        // CDP attach is migrating to the in-process channel — see
-        // `app/src-tauri/src/cdp/in_process.rs` and the per-account
-        // session opener (`cdp/session.rs`). The legacy TCP DevTools
-        // port is still passed below (search for
-        // `--remote-debugging-port`) because the per-scanner `CdpConn`
-        // duplicates in `discord_scanner`, `whatsapp_scanner`,
-        // `slack_scanner`, `telegram_scanner`, `wechat_scanner`, and
-        // `meet_video` have not migrated yet. Once they do, the flag
-        // can be dropped and the unauthenticated same-UID loopback
-        // listener with it.
+        // CDP attach goes through the in-process channel only — see
+        // `app/src-tauri/src/cdp/in_process.rs`. Production builds do
+        // not pass the legacy `--remote-debugging-port` flag: every
+        // scanner attaches via `Webview::send_dev_tools_message` and
+        // there is no remaining loopback DevTools listener. The E2E
+        // test-support build can opt into a loopback port below because
+        // the Appium Chromium harness still attaches through
+        // `debuggerAddress`.
         //
         // NOTE: flags must be prefixed with `--`. The runtime's
         // `on_before_command_line_processing` dispatch (in
@@ -2588,18 +2782,13 @@ pub fn run() {
             args.push(("--use-fake-ui-for-media-stream", None));
             args.push(("--use-file-for-fake-video-capture", Some(path)));
         }
-        // CDP attach is migrating to in-process. The per-account
-        // session opener (`cdp/session.rs`) uses the in-process channel
-        // installed by `webview_accounts::open`. The per-scanner
-        // duplicates (whatsapp, slack, telegram, wechat, discord,
-        // meet_video) still reach the embedded browser over the TCP
-        // loopback DevTools port — once they migrate this flag can be
-        // dropped and the unauthenticated listener closed for good.
-        // Leak the small port string to satisfy the `'static` arg lifetime
-        // (one-time, a few bytes per launch — this is a startup flag).
-        let cdp_port_str: &'static str =
-            Box::leak(crate::cdp::cdp_port().to_string().into_boxed_str());
-        args.push(("--remote-debugging-port", Some(cdp_port_str)));
+        #[cfg(feature = "e2e-test-support")]
+        if std::env::var("OPENHUMAN_E2E_MODE").ok().as_deref() == Some("1") {
+            let port = std::env::var("CEF_CDP_PORT").unwrap_or_else(|_| "19222".to_string());
+            let leaked_port: &'static str = Box::leak(port.into_boxed_str());
+            log::info!("[cef-startup] e2e remote-debugging-port enabled port={leaked_port}");
+            args.push(("--remote-debugging-port", Some(leaked_port)));
+        }
         let force_gpu_env = std::env::var("OPENHUMAN_FORCE_GPU").ok();
         append_platform_cef_gpu_workarounds(
             &mut args,
@@ -2607,6 +2796,10 @@ pub fn run() {
             std::env::consts::ARCH,
             force_gpu_env.as_deref(),
         );
+        // #3554: never forward a `--time-ticks-at-unix-epoch` switch to CEF —
+        // a corrupt/negative value drives the renderer's clock decades off and
+        // shows a wrong "Current Date & Time". Let Chromium compute it.
+        strip_time_ticks_at_unix_epoch(&mut args);
         tauri::Builder::<tauri::Cef>::new().command_line_args::<&str, &str>(args)
     };
 
@@ -3435,13 +3628,17 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             core_rpc_url,
             core_rpc_token,
+            // Host-side HTTP relay so the renderer can reach a self-hosted
+            // runtime on a LAN IP that the secure `tauri://localhost` webview
+            // cannot fetch directly (cleartext mixed content). See #3865.
+            core_rpc::relay_http_rpc,
             overlay_parent_rpc_url,
             process_diagnostics_list_owned,
-            // `mod artifact_commands;` is `#[cfg(any(target_os = "macos", target_os = "linux"))]`
-            // (Downloads-dir + `tokio::fs::copy` flow is non-Windows-only today).
-            // The handler entry MUST carry the same gate or Windows builds fail
-            // with "function not found in scope" (CR #3328947313 on PR #3026).
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            // Artifact export commands — both cross-platform (#3162). The
+            // Downloads command was previously macOS/Linux-gated, but the
+            // `directories` + `tokio::fs::copy` flow compiles on Windows too,
+            // and the Save-As fallback needs it there (CodeRabbit on #4127).
+            artifact_commands::save_artifact_via_dialog,
             artifact_commands::download_artifact_to_downloads,
             check_core_update,
             apply_core_update,
@@ -3451,6 +3648,7 @@ pub fn run() {
             install_app_update,
             restart_core_process,
             recover_port_conflict,
+            force_quit_port_owner,
             start_core_process,
             local_data_reset::reset_local_data,
             app_quit,

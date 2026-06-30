@@ -17,12 +17,10 @@ import {
   openhumanAutocompleteStop,
   openhumanGetConfig,
 } from '../../../utils/tauriCommands';
-import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
 import Input from '../../ui/Input';
-import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsSection, SettingsStatusLine, SettingsTextArea } from '../controls';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 
 const DEFAULT_CONFIG: AutocompleteConfig = {
   enabled: false,
@@ -71,7 +69,6 @@ const parseAutocompleteConfig = (raw: unknown): AutocompleteConfig => {
 
 const AutocompleteDebugPanel = () => {
   const { t } = useT();
-  const { navigateBack } = useSettingsNavigation();
 
   // Status & loading
   const [status, setStatus] = useState<AutocompleteStatus | null>(null);
@@ -478,299 +475,289 @@ const AutocompleteDebugPanel = () => {
   // -------------------------------------------------------------------------
 
   return (
-    <PanelPage
-      className="z-10"
-      contentClassName=""
-      description={t('settings.developerMenu.autocomplete.desc')}
-      leading={<SettingsBackButton onBack={navigateBack} />}>
-      <div className="max-w-2xl mx-auto w-full p-4 space-y-4">
-        {/* ------------------------------------------------------------------ */}
-        {/* Runtime section                                                     */}
-        {/* ------------------------------------------------------------------ */}
-        <SettingsSection title={t('settings.autocomplete.appFilter.runtime')}>
-          <div className="px-4 py-3 space-y-3">
-            <div className="text-sm text-neutral-800 dark:text-neutral-200 space-y-1">
-              <div>
-                {t('settings.autocomplete.appFilter.platformSupported')}:{' '}
-                {status?.platform_supported ? t('common.yes') : t('common.no')}
-              </div>
-              <div>
-                {t('settings.autocomplete.appFilter.enabled')}:{' '}
-                {status?.enabled ? t('common.yes') : t('common.no')}
-              </div>
-              <div>
-                {t('settings.autocomplete.appFilter.running')}:{' '}
-                {status?.running ? t('common.yes') : t('common.no')}
-              </div>
-              <div>
-                {t('settings.autocomplete.appFilter.phase')}:{' '}
-                {status?.phase ?? t('settings.autocomplete.shared.unknown')}
-              </div>
-              <div>
-                {t('settings.autocomplete.appFilter.debounce')}:{' '}
-                {`${String(status?.debounce_ms ?? 0)}ms`}
-              </div>
-              <div>
-                {t('settings.autocomplete.appFilter.model')}:{' '}
-                {status?.model_id ?? t('settings.autocomplete.shared.notApplicable')}
-              </div>
-              <div>
-                {t('settings.autocomplete.appFilter.app')}:{' '}
-                {status?.app_name ?? t('settings.autocomplete.shared.notApplicable')}
-              </div>
-              <div>
-                {t('settings.autocomplete.appFilter.lastError')}:{' '}
-                {status?.last_error ?? t('settings.autocomplete.shared.none')}
-              </div>
-              <div>
-                {t('settings.autocomplete.appFilter.currentSuggestion')}:{' '}
-                {status?.suggestion?.value ?? t('settings.autocomplete.shared.none')}
-              </div>
+    <SettingsPanel description={t('settings.developerMenu.autocomplete.desc')}>
+      {/* ------------------------------------------------------------------ */}
+      {/* Runtime section                                                     */}
+      {/* ------------------------------------------------------------------ */}
+      <SettingsSection title={t('settings.autocomplete.appFilter.runtime')}>
+        <div className="px-4 py-3 space-y-3">
+          <div className="text-sm text-content space-y-1">
+            <div>
+              {t('settings.autocomplete.appFilter.platformSupported')}:{' '}
+              {status?.platform_supported ? t('common.yes') : t('common.no')}
             </div>
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => void refreshStatus(true)}
-                disabled={isLoading}>
-                {isLoading
-                  ? t('settings.autocomplete.appFilter.refreshing')
-                  : t('settings.autocomplete.appFilter.refreshStatus')}
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => void start()}
-                disabled={!status?.platform_supported || Boolean(status?.running)}>
-                {t('autocomplete.start')}
-              </Button>
-              <Button
-                type="button"
-                variant="danger"
-                size="sm"
-                onClick={() => void stop()}
-                disabled={!status?.running}>
-                {t('autocomplete.stop')}
-              </Button>
+            <div>
+              {t('settings.autocomplete.appFilter.enabled')}:{' '}
+              {status?.enabled ? t('common.yes') : t('common.no')}
+            </div>
+            <div>
+              {t('settings.autocomplete.appFilter.running')}:{' '}
+              {status?.running ? t('common.yes') : t('common.no')}
+            </div>
+            <div>
+              {t('settings.autocomplete.appFilter.phase')}:{' '}
+              {status?.phase ?? t('settings.autocomplete.shared.unknown')}
+            </div>
+            <div>
+              {t('settings.autocomplete.appFilter.debounce')}:{' '}
+              {`${String(status?.debounce_ms ?? 0)}ms`}
+            </div>
+            <div>
+              {t('settings.autocomplete.appFilter.model')}:{' '}
+              {status?.model_id ?? t('settings.autocomplete.shared.notApplicable')}
+            </div>
+            <div>
+              {t('settings.autocomplete.appFilter.app')}:{' '}
+              {status?.app_name ?? t('settings.autocomplete.shared.notApplicable')}
+            </div>
+            <div>
+              {t('settings.autocomplete.appFilter.lastError')}:{' '}
+              {status?.last_error ?? t('settings.autocomplete.shared.none')}
+            </div>
+            <div>
+              {t('settings.autocomplete.appFilter.currentSuggestion')}:{' '}
+              {status?.suggestion?.value ?? t('settings.autocomplete.shared.none')}
             </div>
           </div>
-        </SettingsSection>
-
-        {/* ------------------------------------------------------------------ */}
-        {/* Test section                                                        */}
-        {/* ------------------------------------------------------------------ */}
-        <SettingsSection title={t('settings.autocomplete.appFilter.test')}>
-          <div className="px-4 py-3 space-y-3">
-            <div className="space-y-1">
-              <div className="text-xs text-neutral-500 dark:text-neutral-400">
-                {t('settings.autocomplete.appFilter.contextOverride')}
-              </div>
-              <SettingsTextArea
-                value={contextOverride}
-                onChange={event => setContextOverride(event.target.value)}
-                rows={3}
-                aria-label={t('settings.autocomplete.appFilter.contextOverride')}
-              />
-            </div>
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => void testCurrent()}>
-                {t('settings.autocomplete.appFilter.getSuggestion')}
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => void acceptSuggestion()}>
-                {t('settings.autocomplete.appFilter.acceptSuggestion')}
-              </Button>
-              <Button type="button" variant="secondary" size="sm" onClick={() => void debugFocus()}>
-                {t('settings.autocomplete.appFilter.debugFocus')}
-              </Button>
-            </div>
-            {focusDebug && (
-              <pre className="max-h-48 overflow-auto rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 p-2 text-xs text-neutral-800 dark:text-neutral-200">
-                {focusDebug}
-              </pre>
-            )}
-          </div>
-        </SettingsSection>
-
-        {/* ------------------------------------------------------------------ */}
-        {/* Live Logs section                                                   */}
-        {/* ------------------------------------------------------------------ */}
-        <SettingsSection title={t('settings.autocomplete.appFilter.liveLogs')}>
-          <div className="px-4 py-3 space-y-3">
-            <div className="flex justify-end">
-              <Button type="button" variant="secondary" size="xs" onClick={clearLogs}>
-                {t('common.clear')}
-              </Button>
-            </div>
-            {/* Bespoke log-stream display — kept intact */}
-            <pre className="max-h-56 overflow-auto rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 p-2 text-xs text-neutral-800 dark:text-neutral-200">
-              {logs.length > 0 ? logs.join('\n') : t('settings.autocomplete.appFilter.noLogs')}
-            </pre>
-          </div>
-        </SettingsSection>
-
-        {/* ------------------------------------------------------------------ */}
-        {/* Advanced settings                                                   */}
-        {/* ------------------------------------------------------------------ */}
-        <SettingsSection title={t('autocomplete.advancedSettings')}>
-          <div className="px-4 py-3 space-y-3">
-            <label className="flex items-center justify-between rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 px-3 py-2">
-              <span className="text-sm text-neutral-800 dark:text-neutral-200">
-                {t('settings.autocomplete.completionStyle.debounce')}
-              </span>
-              <Input
-                type="number"
-                inputSize="sm"
-                min={50}
-                max={2000}
-                step={10}
-                value={debounceMs}
-                onChange={event => setDebounceMs(event.target.value)}
-                className="w-28"
-                aria-label={t('settings.autocomplete.completionStyle.debounce')}
-              />
-            </label>
-            <label className="flex items-center justify-between rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 px-3 py-2">
-              <span className="text-sm text-neutral-800 dark:text-neutral-200">
-                {t('settings.autocomplete.completionStyle.maxChars')}
-              </span>
-              <Input
-                type="number"
-                inputSize="sm"
-                min={32}
-                max={1200}
-                step={8}
-                value={maxChars}
-                onChange={event => setMaxChars(event.target.value)}
-                className="w-28"
-                aria-label={t('settings.autocomplete.completionStyle.maxChars')}
-              />
-            </label>
-            <label className="flex items-center justify-between rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 px-3 py-2">
-              <span className="text-sm text-neutral-800 dark:text-neutral-200">
-                {t('settings.autocomplete.completionStyle.overlayTtl')}
-              </span>
-              <Input
-                type="number"
-                inputSize="sm"
-                min={300}
-                max={10000}
-                step={100}
-                value={overlayTtlMs}
-                onChange={event => setOverlayTtlMs(event.target.value)}
-                className="w-28"
-                aria-label={t('settings.autocomplete.completionStyle.overlayTtl')}
-              />
-            </label>
-            <div className="space-y-1">
-              <div className="text-xs text-neutral-500 dark:text-neutral-400">
-                {t('settings.autocomplete.completionStyle.styleInstructions')}
-              </div>
-              <SettingsTextArea
-                value={styleInstructions}
-                onChange={event => setStyleInstructions(event.target.value)}
-                rows={3}
-                aria-label={t('settings.autocomplete.completionStyle.styleInstructions')}
-              />
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-neutral-500 dark:text-neutral-400">
-                {t('settings.autocomplete.completionStyle.styleExamples')}
-              </div>
-              <SettingsTextArea
-                value={styleExamplesText}
-                onChange={event => setStyleExamplesText(event.target.value)}
-                rows={3}
-                aria-label={t('settings.autocomplete.completionStyle.styleExamples')}
-              />
-            </div>
+          <div className="flex gap-2">
             <Button
               type="button"
-              variant="primary"
+              variant="secondary"
               size="sm"
-              onClick={() => void saveAdvancedConfig()}
-              disabled={isSaving}>
-              {isSaving ? t('autocomplete.saving') : t('common.save')}
+              onClick={() => void refreshStatus(true)}
+              disabled={isLoading}>
+              {isLoading
+                ? t('settings.autocomplete.appFilter.refreshing')
+                : t('settings.autocomplete.appFilter.refreshStatus')}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => void start()}
+              disabled={!status?.platform_supported || Boolean(status?.running)}>
+              {t('autocomplete.start')}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              tone="danger"
+              size="sm"
+              onClick={() => void stop()}
+              disabled={!status?.running}>
+              {t('autocomplete.stop')}
             </Button>
           </div>
-        </SettingsSection>
+        </div>
+      </SettingsSection>
 
-        {/* ------------------------------------------------------------------ */}
-        {/* Personalization History                                             */}
-        {/* ------------------------------------------------------------------ */}
-        <SettingsSection title={t('settings.autocomplete.completionStyle.personalizationHistory')}>
-          <div className="px-4 py-3 space-y-3">
-            <div className="flex justify-end">
-              <Button
-                type="button"
-                variant="danger"
-                size="xs"
-                onClick={() => void clearHistory()}
-                disabled={isClearingHistory || historyEntries.length === 0}>
-                {isClearingHistory
-                  ? t('settings.autocomplete.completionStyle.clearing')
-                  : t('settings.autocomplete.completionStyle.clearHistory')}
-              </Button>
+      {/* ------------------------------------------------------------------ */}
+      {/* Test section                                                        */}
+      {/* ------------------------------------------------------------------ */}
+      <SettingsSection title={t('settings.autocomplete.appFilter.test')}>
+        <div className="px-4 py-3 space-y-3">
+          <div className="space-y-1">
+            <div className="text-xs text-content-muted">
+              {t('settings.autocomplete.appFilter.contextOverride')}
             </div>
-            <p className="text-xs text-neutral-500 dark:text-neutral-400">
-              {isHistoryLoading
-                ? t('common.loading')
-                : historyEntries.length === 0
-                  ? t('settings.autocomplete.completionStyle.noHistory')
-                  : (historyEntries.length === 1
-                      ? t('settings.autocomplete.completionStyle.acceptedCompletion')
-                      : t('settings.autocomplete.completionStyle.acceptedCompletions')
-                    ).replace('{count}', String(historyEntries.length))}
-            </p>
-            {/* Bespoke history list — kept intact */}
-            {historyEntries.length > 0 && (
-              <div className="max-h-48 overflow-y-auto rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 p-2 space-y-1">
-                {historyEntries.map((entry, idx) => (
-                  <div
-                    key={`${String(entry.timestamp_ms)}-${String(idx)}`}
-                    className="flex flex-col gap-0.5 rounded-lg bg-white dark:bg-neutral-900 px-2 py-1.5 text-xs border border-neutral-100 dark:border-neutral-800">
-                    <div className="flex items-center gap-2 text-neutral-500 dark:text-neutral-400">
-                      <span className="shrink-0">
-                        {new Date(entry.timestamp_ms).toLocaleString()}
-                      </span>
-                      {entry.app_name && (
-                        <span className="rounded bg-neutral-100 dark:bg-neutral-800 px-1 text-neutral-500 dark:text-neutral-400">
-                          {entry.app_name}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-baseline gap-1 text-neutral-800 dark:text-neutral-200 truncate">
-                      <span className="shrink-0 text-neutral-500 dark:text-neutral-400">…</span>
-                      <span className="truncate text-neutral-500 dark:text-neutral-400">
-                        {entry.context.slice(-40)}
-                      </span>
-                      <span className="shrink-0 text-neutral-500 dark:text-neutral-400">→</span>
-                      <span className="font-medium text-primary-500 truncate">
-                        {entry.suggestion}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            <SettingsTextArea
+              value={contextOverride}
+              onChange={event => setContextOverride(event.target.value)}
+              rows={3}
+              aria-label={t('settings.autocomplete.appFilter.contextOverride')}
+            />
           </div>
-        </SettingsSection>
+          <div className="flex gap-2">
+            <Button type="button" variant="secondary" size="sm" onClick={() => void testCurrent()}>
+              {t('settings.autocomplete.appFilter.getSuggestion')}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => void acceptSuggestion()}>
+              {t('settings.autocomplete.appFilter.acceptSuggestion')}
+            </Button>
+            <Button type="button" variant="secondary" size="sm" onClick={() => void debugFocus()}>
+              {t('settings.autocomplete.appFilter.debugFocus')}
+            </Button>
+          </div>
+          {focusDebug && (
+            <pre className="max-h-48 overflow-auto rounded-xl border border-line bg-surface-muted p-2 text-xs text-content">
+              {focusDebug}
+            </pre>
+          )}
+        </div>
+      </SettingsSection>
 
-        {/* ------------------------------------------------------------------ */}
-        {/* Feedback messages                                                   */}
-        {/* ------------------------------------------------------------------ */}
-        <SettingsStatusLine saving={false} savedNote={message} error={error} savingLabel="" />
-      </div>
-    </PanelPage>
+      {/* ------------------------------------------------------------------ */}
+      {/* Live Logs section                                                   */}
+      {/* ------------------------------------------------------------------ */}
+      <SettingsSection title={t('settings.autocomplete.appFilter.liveLogs')}>
+        <div className="px-4 py-3 space-y-3">
+          <div className="flex justify-end">
+            <Button type="button" variant="secondary" size="xs" onClick={clearLogs}>
+              {t('common.clear')}
+            </Button>
+          </div>
+          {/* Bespoke log-stream display — kept intact */}
+          <pre className="max-h-56 overflow-auto rounded-xl border border-line bg-surface-muted p-2 text-xs text-content">
+            {logs.length > 0 ? logs.join('\n') : t('settings.autocomplete.appFilter.noLogs')}
+          </pre>
+        </div>
+      </SettingsSection>
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Advanced settings                                                   */}
+      {/* ------------------------------------------------------------------ */}
+      <SettingsSection title={t('autocomplete.advancedSettings')}>
+        <div className="px-4 py-3 space-y-3">
+          <label className="flex items-center justify-between rounded-xl border border-line bg-surface-muted px-3 py-2">
+            <span className="text-sm text-content">
+              {t('settings.autocomplete.completionStyle.debounce')}
+            </span>
+            <Input
+              type="number"
+              inputSize="sm"
+              min={50}
+              max={2000}
+              step={10}
+              value={debounceMs}
+              onChange={event => setDebounceMs(event.target.value)}
+              className="w-28"
+              aria-label={t('settings.autocomplete.completionStyle.debounce')}
+            />
+          </label>
+          <label className="flex items-center justify-between rounded-xl border border-line bg-surface-muted px-3 py-2">
+            <span className="text-sm text-content">
+              {t('settings.autocomplete.completionStyle.maxChars')}
+            </span>
+            <Input
+              type="number"
+              inputSize="sm"
+              min={32}
+              max={1200}
+              step={8}
+              value={maxChars}
+              onChange={event => setMaxChars(event.target.value)}
+              className="w-28"
+              aria-label={t('settings.autocomplete.completionStyle.maxChars')}
+            />
+          </label>
+          <label className="flex items-center justify-between rounded-xl border border-line bg-surface-muted px-3 py-2">
+            <span className="text-sm text-content">
+              {t('settings.autocomplete.completionStyle.overlayTtl')}
+            </span>
+            <Input
+              type="number"
+              inputSize="sm"
+              min={300}
+              max={10000}
+              step={100}
+              value={overlayTtlMs}
+              onChange={event => setOverlayTtlMs(event.target.value)}
+              className="w-28"
+              aria-label={t('settings.autocomplete.completionStyle.overlayTtl')}
+            />
+          </label>
+          <div className="space-y-1">
+            <div className="text-xs text-content-muted">
+              {t('settings.autocomplete.completionStyle.styleInstructions')}
+            </div>
+            <SettingsTextArea
+              value={styleInstructions}
+              onChange={event => setStyleInstructions(event.target.value)}
+              rows={3}
+              aria-label={t('settings.autocomplete.completionStyle.styleInstructions')}
+            />
+          </div>
+          <div className="space-y-1">
+            <div className="text-xs text-content-muted">
+              {t('settings.autocomplete.completionStyle.styleExamples')}
+            </div>
+            <SettingsTextArea
+              value={styleExamplesText}
+              onChange={event => setStyleExamplesText(event.target.value)}
+              rows={3}
+              aria-label={t('settings.autocomplete.completionStyle.styleExamples')}
+            />
+          </div>
+          <Button
+            type="button"
+            variant="primary"
+            size="sm"
+            onClick={() => void saveAdvancedConfig()}
+            disabled={isSaving}>
+            {isSaving ? t('autocomplete.saving') : t('common.save')}
+          </Button>
+        </div>
+      </SettingsSection>
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Personalization History                                             */}
+      {/* ------------------------------------------------------------------ */}
+      <SettingsSection title={t('settings.autocomplete.completionStyle.personalizationHistory')}>
+        <div className="px-4 py-3 space-y-3">
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              variant="secondary"
+              tone="danger"
+              size="xs"
+              onClick={() => void clearHistory()}
+              disabled={isClearingHistory || historyEntries.length === 0}>
+              {isClearingHistory
+                ? t('settings.autocomplete.completionStyle.clearing')
+                : t('settings.autocomplete.completionStyle.clearHistory')}
+            </Button>
+          </div>
+          <p className="text-xs text-content-muted">
+            {isHistoryLoading
+              ? t('common.loading')
+              : historyEntries.length === 0
+                ? t('settings.autocomplete.completionStyle.noHistory')
+                : (historyEntries.length === 1
+                    ? t('settings.autocomplete.completionStyle.acceptedCompletion')
+                    : t('settings.autocomplete.completionStyle.acceptedCompletions')
+                  ).replace('{count}', String(historyEntries.length))}
+          </p>
+          {/* Bespoke history list — kept intact */}
+          {historyEntries.length > 0 && (
+            <div className="max-h-48 overflow-y-auto rounded-xl border border-line bg-surface-muted p-2 space-y-1">
+              {historyEntries.map((entry, idx) => (
+                <div
+                  key={`${String(entry.timestamp_ms)}-${String(idx)}`}
+                  className="flex flex-col gap-0.5 rounded-lg bg-surface px-2 py-1.5 text-xs border border-line-subtle">
+                  <div className="flex items-center gap-2 text-content-muted">
+                    <span className="shrink-0">
+                      {new Date(entry.timestamp_ms).toLocaleString()}
+                    </span>
+                    {entry.app_name && (
+                      <span className="rounded bg-surface-subtle px-1 text-content-muted">
+                        {entry.app_name}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-baseline gap-1 text-content truncate">
+                    <span className="shrink-0 text-content-muted">…</span>
+                    <span className="truncate text-content-muted">{entry.context.slice(-40)}</span>
+                    <span className="shrink-0 text-content-muted">→</span>
+                    <span className="font-medium text-primary-500 truncate">
+                      {entry.suggestion}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </SettingsSection>
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Feedback messages                                                   */}
+      {/* ------------------------------------------------------------------ */}
+      <SettingsStatusLine saving={false} savedNote={message} error={error} savingLabel="" />
+    </SettingsPanel>
   );
 };
 

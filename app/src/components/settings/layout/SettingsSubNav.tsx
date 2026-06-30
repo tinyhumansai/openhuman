@@ -3,14 +3,25 @@ import ChipTabs, { type ChipTabItem } from '../../layout/ChipTabs';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 import { entryRoute, resolveSidebarId, subNavSiblings } from '../settingsRouteRegistry';
 
+interface SettingsSubNavProps {
+  /**
+   * Row container classes. Defaults to the standalone spacing used when the row
+   * sits on its own; the {@link SettingsPanel} header passes a tighter value so
+   * the pills tuck directly under the title/description.
+   */
+  className?: string;
+}
+
 /**
- * Pill-tab row of real route links shown above panels that belong to a
- * sidebar family (e.g. Account → Team / Privacy / Security / Migration).
- * Each pill navigates to its own route — no nested hub pages. Rendered with the
- * shared {@link ChipTabs} bar (nav semantics) so it matches every other chip
- * row in the app.
+ * Pill-tab row of real route links shown for panels that belong to a sidebar
+ * family (e.g. Account → Team / Privacy / Security / Migration). Each pill
+ * navigates to its own route — no nested hub pages. Rendered with the shared
+ * {@link ChipTabs} bar (nav semantics) so it matches every other chip row in
+ * the app. Returns `null` when the active route has no siblings.
  */
-const SettingsSubNav = () => {
+const SettingsSubNav = ({
+  className = 'flex flex-wrap gap-1.5 px-4 pt-4 pb-3',
+}: SettingsSubNavProps = {}) => {
   const { t } = useT();
   const { currentRoute, navigateToSettings } = useSettingsNavigation();
 
@@ -34,7 +45,7 @@ const SettingsSubNav = () => {
       as="nav"
       ariaLabel={t('nav.settings')}
       testId="settings-subnav"
-      className="flex flex-wrap gap-1.5 px-4 pt-4 pb-3"
+      className={className}
       items={items}
       value={value}
       onChange={id => {

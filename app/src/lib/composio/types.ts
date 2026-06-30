@@ -5,8 +5,43 @@
  * backend emits camelCase, snake_case where the Rust RPC layer does).
  */
 
+/**
+ * One toolkit as described by the live Composio catalog. The backend
+ * fetches this from `composio.toolkits.get({})` (see the workspace
+ * `COMPOSIO_DYNAMIC_CATALOG_PLAN.md`), caches it, and forwards it through
+ * the core so the desktop UI no longer has to hardcode display metadata.
+ *
+ * Everything except `slug` is best-effort: older cores/backends that
+ * predate the dynamic catalog omit `catalog` entirely, so consumers must
+ * fall back to the local `toolkitMeta` derivation.
+ */
+export interface ComposioToolkitCatalogEntry {
+  /** Toolkit slug as Composio emits it, e.g. `"googlecalendar"`. */
+  slug: string;
+  /** Human-readable name, e.g. `"Google Calendar"`. */
+  name: string;
+  /** Composio-hosted logo URL (`meta.logo`). */
+  logo?: string;
+  /** Short description (`meta.description`). */
+  description?: string;
+  /** Composio category names (`meta.categories[].name`/slug). */
+  categories?: string[];
+  /**
+   * Whether the user can actually connect/use this toolkit right now —
+   * i.e. it passed the backend curation/allowlist gate. Uncurated
+   * toolkits still appear in the catalog but render as preview.
+   */
+  enabled?: boolean;
+}
+
 export interface ComposioToolkitsResponse {
+  /** Back-compat: slugs the user is allowed to connect (enabled only). */
   toolkits: string[];
+  /**
+   * Rich render model from the dynamic Composio catalog. Optional —
+   * cores that predate the dynamic catalog send only `toolkits`.
+   */
+  catalog?: ComposioToolkitCatalogEntry[];
 }
 
 /**

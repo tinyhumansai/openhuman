@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { chatSend, subscribeChatEvents } from '../chatService';
+import { chatClearQueue, chatSend, subscribeChatEvents } from '../chatService';
 import { socketService } from '../socketService';
 
 const mockCallCoreRpc = vi.fn();
@@ -426,5 +426,33 @@ describe('chatService.subscribeChatEvents', () => {
     expect(params.speak_reply).toBeUndefined();
     expect(params.source).toBeUndefined();
     expect(params.session_id).toBeUndefined();
+  });
+});
+
+describe('chatService.chatClearQueue', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('calls the canonical queue-clear RPC with the thread id', async () => {
+    mockCallCoreRpc.mockResolvedValue({ dropped: 2 });
+
+    const dropped = await chatClearQueue('thread-9');
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.channel_web_queue_clear',
+      params: { thread_id: 'thread-9' },
+    });
+    expect(dropped).toBe(2);
+  });
+
+  it('defaults to 0 dropped when the response omits the count', async () => {
+    mockCallCoreRpc.mockResolvedValue({});
+    expect(await chatClearQueue('thread-9')).toBe(0);
+  });
+
+  it('returns null when the RPC throws so callers can keep the pills', async () => {
+    mockCallCoreRpc.mockRejectedValue(new Error('rpc down'));
+    expect(await chatClearQueue('thread-9')).toBeNull();
   });
 });

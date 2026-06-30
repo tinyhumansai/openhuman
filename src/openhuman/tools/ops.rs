@@ -167,13 +167,19 @@ pub fn all_tools_with_runtime(
         // `agent::harness::subagent_runner` for the dispatch path.
         Box::new(SpawnSubagentTool::new()),
         Box::new(SpawnAsyncSubagentTool::new()),
-        // Steer a running async sub-agent mid-flight and collect its result:
-        // `steer_subagent { task_id, message }` injects into the child's
-        // run-queue (drained at its next iteration boundary), `wait_subagent
-        // { task_id }` blocks for the final output. See
-        // `agent_orchestration::running_subagents`.
+        // "Plan mode as a subagent": runs the read-only `context_scout`
+        // inline and returns a bounded context bundle + recommended next
+        // tool calls. Visible only to agents that allowlist it
+        // (orchestrator / planner).
+        Box::new(AgentPrepareContextTool::new()),
+        // Steer/list/close reusable async sub-agents and collect results by
+        // durable `subagent_session_id` (preferred) or transient `task_id`.
+        Box::new(ListSubagentsTool::new()),
         Box::new(SteerSubagentTool::new()),
+        Box::new(WaitTool::new()),
+        Box::new(WaitLoopTool::new()),
         Box::new(WaitSubagentTool::new()),
+        Box::new(CloseSubagentTool::new()),
         Box::new(ContinueSubagentTool::new()),
         Box::new(SpawnParallelAgentsTool::new()),
         Box::new(DelegateToPersonalityTool::new()),
@@ -183,6 +189,9 @@ pub fn all_tools_with_runtime(
         // build-mode pass. The plan→build mode switch itself is a
         // follow-up; the tool emits a stable marker today.
         Box::new(TodoTool::new()),
+        // Interactive plan-review gate: parks the live turn on a thread-scoped
+        // plan the user must approve before execution (Codex/Claude plan mode).
+        Box::new(crate::openhuman::plan_review::RequestPlanReviewTool::new()),
         // Move/update a specific task card by id on a target board (defaults to
         // the proactive `task-sources` board) — lets the agent advance the task
         // it's working (in_progress / done+evidence / blocked+reason) from any
@@ -198,6 +207,14 @@ pub fn all_tools_with_runtime(
         Box::new(RunWorkflowTool::new().with_skill_allowlist(skill_allowlist.cloned())),
         Box::new(AwaitWorkflowTool::new()),
         Box::new(CurrentTimeTool::new()),
+        // Reversibility for native tool-output compaction (Stage 1a): when a
+        // large result is compacted with a `retrieve_tool_output("<hash>")`
+        // marker, this hands the original back from the CCR store on demand.
+        Box::new(RetrieveToolOutputTool::new()),
+        // TokenJuice 2.0 content-router retrieval: fetches the original (full or
+        // by byte/line range) for a `⟦tj:<hash>⟧` marker from the CCR cache.
+        // Supersedes `retrieve_tool_output`; both are kept live during migration.
+        Box::new(crate::openhuman::tokenjuice::TokenjuiceRetrieveTool::new()),
         // Deterministic time-expression → timestamp resolver. `current_time`
         // only returns *now*, leaving the model to do epoch arithmetic by hand
         // (a real incident had an agent compute "24h ago" ~10 months off, then
@@ -246,8 +263,6 @@ pub fn all_tools_with_runtime(
         // can explain an empty/stalled wiki + the fix.
         Box::new(MemoryDoctorTool::new(config.clone())),
         Box::new(MemoryQueryTool),
-        Box::new(MemoryQueryWalkTool),
-        Box::new(SmartMemoryWalkTool),
         // memory_search tools — vector search, chunk context, hybrid search,
         // and previously unregistered raw store tools.
         Box::new(MemoryVectorSearchTool),
@@ -357,6 +372,9 @@ pub fn all_tools_with_runtime(
         Box::new(ThreadUpdateTitleTool),
         Box::new(ThreadUpdateLabelsTool),
         Box::new(ThreadMessageListTool),
+        // Read-only cross-thread transcript search (trigram index). Lets the
+        // context scout and other agents recall what was said in earlier chats.
+        Box::new(ThreadTranscriptSearchTool),
         Box::new(ThreadMessageAppendTool),
         Box::new(ThreadMessageUpdateTool),
         Box::new(ThreadTitleGenerateTool),
@@ -522,8 +540,24 @@ pub fn all_tools_with_runtime(
          memory_hybrid_search, memory_store_raw_search, memory_store_raw_chunks, memory_store_kinds"
     );
 
-    // Subconscious scratchpad tools — persistent working memory across ticks.
-    tools.extend(crate::openhuman::subconscious::scratchpad::tools::all_scratchpad_tools());
+    // Memory diff — structured "what changed in the agent's world since a
+    // checkpoint/last sync". Drives the subconscious tick's first stage and is
+    // available to any agent that lists it. Unit struct, no runtime deps.
+    tools.push(Box::new(crate::openhuman::memory_diff::MemoryDiffTool));
+
+    // Subconscious user-facing handoff — notify_user proactive delivery.
+    tools.extend(crate::openhuman::subconscious::user_thread::all_user_thread_tools());
+
+    // tiny.place agent surface. These wrap the internal tiny.place controllers
+    // so the dedicated tinyplace subagent can register identities, inspect
+    // inbox/DM state, trade marketplace assets, manage groups, and work jobs
+    // through the same validation/client paths as JSON-RPC.
+    let tinyplace_tools = crate::openhuman::tinyplace::tools::all_tinyplace_agent_tools();
+    log::debug!(
+        "[tools::ops][tinyplace] registering tinyplace agent tools count={}",
+        tinyplace_tools.len()
+    );
+    tools.extend(tinyplace_tools);
 
     // Presentation generation (#2778). Native-Rust engine (ppt-rs
     // backed) as of the #2780-follow-up rust-engine refactor — no
@@ -533,6 +567,43 @@ pub fn all_tools_with_runtime(
         root_config.workspace_dir.clone(),
         security.clone(),
     )));
+
+    // Long-term goals list tools. Used primarily by the background
+    // `goals_agent` (which filters to these via its `[tools] named`
+    // allowlist); also available to the main agent for explicit edits.
+    {
+        let goals_dir = root_config.workspace_dir.clone();
+        tools.push(Box::new(
+            crate::openhuman::memory_goals::GoalsListTool::new(goals_dir.clone()),
+        ));
+        tools.push(Box::new(crate::openhuman::memory_goals::GoalsAddTool::new(
+            goals_dir.clone(),
+        )));
+        tools.push(Box::new(
+            crate::openhuman::memory_goals::GoalsEditTool::new(goals_dir.clone()),
+        ));
+        tools.push(Box::new(
+            crate::openhuman::memory_goals::GoalsDeleteTool::new(goals_dir),
+        ));
+    }
+
+    // Thread-level goal tools (Codex-style per-thread completion contract).
+    // Visible only to agents that allowlist them (orchestrator). The target
+    // thread is resolved from the ambient `thread_id`, so no thread arg is
+    // taken. `goal_get`/`goal_set`/`goal_complete` — pause/resume/budget are
+    // system-driven and have no model tool.
+    {
+        let goal_dir = root_config.workspace_dir.clone();
+        tools.push(Box::new(crate::openhuman::thread_goals::GoalGetTool::new(
+            goal_dir.clone(),
+        )));
+        tools.push(Box::new(crate::openhuman::thread_goals::GoalSetTool::new(
+            goal_dir.clone(),
+        )));
+        tools.push(Box::new(
+            crate::openhuman::thread_goals::GoalCompleteTool::new(goal_dir),
+        ));
+    }
 
     if browser_config.enabled {
         // Unified web-access allowlist (merge fetch + browser firewalls): the
@@ -673,6 +744,13 @@ pub fn all_tools_with_runtime(
     }
 
     tools.extend(crate::openhuman::search::build_search_tools(root_config));
+
+    // Media generation (image/video via GMI through the backend). Skipped when
+    // no integration client is configured; artifacts land under `action_dir`.
+    tools.extend(crate::openhuman::media_generation::build_media_tools(
+        root_config,
+        action_dir,
+    ));
 
     // High-level web3 tools (swaps / bridges / dapp calls) built on the wallet.
     // They call the backend deBridge proxy per-invocation and error gracefully

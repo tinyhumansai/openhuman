@@ -14,6 +14,7 @@
 import { type ReactNode, useState } from 'react';
 
 import { canonicalizeComposioToolkitSlug } from '../../lib/composio/toolkitSlug';
+import type { ComposioToolkitCatalogEntry } from '../../lib/composio/types';
 import type { SkillCategory } from '../skills/skillCategories';
 
 export interface ComposioToolkitMeta {
@@ -237,7 +238,7 @@ const PLATFORM_KEYWORDS = [
 
 function GenericIntegrationIcon() {
   return (
-    <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-stone-100 dark:bg-neutral-800 text-stone-600 dark:text-neutral-300 shadow-sm ring-1 ring-black/5">
+    <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-surface-subtle text-content-secondary shadow-sm ring-1 ring-black/5">
       <svg className="h-[18px] w-[18px]" viewBox="0 0 24 24" aria-hidden="true" fill="none">
         <path
           d="M8 8h8v8H8zM5 12h3m8 0h3M12 5v3m0 8v3"
@@ -251,16 +252,25 @@ function GenericIntegrationIcon() {
   );
 }
 
-function ComposioLogoBadge({ slug, name }: { slug: string; name: string }) {
+function ComposioLogoBadge({
+  slug,
+  name,
+  logoUrl: logoOverride,
+}: {
+  slug: string;
+  name: string;
+  /** Prefer the dynamic-catalog logo when present; fall back to the CDN URL. */
+  logoUrl?: string;
+}) {
   const [failed, setFailed] = useState(false);
-  const logoUrl = composioLogoUrl(slug);
+  const logoUrl = logoOverride || composioLogoUrl(slug);
 
   if (failed) {
     return <GenericIntegrationIcon />;
   }
 
   return (
-    <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-xl bg-white dark:bg-neutral-900 shadow-sm ring-1 ring-black/5">
+    <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-xl bg-surface shadow-sm ring-1 ring-black/5">
       <img
         src={logoUrl}
         alt={`${name} logo`}
@@ -283,6 +293,42 @@ function guessCategory(slug: string, name: string): SkillCategory {
   if (PRODUCTIVITY_KEYWORDS.some(keyword => key.includes(keyword))) return 'Productivity';
   if (PLATFORM_KEYWORDS.some(keyword => key.includes(keyword))) return 'Platform';
   return 'Tools & Automation';
+}
+
+/**
+ * Map Composio's catalog category strings onto our fixed `SkillCategory`
+ * buckets. Composio category names are free-form (e.g. `"productivity"`,
+ * `"crm"`, `"developer-tools"`), so we match on substrings and return the
+ * first hit. Returns `undefined` when nothing matches so the caller can
+ * fall back to the slug/name keyword heuristic.
+ */
+function mapComposioCategory(categories?: string[]): SkillCategory | undefined {
+  if (!categories || categories.length === 0) return undefined;
+  const haystack = categories.join(' ').toLowerCase();
+  const has = (...needles: string[]) => needles.some(n => haystack.includes(n));
+
+  if (has('chat', 'messaging', 'communication')) return 'Chat';
+  if (has('social', 'marketing')) return 'Social';
+  if (
+    has(
+      'productivity',
+      'document',
+      'calendar',
+      'scheduling',
+      'project management',
+      'project-management',
+      'note',
+      'task',
+      'storage',
+      'email'
+    )
+  ) {
+    return 'Productivity';
+  }
+  if (has('crm', 'developer', 'devtool', 'analytics', 'payment', 'finance', 'database', 'cloud')) {
+    return 'Platform';
+  }
+  return undefined;
 }
 
 function defaultDescription(name: string, category: SkillCategory): string {
@@ -342,17 +388,32 @@ function descriptionForToolkit(key: string, name: string, category: SkillCategor
   return defaultDescription(name, category);
 }
 
-export function composioToolkitMeta(slug: string): ComposioToolkitMeta {
+/**
+ * Build the render model for a toolkit card/modal.
+ *
+ * When a live-catalog `entry` is supplied (backend dynamic catalog — see
+ * `COMPOSIO_DYNAMIC_CATALOG_PLAN.md`) its name/description/category/logo
+ * win, so the UI reflects what Composio actually offers. Every field
+ * degrades gracefully to the local hardcoded derivation when the entry is
+ * absent (older core/backend) or a given field is empty.
+ */
+export function composioToolkitMeta(
+  slug: string,
+  entry?: ComposioToolkitCatalogEntry
+): ComposioToolkitMeta {
   const key = canonicalizeComposioToolkitSlug(slug);
-  const name = MANAGED_TOOLKIT_NAME_BY_SLUG.get(key) ?? prettifyUnknownSlug(key);
-  const category = guessCategory(key, name);
+  const name =
+    entry?.name?.trim() || MANAGED_TOOLKIT_NAME_BY_SLUG.get(key) || prettifyUnknownSlug(key);
+  const category = mapComposioCategory(entry?.categories) ?? guessCategory(key, name);
+  const description = entry?.description?.trim() || descriptionForToolkit(key, name, category);
+  const logoUrl = entry?.logo?.trim() || composioLogoUrl(key);
   return {
     slug: key,
     name,
-    description: descriptionForToolkit(key, name, category),
+    description,
     category,
-    icon: <ComposioLogoBadge slug={key} name={name} />,
-    logoUrl: composioLogoUrl(key),
+    icon: <ComposioLogoBadge slug={key} name={name} logoUrl={logoUrl} />,
+    logoUrl,
     permissionLabel: permissionLabelFor(category),
   };
 }

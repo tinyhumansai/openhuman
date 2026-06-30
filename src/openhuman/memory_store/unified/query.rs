@@ -252,14 +252,10 @@ impl UnifiedMemory {
                 }
             }
 
-            for entry in &episodic_hits {
+            for (position_idx, entry) in episodic_hits.iter().enumerate() {
                 let freshness = Self::recency_score(entry.timestamp, now);
                 // Episodic FTS5 returns results ordered by rank (best first).
                 // Normalize position to a 0-1 relevance score.
-                let position_idx = episodic_hits
-                    .iter()
-                    .position(|e| e.id == entry.id)
-                    .unwrap_or(0);
                 let fts_relevance = 1.0 - (position_idx as f64 / episodic_hits.len().max(1) as f64);
 
                 let episodic_score = (fts_relevance * 0.7) + (freshness * 0.3);
@@ -399,6 +395,14 @@ impl UnifiedMemory {
         let now = Self::now_ts();
         let mut hits = Vec::new();
 
+        // Loop-invariant: every document sees the same graph relations, so build
+        // the RelationMatch view once instead of cloning all rows per document.
+        let relation_matches = graph_relations
+            .iter()
+            .cloned()
+            .map(|relation| RelationMatch { relation, hop: 1 })
+            .collect::<Vec<_>>();
+
         for doc in docs {
             let freshness = Self::recency_score(doc.updated_at, now);
             let priority = Self::document_priority_signal(
@@ -436,11 +440,7 @@ impl UnifiedMemory {
                 supporting_relations: self.supporting_relations_for_document(
                     &doc.document_id,
                     &doc.content,
-                    &graph_relations
-                        .iter()
-                        .cloned()
-                        .map(|relation| RelationMatch { relation, hop: 1 })
-                        .collect::<Vec<_>>(),
+                    &relation_matches,
                 ),
                 taint: doc.taint,
             });

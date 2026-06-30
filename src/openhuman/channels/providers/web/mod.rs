@@ -26,6 +26,11 @@ pub use event_bus::{
     register_artifact_surface_subscriber, subscribe_web_channel_events,
 };
 
+// Test-only: OnceLock-bypassing approval bridge for per-runtime integration tests.
+// Compiled only in debug builds so it cannot be linked into a release binary.
+#[cfg(debug_assertions)]
+pub use event_bus::fresh_approval_surface_subscription;
+
 // Public API — operations
 #[cfg(any(test, debug_assertions))]
 pub use ops::parallel_in_flight_entries_for_test;

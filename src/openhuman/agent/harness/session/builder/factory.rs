@@ -270,6 +270,12 @@ impl Agent {
             "model_council_readonly",
         );
         agent.set_agent_definition_name(format!("model_council_{safe_name}"));
+        // Council jurors are non-interactive, single-shot read-only model calls
+        // built from the orchestrator definition. The first-turn super-context
+        // pass (default-on) is an interactive convenience for the user-facing
+        // chat orchestrator — running it per juror would add an unexpected
+        // `context_scout` LLM call to each jury seat. Suppress it here.
+        agent.context.set_super_context_enabled(false);
         if let Some(model) = model_override
             .map(|m| m.trim().to_string())
             .filter(|m| !m.is_empty())
@@ -315,8 +321,9 @@ impl Agent {
                 "[profiles] applying per-profile session gate"
             );
         }
-        let runtime: Arc<dyn host_runtime::RuntimeAdapter> =
-            Arc::from(host_runtime::create_runtime(&config.runtime)?);
+        let runtime: Arc<dyn host_runtime::RuntimeAdapter> = Arc::from(
+            host_runtime::create_runtime(&config.runtime, config.shell.hide_window)?,
+        );
         let security = Arc::new(SecurityPolicy::from_config(
             &config.autonomy,
             &config.workspace_dir,
@@ -349,41 +356,67 @@ impl Agent {
         let profile_mcp_allowlist: Option<Vec<String>> =
             profile.and_then(|p| p.allowed_mcp_servers.clone());
 
-        let mut tools = tools::all_tools_with_runtime(
-            Arc::new(config.clone()),
-            &security,
-            runtime,
-            audit,
-            memory.clone(),
-            &config.browser,
-            &config.http_request,
-            &config.action_dir,
-            &config.agents,
-            config,
-            profile_skill_allowlist.as_ref(),
-            profile_mcp_allowlist.as_deref(),
-        );
-
-        // Filter tools by user preference stored in app state.
-        {
+        // Load the user's persisted tool preferences once. They drive two
+        // things below: granting the App UI Control / App Automation mutation
+        // opt-in (#3762) and filtering the tool set to the enabled snapshot.
+        let enabled_tools: Vec<String> = {
             use crate::openhuman::app_state::load_stored_app_state;
             match load_stored_app_state(config) {
-                Ok(stored) => {
-                    if let Some(ref tasks) = stored.onboarding_tasks {
-                        if !tasks.enabled_tools.is_empty() {
-                            crate::openhuman::tools::filter_tools_by_user_preference(
-                                &mut tools,
-                                &tasks.enabled_tools,
-                            );
-                        }
-                    }
-                }
+                Ok(stored) => stored
+                    .onboarding_tasks
+                    .map(|tasks| tasks.enabled_tools)
+                    .unwrap_or_default(),
                 Err(e) => {
                     log::warn!(
                         "[session-builder] failed to load app state for tool filtering: {e}"
                     );
+                    Vec::new()
                 }
             }
+        };
+
+        // Enabling the "App UI Control" (`ax_interact`) or "App Automation"
+        // (`automate`) tool in Settings → Features grants the mutating
+        // click/type actions its description promises — not just the read-only
+        // `list`. Previously those actions required the UI-less
+        // `computer_control.ax_interact_mutations` flag or Full autonomy, so the
+        // toggle silently did nothing on the default (Supervised) autonomy
+        // (#3762). The actions stay approval-gated and bound by the
+        // sensitive-app denylist; Full autonomy continues to grant this
+        // independently via `app_control_enabled`.
+        let adjusted_config: Config;
+        let tool_config: &Config = if !config.computer_control.ax_interact_mutations
+            && tools::enables_app_ui_control_mutations(&enabled_tools)
+        {
+            let mut c = config.clone();
+            c.computer_control.ax_interact_mutations = true;
+            log::debug!(
+                "[session-builder] action=grant_app_ui_control_mutations source=features_toggle"
+            );
+            adjusted_config = c;
+            &adjusted_config
+        } else {
+            config
+        };
+
+        let mut tools = tools::all_tools_with_runtime(
+            Arc::new(tool_config.clone()),
+            &security,
+            runtime,
+            audit,
+            memory.clone(),
+            &tool_config.browser,
+            &tool_config.http_request,
+            &tool_config.action_dir,
+            &tool_config.agents,
+            tool_config,
+            profile_skill_allowlist.as_ref(),
+            profile_mcp_allowlist.as_deref(),
+        );
+
+        // Filter tools by the user preference loaded above.
+        if !enabled_tools.is_empty() {
+            crate::openhuman::tools::filter_tools_by_user_preference(&mut tools, &enabled_tools);
         }
 
         if read_only_tools_only {
@@ -442,13 +475,7 @@ impl Agent {
         // chat to the `reasoning` workload regardless of their
         // `chat_provider` selection. Subagents still set their own role
         // through `ModelSpec::Hint(...)` in the subagent runner.
-        let provider_role = match config.default_model.as_deref().map(str::trim) {
-            Some("hint:agentic") => "agentic",
-            Some("hint:coding") => "coding",
-            Some("hint:summarization") => "summarization",
-            Some("hint:reasoning") => "reasoning",
-            _ => "chat",
-        };
+        let provider_role = provider_role_for(agent_id, config.default_model.as_deref());
         let (provider, mut model_name): (Box<dyn Provider>, String) =
             crate::openhuman::inference::provider::create_chat_provider(provider_role, config)?;
         log::info!(
@@ -464,13 +491,29 @@ impl Agent {
         let target_is_lead = target_def
             .map(|def| !def.subagents.is_empty())
             .unwrap_or(true);
-        if let Some(pinned_model) = config.configured_agent_model(target_agent_id, target_is_lead) {
+        // The `subconscious` workload's model is governed by `subconscious_provider`
+        // + the managed-tier registry — NOT by an interactive agent model pin.
+        // The tick reuses the orchestrator definition (agent_id="orchestrator"),
+        // so without this guard a configured `[orchestrator].model` pin would
+        // clobber the resolved subconscious model and send an unrelated tier to
+        // the Subconscious provider (Codex P2).
+        if provider_role != "subconscious" {
+            if let Some(pinned_model) =
+                config.configured_agent_model(target_agent_id, target_is_lead)
+            {
+                log::debug!(
+                    "[session-builder] agent_id={} using config-level model pin model={}",
+                    target_agent_id,
+                    pinned_model
+                );
+                model_name = pinned_model.to_string();
+            }
+        } else {
             log::debug!(
-                "[session-builder] agent_id={} using config-level model pin model={}",
-                target_agent_id,
-                pinned_model
+                "[session-builder] agent_id={} provider_role=subconscious — skipping agent model \
+                 pin so the subconscious provider/registry model is preserved",
+                target_agent_id
             );
-            model_name = pinned_model.to_string();
         }
 
         // Resolve the user-configured vision flag for the (now-final) model while
@@ -865,13 +908,41 @@ impl Agent {
         // contract (empty == no filter) stays intact: an empty set
         // means "no filter" for both legacy callers and the new
         // agent-scoped path.
-        let visible: std::collections::HashSet<String> = match filter_from_scope {
+        let mut visible: std::collections::HashSet<String> = match filter_from_scope {
             Some(set) => set,
             None => delegation_tools
                 .iter()
                 .map(|t| t.name().to_string())
                 .collect(),
         };
+        // Compaction applies to every agent's tool output, so the CCR recovery
+        // tool must be a *real* member of any non-empty allowlist — this is the
+        // single source of truth that the policy session, advertised specs, and
+        // the run-time visible-name gate all consume, so adding it here makes a
+        // `retrieve_tool_output("…")` footer actionable for Named-scope agents
+        // (e.g. the orchestrator's curated list). An empty set already means
+        // "no filter", so it needs nothing. Added BEFORE the disallow filter
+        // below so an agent that explicitly disallows it still has it removed.
+        super::ensure_recovery_tool_visible(&mut visible);
+
+        if let Some(def) = target_def {
+            if !def.disallowed_tools.is_empty() {
+                match &def.tools {
+                    ToolScope::Wildcard => {
+                        visible = tools
+                            .iter()
+                            .map(|t| t.name().to_string())
+                            .chain(delegation_tools.iter().map(|t| t.name().to_string()))
+                            .filter(|name| !definition_disallows_tool(&def.disallowed_tools, name))
+                            .collect();
+                    }
+                    ToolScope::Named(_) => {
+                        visible
+                            .retain(|name| !definition_disallows_tool(&def.disallowed_tools, name));
+                    }
+                }
+            }
+        }
 
         // Phase 4 (#566): add the MemoryAccessSection bias instruction only
         // when at least one retrieval tool is actually loaded AND survives
@@ -1008,6 +1079,9 @@ impl Agent {
         let effective_trigger_memory_agent = target_def
             .map(|def| def.trigger_memory_agent)
             .unwrap_or_default();
+        let effective_tokenjuice_compression = target_def
+            .map(|def| def.effective_tokenjuice_compression())
+            .unwrap_or(crate::openhuman::tokenjuice::AgentTokenjuiceCompression::Full);
 
         // Stamp the resolved agent definition id onto the Agent via the
         // builder. Without this call, `agent_definition_name` falls
@@ -1130,7 +1204,8 @@ impl Agent {
             .agent_definition_name(agent_id.to_string())
             .omit_profile(effective_omit_profile)
             .omit_memory_md(effective_omit_memory_md)
-            .trigger_memory_agent(effective_trigger_memory_agent);
+            .trigger_memory_agent(effective_trigger_memory_agent)
+            .tokenjuice_compression(effective_tokenjuice_compression);
         if let Some(ps) = payload_summarizer {
             builder = builder.payload_summarizer(ps);
         }
@@ -1145,5 +1220,88 @@ impl Agent {
             crate::openhuman::composio::connected_set_hash(&agent.connected_integrations);
         agent.synthesized_tool_names = synthesized_tool_names;
         Ok(agent)
+    }
+}
+
+fn definition_disallows_tool(disallowed: &[String], name: &str) -> bool {
+    disallowed.iter().any(|entry| {
+        if let Some(prefix) = entry.strip_suffix('*') {
+            name.starts_with(prefix)
+        } else {
+            entry == name
+        }
+    })
+}
+
+/// Resolve the provider/workload role for a session build.
+///
+/// The `subconscious` workload has two entry points and both must route here:
+/// - the cloud tick builds via `Agent::from_config` (agent_id `"orchestrator"`)
+///   with `default_model = "hint:subconscious"`;
+/// - the event-driven long-lived session builds via
+///   `Agent::from_config_for_agent(_, "subconscious")` and does NOT set the hint.
+///
+/// Routing on `agent_id == "subconscious"` covers the second case (Codex P2:
+/// otherwise promoted background turns fall through to `chat_provider` and ignore
+/// Settings → AI "Subconscious"). Other explicit `hint:<role>` markers route to
+/// their workload; everything else (incl. the legacy `default_model` tier the
+/// bootstrap pinned) falls through to `chat` so `chat_provider` drives the
+/// user-facing turn.
+pub(crate) fn provider_role_for(agent_id: &str, default_model: Option<&str>) -> &'static str {
+    if agent_id.trim() == "subconscious" {
+        return "subconscious";
+    }
+    match default_model.map(str::trim) {
+        Some("hint:agentic") => "agentic",
+        Some("hint:coding") => "coding",
+        Some("hint:summarization") => "summarization",
+        Some("hint:reasoning") => "reasoning",
+        Some("hint:subconscious") => "subconscious",
+        _ => "chat",
+    }
+}
+
+#[cfg(test)]
+mod provider_role_tests {
+    use super::provider_role_for;
+
+    #[test]
+    fn orchestrator_defaults_to_chat() {
+        assert_eq!(provider_role_for("orchestrator", Some("chat-v1")), "chat");
+        assert_eq!(provider_role_for("orchestrator", None), "chat");
+        // A legacy heavy default_model tier still falls through to chat.
+        assert_eq!(
+            provider_role_for("orchestrator", Some("reasoning-v1")),
+            "chat"
+        );
+    }
+
+    #[test]
+    fn explicit_hints_route_to_workload() {
+        assert_eq!(
+            provider_role_for("orchestrator", Some("hint:agentic")),
+            "agentic"
+        );
+        assert_eq!(
+            provider_role_for("orchestrator", Some("hint:reasoning")),
+            "reasoning"
+        );
+        // The cloud tick: orchestrator agent_id + the subconscious hint.
+        assert_eq!(
+            provider_role_for("orchestrator", Some("hint:subconscious")),
+            "subconscious"
+        );
+    }
+
+    #[test]
+    fn subconscious_agent_id_routes_to_subconscious_without_hint() {
+        // The event-driven long-lived session builds with agent_id="subconscious"
+        // and no hint — it must still resolve the subconscious workload (Codex P2).
+        assert_eq!(provider_role_for("subconscious", None), "subconscious");
+        assert_eq!(
+            provider_role_for("subconscious", Some("chat-v1")),
+            "subconscious"
+        );
+        assert_eq!(provider_role_for(" subconscious ", None), "subconscious");
     }
 }

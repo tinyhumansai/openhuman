@@ -21,8 +21,9 @@ use super::ops::VadEvent;
 use super::session::{registry, CaptionOutcome};
 use super::store::{self, MeetCallRecord};
 use super::types::{
-    ListCallsRequest, ListCallsResponse, PollSpeechRequest, PushCaptionRequest,
-    PushListenPcmRequest, StartSessionRequest, StopSessionRequest,
+    GetCallDetailRequest, GetCallDetailResponse, ListCallsRequest, ListCallsResponse,
+    PollSpeechRequest, PushCaptionRequest, PushListenPcmRequest, StartSessionRequest,
+    StopSessionRequest,
 };
 
 /// Default `limit` for `handle_list_calls` when the caller omits one.
@@ -232,6 +233,10 @@ pub async fn handle_stop_session(params: Map<String, Value>) -> Result<Value, St
         listened_seconds: session.listened_seconds(),
         spoken_seconds: session.spoken_seconds(),
         turn_count: session.turn_count,
+        // Local meet-agent calls expose no per-speaker transcript here,
+        // so we leave participants empty. The backend-meet flow
+        // (agent_meetings) populates this from the transcript.
+        participants: Vec::new(),
     };
     if let Err(err) = store::append_record(&record).await {
         log::warn!(
@@ -270,6 +275,21 @@ pub async fn handle_list_calls(params: Map<String, Value>) -> Result<Value, Stri
     };
     let value = serde_json::to_value(&response)
         .map_err(|e| format!("{LOG_PREFIX} serialize list_calls response: {e}"))?;
+    RpcOutcome::new(value, vec![]).into_cli_compatible_json()
+}
+
+pub async fn handle_get_call_detail(params: Map<String, Value>) -> Result<Value, String> {
+    let req: GetCallDetailRequest = serde_json::from_value(Value::Object(params))
+        .map_err(|e| format!("{LOG_PREFIX} invalid get_call_detail params: {e}"))?;
+    let detail = store::read_detail(&req.request_id).await?;
+    log::info!(
+        "{LOG_PREFIX} get_call_detail request_id={} found={}",
+        req.request_id,
+        detail.is_some()
+    );
+    let response = GetCallDetailResponse { ok: true, detail };
+    let value = serde_json::to_value(&response)
+        .map_err(|e| format!("{LOG_PREFIX} serialize get_call_detail response: {e}"))?;
     RpcOutcome::new(value, vec![]).into_cli_compatible_json()
 }
 
@@ -379,6 +399,29 @@ mod tests {
         let mut stop = Map::new();
         stop.insert("request_id".into(), json!("rpc-push"));
         handle_stop_session(stop).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn get_call_detail_missing_returns_ok_with_null() {
+        // A call with no recorded detail (older call, or a best-effort write
+        // that failed) must resolve to `ok: true, detail: null` — the contract
+        // the recent-calls panel relies on to render its "nothing captured"
+        // state rather than surfacing an error.
+        let mut params = Map::new();
+        params.insert(
+            "request_id".into(),
+            json!("rpc-detail-never-recorded-3f9c1a"),
+        );
+        let out = handle_get_call_detail(params).await.unwrap();
+        assert_eq!(out.get("ok"), Some(&json!(true)));
+        assert_eq!(out.get("detail"), Some(&json!(null)));
+    }
+
+    #[tokio::test]
+    async fn get_call_detail_rejects_missing_request_id() {
+        // Empty params → deserialization error, surfaced as Err rather than a
+        // panic, so the RPC layer can return a clean error to the caller.
+        assert!(handle_get_call_detail(Map::new()).await.is_err());
     }
 
     #[test]

@@ -17,6 +17,7 @@ pub(super) struct SubagentCheckpoint<'a> {
     pub(super) model: String,
     pub(super) temperature: f64,
     pub(super) agent_id: String,
+    pub(super) max_output_tokens: u32,
 }
 
 #[async_trait::async_trait]
@@ -44,6 +45,9 @@ impl super::super::super::engine::CheckpointStrategy for SubagentCheckpoint<'_> 
                     messages: &summary_input,
                     tools: None,
                     stream: None,
+                    // Bounded progress-summary turn; cap also keeps the
+                    // reservation-pricing pre-flight realistic (TAURI-RUST-C62).
+                    max_tokens: Some(self.max_output_tokens),
                 },
                 &self.model,
                 self.temperature,

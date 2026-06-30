@@ -1,32 +1,41 @@
-//! Subconscious engine — periodic agent loop that maintains a scratchpad.
+//! Subconscious engine — periodic, structured background loop.
 //!
-//! On each tick: load scratchpad → retrieve memory context (in code) →
-//! build situation report → run subconscious agent (with tool access +
-//! timeout) → agent maintains scratchpad via tools → log the run.
+//! Each tick is a small, deterministic, three-stage flow:
+//!
+//!   1. **memory_diff (code)** — diff the agent's connected sources against the
+//!      world baseline captured at the end of the previous tick, to see how the
+//!      user's world changed (`memory_diff::ops::diff_since_checkpoint`).
+//!   2. **prepare_context (code)** — run the read-only `context_scout`
+//!      (`agent_prepare_context`) over that diff to gather grounding context
+//!      from memory, goals/profile, integrations, and the web.
+//!   3. **decide (agent)** — hand `diff + context` to the slim subconscious
+//!      agent, which decides what (if anything) to do: record follow-ups on the
+//!      user's global to-do board (`update_task`), evolve long-term goals
+//!      (`goals_*`), notify the user (`notify_user`), or delegate deeper work
+//!      (`spawn_async_subagent`).
+//!
+//! Continuity across ticks lives in those durable stores (global to-dos +
+//! goals), not in a bespoke scratchpad — so quiet ticks (no diff) cost nothing
+//! and the loop stays stateless beyond the world baseline.
 //!
 //! ## Concurrency & timeouts
 //!
-//! A per-engine `tick_lock` prevents overlapping ticks. Each tick has
-//! a hard wall-clock timeout (`TICK_TIMEOUT`) so a stuck LLM call
-//! cannot block the loop forever. Individual tool calls within the
-//! agent turn are bounded by the agent harness's own iteration cap.
+//! A per-engine `tick_lock` prevents overlapping ticks. Each tick has a hard
+//! wall-clock timeout (`TICK_TIMEOUT`) so a stuck LLM call cannot block the loop
+//! forever. Individual tool calls within the agent turn are bounded by the agent
+//! harness's own iteration cap.
 
-use super::scratchpad;
-use super::situation_report::build_situation_report;
 use super::store;
 use super::types::{SubconsciousStatus, TickResult};
 use crate::openhuman::config::schema::SubconsciousMode;
 use crate::openhuman::config::Config;
 use crate::openhuman::credentials::{AuthService, APP_SESSION_PROVIDER};
-use crate::openhuman::memory_store::MemoryClientRef;
+use crate::openhuman::memory_diff::types::CrossSourceDiff;
 use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
-
-/// Max chunks to retrieve from memory before the LLM call.
-const MEMORY_RETRIEVAL_MAX_CHUNKS: u32 = 30;
 
 /// Hard timeout for a single subconscious tick (agent run).
 const TICK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
@@ -34,17 +43,41 @@ const TICK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60
 /// Per-tool-call timeout injected into the agent config.
 const TOOL_CALL_TIMEOUT_SECS: u64 = 5 * 60;
 
+/// Label stamped on the world-baseline checkpoint the tick re-creates each run.
+const BASELINE_CHECKPOINT_LABEL: &str = "subconscious_tick";
+
+/// Max changed items listed per source in the rendered world diff, to keep the
+/// decision agent's prompt bounded when a source churns a lot.
+const MAX_ITEMS_PER_SOURCE: usize = 10;
+
+/// Tool catalogue handed to the `context_scout` so its `recommended_tool_calls`
+/// stay grounded in tools the decision agent can actually call. Keep in sync
+/// with `agent/agent.toml`'s `[tools].named` (actionable subset).
+const SUBCONSCIOUS_TOOL_CATALOG: &str = "\
+- notify_user: Send the user a proactive message about something important or time-sensitive.
+- update_task: Add or update an actionable item on the user's global to-do board.
+- goals_add: Record a new long-term goal that the changed world makes relevant.
+- goals_edit: Revise an existing long-term goal.
+- spawn_async_subagent: Delegate deeper research or multi-step work.
+";
+
+/// Actionable reason surfaced (via `SubconsciousStatus.provider_unavailable_reason`)
+/// when a subconscious tick fails because the configured chat model has no
+/// tool-use endpoint. The subconscious turn is inherently tool-bearing (it acts
+/// through tools), so a tool-incapable model can never satisfy a tick — this
+/// tells the user how to recover. See TAURI-RUST-ADC.
+const TOOL_UNSUPPORTED_REASON: &str = "The selected chat model has no tool-use endpoint, so Subconscious can't run. Pick a tool-capable model in Settings > AI.";
+
 /// Pick the `TrustedAutomationSource` variant for a subconscious tick.
 ///
-/// Extracted from the engine's `run_agent` body so the
-/// origin-escalation contract can be unit-tested without spinning up
-/// a real `Agent` + provider.
+/// Extracted from the engine's `run_agent` body so the origin-escalation
+/// contract can be unit-tested without spinning up a real `Agent` + provider.
 ///
-/// Contract: any tick whose situation report contained third-party
-/// sync content (Gmail / Slack / Notion / sealed source summaries)
-/// must run with `SubconsciousTainted` so the approval gate refuses
-/// external_effect tools. Untainted ticks keep the legacy
-/// `Subconscious` origin.
+/// Contract: any tick that reacted to third-party sync changes (the memory_diff
+/// surfaced added/modified/removed items, all of which originate from external
+/// sources like Gmail / Slack / Notion / synced folders) must run with
+/// `SubconsciousTainted` so the approval gate refuses external_effect tools.
+/// A tick with no external changes keeps the legacy `Subconscious` origin.
 pub(crate) fn tick_origin_source(
     has_external_content: bool,
 ) -> crate::openhuman::agent::turn_origin::TrustedAutomationSource {
@@ -61,7 +94,6 @@ pub struct SubconsciousEngine {
     interval_minutes: u32,
     context_budget_tokens: u32,
     enabled: bool,
-    memory: Option<MemoryClientRef>,
     state: Mutex<EngineState>,
     tick_generation: AtomicU64,
     tick_lock: Mutex<()>,
@@ -75,14 +107,13 @@ struct EngineState {
 }
 
 impl SubconsciousEngine {
-    pub fn new(config: &crate::openhuman::config::Config, memory: Option<MemoryClientRef>) -> Self {
-        Self::from_heartbeat_config(&config.heartbeat, config.workspace_dir.clone(), memory)
+    pub fn new(config: &crate::openhuman::config::Config) -> Self {
+        Self::from_heartbeat_config(&config.heartbeat, config.workspace_dir.clone())
     }
 
     pub fn from_heartbeat_config(
         heartbeat: &crate::openhuman::config::HeartbeatConfig,
         workspace_dir: PathBuf,
-        memory: Option<MemoryClientRef>,
     ) -> Self {
         let last_tick_at = match store::with_connection(&workspace_dir, store::get_last_tick_at) {
             Ok(v) => {
@@ -105,7 +136,6 @@ impl SubconsciousEngine {
             interval_minutes: mode.default_interval_minutes().max(5),
             context_budget_tokens: heartbeat.context_budget_tokens,
             enabled: mode.is_enabled(),
-            memory,
             state: Mutex::new(EngineState {
                 last_tick_at,
                 total_ticks: 0,
@@ -215,57 +245,91 @@ impl SubconsciousEngine {
             });
         }
 
-        let mut state = self.state.lock().await;
-        state.provider_unavailable_reason = None;
-        let last_tick_at = state.last_tick_at;
-        drop(state);
+        {
+            let mut state = self.state.lock().await;
+            state.provider_unavailable_reason = None;
+        }
 
-        // 1. Build situation report
-        let report = build_situation_report(
-            &config,
-            &self.workspace_dir,
-            last_tick_at,
-            self.context_budget_tokens,
-        )
-        .await;
-        let has_external_content = report.has_external_content;
+        // ── Stage 1: memory_diff — how did the agent's world change? ──────────
+        let baseline =
+            store::with_connection(&self.workspace_dir, store::get_baseline_checkpoint_id)
+                .unwrap_or_else(|e| {
+                    warn!("[subconscious] baseline load failed: {e}");
+                    None
+                });
 
-        // 2. Load scratchpad (persistent working memory)
-        let scratchpad_entries = scratchpad::load(&self.workspace_dir).unwrap_or_else(|e| {
-            warn!("[subconscious] scratchpad load failed: {e}");
-            Vec::new()
-        });
-        let scratchpad_section = scratchpad::render_for_prompt(&scratchpad_entries);
+        let diff: Option<CrossSourceDiff> = match &baseline {
+            Some(checkpoint_id) => match crate::openhuman::memory_diff::ops::diff_since_checkpoint(
+                checkpoint_id,
+                &config,
+                false,
+            )
+            .await
+            {
+                Ok(d) => Some(d),
+                Err(e) => {
+                    warn!("[subconscious] memory_diff failed (baseline={checkpoint_id}): {e}");
+                    None
+                }
+            },
+            None => {
+                debug!("[subconscious] no world baseline yet — first tick establishes one");
+                None
+            }
+        };
 
-        // 3. Pre-LLM memory retrieval — query the memory tree using
-        //    scratchpad entries as context so the recall is focused on
-        //    what the subconscious is currently tracking.
-        let memory_section = retrieve_memory_context(&self.memory, &scratchpad_entries).await;
+        let has_changes = diff
+            .as_ref()
+            .map(|d| world_diff_change_count(d) > 0)
+            .unwrap_or(false);
 
-        // 4. Load identity context
-        let identity = load_identity_context(&self.workspace_dir);
+        if !has_changes {
+            // Quiet window, first tick, or a diff error: nothing to react to.
+            // Refresh the baseline and return without spending a decision turn.
+            info!("[subconscious] no world changes this tick — refreshing baseline, no agent run");
+            self.refresh_baseline(&config).await;
+            let mut state = self.state.lock().await;
+            state.total_ticks += 1;
+            if self.tick_generation.load(Ordering::SeqCst) == my_generation {
+                state.consecutive_failures = 0;
+                state.last_tick_at = tick_at;
+                persist_last_tick_at(&self.workspace_dir, tick_at);
+            }
+            return Ok(TickResult {
+                tick_at,
+                duration_ms: started.elapsed().as_millis() as u64,
+                response_chars: 0,
+            });
+        }
 
-        // 5. Build user message with dynamic context (system prompt comes from agent definition)
-        let agent_prompt = format!(
-            "{identity}\n\n\
-             ## Situation Report (pre-loaded context)\n\n\
-             {situation}\n\n\
-             {memory}\n\n\
-             {scratchpad}",
-            situation = report.prompt_text,
-            memory = memory_section,
-            scratchpad = scratchpad_section,
-        );
+        let diff = diff.expect("has_changes implies diff is Some");
+        let world_diff = render_world_diff(&diff);
+        // Every change originates from an external source sync, so the decision
+        // turn runs tainted: the approval gate refuses external_effect tools.
+        let has_external_content = true;
+
+        // ── Stage 2: prepare_context — ground the diff before deciding ───────
+        let prepared_context = self.prepare_context(&world_diff).await;
+
+        // ── Stage 3: decide — slim agent acts on diff + prepared context ─────
+        let mut agent_prompt =
+            String::with_capacity(world_diff.len() + prepared_context.len() + 256);
+        agent_prompt.push_str("## What changed in your world since the last check\n\n");
+        agent_prompt.push_str(&world_diff);
+        agent_prompt.push_str("\n\n");
+        if !prepared_context.is_empty() {
+            agent_prompt.push_str("## Prepared context\n\n");
+            agent_prompt.push_str(&prepared_context);
+            agent_prompt.push_str("\n\n");
+        }
+
         let agent_result = self
             .run_agent(&config, &agent_prompt, has_external_content)
             .await;
         let agent_failed = agent_result.is_err();
-        let response_chars = match &agent_result {
-            Ok(chars) => *chars,
-            Err(_) => 0,
-        };
+        let response_chars = *agent_result.as_ref().unwrap_or(&0);
 
-        // 6. Check if superseded
+        // Check if superseded by a newer tick.
         if self.tick_generation.load(Ordering::SeqCst) != my_generation {
             info!("[subconscious] tick superseded by newer tick, discarding");
             let mut state = self.state.lock().await;
@@ -277,14 +341,28 @@ impl SubconsciousEngine {
             });
         }
 
-        // 7. Update state — only advance last_tick_at and reset failures
-        //    when the agent actually ran. Errors keep consecutive_failures
-        //    incrementing and leave last_tick_at unchanged so the next tick
-        //    re-fetches the same window.
+        // Advance the world baseline only on a successful, current tick, so a
+        // failed tick re-diffs the same window next time instead of losing it.
+        if !agent_failed {
+            self.refresh_baseline(&config).await;
+        }
+
         let mut state = self.state.lock().await;
         state.total_ticks += 1;
         if agent_failed {
             state.consecutive_failures += 1;
+            // Surface an actionable reason when the failure is a permanent
+            // tool-capability error (TAURI-RUST-ADC): the subconscious turn is
+            // inherently tool-bearing, so a tool-incapable chat model can never
+            // satisfy it and the user must pick a tool-capable model.
+            if let Err(e) = &agent_result {
+                if is_tool_capability_error(e) {
+                    info!(
+                        "[subconscious] configured chat model has no tool-use endpoint — Subconscious can't run until the model changes (TAURI-RUST-ADC)"
+                    );
+                    state.provider_unavailable_reason = Some(TOOL_UNSUPPORTED_REASON.to_string());
+                }
+            }
         } else {
             state.consecutive_failures = 0;
             state.last_tick_at = tick_at;
@@ -296,6 +374,67 @@ impl SubconsciousEngine {
             duration_ms: started.elapsed().as_millis() as u64,
             response_chars,
         })
+    }
+
+    /// Stage 2: run the read-only `context_scout` over the world diff to gather
+    /// grounding context. Best-effort — on any error the decision agent simply
+    /// runs without a prepared-context section.
+    async fn prepare_context(&self, world_diff: &str) -> String {
+        let question = format!(
+            "Background awareness check. Here is what changed in the user's connected sources \
+             since the last check:\n\n{world_diff}\n\nSurface what the user should be aware of or \
+             act on, and the context that grounds a good decision.",
+        );
+
+        match crate::openhuman::agent_orchestration::tools::run_context_scout_with_catalog(
+            &question,
+            None,
+            SUBCONSCIOUS_TOOL_CATALOG,
+        )
+        .await
+        {
+            Ok(result) if !result.is_error => {
+                debug!(
+                    "[subconscious] prepared context bundle ({} chars)",
+                    result.output().chars().count()
+                );
+                result.output().to_string()
+            }
+            Ok(result) => {
+                warn!(
+                    "[subconscious] prepare_context returned an error result: {}",
+                    result.output()
+                );
+                String::new()
+            }
+            Err(e) => {
+                warn!("[subconscious] prepare_context failed: {e}");
+                String::new()
+            }
+        }
+    }
+
+    /// Re-snapshot the world and persist the new checkpoint as the baseline the
+    /// next tick diffs against. Best-effort — a failure leaves the old baseline
+    /// in place (the next tick diffs against a slightly older window).
+    async fn refresh_baseline(&self, config: &Config) {
+        match crate::openhuman::memory_diff::ops::create_checkpoint(
+            BASELINE_CHECKPOINT_LABEL,
+            config,
+        )
+        .await
+        {
+            Ok(ckpt) => {
+                if let Err(e) = store::with_connection(&self.workspace_dir, |conn| {
+                    store::set_baseline_checkpoint_id(conn, &ckpt.id)
+                }) {
+                    warn!("[subconscious] failed to persist baseline checkpoint id: {e}");
+                } else {
+                    debug!("[subconscious] world baseline advanced to {}", ckpt.id);
+                }
+            }
+            Err(e) => warn!("[subconscious] failed to create world baseline checkpoint: {e}"),
+        }
     }
 
     pub async fn status(&self) -> SubconsciousStatus {
@@ -317,9 +456,9 @@ impl SubconsciousEngine {
         }
     }
 
-    /// Run the subconscious agent with mode-appropriate tool access.
-    /// The agent maintains the scratchpad via tools during its turn.
-    /// Returns `response_chars` on success, or `Err` on agent init/run failure.
+    /// Run the slim subconscious agent over `prompt_text` (diff + prepared
+    /// context). The agent decides and acts through its tools. Returns
+    /// `response_chars` on success, or `Err` on agent init/run failure.
     async fn run_agent(
         &self,
         config: &Config,
@@ -330,13 +469,28 @@ impl SubconsciousEngine {
 
         let mut effective = config.clone();
         effective.agent.agent_timeout_secs = TOOL_CALL_TIMEOUT_SECS;
+        // Route the tick build through the `subconscious` background workload so
+        // Settings → AI → Advanced "Subconscious" governs the cloud tick
+        // provider, instead of riding the `chat` role. The session builder maps
+        // `hint:subconscious` → the `subconscious` provider role; on the managed
+        // backend the model still resolves to `chat-v1` (no regression).
+        effective.default_model = Some("hint:subconscious".to_string());
+        debug!(
+            "[subconscious] tick provider routed via hint:subconscious (subconscious_provider={:?})",
+            effective.subconscious_provider
+        );
+
+        // The decision agent must write internal continuity (global to-dos,
+        // goals) and surface proactive messages — all app-internal writes, not
+        // external effects. So it runs with Full autonomy; genuinely external
+        // effects are still gated by the tainted origin + approval gate. Mode
+        // only scales how much delegation depth the tick gets.
+        effective.autonomy.level = crate::openhuman::security::AutonomyLevel::Full;
         match self.mode {
             SubconsciousMode::Simple => {
-                effective.autonomy.level = crate::openhuman::security::AutonomyLevel::ReadOnly;
                 effective.agent.max_tool_iterations = 15;
             }
-            SubconsciousMode::Aggressive => {
-                effective.autonomy.level = crate::openhuman::security::AutonomyLevel::Full;
+            SubconsciousMode::Aggressive | SubconsciousMode::EventDriven => {
                 effective.agent.max_tool_iterations = 30;
             }
             SubconsciousMode::Off => return Ok(0),
@@ -353,30 +507,28 @@ impl SubconsciousEngine {
         );
 
         let mode_guidance = match self.mode {
-            SubconsciousMode::Aggressive => {
-                "\n\n\
-                You are in AGGRESSIVE mode. You may use `spawn_subagent` to delegate \
-                complex tasks:\n\
-                - `agent_id: \"orchestrator\"` with `model: \"reasoning-v1\"` for deep \
-                  reasoning and multi-step execution\n\
-                - `agent_id: \"researcher\"` for web research and external data\n\n\
-                Use this power when you identify actionable opportunities, approaching \
-                deadlines, or patterns that warrant proactive help."
+            SubconsciousMode::Aggressive | SubconsciousMode::EventDriven => {
+                "\n\nYou may delegate deeper work with `spawn_async_subagent` (e.g. research \
+                 or multi-step execution) when you spot something genuinely actionable."
             }
             _ => "",
         };
 
         let user_message = format!(
-            "{prompt_text}\n\n\
-             ## Instructions\n\n\
-             Based on the situation report and your existing scratchpad, maintain your \
-             scratchpad — add new observations, edit stale entries, remove resolved items.\n\n\
-             Your scratchpad IS your continuity mechanism across ticks. Keep it focused \
-             and actionable.\
-             {mode_guidance}",
+            "{prompt_text}\
+             ## Your job\n\n\
+             The diff above is how the user's world changed since the last check; the prepared \
+             context grounds it. Decide what (if anything) deserves action:\n\
+             - Record or update actionable follow-ups on the user's to-do board with `update_task` \
+               (pass `threadId: \"user-tasks\"`).\n\
+             - Evolve the user's long-term goals with `goals_add` / `goals_edit` when the world \
+               shifts what matters to them.\n\
+             - Surface anything time-sensitive or important with `notify_user`.\n\n\
+             If nothing meaningful changed, do nothing — staying silent is the right call most \
+             ticks. Do not invent busywork.{mode_guidance}",
         );
 
-        debug!("[subconscious] spawning agent with tool access");
+        debug!("[subconscious] spawning decision agent");
         let source = tick_origin_source(has_external_content);
         debug!(
             "[subconscious] tick origin source={:?} has_external_content={has_external_content}",
@@ -398,11 +550,66 @@ impl SubconsciousEngine {
 
         let response_chars = response.chars().count();
         info!(
-            "[subconscious] agent completed (response {} chars)",
+            "[subconscious] decision agent completed (response {} chars)",
             response_chars
         );
         Ok(response_chars)
     }
+}
+
+// ── World-diff rendering ─────────────────────────────────────────────────────
+
+/// Total added + modified + removed across all sources in a cross-source diff.
+fn world_diff_change_count(diff: &CrossSourceDiff) -> u32 {
+    diff.summary.added + diff.summary.modified + diff.summary.removed
+}
+
+/// Render a [`CrossSourceDiff`] into a compact markdown summary for the decision
+/// agent's prompt. Per-source change lists are capped at [`MAX_ITEMS_PER_SOURCE`]
+/// so a churny source can't blow out the context window.
+fn render_world_diff(diff: &CrossSourceDiff) -> String {
+    let s = &diff.summary;
+    let total = s.added + s.modified + s.removed;
+    if total == 0 {
+        return "Nothing changed across your connected sources since the last check.".to_string();
+    }
+
+    let mut out = format!(
+        "{total} item(s) changed across your sources since the last check \
+         ({} added, {} modified, {} removed).\n",
+        s.added, s.modified, s.removed
+    );
+
+    for source in &diff.per_source {
+        let ss = &source.summary;
+        if ss.added + ss.modified + ss.removed == 0 {
+            continue;
+        }
+        out.push_str(&format!(
+            "\n### {} ({})\n- {} added, {} modified, {} removed\n",
+            source.source_label, source.source_kind, ss.added, ss.modified, ss.removed
+        ));
+        for change in source.changes.iter().take(MAX_ITEMS_PER_SOURCE) {
+            let verb = match change.kind {
+                crate::openhuman::memory_diff::types::ChangeKind::Added => "added",
+                crate::openhuman::memory_diff::types::ChangeKind::Removed => "removed",
+                crate::openhuman::memory_diff::types::ChangeKind::Modified => "modified",
+            };
+            let label = if change.title.trim().is_empty() {
+                change.item_id.as_str()
+            } else {
+                change.title.as_str()
+            };
+            out.push_str(&format!("  - [{verb}] {label}\n"));
+        }
+        if source.changes.len() > MAX_ITEMS_PER_SOURCE {
+            out.push_str(&format!(
+                "  - …and {} more\n",
+                source.changes.len() - MAX_ITEMS_PER_SOURCE
+            ));
+        }
+    }
+    out
 }
 
 // ── Provider routing ────────────────────────────────────────────────────────
@@ -464,104 +671,16 @@ fn resolve_subconscious_route(config: &Config) -> SubconsciousProviderRoute {
     }
 }
 
-// ── Pre-LLM memory retrieval ────────────────────────────────────────────────
-
-/// Query the memory tree using scratchpad entries as context, returning
-/// a rendered markdown section to inject into the user message. This
-/// replaces the old `call_memory_agent` tool call — the retrieval now
-/// happens in code before the LLM runs, saving a full agent turn.
-async fn retrieve_memory_context(
-    memory: &Option<MemoryClientRef>,
-    scratchpad_entries: &[scratchpad::ScratchpadEntry],
-) -> String {
-    let client = match memory {
-        Some(c) => c,
-        None => {
-            debug!("[subconscious] no memory client — skipping pre-LLM retrieval");
-            return String::new();
-        }
-    };
-
-    // Build a query from high-priority scratchpad items (p5+) or fall back
-    // to a generic recent-activity query.
-    let query = build_memory_query(scratchpad_entries);
-    debug!(
-        "[subconscious] pre-LLM memory retrieval query_len={}",
-        query.len()
-    );
-
-    let started = std::time::Instant::now();
-
-    // Query conversation_memory namespace for relevant context
-    let conversation_ctx = client
-        .query_namespace("conversation_memory", &query, MEMORY_RETRIEVAL_MAX_CHUNKS)
-        .await
-        .unwrap_or_else(|e| {
-            warn!("[subconscious] conversation_memory query failed: {e}");
-            String::new()
-        });
-
-    // Also recall recent learning reflections (user patterns, preferences)
-    let reflections_ctx = client
-        .recall_namespace("learning_reflections", 10)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_default();
-
-    let elapsed = started.elapsed();
-    info!(
-        "[subconscious] pre-LLM memory retrieval done in {:.1}s conv_chars={} refl_chars={}",
-        elapsed.as_secs_f64(),
-        conversation_ctx.len(),
-        reflections_ctx.len()
-    );
-
-    if conversation_ctx.is_empty() && reflections_ctx.is_empty() {
-        return String::new();
-    }
-
-    let mut section = String::from("## Memory Context (pre-loaded)\n\n");
-    if !conversation_ctx.is_empty() {
-        section.push_str("### Recent Conversations & Activity\n\n");
-        section.push_str(&conversation_ctx);
-        section.push_str("\n\n");
-    }
-    if !reflections_ctx.is_empty() {
-        section.push_str("### Learned User Patterns\n\n");
-        section.push_str(&reflections_ctx);
-        section.push_str("\n\n");
-    }
-    section
-}
-
-/// Build a memory query from scratchpad entries. High-priority items
-/// (p5+) get included verbatim; lower-priority items contribute keywords.
-/// Falls back to a generic query when the scratchpad is empty.
-fn build_memory_query(entries: &[scratchpad::ScratchpadEntry]) -> String {
-    if entries.is_empty() {
-        return "What has the user been working on recently? Any upcoming deadlines, \
-                unresolved threads, or notable activity across all sources?"
-            .to_string();
-    }
-
-    let high_priority: Vec<&scratchpad::ScratchpadEntry> =
-        entries.iter().filter(|e| e.priority >= 5).collect();
-
-    if high_priority.is_empty() {
-        // Use all entries as a broad query
-        let bodies: Vec<&str> = entries.iter().map(|e| e.body.as_str()).collect();
-        return format!(
-            "Recent activity and updates related to: {}",
-            bodies.join("; ")
-        );
-    }
-
-    let bodies: Vec<&str> = high_priority.iter().map(|e| e.body.as_str()).collect();
-    format!(
-        "Updates and context for these tracked items: {}",
-        bodies.join("; ")
-    )
+/// True when an agent-run error means the configured chat model can't do tool
+/// calls at all — a permanent, user-actionable condition (pick a tool-capable
+/// model). Matches both the direct-provider body (`<model> does not support
+/// tools`) and OpenRouter's router-level phrasing (`No endpoints found that
+/// support tool use`, TAURI-RUST-ADC). Kept narrow to tool capability so an
+/// unrelated provider error (auth, billing, rate-limit) is not misread as one.
+fn is_tool_capability_error(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    lower.contains("no endpoints found that support tool use")
+        || lower.contains("does not support tools")
 }
 
 fn persist_last_tick_at(workspace_dir: &std::path::Path, tick_at: f64) {
@@ -577,72 +696,6 @@ fn now_secs() -> f64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs_f64())
         .unwrap_or(0.0)
-}
-
-// ── Identity loading ───────────────────────────────────────────────────────
-
-const IDENTITY_EXCERPT_CHARS: usize = 2000;
-
-fn load_identity_context(workspace_dir: &std::path::Path) -> String {
-    let prompts_dir = resolve_prompts_dir(workspace_dir);
-    let mut ctx = String::new();
-
-    if let Some(ref dir) = prompts_dir {
-        if let Some(soul) = load_file_excerpt(dir, "SOUL.md") {
-            ctx.push_str(&soul);
-            ctx.push_str("\n\n");
-        }
-    }
-
-    if let Some(profile) = load_file_excerpt(workspace_dir, "PROFILE.md") {
-        ctx.push_str("## User Profile\n\n");
-        ctx.push_str(&profile);
-        ctx.push_str("\n\n");
-    }
-
-    if ctx.is_empty() {
-        "You are OpenHuman, an AI assistant for productivity and collaboration.".to_string()
-    } else {
-        ctx
-    }
-}
-
-fn resolve_prompts_dir(workspace_dir: &std::path::Path) -> Option<std::path::PathBuf> {
-    let workspace_ai = workspace_dir.join("ai");
-    if workspace_ai.is_dir() {
-        return Some(workspace_ai);
-    }
-
-    if let Some(dir) = option_env!("CARGO_MANIFEST_DIR").map(std::path::PathBuf::from) {
-        let candidate = dir
-            .join("src")
-            .join("openhuman")
-            .join("agent")
-            .join("prompts");
-        if candidate.is_dir() {
-            return Some(candidate);
-        }
-    }
-
-    if let Ok(cwd) = std::env::current_dir() {
-        return crate::openhuman::dev_paths::repo_ai_prompts_dir(&cwd);
-    }
-
-    None
-}
-
-fn load_file_excerpt(dir: &std::path::Path, filename: &str) -> Option<String> {
-    let content = std::fs::read_to_string(dir.join(filename)).ok()?;
-    let trimmed = content.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    if trimmed.chars().count() > IDENTITY_EXCERPT_CHARS {
-        let truncated: String = trimmed.chars().take(IDENTITY_EXCERPT_CHARS).collect();
-        Some(format!("{truncated}\n[... truncated]"))
-    } else {
-        Some(trimmed.to_string())
-    }
 }
 
 #[cfg(test)]

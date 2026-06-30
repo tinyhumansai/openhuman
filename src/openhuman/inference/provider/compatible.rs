@@ -18,6 +18,8 @@ mod compatible_request;
 mod compatible_stream;
 #[path = "compatible_stream_native.rs"]
 mod compatible_stream_native;
+#[path = "compatible_timeout.rs"]
+mod compatible_timeout;
 #[path = "compatible_types.rs"]
 mod compatible_types;
 
@@ -280,6 +282,22 @@ impl OpenAiCompatibleProvider {
         self
     }
 
+    /// Whether the chat-completions-404 → `/v1/responses` fallback should fire
+    /// for this provider on the current call.
+    ///
+    /// `supports_responses_fallback` is the static (factory-decided) capability,
+    /// but a custom / unknown slug whose endpoint does not actually implement
+    /// the Responses API only reveals that at runtime — the `/responses` route
+    /// returns its own 404. Once we have seen that, [`responses_api_known_unsupported`]
+    /// reports the endpoint as Responses-incapable and we stop re-issuing the
+    /// guaranteed-failing second request, routing to chat-completions only. This
+    /// is the runtime complement to the builtin-slug gate in `factory.rs`
+    /// (`builtin_cloud_supports_responses_api`) for custom slugs like
+    /// `nous-portal` that the factory can't classify (TAURI-RUST-FJZ).
+    pub(super) fn responses_fallback_active(&self) -> bool {
+        self.supports_responses_fallback && !responses_api_known_unsupported(&self.base_url)
+    }
+
     pub fn with_extra_query_param(
         mut self,
         name: impl Into<String>,
@@ -293,6 +311,95 @@ impl OpenAiCompatibleProvider {
         }
         self
     }
+}
+
+/// Endpoints (`base_url`) whose `/v1/responses` route has returned 404 — i.e.
+/// they do not implement the OpenAI Responses API. Once an endpoint is recorded
+/// here, the chat-completions-404 → `/responses` fallback is disabled for it for
+/// the rest of the process lifetime (see [`OpenAiCompatibleProvider::responses_fallback_active`]),
+/// so a permanent client 404 stops triggering a second guaranteed 404 on every
+/// retry (TAURI-RUST-FJZ — `nous-portal`, a chat-completions-only custom slug).
+///
+/// Keyed on `base_url` because that, not the user-facing slug, determines
+/// Responses support: two slugs pointed at the same endpoint share its
+/// capability, and a slug rename must not reset what we learned.
+fn responses_unsupported_endpoints() -> &'static std::sync::Mutex<std::collections::HashSet<String>>
+{
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
+/// Record that `base_url` returned 404 from its `/v1/responses` route and is
+/// therefore not Responses-capable. Idempotent.
+pub(super) fn mark_responses_api_unsupported(base_url: &str) {
+    if let Ok(mut set) = responses_unsupported_endpoints().lock() {
+        if set.insert(base_url.to_string()) {
+            log::debug!(
+                "[provider] /responses route 404'd — disabling responses fallback for \
+                 endpoint {} (chat-completions only henceforth)",
+                super::factory::redact_endpoint(base_url),
+            );
+        }
+    }
+}
+
+/// Whether `base_url` has been recorded as not implementing the Responses API.
+pub(super) fn responses_api_known_unsupported(base_url: &str) -> bool {
+    responses_unsupported_endpoints()
+        .lock()
+        .map(|set| set.contains(base_url))
+        .unwrap_or(false)
+}
+
+/// Prompt-cache behaviour for an OpenAI-compatible provider, keyed on its
+/// configured slug (#3939).
+///
+/// Conservative by default: only providers we have verified to both (a) cache
+/// identical request prefixes server-side and (b) report cached input tokens
+/// via the OpenAI `prompt_tokens_details.cached_tokens` shape that
+/// [`OpenAiCompatibleProvider`]'s usage extractor already normalises are opted
+/// in. Unknown / custom slugs (including local LM Studio endpoints, which do no
+/// server-side billing-grade caching) get the all-`false` default, so we never
+/// advertise caching a custom endpoint may not do. `explicit_cache_control`
+/// stays `false` for every OpenAI-compatible provider — the chat-completions
+/// API has no cache-control field — and `cache_key_grouping` is reserved for
+/// the OpenHuman backend's `thread_id` extension, declared on
+/// `OpenHumanBackendProvider` directly.
+pub(crate) fn prompt_cache_for_compatible_slug(
+    slug: &str,
+) -> super::traits::PromptCacheCapabilities {
+    // Compare on the leading slug segment so a user-renamed `openai-eu` or a
+    // `openai:gpt-5.1` style slug still resolves to the `openai` family.
+    let normalized = slug.trim().to_ascii_lowercase();
+    let family = normalized
+        .split(|c| c == ':' || c == '/' || c == '-')
+        .next()
+        .unwrap_or("")
+        .trim();
+
+    // Verified OpenAI-style implicit prefix cache + cached-token usage reporting.
+    let openai_style_cache = matches!(family, "openai" | "openrouter" | "gmi");
+
+    let caps = super::traits::PromptCacheCapabilities {
+        automatic_prefix_cache: openai_style_cache,
+        explicit_cache_control: false,
+        usage_reports_cached_input: openai_style_cache,
+        cache_key_grouping: false,
+    };
+
+    tracing::debug!(
+        domain = "llm_provider",
+        operation = "prompt_cache_capability",
+        provider = %family,
+        automatic_prefix_cache = caps.automatic_prefix_cache,
+        explicit_cache_control = caps.explicit_cache_control,
+        usage_reports_cached_input = caps.usage_reports_cached_input,
+        cache_key_grouping = caps.cache_key_grouping,
+        "[llm_provider] prompt-cache capability selected for compatible provider"
+    );
+
+    caps
 }
 
 #[cfg(test)]

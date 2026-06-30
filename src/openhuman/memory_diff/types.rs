@@ -30,16 +30,6 @@ pub struct Snapshot {
     pub taken_at_ms: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct SnapshotItem {
-    pub item_id: String,
-    pub title: String,
-    pub content_hash: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub timestamp_ms: Option<i64>,
-    pub chunk_count: u32,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ChangeKind {

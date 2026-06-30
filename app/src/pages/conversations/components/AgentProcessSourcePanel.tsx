@@ -1,10 +1,16 @@
 import { useEffect } from 'react';
 
+import Button from '../../../components/ui/Button';
 import { useT } from '../../../lib/i18n/I18nContext';
-import type { ToolTimelineEntry } from '../../../store/chatRuntimeSlice';
-import { type AgentSource, extractAgentSources } from '../../../utils/toolTimelineFormatting';
+import type { ProcessingTranscriptItem, ToolTimelineEntry } from '../../../store/chatRuntimeSlice';
+import {
+  type AgentSource,
+  extractAgentSources,
+  formatTimelineEntry,
+} from '../../../utils/toolTimelineFormatting';
 import { AgentSparkIcon } from './AgentTimelineRail';
-import { ToolTimelineBlock } from './ToolTimelineBlock';
+import { ProcessingTranscriptView } from './ProcessingTranscriptView';
+import { SubagentActivityBlock, ToolTimelineBlock } from './ToolTimelineBlock';
 
 /** Compact globe glyph for a source row. Inherits `currentColor`. */
 function GlobeIcon({ className }: { className?: string }) {
@@ -35,13 +41,13 @@ function AgentSourceRow({ source }: { source: AgentSource }) {
         href={source.url}
         target="_blank"
         rel="noreferrer noopener"
-        className="flex items-center justify-between gap-3 rounded-md px-1.5 py-1 text-[11px] hover:bg-stone-50 dark:hover:bg-neutral-800/60"
+        className="flex items-center justify-between gap-3 rounded-md px-1.5 py-1 text-[11px] hover:bg-surface-hover"
         data-testid="agent-source-row">
         <span className="flex min-w-0 items-center gap-1.5">
-          <GlobeIcon className="shrink-0 text-stone-400 dark:text-neutral-500" />
-          <span className="truncate text-stone-700 dark:text-neutral-200">{source.title}</span>
+          <GlobeIcon className="shrink-0 text-content-faint" />
+          <span className="truncate text-content-secondary">{source.title}</span>
         </span>
-        <span className="shrink-0 truncate text-stone-400 dark:text-neutral-500">{source.url}</span>
+        <span className="shrink-0 truncate text-content-faint">{source.url}</span>
       </a>
     </li>
   );
@@ -64,10 +70,20 @@ function AgentSourceRow({ source }: { source: AgentSource }) {
 export function AgentProcessSourcePanel({
   open,
   entries,
+  transcript = [],
+  scopedEntry,
   onClose,
 }: {
   open: boolean;
   entries: ToolTimelineEntry[];
+  /** Ordered narration/thinking/tool transcript. When present, the panel
+   *  renders the interleaved Hermes view; otherwise it falls back to the
+   *  tool-only timeline. */
+  transcript?: ProcessingTranscriptItem[];
+  /** When set, the panel is scoped to a single step — its title becomes the
+   *  step label and the body shows only that step's details (its sub-agent
+   *  activity, or its tool detail). `undefined` → the whole-run overview. */
+  scopedEntry?: ToolTimelineEntry;
   onClose: () => void;
 }) {
   const { t } = useT();
@@ -84,7 +100,14 @@ export function AgentProcessSourcePanel({
 
   if (!open) return null;
 
-  const sources = extractAgentSources(entries);
+  // Sources/sub-agents are scoped to the single step when one is selected,
+  // else they cover the whole run.
+  const sources = extractAgentSources(scopedEntry ? [scopedEntry] : entries);
+  const subagentEntries = entries.filter(entry => entry.subagent);
+  // For a scoped *non*-sub-agent step, the detail (args / output) to show.
+  const scopedDetail = scopedEntry
+    ? (formatTimelineEntry(scopedEntry).detail ?? scopedEntry.argsBuffer)
+    : undefined;
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" data-testid="agent-process-source-panel">
@@ -95,42 +118,86 @@ export function AgentProcessSourcePanel({
         className="absolute inset-0 bg-stone-900/30 dark:bg-black/50"
         onClick={onClose}
       />
-      <aside className="relative flex h-full w-full max-w-[600px] flex-col bg-white shadow-xl dark:bg-neutral-900">
+      <aside className="relative flex h-full w-full max-w-[600px] flex-col bg-surface shadow-xl">
         {/* Header */}
-        <header className="flex items-center gap-2.5 border-b border-stone-200 px-4 py-3 dark:border-neutral-800">
+        <header className="flex items-center gap-2.5 border-b border-line px-4 py-3">
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-50 text-primary-500 dark:bg-primary-500/15">
             <AgentSparkIcon />
           </span>
-          <span className="min-w-0 flex-1 truncate font-semibold text-stone-800 dark:text-neutral-100">
-            {t('conversations.agentTaskInsights.processSourceTitle')}
+          <span className="min-w-0 flex-1 truncate font-semibold text-content">
+            {scopedEntry
+              ? formatTimelineEntry(scopedEntry).title
+              : t('conversations.agentTaskInsights.processSourceTitle')}
           </span>
-          <button
-            type="button"
+          <Button
+            iconOnly
+            variant="tertiary"
+            size="sm"
             onClick={onClose}
             aria-label={t('conversations.subagent.close')}
-            className="shrink-0 rounded-full p-1.5 text-stone-400 hover:bg-stone-100 hover:text-stone-600 dark:hover:bg-neutral-800 dark:hover:text-neutral-200">
+            className="shrink-0 rounded-full">
             ✕
-          </button>
+          </Button>
         </header>
 
         {/* Body — the full agent timeline, then the visited sources. */}
         <div className="flex-1 space-y-5 overflow-y-auto px-4 py-4">
           <section>
-            <h3 className="mb-2 text-[10px] font-semibold tracking-wide text-stone-400 uppercase dark:text-neutral-500">
+            <h3 className="mb-2 text-[10px] font-semibold tracking-wide text-content-faint uppercase">
               {t('conversations.agentTaskInsights.stepsHeading')}
             </h3>
-            {entries.length > 0 ? (
+            {scopedEntry ? (
+              // Scoped to one step: show only that step's details.
+              scopedEntry.subagent ? (
+                <SubagentActivityBlock subagent={scopedEntry.subagent} />
+              ) : scopedDetail ? (
+                <pre className="max-h-[60vh] overflow-y-auto rounded-lg bg-surface-muted px-3 py-2 text-[12px] whitespace-pre-wrap break-words text-content-secondary">
+                  {scopedDetail}
+                </pre>
+              ) : (
+                <p className="text-xs text-content-faint italic">
+                  {t('conversations.agentTaskInsights.noSteps')}
+                </p>
+              )
+            ) : transcript.length > 0 ? (
+              // Hermes-style interleaved narration + grouped, human-labeled steps.
+              <ProcessingTranscriptView transcript={transcript} entries={entries} />
+            ) : entries.length > 0 ? (
+              // Legacy snapshot (no transcript): fall back to the tool timeline,
+              // which already nests each sub-agent's full activity inline.
               <ToolTimelineBlock entries={entries} expandAllRows />
             ) : (
-              <p className="text-xs text-stone-400 italic dark:text-neutral-500">
+              <p className="text-xs text-content-faint italic">
                 {t('conversations.agentTaskInsights.noSteps')}
               </p>
             )}
           </section>
 
+          {/* Sub-agents — each delegated agent's full processing (thoughts +
+              tool rows + detail). Only rendered alongside the transcript view,
+              which doesn't nest sub-agent activity itself; the no-transcript
+              fallback above already expands it. */}
+          {!scopedEntry && transcript.length > 0 && subagentEntries.length > 0 ? (
+            <section>
+              <h3 className="mb-2 text-[10px] font-semibold tracking-wide text-content-faint uppercase">
+                {t('conversations.agentTaskInsights.subagentsHeading')}
+              </h3>
+              <div className="space-y-3">
+                {subagentEntries.map(entry => (
+                  <div key={entry.id} data-testid="agent-source-subagent">
+                    <p className="text-[12px] font-medium text-content-secondary">
+                      {formatTimelineEntry(entry).title}
+                    </p>
+                    <SubagentActivityBlock subagent={entry.subagent!} />
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
           {sources.length > 0 ? (
             <section>
-              <h3 className="mb-2 text-[10px] font-semibold tracking-wide text-stone-400 uppercase dark:text-neutral-500">
+              <h3 className="mb-2 text-[10px] font-semibold tracking-wide text-content-faint uppercase">
                 {t('conversations.agentTaskInsights.sourcesHeading')}
               </h3>
               <ul className="space-y-0.5">

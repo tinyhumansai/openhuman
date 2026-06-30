@@ -19,6 +19,7 @@ import { createPortal } from 'react-dom';
 import { useAppUpdate } from '../hooks/useAppUpdate';
 import { useT } from '../lib/i18n/I18nContext';
 import { formatBytes } from '../utils/localAiHelpers';
+import Button from './ui/Button';
 
 interface AppUpdatePromptProps {
   /** Override auto-check defaults (mostly for tests). */
@@ -105,12 +106,14 @@ const AppUpdatePrompt = (props: AppUpdatePromptProps) => {
             <span className="text-sm font-medium text-white">{headerLabel(phase, t)}</span>
           </div>
           {(phase === 'ready_to_install' || phase === 'error') && (
-            <button
+            <Button
+              iconOnly
+              variant="tertiary"
+              size="xs"
               onClick={phase === 'error' ? handleDismissError : handleLater}
-              className="p-1 text-stone-500 hover:text-stone-300 transition-colors"
               aria-label={t('app.update.dismissNotification')}>
               <CloseIcon className="w-3.5 h-3.5" />
-            </button>
+            </Button>
           )}
         </div>
 
@@ -118,32 +121,28 @@ const AppUpdatePrompt = (props: AppUpdatePromptProps) => {
         <div className="px-4 pt-1 pb-3">
           {phase === 'ready_to_install' && (
             <>
-              <p className="text-xs text-stone-300 leading-relaxed">
+              <p className="text-xs text-content-faint leading-relaxed">
                 {newVersion
                   ? t('app.update.versionReady').replace('{version}', newVersion)
                   : t('app.update.newVersionReady')}
                 {currentVersion && (
-                  <span className="text-stone-500">
+                  <span className="text-content-muted">
                     {' '}
                     {t('app.update.currentlyOn').replace('{version}', currentVersion)}
                   </span>
                 )}
               </p>
               {info?.body && <ReleaseNotes body={info.body} />}
-              <p className="mt-2 text-[11px] text-stone-500 leading-relaxed">
+              <p className="mt-2 text-[11px] text-content-muted leading-relaxed">
                 {t('app.update.restartNote')}
               </p>
               <div className="mt-3 flex gap-2">
-                <button
-                  onClick={handleInstall}
-                  className="flex-1 px-3 py-1.5 rounded-lg bg-primary-500 hover:bg-primary-400 text-white text-xs font-medium transition-colors">
+                <Button size="sm" onClick={handleInstall} className="flex-1">
                   {t('app.update.restartNow')}
-                </button>
-                <button
-                  onClick={handleLater}
-                  className="px-3 py-1.5 rounded-lg border border-stone-700 text-stone-300 hover:bg-stone-800 text-xs transition-colors">
+                </Button>
+                <Button variant="secondary" size="sm" onClick={handleLater}>
                   {t('app.update.later')}
-                </button>
+                </Button>
               </div>
             </>
           )}
@@ -151,9 +150,9 @@ const AppUpdatePrompt = (props: AppUpdatePromptProps) => {
           {(phase === 'installing' || phase === 'restarting') && (
             <>
               <ProgressBar indeterminate />
-              <div className="mt-2 flex items-center justify-between text-[11px] text-stone-400">
+              <div className="mt-2 flex items-center justify-between text-[11px] text-content-faint">
                 <span>{progressDetail(phase, bytesDownloaded, totalBytes, percent, t)}</span>
-                {newVersion && <span className="text-stone-500">v{newVersion}</span>}
+                {newVersion && <span className="text-content-muted">v{newVersion}</span>}
               </div>
             </>
           )}
@@ -164,16 +163,12 @@ const AppUpdatePrompt = (props: AppUpdatePromptProps) => {
                 {error ?? t('app.update.errorFallback')}
               </p>
               <div className="mt-3 flex gap-2">
-                <button
-                  onClick={handleRetryDownload}
-                  className="flex-1 px-3 py-1.5 rounded-lg bg-primary-500 hover:bg-primary-400 text-white text-xs font-medium transition-colors">
+                <Button size="sm" onClick={handleRetryDownload} className="flex-1">
                   {t('common.retry')}
-                </button>
-                <button
-                  onClick={handleDismissError}
-                  className="px-3 py-1.5 rounded-lg border border-stone-700 text-stone-300 hover:bg-stone-800 text-xs transition-colors">
+                </Button>
+                <Button variant="secondary" size="sm" onClick={handleDismissError}>
                   {t('common.dismiss')}
-                </button>
+                </Button>
               </div>
             </>
           )}
@@ -247,7 +242,7 @@ const ReleaseNotes = ({ body }: { body: string }) => {
   const display = expanded || !isLong ? trimmed : `${trimmed.slice(0, 160).trimEnd()}…`;
   return (
     <div className="mt-2 rounded-lg bg-stone-800/60 border border-stone-700/40 px-3 py-2">
-      <p className="text-[11px] text-stone-400 whitespace-pre-line break-words">{display}</p>
+      <p className="text-[11px] text-content-faint whitespace-pre-line break-words">{display}</p>
       {isLong && (
         <ReleaseNotesToggle expanded={expanded} onToggle={() => setExpanded(prev => !prev)} />
       )}
@@ -264,12 +259,13 @@ const ReleaseNotesToggle = ({
 }) => {
   const { t } = useT();
   return (
-    <button
-      type="button"
+    <Button
+      variant="tertiary"
+      size="xs"
       onClick={onToggle}
-      className="mt-1 text-[11px] text-primary-300 hover:text-primary-200 transition-colors">
+      className="mt-1 px-0 text-[11px] text-primary-300 hover:bg-transparent hover:text-primary-200">
       {expanded ? t('common.showLess') : t('common.showMore')}
-    </button>
+    </Button>
   );
 };
 

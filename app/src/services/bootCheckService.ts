@@ -9,7 +9,7 @@
  */
 import { invoke } from '@tauri-apps/api/core';
 
-import type { BootCheckTransport } from '../lib/bootCheck';
+import type { BootCheckTransport, RecoveryOutcome } from '../lib/bootCheck';
 import { callCoreRpc } from './coreRpcClient';
 
 async function callRpc<T>(method: string, params?: Record<string, unknown>): Promise<T> {
@@ -22,14 +22,25 @@ async function invokeCmd<T>(cmd: string, args?: Record<string, unknown>): Promis
 
 /**
  * Invoke the `recover_port_conflict` Tauri command to reap stale OpenHuman
- * processes and restart the embedded core on any available port.
+ * processes and restart the embedded core on any available port. When recovery
+ * fails because a foreign process holds the port, the outcome carries that
+ * process's identity in `foreign_owner`.
  */
-export async function recoverPortConflict(): Promise<{
-  success: boolean;
-  message: string;
-  new_port?: number;
-}> {
+export async function recoverPortConflict(): Promise<RecoveryOutcome> {
   return invokeCmd('recover_port_conflict');
 }
 
-export const bootCheckTransport: BootCheckTransport = { callRpc, invokeCmd, recoverPortConflict };
+/**
+ * Invoke the `force_quit_port_owner` Tauri command to terminate the foreign
+ * process holding the core RPC port, after the user consented to that pid.
+ */
+export async function forceQuitPortOwner(pid: number): Promise<RecoveryOutcome> {
+  return invokeCmd('force_quit_port_owner', { pid });
+}
+
+export const bootCheckTransport: BootCheckTransport = {
+  callRpc,
+  invokeCmd,
+  recoverPortConflict,
+  forceQuitPortOwner,
+};

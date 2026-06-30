@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { mcpClientsApi } from '../../../services/api/mcpClientsApi';
+import Button from '../../ui/Button';
 import McpServerCard from './McpServerCard';
 import type { SmitheryServer } from './types';
 
@@ -92,7 +93,7 @@ const McpCatalogBrowser = ({ onSelectInstall }: McpCatalogBrowserProps) => {
           placeholder={t('mcp.catalog.searchPlaceholder')}
           value={query}
           onChange={e => setQuery(e.target.value)}
-          className="flex-1 rounded-lg border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-800 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary-500/40"
+          className="flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-content placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary-500/40"
         />
       </div>
 
@@ -103,11 +104,9 @@ const McpCatalogBrowser = ({ onSelectInstall }: McpCatalogBrowserProps) => {
       )}
 
       {loading && servers.length === 0 ? (
-        <div className="text-sm text-stone-400 dark:text-neutral-500 py-6 text-center">
-          {t('common.loading')}
-        </div>
+        <div className="text-sm text-content-faint py-6 text-center">{t('common.loading')}</div>
       ) : servers.length === 0 ? (
-        <div className="text-sm text-stone-400 dark:text-neutral-500 py-6 text-center">
+        <div className="text-sm text-content-faint py-6 text-center">
           {query
             ? t('mcp.catalog.noResultsFor').replace('{query}', query)
             : t('mcp.catalog.noResults')}
@@ -126,13 +125,9 @@ const McpCatalogBrowser = ({ onSelectInstall }: McpCatalogBrowserProps) => {
 
           {page < totalPages && (
             <div className="flex justify-center pt-2">
-              <button
-                type="button"
-                disabled={loading}
-                onClick={handleLoadMore}
-                className="rounded-lg border border-stone-200 dark:border-neutral-700 px-4 py-2 text-sm font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-600 disabled:opacity-50">
+              <Button variant="secondary" size="md" disabled={loading} onClick={handleLoadMore}>
                 {loading ? t('common.loading') : t('mcp.catalog.loadMore')}
-              </button>
+              </Button>
             </div>
           )}
         </>

@@ -971,9 +971,7 @@ describe('WorkflowRunnerBody — recent runs status badges', () => {
     renderBody(Body);
 
     await waitFor(() => {
-      expect(
-        screen.getByText('settings.skillsRunner.recentRuns.headingAll')
-      ).toBeInTheDocument();
+      expect(screen.getByText('settings.skillsRunner.recentRuns.headingAll')).toBeInTheDocument();
     });
   });
 
@@ -1124,7 +1122,19 @@ describe('WorkflowRunnerBody — history run with no output', () => {
 
   it('shows historyNoOutput placeholder when a run row has null output', async () => {
     hoisted.cronRuns.mockResolvedValue({
-      result: { runs: [{ id: 1, job_id: 'job-1', started_at: '2026-05-30T09:00:00Z', finished_at: '2026-05-30T09:00:05Z', status: 'ok', output: null, duration_ms: 5000 }] },
+      result: {
+        runs: [
+          {
+            id: 1,
+            job_id: 'job-1',
+            started_at: '2026-05-30T09:00:00Z',
+            finished_at: '2026-05-30T09:00:05Z',
+            status: 'ok',
+            output: null,
+            duration_ms: 5000,
+          },
+        ],
+      },
     });
 
     const Body = await importBody();
@@ -1210,9 +1220,7 @@ describe('WorkflowRunnerBody — buildCronJobName with non-empty inputs', () => 
       id: 'name-skill',
       name: 'Name Skill',
       when_to_use: 'test.',
-      inputs: [
-        { name: 'owner', type: 'string', required: true, description: 'Owner' },
-      ],
+      inputs: [{ name: 'owner', type: 'string', required: true, description: 'Owner' }],
     });
   });
 
@@ -1248,11 +1256,9 @@ describe('WorkflowRunnerBody — ensureRuntimeAvailability failure', () => {
     hoisted.cronList.mockResolvedValue({ result: [] });
     hoisted.cronRuns.mockResolvedValue({ result: { runs: [] } });
     hoisted.runWorkflow.mockResolvedValue({ run_id: 'r', skill_id: 'x', log: '/tmp/l' });
-    hoisted.listWorkflows.mockResolvedValue([{
-      id: 'py-skill',
-      name: 'Python Skill',
-      resources: ['scripts/run.py'],
-    }]);
+    hoisted.listWorkflows.mockResolvedValue([
+      { id: 'py-skill', name: 'Python Skill', resources: ['scripts/run.py'] },
+    ]);
     hoisted.describeWorkflow.mockResolvedValue({
       id: 'py-skill',
       name: 'Python Skill',
@@ -1264,7 +1270,16 @@ describe('WorkflowRunnerBody — ensureRuntimeAvailability failure', () => {
   it('surfaces runtime unavailable error on run when python runtime is missing', async () => {
     hoisted.resolveRuntimes.mockResolvedValue({
       runtimes: [
-        { runtime: 'python', enabled: true, available: false, source: 'managed', version: null, binary: null, binDir: null, error: 'not installed' },
+        {
+          runtime: 'python',
+          enabled: true,
+          available: false,
+          source: 'managed',
+          version: null,
+          binary: null,
+          binDir: null,
+          error: 'not installed',
+        },
       ],
     });
 

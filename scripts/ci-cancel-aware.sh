@@ -10,6 +10,7 @@ fi
 OS_NAME="$(uname -s 2>/dev/null || echo unknown)"
 CHILD_PID=""
 RECEIVED_SIGNAL=""
+CHILD_OWNS_PROCESS_GROUP=0
 
 is_windows_shell() {
   case "$OS_NAME" in
@@ -35,6 +36,10 @@ terminate_tree_term() {
     return
   fi
 
+  if [ "$CHILD_OWNS_PROCESS_GROUP" = "1" ]; then
+    kill -TERM -- "-$pid" 2>/dev/null || true
+  fi
+
   local descendants=""
   descendants="$(collect_descendants_unix "$pid")"
   if [ -n "$descendants" ]; then
@@ -51,6 +56,10 @@ terminate_tree_kill() {
   if is_windows_shell; then
     taskkill //PID "$pid" //T //F >/dev/null 2>&1 || true
     return
+  fi
+
+  if [ "$CHILD_OWNS_PROCESS_GROUP" = "1" ]; then
+    kill -KILL -- "-$pid" 2>/dev/null || true
   fi
 
   local descendants=""
@@ -103,19 +112,33 @@ cleanup() {
   return "$status"
 }
 
+start_child() {
+  if ! is_windows_shell && command -v setsid >/dev/null 2>&1; then
+    setsid "$@" &
+    CHILD_OWNS_PROCESS_GROUP=1
+  else
+    "$@" &
+    CHILD_OWNS_PROCESS_GROUP=0
+  fi
+  CHILD_PID=$!
+}
+
 trap 'forward_cancel INT' INT
 trap 'forward_cancel TERM' TERM
 trap 'forward_cancel HUP' HUP
 trap cleanup EXIT
 
 echo "[ci-cancel-aware] exec: $(printf '%q ' "$@")" >&2
-"$@" &
-CHILD_PID=$!
+start_child "$@"
 
 set +e
 wait "$CHILD_PID"
 status=$?
 set -e
 
-CHILD_PID=""
+# A trapped cancellation can interrupt wait before the child exits. Keep
+# CHILD_PID set so the EXIT cleanup can escalate from TERM to KILL.
+if ! kill -0 "$CHILD_PID" 2>/dev/null; then
+  CHILD_PID=""
+fi
 exit "$status"

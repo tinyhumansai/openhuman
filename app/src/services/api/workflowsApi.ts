@@ -243,12 +243,29 @@ function normalizeWorkflowSummary(raw: RawWorkflowSummary): WorkflowSummary {
   };
 }
 
+/** Options for {@link workflowsApi.listWorkflows}. */
+export interface ListWorkflowsOptions {
+  /**
+   * When `true`, also include capability skills under the `skills/` roots
+   * (registry installs land there), not just `workflows/`-root automations.
+   */
+  includeSkills?: boolean;
+}
+
 export const workflowsApi = {
-  /** Enumerate SKILL.md / legacy skills visible in the active workspace. */
-  listWorkflows: async (): Promise<WorkflowSummary[]> => {
-    log('listWorkflows: request');
+  /**
+   * Enumerate SKILL.md / legacy skills visible in the active workspace.
+   *
+   * By default returns only `workflows/`-root automations (the Automations UI
+   * view). Pass `{ includeSkills: true }` to also include capability skills
+   * under the `skills/` roots — the Skills Explorer uses this so
+   * registry-installed skills show up in its Installed tab.
+   */
+  listWorkflows: async (opts?: ListWorkflowsOptions): Promise<WorkflowSummary[]> => {
+    log('listWorkflows: request includeSkills=%s', opts?.includeSkills ?? false);
     const response = await callCoreRpc<Envelope<WorkflowsListResult> | WorkflowsListResult>({
       method: 'openhuman.workflows_list',
+      params: opts?.includeSkills ? { include_skills: true } : undefined,
     });
     const result = unwrapEnvelope(response);
     const workflows = (result?.workflows ?? []).map(normalizeWorkflowSummary);

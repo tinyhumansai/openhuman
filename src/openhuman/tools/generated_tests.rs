@@ -266,3 +266,41 @@ async fn generated_tool_marks_execute_risk_as_external_effect() {
 
     assert!(tool.external_effect());
 }
+
+#[tokio::test]
+async fn generated_tool_uses_curated_display_label_when_set() {
+    let mut definition = sample_definition();
+    definition.display_label = Some("Sending update".into());
+    let tool = GeneratedTool::new(definition, Arc::new(EchoAdapter)).unwrap();
+
+    assert_eq!(
+        tool.display_label(&json!({})).as_deref(),
+        Some("Sending update")
+    );
+}
+
+#[tokio::test]
+async fn generated_tool_falls_back_to_humanized_name_for_label() {
+    // No curated label → derive a Title-Cased phrase from the action name,
+    // never the raw snake_case.
+    let tool = GeneratedTool::new(sample_definition(), Arc::new(EchoAdapter)).unwrap();
+
+    assert_eq!(
+        tool.display_label(&json!({})).as_deref(),
+        Some("Send Update")
+    );
+}
+
+#[tokio::test]
+async fn generated_tool_pulls_contextual_detail_from_args() {
+    let tool = GeneratedTool::new(sample_definition(), Arc::new(EchoAdapter)).unwrap();
+
+    // A recipient-style arg becomes the bracketed context, Claude-style.
+    assert_eq!(
+        tool.display_detail(&json!({ "to": "steven@gmail.com" }))
+            .as_deref(),
+        Some("steven@gmail.com")
+    );
+    // Nothing recognizable → no detail (label-only row).
+    assert!(tool.display_detail(&json!({ "message": "hi" })).is_none());
+}

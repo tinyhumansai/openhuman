@@ -45,7 +45,9 @@ test.describe('Auth & Access Control', () => {
   test('authenticated sign-in reaches home', async ({ page }) => {
     await signInViaBypassUser(page, 'pw-auth-access-token');
 
-    await expect.poll(async () => page.evaluate(() => window.location.hash)).toMatch(/^#\/home/);
+    await expect
+      .poll(async () => page.evaluate(() => window.location.hash))
+      .toMatch(/^#\/(home|chat)/);
     await expect(await waitForMockRequest('GET', '/auth/me')).toBeTruthy();
   });
 
@@ -55,7 +57,9 @@ test.describe('Auth & Access Control', () => {
 
     await signInViaBypassUser(page, 'pw-auth-access-second');
 
-    await expect.poll(async () => page.evaluate(() => window.location.hash)).toMatch(/^#\/home/);
+    await expect
+      .poll(async () => page.evaluate(() => window.location.hash))
+      .toMatch(/^#\/(home|chat)/);
     await expect
       .poll(async () => {
         const requests = await mockRequests();

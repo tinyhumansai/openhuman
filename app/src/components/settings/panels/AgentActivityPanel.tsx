@@ -2,10 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { callCoreRpc } from '../../../services/coreRpcClient';
-import PanelPage from '../../layout/PanelPage';
-import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsStatusLine } from '../controls';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 
 interface ActivityLevelSettings {
   level: number;
@@ -51,7 +49,6 @@ function getCostMax(level: number): number {
 
 export default function AgentActivityPanel() {
   const { t } = useT();
-  const { navigateBack } = useSettingsNavigation();
   const [settings, setSettings] = useState<ActivityLevelSettings | null>(null);
   const [monthlyCost, setMonthlyCost] = useState<MonthlyCostSummary | null>(null);
   const [status, setStatus] = useState<Status>('loading');
@@ -101,27 +98,15 @@ export default function AgentActivityPanel() {
   }, []);
 
   if (status === 'loading' && !settings) {
-    return (
-      <div className="p-4 text-sm text-neutral-500 dark:text-neutral-400">
-        {t('common.loading')}
-      </div>
-    );
+    return <div className="p-4 text-sm text-content-muted">{t('common.loading')}</div>;
   }
 
   return (
-    <PanelPage
-      className="z-10"
-      contentClassName=""
-      description={t('activityLevel.description')}
-      leading={<SettingsBackButton onBack={navigateBack} />}>
-      <div className="flex flex-col gap-4 p-4">
-        <p className="text-xs text-neutral-500 dark:text-neutral-400">
-          {t('activityLevel.description')}
-        </p>
-
+    <SettingsPanel description={t('activityLevel.description')}>
+      <div className="flex flex-col gap-4">
         {monthlyCost && monthlyCost.total_cost_usd > 0 && (
-          <div className="px-3 py-2 rounded-md bg-neutral-100 dark:bg-neutral-800 text-sm">
-            <span className="font-medium text-neutral-800 dark:text-neutral-200">
+          <div className="px-3 py-2 rounded-md bg-surface-subtle text-sm">
+            <span className="font-medium text-content">
               {t('activityLevel.currentMonth').replace(
                 '{amount}',
                 monthlyCost.total_cost_usd.toFixed(2)
@@ -145,25 +130,25 @@ export default function AgentActivityPanel() {
                 className={`w-full text-left px-4 py-3 rounded-lg border transition-colors ${
                   isSelected
                     ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
-                    : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 hover:border-neutral-300 dark:hover:border-neutral-700'
+                    : 'border-line bg-surface hover:border-line-strong dark:hover:border-line-strong'
                 } ${status === 'saving' ? 'opacity-50' : ''}`}>
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
+                      <span className="text-sm font-semibold text-content">
                         {t(`activityLevel.${key as LevelKey}`)}
                       </span>
                       {value === 2 && (
-                        <span className="text-xs px-1.5 py-0.5 rounded bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-400">
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-surface-strong dark:bg-neutral-700 text-content-secondary dark:text-content-muted">
                           {t('activityLevel.default')}
                         </span>
                       )}
                     </div>
-                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+                    <p className="text-xs text-content-muted mt-0.5">
                       {t(`activityLevel.${key as LevelKey}Desc`)}
                     </p>
                   </div>
-                  <div className="text-xs font-mono text-neutral-500 dark:text-neutral-400 shrink-0 ml-4">
+                  <div className="text-xs font-mono text-content-muted shrink-0 ml-4">
                     {costMin === 0 && costMax === 0
                       ? t('activityLevel.costFree')
                       : t('activityLevel.costRange')
@@ -183,6 +168,6 @@ export default function AgentActivityPanel() {
           savingLabel={t('autonomy.statusSaving')}
         />
       </div>
-    </PanelPage>
+    </SettingsPanel>
   );
 }

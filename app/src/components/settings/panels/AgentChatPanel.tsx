@@ -2,17 +2,16 @@ import { useEffect, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { openhumanAgentChat } from '../../../utils/tauriCommands';
-import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsBackButton from '../components/SettingsBackButton';
 import {
   SettingsEmptyState,
+  SettingsRow,
   SettingsSection,
   SettingsStatusLine,
   SettingsTextArea,
   SettingsTextField,
 } from '../controls';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 
 type ChatMessage = { role: 'user' | 'agent'; text: string };
 
@@ -20,7 +19,6 @@ const STORAGE_KEY = 'openhuman.settings.agentChat.history';
 
 const AgentChatPanel = () => {
   const { t } = useT();
-  const { navigateBack } = useSettingsNavigation();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [modelOverride, setModelOverride] = useState('');
@@ -83,20 +81,14 @@ const AgentChatPanel = () => {
   };
 
   return (
-    <PanelPage
-      className="z-10"
-      contentClassName=""
-      description={t('settings.developerMenu.agentChat.desc')}
-      leading={<SettingsBackButton onBack={navigateBack} />}>
-      <div className="p-4 space-y-4">
-        <SettingsSection title={t('chat.overrides')} description={t('chat.agentChatDesc')}>
-          <div className="px-4 py-3 grid gap-3 md:grid-cols-2">
-            <div className="space-y-1">
-              <label
-                htmlFor="agent-chat-model"
-                className="text-xs text-neutral-500 dark:text-neutral-400">
-                {t('chat.model')}
-              </label>
+    <SettingsPanel description={t('settings.developerMenu.agentChat.desc')}>
+      <SettingsSection title={t('chat.overrides')} description={t('chat.agentChatDesc')}>
+        <div className="grid md:grid-cols-2">
+          <SettingsRow
+            stacked
+            htmlFor="agent-chat-model"
+            label={t('chat.model')}
+            control={
               <SettingsTextField
                 id="agent-chat-model"
                 placeholder={t('chat.modelPlaceholder')}
@@ -104,13 +96,13 @@ const AgentChatPanel = () => {
                 onChange={event => setModelOverride(event.target.value)}
                 aria-label={t('chat.model')}
               />
-            </div>
-            <div className="space-y-1">
-              <label
-                htmlFor="agent-chat-temperature"
-                className="text-xs text-neutral-500 dark:text-neutral-400">
-                {t('chat.temperature')}
-              </label>
+            }
+          />
+          <SettingsRow
+            stacked
+            htmlFor="agent-chat-temperature"
+            label={t('chat.temperature')}
+            control={
               <SettingsTextField
                 id="agent-chat-temperature"
                 placeholder="0.7"
@@ -118,55 +110,55 @@ const AgentChatPanel = () => {
                 onChange={event => setTemperature(event.target.value)}
                 aria-label={t('chat.temperature')}
               />
-            </div>
-          </div>
-        </SettingsSection>
+            }
+          />
+        </div>
+      </SettingsSection>
 
-        <SettingsSection title={t('chat.conversation')}>
-          <div className="px-4 py-3 space-y-3">
-            <SettingsStatusLine saving={false} error={error || null} savingLabel="" />
-            <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 p-4 space-y-3 min-h-[6rem]">
-              {messages.length === 0 ? (
-                <SettingsEmptyState label={t('chat.startAgentConversation')} />
-              ) : (
-                messages.map((message, index) => (
-                  <div key={`${message.role}-${index}`} className="space-y-1">
-                    <div className="text-[11px] uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-                      {message.role === 'user' ? t('chat.you') : t('chat.agent')}
-                    </div>
-                    <div
-                      className={`text-sm whitespace-pre-wrap ${
-                        message.role === 'user'
-                          ? 'text-neutral-800 dark:text-neutral-100'
-                          : 'text-emerald-700 dark:text-emerald-300'
-                      }`}>
-                      {message.text}
-                    </div>
+      <SettingsSection title={t('chat.conversation')}>
+        <div className="px-4 py-3 space-y-3">
+          <SettingsStatusLine saving={false} error={error || null} savingLabel="" />
+          <div className="rounded-xl border border-line bg-surface-muted p-4 space-y-3 min-h-[6rem]">
+            {messages.length === 0 ? (
+              <SettingsEmptyState label={t('chat.startAgentConversation')} />
+            ) : (
+              messages.map((message, index) => (
+                <div key={`${message.role}-${index}`} className="space-y-1">
+                  <div className="text-[11px] uppercase tracking-wide text-content-muted">
+                    {message.role === 'user' ? t('chat.you') : t('chat.agent')}
                   </div>
-                ))
-              )}
-            </div>
-            <div className="space-y-2">
-              <SettingsTextArea
-                placeholder={t('chat.askAgent')}
-                value={input}
-                onChange={event => setInput(event.target.value)}
-                rows={4}
-                aria-label={t('chat.askAgent')}
-              />
-              <Button
-                type="button"
-                variant="primary"
-                size="sm"
-                onClick={() => void sendMessage()}
-                disabled={sending}>
-                {sending ? t('common.loading') : t('chat.sendMessage')}
-              </Button>
-            </div>
+                  <div
+                    className={`text-sm whitespace-pre-wrap ${
+                      message.role === 'user'
+                        ? 'text-content'
+                        : 'text-emerald-700 dark:text-emerald-300'
+                    }`}>
+                    {message.text}
+                  </div>
+                </div>
+              ))
+            )}
           </div>
-        </SettingsSection>
-      </div>
-    </PanelPage>
+          <div className="space-y-2">
+            <SettingsTextArea
+              placeholder={t('chat.askAgent')}
+              value={input}
+              onChange={event => setInput(event.target.value)}
+              rows={4}
+              aria-label={t('chat.askAgent')}
+            />
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              onClick={() => void sendMessage()}
+              disabled={sending}>
+              {sending ? t('common.loading') : t('chat.sendMessage')}
+            </Button>
+          </div>
+        </div>
+      </SettingsSection>
+    </SettingsPanel>
   );
 };
 

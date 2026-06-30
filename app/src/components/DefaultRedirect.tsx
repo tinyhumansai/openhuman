@@ -8,7 +8,7 @@ import RouteLoadingScreen from './RouteLoadingScreen';
  * Default redirect based on auth + onboarding status.
  * - Not logged in → / (Welcome page)
  * - Logged in, onboarding not completed → /onboarding
- * - Logged in, onboarding completed → /home
+ * - Logged in, onboarding completed → /chat (the unified home/chat surface)
  */
 const DefaultRedirect = () => {
   const { isBootstrapping, snapshot } = useCoreState();
@@ -43,7 +43,7 @@ const DefaultRedirect = () => {
     return <Navigate to="/onboarding" replace />;
   }
 
-  return <Navigate to="/home" replace />;
+  return <Navigate to="/chat" replace />;
 };
 
 export default DefaultRedirect;

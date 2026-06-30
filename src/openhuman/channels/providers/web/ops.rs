@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use once_cell::sync::Lazy;
 use serde_json::{json, Value};
@@ -21,6 +21,148 @@ use super::web_errors::classify_inference_error;
 
 pub(crate) static THREAD_SESSIONS: Lazy<Mutex<HashMap<String, SessionEntry>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// A recorded budget-exhausted signal: when it happened, and which provider
+/// binding it happened on. The binding scopes the signal so a managed
+/// out-of-credits error never mislabels a later empty turn the user has
+/// re-routed to a different provider (local / BYO), whose balance is unrelated.
+#[derive(Debug, Clone)]
+struct BudgetSignal {
+    provider_binding: String,
+    at: Instant,
+}
+
+/// Per-thread "recent budget-exhausted" signal (issue #3386).
+///
+/// Set when a turn terminates with an inference budget-exhausted error; read by
+/// a *later* turn on the same thread whose provider returned an empty 200. The
+/// managed route closes the SSE cleanly under credit exhaustion (the response
+/// already flushed HTTP 200, so there is no error frame and no inline budget
+/// marker — `OpenHumanBilling` carries only `charged_amount_usd`). Without this
+/// correlator such a budget-caused empty turn surfaces as the generic "empty
+/// response" copy instead of the actionable out-of-credits copy.
+///
+/// The signal is scoped to the provider binding it was recorded on: budget is a
+/// per-provider fact, so a managed-route exhaustion must not reclassify an empty
+/// turn the thread has since re-routed to a local / BYO provider.
+///
+/// Kept in a sibling map rather than on `SessionEntry` so the signal survives
+/// the de-poison session drop (an empty turn is not poisoned, but cold-boot
+/// reseeds would otherwise be the wrong lifetime to hang this on).
+static THREAD_BUDGET_SIGNALS: Lazy<Mutex<HashMap<String, BudgetSignal>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// How long a recorded budget-exhausted signal stays eligible to reclassify a
+/// later empty turn on the same thread. Five minutes: long enough to bridge a
+/// user retry after the first out-of-credits turn, short enough that a genuine
+/// empty response well after the fact isn't mislabeled. A successful turn clears
+/// the signal regardless (the balance is evidently usable again). See #3386.
+const BUDGET_SIGNAL_TTL: Duration = Duration::from_secs(5 * 60);
+
+/// What the budget-correlator should do with a terminated turn (#3386).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum BudgetCorrelation {
+    /// The terminal error is itself an inference budget-exhausted error:
+    /// record the signal and surface the budget copy.
+    BudgetExhausted,
+    /// An empty provider response coincided with a fresh same-thread budget
+    /// signal: surface the budget copy in place of the "empty response" copy.
+    UpgradeEmptyToBudget,
+    /// No budget correlation — pass the error through unchanged.
+    PassThrough,
+}
+
+/// Pure decision for the budget-correlator, split out so the branch matrix is
+/// unit-testable without a clock or the full `run_chat_task` frame. The async
+/// helpers below supply `has_fresh_signal`.
+pub(super) fn classify_budget_correlation(
+    is_budget_error: bool,
+    is_empty_response: bool,
+    has_fresh_signal: bool,
+) -> BudgetCorrelation {
+    if is_budget_error {
+        BudgetCorrelation::BudgetExhausted
+    } else if is_empty_response && has_fresh_signal {
+        BudgetCorrelation::UpgradeEmptyToBudget
+    } else {
+        BudgetCorrelation::PassThrough
+    }
+}
+
+/// Pure freshness predicate (age vs TTL), split out for clock-free testing.
+fn budget_signal_is_fresh(age: Duration, ttl: Duration) -> bool {
+    age <= ttl
+}
+
+/// Drop every expired entry from the map, not just the one being queried.
+/// Without this, a thread that hits budget exhaustion and then never retries or
+/// succeeds would leak its entry for the process lifetime. Called on the write
+/// path so each new budget event sweeps the map.
+fn prune_stale_budget_signals(signals: &mut HashMap<String, BudgetSignal>) {
+    signals.retain(|_, sig| budget_signal_is_fresh(sig.at.elapsed(), BUDGET_SIGNAL_TTL));
+}
+
+/// Record that this thread just hit an inference budget-exhausted error on the
+/// given provider binding.
+pub(super) async fn record_budget_signal(thread_id: &str, provider_binding: &str) {
+    let mut signals = THREAD_BUDGET_SIGNALS.lock().await;
+    prune_stale_budget_signals(&mut signals);
+    signals.insert(
+        key_for(thread_id),
+        BudgetSignal {
+            provider_binding: provider_binding.to_string(),
+            at: Instant::now(),
+        },
+    );
+}
+
+/// Clear any recorded budget signal for this thread — called on a successful
+/// turn, where the balance is evidently usable again.
+pub(super) async fn clear_budget_signal(thread_id: &str) {
+    let mut signals = THREAD_BUDGET_SIGNALS.lock().await;
+    signals.remove(&key_for(thread_id));
+}
+
+/// Whether this thread has a budget signal recorded within `BUDGET_SIGNAL_TTL`
+/// **on the same provider binding** as the current turn. A binding mismatch or
+/// an expired entry evicts it and reads as not-fresh, so a re-routed turn never
+/// inherits the prior provider's exhaustion.
+pub(super) async fn has_fresh_budget_signal(thread_id: &str, provider_binding: &str) -> bool {
+    let mut signals = THREAD_BUDGET_SIGNALS.lock().await;
+    let key = key_for(thread_id);
+    match signals.get(&key) {
+        Some(sig)
+            if sig.provider_binding == provider_binding
+                && budget_signal_is_fresh(sig.at.elapsed(), BUDGET_SIGNAL_TTL) =>
+        {
+            true
+        }
+        Some(_) => {
+            signals.remove(&key);
+            false
+        }
+        None => false,
+    }
+}
+
+/// Test-only seeder: record a budget signal on `provider_binding` aged `age`
+/// into the past so expiry can be exercised without sleeping.
+#[cfg(test)]
+pub(super) async fn record_budget_signal_aged(
+    thread_id: &str,
+    provider_binding: &str,
+    age: Duration,
+) {
+    let mut signals = THREAD_BUDGET_SIGNALS.lock().await;
+    let when = Instant::now().checked_sub(age).unwrap_or_else(Instant::now);
+    signals.insert(
+        key_for(thread_id),
+        BudgetSignal {
+            provider_binding: provider_binding.to_string(),
+            at: when,
+        },
+    );
+}
 
 pub(super) static IN_FLIGHT: Lazy<Mutex<HashMap<String, InFlightEntry>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
@@ -467,6 +609,7 @@ pub async fn start_chat(
                     &chat_result.full_response,
                     &user_message,
                     &chat_result.citations,
+                    chat_result.usage.as_ref(),
                 )
                 .await;
             }
@@ -671,6 +814,7 @@ async fn spawn_parallel_turn(
                     &chat_result.full_response,
                     &user_message,
                     &chat_result.citations,
+                    chat_result.usage.as_ref(),
                 )
                 .await;
             }
@@ -950,4 +1094,121 @@ pub async fn channel_web_cancel(
         }),
         "web channel cancellation processed",
     ))
+}
+
+#[cfg(test)]
+mod budget_correlation_tests {
+    use super::*;
+
+    #[test]
+    fn classify_budget_correlation_matrix() {
+        // A budget error always records + surfaces budget copy, regardless of
+        // the other flags.
+        assert_eq!(
+            classify_budget_correlation(true, false, false),
+            BudgetCorrelation::BudgetExhausted
+        );
+        assert_eq!(
+            classify_budget_correlation(true, true, true),
+            BudgetCorrelation::BudgetExhausted
+        );
+        // Empty response only upgrades when a fresh signal is present.
+        assert_eq!(
+            classify_budget_correlation(false, true, true),
+            BudgetCorrelation::UpgradeEmptyToBudget
+        );
+        assert_eq!(
+            classify_budget_correlation(false, true, false),
+            BudgetCorrelation::PassThrough
+        );
+        // A fresh signal without an empty response does not invent an upgrade.
+        assert_eq!(
+            classify_budget_correlation(false, false, true),
+            BudgetCorrelation::PassThrough
+        );
+        // Neither flag: untouched.
+        assert_eq!(
+            classify_budget_correlation(false, false, false),
+            BudgetCorrelation::PassThrough
+        );
+    }
+
+    #[test]
+    fn budget_signal_is_fresh_boundary() {
+        let ttl = Duration::from_secs(300);
+        assert!(budget_signal_is_fresh(Duration::from_secs(0), ttl));
+        assert!(budget_signal_is_fresh(Duration::from_secs(299), ttl));
+        assert!(budget_signal_is_fresh(ttl, ttl)); // inclusive at the boundary
+        assert!(!budget_signal_is_fresh(Duration::from_secs(301), ttl));
+    }
+
+    const BINDING: &str = "openhuman-managed";
+
+    #[tokio::test]
+    async fn record_then_fresh_then_clear() {
+        let thread = "budget-corr-test-lifecycle";
+        clear_budget_signal(thread).await; // isolate from other tests
+        assert!(!has_fresh_budget_signal(thread, BINDING).await);
+
+        record_budget_signal(thread, BINDING).await;
+        assert!(has_fresh_budget_signal(thread, BINDING).await);
+
+        clear_budget_signal(thread).await;
+        assert!(!has_fresh_budget_signal(thread, BINDING).await);
+    }
+
+    #[tokio::test]
+    async fn stale_signal_is_not_fresh_and_is_evicted() {
+        let thread = "budget-corr-test-stale";
+        // Seed a signal older than the TTL.
+        record_budget_signal_aged(thread, BINDING, BUDGET_SIGNAL_TTL + Duration::from_secs(1))
+            .await;
+        // Reads as not-fresh and self-evicts.
+        assert!(!has_fresh_budget_signal(thread, BINDING).await);
+        // Confirm eviction: still not fresh, and a later in-window seed works.
+        assert!(!has_fresh_budget_signal(thread, BINDING).await);
+        record_budget_signal_aged(thread, BINDING, Duration::from_secs(1)).await;
+        assert!(has_fresh_budget_signal(thread, BINDING).await);
+        clear_budget_signal(thread).await;
+    }
+
+    #[tokio::test]
+    async fn signal_does_not_cross_provider_bindings() {
+        let thread = "budget-corr-test-binding";
+        clear_budget_signal(thread).await;
+        // Budget hit on the managed route.
+        record_budget_signal(thread, "openhuman-managed").await;
+        // A turn re-routed to a different (BYO/local) provider must NOT inherit
+        // the managed exhaustion — its empty response is unrelated.
+        assert!(!has_fresh_budget_signal(thread, "byo-deepseek").await);
+        // The same managed binding still reads fresh (mismatch read above
+        // evicted it, so re-record to prove the same-binding path).
+        record_budget_signal(thread, "openhuman-managed").await;
+        assert!(has_fresh_budget_signal(thread, "openhuman-managed").await);
+        clear_budget_signal(thread).await;
+    }
+
+    #[tokio::test]
+    async fn record_prunes_other_threads_stale_entries() {
+        let abandoned = "budget-corr-test-abandoned";
+        let active = "budget-corr-test-active";
+        // An abandoned thread leaves a stale entry behind...
+        record_budget_signal_aged(
+            abandoned,
+            BINDING,
+            BUDGET_SIGNAL_TTL + Duration::from_secs(1),
+        )
+        .await;
+        // ...which a later budget event on a DIFFERENT thread sweeps away.
+        record_budget_signal(active, BINDING).await;
+        {
+            let signals = THREAD_BUDGET_SIGNALS.lock().await;
+            assert!(
+                !signals.contains_key(abandoned),
+                "stale entry should be pruned"
+            );
+            assert!(signals.contains_key(active));
+        }
+        clear_budget_signal(active).await;
+    }
 }

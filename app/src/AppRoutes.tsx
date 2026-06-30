@@ -1,5 +1,7 @@
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { type Location, Navigate, Route, Routes } from 'react-router-dom';
 
+import AgentWorldShell from './agentworld/AgentWorldShell';
+import AgentWorld from './agentworld/pages/AgentWorld';
 import AppRoutesIOS from './AppRoutesIOS';
 import DefaultRedirect from './components/DefaultRedirect';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -9,20 +11,29 @@ import { getIsMobile } from './lib/platform';
 import Accounts from './pages/Accounts';
 import Brain from './pages/Brain';
 import AgentInsightsPreview from './pages/dev/AgentInsightsPreview';
-import Home from './pages/Home';
+import Feedback from './pages/Feedback';
 import Invites from './pages/Invites';
 import Notifications from './pages/Notifications';
 import Onboarding from './pages/onboarding/Onboarding';
 import { PttOverlayPage } from './pages/PttOverlayPage';
 import Rewards from './pages/Rewards';
-import Settings from './pages/Settings';
 import Skills from './pages/Skills';
 import WebCallbackPage from './pages/WebCallbackPage';
 import Welcome from './pages/Welcome';
 import WorkflowNew from './pages/WorkflowNew';
 import WorkflowsRun from './pages/WorkflowsRun';
 
-const AppRoutes = () => {
+interface AppRoutesProps {
+  /**
+   * Optional location override. The desktop shell passes the *background*
+   * location here while the Settings modal is open, so the page behind the
+   * modal stays rendered even though the URL is `/settings/*`. Omitted
+   * everywhere else (router uses the ambient location).
+   */
+  location?: Location | string;
+}
+
+const AppRoutes = ({ location }: AppRoutesProps = {}) => {
   // Mobile target (iOS or Android): pair → Human/Chat/Settings only.
   // Desktop routes are not rendered.
   if (getIsMobile()) {
@@ -30,7 +41,7 @@ const AppRoutes = () => {
   }
 
   return (
-    <Routes>
+    <Routes location={location}>
       {/* Public routes - redirect to /home if logged in */}
       <Route
         path="/"
@@ -41,6 +52,7 @@ const AppRoutes = () => {
         }
       />
 
+      <Route path="/auth" element={<WebCallbackPage callbackKind="auth" />} />
       <Route path="/callback/:kind" element={<WebCallbackPage />} />
       <Route path="/callback/:kind/:status" element={<WebCallbackPage />} />
 
@@ -55,14 +67,9 @@ const AppRoutes = () => {
       />
 
       {/* Protected routes */}
-      <Route
-        path="/home"
-        element={
-          <ProtectedRoute requireAuth={true}>
-            <Home />
-          </ProtectedRoute>
-        }
-      />
+      {/* Home is merged into the unified chat surface — /home redirects to /chat
+          (the chat's empty "new window" state is the former Home greeting). */}
+      <Route path="/home" element={<Navigate to="/chat" replace />} />
 
       {/* Human — first-class destination again (restored after the IA Phase 6
           merge into Assistant). Renders the Human/mascot surface. iOS serves
@@ -132,7 +139,7 @@ const AppRoutes = () => {
       {/* Unified chat = agent + connected web apps. Replaces the old
           /conversations and /accounts routes. */}
       <Route
-        path="/chat"
+        path="/chat/:threadId?"
         element={
           <ProtectedRoute requireAuth={true}>
             <Accounts />
@@ -149,6 +156,15 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute requireAuth={true}>
             <Invites />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/feedback"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <Feedback />
           </ProtectedRoute>
         }
       />
@@ -180,19 +196,28 @@ const AppRoutes = () => {
 
       <Route path="/webhooks" element={<Navigate to="/settings/integrations#webhooks" replace />} />
 
-      <Route
-        path="/settings/*"
-        element={
-          <ProtectedRoute requireAuth={true}>
-            <Settings />
-          </ProtectedRoute>
-        }
-      />
+      {/* Desktop Settings renders as a modal overlay mounted by AppShellDesktop
+          (App.tsx) using the backgroundLocation pattern — it is no longer an
+          inline route here. iOS keeps its own /settings/* route in
+          AppRoutesIOS.tsx. */}
 
       <Route path="/ptt-overlay" element={<PttOverlayPage />} />
 
       {/* Dev-only visual preview of the Agentic task insights surface. */}
       <Route path="/dev/agent-insights" element={<AgentInsightsPreview />} />
+
+      {/* Agent World — tiny.place A2A social network integration.
+          Nested routes (explore, directory, …) are handled inside AgentWorld. */}
+      <Route
+        path="/agent-world/*"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <AgentWorldShell>
+              <AgentWorld />
+            </AgentWorldShell>
+          </ProtectedRoute>
+        }
+      />
 
       {/* Default redirect based on auth status */}
       <Route path="*" element={<DefaultRedirect />} />

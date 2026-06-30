@@ -2,6 +2,7 @@ use crate::openhuman::config::{McpAuthConfig, McpClientIdentityConfig};
 use crate::openhuman::workflows::types::ToolResult;
 use anyhow::Context;
 use base64::Engine;
+use futures_util::StreamExt;
 use parking_lot::Mutex;
 #[cfg(test)]
 use reqwest::header::HeaderMap;
@@ -143,6 +144,36 @@ pub struct McpAuthorizationContext {
     pub protected_resource_metadata: Option<ProtectedResourceMetadata>,
     pub authorization_server_metadata: Vec<AuthorizationServerMetadata>,
 }
+
+/// Typed error for an HTTP 401 from a remote MCP server. Carried as the root
+/// of the `anyhow` chain so the connect path can recognise an auth failure via
+/// `downcast_ref` — instead of fragile string matching — and classify the
+/// server as "needs authentication" rather than a generic transport error
+/// (issue #3719). The `Display` form is the diagnostic string used in logs;
+/// the user-facing copy is derived separately in `mcp_registry::connections`.
+#[derive(Debug, Clone)]
+pub struct McpUnauthorizedError {
+    /// Redacted endpoint (scheme + authority only) the 401 came from.
+    pub endpoint: String,
+    /// `resource_metadata` URL advertised by the `WWW-Authenticate` challenge,
+    /// when present — the entry point to OAuth discovery.
+    pub resource_metadata: Option<String>,
+}
+
+impl std::fmt::Display for McpUnauthorizedError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.resource_metadata {
+            Some(rm) => write!(
+                f,
+                "MCP unauthorized for `{}` (HTTP 401; resource metadata: {rm})",
+                self.endpoint
+            ),
+            None => write!(f, "MCP unauthorized for `{}` (HTTP 401)", self.endpoint),
+        }
+    }
+}
+
+impl std::error::Error for McpUnauthorizedError {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct McpSseEvent {
@@ -716,8 +747,8 @@ pub fn redact_endpoint(raw: &str) -> String {
 #[path = "client_helpers.rs"]
 mod client_helpers;
 use client_helpers::{
-    header_to_string, parse_sse_events, parse_sse_message, parse_www_authenticate_challenge,
-    x_mcp_headers_from_schema,
+    first_complete_sse_data, header_to_string, parse_sse_events, parse_sse_message,
+    parse_www_authenticate_challenge, x_mcp_headers_from_schema,
 };
 
 impl McpHttpClient {
@@ -729,32 +760,51 @@ impl McpHttpClient {
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
             .to_string();
-        let text = response.text().await?;
-
         if status == reqwest::StatusCode::UNAUTHORIZED {
-            let auth_suffix = if let Some(challenge) = parse_www_authenticate_challenge(&headers) {
-                match challenge.resource_metadata.as_deref() {
-                    Some(resource_metadata) => {
-                        format!("; resource metadata: {resource_metadata}")
-                    }
-                    None => String::new(),
-                }
-            } else {
-                String::new()
-            };
-            anyhow::bail!(
-                "MCP unauthorized for `{}` (HTTP 401{})",
-                redact_endpoint(&self.endpoint),
-                auth_suffix
-            );
+            let resource_metadata = parse_www_authenticate_challenge(&headers)
+                .and_then(|challenge| challenge.resource_metadata);
+            // Return a TYPED error (not a string `bail!`) so callers can
+            // `downcast_ref::<McpUnauthorizedError>()` and surface an
+            // actionable "needs authentication" state (#3719) rather than a
+            // generic failure. `anyhow` preserves the root type through `?`.
+            return Err(anyhow::Error::new(McpUnauthorizedError {
+                endpoint: redact_endpoint(&self.endpoint),
+                resource_metadata,
+            }));
         }
         if !status.is_success() {
+            let text = response.text().await.unwrap_or_default();
             anyhow::bail!("MCP HTTP {} — {}", status.as_u16(), text);
         }
 
         let payload: Value = if content_type.starts_with("text/event-stream") {
-            parse_sse_message(&text)?
+            // Read the SSE body incrementally and return as soon as the single
+            // JSON-RPC reply frame arrives, instead of buffering to stream-close
+            // (`response.text().await`). A server that holds the stream open
+            // after replying would otherwise stall this call until the request
+            // timeout, and those stalls compound across a skill's tool chain
+            // (#4195). The request-level reqwest timeout still bounds the worst
+            // case (a server that never replies).
+            let mut raw: Vec<u8> = Vec::new();
+            let mut stream = response.bytes_stream();
+            let mut frame: Option<Value> = None;
+            while let Some(chunk) = stream.next().await {
+                raw.extend_from_slice(&chunk?);
+                // Decode the whole buffer each pass so a multi-byte UTF-8
+                // sequence split across chunk boundaries is never corrupted.
+                if let Some(data) = first_complete_sse_data(&String::from_utf8_lossy(&raw))? {
+                    frame = Some(data);
+                    break;
+                }
+            }
+            match frame {
+                Some(data) => data,
+                // Stream ended without a data frame — fall back to the whole-body
+                // parser for a clear "no data frame" error that includes the body.
+                None => parse_sse_message(&String::from_utf8_lossy(&raw))?,
+            }
         } else {
+            let text = response.text().await?;
             serde_json::from_str(&text).map_err(|e| {
                 anyhow::anyhow!("Failed to parse MCP JSON response: {e} — body: {text}")
             })?

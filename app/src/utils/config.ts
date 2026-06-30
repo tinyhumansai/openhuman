@@ -208,6 +208,11 @@ export const LATEST_APP_DOWNLOAD_URL =
   (import.meta.env.VITE_LATEST_APP_DOWNLOAD_URL as string | undefined)?.trim() ||
   'https://github.com/tinyhumansai/openhuman/releases/latest';
 
+/** Support page base URL. The crash screen appends `?ref=<sentryEventId>` so support can correlate a user's pasted Error ID to the exact Sentry event. Override via VITE_SUPPORT_URL for deployment-specific support endpoints. */
+export const SUPPORT_URL =
+  (import.meta.env.VITE_SUPPORT_URL as string | undefined)?.trim() ||
+  'https://tinyhumans.ai/support';
+
 /**
  * Set `VITE_SENTRY_SMOKE_TEST=true` in one build (or in `.env.local`) to
  * fire a one-shot diagnostic event at `initSentry()` time and verify the
@@ -235,3 +240,16 @@ export const MASCOT_VOICE_ID =
 export const MASCOT_VOICE_MODEL_ID =
   (import.meta.env.VITE_MASCOT_VOICE_MODEL_ID as string | undefined)?.trim() ||
   'eleven_multilingual_v2';
+
+/**
+ * URL of the published mascot manifest (`dist/mascots.json` from the
+ * `tinyhumansai/mascots` repo). This is the authoritative source for the
+ * in-app mascot library — each entry names a Rive `.riv` runtime file plus its
+ * `stateEngine` (poses, viseme codes, channels). Fetched directly over HTTPS
+ * (the `raw.githubusercontent.com` host is CORS-open and allowed by the
+ * webview CSP's `connect-src https:`). Override with `VITE_MASCOT_MANIFEST_URL`
+ * to point at a fork or a locally-served manifest during development.
+ */
+export const MASCOT_MANIFEST_URL =
+  (import.meta.env.VITE_MASCOT_MANIFEST_URL as string | undefined)?.trim() ||
+  'https://raw.githubusercontent.com/tinyhumansai/mascots/main/dist/mascots.json';

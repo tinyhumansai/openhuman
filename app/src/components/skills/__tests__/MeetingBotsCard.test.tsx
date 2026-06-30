@@ -2,10 +2,7 @@ import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { MeetCallRecord } from '../../../services/meetCallService';
-import {
-  setBackendMeetError,
-  setBackendMeetJoined,
-} from '../../../store/backendMeetSlice';
+import { setBackendMeetError, setBackendMeetJoined } from '../../../store/backendMeetSlice';
 import { renderWithProviders } from '../../../test/test-utils';
 import MeetingBotsCard from '../MeetingBotsCard';
 
@@ -49,6 +46,9 @@ describe('MeetingBotsCard', () => {
     fireEvent.change(screen.getByLabelText(/meeting link/i), {
       target: { value: 'https://meet.google.com/abc-defg-hij' },
     });
+    fireEvent.change(screen.getByLabelText(/your name in this meeting/i), {
+      target: { value: 'Alice' },
+    });
     const form = document.querySelector('form')!;
     fireEvent.submit(form);
 
@@ -56,9 +56,16 @@ describe('MeetingBotsCard', () => {
       expect(joinMock).toHaveBeenCalledWith(
         expect.objectContaining({
           meetUrl: 'https://meet.google.com/abc-defg-hij',
-          displayName: 'OpenHuman',
+          displayName: 'Tiny',
           platform: 'gmeet',
-          agentName: 'OpenHuman',
+          agentName: 'Tiny',
+          // Participant-name field is wired to the backend authorized-speaker gate.
+          respondToParticipant: 'Alice',
+          // Active mode must give the backend a wake phrase so it can emit
+          // bot:in_call_request when the participant addresses the bot.
+          wakePhrase: 'Hey Tiny',
+          // Active toggle defaults to checked → listen-only false.
+          listenOnly: false,
         })
       );
     });
@@ -66,9 +73,7 @@ describe('MeetingBotsCard', () => {
     // MeetingBotsInline to ActiveMeetingView. The inline component is unmounted at
     // that point, so its useEffect success-toast branch does not fire. Verify the
     // active view is now shown instead.
-    store.dispatch(
-      setBackendMeetJoined({ meetUrl: 'https://meet.google.com/abc-defg-hij' })
-    );
+    store.dispatch(setBackendMeetJoined({ meetUrl: 'https://meet.google.com/abc-defg-hij' }));
     await vi.waitFor(() => {
       expect(screen.getAllByText(/live/i).length).toBeGreaterThan(0);
     });
@@ -107,11 +112,43 @@ describe('MeetingBotsCard', () => {
           meetUrl: 'https://meet.google.com/abc-defg-hij',
           displayName: 'Nova',
           agentName: 'Nova',
+          wakePhrase: 'Hey Nova',
           systemPrompt: 'Calm and concise.',
           mascotId: 'yellow',
           riveColors: { primaryColor: '#123456', secondaryColor: '#abcdef' },
         })
       );
+    });
+  });
+
+  it('falls back to the legacy mascot color for manifest-only mascot ids', async () => {
+    joinMock.mockResolvedValueOnce({
+      meetUrl: 'https://meet.google.com/abc-defg-hij',
+      platform: 'gmeet',
+    });
+
+    renderWithProviders(<MeetingBotsCard />, {
+      preloadedState: {
+        mascot: {
+          color: 'yellow',
+          voiceId: null,
+          voiceGender: 'male',
+          voiceUseLocaleDefault: false,
+          selectedMascotId: 'river-guide',
+          customMascotGifUrl: null,
+          customPrimaryColor: '#123456',
+          customSecondaryColor: '#abcdef',
+        },
+      },
+    });
+
+    fireEvent.change(screen.getByLabelText(/meeting link/i), {
+      target: { value: 'https://meet.google.com/abc-defg-hij' },
+    });
+    fireEvent.submit(document.querySelector('form')!);
+
+    await vi.waitFor(() => {
+      expect(joinMock).toHaveBeenCalledWith(expect.objectContaining({ mascotId: 'yellow' }));
     });
   });
 
@@ -147,20 +184,13 @@ describe('MeetingBotsCard', () => {
     fireEvent.submit(document.querySelector('form')!);
 
     await vi.waitFor(() => expect(joinMock).toHaveBeenCalled());
-    store.dispatch(
-      setBackendMeetError({ error: 'Meeting bot is a paid-plan feature.' })
-    );
+    store.dispatch(setBackendMeetError({ error: 'Meeting bot is a paid-plan feature.' }));
 
     await vi.waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent(
-        'Meeting bot is a paid-plan feature.'
-      );
+      expect(screen.getByRole('alert')).toHaveTextContent('Meeting bot is a paid-plan feature.');
     });
     expect(onToast).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'error',
-        title: expect.stringMatching(/not start/i),
-      })
+      expect.objectContaining({ type: 'error', title: expect.stringMatching(/not start/i) })
     );
   });
 
@@ -169,10 +199,37 @@ describe('MeetingBotsCard', () => {
     expect(screen.getByRole('button', { name: /send to google meet/i })).toBeInTheDocument();
   });
 
-  it('only asks for the meeting link in passive mode', () => {
+  it('asks for the meeting link and the participant the bot answers to', () => {
     renderWithProviders(<MeetingBotsCard />);
     expect(screen.getByLabelText(/meeting link/i)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/your name in this meeting/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/your name in this meeting/i)).toBeInTheDocument();
+  });
+
+  it('forwards listen-only when the active toggle is unchecked', async () => {
+    joinMock.mockResolvedValueOnce({
+      meetUrl: 'https://meet.google.com/abc-defg-hij',
+      platform: 'gmeet',
+    });
+    renderWithProviders(<MeetingBotsCard />);
+
+    fireEvent.change(screen.getByLabelText(/meeting link/i), {
+      target: { value: 'https://meet.google.com/abc-defg-hij' },
+    });
+    fireEvent.change(screen.getByLabelText(/your name in this meeting/i), {
+      target: { value: 'Alice' },
+    });
+    // Active toggle is checked by default; unchecking it selects listen-only.
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.submit(document.querySelector('form')!);
+
+    await vi.waitFor(() => {
+      expect(joinMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          listenOnly: true,
+          wakePhrase: undefined,
+        })
+      );
+    });
   });
 });
 
@@ -317,6 +374,30 @@ describe('MeetingBotsCard — recent calls section', () => {
     });
     expect(screen.getByText(/2 turns/i)).toBeInTheDocument();
     expect(screen.getByText(/5 turns/i)).toBeInTheDocument();
+  });
+
+  it('renders the owner and participant names on a call row', async () => {
+    listMock.mockResolvedValueOnce([
+      makeCallRecord({
+        owner_display_name: 'Shanu Goyanka',
+        participants: ['Shanu Goyanka', 'Alex Rivera'],
+      }),
+    ]);
+    renderWithProviders(<MeetingBotsCard />);
+    await waitFor(() => {
+      expect(screen.getByText(/added by shanu goyanka/i)).toBeInTheDocument();
+    });
+    expect(screen.getByText(/with shanu goyanka, alex rivera/i)).toBeInTheDocument();
+  });
+
+  it('omits the participants line when the record has none', async () => {
+    listMock.mockResolvedValueOnce([makeCallRecord({ owner_display_name: '', participants: [] })]);
+    renderWithProviders(<MeetingBotsCard />);
+    await waitFor(() => {
+      expect(screen.getByText(/3 turns/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/^with /i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/added by/i)).not.toBeInTheDocument();
   });
 
   it('shows the count badge when there is at least one record', async () => {

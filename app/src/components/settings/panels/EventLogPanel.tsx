@@ -2,11 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { getCoreHttpBaseUrl, getCoreRpcToken } from '../../../services/coreRpcClient';
-import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsSelect, SettingsTextField } from '../controls';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 
 interface EventEntry {
   id: number;
@@ -49,7 +47,6 @@ const RECONNECT_DELAY_MS = 3000;
 
 const EventLogPanel = () => {
   const { t } = useT();
-  const { navigateBack } = useSettingsNavigation();
   const [entries, setEntries] = useState<EventEntry[]>([]);
   const [isLive, setIsLive] = useState(false);
   const [filterType, setFilterType] = useState<string>('');
@@ -212,121 +209,107 @@ const EventLogPanel = () => {
   const domains = [...new Set(entries.map(e => e.domain))].sort();
 
   return (
-    <PanelPage
-      className="z-10"
-      contentClassName=""
-      testId="event-log-panel"
-      description={t('settings.developerMenu.eventLog.desc')}
-      leading={<SettingsBackButton onBack={navigateBack} />}>
-      <div className="p-4 space-y-4">
-        {/* Status bar */}
-        <div className="flex flex-wrap items-center gap-2">
-          <SettingsSelect
-            value={filterType}
-            onChange={e => setFilterType(e.target.value)}
-            aria-label={t('settings.developerMenu.eventLog.allTypes')}
-            inputSize="sm">
-            <option value="">{t('settings.developerMenu.eventLog.allTypes')}</option>
-            {domains.map(d => (
-              <option key={d} value={d}>
-                {d}
-              </option>
-            ))}
-          </SettingsSelect>
-          <SettingsTextField
-            className="w-40"
-            placeholder={t('settings.developerMenu.eventLog.filterAgent')}
-            value={filterText}
-            onChange={e => setFilterText(e.target.value)}
-            aria-label={t('settings.developerMenu.eventLog.filterAgent')}
-            inputSize="sm"
-          />
-          <Button
-            type="button"
-            variant="secondary"
-            size="xs"
-            onClick={exportLog}
-            disabled={filteredEntries.length === 0}>
-            {t('settings.developerMenu.eventLog.download')}
-          </Button>
-          <span className="text-xs text-neutral-500 dark:text-neutral-400">
-            {filteredEntries.length} {t('settings.developerMenu.eventLog.events')} &middot;{' '}
-            <span
-              className={
-                isLive
-                  ? 'text-sage-600 dark:text-sage-300'
-                  : 'text-neutral-500 dark:text-neutral-400'
-              }>
-              {isLive
-                ? t('settings.developerMenu.eventLog.live')
-                : t('settings.developerMenu.eventLog.disconnected')}
-            </span>
+    <SettingsPanel testId="event-log-panel" description={t('settings.developerMenu.eventLog.desc')}>
+      {/* Status bar */}
+      <div className="flex flex-wrap items-center gap-2">
+        <SettingsSelect
+          value={filterType}
+          onChange={e => setFilterType(e.target.value)}
+          aria-label={t('settings.developerMenu.eventLog.allTypes')}
+          inputSize="sm">
+          <option value="">{t('settings.developerMenu.eventLog.allTypes')}</option>
+          {domains.map(d => (
+            <option key={d} value={d}>
+              {d}
+            </option>
+          ))}
+        </SettingsSelect>
+        <SettingsTextField
+          className="w-40"
+          placeholder={t('settings.developerMenu.eventLog.filterAgent')}
+          value={filterText}
+          onChange={e => setFilterText(e.target.value)}
+          aria-label={t('settings.developerMenu.eventLog.filterAgent')}
+          inputSize="sm"
+        />
+        <Button
+          type="button"
+          variant="secondary"
+          size="xs"
+          onClick={exportLog}
+          disabled={filteredEntries.length === 0}>
+          {t('settings.developerMenu.eventLog.download')}
+        </Button>
+        <span className="text-xs text-content-muted">
+          {filteredEntries.length} {t('settings.developerMenu.eventLog.events')} &middot;{' '}
+          <span className={isLive ? 'text-sage-600 dark:text-sage-300' : 'text-content-muted'}>
+            {isLive
+              ? t('settings.developerMenu.eventLog.live')
+              : t('settings.developerMenu.eventLog.disconnected')}
           </span>
-        </div>
-
-        {/* Jump to latest */}
-        {!autoScroll && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            onClick={() => {
-              setAutoScroll(true);
-              const el = containerRef.current;
-              if (el) {
-                el.scrollTop = newEntriesRef.current === 'top' ? 0 : el.scrollHeight;
-              }
-            }}>
-            {t('settings.developerMenu.eventLog.jumpToLatest')}
-          </Button>
-        )}
-
-        {/* Event stream */}
-        <section className="space-y-1">
-          <div
-            ref={containerRef}
-            onScroll={handleScroll}
-            className="max-h-[60vh] overflow-y-auto space-y-1">
-            {filteredEntries.length === 0 && (
-              <p className="text-xs text-neutral-500 dark:text-neutral-400 py-4 text-center">
-                {isLive
-                  ? t('settings.developerMenu.eventLog.waiting')
-                  : t('settings.developerMenu.eventLog.notConnected')}
-              </p>
-            )}
-            {filteredEntries.map(entry => {
-              const colors = DOMAIN_BADGE_COLORS[entry.domain] || {
-                bg: 'bg-neutral-500/20',
-                text: 'text-neutral-400',
-              };
-              return (
-                <div
-                  key={entry.id}
-                  className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 px-3 py-2 flex items-start gap-2">
-                  <span className="text-[10px] text-neutral-500 dark:text-neutral-400 font-mono shrink-0 pt-0.5">
-                    {entry.timestamp}
-                  </span>
-                  <span
-                    className={`rounded-full ${colors.bg} px-2 py-0.5 text-[10px] ${colors.text} shrink-0`}>
-                    {DOMAIN_BADGE_KEYS[entry.domain]
-                      ? t(DOMAIN_BADGE_KEYS[entry.domain])
-                      : entry.domain.toUpperCase()}
-                  </span>
-                  {entry.agent && (
-                    <span className="text-[10px] text-neutral-500 dark:text-neutral-400 shrink-0 font-mono">
-                      {entry.agent}
-                    </span>
-                  )}
-                  <span className="text-xs text-neutral-800 dark:text-neutral-100 truncate">
-                    {entry.event}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </section>
+        </span>
       </div>
-    </PanelPage>
+
+      {/* Jump to latest */}
+      {!autoScroll && (
+        <Button
+          type="button"
+          variant="tertiary"
+          size="xs"
+          onClick={() => {
+            setAutoScroll(true);
+            const el = containerRef.current;
+            if (el) {
+              el.scrollTop = newEntriesRef.current === 'top' ? 0 : el.scrollHeight;
+            }
+          }}>
+          {t('settings.developerMenu.eventLog.jumpToLatest')}
+        </Button>
+      )}
+
+      {/* Event stream */}
+      <section className="space-y-1">
+        <div
+          ref={containerRef}
+          onScroll={handleScroll}
+          className="max-h-[60vh] overflow-y-auto space-y-1">
+          {filteredEntries.length === 0 && (
+            <p className="text-xs text-content-muted py-4 text-center">
+              {isLive
+                ? t('settings.developerMenu.eventLog.waiting')
+                : t('settings.developerMenu.eventLog.notConnected')}
+            </p>
+          )}
+          {filteredEntries.map(entry => {
+            const colors = DOMAIN_BADGE_COLORS[entry.domain] || {
+              bg: 'bg-neutral-500/20',
+              text: 'text-content-faint',
+            };
+            return (
+              <div
+                key={entry.id}
+                className="rounded-xl border border-line bg-surface-muted px-3 py-2 flex items-start gap-2">
+                <span className="text-[10px] text-content-muted font-mono shrink-0 pt-0.5">
+                  {entry.timestamp}
+                </span>
+                <span
+                  className={`rounded-full ${colors.bg} px-2 py-0.5 text-[10px] ${colors.text} shrink-0`}>
+                  {DOMAIN_BADGE_KEYS[entry.domain]
+                    ? t(DOMAIN_BADGE_KEYS[entry.domain])
+                    : entry.domain.toUpperCase()}
+                </span>
+                {entry.agent && (
+                  <span className="text-[10px] text-content-muted shrink-0 font-mono">
+                    {entry.agent}
+                  </span>
+                )}
+                <span className="text-xs text-content truncate">{entry.event}</span>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    </SettingsPanel>
   );
 };
 

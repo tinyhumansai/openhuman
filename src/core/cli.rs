@@ -14,6 +14,10 @@ use crate::core::jsonrpc::{default_state, invoke_method, parse_json_params};
 use crate::core::logging::CliLogDefault;
 use crate::core::{ControllerSchema, TypeSchema};
 
+/// Debug/e2e agent paths can build deep async poll stacks while assembling
+/// prompts, provider requests, and sub-agent tool loops.
+const CLI_RUNTIME_THREAD_STACK_SIZE: usize = 8 * 1024 * 1024;
+
 /// The ASCII banner displayed when the CLI starts.
 const CLI_BANNER: &str = r#"
 
@@ -433,6 +437,14 @@ fn run_namespace_command(
 
     println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
+}
+
+fn build_cli_runtime() -> Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_multi_thread()
+        .thread_stack_size(CLI_RUNTIME_THREAD_STACK_SIZE)
+        .enable_all()
+        .build()
+        .map_err(Into::into)
 }
 
 /// Parses command-line arguments into a JSON map based on a function's schema.

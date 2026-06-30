@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import Button from '../../../components/ui/Button';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { setCloudProviderKey } from '../../../services/api/aiSettingsApi';
 import { callCoreRpc } from '../../../services/coreRpcClient';
@@ -132,20 +133,20 @@ const ApiKeysStep = ({ onNext, onSkip }: ApiKeysStepProps) => {
   return (
     <div
       data-testid="onboarding-api-keys-step"
-      className="rounded-2xl bg-white dark:bg-neutral-900 p-10 shadow-soft animate-fade-up">
+      className="rounded-2xl bg-surface p-10 shadow-soft animate-fade-up">
       <div className="text-center">
-        <h1 className="text-2xl font-display text-stone-900 dark:text-neutral-100 mb-2 leading-tight">
+        <h1 className="text-2xl font-title text-content mb-2 leading-tight">
           {t('onboarding.apiKeys.title')}
         </h1>
-        <p className="text-stone-500 dark:text-neutral-400 text-sm leading-relaxed">
+        <p className="text-content-muted text-sm leading-relaxed">
           {t('onboarding.apiKeys.subtitle')}
         </p>
       </div>
 
       <div className="mt-6 flex flex-col gap-4">
-        <div className="flex flex-col gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/40 p-3">
+        <div className="flex flex-col gap-2 rounded-lg border border-line bg-surface-muted p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-xs font-medium text-stone-700 dark:text-neutral-200">
+            <span className="text-xs font-medium text-content-secondary">
               {t('onboarding.apiKeys.openaiLabel')}
             </span>
             {oauthConnected ? (
@@ -156,7 +157,7 @@ const ApiKeysStep = ({ onNext, onSkip }: ApiKeysStepProps) => {
               </span>
             ) : null}
           </div>
-          <p className="text-[11px] text-stone-500 dark:text-neutral-400">
+          <p className="text-[11px] text-content-muted">
             {t('onboarding.apiKeys.openaiOauthHint')}
           </p>
           <button
@@ -171,7 +172,7 @@ const ApiKeysStep = ({ onNext, onSkip }: ApiKeysStepProps) => {
           </button>
           {oauthAwaitingCallback && !oauthConnected ? (
             <div className="flex flex-col gap-1.5">
-              <p className="text-[11px] text-stone-500 dark:text-neutral-400">
+              <p className="text-[11px] text-content-muted">
                 {t('onboarding.apiKeys.openaiOauthCallbackHint').replace(
                   '{url}',
                   OPENAI_OAUTH_CALLBACK_ORIGIN
@@ -188,7 +189,7 @@ const ApiKeysStep = ({ onNext, onSkip }: ApiKeysStepProps) => {
                   setOauthCallbackUrl(e.target.value);
                   setError(null);
                 }}
-                className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-xs text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                className="rounded-lg border border-line-strong bg-surface px-3 py-2 text-xs text-content placeholder-content-faint focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
               />
               <button
                 type="button"
@@ -201,11 +202,11 @@ const ApiKeysStep = ({ onNext, onSkip }: ApiKeysStepProps) => {
             </div>
           ) : null}
           <div className="relative flex items-center gap-2 py-1">
-            <div className="h-px flex-1 bg-stone-200 dark:bg-neutral-700" />
-            <span className="text-[10px] uppercase tracking-wide text-stone-400 dark:text-neutral-500">
+            <div className="h-px flex-1 bg-surface-strong" />
+            <span className="text-[10px] uppercase tracking-wide text-content-faint">
               {t('onboarding.apiKeys.orApiKey')}
             </span>
-            <div className="h-px flex-1 bg-stone-200 dark:bg-neutral-700" />
+            <div className="h-px flex-1 bg-surface-strong" />
           </div>
           <input
             id="onboarding-openai-key"
@@ -219,14 +220,14 @@ const ApiKeysStep = ({ onNext, onSkip }: ApiKeysStepProps) => {
               setOpenai(e.target.value);
               setError(null);
             }}
-            className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+            className="rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-content placeholder-content-faint focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
           />
         </div>
 
         <div className="flex flex-col gap-1.5">
           <label
             htmlFor="onboarding-anthropic-key"
-            className="text-xs font-medium text-stone-700 dark:text-neutral-200">
+            className="text-xs font-medium text-content-secondary">
             {t('onboarding.apiKeys.anthropicLabel')}
           </label>
           <input
@@ -241,7 +242,7 @@ const ApiKeysStep = ({ onNext, onSkip }: ApiKeysStepProps) => {
               setAnthropic(e.target.value);
               setError(null);
             }}
-            className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+            className="rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-content placeholder-content-faint focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
           />
         </div>
 
@@ -258,13 +259,14 @@ const ApiKeysStep = ({ onNext, onSkip }: ApiKeysStepProps) => {
       </div>
 
       <div className="mt-4 flex justify-center">
-        <button
-          type="button"
+        <Button
+          variant="tertiary"
+          size="xs"
           onClick={onSkip}
           disabled={saving}
-          className="text-xs text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 underline disabled:opacity-50">
+          className="underline">
           {t('onboarding.apiKeys.skipForNow')}
-        </button>
+        </Button>
       </div>
     </div>
   );

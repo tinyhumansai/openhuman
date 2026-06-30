@@ -23,17 +23,18 @@
  * Design mirrors `InstallSkillDialog` — see
  * `.claude/rules/15-settings-modal-system.md`.
  */
+import debug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import debug from 'debug';
 
 import { useT } from '../../lib/i18n/I18nContext';
+import { trackEvent } from '../../services/analytics';
 import {
+  type UninstallWorkflowResult,
   workflowsApi,
   type WorkflowSummary,
-  type UninstallWorkflowResult,
 } from '../../services/api/workflowsApi';
-import { trackEvent } from '../../services/analytics';
+import Button from '../ui/Button';
 
 const log = debug('skills:uninstall-dialog');
 
@@ -104,15 +105,17 @@ export default function UninstallSkillConfirmDialog({ skill, onClose, onUninstal
       onMouseDown={e => {
         if (e.target === e.currentTarget && !submitting) onClose();
       }}>
-      <div className="w-[420px] max-w-[90vw] rounded-2xl bg-white dark:bg-neutral-900 p-5 shadow-2xl">
-        <h2 id="uninstall-skill-title" className="text-base font-semibold text-stone-900 dark:text-neutral-100">
+      <div className="w-[420px] max-w-[90vw] rounded-2xl bg-surface p-5 shadow-2xl">
+        <h2
+          id="uninstall-skill-title"
+          className="text-base font-semibold text-content">
           {t('common.delete')} {skill.name}?
         </h2>
-        <p className="mt-2 text-sm text-stone-600 dark:text-neutral-300">
+        <p className="mt-2 text-sm text-content-secondary">
           {t('skills.uninstall.description')}
         </p>
         {skill.location && (
-          <p className="mt-3 break-all rounded-lg bg-stone-50 dark:bg-neutral-800/60 px-3 py-2 font-mono text-[11px] text-stone-600 dark:text-neutral-300">
+          <p className="mt-3 break-all rounded-lg bg-surface-muted px-3 py-2 font-mono text-[11px] text-content-secondary">
             {skill.location.replace(/\/(WORKFLOW|SKILL)\.md$/i, '')}
           </p>
         )}
@@ -123,22 +126,23 @@ export default function UninstallSkillConfirmDialog({ skill, onClose, onUninstal
           </div>
         )}
         <div className="mt-5 flex items-center justify-end gap-2">
-          <button
+          <Button
             ref={cancelBtnRef}
-            type="button"
+            variant="secondary"
+            size="sm"
             disabled={submitting}
-            onClick={onClose}
-            className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-1.5 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 disabled:cursor-not-allowed disabled:opacity-50">
+            onClick={onClose}>
             {t('common.cancel')}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="secondary"
+            tone="danger"
+            size="sm"
             disabled={submitting}
             onClick={handleConfirm}
-            data-testid="uninstall-skill-confirm"
-            className="rounded-lg border border-coral-300 bg-coral-50 px-3 py-1.5 text-xs font-medium text-coral-700 hover:bg-coral-100 disabled:cursor-not-allowed disabled:opacity-50">
+            data-testid="uninstall-skill-confirm">
             {submitting ? t('team.deleting') : t('common.delete')}
-          </button>
+          </Button>
         </div>
       </div>
     </div>,

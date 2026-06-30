@@ -5,25 +5,16 @@
 // `app/src/components/skills/WorkflowRunnerBody.tsx`, shared with the
 // top-level /skills page's "Runners" tab.
 import { useT } from '../../../lib/i18n/I18nContext';
-import PanelPage from '../../layout/PanelPage';
 import WorkflowRunnerBody from '../../skills/WorkflowRunnerBody';
-import SettingsBackButton from '../components/SettingsBackButton';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 
 const WorkflowRunnerPanel = () => {
   const { t } = useT();
-  const { navigateBack } = useSettingsNavigation();
 
   return (
-    <PanelPage
-      className="z-10"
-      contentClassName=""
-      description={t('settings.developerMenu.skillsRunner.desc')}
-      leading={<SettingsBackButton onBack={navigateBack} />}>
-      <div className="flex-1 overflow-y-auto p-6">
-        <WorkflowRunnerBody />
-      </div>
-    </PanelPage>
+    <SettingsPanel description={t('settings.developerMenu.skillsRunner.desc')}>
+      <WorkflowRunnerBody />
+    </SettingsPanel>
   );
 };
 

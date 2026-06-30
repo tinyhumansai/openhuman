@@ -9,13 +9,40 @@
 //! 2. **Emoji reactions** — decide whether the assistant should react to the
 //!    user's message with an emoji.
 
-use crate::core::socketio::WebChannelEvent;
+use crate::core::socketio::{SubagentUsagePayload, TurnUsagePayload, WebChannelEvent};
+use crate::openhuman::agent::harness::turn_subagent_usage::LastTurnUsage;
 use crate::openhuman::config::rpc as config_rpc;
 
 use super::web::publish_web_channel_event;
 
 const MIN_SEGMENT_CHARS: usize = 40;
 const MAX_SEGMENTS: usize = 5;
+
+/// Convert a turn's [`LastTurnUsage`] into the wire payload carried on
+/// `chat_done`. Returns `None` for a turn that recorded no spend at all (e.g. a
+/// synthetic budget-exhausted placeholder) so the event stays compact.
+fn usage_payload(usage: Option<&LastTurnUsage>) -> Option<TurnUsagePayload> {
+    let usage = usage?;
+    let subagents = usage
+        .subagents
+        .iter()
+        .map(|s| SubagentUsagePayload {
+            task_id: s.task_id.clone(),
+            agent_id: s.agent_id.clone(),
+            input_tokens: s.usage.input_tokens,
+            output_tokens: s.usage.output_tokens,
+            cost_usd: s.usage.charged_amount_usd,
+        })
+        .collect();
+    Some(TurnUsagePayload {
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        cached_input_tokens: usage.cached_input_tokens,
+        cost_usd: usage.cost_usd,
+        context_window: usage.context_window,
+        subagents,
+    })
+}
 
 /// Deliver an agent response to the frontend, applying local-model
 /// presentation (segmentation + reaction) when the model is available.
@@ -30,7 +57,10 @@ pub async fn deliver_response(
     full_response: &str,
     user_message: &str,
     citations: &[crate::openhuman::agent::memory_loader::MemoryCitation],
+    usage: Option<&LastTurnUsage>,
 ) {
+    let usage_payload = usage_payload(usage);
+
     // Spawn reaction decision in parallel — it runs on the local model and
     // shouldn't block segmentation or delivery.
     let user_msg_owned = user_message.to_string();
@@ -71,11 +101,14 @@ pub async fn deliver_response(
             tool_call_id: None,
             subagent: None,
             task_board: None,
+            tool_display_label: None,
+            tool_display_detail: None,
             citations: if citations.is_empty() {
                 None
             } else {
                 Some(serde_json::json!(citations))
             },
+            usage: usage_payload,
         });
         return;
     }
@@ -117,11 +150,15 @@ pub async fn deliver_response(
             tool_call_id: None,
             subagent: None,
             task_board: None,
+            tool_display_label: None,
+            tool_display_detail: None,
             citations: if i == 0 && !citations.is_empty() {
                 Some(serde_json::json!(citations))
             } else {
                 None
             },
+            // Usage is attached only to the terminal `chat_done`, never segments.
+            usage: None,
         });
     }
 
@@ -153,11 +190,14 @@ pub async fn deliver_response(
         tool_call_id: None,
         subagent: None,
         task_board: None,
+        tool_display_label: None,
+        tool_display_detail: None,
         citations: if citations.is_empty() {
             None
         } else {
             Some(serde_json::json!(citations))
         },
+        usage: usage_payload,
     });
 }
 
@@ -460,6 +500,7 @@ pub mod test_support {
             full_response,
             user_message,
             citations,
+            None,
         )
         .await;
     }

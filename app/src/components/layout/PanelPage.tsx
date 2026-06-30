@@ -24,12 +24,19 @@ export interface PanelPageTab<T extends string = string> {
 }
 
 export interface PanelPageProps<T extends string = string> {
-  /** Page description, shown above any chips. Titles are inferred from the chrome. */
+  /** Page title, shown in the header above the description (optional). */
+  title?: ReactNode;
+  /** Page description, shown below the title and above any chips. */
   description?: ReactNode;
-  /** Leading node before the description (e.g. a back button). */
+  /** Leading node before the title (e.g. a back button). */
   leading?: ReactNode;
   /** Right-aligned page action(s). */
   action?: ReactNode;
+  /**
+   * Extra fixed-header content rendered below the description (single-body case
+   * only) — e.g. a sibling sub-nav row. Sits above the scrolling body.
+   */
+  headerExtra?: ReactNode;
 
   /**
    * Chip tabs. When provided, the page renders a chip row and swaps the body to
@@ -71,9 +78,11 @@ const DEFAULT_CONTENT_CLASS = 'p-4 space-y-5';
  * bottom bar and chips name the view; reach for `description` when a hint helps.
  */
 export default function PanelPage<T extends string = string>({
+  title,
   description,
   leading,
   action,
+  headerExtra,
   tabs,
   value,
   onChange,
@@ -93,9 +102,11 @@ export default function PanelPage<T extends string = string>({
       <PanelScaffold
         className={className}
         testId={testId}
+        title={title}
         description={description}
         leading={leading}
         action={action}
+        headerExtra={headerExtra}
         contentClassName={contentClassName}>
         {children}
       </PanelScaffold>
@@ -111,13 +122,15 @@ export default function PanelPage<T extends string = string>({
 
   return (
     <div className={`relative flex h-full min-h-0 flex-col ${className}`} data-testid={testId}>
-      {/* Fixed page chrome: optional description, then the chip row. */}
+      {/* Fixed page chrome: optional title + description, then the chip row. */}
       <PanelHeader
+        title={title}
         description={description}
         leading={leading}
         action={action}
         className="flex-shrink-0 px-4 pt-4 pb-3"
         bgClassName={DEFAULT_PANEL_HEADER_BG}>
+        {headerExtra}
         <ChipTabs
           className="flex flex-wrap gap-1.5 pt-2"
           ariaLabel={tabsAriaLabel}

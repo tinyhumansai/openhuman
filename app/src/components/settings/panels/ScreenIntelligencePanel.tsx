@@ -3,11 +3,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useScreenIntelligenceState } from '../../../features/screen-intelligence/useScreenIntelligenceState';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { isTauri, openhumanUpdateScreenIntelligenceSettings } from '../../../utils/tauriCommands';
-import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsBackButton from '../components/SettingsBackButton';
-import { SettingsRow, SettingsSection, SettingsSelect, SettingsStatusLine } from '../controls';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import {
+  SettingsRow,
+  SettingsSection,
+  SettingsSelect,
+  SettingsStatusLine,
+  SettingsSwitch,
+} from '../controls';
+import SettingsPanel from '../layout/SettingsPanel';
 import PermissionsSection from './screen-intelligence/PermissionsSection';
 
 const formatRemaining = (remainingMs: number | null): string => {
@@ -25,7 +29,6 @@ const formatRemaining = (remainingMs: number | null): string => {
 
 const ScreenIntelligencePanel = () => {
   const { t } = useT();
-  const { navigateBack } = useSettingsNavigation();
   const {
     status,
     lastRestartSummary,
@@ -112,12 +115,8 @@ const ScreenIntelligencePanel = () => {
   };
 
   return (
-    <PanelPage
-      className="z-10"
-      contentClassName=""
-      description={t('pages.settings.features.screenAwarenessDesc')}
-      leading={<SettingsBackButton onBack={navigateBack} />}>
-      <div className="max-w-2xl mx-auto w-full p-4 space-y-4">
+    <SettingsPanel description={t('pages.settings.features.screenAwarenessDesc')}>
+      <>
         {(status?.platform_supported ?? true) && (
           <PermissionsSection
             screenRecording={status?.permissions.screen_recording ?? 'unknown'}
@@ -138,16 +137,18 @@ const ScreenIntelligencePanel = () => {
         {/* Screen awareness config */}
         <SettingsSection title={t('settings.features.screenAwareness')}>
           {/* Enabled toggle */}
-          <label className="flex items-center justify-between px-4 py-3">
-            <span className="text-sm text-neutral-700 dark:text-neutral-200">
-              {t('common.enabled')}
-            </span>
-            <input
-              type="checkbox"
-              checked={enabled}
-              onChange={event => setEnabled(event.target.checked)}
-            />
-          </label>
+          <SettingsRow
+            htmlFor="screen-intelligence-enabled"
+            label={t('common.enabled')}
+            control={
+              <SettingsSwitch
+                id="screen-intelligence-enabled"
+                checked={enabled}
+                onCheckedChange={setEnabled}
+                aria-label={t('common.enabled')}
+              />
+            }
+          />
 
           {/* Policy mode */}
           <SettingsRow
@@ -176,21 +177,20 @@ const ScreenIntelligencePanel = () => {
           />
 
           {/* Screen monitoring toggle */}
-          <label className="flex items-center justify-between px-4 py-3">
-            <span className="text-sm text-neutral-700 dark:text-neutral-200">
-              {t('settings.screenAwareness.screenMonitoring')}
-            </span>
-            <input
-              type="checkbox"
-              checked={screenMonitoring}
-              onChange={event =>
-                setFeatureOverrides(current => ({
-                  ...current,
-                  screen_monitoring: event.target.checked,
-                }))
-              }
-            />
-          </label>
+          <SettingsRow
+            htmlFor="screen-intelligence-monitoring"
+            label={t('settings.screenAwareness.screenMonitoring')}
+            control={
+              <SettingsSwitch
+                id="screen-intelligence-monitoring"
+                checked={screenMonitoring}
+                onCheckedChange={next =>
+                  setFeatureOverrides(current => ({ ...current, screen_monitoring: next }))
+                }
+                aria-label={t('settings.screenAwareness.screenMonitoring')}
+              />
+            }
+          />
 
           {/* Save */}
           <div className="px-4 py-3 space-y-2">
@@ -214,7 +214,7 @@ const ScreenIntelligencePanel = () => {
         {/* Session controls */}
         <SettingsSection title={t('settings.screenAwareness.session')}>
           <div className="px-4 py-3 space-y-3">
-            <div className="text-sm text-neutral-600 dark:text-neutral-300 space-y-1">
+            <div className="text-sm text-content-secondary space-y-1">
               <div>
                 {t('settings.screenAwareness.status')}:{' '}
                 {status?.session.active
@@ -243,7 +243,8 @@ const ScreenIntelligencePanel = () => {
               </Button>
               <Button
                 type="button"
-                variant="danger"
+                variant="secondary"
+                tone="danger"
                 size="sm"
                 onClick={() => void stopSession('manual_stop')}
                 disabled={stopDisabled}>
@@ -272,8 +273,8 @@ const ScreenIntelligencePanel = () => {
             {lastError}
           </div>
         )}
-      </div>
-    </PanelPage>
+      </>
+    </SettingsPanel>
   );
 };
 

@@ -10,22 +10,30 @@ import {
 import { PersistGate } from 'redux-persist/integration/react';
 
 import AppRoutes from './AppRoutes';
+import WebviewHost from './components/accounts/WebviewHost';
+import AnnouncementGate from './components/Announcement/AnnouncementGate';
 import AppBackground from './components/AppBackground';
 import AppUpdatePrompt from './components/AppUpdatePrompt';
 import BootCheckGate from './components/BootCheckGate/BootCheckGate';
-import BottomTabBar from './components/BottomTabBar';
 import CommandProvider from './components/commands/CommandProvider';
 import ServiceBlockingGate from './components/daemon/ServiceBlockingGate';
 import DictationHotkeyManager from './components/DictationHotkeyManager';
 import ErrorFallbackScreen from './components/ErrorFallbackScreen';
+import HarnessInitOverlay from './components/InitProgressScreen/HarnessInitOverlay';
 import KeyringConsentOverlay from './components/keyring/KeyringConsentOverlay';
+import AppSidebar from './components/layout/shell/AppSidebar';
+import RootShellLayout from './components/layout/shell/RootShellLayout';
+import { SidebarSlotProvider } from './components/layout/shell/SidebarSlot';
 import LocalAIDownloadSnackbar from './components/LocalAIDownloadSnackbar';
 import SecretPromptDialog from './components/mcp-setup/SecretPromptDialog';
 import OpenhumanLinkModal from './components/OpenhumanLinkModal';
 import PersistRehydrationScreen from './components/PersistRehydrationScreen';
 import PttHotkeyManager from './components/PttHotkeyManager';
 import SecurityBanner from './components/SecurityBanner';
+import SettingsModal from './components/settings/modal/SettingsModal';
+import { resolveSettingsOverlay } from './components/settings/modal/settingsOverlay';
 import GlobalUpsellBanner from './components/upsell/GlobalUpsellBanner';
+import UserErrorCenter from './components/userErrors/UserErrorCenter';
 import AppWalkthrough from './components/walkthrough/AppWalkthrough';
 import { MascotFrameProducer } from './features/meet/MascotFrameProducer';
 import { useNotchBootSync } from './hooks/useNotchBootSync';
@@ -50,12 +58,14 @@ import {
   stopInternetStatusListener,
 } from './services/internetStatusListener';
 import {
+  hideWebviewAccount,
   startWebviewAccountService,
   stopWebviewAccountService,
 } from './services/webviewAccountService';
 import { persistor, store } from './store';
-import { useAppSelector } from './store/hooks';
-import { isAccountsFullscreen } from './utils/accountsFullscreen';
+import { setActiveAccount } from './store/accountsSlice';
+import { useAppDispatch, useAppSelector } from './store/hooks';
+import { AGENT_ACCOUNT_ID } from './utils/accountsFullscreen';
 import { DEV_FORCE_ONBOARDING } from './utils/config';
 
 // Attach the `webview:event` listener at app boot so background recipe
@@ -96,10 +106,37 @@ function App() {
   const socketWrapped = (children: React.ReactNode) =>
     onMobile ? <>{children}</> : <SocketProvider>{children}</SocketProvider>;
 
+  /*
+   * @generated-source:provider-chain
+   * Authoritative top-level provider / gate nesting for the desktop shell,
+   * outermost first. Keep this list in sync with the JSX returned below;
+   * `scripts/generate-architecture-docs.mjs` renders it into
+   * `gitbooks/developing/architecture/frontend.md` and CI (`pnpm docs:check`)
+   * fails if the doc drifts. Refresh the doc with `pnpm docs:generate`.
+   * Format per line: `<order>. <Component> — <role>` (role must not contain " — ").
+   * 1. Sentry.ErrorBoundary — Crash boundary; renders ErrorFallbackScreen
+   * 2. Provider — Redux store; enables useAppSelector / dispatch app-wide
+   * 3. PersistGate — Holds UI until persisted Redux slices rehydrate
+   * 4. ThemeProvider — Theme tokens and dark-mode handling
+   * 5. I18nProvider — Localization context consumed via useT
+   * 6. BootCheckGate — Blocks render until the core boot snapshot resolves
+   * 7. CoreStateProvider — Core app snapshot: auth, session, onboarding state
+   * 8. SocketProvider — Core socket.io events; desktop only (mobile uses the TunnelTransport relay)
+   * 9. ChatRuntimeProvider — Chat runtime events, tool timeline, and approvals
+   * 10. Router — HashRouter navigation for all routes
+   * 11. CommandProvider — Command palette context
+   * 12. ServiceBlockingGate — Blocks the shell until required services are configured
+   * @end-source:provider-chain
+   */
   return (
     <Sentry.ErrorBoundary
-      fallback={({ error, componentStack, resetError }) => (
-        <ErrorFallbackScreen error={error} componentStack={componentStack} onReset={resetError} />
+      fallback={({ error, componentStack, resetError, eventId }) => (
+        <ErrorFallbackScreen
+          error={error}
+          componentStack={componentStack}
+          eventId={eventId}
+          onReset={resetError}
+        />
       )}>
       <Provider store={store}>
         <PersistGate loading={<PersistRehydrationScreen />} persistor={persistor}>
@@ -119,6 +156,8 @@ function App() {
                             {!onMobile && <LocalAIDownloadSnackbar />}
                             {!onMobile && <AppUpdatePrompt />}
                             <KeyringConsentOverlay />
+                            <HarnessInitOverlay />
+                            <AnnouncementGate />
                             <SecretPromptDialog />
                           </ServiceBlockingGate>
                         </CommandProvider>
@@ -158,15 +197,11 @@ function AppShell() {
 }
 
 /** Desktop inner shell — lives inside the Router so it can use useLocation. */
-function AppShellDesktop() {
+export function AppShellDesktop() {
   const location = useLocation();
   const navigate = useNavigate();
+  const dispatch = useAppDispatch();
   const { snapshot, isBootstrapping } = useCoreState();
-  const activeAccountId = useAppSelector(state => state.accounts.activeAccountId);
-  // On /accounts, only the agent view keeps the tab bar + its reserved
-  // bottom padding. Any other selected "app" (e.g. WhatsApp) takes the
-  // full viewport so the embedded webview goes edge-to-edge.
-  const fullscreen = isAccountsFullscreen(location.pathname, activeAccountId);
   const onOnboardingRoute = location.pathname.startsWith('/onboarding');
   const onboardingPending =
     !!snapshot.sessionToken && (DEV_FORCE_ONBOARDING || !snapshot.onboardingCompleted);
@@ -183,9 +218,9 @@ function AppShellDesktop() {
       navigate('/onboarding', { replace: true });
     } else if (!onboardingPending && onOnboardingRoute) {
       console.debug(
-        `[onboarding-gate] redirecting ${location.pathname} -> /home (onboarding complete)`
+        `[onboarding-gate] redirecting ${location.pathname} -> /chat (onboarding complete)`
       );
-      navigate('/home', { replace: true });
+      navigate('/chat', { replace: true });
     }
   }, [
     isBootstrapping,
@@ -201,6 +236,26 @@ function AppShellDesktop() {
     trackPageView(location.pathname);
   }, [location.pathname]);
 
+  // Hide the active connected-app webview when we navigate away from the chat
+  // surface. Provider CEF selection is intentionally route-independent; any
+  // real route change clears that high-level selection so the native view
+  // cannot linger over the newly-routed page.
+  const activeAccountId = useAppSelector(state => state.accounts.activeAccountId);
+  const accountsById = useAppSelector(state => state.accounts.accounts);
+  const accountsOverlayOpen = useAppSelector(state => state.accounts.overlayOpen);
+  const previousPathRef = useRef(location.pathname);
+  useEffect(() => {
+    if (
+      location.pathname !== previousPathRef.current &&
+      activeAccountId &&
+      activeAccountId !== AGENT_ACCOUNT_ID
+    ) {
+      void hideWebviewAccount(activeAccountId);
+      dispatch(setActiveAccount(AGENT_ACCOUNT_ID));
+    }
+    previousPathRef.current = location.pathname;
+  }, [dispatch, location.pathname, activeAccountId]);
+
   // Sync the notch indicator to the persisted always-on listening state once
   // the core is ready (once per boot). Extracted to a hook so it's testable.
   useNotchBootSync(isBootstrapping);
@@ -214,31 +269,74 @@ function AppShellDesktop() {
     }
   }, [location.pathname, navType]);
 
-  return (
-    <div className="relative h-screen flex flex-col overflow-hidden">
-      <AppBackground />
-      <div className="relative z-10 flex-1 flex flex-col overflow-hidden">
-        <div
-          ref={scrollRef}
-          className={`flex-1 overflow-y-auto ${fullscreen || onOnboardingRoute ? '' : 'pb-16'}`}>
-          <GlobalUpsellBanner />
-          <AppRoutes />
+  // Routes that own the full viewport with no app chrome: the public
+  // welcome/login screens, the onboarding stepper, and any pre-auth state.
+  // Everything else renders inside the root two-pane shell (sidebar + main).
+  const token = snapshot.sessionToken;
+  const onHiddenChromePath = ['/', '/login'].some(
+    path => location.pathname === path || location.pathname.startsWith(`${path}/`)
+  );
+  const chromeless = !token || onOnboardingRoute || onHiddenChromePath;
+
+  // Desktop Settings is a modal overlay (the backgroundLocation pattern): when
+  // the URL is a settings path we keep rendering the page *behind* it
+  // (`baseLocation`) and mount <SettingsModal/> on top (z-50 portal), which sits
+  // above the provider WebviewHost overlay (z-30) below.
+  const { settingsOpen, baseLocation } = resolveSettingsOverlay(location);
+
+  const activeProviderAccount =
+    activeAccountId && activeAccountId !== AGENT_ACCOUNT_ID
+      ? (accountsById[activeAccountId] ?? null)
+      : null;
+
+  const content = (
+    <div ref={scrollRef} className="relative h-full overflow-y-auto">
+      <GlobalUpsellBanner />
+      <AppRoutes location={baseLocation} />
+      {activeProviderAccount && !accountsOverlayOpen && (
+        <div className="absolute inset-0 z-30">
+          <WebviewHost
+            accountId={activeProviderAccount.id}
+            provider={activeProviderAccount.provider}
+          />
         </div>
-        {!onOnboardingRoute && <BottomTabBar />}
-      </div>
-      <OpenhumanLinkModal />
-      {/* Hidden Remotion-driven producer for the Meet camera. Mounts a
-          640×480 JPEG frame stream to the Rust frame bus while a meet
-          call is active; idle no-op otherwise. See
-          features/meet/MascotFrameProducer.tsx. */}
-      <MascotFrameProducer />
-      {/* Post-onboarding Joyride walkthrough — mounted here (outside routes) so
-          it persists across tab navigations. Joyride targets span Home + BottomTabBar
-          tabs so it must stay mounted while the user moves between routes. */}
-      {!isBootstrapping && !onOnboardingRoute && (
-        <AppWalkthrough onboarded={!!snapshot.onboardingCompleted} />
       )}
     </div>
+  );
+
+  return (
+    <SidebarSlotProvider>
+      <div className="relative h-screen flex flex-col overflow-hidden">
+        <AppBackground />
+        <div className="relative z-10 flex-1 min-h-0 flex flex-col overflow-hidden">
+          {chromeless ? (
+            content
+          ) : (
+            <RootShellLayout sidebar={<AppSidebar />}>{content}</RootShellLayout>
+          )}
+        </div>
+        {/* Desktop Settings modal — mounted over whatever page is rendered
+            beneath when the URL is a settings path. */}
+        {settingsOpen && !chromeless && <SettingsModal />}
+        <OpenhumanLinkModal />
+        {/* User-actionable runtime errors (#3931): a first-class panel for
+            expected user states (insufficient BYO credits, managed-budget
+            exhaustion). Mounted outside the routes so entries survive route
+            changes and background-job completion. */}
+        <UserErrorCenter />
+        {/* Hidden Remotion-driven producer for the Meet camera. Mounts a
+            640×480 JPEG frame stream to the Rust frame bus while a meet
+            call is active; idle no-op otherwise. See
+            features/meet/MascotFrameProducer.tsx. */}
+        <MascotFrameProducer />
+        {/* Post-onboarding Joyride walkthrough — mounted here (outside routes) so
+            it persists across tab navigations. Joyride targets span Home + the
+            sidebar nav so it must stay mounted while the user moves between routes. */}
+        {!isBootstrapping && !onOnboardingRoute && (
+          <AppWalkthrough onboarded={!!snapshot.onboardingCompleted} />
+        )}
+      </div>
+    </SidebarSlotProvider>
   );
 }
 

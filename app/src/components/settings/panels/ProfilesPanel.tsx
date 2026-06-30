@@ -8,7 +8,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { LuPlus } from 'react-icons/lu';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import {
@@ -19,14 +19,15 @@ import {
   selectAgentProfiles,
 } from '../../../store/agentProfileSlice';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
-import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsEmptyState, SettingsSection } from '../controls';
+import SettingsPanel from '../layout/SettingsPanel';
+import { settingsNavState } from '../modal/settingsOverlay';
 
 const ProfilesPanel = () => {
   const { t } = useT();
   const navigate = useNavigate();
+  const location = useLocation();
   const dispatch = useAppDispatch();
   const profiles = useAppSelector(selectAgentProfiles);
   const activeId = useAppSelector(selectActiveAgentProfileId);
@@ -64,25 +65,20 @@ const ProfilesPanel = () => {
   );
 
   return (
-    <PanelPage
-      className="z-10"
-      contentClassName=""
+    <SettingsPanel
       description={t('settings.profiles.menuDesc')}
-      leading={<SettingsBackButton onBack={() => navigate('/settings')} />}
       action={
         <Button
           type="button"
           variant="primary"
           size="sm"
-          onClick={() => navigate('/settings/profiles/new')}>
+          onClick={() => navigate('/settings/profiles/new', settingsNavState(location))}>
           <LuPlus className="h-4 w-4" />
           {t('settings.profiles.new')}
         </Button>
       }>
-      <div className="space-y-4 p-4">
-        <p className="text-sm text-neutral-500 dark:text-neutral-400">
-          {t('settings.profiles.subtitle')}
-        </p>
+      <>
+        <p className="text-sm text-content-muted">{t('settings.profiles.subtitle')}</p>
 
         {(actionError || error) && (
           <p className="rounded-md border border-coral-200 bg-coral-50 px-3 py-2 text-xs text-coral-700 dark:border-coral-500/30 dark:bg-coral-500/10 dark:text-coral-300">
@@ -92,7 +88,7 @@ const ProfilesPanel = () => {
 
         {profiles.length === 0 ? (
           status === 'loading' ? (
-            <div className="flex items-center justify-center py-12 text-neutral-400 dark:text-neutral-500">
+            <div className="flex items-center justify-center py-12 text-content-faint">
               <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-ocean-500 border-t-transparent" />
               <span className="text-sm">{t('common.loading')}</span>
             </div>
@@ -101,16 +97,16 @@ const ProfilesPanel = () => {
           )
         ) : (
           <SettingsSection>
-            <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
+            <ul className="divide-y divide-line-subtle dark:divide-neutral-800">
               {profiles.map(profile => {
                 const isActive = profile.id === activeId;
                 return (
                   <li
                     key={profile.id}
-                    className="flex items-center justify-between gap-3 py-3 first:pt-1 last:pb-1">
+                    className="flex items-center justify-between gap-3 px-4 py-3">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="truncate text-sm font-semibold text-neutral-800 dark:text-neutral-100">
+                        <span className="truncate text-sm font-semibold text-content">
                           {profile.name}
                         </span>
                         {isActive && (
@@ -118,14 +114,14 @@ const ProfilesPanel = () => {
                             {t('settings.profiles.active')}
                           </span>
                         )}
-                        <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400">
+                        <span className="rounded-full bg-surface-subtle px-2 py-0.5 text-[10px] font-medium text-content-muted">
                           {profile.builtIn
                             ? t('settings.profiles.sourceBuiltIn')
                             : t('settings.profiles.sourceCustom')}
                         </span>
                       </div>
                       {profile.description && (
-                        <p className="mt-0.5 truncate text-xs text-neutral-500 dark:text-neutral-400">
+                        <p className="mt-0.5 truncate text-xs text-content-muted">
                           {profile.description}
                         </p>
                       )}
@@ -144,13 +140,18 @@ const ProfilesPanel = () => {
                         type="button"
                         variant="secondary"
                         size="sm"
-                        onClick={() => navigate(`/settings/profiles/edit/${profile.id}`)}>
+                        onClick={() =>
+                          navigate(
+                            `/settings/profiles/edit/${profile.id}`,
+                            settingsNavState(location)
+                          )
+                        }>
                         {t('common.edit')}
                       </Button>
                       {!profile.builtIn && (
                         <Button
                           type="button"
-                          variant="ghost"
+                          variant="tertiary"
                           size="sm"
                           onClick={() => void remove(profile.id)}>
                           {t('common.delete')}
@@ -163,8 +164,8 @@ const ProfilesPanel = () => {
             </ul>
           </SettingsSection>
         )}
-      </div>
-    </PanelPage>
+      </>
+    </SettingsPanel>
   );
 };
 

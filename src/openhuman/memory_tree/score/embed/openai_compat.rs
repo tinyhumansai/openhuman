@@ -54,18 +54,110 @@ impl OpenAiCompatEmbedder {
     /// honours the `dimensions` param so 3-large complies.
     pub fn try_from_config(config: &Config) -> Result<Option<Self>> {
         let provider = config.memory.embedding_provider.trim();
-        let (slug, label): (&str, &'static str) = if provider == "openai" {
-            ("openai", "openai")
-        } else if provider == "custom" || provider.starts_with("custom:") {
-            ("custom", "custom")
-        } else {
-            // Not an OpenAI-compatible provider — let the caller fall through.
-            return Ok(None);
+
+        // Decide which OpenAI-compatible endpoint to route to, if any:
+        //   * `openai`             → OpenAI's hosted API.
+        //   * `custom` / `custom:` → an inline custom endpoint.
+        //   * any configured `cloud_providers` slug (e.g. `lmstudio`, `vllm`)
+        //     → that entry's endpoint, treated as a custom OpenAI-compatible
+        //     server.
+        //
+        // The third case is the #3781 fix. The chat/LLM factory already
+        // resolves these slugs via `config.cloud_providers`
+        // (`make_cloud_provider_by_slug`), so the memory_tree LLM extractor
+        // honours a local `lmstudio` backend. The embedder, however, only knew
+        // `openai`/`custom` — so a local LM Studio embeddings backend
+        // (`[memory] embedding_provider = "lmstudio"`) was silently ignored and
+        // bucket sealing fell through to the managed cloud budget, 400ing with
+        // "Insufficient budget" and failing jobs as unrecoverable. Mirroring the
+        // chat factory's slug resolution here gives sealing/ingest embeddings
+        // the same local-endpoint parity the extractor already has.
+        //
+        // Anything else returns `Ok(None)` so the caller's resolution ladder
+        // continues to the managed cloud default.
+        let (slug, label, custom_endpoint): (&str, &'static str, Option<&str>) =
+            if provider == "openai" {
+                ("openai", "openai", None)
+            } else if provider == "custom" || provider.starts_with("custom:") {
+                ("custom", "custom", provider.strip_prefix("custom:"))
+            } else {
+                // Bare slug, tolerating a trailing `:model` for symmetry with the
+                // top-level `embeddings_provider = "slug:model"` form.
+                let bare = provider.split(':').next().unwrap_or(provider).trim();
+                // Reserved / managed / native-API slugs are owned by other
+                // branches of the resolution ladder (managed cloud, Voyage,
+                // Cohere, native Ollama, deliberate opt-out) — never the
+                // OpenAI-compatible adapter. Let the caller fall through.
+                if bare.is_empty()
+                    || matches!(
+                        bare,
+                        "managed" | "cloud" | "openhuman" | "voyage" | "cohere" | "ollama" | "none"
+                    )
+                {
+                    return Ok(None);
+                }
+                match config
+                    .cloud_providers
+                    .iter()
+                    .find(|e| e.slug == bare)
+                    .map(|e| e.endpoint.trim())
+                    .filter(|ep| !ep.is_empty())
+                {
+                    // A configured OpenAI-compatible provider (LM Studio, vLLM,
+                    // text-embeddings-inference, …) → route as `custom` against
+                    // its endpoint.
+                    Some(endpoint) => ("custom", "custom", Some(endpoint)),
+                    // Unknown slug, or one with no endpoint configured — fall
+                    // through to the managed cloud default rather than erroring.
+                    None => return Ok(None),
+                }
+            };
+
+        // Credential lookup keys on the bare slug (`embeddings:<slug>`); local
+        // servers like LM Studio usually need no key, so an empty result is fine
+        // and matches the existing `custom` behaviour. `resolve_api_key` already
+        // normalises a `custom:<url>` argument down to the `custom` slug.
+        let cred_slug = provider.split(':').next().unwrap_or(provider).trim();
+        let api_key = crate::openhuman::embeddings::resolve_api_key(config, cred_slug);
+
+        // Model: prefer the explicit `embedding_model`; otherwise fall back to an
+        // inline `slug:model` suffix on the provider string. The `custom:<url>`
+        // form is exempt — its suffix is an endpoint URL, not a model name, so
+        // splitting it would mis-route the URL as the model. Leave the model
+        // empty in that case and let the endpoint default apply.
+        let model = {
+            let explicit = config.memory.embedding_model.trim();
+            if !explicit.is_empty() {
+                explicit
+            } else if provider.starts_with("custom:") {
+                ""
+            } else {
+                provider
+                    .split_once(':')
+                    .map(|(_, m)| m.trim())
+                    .unwrap_or("")
+            }
         };
 
-        let model = config.memory.embedding_model.trim();
-        let api_key = crate::openhuman::embeddings::resolve_api_key(config, provider);
-        let custom_endpoint = provider.strip_prefix("custom:");
+        // The memory tree's on-disk format is fixed at [`EMBEDDING_DIM`]. Models
+        // that don't honour the OpenAI `dimensions` request param (everything
+        // outside `text-embedding-3-*`) return their own native length, so a
+        // config whose stored dimension isn't `EMBEDDING_DIM` can never satisfy
+        // the tree. Building the adapter anyway would only defer the failure to
+        // the first embed ("expected 1024, got N") — refuse it here with an
+        // actionable message instead (Codex review on #4056). `text-embedding-3-*`
+        // is exempt: we request `EMBEDDING_DIM` below and the server reduces to it.
+        if !crate::openhuman::embeddings::model_supports_dimensions(model)
+            && config.memory.embedding_dimensions != EMBEDDING_DIM
+        {
+            anyhow::bail!(
+                "embeddings provider '{provider}' (model '{model}') produces \
+                 {}-dimensional vectors, but the memory tree requires {EMBEDDING_DIM}. \
+                 Choose a {EMBEDDING_DIM}-dimension model — an OpenAI `text-embedding-3-*` \
+                 model, or a {EMBEDDING_DIM}-dim model such as `mxbai-embed-large` or `bge-large`.",
+                config.memory.embedding_dimensions
+            );
+        }
 
         let inner = crate::openhuman::embeddings::create_embedding_provider_with_credentials(
             slug,
@@ -74,10 +166,15 @@ impl OpenAiCompatEmbedder {
             &api_key,
             custom_endpoint,
         )
-        .with_context(|| format!("build {label} embedder for memory tree"))?;
+        .with_context(|| {
+            format!("build {label} embedder for memory tree (provider='{provider}')")
+        })?;
 
         log::debug!(
-            "[memory_tree::embed::openai_compat] using {label} provider model={} dims={}",
+            "[memory_tree::embed::openai_compat] using {label} provider (config='{}') \
+             endpoint={:?} model={} dims={}",
+            provider,
+            custom_endpoint,
             model,
             EMBEDDING_DIM
         );
@@ -156,5 +253,153 @@ mod tests {
         let got = OpenAiCompatEmbedder::try_from_config(&cfg).expect("no error");
         let e = got.expect("custom should build an adapter");
         assert_eq!(e.name(), "custom");
+    }
+
+    /// When `embedding_model` is unset, a `custom:<url>` provider must NOT treat
+    /// the endpoint URL suffix as an inline model name (CodeRabbit #3781). The
+    /// adapter still builds; the model is simply left empty.
+    #[test]
+    fn some_for_custom_endpoint_does_not_use_url_as_model() {
+        let (_tmp, mut cfg) = cfg_with_provider("custom:https://embed.example/v1");
+        cfg.memory.embedding_model = String::new(); // force the inline fallback path
+        let got = OpenAiCompatEmbedder::try_from_config(&cfg).expect("no error");
+        let e = got.expect("custom endpoint with no model should still build");
+        assert_eq!(e.name(), "custom");
+    }
+
+    /// Build a `cloud_providers` entry the way AI Settings persists a local
+    /// OpenAI-compatible server.
+    fn lmstudio_entry(
+        endpoint: &str,
+    ) -> crate::openhuman::config::schema::cloud_providers::CloudProviderCreds {
+        crate::openhuman::config::schema::cloud_providers::CloudProviderCreds {
+            id: "p_lmstudio_test".to_string(),
+            slug: "lmstudio".to_string(),
+            endpoint: endpoint.to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// #3781: a configured `lmstudio` slug (OpenAI-compatible, like LM Studio at
+    /// localhost:1234) must resolve to its `cloud_providers` endpoint and route
+    /// as a `custom` OpenAI-compatible embedder — NOT fall through to managed
+    /// cloud. This is the headline bug: sealing ignored the local backend.
+    #[test]
+    fn some_for_configured_lmstudio_slug() {
+        let (_tmp, mut cfg) = cfg_with_provider("lmstudio");
+        cfg.memory.embedding_model = "bge-m3".to_string();
+        cfg.cloud_providers = vec![lmstudio_entry("http://localhost:1234/v1")];
+
+        let got = OpenAiCompatEmbedder::try_from_config(&cfg).expect("no error");
+        let e = got.expect("configured lmstudio slug must build an adapter, not fall through");
+        assert_eq!(e.name(), "custom");
+    }
+
+    /// The `slug:model` form (mirroring the top-level
+    /// `embeddings_provider = "lmstudio:bge-m3"` shape) also resolves, taking the
+    /// model from the inline suffix when `embedding_model` is unset.
+    #[test]
+    fn some_for_lmstudio_slug_with_inline_model() {
+        let (_tmp, mut cfg) = cfg_with_provider("lmstudio:bge-m3");
+        cfg.memory.embedding_model = String::new(); // force inline-suffix fallback
+        cfg.cloud_providers = vec![lmstudio_entry("http://localhost:1234/v1")];
+
+        let got = OpenAiCompatEmbedder::try_from_config(&cfg).expect("no error");
+        let e = got.expect("lmstudio:model slug must resolve");
+        assert_eq!(e.name(), "custom");
+    }
+
+    /// A custom slug with no matching `cloud_providers` entry must fall through
+    /// (Ok(None)) so the caller's ladder continues to the managed default —
+    /// rather than erroring or hijacking the resolution.
+    #[test]
+    fn none_for_unconfigured_custom_slug() {
+        let (_tmp, cfg) = cfg_with_provider("lmstudio"); // no cloud_providers entry
+        let got = OpenAiCompatEmbedder::try_from_config(&cfg).expect("no error");
+        assert!(
+            got.is_none(),
+            "unconfigured slug should fall through, not build an adapter"
+        );
+    }
+
+    /// An entry that exists but has a blank endpoint is unusable → fall through.
+    #[test]
+    fn none_for_configured_slug_with_blank_endpoint() {
+        let (_tmp, mut cfg) = cfg_with_provider("lmstudio");
+        cfg.cloud_providers = vec![lmstudio_entry("   ")];
+        let got = OpenAiCompatEmbedder::try_from_config(&cfg).expect("no error");
+        assert!(got.is_none(), "blank endpoint should fall through");
+    }
+
+    /// Reserved/managed/native slugs must keep falling through even if a stray
+    /// `cloud_providers` entry exists for them — they are owned by other ladder
+    /// branches, not the OpenAI-compatible adapter.
+    #[test]
+    fn reserved_slugs_still_fall_through() {
+        use crate::openhuman::config::schema::cloud_providers::CloudProviderCreds;
+        for p in ["managed", "cloud", "voyage", "cohere", "ollama", "none"] {
+            let (_tmp, mut cfg) = cfg_with_provider(p);
+            cfg.cloud_providers = vec![CloudProviderCreds {
+                id: format!("p_{p}"),
+                slug: p.to_string(),
+                endpoint: "http://localhost:1234/v1".to_string(),
+                ..Default::default()
+            }];
+            let got = OpenAiCompatEmbedder::try_from_config(&cfg).expect("no error");
+            assert!(got.is_none(), "{p} must fall through, got Some");
+        }
+    }
+
+    /// Codex review on #4056: a custom config whose stored dimension isn't the
+    /// tree's fixed [`EMBEDDING_DIM`] (and whose model can't reduce to it via the
+    /// OpenAI `dimensions` param) must be refused at construction with a clear,
+    /// actionable error — not built and then failed at the first embed with a raw
+    /// "expected 1024, got N". This is what keeps an auto-detected non-1024 custom
+    /// endpoint (which the embeddings RPC still accepts) out of the 1024-only tree.
+    #[test]
+    fn err_for_non_reducible_model_with_incompatible_dimension() {
+        let (_tmp, mut cfg) = cfg_with_provider("custom:https://embed.example/v1");
+        cfg.memory.embedding_model = "nomic-embed-text".to_string(); // not text-embedding-3-*
+        cfg.memory.embedding_dimensions = 768; // != EMBEDDING_DIM (1024)
+                                               // `expect_err` would require the Ok type (the embedder) to impl Debug,
+                                               // which it can't (boxed trait object) — match instead.
+        let err = match OpenAiCompatEmbedder::try_from_config(&cfg) {
+            Err(e) => e,
+            Ok(_) => panic!("768 != tree dim must error, got Ok"),
+        };
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("768") && msg.contains(&EMBEDDING_DIM.to_string()),
+            "error must name both the model's dim and the required dim: {msg}"
+        );
+    }
+
+    /// A non-reducible model that natively matches [`EMBEDDING_DIM`] still builds —
+    /// only an incompatible dimension is refused.
+    #[test]
+    fn some_for_non_reducible_model_at_tree_dimension() {
+        let (_tmp, mut cfg) = cfg_with_provider("custom:https://embed.example/v1");
+        cfg.memory.embedding_model = "mxbai-embed-large".to_string();
+        cfg.memory.embedding_dimensions = EMBEDDING_DIM; // 1024
+        let got = OpenAiCompatEmbedder::try_from_config(&cfg).expect("no error");
+        assert!(
+            got.is_some(),
+            "a 1024-native custom model must build the tree adapter"
+        );
+    }
+
+    /// `text-embedding-3-*` is exempt from the dimension guard: the adapter
+    /// requests `EMBEDDING_DIM` and the server reduces to it, so even a config
+    /// stored at a different dimension still builds.
+    #[test]
+    fn some_for_reducible_model_regardless_of_stored_dimension() {
+        let (_tmp, mut cfg) = cfg_with_provider("openai");
+        cfg.memory.embedding_model = "text-embedding-3-large".to_string();
+        cfg.memory.embedding_dimensions = 256; // reducible — tree still requests 1024
+        let got = OpenAiCompatEmbedder::try_from_config(&cfg).expect("no error");
+        assert!(
+            got.is_some(),
+            "reducible model must build regardless of stored dim"
+        );
     }
 }

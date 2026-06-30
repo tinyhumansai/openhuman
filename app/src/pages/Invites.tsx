@@ -1,6 +1,7 @@
 import debugFactory from 'debug';
 import { useEffect, useRef, useState } from 'react';
 
+import Button from '../components/ui/Button';
 import { useUser } from '../hooks/useUser';
 import { useT } from '../lib/i18n/I18nContext';
 import { inviteApi } from '../services/api/inviteApi';
@@ -27,18 +28,18 @@ const CodeRow = ({ invite }: { invite: InviteCode }) => {
     : claimedUser?.firstName || 'Someone';
 
   return (
-    <div className="flex items-center justify-between py-3 px-4 rounded-xl bg-white/5 hover:bg-white/[0.07] transition-colors">
+    <div className="flex items-center justify-between py-3 px-4 rounded-xl bg-surface/5 hover:bg-white/[0.07] transition-colors">
       <div className="flex-1 min-w-0">
         <span className="font-mono text-sm tracking-wider">{invite.code}</span>
         {claimed && (
-          <p className="text-xs text-stone-500 mt-0.5">
+          <p className="text-xs text-content-muted mt-0.5">
             {t('rewards.credits')} {displayName}
           </p>
         )}
       </div>
       <div className="flex items-center gap-2 ml-3">
         {claimed ? (
-          <span className="text-xs px-2 py-1 rounded-full bg-stone-700/50 text-stone-400">
+          <span className="text-xs px-2 py-1 rounded-full bg-stone-700/50 text-content-faint">
             {t('common.disabled')}
           </span>
         ) : (
@@ -46,9 +47,12 @@ const CodeRow = ({ invite }: { invite: InviteCode }) => {
             {t('common.enabled')}
           </span>
         )}
-        <button
+        <Button
+          iconOnly
+          variant="tertiary"
+          size="sm"
           onClick={handleCopy}
-          className="p-1.5 rounded-lg hover:bg-white/10 transition-colors text-stone-400 hover:text-stone-200"
+          aria-label={t('common.copy')}
           title={t('common.copy')}>
           {copied ? (
             <svg
@@ -73,7 +77,7 @@ const CodeRow = ({ invite }: { invite: InviteCode }) => {
               />
             </svg>
           )}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -160,7 +164,7 @@ const Invites = () => {
           <div className="space-y-4">
             {/* Redeem Section — shown only if user hasn't redeemed yet */}
             {!hasBeenInvited && (
-              <div className="bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 p-6 animate-fade-up">
+              <div className="bg-surface rounded-2xl shadow-soft border border-line p-6 animate-fade-up">
                 <h2 className="text-lg font-bold mb-1">{t('rewards.referralCode')}</h2>
                 <p className="text-xs opacity-70 mb-4">{t('rewards.share')}</p>
                 <div className="flex gap-2">
@@ -170,15 +174,16 @@ const Invites = () => {
                     onChange={e => setRedeemInput(e.target.value.toUpperCase())}
                     onKeyDown={e => e.key === 'Enter' && handleRedeem()}
                     placeholder={t('common.search')}
-                    className="flex-1 px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl font-mono text-sm tracking-wider placeholder:text-stone-500 placeholder:tracking-normal placeholder:font-sans focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 transition-all"
+                    className="flex-1 px-4 py-2.5 bg-surface/5 border border-white/10 rounded-xl font-mono text-sm tracking-wider placeholder:text-stone-500 placeholder:tracking-normal placeholder:font-sans focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 transition-all"
                     disabled={redeemStatus === 'loading'}
                   />
-                  <button
+                  <Button
+                    variant="primary"
                     onClick={handleRedeem}
                     disabled={redeemStatus === 'loading' || !redeemInput.trim()}
-                    className="btn-primary px-5 py-2.5 text-sm font-medium rounded-xl disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap">
+                    className="whitespace-nowrap">
                     {redeemStatus === 'loading' ? '...' : t('rewards.referrals')}
-                  </button>
+                  </Button>
                 </div>
                 {redeemStatus === 'success' && (
                   <p className="text-sage-500 text-xs mt-2">{t('common.success')}</p>
@@ -190,7 +195,7 @@ const Invites = () => {
             )}
 
             {/* Your Invite Codes */}
-            <div className="bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 p-6 animate-fade-up">
+            <div className="bg-surface rounded-2xl shadow-soft border border-line p-6 animate-fade-up">
               <div className="mb-4">
                 <h2 className="text-lg font-bold mb-1">{t('rewards.referralCode')}</h2>
                 <p className="text-xs opacity-70">{t('rewards.share')}</p>
@@ -201,7 +206,7 @@ const Invites = () => {
               {isLoading ? (
                 <div className="space-y-3">
                   {Array.from({ length: 5 }).map((_, i) => (
-                    <div key={i} className="h-12 bg-white/5 rounded-xl animate-pulse" />
+                    <div key={i} className="h-12 bg-surface/5 rounded-xl animate-pulse" />
                   ))}
                 </div>
               ) : codes.length > 0 ? (
@@ -211,7 +216,7 @@ const Invites = () => {
                   ))}
                 </div>
               ) : (
-                <p className="text-sm text-stone-500 dark:text-neutral-400 text-center py-6">
+                <p className="text-sm text-content-muted text-center py-6">
                   {t('invites.noInvites')}
                 </p>
               )}

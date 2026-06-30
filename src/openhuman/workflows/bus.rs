@@ -277,8 +277,8 @@ mod tests {
 
     // ── ensure_triggered_workflow_subscriber (C1 boot-path helper) ───────────
 
-    #[test]
-    fn ensure_triggered_workflow_subscriber_is_idempotent_and_safe() {
+    #[tokio::test]
+    async fn ensure_triggered_workflow_subscriber_is_idempotent_and_safe() {
         // Covers the boot-path helper called from both `start_channels` and
         // `bootstrap_core_runtime`: it loads workflow metadata from the
         // workspace and registers the subscriber exactly once via the
@@ -286,6 +286,12 @@ mod tests {
         // workflows, so registration resolves to `None`; the call must not
         // panic and must be safe to repeat (the OnceLock makes the second call
         // a no-op).
+        //
+        // Runs under a tokio runtime (like the real async boot paths): the
+        // process-global OnceLock means whichever test initializes it first runs
+        // the registration closure, and if leaked global workspace state makes
+        // `load_workflow_metadata` find workflows, `subscribe_global` will
+        // `tokio::spawn` the subscriber task — which panics without a runtime.
         let tmp = tempfile::tempdir().expect("tempdir");
         ensure_triggered_workflow_subscriber(tmp.path());
         ensure_triggered_workflow_subscriber(tmp.path());

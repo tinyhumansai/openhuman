@@ -71,12 +71,12 @@ const ConnectionPathTab = () => {
   return (
     <div className="space-y-4">
       {namespaces.length > 0 && (
-        <label className="flex items-center gap-2 text-xs text-stone-600 dark:text-neutral-300">
+        <label className="flex items-center gap-2 text-xs text-content-secondary">
           {t('connectionPath.namespaceLabel')}
           <select
             value={namespace}
             onChange={e => handleNamespace(e.target.value)}
-            className="rounded-lg border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm text-stone-800 dark:text-neutral-100">
+            className="rounded-lg border border-line bg-surface px-2 py-1 text-sm text-content">
             <option value="">{t('connectionPath.namespaceAll')}</option>
             {namespaces.map(ns => (
               <option key={ns} value={ns}>
@@ -88,7 +88,7 @@ const ConnectionPathTab = () => {
       )}
 
       <div className="flex flex-wrap gap-3">
-        <label className="flex flex-1 min-w-[10rem] flex-col gap-1 text-xs text-stone-600 dark:text-neutral-300">
+        <label className="flex flex-1 min-w-[10rem] flex-col gap-1 text-xs text-content-secondary">
           {t('connectionPath.sourceLabel')}
           <input
             type="text"
@@ -96,10 +96,10 @@ const ConnectionPathTab = () => {
             value={source}
             onChange={e => setSource(e.target.value)}
             placeholder={t('connectionPath.sourcePlaceholder')}
-            className="rounded-lg border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1.5 text-sm text-stone-800 dark:text-neutral-100"
+            className="rounded-lg border border-line bg-surface px-2 py-1.5 text-sm text-content"
           />
         </label>
-        <label className="flex flex-1 min-w-[10rem] flex-col gap-1 text-xs text-stone-600 dark:text-neutral-300">
+        <label className="flex flex-1 min-w-[10rem] flex-col gap-1 text-xs text-content-secondary">
           {t('connectionPath.targetLabel')}
           <input
             type="text"
@@ -107,7 +107,7 @@ const ConnectionPathTab = () => {
             value={target}
             onChange={e => setTarget(e.target.value)}
             placeholder={t('connectionPath.targetPlaceholder')}
-            className="rounded-lg border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1.5 text-sm text-stone-800 dark:text-neutral-100"
+            className="rounded-lg border border-line bg-surface px-2 py-1.5 text-sm text-content"
           />
         </label>
         <datalist id={ENTITY_LIST_ID}>

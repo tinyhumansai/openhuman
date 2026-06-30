@@ -55,7 +55,10 @@ pub use session_memory::{
     SessionMemoryConfig, SessionMemoryState, ARCHIVIST_EXTRACTION_PROMPT, DEFAULT_MIN_TOKEN_GROWTH,
     DEFAULT_MIN_TOOL_CALLS, DEFAULT_MIN_TURNS_BETWEEN,
 };
-pub use summarizer::{ProviderSummarizer, Summarizer, SummaryStats};
+pub use summarizer::{
+    summarize_chat_history, EngineAutocompact, ProviderSummarizer, Summarizer, SummaryStats,
+    DEFAULT_KEEP_RECENT, DEFAULT_SUMMARIZER_TEMPERATURE,
+};
 pub use tool_result_budget::{
     apply_tool_result_budget, BudgetOutcome, DEFAULT_TOOL_RESULT_BUDGET_BYTES,
 };

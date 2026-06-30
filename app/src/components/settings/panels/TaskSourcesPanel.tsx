@@ -18,7 +18,6 @@ import {
   type TaskSourcesStatus,
 } from '../../../utils/tauriCommands';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
 import {
   SettingsBadge,
   SettingsCheckbox,
@@ -29,7 +28,7 @@ import {
   SettingsStatusLine,
   SettingsTextField,
 } from '../controls';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 
 const PROVIDERS: TaskSourceProvider[] = ['github', 'notion', 'linear', 'clickup'];
 
@@ -111,7 +110,6 @@ interface TaskSourcesPanelProps {
 
 const TaskSourcesPanel = ({ embedded = false }: TaskSourcesPanelProps) => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -331,274 +329,269 @@ const TaskSourcesPanel = ({ embedded = false }: TaskSourcesPanelProps) => {
     }
   };
 
-  return (
-    <div className="z-10 relative" data-testid="task-sources-panel">
-      {!embedded && (
-        <SettingsHeader
-          title={t('settings.taskSources.title')}
-          showBackButton={true}
-          onBack={navigateBack}
-          breadcrumbs={breadcrumbs}
-        />
+  const body = (
+    <>
+      <div className="space-y-1">
+        <p className="text-xs text-content-muted">{t('settings.taskSources.description')}</p>
+        <p className="text-xs text-content-faint">{t('settings.taskSources.connectHint')}</p>
+      </div>
+
+      {status && !status.enabled && (
+        <div className="rounded-lg border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
+          {t('settings.taskSources.disabledBanner')}
+        </div>
       )}
 
-      <div className="p-4 pt-2 space-y-5">
-        <div className="space-y-1">
-          <p className="text-xs text-neutral-500 dark:text-neutral-400">
-            {t('settings.taskSources.description')}
-          </p>
-          <p className="text-xs text-neutral-400 dark:text-neutral-500">
-            {t('settings.taskSources.connectHint')}
-          </p>
-        </div>
+      <SettingsStatusLine saving={false} savedNote={notice} error={error} savingLabel="" />
 
-        {status && !status.enabled && (
-          <div className="rounded-lg border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
-            {t('settings.taskSources.disabledBanner')}
-          </div>
+      {/* ── Add a source ─────────────────────────────────────────── */}
+      <SettingsSection title={t('settings.taskSources.addTitle')}>
+        <SettingsRow
+          label={t('settings.taskSources.provider')}
+          htmlFor="task-source-provider"
+          stacked
+          control={
+            <SettingsSelect
+              id="task-source-provider"
+              value={provider}
+              onChange={e => setProvider(e.target.value as TaskSourceProvider)}
+              className="w-full">
+              {PROVIDERS.map(p => (
+                <option key={p} value={p}>
+                  {providerLabel(p, t)}
+                </option>
+              ))}
+            </SettingsSelect>
+          }
+        />
+
+        <SettingsRow
+          label={t('settings.taskSources.name')}
+          htmlFor="task-source-name"
+          stacked
+          control={
+            <SettingsTextField
+              id="task-source-name"
+              type="text"
+              placeholder={t('settings.taskSources.namePlaceholder')}
+              value={name}
+              onChange={e => setName(e.target.value)}
+              aria-label={t('settings.taskSources.name')}
+            />
+          }
+        />
+
+        <SettingsRow
+          label={primaryLabel}
+          htmlFor="task-source-primary"
+          stacked
+          control={
+            <SettingsTextField
+              id="task-source-primary"
+              type="text"
+              value={primary}
+              onChange={e => setPrimary(e.target.value)}
+              aria-label={primaryLabel}
+            />
+          }
+        />
+
+        {provider === 'notion' && (
+          <SettingsRow
+            stacked
+            control={
+              <div className="space-y-1">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="xs"
+                  disabled={busyKey !== null}
+                  onClick={() => void browseDatabases()}>
+                  {busyKey === 'databases'
+                    ? t('settings.taskSources.notion.loadingDatabases')
+                    : t('settings.taskSources.notion.browseDatabases')}
+                </Button>
+                {databases.length > 0 && (
+                  <SettingsSelect
+                    value={primary}
+                    onChange={e => setPrimary(e.target.value)}
+                    className="w-full mt-1">
+                    <option value="">{t('settings.taskSources.notion.selectDatabase')}</option>
+                    {databases.map(db => (
+                      <option key={db.id} value={db.id}>
+                        {db.title}
+                      </option>
+                    ))}
+                  </SettingsSelect>
+                )}
+              </div>
+            }
+          />
         )}
 
-        <SettingsStatusLine saving={false} savedNote={notice} error={error} savingLabel="" />
-
-        {/* ── Add a source ─────────────────────────────────────────── */}
-        <SettingsSection title={t('settings.taskSources.addTitle')}>
+        {provider === 'github' && (
           <SettingsRow
-            label={t('settings.taskSources.provider')}
-            htmlFor="task-source-provider"
-            stacked
-            control={
-              <SettingsSelect
-                id="task-source-provider"
-                value={provider}
-                onChange={e => setProvider(e.target.value as TaskSourceProvider)}
-                className="w-full">
-                {PROVIDERS.map(p => (
-                  <option key={p} value={p}>
-                    {providerLabel(p, t)}
-                  </option>
-                ))}
-              </SettingsSelect>
-            }
-          />
-
-          <SettingsRow
-            label={t('settings.taskSources.name')}
-            htmlFor="task-source-name"
+            label={t('settings.taskSources.github.labels')}
+            htmlFor="task-source-labels"
             stacked
             control={
               <SettingsTextField
-                id="task-source-name"
+                id="task-source-labels"
                 type="text"
-                placeholder={t('settings.taskSources.namePlaceholder')}
-                value={name}
-                onChange={e => setName(e.target.value)}
-                aria-label={t('settings.taskSources.name')}
+                value={labels}
+                onChange={e => setLabels(e.target.value)}
+                aria-label={t('settings.taskSources.github.labels')}
               />
             }
           />
+        )}
 
-          <SettingsRow
-            label={primaryLabel}
-            htmlFor="task-source-primary"
-            stacked
-            control={
-              <SettingsTextField
-                id="task-source-primary"
-                type="text"
-                value={primary}
-                onChange={e => setPrimary(e.target.value)}
-                aria-label={primaryLabel}
-              />
-            }
-          />
+        <SettingsRow
+          htmlFor="task-source-assigned"
+          label={t('settings.taskSources.assignedToMe')}
+          control={
+            <SettingsCheckbox
+              id="task-source-assigned"
+              checked={assignedToMe}
+              onCheckedChange={next => setAssignedToMe(next)}
+              aria-label={t('settings.taskSources.assignedToMe')}
+            />
+          }
+        />
 
-          {provider === 'notion' && (
-            <SettingsRow
-              stacked
-              control={
-                <div className="space-y-1">
+        <div className="flex gap-2 px-4 py-3 border-t border-line-subtle">
+          <Button
+            type="button"
+            variant="primary"
+            size="xs"
+            disabled={busyKey !== null}
+            onClick={() => void addSource()}>
+            {busyKey === 'add' ? t('settings.taskSources.adding') : t('settings.taskSources.add')}
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            size="xs"
+            disabled={busyKey !== null}
+            onClick={() => void previewFilter()}>
+            {t('settings.taskSources.preview')}
+          </Button>
+        </div>
+      </SettingsSection>
+
+      {/* ── Configured sources ───────────────────────────────────── */}
+      <SettingsSection title={t('settings.taskSources.configured')}>
+        <div className="px-4 py-3 border-b border-line-subtle">
+          <Button
+            type="button"
+            variant="secondary"
+            size="xs"
+            disabled={loading || busyKey !== null || sources.length === 0}
+            onClick={() => void syncAll()}>
+            {busyKey === 'sync'
+              ? t('settings.taskSources.syncing')
+              : t('settings.taskSources.syncAll')}
+          </Button>
+        </div>
+
+        {loading ? (
+          <div className="px-4 py-3">
+            <p className="text-sm text-content-faint">{t('common.loading')}</p>
+          </div>
+        ) : sources.length === 0 ? (
+          <SettingsEmptyState label={t('settings.taskSources.empty')} />
+        ) : (
+          <ul className="divide-y divide-line-subtle dark:divide-neutral-800">
+            {sources.map(source => (
+              <li
+                key={source.id}
+                className="p-3 space-y-2"
+                data-testid={`task-source-${source.id}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-medium text-content">
+                      {source.name || providerLabel(source.provider, t)}
+                    </p>
+                    <p className="text-xs text-content-faint">
+                      {providerLabel(source.provider, t)}
+                      {source.target === 'agent_todo_proactive'
+                        ? ` · ${t('settings.taskSources.proactive')}`
+                        : ''}
+                    </p>
+                    <p className="text-xs text-content-faint">
+                      {t('settings.taskSources.lastFetch')}:{' '}
+                      {source.lastFetchAt
+                        ? new Date(source.lastFetchAt).toLocaleString()
+                        : t('settings.taskSources.never')}
+                    </p>
+                  </div>
+                  <SettingsBadge variant={source.enabled ? 'success' : 'neutral'}>
+                    {source.enabled
+                      ? t('settings.taskSources.statusEnabled')
+                      : t('settings.taskSources.statusDisabled')}
+                  </SettingsBadge>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"
                     variant="secondary"
                     size="xs"
                     disabled={busyKey !== null}
-                    onClick={() => void browseDatabases()}>
-                    {busyKey === 'databases'
-                      ? t('settings.taskSources.notion.loadingDatabases')
-                      : t('settings.taskSources.notion.browseDatabases')}
+                    onClick={() => void toggleSource(source)}>
+                    {source.enabled
+                      ? t('settings.taskSources.disable')
+                      : t('settings.taskSources.enable')}
                   </Button>
-                  {databases.length > 0 && (
-                    <SettingsSelect
-                      value={primary}
-                      onChange={e => setPrimary(e.target.value)}
-                      className="w-full mt-1">
-                      <option value="">{t('settings.taskSources.notion.selectDatabase')}</option>
-                      {databases.map(db => (
-                        <option key={db.id} value={db.id}>
-                          {db.title}
-                        </option>
-                      ))}
-                    </SettingsSelect>
-                  )}
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="xs"
+                    disabled={busyKey !== null}
+                    onClick={() => void fetchNow(source)}>
+                    {busyKey === `fetch:${source.id}`
+                      ? t('settings.taskSources.fetching')
+                      : t('settings.taskSources.fetchNow')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    tone="danger"
+                    size="xs"
+                    disabled={busyKey !== null}
+                    onClick={() => void removeSource(source)}>
+                    {t('settings.taskSources.remove')}
+                  </Button>
                 </div>
-              }
-            />
-          )}
+              </li>
+            ))}
+          </ul>
+        )}
 
-          {provider === 'github' && (
-            <SettingsRow
-              label={t('settings.taskSources.github.labels')}
-              htmlFor="task-source-labels"
-              stacked
-              control={
-                <SettingsTextField
-                  id="task-source-labels"
-                  type="text"
-                  value={labels}
-                  onChange={e => setLabels(e.target.value)}
-                  aria-label={t('settings.taskSources.github.labels')}
-                />
-              }
-            />
-          )}
-
-          <SettingsRow
-            htmlFor="task-source-assigned"
-            label={t('settings.taskSources.assignedToMe')}
-            control={
-              <SettingsCheckbox
-                id="task-source-assigned"
-                checked={assignedToMe}
-                onCheckedChange={next => setAssignedToMe(next)}
-                aria-label={t('settings.taskSources.assignedToMe')}
-              />
-            }
-          />
-
-          <div className="flex gap-2 px-4 py-3 border-t border-neutral-100 dark:border-neutral-800">
-            <Button
-              type="button"
-              variant="primary"
-              size="xs"
-              disabled={busyKey !== null}
-              onClick={() => void addSource()}>
-              {busyKey === 'add' ? t('settings.taskSources.adding') : t('settings.taskSources.add')}
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              size="xs"
-              disabled={busyKey !== null}
-              onClick={() => void previewFilter()}>
-              {t('settings.taskSources.preview')}
-            </Button>
-          </div>
-        </SettingsSection>
-
-        {/* ── Configured sources ───────────────────────────────────── */}
-        <SettingsSection title={t('settings.taskSources.configured')}>
-          <div className="px-4 py-3 border-b border-neutral-100 dark:border-neutral-800">
-            <Button
-              type="button"
-              variant="secondary"
-              size="xs"
-              disabled={loading || busyKey !== null || sources.length === 0}
-              onClick={() => void syncAll()}>
-              {busyKey === 'sync'
-                ? t('settings.taskSources.syncing')
-                : t('settings.taskSources.syncAll')}
-            </Button>
-          </div>
-
-          {loading ? (
-            <div className="px-4 py-3">
-              <p className="text-sm text-neutral-400 dark:text-neutral-500">
-                {t('common.loading')}
-              </p>
-            </div>
-          ) : sources.length === 0 ? (
-            <SettingsEmptyState label={t('settings.taskSources.empty')} />
-          ) : (
-            <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
-              {sources.map(source => (
-                <li
-                  key={source.id}
-                  className="p-3 space-y-2"
-                  data-testid={`task-source-${source.id}`}>
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">
-                        {source.name || providerLabel(source.provider, t)}
-                      </p>
-                      <p className="text-xs text-neutral-400 dark:text-neutral-500">
-                        {providerLabel(source.provider, t)}
-                        {source.target === 'agent_todo_proactive'
-                          ? ` · ${t('settings.taskSources.proactive')}`
-                          : ''}
-                      </p>
-                      <p className="text-xs text-neutral-400 dark:text-neutral-500">
-                        {t('settings.taskSources.lastFetch')}:{' '}
-                        {source.lastFetchAt
-                          ? new Date(source.lastFetchAt).toLocaleString()
-                          : t('settings.taskSources.never')}
-                      </p>
-                    </div>
-                    <SettingsBadge variant={source.enabled ? 'success' : 'neutral'}>
-                      {source.enabled
-                        ? t('settings.taskSources.statusEnabled')
-                        : t('settings.taskSources.statusDisabled')}
-                    </SettingsBadge>
-                  </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="xs"
-                      disabled={busyKey !== null}
-                      onClick={() => void toggleSource(source)}>
-                      {source.enabled
-                        ? t('settings.taskSources.disable')
-                        : t('settings.taskSources.enable')}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="xs"
-                      disabled={busyKey !== null}
-                      onClick={() => void fetchNow(source)}>
-                      {busyKey === `fetch:${source.id}`
-                        ? t('settings.taskSources.fetching')
-                        : t('settings.taskSources.fetchNow')}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="danger"
-                      size="xs"
-                      disabled={busyKey !== null}
-                      onClick={() => void removeSource(source)}>
-                      {t('settings.taskSources.remove')}
-                    </Button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          <div className="px-4 py-3 border-t border-neutral-100 dark:border-neutral-800">
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              disabled={loading || busyKey !== null}
-              onClick={() => void load()}>
-              {t('settings.taskSources.refresh')}
-            </Button>
-          </div>
-        </SettingsSection>
-      </div>
-    </div>
+        <div className="px-4 py-3 border-t border-line-subtle">
+          <Button
+            type="button"
+            variant="tertiary"
+            size="xs"
+            disabled={loading || busyKey !== null}
+            onClick={() => void load()}>
+            {t('settings.taskSources.refresh')}
+          </Button>
+        </div>
+      </SettingsSection>
+    </>
   );
+
+  // Embedded inside the tabbed Integrations page: the parent owns the header,
+  // so render just the padded body.
+  if (embedded)
+    return (
+      <div className="p-4 pt-2 space-y-5" data-testid="task-sources-panel">
+        {body}
+      </div>
+    );
+
+  return <SettingsPanel testId="task-sources-panel">{body}</SettingsPanel>;
 };
 
 export default TaskSourcesPanel;

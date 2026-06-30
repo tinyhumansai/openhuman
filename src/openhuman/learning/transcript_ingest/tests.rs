@@ -170,7 +170,11 @@ impl Memory for InMemory {
 fn fake_meta(thread_id: Option<&str>) -> TranscriptMeta {
     TranscriptMeta {
         agent_name: "main".into(),
+        agent_id: None,
+        agent_type: None,
         dispatcher: "native".into(),
+        provider: None,
+        model: None,
         created: "2026-05-09T11:00:00Z".into(),
         updated: "2026-05-09T12:00:00Z".into(),
         turn_count: 4,
@@ -179,6 +183,7 @@ fn fake_meta(thread_id: Option<&str>) -> TranscriptMeta {
         cached_input_tokens: 0,
         charged_amount_usd: 0.0,
         thread_id: thread_id.map(|s| s.into()),
+        task_id: None,
     }
 }
 

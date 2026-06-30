@@ -12,6 +12,7 @@ import {
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import type { ChannelConnectionStatus, ChannelDefinition } from '../../types/channels';
 import { restartCoreProcess } from '../../utils/tauriCommands/core';
+import Button from '../ui/Button';
 import ChannelFieldInput from './ChannelFieldInput';
 import ChannelStatusBadge from './ChannelStatusBadge';
 
@@ -216,13 +217,13 @@ const YuanbaoConfig = ({ definition }: YuanbaoConfigProps) => {
 
   return (
     <div className="space-y-3">
-      <div className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3">
+      <div className="rounded-lg border border-line bg-surface-muted p-3">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+            <p className="text-sm font-medium text-content">
               {AUTH_MODE_LABELS[spec.mode] ?? spec.mode}
             </p>
-            <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1">{spec.description}</p>
+            <p className="text-xs text-content-muted mt-1">{spec.description}</p>
             {connection?.lastError && (
               <p className="text-xs text-coral-600 mt-1">{connection.lastError}</p>
             )}
@@ -253,45 +254,47 @@ const YuanbaoConfig = ({ definition }: YuanbaoConfigProps) => {
         )}
 
         <div className="mt-3 flex gap-2">
-          <button
-            type="button"
+          <Button
+            variant="primary"
+            size="sm"
             disabled={busy}
             onClick={handleConnect}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50">
-            {busy && (
-              <svg
-                className="h-3 w-3 animate-spin"
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24">
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                />
-              </svg>
-            )}
+            leadingIcon={
+              busy ? (
+                <svg
+                  className="h-3 w-3 animate-spin"
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24">
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                  />
+                </svg>
+              ) : undefined
+            }>
             {busy
               ? t('channels.yuanbao.connecting')
               : status === 'connected'
                 ? t('channels.yuanbao.reconnect')
                 : t('channels.yuanbao.connect')}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
             disabled={busy || status === 'disconnected'}
-            onClick={handleDisconnect}
-            className="rounded-lg border border-stone-200 dark:border-neutral-800 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-700 disabled:opacity-50">
+            onClick={handleDisconnect}>
             {t('accounts.disconnect')}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

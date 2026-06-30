@@ -10,7 +10,7 @@ export const STATUS_STYLES: Record<ChannelConnectionStatus, { label: string; cla
     },
     disconnected: {
       label: 'Disconnected',
-      className: 'bg-stone-100 text-stone-500 border-stone-200',
+      className: 'bg-surface-subtle text-content-muted border-line',
     },
     error: { label: 'Error', className: 'bg-coral-500/10 text-coral-700 border-coral-500/30' },
   };
@@ -49,6 +49,13 @@ export const FALLBACK_DEFINITIONS: ChannelDefinition[] = [
             placeholder: '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11',
           },
           {
+            key: 'chat_id',
+            label: 'Chat ID',
+            field_type: 'string',
+            required: false,
+            placeholder: 'Optional: default chat for outbound messages',
+          },
+          {
             key: 'allowed_users',
             label: 'Allowed Users',
             field_type: 'string',
@@ -84,6 +91,20 @@ export const FALLBACK_DEFINITIONS: ChannelDefinition[] = [
             field_type: 'string',
             required: false,
             placeholder: 'Optional: restrict to a specific server',
+          },
+          {
+            key: 'channel_id',
+            label: 'Channel ID',
+            field_type: 'string',
+            required: false,
+            placeholder: 'Optional: default channel for outbound messages',
+          },
+          {
+            key: 'allowed_users',
+            label: 'Allowed Users',
+            field_type: 'string',
+            required: false,
+            placeholder: 'Comma-separated Discord user IDs, or * for everyone (blank = everyone)',
           },
         ],
         auth_action: undefined,

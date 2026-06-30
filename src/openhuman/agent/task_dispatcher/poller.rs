@@ -193,17 +193,26 @@ pub(super) fn pick_next_todo(
 
 /// Whether a card must be parked at `awaiting_approval` before it can run.
 ///
-/// The global `require_task_plan_approval` setting applies *unless* the card is
-/// explicitly marked `approval_mode = NotRequired` — a per-card opt-out for
-/// tasks that have already cleared human review (e.g. approved out of the
-/// `task-sources` inbox onto `user-tasks`). Per-card opt-out wins over the
-/// global default; without this, an already-approved card would be re-parked
-/// and stranded.
+/// Per-card `approval_mode` is authoritative when set; the global
+/// `require_task_plan_approval` setting is only the fallback for cards with no
+/// explicit preference:
+/// - `Required` → always park, **even when the global default is off**. The
+///   interactive plan-review gate (WebChat turns, see
+///   [`crate::openhuman::agent::tools::todo`]) stamps `Required`, and that
+///   review must hold regardless of the global switch — otherwise an
+///   interactive plan would execute before the user ever sees the review card.
+/// - `NotRequired` → never park (already cleared human review, e.g. approved
+///   out of the `task-sources` inbox onto `user-tasks`).
+/// - unset → fall back to the global default.
 pub(super) fn requires_plan_approval(
     global_required: bool,
     approval_mode: Option<&TaskApprovalMode>,
 ) -> bool {
-    global_required && approval_mode != Some(&TaskApprovalMode::NotRequired)
+    match approval_mode {
+        Some(TaskApprovalMode::Required) => true,
+        Some(TaskApprovalMode::NotRequired) => false,
+        None => global_required,
+    }
 }
 
 pub(super) fn card_urgency(card: &TaskBoardCard) -> f64 {

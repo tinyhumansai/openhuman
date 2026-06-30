@@ -268,6 +268,27 @@ describe('runBootCheck — port conflict auto-recovery', () => {
     }
   });
 
+  it('threads the foreign owner through when recovery identifies one', async () => {
+    const transport: BootCheckTransport = {
+      callRpc: vi.fn(),
+      invokeCmd: vi.fn().mockRejectedValue(new Error('port in use')),
+      recoverPortConflict: vi
+        .fn()
+        .mockResolvedValue({
+          success: false,
+          message: 'port still busy',
+          foreign_owner: { pid: 4242, name: 'Skype.exe' },
+        }),
+    };
+
+    const result = await runBootCheck({ kind: 'local' }, transport);
+    expect(result.kind).toBe('unreachable');
+    if (result.kind === 'unreachable') {
+      expect(result.portConflict).toBe(true);
+      expect(result.foreignOwner).toEqual({ pid: 4242, name: 'Skype.exe' });
+    }
+  });
+
   it('clears RPC URL cache and retries waitForCore on timeout', async () => {
     const appVersion = (await import('../../utils/config')).APP_VERSION;
 

@@ -1,6 +1,6 @@
 use super::{
-    flatten_authed_error, key_bytes_from_string, parse_message_path, sanitize_client_version,
-    BackendApiError, BackendOAuthClient,
+    backend_api_body_shape, flatten_authed_error, key_bytes_from_string, parse_message_path,
+    sanitize_client_version, BackendApiError, BackendOAuthClient, BACKEND_API_BODY_SHAPE_MAX_BYTES,
 };
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -170,7 +170,7 @@ async fn spawn_header_capture_server() -> (String, CapturedHeaders) {
         captured.push(&headers);
         Json(json!({
             "success": true,
-            "data": { "jwtToken": "mock-jwt-token" }
+            "data": { "jwt": "mock-jwt-token" }
         }))
     }
 
@@ -184,10 +184,7 @@ async fn spawn_header_capture_server() -> (String, CapturedHeaders) {
 
     let captured = CapturedHeaders::default();
     let app = Router::new()
-        .route(
-            "/telegram/login-tokens/{token}/consume",
-            post(capture_consume),
-        )
+        .route("/auth/login-token/consume", post(capture_consume))
         .route("/probe", get(capture_probe))
         .with_state(captured.clone());
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -416,6 +413,111 @@ async fn authed_json_surfaces_unauthorized_on_401() {
     };
     assert_eq!(method, "GET");
     assert_eq!(path, "/referral/stats");
+}
+
+#[test]
+fn backend_api_body_shape_emits_safe_keys_not_values() {
+    // PII guard (Codex P1 on #4058): the body SHAPE must expose only schema-like
+    // top-level key NAMES and NEVER the values — a non-2xx body can carry emails /
+    // tokens / profile JSON that would otherwise leak to unscrubbed daily logs.
+    let body = r#"{"error":"not found","email":"jo@example.com","token":"sk-secret"}"#;
+    let shape = backend_api_body_shape(body);
+    assert_eq!(shape, "object(keys=3,safe=[email,error,token],redacted=0)");
+    assert!(!shape.contains("jo@example.com"), "value leaked: {shape}");
+    assert!(!shape.contains("sk-secret"), "value leaked: {shape}");
+    assert!(!shape.contains("not found"), "value leaked: {shape}");
+}
+
+#[test]
+fn backend_api_body_shape_redacts_pii_and_nonidentifier_keys() {
+    // CodeRabbit Major on #4058: key NAMES are response-controlled too. A foreign
+    // backend can put an email / free text / unicode in the KEY position; those
+    // must be counted as `redacted`, never echoed.
+    let body = r#"{"jo@example.com":1,"a b":2,"naïve":3,"error":4}"#;
+    let shape = backend_api_body_shape(body);
+    // Only the schema-like `error` survives; the other three are redacted.
+    assert_eq!(shape, "object(keys=4,safe=[error],redacted=3)");
+    assert!(!shape.contains("jo@example.com"), "PII key leaked: {shape}");
+    assert!(!shape.contains("naïve"), "non-ascii key leaked: {shape}");
+    assert!(!shape.contains("a b"), "free-text key leaked: {shape}");
+}
+
+#[test]
+fn backend_api_body_shape_classifies_non_object_bodies() {
+    assert_eq!(backend_api_body_shape(""), "empty");
+    assert_eq!(backend_api_body_shape("   "), "empty");
+    assert_eq!(
+        backend_api_body_shape("Cannot GET /teams/me/usage"),
+        "non_json"
+    );
+    assert_eq!(backend_api_body_shape("<html>404</html>"), "non_json");
+    assert_eq!(backend_api_body_shape("[1,2,3]"), "array");
+    assert_eq!(backend_api_body_shape("42"), "scalar");
+}
+
+#[test]
+fn backend_api_body_shape_bounds_long_safe_key_list() {
+    // The `safe=[…]` list is truncated at BACKEND_API_BODY_SHAPE_MAX_BYTES = 120.
+    // Surviving keys are ASCII identifiers (non-ASCII keys are redacted upstream),
+    // so build many ASCII keys to overflow the cap and assert the truncation
+    // CONTRACT: bounded, ellipsis-terminated, and not carrying the last key.
+    let mut obj = serde_json::Map::new();
+    for i in 0..30 {
+        obj.insert(format!("field{i:02}"), json!(1)); // 30 × "fieldNN" (7 bytes) ≫ 120
+    }
+    let body = serde_json::to_string(&Value::Object(obj)).unwrap();
+    let shape = backend_api_body_shape(&body);
+
+    let keys = shape
+        .strip_prefix("object(keys=30,safe=[")
+        .and_then(|s| s.strip_suffix("],redacted=0)"))
+        .unwrap_or_else(|| panic!("unexpected shape: {shape}"));
+    assert!(
+        keys.len() <= BACKEND_API_BODY_SHAPE_MAX_BYTES,
+        "safe list exceeds cap ({} > {BACKEND_API_BODY_SHAPE_MAX_BYTES}): {keys}",
+        keys.len()
+    );
+    assert!(keys.ends_with('…'), "expected ellipsis-terminated: {keys}");
+    assert!(
+        !keys.contains("field29"),
+        "last key should be truncated away: {keys}"
+    );
+}
+
+#[tokio::test]
+async fn authed_json_reports_non_channel_404_still_propagates() {
+    // TAURI-RUST-8C: a GET 404 on a non-channel path (e.g. `/teams/me/usage`)
+    // falls through to `report_error` (not a typed/suppressed state) — it must
+    // still return an Err (no suppression) and not a typed `BackendApiError`.
+    let app = Router::new().route(
+        "/teams/me/usage",
+        get(|| async {
+            (
+                axum::http::StatusCode::NOT_FOUND,
+                r#"{"message":"Not Found"}"#,
+            )
+        }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base_url = format!("http://{addr}");
+    let client = BackendOAuthClient::new(&base_url).unwrap();
+
+    let err = client
+        .authed_json("mock-jwt", Method::GET, "/teams/me/usage", None)
+        .await
+        .unwrap_err();
+    assert!(err.downcast_ref::<BackendApiError>().is_none());
+    let msg = format!("{err:#}");
+    assert!(msg.contains("404"), "error should carry the status: {msg}");
+    assert!(
+        msg.contains("/teams/me/usage"),
+        "error should carry the path: {msg}"
+    );
 }
 
 #[test]

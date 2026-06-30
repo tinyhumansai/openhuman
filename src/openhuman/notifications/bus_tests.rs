@@ -275,3 +275,48 @@ fn notification_bridge_subscriber_name_is_stable() {
     // silently because callers (loggers, dedup guards) depend on it.
     assert_eq!(sub.name(), "notifications::bridge");
 }
+
+// ── persistence: subscriber stores core notifications (#3805) ───────────────
+
+#[tokio::test]
+async fn subscriber_persists_core_notification_so_it_survives_disconnect() {
+    use crate::openhuman::notifications::store;
+    use tempfile::TempDir;
+
+    let dir = TempDir::new().unwrap();
+    let mut config = crate::openhuman::config::Config::default();
+    config.workspace_dir = dir.path().to_path_buf();
+
+    let subscriber = NotificationBridgeSubscriber::new(config.clone());
+    // No client is subscribed to the broadcast bus here — the in-memory send
+    // reaches zero receivers. The notification must still be durably stored.
+    subscriber
+        .handle(&DomainEvent::CronJobCompleted {
+            job_id: "daily-digest".into(),
+            success: true,
+            output: "ok".into(),
+        })
+        .await;
+
+    let items = store::list_core_notifications(&config, true, 50).unwrap();
+    assert_eq!(items.len(), 1, "cron completion must be persisted");
+    assert_eq!(items[0].category, CoreNotificationCategory::Agents);
+    assert!(items[0].id.starts_with("cron:daily-digest:"));
+    assert_eq!(store::unread_core_notification_count(&config).unwrap(), 1);
+}
+
+#[tokio::test]
+async fn subscriber_without_config_does_not_persist_but_still_translates() {
+    // The Default subscriber (config = None, used only in tests) must not panic
+    // and simply skips persistence.
+    let subscriber = NotificationBridgeSubscriber::default();
+    subscriber
+        .handle(&DomainEvent::CronJobCompleted {
+            job_id: "j".into(),
+            success: false,
+            output: String::new(),
+        })
+        .await;
+    // Nothing to assert beyond "did not panic / persist" — the translation is
+    // covered by event_to_notification tests above.
+}

@@ -3,15 +3,23 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isLocalSessionToken } from '../../utils/localSession';
 import { openhumanComposioGetMode } from '../../utils/tauriCommands';
 import { getCoreStateSnapshot } from '../coreState/store';
-import { listAgentReadyToolkits, listConnections, listToolkits } from './composioApi';
+import { getToolkitCatalog, invalidateToolkitCatalogCache } from './catalogCache';
+import { COMPOSIO_FETCH_TIMEOUT_MS, listAgentReadyToolkits, listConnections } from './composioApi';
 import { canonicalizeComposioToolkitSlug } from './toolkitSlug';
-import type { ComposioConnection } from './types';
+import type { ComposioConnection, ComposioToolkitCatalogEntry } from './types';
 
 // ── useComposioIntegrations ───────────────────────────────────────
 
 export interface UseComposioIntegrationsResult {
   /** Toolkit slugs enabled on the backend allowlist. */
   toolkits: string[];
+  /**
+   * Live Composio catalog entries (dynamic name/logo/description/
+   * categories) keyed by canonical lowercased slug. Empty when the
+   * core/backend predates the dynamic catalog — consumers then fall
+   * back to the local `toolkitMeta` derivation.
+   */
+  catalogByToolkit: Map<string, ComposioToolkitCatalogEntry>;
   /** Best (highest-status) connection keyed by lowercased toolkit slug. */
   connectionByToolkit: Map<string, ComposioConnection>;
   /** All connections keyed by lowercased toolkit slug, sorted by status (ACTIVE first, then by createdAt). */
@@ -40,6 +48,7 @@ export interface UseComposioIntegrationsResult {
 export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioIntegrationsResult {
   const isLocalSession = isLocalSessionToken(getCoreStateSnapshot().snapshot.sessionToken);
   const [toolkits, setToolkits] = useState<string[]>([]);
+  const [catalog, setCatalog] = useState<ComposioToolkitCatalogEntry[]>([]);
   const [connections, setConnections] = useState<ComposioConnection[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -80,6 +89,7 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
     if (!enabled) {
       if (mountedRef.current) {
         setToolkits([]);
+        setCatalog([]);
         setConnections([]);
         setError(null);
         setLoading(false);
@@ -89,14 +99,18 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
 
     let nextError: string | null = null;
     try {
+      // Bound both fetches so the loading skeleton can't pin past ~8s on a
+      // cold cache / down backend. This is the only path that opts into the
+      // shorter budget — see COMPOSIO_FETCH_TIMEOUT_MS.
       const [toolkitsResult, connectionsResult] = await Promise.allSettled([
-        listToolkits(),
-        listConnections(),
+        getToolkitCatalog({ timeoutMs: COMPOSIO_FETCH_TIMEOUT_MS }),
+        listConnections({ timeoutMs: COMPOSIO_FETCH_TIMEOUT_MS }),
       ]);
       if (!mountedRef.current) return;
 
       if (toolkitsResult.status === 'fulfilled') {
         setToolkits(toolkitsResult.value.toolkits ?? []);
+        setCatalog(toolkitsResult.value.catalog ?? []);
       } else {
         const message =
           toolkitsResult.reason instanceof Error
@@ -128,7 +142,7 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
     void refresh();
     if (pollIntervalMs <= 0 || fetchEnabled !== true) return;
     const id = window.setInterval(() => {
-      void listConnections()
+      void listConnections({ timeoutMs: COMPOSIO_FETCH_TIMEOUT_MS })
         .then(resp => {
           if (!mountedRef.current) return;
           setConnections(resp.connections ?? []);
@@ -155,6 +169,10 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
   useEffect(() => {
     const onConfigChanged = () => {
       console.debug('[composio-cache] window:composio:config-changed → refresh()');
+      // The Composio client identity changed (backend ↔ direct / BYO key),
+      // so the cached catalog belongs to the previous tenant. Drop it before
+      // refetching, mirroring the core-side ComposioConfigChanged eviction.
+      invalidateToolkitCatalogCache();
       if (isLocalSession) {
         void resolveFetchEnabled().then(enabled => {
           if (enabled) {
@@ -163,6 +181,7 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
           }
           if (mountedRef.current) {
             setToolkits([]);
+            setCatalog([]);
             setConnections([]);
             setError(null);
             setLoading(false);
@@ -183,6 +202,14 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
     if (s === 'FAILED' || s === 'ERROR' || s === 'EXPIRED') return 1;
     return 0;
   };
+
+  const catalogByToolkit = useMemo(() => {
+    const map = new Map<string, ComposioToolkitCatalogEntry>();
+    for (const entry of catalog) {
+      map.set(canonicalizeComposioToolkitSlug(entry.slug), entry);
+    }
+    return map;
+  }, [catalog]);
 
   const connectionByToolkit = useMemo(() => {
     const map = new Map<string, ComposioConnection>();
@@ -215,7 +242,15 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
     return map;
   }, [connections]);
 
-  return { toolkits, connectionByToolkit, connectionsByToolkit, loading, error, refresh };
+  return {
+    toolkits,
+    catalogByToolkit,
+    connectionByToolkit,
+    connectionsByToolkit,
+    loading,
+    error,
+    refresh,
+  };
 }
 
 // ── useAgentReadyComposioToolkits ─────────────────────────────────

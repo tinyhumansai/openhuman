@@ -10,6 +10,8 @@ export const CORE_RPC_METHODS = {
   configGetMemorySyncSettings: 'openhuman.config_get_memory_sync_settings',
   configGetSandboxSettings: 'openhuman.config_get_sandbox_settings',
   configGetSearchSettings: 'openhuman.config_get_search_settings',
+  configGetSuperContextEnabled: 'openhuman.config_get_super_context_enabled',
+  configSetSuperContextEnabled: 'openhuman.config_set_super_context_enabled',
   configUpdateSearchSettings: 'openhuman.config_update_search_settings',
   configSetBrowserAllowAll: 'openhuman.config_set_browser_allow_all',
   configUpdateAgentPaths: 'openhuman.config_update_agent_paths',
@@ -57,8 +59,10 @@ export const CORE_RPC_METHODS = {
   embeddingsClearApiKey: 'openhuman.embeddings_clear_api_key',
   embeddingsEmbed: 'openhuman.embeddings_embed',
   embeddingsTestConnection: 'openhuman.embeddings_test_connection',
+  channelsList: 'openhuman.channels_list',
   mcpClientsInstalledList: 'openhuman.mcp_clients_installed_list',
   mcpClientsToolCall: 'openhuman.mcp_clients_tool_call',
+  toolRegistryDiagnostics: 'openhuman.tool_registry_diagnostics',
   healthSnapshot: 'openhuman.health_snapshot',
   healthSystemInfo: 'openhuman.health_system_info',
 } as const;
@@ -66,13 +70,22 @@ export const CORE_RPC_METHODS = {
 export type CoreRpcMethod = (typeof CORE_RPC_METHODS)[keyof typeof CORE_RPC_METHODS];
 
 export const LEGACY_METHOD_ALIASES: Record<string, CoreRpcMethod> = {
+  // #3565: old desktop clients used dotted namespace/function channel calls.
+  'channels.list': CORE_RPC_METHODS.channelsList,
   // MCP clients — old method names that appeared in Sentry (CORE-RUST-DR/DS/DT/DV/DW).
   // See src/core/legacy_aliases.rs for the Rust-side mirror of this table.
   'mcp_clients.list': CORE_RPC_METHODS.mcpClientsInstalledList,
+  'openhuman.channels.list': CORE_RPC_METHODS.channelsList,
   'openhuman.mcp_clients_list': CORE_RPC_METHODS.mcpClientsInstalledList,
   'openhuman.mcp_list': CORE_RPC_METHODS.mcpClientsInstalledList,
   'openhuman.mcp_servers_list': CORE_RPC_METHODS.mcpClientsInstalledList,
   'openhuman.tool_registry_call': CORE_RPC_METHODS.mcpClientsToolCall,
+  // #3294: old desktop bundles called the tool-registry diagnostics
+  // controller with the dotted `tool_registry.diagnostics` spelling before the
+  // canonical `openhuman.tool_registry_diagnostics` form, so the Tool Policy
+  // diagnostics panel failed with "unknown method". Keep in sync with the
+  // Rust-side mirror in src/core/legacy_aliases.rs.
+  'tool_registry.diagnostics': CORE_RPC_METHODS.toolRegistryDiagnostics,
   'openhuman.get_analytics_settings': CORE_RPC_METHODS.configGetAnalyticsSettings,
   'openhuman.get_composio_trigger_settings': CORE_RPC_METHODS.configGetComposioTriggerSettings,
   'openhuman.get_dashboard_settings': CORE_RPC_METHODS.configGetDashboardSettings,
@@ -114,6 +127,14 @@ export const LEGACY_METHOD_ALIASES: Record<string, CoreRpcMethod> = {
   'openhuman.providers_list_models': CORE_RPC_METHODS.inferenceListModels,
   'openhuman.inference_embed': CORE_RPC_METHODS.embeddingsEmbed,
   health_snapshot: CORE_RPC_METHODS.healthSnapshot,
+  // Dotted / bare health probes from older clients and SDK callers (#3566,
+  // Sentry CORE-2C). No distinct status/get handler exists — the snapshot
+  // already carries the health verdict — so all four alias to the snapshot.
+  // Keep in sync with src/core/legacy_aliases.rs (drift guard enforces it).
+  health: CORE_RPC_METHODS.healthSnapshot,
+  'health.get': CORE_RPC_METHODS.healthSnapshot,
+  'health.snapshot': CORE_RPC_METHODS.healthSnapshot,
+  'health.status': CORE_RPC_METHODS.healthSnapshot,
   // `openhuman.system_info` was used by older clients / SDK callers before the
   // method was namespaced as `openhuman.health_system_info`.
   // Sentry CORE-RUST-G0 — https://sentry.tinyhumans.ai/organizations/tinyhumans/issues/6340/

@@ -6,6 +6,49 @@ use crate::openhuman::threads::turn_state::{TurnStateMirror, TurnStateStore};
 use super::event_bus::publish_web_channel_event;
 use super::types::ChatRequestMetadata;
 
+/// Current wall-clock time as Unix-epoch milliseconds, used to stamp tracing
+/// spans (issue #3886). Saturates to `0` if the clock is before the epoch.
+fn unix_epoch_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Upper bound on the sub-agent tool output forwarded to the drawer over
+/// Socket.IO. The `SubagentToolCallCompleted` event carries the *pre-handoff*
+/// tool result (the result-handoff path that stashes large toolkit payloads
+/// behind a short placeholder runs later, in `SubagentToolSource`), so a raw
+/// multi-MB integration result would otherwise ship in full to the socket /
+/// Redux / DOM. Cap it here on a UTF-8 boundary with a truncation marker so the
+/// drawer payload stays bounded while still showing what the tool returned.
+const MAX_WIRE_SUBAGENT_OUTPUT: usize = 256 * 1024;
+
+/// Bytes reserved within the cap for the truncation marker so the *final*
+/// payload (content + marker) never exceeds [`MAX_WIRE_SUBAGENT_OUTPUT`].
+/// Generous upper bound for `…[truncated <N> bytes of tool output]` at any
+/// plausible `N` (the "…" is 3 UTF-8 bytes).
+const TRUNCATION_MARKER_BUDGET: usize = 80;
+
+/// Truncate `output` so the returned string stays within
+/// [`MAX_WIRE_SUBAGENT_OUTPUT`] bytes, slicing on a char boundary and
+/// appending a marker (which is itself counted against the cap) when content
+/// was dropped. Returns the input unchanged when it's already within the cap.
+fn cap_wire_output(output: String) -> String {
+    if output.len() <= MAX_WIRE_SUBAGENT_OUTPUT {
+        return output;
+    }
+    let mut end = MAX_WIRE_SUBAGENT_OUTPUT.saturating_sub(TRUNCATION_MARKER_BUDGET);
+    while end > 0 && !output.is_char_boundary(end) {
+        end -= 1;
+    }
+    let omitted = output.len() - end;
+    format!(
+        "{}\n…[truncated {omitted} bytes of tool output]",
+        &output[..end]
+    )
+}
+
 pub(super) fn ledger_upsert_agent_run(
     config: &crate::openhuman::config::Config,
     upsert: crate::openhuman::session_db::run_ledger::AgentRunUpsert,
@@ -32,6 +75,29 @@ pub(super) fn ledger_upsert_telemetry(
         crate::openhuman::session_db::run_ledger::upsert_run_telemetry(config, telemetry)
     {
         log::warn!("[run_ledger][web_channel] failed to upsert telemetry: {err}");
+    }
+}
+
+/// Build the worktree-isolation slice of a `subagent_completed`
+/// [`SubagentProgressDetail`] (#3376). An empty `changed_files` collapses to
+/// `None` so the renderer omits an empty "changed files" list rather than
+/// showing "0 files"; a non-empty list is forwarded verbatim. `worktree_path`
+/// / `dirty_status` pass through (`None` for non-isolated workers). Split out
+/// so the empty/non-empty branch is unit-testable without a live DB + channel.
+fn subagent_worktree_detail(
+    worktree_path: Option<String>,
+    changed_files: Vec<String>,
+    dirty_status: Option<bool>,
+) -> SubagentProgressDetail {
+    SubagentProgressDetail {
+        worktree_path,
+        changed_files: if changed_files.is_empty() {
+            None
+        } else {
+            Some(changed_files)
+        },
+        dirty_status,
+        ..Default::default()
     }
 }
 
@@ -71,9 +137,30 @@ pub(crate) fn spawn_progress_bridge(
         let mut child_tool_counts: HashMap<String, u64> = HashMap::new();
         let mut turn_state =
             TurnStateMirror::new(turn_state_store, thread_id.clone(), request_id.clone());
+
+        // #3886: opt-in structured tracing export. When enabled, fold the same
+        // progress stream into OTel/Langfuse-style spans correlated by session
+        // id (falling back to the thread id for headless/autonomous runs) with
+        // the client id as user attribution. `None` (disabled) is zero-cost.
+        let mut span_collector = if config.observability.agent_tracing.enabled {
+            use crate::openhuman::agent::progress_tracing::{
+                trace_session_id, SpanCollector, TraceContext,
+            };
+            let session_id = trace_session_id(metadata.session_id, &thread_id);
+            Some(SpanCollector::new(TraceContext::new(
+                session_id,
+                Some(client_id.clone()),
+            )))
+        } else {
+            None
+        };
+
         while let Some(event) = rx.recv().await {
             events_seen += 1;
             turn_state.observe(&event);
+            if let Some(collector) = span_collector.as_mut() {
+                collector.record(&event, unix_epoch_ms());
+            }
             match &event {
                 AgentProgress::TextDelta { delta, iteration } => {
                     log::trace!(
@@ -220,6 +307,8 @@ pub(crate) fn spawn_progress_bridge(
                     tool_name,
                     arguments,
                     iteration,
+                    display_label,
+                    display_detail,
                 } => {
                     parent_tool_count += 1;
                     ledger_append_event(
@@ -252,6 +341,8 @@ pub(crate) fn spawn_progress_bridge(
                         args: Some(arguments),
                         round: Some(iteration),
                         tool_call_id: Some(call_id),
+                        tool_display_label: display_label,
+                        tool_display_detail: display_detail,
                         ..Default::default()
                     });
                 }
@@ -384,6 +475,9 @@ pub(crate) fn spawn_progress_bridge(
                     elapsed_ms,
                     iterations,
                     output_chars,
+                    worktree_path,
+                    changed_files,
+                    dirty_status,
                 } => {
                     let completed_at = chrono::Utc::now();
                     ledger_upsert_agent_run(
@@ -428,7 +522,10 @@ pub(crate) fn spawn_progress_bridge(
                                 "agentId": agent_id,
                                 "elapsedMs": elapsed_ms,
                                 "iterations": iterations,
-                                "outputChars": output_chars
+                                "outputChars": output_chars,
+                                "worktreePath": worktree_path,
+                                "changedFiles": changed_files,
+                                "dirtyStatus": dirty_status
                             }),
                         },
                     );
@@ -448,7 +545,10 @@ pub(crate) fn spawn_progress_bridge(
                             elapsed_ms: Some(elapsed_ms),
                             iterations: Some(iterations),
                             output_chars: Some(output_chars as u64),
-                            ..Default::default()
+                            // Worktree isolation metadata (#3376) — drives the
+                            // inline subagent worktree row's open/diff/remove
+                            // actions. All `None`/absent for non-isolated workers.
+                            ..subagent_worktree_detail(worktree_path, changed_files, dirty_status)
                         }),
                         ..Default::default()
                     });
@@ -627,7 +727,10 @@ pub(crate) fn spawn_progress_bridge(
                     task_id,
                     call_id,
                     tool_name,
+                    arguments,
                     iteration,
+                    display_label,
+                    display_detail,
                 } => {
                     let count = child_tool_counts.entry(task_id.clone()).or_insert(0);
                     *count += 1;
@@ -659,8 +762,18 @@ pub(crate) fn spawn_progress_bridge(
                         request_id: request_id.clone(),
                         tool_name: Some(tool_name),
                         skill_id: Some(task_id.clone()),
+                        // The child's tool arguments, so the UI can show what
+                        // the sub-agent actually did (issue: subagent drawer
+                        // detail). Skipped from the wire when `null`.
+                        args: if arguments.is_null() {
+                            None
+                        } else {
+                            Some(arguments)
+                        },
                         round: Some(round),
                         tool_call_id: Some(call_id),
+                        tool_display_label: display_label,
+                        tool_display_detail: display_detail,
                         subagent: Some(SubagentProgressDetail {
                             child_iteration: Some(iteration),
                             agent_id: Some(agent_id),
@@ -677,6 +790,7 @@ pub(crate) fn spawn_progress_bridge(
                     tool_name,
                     success,
                     output_chars,
+                    output,
                     elapsed_ms,
                     iteration,
                 } => {
@@ -706,10 +820,11 @@ pub(crate) fn spawn_progress_bridge(
                         success: Some(success),
                         round: Some(round),
                         tool_call_id: Some(call_id),
-                        output: Some(
-                            json!({"output_chars": output_chars, "elapsed_ms": elapsed_ms})
-                                .to_string(),
-                        ),
+                        // The child's actual tool output, so the drawer can show
+                        // *what came back* (not just a char count). Capped to a
+                        // bounded size for the wire (#4007); `output_chars` +
+                        // `elapsed_ms` still ride along in `subagent` below.
+                        output: Some(cap_wire_output(output)),
                         subagent: Some(SubagentProgressDetail {
                             child_iteration: Some(iteration),
                             agent_id: Some(agent_id),
@@ -939,6 +1054,17 @@ pub(crate) fn spawn_progress_bridge(
                 },
             );
         }
+        // #3886: seal any spans still open after the stream closed and hand the
+        // run's trace to the configured tracing sink. Best-effort and gated;
+        // never affects the turn outcome.
+        if let Some(mut collector) = span_collector.take() {
+            collector.finish(unix_epoch_ms());
+            crate::openhuman::agent::progress_tracing::export_spans(
+                &config.observability.agent_tracing,
+                collector.spans(),
+            );
+        }
+
         log::debug!(
             "[web_channel][bridge] exit client_id={} thread_id={} request_id={} round={} events_seen={}",
             client_id,
@@ -948,4 +1074,59 @@ pub(crate) fn spawn_progress_bridge(
             events_seen,
         );
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cap_wire_output_passes_through_small_payloads() {
+        let s = "small tool result".to_string();
+        assert_eq!(cap_wire_output(s.clone()), s);
+    }
+
+    #[test]
+    fn cap_wire_output_truncates_large_payloads_on_char_boundary() {
+        // A multibyte payload past the cap: result stays valid UTF-8, is shorter
+        // than the input, and carries the truncation marker.
+        let big = "é".repeat(MAX_WIRE_SUBAGENT_OUTPUT); // 2 bytes each → well over cap
+        let capped = cap_wire_output(big.clone());
+        assert!(capped.len() < big.len());
+        assert!(capped.contains("[truncated"));
+        // Truncation landed on a char boundary (no replacement char / panic).
+        assert!(capped.starts_with('é'));
+        // The final payload (content + marker) must honor the wire cap.
+        assert!(capped.len() <= MAX_WIRE_SUBAGENT_OUTPUT);
+    }
+
+    #[test]
+    fn worktree_detail_collapses_empty_changed_files_to_none() {
+        // Non-isolated / clean worker: empty list → `None` so the renderer
+        // omits the "changed files" section instead of showing an empty one.
+        let d = subagent_worktree_detail(None, vec![], None);
+        assert_eq!(d.worktree_path, None);
+        assert_eq!(d.changed_files, None);
+        assert_eq!(d.dirty_status, None);
+    }
+
+    #[test]
+    fn worktree_detail_forwards_isolated_worker_fields() {
+        // Isolated worker with uncommitted changes: fields pass through and a
+        // non-empty list is wrapped in `Some`.
+        let d = subagent_worktree_detail(
+            Some("/repo/.claude/worktrees/run-1".to_string()),
+            vec!["src/lib.rs".to_string(), "README.md".to_string()],
+            Some(true),
+        );
+        assert_eq!(
+            d.worktree_path.as_deref(),
+            Some("/repo/.claude/worktrees/run-1")
+        );
+        assert_eq!(
+            d.changed_files,
+            Some(vec!["src/lib.rs".to_string(), "README.md".to_string()])
+        );
+        assert_eq!(d.dirty_status, Some(true));
+    }
 }

@@ -12,12 +12,16 @@
 //! - [`ops`]     — RPC handlers that emit Socket.IO events
 //! - [`schemas`] — controller schema + registered handler wrappers
 //! - [`store`]   — SQLite persistence for meeting sessions
+//! - [`in_call`] — Phase 2 in-call agency: wake-phrase command → orchestrator → `bot:speak`
 
 pub mod bus;
 pub mod calendar;
+pub mod in_call;
 pub mod ops;
+pub mod recent_calls;
 pub mod schemas;
 pub mod store;
+pub mod summary;
 pub mod types;
 
 pub use schemas::{

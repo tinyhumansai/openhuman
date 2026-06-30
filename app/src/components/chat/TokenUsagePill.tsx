@@ -65,7 +65,7 @@ const TokenUsagePill = () => {
     <div className="flex items-center gap-1.5 text-[11px] leading-none">
       {showSessionCounter ? (
         <span
-          className="inline-flex items-center gap-1 rounded-full bg-stone-100 dark:bg-neutral-800 px-2 py-1 font-mono text-stone-600 dark:text-neutral-300 ring-1 ring-stone-200/60 dark:ring-neutral-700"
+          className="inline-flex items-center gap-1 rounded-full bg-surface-subtle px-2 py-1 font-mono text-content-secondary ring-1 ring-stone-200/60 dark:ring-neutral-700"
           title={t('token.sessionTokens')
             .replace('{in}', sessionTokens.inputTokens.toLocaleString())
             .replace('{out}', sessionTokens.outputTokens.toLocaleString())

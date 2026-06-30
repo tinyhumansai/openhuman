@@ -17,9 +17,10 @@ const panels: PanelCheck[] = [
     hash: '/settings/billing',
     markers: ['Billing moved to the web', 'Open billing dashboard', 'credits'],
   },
-  { hash: '/home', markers: ['Ask your assistant anything', 'Your device is connected'] },
+  // Home folded into the unified chat surface — /home redirects to /chat.
+  { hash: '/home', markers: ['New Conversation'] },
   // /chat is the Assistant surface (thread list + agent chat header).
-  { hash: '/chat', markers: ['Threads', 'New thread', 'Talk to Tiny', 'Reasoning'] },
+  { hash: '/chat', markers: ['New Conversation', 'Threads', 'New thread', 'Reasoning'] },
 ];
 
 async function waitForPanelLoad(page: Parameters<typeof test>[0]['page']) {
@@ -34,17 +35,14 @@ test.describe('User journey - settings round-trip', () => {
     await bootAuthenticatedPage(page, 'pw-settings-round-trip-' + testSlug, '/home');
   });
 
-  test('starts on /home after login', async ({ page }) => {
+  test('starts on the chat surface after login', async ({ page }) => {
+    // Home folded into the unified chat surface: post-login landing is /chat.
     await waitForAppReady(page);
     await expect
       .poll(async () => page.evaluate(() => window.location.hash), { timeout: PANEL_TIMEOUT })
-      .toMatch(/^#\/home/);
+      .toMatch(/^#\/chat/);
     const text = await page.locator('#root').innerText();
-    expect(
-      ['Ask your assistant anything', 'Your device is connected'].some(marker =>
-        text.includes(marker)
-      )
-    ).toBe(true);
+    expect(['New Conversation', 'Threads'].some(marker => text.includes(marker))).toBe(true);
   });
 
   for (const panel of panels) {

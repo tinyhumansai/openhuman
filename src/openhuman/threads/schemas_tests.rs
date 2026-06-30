@@ -19,6 +19,7 @@ const ALL_FUNCTIONS: &[&str] = &[
     "turn_state_clear",
     "task_board_get",
     "task_board_put",
+    "token_usage",
 ];
 
 #[test]

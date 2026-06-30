@@ -73,6 +73,24 @@ fn inference_update_local_settings_schema_allows_json_base_url() {
 }
 
 #[test]
+fn inference_update_local_settings_schema_accepts_api_key() {
+    // Regression: the OMLX Bearer key flows through `inference.update_local_settings`.
+    // The serde struct + handler carried `api_key`, but the ControllerSchema inputs
+    // did not — so `validate_params` rejected it as "unknown param 'api_key'" before
+    // dispatch. The field must be declared here for the RPC to accept it.
+    let schema = schemas("update_local_settings");
+    let field = schema
+        .inputs
+        .iter()
+        .find(|field| field.name == "api_key")
+        .expect("api_key field must be declared so validate_params accepts it");
+    match &field.ty {
+        TypeSchema::Option(inner) => assert!(matches!(**inner, TypeSchema::String)),
+        other => panic!("expected Option<String>, got {other:?}"),
+    }
+}
+
+#[test]
 fn inference_openai_oauth_schemas_are_registered_with_expected_shapes() {
     let registered: Vec<&str> = all_registered_controllers()
         .into_iter()

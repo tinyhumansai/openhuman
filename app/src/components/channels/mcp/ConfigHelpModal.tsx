@@ -8,6 +8,7 @@
  * only this modal and returns to whatever opened it.
  */
 import { useT } from '../../../lib/i18n/I18nContext';
+import Button from '../../ui/Button';
 import ConfigAssistantPanel from './ConfigAssistantPanel';
 
 interface ConfigHelpModalProps {
@@ -46,18 +47,19 @@ const ConfigHelpModal = ({
         if (e.target === e.currentTarget) onClose();
       }}
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4 py-6 overflow-y-auto">
-      <div className="flex h-[78vh] max-h-[88vh] w-full max-w-2xl flex-col rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-xl p-4">
+      <div className="flex h-[78vh] max-h-[88vh] w-full max-w-2xl flex-col rounded-xl border border-line bg-surface shadow-xl p-4">
         <div className="mb-2 flex items-center justify-between">
-          <h3 className="text-base font-semibold text-stone-900 dark:text-neutral-100">
+          <h3 className="text-base font-semibold text-content">
             {t('mcp.connectAuth.howToGetToken')}
           </h3>
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="xs"
             onClick={onClose}
             aria-label={t('common.cancel')}
-            className="shrink-0 rounded-lg border border-stone-200 dark:border-neutral-700 px-2 py-1 text-xs text-stone-500 dark:text-neutral-400 hover:border-stone-300 dark:hover:border-neutral-600">
+            className="shrink-0">
             ✕
-          </button>
+          </Button>
         </div>
         <div className="min-h-0 flex-1">
           <ConfigAssistantPanel

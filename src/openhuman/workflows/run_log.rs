@@ -843,6 +843,8 @@ mod tests {
             tool_name: "codegraph_search".into(),
             arguments: serde_json::json!({"query": "x"}),
             iteration: 2,
+            display_label: None,
+            display_detail: None,
         })
         .expect("tool call logged");
         assert!(line.contains("codegraph_search"));

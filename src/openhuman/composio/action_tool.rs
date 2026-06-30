@@ -97,6 +97,18 @@ impl ComposioActionTool {
     }
 }
 
+/// Render a Composio action slug (`GMAIL_SEND_EMAIL`) as a sentence-cased
+/// human phrase ("Gmail send email") for the chat processing timeline.
+fn humanize_composio_action(slug: &str) -> String {
+    let lower = slug.trim().to_ascii_lowercase().replace('_', " ");
+    let lower = lower.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut chars = lower.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => slug.to_string(),
+    }
+}
+
 #[async_trait]
 impl Tool for ComposioActionTool {
     fn name(&self) -> &str {
@@ -131,6 +143,14 @@ impl Tool for ComposioActionTool {
 
     fn category(&self) -> ToolCategory {
         ToolCategory::Workflow
+    }
+
+    fn display_label(&self, _args: &Value) -> Option<String> {
+        // Composio slugs are UPPER_SNAKE (e.g. `GMAIL_SEND_EMAIL`). Render a
+        // sentence-cased phrase ("Gmail send email") instead of the shouty
+        // raw slug or a Title-Cased "GMAIL SEND EMAIL". The contextual target
+        // (recipient/query) is filled by the trait-default `display_detail`.
+        Some(humanize_composio_action(&self.action_name))
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
@@ -361,6 +381,38 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join(" ")
+    }
+
+    #[test]
+    fn humanize_composio_action_sentence_cases_slug() {
+        assert_eq!(
+            humanize_composio_action("GMAIL_SEND_EMAIL"),
+            "Gmail send email"
+        );
+        assert_eq!(
+            humanize_composio_action("GOOGLECALENDAR_EVENTS_LIST"),
+            "Googlecalendar events list"
+        );
+        assert_eq!(humanize_composio_action(""), "");
+    }
+
+    #[test]
+    fn display_label_is_human_and_detail_pulls_recipient() {
+        let tool = ComposioActionTool::new(
+            fake_config(),
+            "GMAIL_SEND_EMAIL".to_string(),
+            "Send an email via Gmail".to_string(),
+            None,
+        );
+        assert_eq!(
+            tool.display_label(&serde_json::Value::Null).as_deref(),
+            Some("Gmail send email")
+        );
+        assert_eq!(
+            tool.display_detail(&serde_json::json!({ "recipient_email": "steven@gmail.com" }))
+                .as_deref(),
+            Some("steven@gmail.com")
+        );
     }
 
     #[tokio::test]

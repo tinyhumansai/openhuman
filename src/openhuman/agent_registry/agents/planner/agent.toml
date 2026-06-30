@@ -41,6 +41,12 @@ hint = "reasoning"
 # actions slip past the gate.
 named = [
     "file_read",
+    # NOTE: `agent_prepare_context` is intentionally NOT here. When the planner
+    # runs via `delegate_plan` it executes under the orchestrator's
+    # PARENT_CONTEXT (run_subagent filters the child tool surface but does not
+    # install a planner-scoped ParentExecutionContext), so a nested scout would
+    # render the orchestrator's visible catalog/session, not the planner's.
+    # Context scouting is the orchestrator's first-message job; keep it there.
     # Read-only nav primitives from #1208. `edit`, `apply_patch`, `lsp`
     # are intentionally NOT included — sandbox_mode = "read_only" above
     # forbids workspace mutations, and downstream agents do the writing.

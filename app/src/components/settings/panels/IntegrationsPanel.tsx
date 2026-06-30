@@ -2,9 +2,7 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import Webhooks from '../../../pages/Webhooks';
-import PanelPage from '../../layout/PanelPage';
-import SettingsBackButton from '../components/SettingsBackButton';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 import TaskSourcesPanel from './TaskSourcesPanel';
 
 type TabId = 'task-sources' | 'webhooks';
@@ -25,7 +23,6 @@ const hashToTab = (hash: string): TabId => {
  */
 const IntegrationsPanel = () => {
   const { t } = useT();
-  const { navigateBack } = useSettingsNavigation();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -43,10 +40,8 @@ const IntegrationsPanel = () => {
   };
 
   return (
-    <PanelPage<TabId>
-      className="z-10"
+    <SettingsPanel<TabId>
       description={t('settings.integrations.menuDesc')}
-      leading={<SettingsBackButton onBack={navigateBack} />}
       tabsAriaLabel={t('settings.integrations.title')}
       tabsTestIdPrefix="integrations-tab"
       value={tab}

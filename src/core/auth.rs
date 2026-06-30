@@ -96,7 +96,31 @@ const PUBLIC_PATHS: &[&str] = &[
     "/oauth/mcp/callback",
     "/schema",
     "/events",
+    // AgentBox marketplace surface — see `openhuman::agentbox::http`.
+    // Mounted only when `OPENHUMAN_AGENTBOX_MODE=1`; the public-path entry is
+    // unconditional so the matcher remains a pure function of the path string.
+    "/run",
 ];
+
+/// Public path prefixes — match when the request path begins with any entry.
+///
+/// Use this only when the suffix is dynamic (path params). For exact paths,
+/// add to [`PUBLIC_PATHS`] instead.
+const PUBLIC_PATH_PREFIXES: &[&str] = &[
+    // AgentBox `GET /jobs/{job_id}` — `{job_id}` is a UUID per submission.
+    "/jobs/",
+];
+
+/// Returns `true` when `path` bypasses bearer-token authentication.
+///
+/// A path is public when it appears in [`PUBLIC_PATHS`] (exact match) or
+/// begins with any entry in [`PUBLIC_PATH_PREFIXES`] (prefix match).
+fn is_public_path(path: &str) -> bool {
+    PUBLIC_PATHS.contains(&path)
+        || PUBLIC_PATH_PREFIXES
+            .iter()
+            .any(|prefix| path.starts_with(prefix))
+}
 
 /// Paths that may authenticate via `?token=…` in the URL when no
 /// `Authorization` header is present.
@@ -259,7 +283,7 @@ pub async fn rpc_auth_middleware(req: axum::extract::Request, next: Next) -> Res
     let path = req.uri().path().to_string();
 
     // CORS preflight and public utility paths bypass auth.
-    if req.method() == Method::OPTIONS || PUBLIC_PATHS.contains(&path.as_str()) {
+    if req.method() == Method::OPTIONS || is_public_path(&path) {
         return next.run(req).await;
     }
 
@@ -573,6 +597,18 @@ mod tests {
     #[test]
     fn public_paths_include_desktop_auth_callback() {
         assert!(PUBLIC_PATHS.contains(&"/auth"));
+    }
+
+    #[test]
+    fn agentbox_run_and_jobs_paths_are_public() {
+        // AgentBox marketplace surface bypasses bearer auth (gated externally
+        // by `OPENHUMAN_AGENTBOX_MODE` at router-build time).
+        assert!(is_public_path("/run"));
+        assert!(is_public_path("/jobs/abc-123"));
+        assert!(is_public_path("/jobs/00000000-0000-0000-0000-000000000000"));
+        // Sanity: still protect the executable surface.
+        assert!(!is_public_path("/rpc"));
+        assert!(!is_public_path("/v1/chat/completions"));
     }
 
     #[cfg(unix)]

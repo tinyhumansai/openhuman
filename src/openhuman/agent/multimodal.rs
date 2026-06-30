@@ -6,10 +6,10 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use flate2::read::GzDecoder;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::io::Read;
-use std::path::Path;
-use std::sync::{Mutex, OnceLock};
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 const IMAGE_MARKER_PREFIX: &str = "[IMAGE:";
@@ -460,15 +460,21 @@ pub async fn inline_file_attachments(message: &str, file_config: &MultimodalFile
     rewritten
 }
 
-// ── Image sidecar (PDF/image-attach fix, pass 2) ──────────────────────────
+// ── Image sidecar (disk-backed) ───────────────────────────────────────────
 //
 // Persisted messages must never carry a raw `[IMAGE:data:…]` data URI: like the
 // PDF blob it floods the injection scan, the memory auto-save (N-chunk embed →
 // Voyage 400), and the cross-thread JSONL index. So at ingress we replace each
-// image marker with a compact `[Image: image #att:<id>]` placeholder and stash
-// the decoded data URI out-of-band. At provider dispatch we rehydrate the URI
-// back into an inline `[IMAGE:…]` marker — but ONLY for vision-capable models;
-// non-vision models keep the text placeholder (no multi-MB payload, no error).
+// image marker with a compact `[Image: image #att:<id>]` placeholder and write
+// the decoded image bytes out-of-band to `<workspace>/attachments/<id>.<ext>`.
+// At provider dispatch we rehydrate the placeholder back into an inline
+// `[IMAGE:<path>]` marker — but ONLY for vision-capable models; non-vision
+// models keep the text placeholder (no multi-MB payload, no error).
+//
+// Disk-backed (not the old in-memory FIFO) so attachments survive process
+// restarts and long delegation chains: a sub-agent spawned several hops after
+// ingress still resolves the image by id. `normalize_local_image` re-reads the
+// file at dispatch, so no decode/MIME logic is duplicated here.
 
 /// Placeholder token left in the persisted message in place of a raw image data
 /// URI. Mixed-case so it never collides with the inline `[IMAGE:` parser.
@@ -476,51 +482,180 @@ const IMAGE_PLACEHOLDER_PREFIX: &str = "[Image:";
 /// Separator before the stash content-hash id inside a placeholder.
 const IMAGE_STASH_REF: &str = "#att:";
 
-/// Upper bounds on the in-memory image stash so it can't grow without limit
-/// over the process lifetime (the data URI is out of history, but still on heap
-/// until evicted). Whichever bound trips first evicts oldest-first (FIFO).
-const IMAGE_STASH_MAX_ENTRIES: usize = 32;
-const IMAGE_STASH_MAX_BYTES: usize = 64 * 1024 * 1024;
+/// Soft cap on the on-disk attachments directory. After each write, oldest
+/// files (by mtime) are evicted until the total is back under this bound.
+const ATTACHMENTS_MAX_BYTES: u64 = 256 * 1024 * 1024;
+/// Age after which an attachment is considered stale and removed by the
+/// startup sweep ([`sweep_stale_attachments`]).
+const ATTACHMENTS_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 
-/// Bounded, content-addressed stash of inbound image data URIs. FIFO eviction
-/// keeps resident memory capped; entries are keyed by content hash so identical
-/// images dedupe. In-memory only — lost on restart (a follow-up turn then sees
-/// the text placeholder). Disk-backing under `<workspace>/attachments/` is the
-/// production hardening; the persistence-pollution fix holds either way.
-#[derive(Default)]
-struct ImageStash {
-    map: HashMap<String, String>,
-    order: VecDeque<String>,
-    bytes: usize,
+/// Process-global on-disk attachments directory. Installed once at core startup
+/// via [`init_attachments_dir`]; mirrors the `OnceLock` pattern the in-memory
+/// stash used before.
+static ATTACHMENTS_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Install the on-disk attachments directory (`<workspace>/attachments`). Call
+/// once at core startup. Idempotent — first writer wins. Best-effort fires a
+/// stale-file sweep when called inside a Tokio runtime.
+pub fn init_attachments_dir(dir: PathBuf) {
+    if ATTACHMENTS_DIR.set(dir).is_err() {
+        return;
+    }
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        handle.spawn(async {
+            sweep_stale_attachments().await;
+        });
+    }
 }
 
-impl ImageStash {
-    fn insert(&mut self, id: String, uri: String) {
-        if self.map.contains_key(&id) {
-            return; // content-addressed: already present, keep its FIFO position
+/// Resolve the attachments dir, falling back to a **per-user private** dir when
+/// unset (CLI / direct invocation / tests that never called
+/// [`init_attachments_dir`]). The persistence-pollution fix and rehydration both
+/// hold either way.
+fn attachments_dir() -> PathBuf {
+    ATTACHMENTS_DIR
+        .get()
+        .cloned()
+        .unwrap_or_else(fallback_attachments_dir)
+}
+
+/// Per-user fallback attachments dir used only when [`init_attachments_dir`] was
+/// never called. Uses the OS user cache dir (e.g. `~/Library/Caches/...`,
+/// `~/.cache/...`) so persisted image bytes aren't dropped into a world-readable
+/// shared `temp_dir()` on multi-user hosts. Only falls back to `temp_dir()` when
+/// no user cache dir can be resolved at all.
+fn fallback_attachments_dir() -> PathBuf {
+    directories::BaseDirs::new()
+        .map(|d| d.cache_dir().join("openhuman-attachments"))
+        .unwrap_or_else(|| std::env::temp_dir().join("openhuman-attachments"))
+}
+
+/// Persist a canonical image data URI to `<dir>/<id>.<ext>`, content-addressed
+/// by `id`. Atomic (temp file + rename); deduped (skips the write when the
+/// target already exists). Returns the written path. After writing, enforces
+/// [`ATTACHMENTS_MAX_BYTES`].
+async fn write_attachment(id: &str, data_uri: &str) -> anyhow::Result<PathBuf> {
+    let parsed = parse_data_uri(data_uri)
+        .map_err(|reason| anyhow::anyhow!("cannot decode stashed data URI: {reason}"))?;
+    let ext = ext_from_mime(&parsed.mime).unwrap_or("img");
+    let dir = attachments_dir();
+    tokio::fs::create_dir_all(&dir).await?;
+    let final_path = dir.join(format!("{id}.{ext}"));
+    if tokio::fs::try_exists(&final_path).await.unwrap_or(false) {
+        return Ok(final_path); // content-addressed: already persisted
+    }
+    let tmp_path = dir.join(format!(".{id}.{ext}.tmp"));
+    tokio::fs::write(&tmp_path, &parsed.bytes).await?;
+    tokio::fs::rename(&tmp_path, &final_path).await?;
+    enforce_attachments_cap(&dir).await;
+    Ok(final_path)
+}
+
+/// File extension for a known image MIME (inverse of [`mime_from_extension`]).
+fn ext_from_mime(mime: &str) -> Option<&'static str> {
+    match mime {
+        "image/png" => Some("png"),
+        "image/jpeg" => Some("jpg"),
+        "image/webp" => Some("webp"),
+        "image/gif" => Some("gif"),
+        "image/bmp" => Some("bmp"),
+        _ => None,
+    }
+}
+
+/// Build an `id → path` index from a single read of the attachments dir. Skips
+/// in-flight `.tmp` files. Sync (called from the sync rehydrate path).
+fn build_attachment_index() -> HashMap<String, PathBuf> {
+    let dir = attachments_dir();
+    let mut map = HashMap::new();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return map;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with('.') {
+            continue; // skip `.<id>.<ext>.tmp` in-flight writes
         }
-        self.bytes = self.bytes.saturating_add(uri.len());
-        self.order.push_back(id.clone());
-        self.map.insert(id, uri);
-        while self.map.len() > IMAGE_STASH_MAX_ENTRIES || self.bytes > IMAGE_STASH_MAX_BYTES {
-            let Some(old) = self.order.pop_front() else {
-                break;
-            };
-            if let Some(v) = self.map.remove(&old) {
-                self.bytes = self.bytes.saturating_sub(v.len());
+        if let Some(stem) = name.split('.').next() {
+            if !stem.is_empty() {
+                map.insert(stem.to_string(), entry.path());
             }
         }
     }
+    map
+}
 
-    fn get(&self, id: &str) -> Option<&String> {
-        self.map.get(id)
+/// Evict oldest attachments (by mtime) until the dir is under
+/// [`ATTACHMENTS_MAX_BYTES`]. Best-effort; replaces the old heap FIFO.
+async fn enforce_attachments_cap(dir: &Path) {
+    let mut files: Vec<(PathBuf, std::time::SystemTime, u64)> = Vec::new();
+    let mut total: u64 = 0;
+    let Ok(mut rd) = tokio::fs::read_dir(dir).await else {
+        return;
+    };
+    while let Ok(Some(entry)) = rd.next_entry().await {
+        // Skip in-flight `.<id>.<ext>.tmp` writes (mirrors build_attachment_index)
+        // so concurrent atomic writes aren't evicted out from under a rename.
+        if entry.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
+        if let Ok(meta) = entry.metadata().await {
+            if meta.is_file() {
+                let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+                total = total.saturating_add(meta.len());
+                files.push((entry.path(), mtime, meta.len()));
+            }
+        }
+    }
+    if total <= ATTACHMENTS_MAX_BYTES {
+        return;
+    }
+    files.sort_by_key(|(_, mtime, _)| *mtime); // oldest first
+    for (path, _, len) in files {
+        if total <= ATTACHMENTS_MAX_BYTES {
+            break;
+        }
+        if tokio::fs::remove_file(&path).await.is_ok() {
+            total = total.saturating_sub(len);
+            tracing::debug!(
+                target: "multimodal",
+                path = %path.display(),
+                "[multimodal::images][gc] evicted attachment over size cap"
+            );
+        }
     }
 }
 
-static IMAGE_STASH: OnceLock<Mutex<ImageStash>> = OnceLock::new();
-
-fn image_stash() -> &'static Mutex<ImageStash> {
-    IMAGE_STASH.get_or_init(|| Mutex::new(ImageStash::default()))
+/// Delete attachments older than [`ATTACHMENTS_TTL`]. Best-effort startup sweep
+/// fired by [`init_attachments_dir`].
+pub async fn sweep_stale_attachments() {
+    let dir = attachments_dir();
+    let Ok(mut rd) = tokio::fs::read_dir(&dir).await else {
+        return;
+    };
+    let now = std::time::SystemTime::now();
+    let mut reclaimed = 0u64;
+    while let Ok(Some(entry)) = rd.next_entry().await {
+        let Ok(meta) = entry.metadata().await else {
+            continue;
+        };
+        if !meta.is_file() {
+            continue;
+        }
+        let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+        let age = now.duration_since(mtime).unwrap_or(Duration::ZERO);
+        if age > ATTACHMENTS_TTL && tokio::fs::remove_file(entry.path()).await.is_ok() {
+            reclaimed = reclaimed.saturating_add(meta.len());
+        }
+    }
+    if reclaimed > 0 {
+        tracing::info!(
+            target: "multimodal",
+            reclaimed_bytes = reclaimed,
+            "[multimodal::images][gc] startup sweep removed stale attachments"
+        );
+    }
 }
 
 /// Ingress-time image stashing. Replaces every `[IMAGE:data:…]` marker with a
@@ -551,10 +686,20 @@ pub async fn stash_image_attachments(message: &str, image_config: &MultimodalCon
         match normalize_image_reference(reference, image_config, max_image_bytes, &client).await {
             Ok(data_uri) => {
                 let id = sha256_prefix(data_uri.as_bytes());
-                image_stash()
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .insert(id.clone(), data_uri);
+                match write_attachment(&id, &data_uri).await {
+                    Ok(path) => tracing::debug!(
+                        target: "multimodal",
+                        id = %id,
+                        path = %path.display(),
+                        "[multimodal::images][stash] persisted attachment to disk"
+                    ),
+                    Err(err) => tracing::warn!(
+                        target: "multimodal",
+                        id = %id,
+                        reason = %err,
+                        "[multimodal::images][stash] failed to persist attachment; placeholder will not rehydrate"
+                    ),
+                }
                 placeholders.push(format!("[Image: image {IMAGE_STASH_REF}{id}]"));
             }
             Err(err) => {
@@ -585,6 +730,28 @@ pub async fn stash_image_attachments(message: &str, image_config: &MultimodalCon
     out
 }
 
+/// Extract the `[Image: … #att:<id>]` sidecar placeholder tokens from `text`,
+/// in order. Used to forward a user's attached images into a delegated vision
+/// sub-agent's prompt so its turn rehydrates them (the orchestrator itself, on
+/// a non-vision tier, keeps the placeholder as text and never sees the image).
+pub fn extract_image_placeholders_in_text(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cursor = 0;
+    while let Some(rel) = text[cursor..].find(IMAGE_PLACEHOLDER_PREFIX) {
+        let start = cursor + rel;
+        let Some(rel_end) = text[start..].find(']') else {
+            break;
+        };
+        let end = start + rel_end + 1;
+        let token = &text[start..end];
+        if token.contains(IMAGE_STASH_REF) {
+            out.push(token.to_string());
+        }
+        cursor = end;
+    }
+    out
+}
+
 /// True if any message carries an `[Image: … #att:<id>]` sidecar placeholder.
 pub fn has_image_placeholders(messages: &[ChatMessage]) -> bool {
     messages.iter().any(|m| {
@@ -593,11 +760,12 @@ pub fn has_image_placeholders(messages: &[ChatMessage]) -> bool {
 }
 
 /// Rehydrate `[Image: … #att:<id>]` placeholders back into inline
-/// `[IMAGE:<data-uri>]` markers from the stash, returning a provider-only copy.
-/// Placeholders whose id is absent (e.g. after a restart) keep their text.
-/// Call ONLY for vision-capable models.
+/// `[IMAGE:<path>]` markers pointing at the on-disk attachment, returning a
+/// provider-only copy. `normalize_image_reference` re-reads the file at
+/// dispatch. Placeholders whose id is absent (file evicted/swept, or written by
+/// a different workspace) keep their text. Call ONLY for vision-capable models.
 pub fn rehydrate_image_placeholders(messages: &[ChatMessage]) -> Vec<ChatMessage> {
-    let stash = image_stash().lock().unwrap_or_else(|p| p.into_inner());
+    let index = build_attachment_index();
     messages
         .iter()
         .map(|m| {
@@ -609,7 +777,7 @@ pub fn rehydrate_image_placeholders(messages: &[ChatMessage]) -> Vec<ChatMessage
             ChatMessage {
                 id: m.id.clone(),
                 role: m.role.clone(),
-                content: rehydrate_placeholders_in_text(&m.content, &stash),
+                content: rehydrate_placeholders_in_text(&m.content, &index),
                 extra_metadata: m.extra_metadata.clone(),
             }
         })
@@ -617,8 +785,9 @@ pub fn rehydrate_image_placeholders(messages: &[ChatMessage]) -> Vec<ChatMessage
 }
 
 /// Replace each `[Image: <name> #att:<id>]` placeholder in `text` with
-/// `[IMAGE:<data-uri>]` when the id is in `stash`; leave it verbatim otherwise.
-fn rehydrate_placeholders_in_text(text: &str, stash: &ImageStash) -> String {
+/// `[IMAGE:<path>]` when the id resolves to an on-disk attachment in `index`;
+/// leave it verbatim otherwise.
+fn rehydrate_placeholders_in_text(text: &str, index: &HashMap<String, PathBuf>) -> String {
     let mut out = String::with_capacity(text.len());
     let mut cursor = 0;
     while let Some(rel) = text[cursor..].find(IMAGE_PLACEHOLDER_PREFIX) {
@@ -635,7 +804,9 @@ fn rehydrate_placeholders_in_text(text: &str, stash: &ImageStash) -> String {
             let id = inner[ai + IMAGE_STASH_REF.len()..]
                 .trim_end_matches(']')
                 .trim();
-            stash.get(id).map(|uri| format!("[IMAGE:{uri}]"))
+            index
+                .get(id)
+                .map(|path| format!("[IMAGE:{}]", path.display()))
         });
         out.push_str(replaced.as_deref().unwrap_or(inner));
         cursor = end;

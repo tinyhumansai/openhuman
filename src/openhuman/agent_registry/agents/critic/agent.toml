@@ -4,6 +4,11 @@ delegate_name = "review_code"
 when_to_use = "Adversarial reviewer — reviews diffs and code against project rules, flags vulnerabilities, regressions, and missing tests. Read-only."
 temperature = 0.4
 max_iterations = 5
+# Bound the review verdict that flows up to the orchestrator verbatim
+# (delegate_critic). 8000 chars (~2000 tokens) matches the normal
+# sub-agent cap (planner/researcher) and keeps long diffs from leaking
+# an unbounded critique into the orchestrator's context (#4099).
+max_result_chars = 8000
 sandbox_mode = "read_only"
 omit_identity = true
 omit_memory_context = true

@@ -17,9 +17,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import InstallSkillDialog from '../InstallSkillDialog';
 
 vi.mock('../../../services/api/workflowsApi', () => ({
-  workflowsApi: {
-    installWorkflowFromUrl: vi.fn(),
-  },
+  workflowsApi: { installWorkflowFromUrl: vi.fn() },
 }));
 
 describe('InstallSkillDialog', () => {
@@ -148,9 +146,7 @@ describe('InstallSkillDialog', () => {
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent('Could not install skill');
     });
-    expect(screen.getByRole('alert')).toHaveTextContent(
-      'unexpected: something weird happened'
-    );
+    expect(screen.getByRole('alert')).toHaveTextContent('unexpected: something weird happened');
     expect(submit.disabled).toBe(false);
   });
 

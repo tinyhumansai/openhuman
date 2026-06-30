@@ -16,6 +16,7 @@ import {
   openhumanLocalAiDownloadsProgress,
   openhumanLocalAiStatus,
 } from '../utils/tauriCommands';
+import Button from './ui/Button';
 
 const POLL_INTERVAL = 2000;
 
@@ -127,7 +128,7 @@ const LocalAIDownloadSnackbar = () => {
             <path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z" />
             <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z" />
           </svg>
-          <span className="text-xs font-medium text-stone-300">
+          <span className="text-xs font-medium text-content-faint">
             {percent != null ? `${percent}%` : label}
           </span>
         </button>
@@ -153,29 +154,33 @@ const LocalAIDownloadSnackbar = () => {
             <span className="text-sm font-medium text-white">{label}</span>
           </div>
           <div className="flex items-center gap-1">
-            <button
+            <Button
+              iconOnly
+              variant="tertiary"
+              size="xs"
               onClick={handleToggleCollapse}
-              className="p-1 text-stone-500 hover:text-stone-300 transition-colors"
               aria-label={t('app.localAiDownload.collapseAria')}>
               <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
                 <path d="M3.75 7.25a.75.75 0 000 1.5h8.5a.75.75 0 000-1.5h-8.5z" />
               </svg>
-            </button>
-            <button
+            </Button>
+            <Button
+              iconOnly
+              variant="tertiary"
+              size="xs"
               onClick={handleDismiss}
-              className="p-1 text-stone-500 hover:text-stone-300 transition-colors"
               aria-label={t('app.localAiDownload.dismissAria')}>
               <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
                 <path d="M4.28 3.22a.75.75 0 00-1.06 1.06L6.94 8l-3.72 3.72a.75.75 0 101.06 1.06L8 9.06l3.72 3.72a.75.75 0 101.06-1.06L9.06 8l3.72-3.72a.75.75 0 00-1.06-1.06L8 6.94 4.28 3.22z" />
               </svg>
-            </button>
+            </Button>
           </div>
         </div>
 
         {/* Phase detail */}
         {phaseDetail && (
           <div className="px-4 pb-1">
-            <span className="text-[11px] text-stone-400 truncate block">{phaseDetail}</span>
+            <span className="text-[11px] text-content-faint truncate block">{phaseDetail}</span>
           </div>
         )}
 
@@ -192,7 +197,7 @@ const LocalAIDownloadSnackbar = () => {
         </div>
 
         {/* Details */}
-        <div className="flex items-center justify-between px-4 pb-3 text-xs text-stone-400">
+        <div className="flex items-center justify-between px-4 pb-3 text-xs text-content-faint">
           <span>
             {isInstallingPhase
               ? t('app.localAiDownload.installing')

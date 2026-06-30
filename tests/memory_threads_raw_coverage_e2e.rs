@@ -24,7 +24,6 @@ use openhuman_core::openhuman::embeddings::NoopEmbedding;
 use openhuman_core::openhuman::memory::query::{
     MemoryQueryTool, MemoryTreeDrillDownTool, MemoryTreeFetchLeavesTool,
     MemoryTreeIngestDocumentTool, MemoryTreeQuerySourceTool, MemoryTreeSearchEntitiesTool,
-    MemoryTreeWalkTool,
 };
 use openhuman_core::openhuman::memory::tools::{
     MemoryForgetTool, MemoryRecallTool, MemoryStoreTool,
@@ -772,7 +771,7 @@ async fn memory_thread_tree_and_sync_controller_schemas_execute_public_handlers(
 
     let thread_schemas = all_threads_controller_schemas();
     let thread_controllers = all_threads_registered_controllers();
-    assert_eq!(thread_schemas.len(), 16);
+    assert_eq!(thread_schemas.len(), 17);
     assert_eq!(thread_schemas.len(), thread_controllers.len());
     assert_eq!(
         openhuman_core::openhuman::threads::schemas::schemas("missing").function,
@@ -795,6 +794,7 @@ async fn memory_thread_tree_and_sync_controller_schemas_execute_public_handlers(
         "turn_state_clear",
         "task_board_get",
         "task_board_put",
+        "token_usage",
     ] {
         assert!(thread_schemas
             .iter()
@@ -1060,7 +1060,6 @@ fn memory_schema_registries_and_query_tool_metadata_cover_public_surfaces() {
         &MemoryTreeDrillDownTool,
         &MemoryTreeFetchLeavesTool,
         &MemoryTreeIngestDocumentTool,
-        &MemoryTreeWalkTool,
     ] {
         assert!(!tool.name().is_empty());
         assert!(!tool.description().is_empty());
@@ -3044,6 +3043,14 @@ impl ComposioProvider for EmptySlugProvider {
 #[tokio::test]
 async fn memory_sync_provider_trait_defaults_and_connection_hook_are_deterministic() {
     let tmp = TempDir::new().expect("tempdir");
+    // Determinism (as this test's name promises): `identity_set` →
+    // `persist_provider_profile` writes through the PROCESS-GLOBAL memory client
+    // and returns 0 when it isn't ready. Other tests in this binary rebind that
+    // global, so under parallel execution this test could otherwise observe an
+    // unready client and see 0 instead of 1. Bind the global to this test's
+    // workspace up front so the assertion is independent of execution order.
+    openhuman_core::openhuman::memory::global::init(tmp.path().to_path_buf())
+        .expect("init global memory client");
     let ctx = ProviderContext {
         config: Arc::new(config_in(&tmp)),
         toolkit: "raw_coverage".into(),
@@ -3142,6 +3149,8 @@ fn turn_state_mirror_persists_progress_edges_from_public_events() {
         tool_name: "memory.search".into(),
         arguments: json!({ "q": "coverage" }),
         iteration: 2,
+        display_label: None,
+        display_detail: None,
     }));
     assert!(mirror.observe(&AgentProgress::ToolCallCompleted {
         call_id: "call-1".into(),
@@ -3176,20 +3185,29 @@ fn turn_state_mirror_persists_progress_edges_from_public_events() {
         max_iterations: 3,
         extended_policy: false,
     }));
-    assert!(!mirror.observe(&AgentProgress::SubagentToolCallStarted {
+    // Sub-agent tool boundaries now FLUSH (return `true`): while a sub-agent
+    // runs, the parent is blocked on its long-lived `spawn_subagent` tool, so
+    // the parent's own iteration/tool flushes don't fire. Flushing on the
+    // child's tool start/complete is what lets the sub-agent's streamed thoughts
+    // reach disk mid-run (survives tab-switch / reload).
+    assert!(mirror.observe(&AgentProgress::SubagentToolCallStarted {
         agent_id: "researcher".into(),
         task_id: "task-1".into(),
         call_id: "child-call".into(),
         tool_name: "memory.read".into(),
+        arguments: serde_json::Value::Null,
         iteration: 1,
+        display_label: None,
+        display_detail: None,
     }));
-    assert!(!mirror.observe(&AgentProgress::SubagentToolCallCompleted {
+    assert!(mirror.observe(&AgentProgress::SubagentToolCallCompleted {
         agent_id: "researcher".into(),
         task_id: "task-1".into(),
         call_id: "child-call".into(),
         tool_name: "memory.read".into(),
         success: true,
         output_chars: 44,
+        output: "child tool output".into(),
         elapsed_ms: 22,
         iteration: 1,
     }));
@@ -3259,10 +3277,14 @@ fn turn_state_mirror_persists_progress_edges_from_public_events() {
     let mut complete = TurnStateMirror::new(store.clone(), "thread/completed", "request-complete");
     assert!(complete.observe(&AgentProgress::TurnCompleted { iterations: 2 }));
     complete.finish();
-    assert!(store
+    // A completed turn's snapshot is now RETAINED (lifecycle `Completed`) rather
+    // than deleted, so the "View processing" panel can replay a finished turn
+    // after reload. `finish()`/mark-all-interrupted skips `Completed` snapshots.
+    let completed = store
         .get("thread/completed")
         .expect("completed snapshot lookup")
-        .is_none());
+        .expect("completed snapshot retained for replay");
+    assert_eq!(completed.lifecycle, TurnLifecycle::Completed);
 }
 
 #[test]
@@ -3451,7 +3473,10 @@ fn turn_state_store_persists_lists_marks_and_clears_snapshots() {
                 iteration: Some(1),
                 elapsed_ms: Some(100),
                 output_chars: Some(10),
+                display_name: None,
+                detail: None,
             }],
+            transcript: vec![],
         }),
     });
     let second = TurnState::started("thread/b", "request-2", 2, "2026-05-29T12:01:00Z");
@@ -4002,6 +4027,10 @@ async fn memory_sources_registry_rpc_and_schema_handlers_cover_crud_edges() {
 
 #[tokio::test]
 async fn memory_ops_public_handlers_cover_document_file_kv_graph_and_envelopes() {
+    Box::pin(memory_ops_public_handlers_cover_document_file_kv_graph_and_envelopes_body()).await;
+}
+
+async fn memory_ops_public_handlers_cover_document_file_kv_graph_and_envelopes_body() {
     let _lock = env_lock();
     let tmp = TempDir::new().expect("tempdir");
     let _workspace = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", tmp.path());
@@ -4385,7 +4414,7 @@ async fn memory_tree_retrieval_rpc_and_schema_wrappers_cover_empty_and_invalid_p
         openhuman_core::openhuman::memory_tree::retrieval::schemas::all_controller_schemas();
     let controllers =
         openhuman_core::openhuman::memory_tree::retrieval::schemas::all_registered_controllers();
-    assert_eq!(schemas.len(), 4);
+    assert_eq!(schemas.len(), 5);
     assert_eq!(schemas.len(), controllers.len());
     assert_eq!(
         openhuman_core::openhuman::memory_tree::retrieval::schemas::schemas("missing").function,

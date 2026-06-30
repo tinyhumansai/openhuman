@@ -213,7 +213,10 @@ impl ComposioTool {
         let url = format!("{}/tools", self.base_v3);
         let mut req = self.client().get(&url).header("x-api-key", &self.api_key);
 
-        req = req.query(&[("limit", "200")]);
+        // #3932: pin toolkit_versions=latest. Composio v3 otherwise defaults to
+        // the 00000000_00 snapshot, which lists zero tools for any toolkit
+        // published after it (Outlook and every other post-launch toolkit).
+        req = req.query(&[("limit", "200"), ("toolkit_versions", "latest")]);
         if let Some(app) = app_name.map(str::trim).filter(|app| !app.is_empty()) {
             req = req.query(&[("toolkits", app), ("toolkit_slug", app)]);
         }
@@ -274,7 +277,13 @@ impl ComposioTool {
         toolkits: &[&str],
         tags: Option<&[&str]>,
     ) -> Vec<(&'static str, String)> {
-        let mut params: Vec<(&'static str, String)> = vec![("limit", "200".to_string())];
+        // #3932: pin toolkit_versions=latest. Without it Composio v3 defaults to
+        // the 00000000_00 snapshot, which lists zero tools for any toolkit
+        // published after it (Outlook and every other post-launch toolkit).
+        let mut params: Vec<(&'static str, String)> = vec![
+            ("limit", "200".to_string()),
+            ("toolkit_versions", "latest".to_string()),
+        ];
 
         let trimmed: Vec<&str> = toolkits
             .iter()

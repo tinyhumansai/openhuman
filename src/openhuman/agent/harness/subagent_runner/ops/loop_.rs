@@ -54,12 +54,14 @@ pub(super) async fn run_inner_loop(
     model_vision: bool,
     temperature: f64,
     max_iterations: usize,
+    max_output_tokens: u32,
     task_id: &str,
     agent_id: &str,
     worker_thread_id: Option<String>,
     handoff_cache: Option<&ResultHandoffCache>,
     parent: &ParentExecutionContext,
     extended_policy: bool,
+    tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression,
     // Optional steering channel. When `Some`, the child engine drains
     // steer/collect messages at iteration boundaries so the parent can
     // `steer_subagent` a running async sub-agent. `None` = non-steerable.
@@ -146,6 +148,7 @@ pub(super) async fn run_inner_loop(
         handoff_cache,
         policy: crate::openhuman::tools::policy::DefaultToolPolicy,
         agent_id: agent_id.to_string(),
+        tokenjuice_compression,
     };
     let mut observer = SubagentObserver {
         worker_thread_id,
@@ -155,12 +158,14 @@ pub(super) async fn run_inner_loop(
         task_id: task_id.to_string(),
         force_text_mode,
         usage: AggregatedUsage::default(),
+        last_turn_usage: None,
     };
     let checkpoint = SubagentCheckpoint {
         provider,
         model: model.to_string(),
         temperature,
         agent_id: agent_id.to_string(),
+        max_output_tokens,
     };
     let progress = super::super::super::engine::SubagentProgress {
         sink: parent.on_progress.clone(),
@@ -170,6 +175,15 @@ pub(super) async fn run_inner_loop(
     };
 
     let parser = super::super::super::engine::DefaultParser;
+
+    // Sub-agents have no typed `ContextManager`, so opt the shared turn engine
+    // into LLM autocompaction: when the context guard reports the window is
+    // filling, the engine summarizes the flat `ChatMessage` history in place
+    // (protecting the leading system prompt + recent tail) instead of only
+    // hard-trimming the oldest messages. Gated on the same `context` config the
+    // main chat uses, so disabling autocompaction disables it everywhere.
+    let autocompact = subagent_autocompact_config().await;
+
     // Heap-allocate the child `run_turn_engine` state machine. Sub-agents
     // run as nested polls inside the *parent* agent's `run_turn_engine`
     // (the orchestrator → tool exec → `dispatch_subagent` → `run_subagent`
@@ -201,9 +215,11 @@ pub(super) async fn run_inner_loop(
             &crate::openhuman::config::MultimodalConfig::default(),
             &crate::openhuman::config::MultimodalFileConfig::default(),
             max_iterations,
+            max_output_tokens,
             None, // sub-agents don't stream a draft
             &["ask_user_clarification"],
             run_queue, // steering channel for `steer_subagent` (None = non-steerable)
+            autocompact.as_ref(),
         )),
     )
     .await?;
@@ -213,5 +229,36 @@ pub(super) async fn run_inner_loop(
         outcome.iterations as usize,
         observer.usage,
         outcome.early_exit_tool,
+    ))
+}
+
+/// Build the sub-agent's engine-autocompaction config from the global
+/// `context` settings, or `None` when context management / autocompaction is
+/// disabled (in which case the engine falls back to hard token-budget trim).
+///
+/// Reuses the same `enabled` + `autocompact_enabled` toggles and
+/// `summarizer_model` override as the main chat, so the two paths stay in sync.
+async fn subagent_autocompact_config() -> Option<crate::openhuman::context::EngineAutocompact> {
+    let config = match crate::openhuman::config::Config::load_or_init().await {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                "[subagent_runner] failed to load config; engine autocompaction disabled"
+            );
+            return None;
+        }
+    };
+    let ctx = &config.context;
+    if !ctx.enabled || !ctx.autocompact_enabled {
+        tracing::debug!(
+            enabled = ctx.enabled,
+            autocompact_enabled = ctx.autocompact_enabled,
+            "[subagent_runner] engine autocompaction disabled by context config"
+        );
+        return None;
+    }
+    Some(crate::openhuman::context::EngineAutocompact::with_defaults(
+        ctx.summarizer_model.clone(),
     ))
 }

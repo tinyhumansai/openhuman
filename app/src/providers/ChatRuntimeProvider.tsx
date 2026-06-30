@@ -3,11 +3,13 @@ import { useCallback, useEffect, useRef } from 'react';
 
 import { requestUsageRefresh } from '../hooks/usageRefresh';
 import { useRefetchSnapshotOnTurnEnd } from '../hooks/useRefetchSnapshotOnTurnEnd';
+import { ingestRuntimeErrorSignal } from '../lib/userErrors/report';
 import {
   type ChatApprovalRequestEvent,
   type ChatDoneEvent,
   type ChatInferenceStartEvent,
   type ChatIterationStartEvent,
+  type ChatPlanReviewRequestEvent,
   type ChatSegmentEvent,
   type ChatSubagentDoneEvent,
   type ChatSubagentTextDeltaEvent,
@@ -21,19 +23,24 @@ import {
 } from '../services/chatService';
 import { store } from '../store';
 import {
+  appendProcessingProse,
   appendSubagentStreamDelta,
   clearInferenceStatusForThread,
   clearParallelRequest,
   clearPendingApprovalForThread,
+  clearPendingPlanReviewForThread,
+  clearProcessingForThread,
   clearStreamingAssistantForThread,
   endInferenceTurn,
   markInferenceTurnStreaming,
   recordChatTurnUsage,
+  recordProcessingTool,
   recordSubagentTranscriptTool,
   resolveSubagentTranscriptTool,
   setInferenceStatusForThread,
   setParallelStream,
   setPendingApprovalForThread,
+  setPendingPlanReviewForThread,
   setStreamingAssistantForThread,
   setTaskBoardForThread,
   setToolTimelineForThread,
@@ -41,12 +48,14 @@ import {
   type ToolTimelineEntry,
   type ToolTimelineEntryStatus,
   upsertArtifactFailedForThread,
+  upsertArtifactInProgressForThread,
   upsertArtifactReadyForThread,
 } from '../store/chatRuntimeSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { selectSocketStatus } from '../store/socketSelectors';
 import {
   addInferenceResponse,
+  addMessageLocal,
   clearThreadInferenceActive,
   createNewThread,
   generateThreadTitleIfNeeded,
@@ -54,7 +63,11 @@ import {
   setSelectedThread,
 } from '../store/threadSlice';
 import { IS_PROD } from '../utils/config';
-import { formatTimelineEntry, promptFromArgsBuffer } from '../utils/toolTimelineFormatting';
+import {
+  formatTimelineEntry,
+  isKnownClientTool,
+  promptFromArgsBuffer,
+} from '../utils/toolTimelineFormatting';
 
 const logChatRuntime = debug('openhuman:chat-runtime');
 const USER_FACING_AGENT_ERROR_MESSAGE =
@@ -64,6 +77,34 @@ const SEGMENT_DELIVERY_TTL_MS = 5 * 60 * 1000;
 const MAX_SEGMENT_DELIVERIES = 100;
 
 type SegmentDelivery = { segments: Map<number, string>; createdAt: number; lastSeenAt: number };
+
+type ThreadSliceState = ReturnType<typeof store.getState>['thread'];
+
+/**
+ * Whether a thread should be treated as occupied for proactive delivery — a
+ * thread is only a valid target when it is provably "fresh" (holds no
+ * messages). We check the in-memory message cache and the persisted
+ * `messageCount` snapshot, so a thread that already has a conversation
+ * server-side (but whose messages aren't loaded into the cache yet) is still
+ * treated as occupied and never reused.
+ *
+ * Crucially, *unknown* thread metadata counts as occupied: when only a
+ * rehydrated `selectedThreadId` is present (e.g. before `loadThreads`
+ * resolves, or after caches were reset while selection was preserved),
+ * `state.threads.find` returns `undefined`. Treating that as fresh would let
+ * a proactive event append into a conversation we simply haven't loaded yet.
+ * We fail closed and open a new thread instead. See #3713.
+ */
+function threadHasMessages(state: ThreadSliceState, threadId: string): boolean {
+  const cached = state.messagesByThreadId[threadId];
+  if (cached && cached.length > 0) return true;
+  if (threadId === state.selectedThreadId && state.messages.length > 0) return true;
+  const thread = state.threads.find(t => t.id === threadId);
+  // Unknown metadata → fail closed (occupied) rather than risk interrupting an
+  // unloaded conversation.
+  if (!thread) return true;
+  return thread.messageCount > 0;
+}
 
 function rtLog(message: string, fields?: Record<string, string | number | null | undefined>) {
   if (IS_PROD) return;
@@ -157,6 +198,50 @@ function hasCompleteSegmentDelivery(
 
 function chatDoneExtraMetadata(event: ChatDoneEvent): Record<string, unknown> | undefined {
   return event.citations?.length ? { citations: event.citations } : undefined;
+}
+
+/**
+ * Map a `chat_done` event's holistic usage onto the `recordChatTurnUsage`
+ * payload. Prefers the structured `usage` object (tokens + cost + context window
+ * + per-sub-agent breakdown); falls back to the deprecated flat token fields for
+ * any older core that still emits them.
+ */
+function chatTurnUsagePayload(event: ChatDoneEvent): {
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens?: number;
+  costUsd?: number;
+  contextWindow?: number;
+  threadId?: string;
+  subAgents?: Array<{
+    agentId: string;
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number;
+  }>;
+} {
+  const u = event.usage;
+  if (u) {
+    return {
+      inputTokens: u.input_tokens,
+      outputTokens: u.output_tokens,
+      cachedTokens: u.cached_input_tokens,
+      costUsd: u.cost_usd,
+      contextWindow: u.context_window,
+      threadId: event.thread_id,
+      subAgents: (u.subagents ?? []).map(s => ({
+        agentId: s.agent_id,
+        inputTokens: s.input_tokens,
+        outputTokens: s.output_tokens,
+        costUsd: s.cost_usd,
+      })),
+    };
+  }
+  return {
+    inputTokens: event.total_input_tokens ?? 0,
+    outputTokens: event.total_output_tokens ?? 0,
+    threadId: event.thread_id,
+  };
 }
 
 export function findPendingDelegationContext(
@@ -262,14 +347,18 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
       }
 
       const state = store.getState().thread;
-      // Resolution priority: selected > any in-flight inference thread > first
-      // thread. With parallel inference there may be several active threads;
-      // any one is an acceptable proactive target when nothing is selected.
-      const firstActiveThreadId = Object.keys(state.activeThreadIds)[0] ?? null;
-      const targetFromState =
-        state.selectedThreadId ?? firstActiveThreadId ?? state.threads[0]?.id ?? null;
-      if (targetFromState) {
-        return targetFromState;
+      // Reuse an existing thread for proactive delivery ONLY when it is
+      // fresh (no messages). Injecting a morning brief / subconscious
+      // update into a thread that already holds a conversation interrupts
+      // the active chat flow (#3713). Candidate priority is selected >
+      // first thread; if the candidate already has messages we fall
+      // through and open a dedicated new thread instead. An in-flight
+      // inference thread always has at least the user's message, so it is
+      // never considered fresh — that is why `activeThreadIds` is no
+      // longer used as a target here.
+      const candidateThreadId = state.selectedThreadId ?? state.threads[0]?.id ?? null;
+      if (candidateThreadId && !threadHasMessages(state, candidateThreadId)) {
+        return candidateThreadId;
       }
 
       if (proactiveThreadCreationPromiseRef.current) {
@@ -306,10 +395,49 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
 
     const decorateEntry = (entry: ToolTimelineEntry): ToolTimelineEntry => {
       const formatted = formatTimelineEntry(entry);
-      return { ...entry, displayName: formatted.title, detail: formatted.detail };
+      // The server now attaches a human label/detail for dynamic
+      // Composio/MCP/integration tools the client can't know. Trust it for
+      // those; for the fixed set of built-ins the client formatter labels
+      // well (with args-aware detail), the client label stays authoritative.
+      if (entry.displayName && !isKnownClientTool(entry.name)) {
+        return {
+          ...entry,
+          displayName: entry.displayName,
+          detail: entry.detail ?? formatted.detail,
+        };
+      }
+      return { ...entry, displayName: formatted.title, detail: formatted.detail ?? entry.detail };
     };
 
-    const finishChatDoneTurn = (event: ChatDoneEvent, path: string) => {
+    // When a turn ends, any follow-ups the user queued behind it are about to be
+    // dispatched by the backend as fresh turns. Nothing else persists their
+    // prompt — the web channel never writes user messages; the composer does
+    // (`addMessageLocal` → `appendMessage`) — so append them to the transcript
+    // now. Doing it here (after this turn's assistant reply was appended, before
+    // `endInferenceTurn` clears the pills) keeps the append-log order correct:
+    // user → assistant → queued follow-up. Without this the queued prompts are
+    // lost on reload and the dispatched answer has no visible user message.
+    const flushQueuedFollowups = async (threadId: string) => {
+      const queued = store.getState().chatRuntime.queuedFollowupsByThread[threadId] ?? [];
+      // Persist sequentially so the queued prompts land in the append-log in the
+      // order the user queued them (concurrent dispatches would race), and
+      // surface failures instead of dropping them silently. The stored message
+      // carries the original content + attachment metadata, so the follow-up
+      // persists identically to an interactive send.
+      for (const item of queued) {
+        try {
+          await dispatch(addMessageLocal({ threadId, message: item.message })).unwrap();
+        } catch (error) {
+          rtLog('flush_followup_append_failed', {
+            thread: threadId,
+            message: item.message.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    };
+
+    const finishChatDoneTurn = async (event: ChatDoneEvent, path: string) => {
       rtLog('refresh_usage_counter', {
         thread: event.thread_id,
         request: event.request_id,
@@ -323,6 +451,9 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         path,
       });
       refetchSnapshot();
+      // Persist queued follow-ups (in order, after this turn's assistant reply)
+      // and only then clear the queue + lifecycle.
+      await flushQueuedFollowups(event.thread_id);
       dispatch(endInferenceTurn({ threadId: event.thread_id }));
       dispatch(clearThreadInferenceActive(event.thread_id));
     };
@@ -331,6 +462,9 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
     const cleanup = subscribeChatEvents({
       onInferenceStart: (event: ChatInferenceStartEvent) => {
         rtLog('inference_start', { thread: event.thread_id, request: event.request_id });
+        // Fresh turn: drop the previous turn's live processing transcript so a
+        // new turn's narration/steps don't append onto the old one.
+        dispatch(clearProcessingForThread({ threadId: event.thread_id }));
         dispatch(markInferenceTurnStreaming({ threadId: event.thread_id }));
         dispatch(
           setInferenceStatusForThread({
@@ -381,6 +515,12 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           ? existing.findIndex(entry => entry.id === event.tool_call_id)
           : -1;
 
+        // Stable row id, shared with the processing-transcript tool pointer so
+        // the panel can resolve the row by `callId`.
+        const rowId =
+          event.tool_call_id ??
+          `${event.thread_id}:${event.round}:${existing.length}:${event.tool_name}`;
+
         let entries: ToolTimelineEntry[];
         if (existingIdx >= 0) {
           entries = [...existing];
@@ -389,21 +529,26 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
             name: event.tool_name,
             round: event.round,
             status: 'running',
+            displayName: event.tool_display_label ?? entries[existingIdx].displayName,
+            detail: event.tool_display_detail ?? entries[existingIdx].detail,
           });
         } else {
           entries = [
             ...existing,
             decorateEntry({
-              id:
-                event.tool_call_id ??
-                `${event.thread_id}:${event.round}:${existing.length}:${event.tool_name}`,
+              id: rowId,
               name: event.tool_name,
               round: event.round,
               status: 'running',
+              displayName: event.tool_display_label,
+              detail: event.tool_display_detail,
             }),
           ];
         }
         dispatch(setToolTimelineForThread({ threadId: event.thread_id, entries }));
+        dispatch(
+          recordProcessingTool({ threadId: event.thread_id, round: event.round, callId: rowId })
+        );
       },
       onToolResult: (event: ChatToolResultEvent) => {
         const eventKey = `tool_result:${event.thread_id}:${event.request_id ?? 'none'}:${event.round}:${event.tool_name}:${event.success}:${event.tool_call_id ?? ''}`;
@@ -540,6 +685,12 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
                     iterations: event.subagent?.iterations ?? entry.subagent.iterations,
                     elapsedMs: event.subagent?.elapsed_ms ?? entry.subagent.elapsedMs,
                     outputChars: event.subagent?.output_chars ?? entry.subagent.outputChars,
+                    // Worktree isolation metadata (#3376) — present only for
+                    // workers that ran with `isolation = "worktree"`. Drives the
+                    // inline worktree row's open/diff/remove affordances.
+                    worktreePath: event.subagent?.worktree_path ?? entry.subagent.worktreePath,
+                    changedFiles: event.subagent?.changed_files ?? entry.subagent.changedFiles,
+                    isDirty: event.subagent?.dirty_status ?? entry.subagent.isDirty,
                   }
                 : entry.subagent,
             });
@@ -602,6 +753,9 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
                 toolName: event.tool_name,
                 status: 'running',
                 iteration: event.subagent?.child_iteration,
+                args: event.args,
+                displayName: event.tool_display_label,
+                detail: event.tool_display_detail,
               },
             ],
           },
@@ -616,6 +770,9 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
             callId: event.tool_call_id,
             toolName: event.tool_name,
             iteration: event.subagent?.child_iteration,
+            args: event.args,
+            displayName: event.tool_display_label,
+            detail: event.tool_display_detail,
           })
         );
       },
@@ -637,6 +794,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           status: event.success ? 'success' : 'error',
           elapsedMs: event.subagent?.elapsed_ms ?? updatedCalls[callIdx].elapsedMs,
           outputChars: event.subagent?.output_chars ?? updatedCalls[callIdx].outputChars,
+          result: event.output ?? updatedCalls[callIdx].result,
         };
         const next = [...existing];
         next[idx] = { ...entry, subagent: { ...entry.subagent, toolCalls: updatedCalls } };
@@ -649,6 +807,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
             success: event.success,
             elapsedMs: event.subagent?.elapsed_ms,
             outputChars: event.subagent?.output_chars,
+            result: event.output,
           })
         );
       },
@@ -728,6 +887,16 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           };
         }
         dispatch(setStreamingAssistantForThread({ threadId: event.thread_id, streaming }));
+        // Build the live interleaved processing transcript so a mid-turn
+        // "View processing" isn't empty (the persisted one lands on settle).
+        dispatch(
+          appendProcessingProse({
+            threadId: event.thread_id,
+            kind: 'narration',
+            round: event.round,
+            delta: event.delta,
+          })
+        );
       },
       onThinkingDelta: event => {
         const cr = store.getState().chatRuntime;
@@ -757,6 +926,14 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           };
         }
         dispatch(setStreamingAssistantForThread({ threadId: event.thread_id, streaming }));
+        dispatch(
+          appendProcessingProse({
+            threadId: event.thread_id,
+            kind: 'thinking',
+            round: event.round,
+            delta: event.delta,
+          })
+        );
       },
       onToolArgsDelta: event => {
         const cr = store.getState().chatRuntime;
@@ -832,6 +1009,21 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           }
         });
       },
+      onArtifactPending: event => {
+        rtLog('artifact_pending', {
+          thread: event.thread_id,
+          artifact_id: event.artifact_id,
+          kind: event.kind,
+        });
+        dispatch(
+          upsertArtifactInProgressForThread({
+            threadId: event.thread_id,
+            artifactId: event.artifact_id,
+            kind: event.kind,
+            title: event.title,
+          })
+        );
+      },
       onArtifactReady: event => {
         rtLog('artifact_ready', {
           thread: event.thread_id,
@@ -886,6 +1078,9 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           firstString(a.path) ??
           firstString(a.url) ??
           firstString(a.target);
+        // `composio_connect` carries the toolkit slug so the inline connect
+        // card (#3993) knows which integration to authorize.
+        const toolkit = firstString(a.toolkit);
         dispatch(
           setPendingApprovalForThread({
             threadId: event.thread_id,
@@ -894,7 +1089,20 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
               toolName: event.tool_name,
               message: event.message,
               command,
+              toolkit,
             },
+          })
+        );
+      },
+      onPlanReviewRequest: (event: ChatPlanReviewRequestEvent) => {
+        rtLog('plan_review_request', { thread: event.thread_id, request: event.request_id });
+        const steps = Array.isArray(event.args?.steps)
+          ? event.args.steps.filter((s): s is string => typeof s === 'string')
+          : [];
+        dispatch(
+          setPendingPlanReviewForThread({
+            threadId: event.thread_id,
+            review: { requestId: event.request_id, summary: event.message, steps },
           })
         );
       },
@@ -923,12 +1131,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           store.getState().chatRuntime.parallelRequestThreads[event.request_id] !== undefined
         ) {
           const parallelRequestId = event.request_id;
-          dispatch(
-            recordChatTurnUsage({
-              inputTokens: event.total_input_tokens,
-              outputTokens: event.total_output_tokens,
-            })
-          );
+          dispatch(recordChatTurnUsage(chatTurnUsagePayload(event)));
           if (!event.segment_total && event.full_response.length > 0) {
             void (async () => {
               try {
@@ -963,15 +1166,11 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         const segmentDelivery = takeSegmentDelivery(segmentDeliveriesRef.current, deliveryKey);
         const completeSegmentDelivery = hasCompleteSegmentDelivery(event, segmentDelivery);
 
-        dispatch(
-          recordChatTurnUsage({
-            inputTokens: event.total_input_tokens,
-            outputTokens: event.total_output_tokens,
-          })
-        );
+        dispatch(recordChatTurnUsage(chatTurnUsagePayload(event)));
         dispatch(clearInferenceStatusForThread({ threadId: event.thread_id }));
         dispatch(clearStreamingAssistantForThread({ threadId: event.thread_id }));
         dispatch(clearPendingApprovalForThread({ threadId: event.thread_id }));
+        dispatch(clearPendingPlanReviewForThread({ threadId: event.thread_id }));
 
         const existing = store.getState().chatRuntime.toolTimelineByThread[event.thread_id] ?? [];
         if (existing.length > 0) {
@@ -1003,7 +1202,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
                 error: error instanceof Error ? error.message : String(error),
               });
             }
-            finishChatDoneTurn(event, 'proactive');
+            await finishChatDoneTurn(event, 'proactive');
           })();
           return;
         }
@@ -1038,7 +1237,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
                 error: error instanceof Error ? error.message : String(error),
               });
             }
-            finishChatDoneTurn(event, 'segment_reconcile');
+            await finishChatDoneTurn(event, 'segment_reconcile');
           })();
           return;
         }
@@ -1049,7 +1248,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
             assistantMessage: event.full_response,
           })
         );
-        finishChatDoneTurn(event, 'ordinary');
+        void finishChatDoneTurn(event, 'ordinary');
       },
       onError: event => {
         const eventKey = `error:${event.thread_id}:${event.request_id ?? 'none'}:${event.error_type}`;
@@ -1063,6 +1262,19 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           request: event.request_id,
           err: event.error_type,
         });
+
+        // #3931: surface expected, user-actionable provider/billing states
+        // (insufficient BYO credits, managed-budget exhaustion) in the shell's
+        // dedicated error panel — in ADDITION to the inline chat message below.
+        // Additive + defensive: no-op for non-actionable errors, never throws.
+        if (event.error_type !== 'cancelled') {
+          ingestRuntimeErrorSignal(dispatch, {
+            message: event.message,
+            errorType: event.error_type,
+            scope: 'chat',
+            sourceDomain: 'chat',
+          });
+        }
 
         // Parallel (forked) turn error: resolve only its lane, leaving the
         // primary turn untouched. Surface a non-cancellation error as a message
@@ -1093,6 +1305,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         dispatch(clearInferenceStatusForThread({ threadId: event.thread_id }));
         dispatch(clearStreamingAssistantForThread({ threadId: event.thread_id }));
         dispatch(clearPendingApprovalForThread({ threadId: event.thread_id }));
+        dispatch(clearPendingPlanReviewForThread({ threadId: event.thread_id }));
 
         const existing = store.getState().chatRuntime.toolTimelineByThread[event.thread_id] ?? [];
         if (existing.length > 0) {
@@ -1128,6 +1341,10 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           requestUsageRefresh();
         }
 
+        // The backend drains + dispatches queued follow-ups even when the turn
+        // errored, so flush them to the transcript here too (otherwise their
+        // prompts are lost). Mirrors the done path (sequential internally).
+        void flushQueuedFollowups(event.thread_id);
         dispatch(endInferenceTurn({ threadId: event.thread_id }));
         dispatch(clearThreadInferenceActive(event.thread_id));
       },
@@ -1167,9 +1384,11 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
     });
     for (const threadId of threadIds) {
       dispatch(clearInferenceStatusForThread({ threadId }));
-      // Clear any parked approval too: a disconnect before onDone/onError would
-      // otherwise leave the approval card stuck for a turn that can't complete.
+      // Clear any parked approval/plan-review too: a disconnect before
+      // onDone/onError would otherwise leave the card stuck for a turn that
+      // can't complete.
       dispatch(clearPendingApprovalForThread({ threadId }));
+      dispatch(clearPendingPlanReviewForThread({ threadId }));
       dispatch(endInferenceTurn({ threadId }));
     }
     // A disconnect kills every in-flight turn on the dead session, so clear all

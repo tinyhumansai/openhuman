@@ -21,6 +21,7 @@ import { createPortal } from 'react-dom';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { type WorkflowSummary } from '../../services/api/workflowsApi';
+import Button from '../ui/Button';
 import CreateWorkflowForm from './CreateWorkflowForm';
 
 const log = debug('skills:create-modal');
@@ -60,24 +61,20 @@ export default function CreateSkillModal({ onClose, onCreated, editing }: Props)
     return () => document.removeEventListener('keydown', handler);
   }, [onClose, submitting]);
 
-  const handleStateChange = useCallback(
-    (state: { valid: boolean; submitting: boolean }) => {
-      setFormValid(state.valid);
-      setSubmitting(state.submitting);
-    },
-    []
-  );
+  const handleStateChange = useCallback((state: { valid: boolean; submitting: boolean }) => {
+    setFormValid(state.valid);
+    setSubmitting(state.submitting);
+  }, []);
 
   return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      onClick={(e) => {
+      onClick={e => {
         if (e.target === e.currentTarget && !submitting) {
           log('backdrop-click close');
           onClose();
         }
-      }}
-    >
+      }}>
       <div
         aria-hidden="true"
         className="absolute inset-0 bg-black/50 backdrop-blur-sm animate-fade-in"
@@ -93,23 +90,23 @@ export default function CreateSkillModal({ onClose, onCreated, editing }: Props)
         role="dialog"
         aria-modal="true"
         aria-labelledby="create-skill-title"
-        className="relative w-full max-w-[520px] rounded-2xl bg-white dark:bg-neutral-900 shadow-2xl animate-fade-in"
-      >
+        className="relative w-full max-w-[520px] rounded-2xl bg-surface shadow-2xl animate-fade-in">
         {/* Header */}
-        <div className="flex items-start justify-between gap-3 border-b border-stone-100 dark:border-neutral-800 px-5 py-4">
+        <div className="flex items-start justify-between gap-3 border-b border-line-subtle px-5 py-4">
           <div className="min-w-0 flex-1">
             <h2
               id="create-skill-title"
-              className="text-base font-semibold text-stone-900 dark:text-neutral-100 font-sans"
-            >
+              className="text-base font-semibold text-content font-sans">
               {editing ? t('common.edit') : t('workflows.create.title')}
             </h2>
-            <p className="mt-0.5 text-xs text-stone-500 dark:text-neutral-400">
+            <p className="mt-0.5 text-xs text-content-muted">
               {t('workflows.create.subtitle')}
             </p>
           </div>
-          <button
-            type="button"
+          <Button
+            iconOnly
+            variant="tertiary"
+            size="md"
             onClick={() => {
               if (!submitting) {
                 log('close-button');
@@ -118,8 +115,7 @@ export default function CreateSkillModal({ onClose, onCreated, editing }: Props)
             }}
             disabled={submitting}
             aria-label={t('common.close')}
-            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-stone-400 dark:text-neutral-500 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 hover:text-stone-600 dark:hover:text-neutral-300 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 disabled:opacity-40"
-          >
+            className="h-8 w-8 flex-shrink-0 text-content-faint">
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
@@ -128,7 +124,7 @@ export default function CreateSkillModal({ onClose, onCreated, editing }: Props)
                 d="M6 18L18 6M6 6l12 12"
               />
             </svg>
-          </button>
+          </Button>
         </div>
 
         {/* Body — shared form component */}
@@ -143,27 +139,21 @@ export default function CreateSkillModal({ onClose, onCreated, editing }: Props)
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 border-t border-stone-100 dark:border-neutral-800 px-5 py-3">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={submitting}
-            className="rounded-lg px-4 py-2 text-sm font-medium text-stone-600 dark:text-neutral-300 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 disabled:opacity-40"
-          >
+        <div className="flex items-center justify-end gap-2 border-t border-line-subtle px-5 py-3">
+          <Button variant="tertiary" onClick={onClose} disabled={submitting}>
             {t('common.cancel')}
-          </button>
-          <button
+          </Button>
+          <Button
             type="submit"
+            variant="primary"
             form={CREATE_FORM_ID}
-            disabled={!formValid || submitting}
-            className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
-          >
+            disabled={!formValid || submitting}>
             {submitting
               ? t('workflows.create.creating')
               : editing
                 ? t('common.save')
                 : t('workflows.create.createBtn')}
-          </button>
+          </Button>
         </div>
       </div>
     </div>,

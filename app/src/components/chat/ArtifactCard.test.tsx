@@ -6,10 +6,10 @@ import ArtifactCard from './ArtifactCard';
 
 // Mock the artifact download service — the card only consumes the
 // two public functions, so a per-test override is enough.
-const downloadArtifactMock = vi.fn();
+const saveArtifactViaDialogMock = vi.fn();
 const revealArtifactInFileManagerMock = vi.fn();
 vi.mock('../../services/artifactDownloadService', () => ({
-  downloadArtifact: (...args: unknown[]) => downloadArtifactMock(...args),
+  saveArtifactViaDialog: (...args: unknown[]) => saveArtifactViaDialogMock(...args),
   revealArtifactInFileManager: (...args: unknown[]) => revealArtifactInFileManagerMock(...args),
 }));
 
@@ -27,7 +27,7 @@ function snapshot(overrides: Partial<ArtifactSnapshot> = {}): ArtifactSnapshot {
 }
 
 beforeEach(() => {
-  downloadArtifactMock.mockReset();
+  saveArtifactViaDialogMock.mockReset();
   revealArtifactInFileManagerMock.mockReset();
 });
 
@@ -82,7 +82,7 @@ describe('<ArtifactCard /> — ready state', () => {
   });
 
   it('drives the download → done flow and reveals on click', async () => {
-    downloadArtifactMock.mockResolvedValueOnce({
+    saveArtifactViaDialogMock.mockResolvedValueOnce({
       ok: true,
       path: '/Users/me/Downloads/Quarterly Deck.pptx',
     });
@@ -94,8 +94,8 @@ describe('<ArtifactCard /> — ready state', () => {
 
     // Service called with (id, title, ext) where ext comes from the
     // title's extension when present, or kind fallback otherwise.
-    await waitFor(() => expect(downloadArtifactMock).toHaveBeenCalledTimes(1));
-    expect(downloadArtifactMock).toHaveBeenCalledWith('a-1', 'Quarterly Deck', 'pptx');
+    await waitFor(() => expect(saveArtifactViaDialogMock).toHaveBeenCalledTimes(1));
+    expect(saveArtifactViaDialogMock).toHaveBeenCalledWith('a-1', 'Quarterly Deck', 'pptx');
 
     // Saved-to row appears with the reveal button.
     await screen.findByText(
@@ -113,40 +113,40 @@ describe('<ArtifactCard /> — ready state', () => {
   });
 
   it('falls back to the kind-based extension when title has no dot', async () => {
-    downloadArtifactMock.mockResolvedValueOnce({ ok: true, path: '/tmp/Doc.pdf' });
+    saveArtifactViaDialogMock.mockResolvedValueOnce({ ok: true, path: '/tmp/Doc.pdf' });
     render(
       <ArtifactCard artifact={snapshot({ artifactId: 'a-2', kind: 'document', title: 'Doc' })} />
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Download' }));
-    await waitFor(() => expect(downloadArtifactMock).toHaveBeenCalledTimes(1));
-    expect(downloadArtifactMock).toHaveBeenCalledWith('a-2', 'Doc', 'pdf');
+    await waitFor(() => expect(saveArtifactViaDialogMock).toHaveBeenCalledTimes(1));
+    expect(saveArtifactViaDialogMock).toHaveBeenCalledWith('a-2', 'Doc', 'pdf');
   });
 
   it('falls back to png for image kind without an extension', async () => {
-    downloadArtifactMock.mockResolvedValueOnce({ ok: true, path: '/tmp/Pic.png' });
+    saveArtifactViaDialogMock.mockResolvedValueOnce({ ok: true, path: '/tmp/Pic.png' });
     render(
       <ArtifactCard artifact={snapshot({ artifactId: 'a-3', kind: 'image', title: 'Pic' })} />
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Download' }));
-    await waitFor(() => expect(downloadArtifactMock).toHaveBeenCalledTimes(1));
-    expect(downloadArtifactMock).toHaveBeenCalledWith('a-3', 'Pic', 'png');
+    await waitFor(() => expect(saveArtifactViaDialogMock).toHaveBeenCalledTimes(1));
+    expect(saveArtifactViaDialogMock).toHaveBeenCalledWith('a-3', 'Pic', 'png');
   });
 
   it('falls back to bin for the "other" kind without an extension', async () => {
-    downloadArtifactMock.mockResolvedValueOnce({ ok: true, path: '/tmp/Blob.bin' });
+    saveArtifactViaDialogMock.mockResolvedValueOnce({ ok: true, path: '/tmp/Blob.bin' });
     render(
       <ArtifactCard artifact={snapshot({ artifactId: 'a-4', kind: 'other', title: 'Blob' })} />
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Download' }));
-    await waitFor(() => expect(downloadArtifactMock).toHaveBeenCalledTimes(1));
-    expect(downloadArtifactMock).toHaveBeenCalledWith('a-4', 'Blob', 'bin');
+    await waitFor(() => expect(saveArtifactViaDialogMock).toHaveBeenCalledTimes(1));
+    expect(saveArtifactViaDialogMock).toHaveBeenCalledWith('a-4', 'Blob', 'bin');
   });
 
   it('uses the existing extension on the title when present', async () => {
-    downloadArtifactMock.mockResolvedValueOnce({ ok: true, path: '/tmp/notes.txt' });
+    saveArtifactViaDialogMock.mockResolvedValueOnce({ ok: true, path: '/tmp/notes.txt' });
     render(
       <ArtifactCard
         artifact={snapshot({ artifactId: 'a-5', kind: 'document', title: 'notes.txt' })}
@@ -154,12 +154,12 @@ describe('<ArtifactCard /> — ready state', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Download' }));
-    await waitFor(() => expect(downloadArtifactMock).toHaveBeenCalledTimes(1));
-    expect(downloadArtifactMock).toHaveBeenCalledWith('a-5', 'notes.txt', 'txt');
+    await waitFor(() => expect(saveArtifactViaDialogMock).toHaveBeenCalledTimes(1));
+    expect(saveArtifactViaDialogMock).toHaveBeenCalledWith('a-5', 'notes.txt', 'txt');
   });
 
   it('surfaces the service error message when download fails', async () => {
-    downloadArtifactMock.mockResolvedValueOnce({ ok: false, error: 'disk full' });
+    saveArtifactViaDialogMock.mockResolvedValueOnce({ ok: false, error: 'disk full' });
 
     render(<ArtifactCard artifact={snapshot()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Download' }));

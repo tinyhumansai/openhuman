@@ -15,9 +15,7 @@ import {
   openhumanCronRuns,
   openhumanCronUpdate,
 } from '../../../utils/tauriCommands/cron';
-import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsBackButton from '../components/SettingsBackButton';
 import {
   SettingsRow,
   SettingsSection,
@@ -25,7 +23,7 @@ import {
   SettingsStatusLine,
   SettingsSwitch,
 } from '../controls';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 
 const log = createDebug('app:settings:DevWorkflowPanel');
 
@@ -56,7 +54,6 @@ interface GhBranch {
 
 const DevWorkflowPanel = () => {
   const { t } = useT();
-  const { navigateBack } = useSettingsNavigation();
 
   // Repo list
   const [repos, setRepos] = useState<ComposioGhRepo[]>([]);
@@ -502,21 +499,18 @@ const DevWorkflowPanel = () => {
   const canSave = selectedRepo && targetBranch && schedule;
 
   return (
-    <PanelPage
-      className="z-10"
-      contentClassName=""
+    <SettingsPanel
       testId="dev-workflow-panel"
-      description={t('settings.developerMenu.devWorkflow.desc')}
-      leading={<SettingsBackButton onBack={navigateBack} />}>
-      <div className="px-4 pt-4 flex flex-col gap-5">
+      description={t('settings.developerMenu.devWorkflow.desc')}>
+      <div className="flex flex-col gap-5">
         {/* Description */}
-        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+        <p className="text-sm text-content-secondary dark:text-content-muted">
           {t('settings.developerMenu.devWorkflow.panelDesc')}
         </p>
 
         {/* Active config summary — shown at top regardless of repo loading */}
         {cronLoading && (
-          <div className="text-xs text-neutral-500 dark:text-neutral-400">
+          <div className="text-xs text-content-muted">
             {t('settings.devWorkflow.loadingRepositories')}
           </div>
         )}
@@ -542,7 +536,7 @@ const DevWorkflowPanel = () => {
                     onCheckedChange={() => void handleToggle()}
                     aria-label={t('settings.devWorkflow.enabled')}
                   />
-                  <span className="text-xs text-neutral-500 dark:text-neutral-400">
+                  <span className="text-xs text-content-muted">
                     {existingJob.enabled
                       ? t('settings.devWorkflow.enabled')
                       : t('settings.devWorkflow.paused')}
@@ -551,32 +545,28 @@ const DevWorkflowPanel = () => {
               }
             />
             <dl className="px-4 pb-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-              <dt className="text-neutral-500 dark:text-neutral-400">
+              <dt className="text-content-muted">
                 {t('settings.devWorkflow.activeConfigRepository')}
               </dt>
-              <dd className="font-mono text-neutral-800 dark:text-neutral-100">
+              <dd className="font-mono text-content">
                 {existingJob.name?.replace(/^dev-workflow-/, '') ?? '—'}
               </dd>
-              <dt className="text-neutral-500 dark:text-neutral-400">
+              <dt className="text-content-muted">
                 {t('settings.devWorkflow.activeConfigSchedule')}
               </dt>
-              <dd className="text-neutral-800 dark:text-neutral-100">
+              <dd className="text-content">
                 {SCHEDULE_PRESETS.find(p => p.value === existingJob.expression)
                   ? t(SCHEDULE_PRESETS.find(p => p.value === existingJob.expression)!.labelKey)
                   : existingJob.expression}
               </dd>
-              <dt className="text-neutral-500 dark:text-neutral-400">
-                {t('settings.devWorkflow.nextRun')}
-              </dt>
-              <dd className="text-neutral-800 dark:text-neutral-100">
+              <dt className="text-content-muted">{t('settings.devWorkflow.nextRun')}</dt>
+              <dd className="text-content">
                 {existingJob.next_run ? new Date(existingJob.next_run).toLocaleString() : '—'}
               </dd>
               {existingJob.last_run && (
                 <>
-                  <dt className="text-neutral-500 dark:text-neutral-400">
-                    {t('settings.devWorkflow.lastRun')}
-                  </dt>
-                  <dd className="text-neutral-800 dark:text-neutral-100">
+                  <dt className="text-content-muted">{t('settings.devWorkflow.lastRun')}</dt>
+                  <dd className="text-content">
                     {new Date(existingJob.last_run).toLocaleString()}
                     {existingJob.last_status && (
                       <span
@@ -602,17 +592,22 @@ const DevWorkflowPanel = () => {
                 disabled={running}>
                 {running ? t('settings.devWorkflow.running') : t('settings.devWorkflow.runNow')}
               </Button>
-              <Button type="button" variant="danger" size="xs" onClick={() => void handleRemove()}>
+              <Button
+                type="button"
+                variant="secondary"
+                tone="danger"
+                size="xs"
+                onClick={() => void handleRemove()}>
                 {t('settings.devWorkflow.remove')}
               </Button>
             </div>
 
             {existingJob.last_output && (
               <div className="px-4 pb-4">
-                <div className="text-xs font-medium text-neutral-500 dark:text-neutral-400 mb-1">
+                <div className="text-xs font-medium text-content-muted mb-1">
                   {t('settings.devWorkflow.lastOutput')}
                 </div>
-                <pre className="px-3 py-2 rounded-md bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 text-[11px] text-neutral-700 dark:text-neutral-300 font-mono whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
+                <pre className="px-3 py-2 rounded-md bg-surface-subtle border border-line dark:border-line-strong text-[11px] text-content-secondary font-mono whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
                   {existingJob.last_output}
                 </pre>
               </div>
@@ -623,29 +618,29 @@ const DevWorkflowPanel = () => {
                 <button
                   type="button"
                   onClick={() => setHistoryExpanded(!historyExpanded)}
-                  className="text-xs text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 transition-colors">
+                  className="text-xs text-content-muted hover:text-content-secondary dark:hover:text-neutral-200 transition-colors">
                   {historyExpanded ? '▾' : '▸'} {t('settings.devWorkflow.recentRuns')} (
                   {runHistory.length})
                 </button>
                 {historyExpanded && (
                   <div className="mt-1.5 space-y-1">
                     {runHistory.map(run => (
-                      <div key={run.id} className="rounded bg-white dark:bg-neutral-800">
+                      <div key={run.id} className="rounded bg-surface">
                         <button
                           type="button"
                           onClick={() => setExpandedRunId(expandedRunId === run.id ? null : run.id)}
-                          className="w-full flex items-center justify-between px-2 py-1.5 text-xs hover:bg-neutral-50 dark:hover:bg-neutral-750 rounded transition-colors">
+                          className="w-full flex items-center justify-between px-2 py-1.5 text-xs hover:bg-surface-muted dark:hover:bg-neutral-750 rounded transition-colors">
                           <div className="flex items-center gap-2">
-                            <span className="text-neutral-400">
+                            <span className="text-content-faint">
                               {expandedRunId === run.id ? '▾' : '▸'}
                             </span>
-                            <span className="text-neutral-600 dark:text-neutral-400">
+                            <span className="text-content-secondary dark:text-content-muted">
                               {new Date(run.started_at).toLocaleString()}
                             </span>
                           </div>
                           <div className="flex items-center gap-2">
                             {run.duration_ms != null && (
-                              <span className="text-neutral-500 dark:text-neutral-500">
+                              <span className="text-content-muted dark:text-content-faint">
                                 {(run.duration_ms / 1000).toFixed(1)}s
                               </span>
                             )}
@@ -660,12 +655,12 @@ const DevWorkflowPanel = () => {
                           </div>
                         </button>
                         {expandedRunId === run.id && run.output && (
-                          <pre className="mx-2 mb-2 px-3 py-2 rounded-md bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 text-[11px] text-neutral-700 dark:text-neutral-300 font-mono whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
+                          <pre className="mx-2 mb-2 px-3 py-2 rounded-md bg-surface-subtle dark:bg-surface border border-line dark:border-line-strong text-[11px] text-content-secondary font-mono whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
                             {run.output}
                           </pre>
                         )}
                         {expandedRunId === run.id && !run.output && (
-                          <div className="mx-2 mb-2 px-3 py-2 text-[11px] text-neutral-400 dark:text-neutral-500 italic">
+                          <div className="mx-2 mb-2 px-3 py-2 text-[11px] text-content-faint italic">
                             {t('settings.devWorkflow.noOutput')}
                           </div>
                         )}
@@ -712,7 +707,7 @@ const DevWorkflowPanel = () => {
 
             {/* Fork info */}
             {forkLoading && (
-              <div className="text-xs text-neutral-500 dark:text-neutral-400">
+              <div className="text-xs text-content-muted">
                 {t('settings.devWorkflow.detectingForkInfo')}
               </div>
             )}
@@ -731,8 +726,8 @@ const DevWorkflowPanel = () => {
               </div>
             )}
             {selectedRepo && !forkLoading && !forkInfo && (
-              <div className="px-3 py-2 rounded-md bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700">
-                <div className="text-xs text-neutral-600 dark:text-neutral-400">
+              <div className="px-3 py-2 rounded-md bg-surface-muted border border-line dark:border-line-strong">
+                <div className="text-xs text-content-secondary dark:text-content-muted">
                   {t('settings.devWorkflow.notForkNote')}
                 </div>
               </div>
@@ -764,7 +759,7 @@ const DevWorkflowPanel = () => {
               </SettingsSection>
             )}
             {branchesLoading && (
-              <div className="text-xs text-neutral-500 dark:text-neutral-400">
+              <div className="text-xs text-content-muted">
                 {t('settings.devWorkflow.loadingBranches')}
               </div>
             )}
@@ -816,7 +811,7 @@ const DevWorkflowPanel = () => {
           </>
         )}
       </div>
-    </PanelPage>
+    </SettingsPanel>
   );
 };
 

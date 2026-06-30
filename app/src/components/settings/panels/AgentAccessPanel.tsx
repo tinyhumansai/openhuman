@@ -11,9 +11,8 @@ import {
   type TrustedAccess,
   type TrustedRoot,
 } from '../../../utils/tauriCommands';
-import PanelPage from '../../layout/PanelPage';
+import { openhumanCronList, openhumanCronUpdate } from '../../../utils/tauriCommands/cron';
 import Button from '../../ui/Button';
-import SettingsBackButton from '../components/SettingsBackButton';
 import {
   SettingsBadge,
   SettingsEmptyState,
@@ -27,6 +26,7 @@ import {
   SettingsTextField,
 } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 import AutonomyRateLimitSection from './AutonomyPanel';
 
 // Installs are always *available* but never silent: every `install_tool` call
@@ -38,7 +38,7 @@ const ALLOW_TOOL_INSTALL = true;
 
 const AgentAccessPanel = () => {
   const { t } = useT();
-  const { navigateBack, navigateToSettings } = useSettingsNavigation();
+  const { navigateToSettings } = useSettingsNavigation();
 
   // Load `level` so we can carry it through when writing other fields, but
   // the tier-selection UI lives in PermissionsPanel. Never render tier radios
@@ -53,6 +53,16 @@ const AgentAccessPanel = () => {
 
   const [newRootPath, setNewRootPath] = useState('');
   const [newRootAccess, setNewRootAccess] = useState<TrustedAccess>('read');
+
+  // Autonomous tiny.place agent ("autopilot") — a seeded, *disabled* cron job
+  // the user opts into here. It's not an autonomy field: we resolve its id by
+  // name from the cron list and flip its `enabled` flag via cron_update. The
+  // section only renders once the job is found (id known).
+  const [autopilotJobId, setAutopilotJobId] = useState<string | null>(null);
+  const [autopilotEnabled, setAutopilotEnabled] = useState(false);
+  // Monotonic guard so rapid toggles can't resolve out-of-order and leave the
+  // UI showing a stale enabled state (last write wins).
+  const autopilotSeqRef = useRef(0);
 
   // Action timeout (the tool/action wall-clock limit, issue #3100). Held as the
   // raw input string so the field can be edited freely; validated on save.
@@ -92,6 +102,20 @@ const AgentAccessPanel = () => {
       } catch (e) {
         if (!cancelled)
           setError(e instanceof Error ? e.message : t('settings.agentAccess.loadError'));
+      }
+      try {
+        // Resolve the seeded tinyplace_autopilot cron job by name so the toggle
+        // below can flip its enabled flag. Non-fatal: the section just stays
+        // hidden if the job isn't present or the list call fails.
+        const cronResp = await openhumanCronList();
+        if (cancelled) return;
+        const autopilot = cronResp.result.find(j => j.name === 'tinyplace_autopilot');
+        if (autopilot) {
+          setAutopilotJobId(autopilot.id);
+          setAutopilotEnabled(autopilot.enabled);
+        }
+      } catch {
+        // Non-fatal — bounty-worker toggle stays hidden.
       }
       try {
         const agentResp = await openhumanGetAgentSettings();
@@ -168,6 +192,29 @@ const AgentAccessPanel = () => {
     void persist({ workspaceOnly, requireTaskPlanApproval: next, trustedRoots });
   };
 
+  // The autopilot is a cron job, not an autonomy field — flip its `enabled`
+  // flag directly via cron_update. Optimistic, with revert on failure, and a
+  // sequence guard so only the most recent toggle writes UI state back.
+  const toggleAutopilot = async (next: boolean) => {
+    if (!autopilotJobId || !isTauri()) return;
+    const seq = ++autopilotSeqRef.current;
+    const prev = autopilotEnabled;
+    setAutopilotEnabled(next);
+    setError(null);
+    setSavedNote(null);
+    try {
+      await openhumanCronUpdate(autopilotJobId, { enabled: next });
+      if (autopilotSeqRef.current === seq) {
+        setSavedNote(t('settings.agentAccess.saved'));
+      }
+    } catch (e) {
+      if (autopilotSeqRef.current === seq) {
+        setAutopilotEnabled(prev);
+        setError(e instanceof Error ? e.message : t('settings.agentAccess.saveError'));
+      }
+    }
+  };
+
   const addRoot = () => {
     const path = newRootPath.trim();
     if (!path) return;
@@ -235,209 +282,222 @@ const AgentAccessPanel = () => {
   };
 
   return (
-    <PanelPage
-      className="z-10"
-      contentClassName=""
-      description={t('settings.agentAccess.menuDesc')}
-      leading={<SettingsBackButton onBack={navigateBack} />}>
-      <div className="p-4 pt-2 space-y-5">
-        {/* Desktop-only notice */}
-        {!isTauri() && (
-          <p className="text-sm text-coral-600 dark:text-coral-300">
-            {t('settings.agentAccess.desktopOnly')}
-          </p>
-        )}
+    <SettingsPanel description={t('settings.agentAccess.menuDesc')}>
+      {/* Desktop-only notice */}
+      {!isTauri() && (
+        <p className="text-sm text-coral-600 dark:text-coral-300">
+          {t('settings.agentAccess.desktopOnly')}
+        </p>
+      )}
 
-        {isLoading ? (
-          <p className="text-sm text-neutral-500 dark:text-neutral-400">
-            {t('settings.agentAccess.loading')}
-          </p>
-        ) : (
-          <>
-            {/* Workspace confinement + task plan approval */}
-            <SettingsSection>
-              <SettingsRow
-                htmlFor="switch-workspace-only"
-                label={t('settings.agentAccess.confine.label')}
-                description={t('settings.agentAccess.confine.desc')}
-                control={
-                  <SettingsSwitch
-                    id="switch-workspace-only"
-                    checked={workspaceOnly}
-                    onCheckedChange={toggleWorkspaceOnly}
-                    aria-label={t('settings.agentAccess.confine.label')}
-                  />
-                }
-              />
-              <SettingsRow
-                htmlFor="switch-task-plan-approval"
-                label={t('settings.agentAccess.requireTaskPlanApproval.label')}
-                description={t('settings.agentAccess.requireTaskPlanApproval.desc')}
-                control={
-                  <SettingsSwitch
-                    id="switch-task-plan-approval"
-                    checked={requireTaskPlanApproval}
-                    onCheckedChange={toggleTaskPlanApproval}
-                    aria-label={t('settings.agentAccess.requireTaskPlanApproval.label')}
-                  />
-                }
-              />
-            </SettingsSection>
-
-            {/* Action timeout */}
-            <SettingsSection
-              title={t('settings.agentAccess.timeout.label')}
-              description={t('settings.agentAccess.timeout.desc')}>
-              <SettingsRow
-                stacked
-                control={
-                  <div className="space-y-2">
-                    <SettingsNumberField
-                      id="timeout-input"
-                      value={timeoutInput}
-                      onChange={setTimeoutInput}
-                      onCommit={() => void commitTimeout()}
-                      unit={t('settings.agentAccess.timeout.unit')}
-                      min={timeoutMin}
-                      max={timeoutMax}
-                      disabled={timeoutEnvOverride}
-                      invalid={!!timeoutError}
-                      aria-label={t('settings.agentAccess.timeout.label')}
-                    />
-                    {timeoutEnvOverride && (
-                      <p className="rounded border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-300">
-                        {t('settings.agentAccess.timeout.envOverride')}
-                      </p>
-                    )}
-                    <SettingsStatusLine
-                      saving={false}
-                      savedNote={timeoutSavedNote}
-                      error={timeoutError}
-                      savingLabel={t('settings.agentAccess.saving')}
-                    />
-                  </div>
-                }
-              />
-            </SettingsSection>
-
-            {/* Granted folders (trusted roots) */}
-            <SettingsSection
-              title={t('settings.agentAccess.grantedFolders')}
-              description={t('settings.agentAccess.grantedDesc')}>
-              {trustedRoots.length === 0 ? (
-                <SettingsEmptyState label={t('settings.agentAccess.noneGranted')} />
-              ) : (
-                <ul>
-                  {trustedRoots.map(r => (
-                    <SettingsListItem
-                      key={r.path}
-                      label={r.path}
-                      mono
-                      badge={
-                        r.access === 'readwrite' ? (
-                          <SettingsBadge variant="success">
-                            {t('settings.agentAccess.readWrite')}
-                          </SettingsBadge>
-                        ) : (
-                          <SettingsBadge variant="neutral">
-                            {t('settings.agentAccess.readOnly')}
-                          </SettingsBadge>
-                        )
-                      }
-                      onRemove={() => removeRoot(r.path)}
-                      removeLabel={t('settings.agentAccess.remove')}
-                    />
-                  ))}
-                </ul>
-              )}
-              {/* Add-folder row */}
-              <div className="flex items-center gap-2 px-4 py-3 border-t border-neutral-100 dark:border-neutral-800">
-                <SettingsTextField
-                  mono
-                  className="flex-1"
-                  value={newRootPath}
-                  onChange={e => setNewRootPath(e.target.value)}
-                  placeholder={t('settings.agentAccess.pathPlaceholder')}
-                  aria-label={t('settings.agentAccess.pathPlaceholder')}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      addRoot();
-                    }
-                  }}
-                  inputSize="sm"
+      {isLoading ? (
+        <p className="text-sm text-content-muted">{t('settings.agentAccess.loading')}</p>
+      ) : (
+        <>
+          {/* Workspace confinement + task plan approval */}
+          <SettingsSection>
+            <SettingsRow
+              htmlFor="switch-workspace-only"
+              label={t('settings.agentAccess.confine.label')}
+              description={t('settings.agentAccess.confine.desc')}
+              control={
+                <SettingsSwitch
+                  id="switch-workspace-only"
+                  checked={workspaceOnly}
+                  onCheckedChange={toggleWorkspaceOnly}
+                  aria-label={t('settings.agentAccess.confine.label')}
                 />
-                <SettingsSelect
-                  value={newRootAccess}
-                  onChange={e => setNewRootAccess(e.target.value as TrustedAccess)}
-                  aria-label={t('settings.agentAccess.accessLevelLabel')}
-                  inputSize="sm"
-                  className="w-32">
-                  <option value="read">{t('settings.agentAccess.readOnly')}</option>
-                  <option value="readwrite">{t('settings.agentAccess.readWrite')}</option>
-                </SettingsSelect>
-                <Button
-                  type="button"
-                  variant="primary"
-                  size="xs"
-                  onClick={addRoot}
-                  disabled={!newRootPath.trim()}>
-                  {t('settings.agentAccess.add')}
-                </Button>
-              </div>
-            </SettingsSection>
-
-            {/* Always-allowed tools */}
-            <SettingsSection
-              title={t('settings.agentAccess.alwaysAllow')}
-              description={t('settings.agentAccess.alwaysAllowDesc')}>
-              {autoApprove.length === 0 ? (
-                <SettingsEmptyState label={t('settings.agentAccess.alwaysAllowNone')} />
-              ) : (
-                <ul>
-                  {autoApprove.map(tool => (
-                    <SettingsListItem
-                      key={tool}
-                      label={tool}
-                      mono
-                      onRemove={() => removeAutoApprove(tool)}
-                      removeLabel={t('settings.agentAccess.remove')}
-                    />
-                  ))}
-                </ul>
-              )}
-            </SettingsSection>
-
-            {/* Action rate limit (formerly the standalone /settings/autonomy page) */}
-            <AutonomyRateLimitSection />
-
-            {/* Approval history */}
-            <SettingsSection
-              title={t('settings.agentAccess.approvalHistory')}
-              description={t('settings.agentAccess.approvalHistoryDesc')}>
-              <div className="px-4 py-3">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="xs"
-                  onClick={() => navigateToSettings('approval-history')}
-                  data-testid="agent-access-approval-history-link">
-                  {t('settings.agentAccess.viewApprovalHistory')}
-                </Button>
-              </div>
-            </SettingsSection>
-
-            {/* Auto-save status */}
-            <SettingsStatusLine
-              saving={isSaving}
-              savedNote={savedNote}
-              error={error}
-              savingLabel={t('settings.agentAccess.saving')}
+              }
             />
-          </>
-        )}
-      </div>
-    </PanelPage>
+            <SettingsRow
+              htmlFor="switch-task-plan-approval"
+              label={t('settings.agentAccess.requireTaskPlanApproval.label')}
+              description={t('settings.agentAccess.requireTaskPlanApproval.desc')}
+              control={
+                <SettingsSwitch
+                  id="switch-task-plan-approval"
+                  checked={requireTaskPlanApproval}
+                  onCheckedChange={toggleTaskPlanApproval}
+                  aria-label={t('settings.agentAccess.requireTaskPlanApproval.label')}
+                />
+              }
+            />
+          </SettingsSection>
+
+          {/* Autonomous tiny.place agent (opt-in). Only shown once the seeded
+                cron job is found, so users without it never see a dead toggle. */}
+          {autopilotJobId && (
+            <SettingsSection
+              title={t('settings.agentAccess.tinyplaceAutopilot.title')}
+              description={t('settings.agentAccess.tinyplaceAutopilot.desc')}>
+              <SettingsRow
+                htmlFor="switch-tinyplace-autopilot"
+                label={t('settings.agentAccess.tinyplaceAutopilot.label')}
+                control={
+                  <SettingsSwitch
+                    id="switch-tinyplace-autopilot"
+                    checked={autopilotEnabled}
+                    onCheckedChange={next => void toggleAutopilot(next)}
+                    aria-label={t('settings.agentAccess.tinyplaceAutopilot.label')}
+                  />
+                }
+              />
+            </SettingsSection>
+          )}
+
+          {/* Action timeout */}
+          <SettingsSection
+            title={t('settings.agentAccess.timeout.label')}
+            description={t('settings.agentAccess.timeout.desc')}>
+            <SettingsRow
+              stacked
+              control={
+                <div className="space-y-2">
+                  <SettingsNumberField
+                    id="timeout-input"
+                    value={timeoutInput}
+                    onChange={setTimeoutInput}
+                    onCommit={() => void commitTimeout()}
+                    unit={t('settings.agentAccess.timeout.unit')}
+                    min={timeoutMin}
+                    max={timeoutMax}
+                    disabled={timeoutEnvOverride}
+                    invalid={!!timeoutError}
+                    aria-label={t('settings.agentAccess.timeout.label')}
+                  />
+                  {timeoutEnvOverride && (
+                    <p className="rounded border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-300">
+                      {t('settings.agentAccess.timeout.envOverride')}
+                    </p>
+                  )}
+                  <SettingsStatusLine
+                    saving={false}
+                    savedNote={timeoutSavedNote}
+                    error={timeoutError}
+                    savingLabel={t('settings.agentAccess.saving')}
+                  />
+                </div>
+              }
+            />
+          </SettingsSection>
+
+          {/* Granted folders (trusted roots) */}
+          <SettingsSection
+            title={t('settings.agentAccess.grantedFolders')}
+            description={t('settings.agentAccess.grantedDesc')}>
+            {trustedRoots.length === 0 ? (
+              <SettingsEmptyState label={t('settings.agentAccess.noneGranted')} />
+            ) : (
+              <ul>
+                {trustedRoots.map(r => (
+                  <SettingsListItem
+                    key={r.path}
+                    label={r.path}
+                    mono
+                    badge={
+                      r.access === 'readwrite' ? (
+                        <SettingsBadge variant="success">
+                          {t('settings.agentAccess.readWrite')}
+                        </SettingsBadge>
+                      ) : (
+                        <SettingsBadge variant="neutral">
+                          {t('settings.agentAccess.readOnly')}
+                        </SettingsBadge>
+                      )
+                    }
+                    onRemove={() => removeRoot(r.path)}
+                    removeLabel={t('settings.agentAccess.remove')}
+                  />
+                ))}
+              </ul>
+            )}
+            {/* Add-folder row */}
+            <div className="flex items-center gap-2 px-4 py-3 border-t border-line-subtle">
+              <SettingsTextField
+                mono
+                className="flex-1"
+                value={newRootPath}
+                onChange={e => setNewRootPath(e.target.value)}
+                placeholder={t('settings.agentAccess.pathPlaceholder')}
+                aria-label={t('settings.agentAccess.pathPlaceholder')}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addRoot();
+                  }
+                }}
+                inputSize="sm"
+              />
+              <SettingsSelect
+                value={newRootAccess}
+                onChange={e => setNewRootAccess(e.target.value as TrustedAccess)}
+                aria-label={t('settings.agentAccess.accessLevelLabel')}
+                inputSize="sm"
+                className="w-32">
+                <option value="read">{t('settings.agentAccess.readOnly')}</option>
+                <option value="readwrite">{t('settings.agentAccess.readWrite')}</option>
+              </SettingsSelect>
+              <Button
+                type="button"
+                variant="primary"
+                size="xs"
+                onClick={addRoot}
+                disabled={!newRootPath.trim()}>
+                {t('settings.agentAccess.add')}
+              </Button>
+            </div>
+          </SettingsSection>
+
+          {/* Always-allowed tools */}
+          <SettingsSection
+            title={t('settings.agentAccess.alwaysAllow')}
+            description={t('settings.agentAccess.alwaysAllowDesc')}>
+            {autoApprove.length === 0 ? (
+              <SettingsEmptyState label={t('settings.agentAccess.alwaysAllowNone')} />
+            ) : (
+              <ul>
+                {autoApprove.map(tool => (
+                  <SettingsListItem
+                    key={tool}
+                    label={tool}
+                    mono
+                    onRemove={() => removeAutoApprove(tool)}
+                    removeLabel={t('settings.agentAccess.remove')}
+                  />
+                ))}
+              </ul>
+            )}
+          </SettingsSection>
+
+          {/* Action rate limit (formerly the standalone /settings/autonomy page) */}
+          <AutonomyRateLimitSection />
+
+          {/* Approval history */}
+          <SettingsSection
+            title={t('settings.agentAccess.approvalHistory')}
+            description={t('settings.agentAccess.approvalHistoryDesc')}>
+            <div className="px-4 py-3">
+              <Button
+                type="button"
+                variant="secondary"
+                size="xs"
+                onClick={() => navigateToSettings('approval-history')}
+                data-testid="agent-access-approval-history-link">
+                {t('settings.agentAccess.viewApprovalHistory')}
+              </Button>
+            </div>
+          </SettingsSection>
+
+          {/* Auto-save status */}
+          <SettingsStatusLine
+            saving={isSaving}
+            savedNote={savedNote}
+            error={error}
+            savingLabel={t('settings.agentAccess.saving')}
+          />
+        </>
+      )}
+    </SettingsPanel>
   );
 };
 

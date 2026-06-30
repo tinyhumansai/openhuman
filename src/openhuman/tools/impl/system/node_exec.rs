@@ -24,16 +24,17 @@
 use crate::openhuman::agent::host_runtime::RuntimeAdapter;
 use crate::openhuman::javascript::NodeBootstrap;
 use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult, ToolTimeout};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Maximum node process wall-clock before we kill it. Longer than the shell
-/// tool because `npm install` / bundler steps can legitimately exceed 60s,
-/// and `node_exec` is often the launcher for those flows.
-const NODE_TIMEOUT_SECS: u64 = 300;
+/// Absolute ceiling a caller may request via `timeout_secs`. There is **no**
+/// default timeout — `node_exec` runs scripts that legitimately take minutes
+/// (bundlers, solvers, test runs) and must not be hard-killed by a default cap
+/// (issue #4023). A deadline applies only when `timeout_secs` is supplied.
+const NODE_TIMEOUT_MAX_SECS: u64 = 1800;
 /// Maximum combined stdout/stderr size (1 MB each) — same cap as shell.
 const MAX_OUTPUT_BYTES: usize = 1_048_576;
 /// Env allow-list for child processes. Matches shell.rs — secrets never leak
@@ -114,7 +115,7 @@ impl Tool for NodeExecTool {
                 },
                 "timeout_secs": {
                     "type": "integer",
-                    "description": "Optional override for the default 300s timeout. Capped at 1800s."
+                    "description": "Optional wall-clock timeout (seconds) before the process is killed. No timeout by default — long-running scripts run to completion. Capped at 1800s; 0 disables."
                 }
             }
         })
@@ -122,6 +123,13 @@ impl Tool for NodeExecTool {
 
     fn permission_level(&self) -> PermissionLevel {
         PermissionLevel::Execute
+    }
+
+    /// `node_exec` runs scripts that legitimately take a long time, so it runs
+    /// unbounded unless the caller passes an explicit `timeout_secs` (capped at
+    /// [`NODE_TIMEOUT_MAX_SECS`]).
+    fn timeout_policy(&self, args: &serde_json::Value) -> ToolTimeout {
+        node_timeout_policy(args)
     }
 
     /// Running JavaScript is arbitrary code execution → the `Write` bucket. In
@@ -152,11 +160,12 @@ impl Tool for NodeExecTool {
             })
             .unwrap_or_default();
 
-        let timeout_secs = args
-            .get("timeout_secs")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(NODE_TIMEOUT_SECS)
-            .min(1800);
+        // No default deadline — only the caller-supplied `timeout_secs` (capped)
+        // bounds the run. `None` ⇒ run to completion.
+        let explicit_timeout = crate::openhuman::tool_timeout::explicit_call_timeout_duration(
+            args.get("timeout_secs").and_then(|v| v.as_u64()),
+            NODE_TIMEOUT_MAX_SECS,
+        );
 
         if inline_code.is_some() == script_path.is_some() {
             return Ok(ToolResult::error(
@@ -239,7 +248,7 @@ impl Tool for NodeExecTool {
             Some(crate::openhuman::agent::harness::definition::SandboxMode::Sandboxed)
         ) {
             return Ok(self
-                .run_sandboxed(&command, &resolved.bin_dir, timeout_secs)
+                .run_sandboxed(&command, &resolved.bin_dir, explicit_timeout)
                 .await);
         }
 
@@ -272,7 +281,12 @@ impl Tool for NodeExecTool {
             }
         }
 
-        let result = tokio::time::timeout(Duration::from_secs(timeout_secs), cmd.output()).await;
+        // Bounded only when the caller asked for a deadline; otherwise run to
+        // completion (no harness/tool timeout on long scripts).
+        let result = match explicit_timeout {
+            Some(timeout) => tokio::time::timeout(timeout, cmd.output()).await,
+            None => Ok(cmd.output().await),
+        };
 
         match result {
             Ok(Ok(output)) => {
@@ -301,13 +315,19 @@ impl Tool for NodeExecTool {
                         Ok(ToolResult::success(format!("{stdout}\n[stderr]\n{stderr}")))
                     }
                 } else {
-                    let err_msg = if stderr.is_empty() { stdout } else { stderr };
-                    Ok(ToolResult::error(err_msg))
+                    // Surface exit code + both streams so the agent can diagnose
+                    // the failure instead of re-running it (#4095).
+                    Ok(super::command_output::command_failure(
+                        output.status.code(),
+                        &stdout,
+                        &stderr,
+                    ))
                 }
             }
             Ok(Err(e)) => Ok(ToolResult::error(format!("Failed to execute node: {e}"))),
             Err(_) => Ok(ToolResult::error(format!(
-                "node_exec timed out after {timeout_secs}s and was killed"
+                "node_exec timed out after {}s and was killed",
+                explicit_timeout.map(|d| d.as_secs()).unwrap_or(0)
             ))),
         }
     }
@@ -327,9 +347,17 @@ impl NodeExecTool {
         &self,
         command: &str,
         bin_dir: &std::path::Path,
-        timeout_secs: u64,
+        timeout: Option<Duration>,
     ) -> ToolResult {
         use crate::openhuman::sandbox;
+
+        // Sandbox backends require a finite deadline. When the caller did not
+        // request one, use a generous effective-unbounded cap (24h) so a
+        // legitimately long script isn't killed while still bounding a wedged
+        // sandbox process. The native (non-sandboxed) path runs truly unbounded.
+        let effective = timeout.unwrap_or_else(|| {
+            Duration::from_secs(crate::openhuman::tool_timeout::SANDBOX_UNBOUNDED_CAP_SECS)
+        });
 
         // Load the live `RuntimeConfig` so `resolve_sandbox_policy` derives
         // the right backend (Docker / local / noop) from the operator's
@@ -383,14 +411,15 @@ impl NodeExecTool {
             command,
             &self.security.action_dir,
             extra_env,
-            Duration::from_secs(timeout_secs),
+            effective,
         )
         .await
         {
             Ok(result) => {
                 if result.timed_out {
                     ToolResult::error(format!(
-                        "node_exec timed out after {timeout_secs}s and was killed"
+                        "node_exec timed out after {}s and was killed",
+                        effective.as_secs()
                     ))
                 } else if result.success() {
                     if result.stderr.is_empty() {
@@ -402,16 +431,27 @@ impl NodeExecTool {
                         ))
                     }
                 } else {
-                    let err_msg = if result.stderr.is_empty() {
-                        result.stdout
-                    } else {
-                        result.stderr
-                    };
-                    ToolResult::error(err_msg)
+                    super::command_output::command_failure(
+                        super::command_output::sandbox_exit_code(result.exit_code),
+                        &result.stdout,
+                        &result.stderr,
+                    )
                 }
             }
             Err(e) => ToolResult::error(format!("Sandbox execution failed: {e}")),
         }
+    }
+}
+
+/// Resolve the wall-clock policy for a `node_exec` call from its args.
+///
+/// No `timeout_secs` (or `0`) ⇒ run unbounded; a positive value ⇒ enforce it,
+/// clamped to [`NODE_TIMEOUT_MAX_SECS`]. Extracted from
+/// [`NodeExecTool::timeout_policy`] so it is unit-testable without a bootstrap.
+fn node_timeout_policy(args: &serde_json::Value) -> ToolTimeout {
+    match args.get("timeout_secs").and_then(|v| v.as_u64()) {
+        None | Some(0) => ToolTimeout::Unbounded,
+        Some(secs) => ToolTimeout::Secs(secs.min(NODE_TIMEOUT_MAX_SECS)),
     }
 }
 
@@ -470,6 +510,29 @@ mod tests {
     fn shell_quote_wraps_plain_strings() {
         assert_eq!(shell_quote("node"), "'node'");
         assert_eq!(shell_quote("/opt/bin/node"), "'/opt/bin/node'");
+    }
+
+    #[test]
+    fn node_timeout_policy_unbounded_by_default() {
+        // No timeout_secs (or explicit 0) ⇒ run to completion.
+        assert_eq!(node_timeout_policy(&json!({})), ToolTimeout::Unbounded);
+        assert_eq!(
+            node_timeout_policy(&json!({"timeout_secs": 0})),
+            ToolTimeout::Unbounded
+        );
+    }
+
+    #[test]
+    fn node_timeout_policy_enforces_and_caps_explicit() {
+        assert_eq!(
+            node_timeout_policy(&json!({"timeout_secs": 120})),
+            ToolTimeout::Secs(120)
+        );
+        // Clamped to the 1800s ceiling.
+        assert_eq!(
+            node_timeout_policy(&json!({"timeout_secs": 99999})),
+            ToolTimeout::Secs(NODE_TIMEOUT_MAX_SECS)
+        );
     }
 
     #[test]

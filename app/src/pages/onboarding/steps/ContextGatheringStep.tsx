@@ -389,13 +389,13 @@ const ContextGatheringStep = ({
 
   if (finished && hasError) {
     return (
-      <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-8 shadow-soft animate-fade-up">
+      <div className="rounded-2xl border border-line bg-surface p-8 shadow-soft animate-fade-up">
         <div className="flex flex-col items-center justify-center gap-5">
-          <h1 className="text-xl font-bold text-stone-900 dark:text-neutral-100">
+          <h1 className="text-xl font-bold text-content">
             {t('onboarding.contextGathering.title')}
           </h1>
           <div className="w-full max-w-sm rounded-xl border border-primary-100 bg-primary-50/80 p-4 dark:border-primary-900/50 dark:bg-primary-950/30">
-            <p className="text-sm text-stone-700 dark:text-neutral-200 text-center leading-relaxed mb-4">
+            <p className="text-sm text-content-secondary text-center leading-relaxed mb-4">
               {t('onboarding.contextGathering.errorDesc')}
             </p>
             <OnboardingNextButton
@@ -427,19 +427,19 @@ const ContextGatheringStep = ({
   };
 
   return (
-    <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-8 shadow-soft animate-fade-up">
+    <div className="rounded-2xl border border-line bg-surface p-8 shadow-soft animate-fade-up">
       <div className="flex flex-col items-center justify-center gap-6 py-8">
         {/* Pulsing avatar silhouette */}
         <div className="w-20 h-20 rounded-full bg-gradient-to-r from-stone-300 via-stone-100 to-stone-300 bg-[length:200%_100%] animate-shimmer" />
 
         {/* Title */}
         <h1
-          className="text-xl font-bold text-stone-900 dark:text-neutral-100 animate-pulse"
+          className="text-xl font-bold text-content animate-pulse"
           data-testid="context-gathering-title">
           {t(titleKey)}
         </h1>
         <p
-          className="text-sm text-stone-500 dark:text-neutral-400 leading-relaxed text-center max-w-sm"
+          className="text-sm text-content-muted leading-relaxed text-center max-w-sm"
           data-testid="context-gathering-desc">
           {t(descKey)}
         </p>
@@ -456,7 +456,7 @@ const ContextGatheringStep = ({
             during the 800ms auto-advance window after a slow success. */}
         {showStillWorking && (
           <div
-            className="flex items-center gap-2 text-xs text-stone-500 dark:text-neutral-400"
+            className="flex items-center gap-2 text-xs text-content-muted"
             data-testid="core-alive-indicator"
             data-alive-state={aliveState}>
             <span
@@ -465,7 +465,7 @@ const ContextGatheringStep = ({
                   ? 'bg-emerald-500'
                   : aliveState === 'unreachable'
                     ? 'bg-red-500'
-                    : 'bg-stone-300 dark:bg-neutral-600 animate-pulse'
+                    : 'bg-surface-strong animate-pulse'
               }`}
               aria-hidden="true"
             />

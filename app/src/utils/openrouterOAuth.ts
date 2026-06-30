@@ -105,8 +105,13 @@ function toOpenRouterCallbackUrl(redirectUri: string): string {
     throw new Error('OpenRouter OAuth listener returned an invalid redirect URL.');
   }
 
+  // Preserve the port the loopback listener actually bound to (carried in
+  // redirectUri): when the requested port is busy, the Tauri command falls back
+  // to an OS-assigned ephemeral port, so hardcoding OPENROUTER_LOOPBACK_PORT here
+  // sent OpenRouter a callback_url pointing at the wrong port. The PKCE
+  // callback_url is per-request, so the dynamic port is valid (this matches the
+  // sibling OAuthProviderButton flow, which trusts the bound port).
   parsed.hostname = 'localhost';
-  parsed.port = String(OPENROUTER_LOOPBACK_PORT);
   return parsed.toString();
 }
 

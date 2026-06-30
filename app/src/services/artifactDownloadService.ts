@@ -1,20 +1,20 @@
 /**
- * Artifact download service (#2779).
+ * Artifact export service (#2779, #3162).
  *
- * Flow:
+ * All paths first resolve the artifact's absolute on-disk path + meta
+ * via the `openhuman.ai_get_artifact` core RPC, then hand a source path
+ * + filename hint to a Tauri command:
  *
- *  1. Call `openhuman.ai_get_artifact` via the existing core RPC client
- *     to resolve the artifact's absolute on-disk path + meta.
- *  2. Invoke the Tauri `download_artifact_to_downloads` command with
- *     the source path + a filename hint built from the artifact's
- *     title. The command picks a non-colliding name under the user's
- *     Downloads directory and copies the file.
- *  3. Return the resolved dest path so the UI can show a "Saved to …"
- *     toast with a "Reveal in Finder" button (the `opener` plugin's
- *     `reveal-item-in-dir` capability is already wired).
+ *  - {@link saveArtifactViaDialog} (#3162) — native Save-As dialog
+ *    pre-filled with the filename; user picks the destination. Cancel is
+ *    reported as `{ ok: false, code: 'CANCELLED' }`. Falls back to the
+ *    Downloads copy if the dialog itself is unavailable.
+ *  - {@link downloadArtifact} (#2779) — copies into the user's Downloads
+ *    directory with a non-colliding name and returns the dest path so the
+ *    UI can offer "Reveal in Finder".
  *
- * No-ops outside Tauri (browser dev preview) — the download flow only
- * makes sense in the desktop shell.
+ * No-ops outside Tauri (browser dev preview) — export only makes sense in
+ * the desktop shell.
  */
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 
@@ -35,6 +35,7 @@ export type ArtifactErrorCode =
   | 'MISSING_ARTIFACT_PATH'
   | 'RESOLVE_FAILED'
   | 'DOWNLOAD_FAILED'
+  | 'CANCELLED'
   | 'DELETE_FAILED';
 
 /** Outcome surfaced to the UI for a single download attempt. */
@@ -80,25 +81,24 @@ interface AiGetArtifactData {
   meta?: { id?: string; title?: string; path?: string; kind?: string; status?: string };
 }
 
+/** Resolved source path + filename hint for an artifact export. */
+interface ResolvedExport {
+  ok: true;
+  sourcePath: string;
+  filename: string;
+}
+type ResolveExportResult = ResolvedExport | { ok: false; code: ArtifactErrorCode; error: string };
+
 /**
- * Resolve the source path + filename hint, then copy to Downloads.
- *
- * `extension` is the file extension WITHOUT the leading dot
- * (`"pptx"`, `"pdf"`, …). Used to build the Downloads filename when
- * the title doesn't already carry one.
+ * Resolve an artifact's absolute on-disk path (via `ai_get_artifact`)
+ * and build the suggested filename. Shared by the Save-As and Downloads
+ * export paths so both apply identical title/extension handling.
  */
-export async function downloadArtifact(
+async function resolveArtifactForExport(
   artifactId: string,
   fallbackTitle: string,
   extension: string
-): Promise<DownloadArtifactOutcome> {
-  if (!isTauri()) {
-    return {
-      ok: false,
-      code: 'NOT_DESKTOP',
-      error: 'Downloads are only available in the desktop app',
-    };
-  }
+): Promise<ResolveExportResult> {
   if (!artifactId.trim()) {
     return { ok: false, code: 'MISSING_ARTIFACT_ID', error: 'artifact id missing' };
   }
@@ -136,12 +136,77 @@ export async function downloadArtifact(
   const titleHasSameExt = ext.length > 0 && title.toLowerCase().endsWith(`.${ext.toLowerCase()}`);
   const filename = ext && !titleHasExtension && !titleHasSameExt ? `${title}.${ext}` : title;
 
+  return { ok: true, sourcePath, filename };
+}
+
+export async function downloadArtifact(
+  artifactId: string,
+  fallbackTitle: string,
+  extension: string
+): Promise<DownloadArtifactOutcome> {
+  if (!isTauri()) {
+    return {
+      ok: false,
+      code: 'NOT_DESKTOP',
+      error: 'Downloads are only available in the desktop app',
+    };
+  }
+
+  const resolved = await resolveArtifactForExport(artifactId, fallbackTitle, extension);
+  if (!resolved.ok) {
+    return { ok: false, code: resolved.code, error: resolved.error };
+  }
+
   try {
-    const dest = await invoke<string>('download_artifact_to_downloads', { sourcePath, filename });
+    const dest = await invoke<string>('download_artifact_to_downloads', {
+      sourcePath: resolved.sourcePath,
+      filename: resolved.filename,
+    });
     return { ok: true, path: dest };
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     return { ok: false, code: 'DOWNLOAD_FAILED', error: reason };
+  }
+}
+
+/**
+ * Export an artifact via the native Save-As dialog (#3162), pre-filled
+ * with the artifact's filename. On the user dismissing the dialog,
+ * returns `{ ok: false, code: 'CANCELLED' }` (the caller should treat
+ * this as a no-op, not an error). If the dialog itself is unavailable —
+ * e.g. headless Linux with no xdg-desktop portal — falls back to the
+ * Downloads copy so the artifact is still recoverable.
+ */
+export async function saveArtifactViaDialog(
+  artifactId: string,
+  fallbackTitle: string,
+  extension: string
+): Promise<DownloadArtifactOutcome> {
+  if (!isTauri()) {
+    return { ok: false, code: 'NOT_DESKTOP', error: 'Saving is only available in the desktop app' };
+  }
+
+  const resolved = await resolveArtifactForExport(artifactId, fallbackTitle, extension);
+  if (!resolved.ok) {
+    return { ok: false, code: resolved.code, error: resolved.error };
+  }
+
+  try {
+    // Command returns the saved path, or `null` when the user cancelled.
+    const dest = await invoke<string | null>('save_artifact_via_dialog', {
+      sourcePath: resolved.sourcePath,
+      suggestedFilename: resolved.filename,
+    });
+    if (dest == null) {
+      return { ok: false, code: 'CANCELLED', error: 'save cancelled by user' };
+    }
+    return { ok: true, path: dest };
+  } catch (err) {
+    // Dialog unavailable (no portal / unsupported) — recover the artifact
+    // via the Downloads copy rather than stranding the user.
+    const reason = err instanceof Error ? err.message : String(err);
+    console.warn('[artifact] save dialog failed, falling back to Downloads:', reason);
+    return downloadArtifact(artifactId, fallbackTitle, extension);
   }
 }
 

@@ -75,6 +75,9 @@ pub enum TrustedAutomationSource {
     /// from an external sync source (Gmail / Slack / Notion / etc.).
     /// Treated as untrusted: external-effect tool surface blocked.
     SubconsciousTainted,
+    /// Autonomous continuation of a thread goal: the heartbeat injected a turn
+    /// to keep working an idle `active` goal the user explicitly created.
+    GoalContinuation,
 }
 
 tokio::task_local! {

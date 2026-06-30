@@ -53,9 +53,12 @@ export interface ChipTabsProps<T extends string> {
 const DEFAULT_ROW_CLASS = 'flex flex-wrap gap-1.5 px-4 pt-3 pb-3';
 
 const baseChipClass = 'rounded-full px-3 py-1 text-xs font-medium transition-colors';
-const activeChipClass = 'bg-stone-800 text-white dark:bg-neutral-100 dark:text-neutral-900';
+// Inverse pill built from theme tokens: the foreground colour becomes the fill
+// and the surface colour becomes the text, so the selected chip stays
+// high-contrast and on-theme under any palette (light, dark, or custom).
+const activeChipClass = 'bg-content text-surface';
 const inactiveChipClass =
-  'bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-800 text-stone-600 dark:text-neutral-300 hover:bg-stone-50 dark:hover:bg-neutral-800';
+  'bg-surface border border-line text-content-secondary hover:bg-surface-hover';
 
 /**
  * Standard pill/chip tab bar — the look first shipped on Settings → Account and

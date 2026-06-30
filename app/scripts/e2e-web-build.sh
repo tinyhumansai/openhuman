@@ -6,7 +6,13 @@ APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 REPO_ROOT="$(cd "$APP_DIR/.." && pwd)"
 cd "$APP_DIR"
 
-RUST_HOST_TRIPLE="${RUST_HOST_TRIPLE:-$(rustc -vV | awk '/^host: / { print $2 }')}"
+RUSTC_BIN="$(command -v rustc)"
+CARGO_BIN="${CARGO_BIN:-$(dirname "$RUSTC_BIN")/cargo}"
+if [ ! -x "$CARGO_BIN" ]; then
+  CARGO_BIN="$(command -v cargo)"
+fi
+
+RUST_HOST_TRIPLE="${RUST_HOST_TRIPLE:-$("$RUSTC_BIN" -vV | awk '/^host: / { print $2 }')}"
 E2E_WEB_CORE_TARGET_DIR="${E2E_WEB_CORE_TARGET_DIR:-$REPO_ROOT/target/e2e-web-${RUST_HOST_TRIPLE}}"
 
 export VITE_BACKEND_URL="http://127.0.0.1:${E2E_MOCK_PORT:-18473}"
@@ -24,4 +30,4 @@ fi
 echo "Building web E2E bundle with backend ${VITE_BACKEND_URL}"
 pnpm run build:web
 echo "Building standalone openhuman-core for web E2E into ${E2E_WEB_CORE_TARGET_DIR}..."
-CARGO_TARGET_DIR="$E2E_WEB_CORE_TARGET_DIR" cargo build --manifest-path "$REPO_ROOT/Cargo.toml" --bin openhuman-core
+CARGO_TARGET_DIR="$E2E_WEB_CORE_TARGET_DIR" bash "$REPO_ROOT/scripts/ci-cancel-aware.sh" "$CARGO_BIN" build --manifest-path "$REPO_ROOT/Cargo.toml" --bin openhuman-core

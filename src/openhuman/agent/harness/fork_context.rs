@@ -52,6 +52,16 @@ pub struct ParentExecutionContext {
     /// provider for prefix-cache reuse.
     pub all_tool_specs: Arc<Vec<ToolSpec>>,
 
+    /// Names of the tools the parent actually advertises and will execute
+    /// this turn (the visibility-filtered subset of `all_tools`, including
+    /// runtime-synthesised `delegate_*` tools). Tools call sites that need
+    /// to reason about what the parent can *actually* invoke — e.g.
+    /// `agent_prepare_context` recommending next tool calls — must consult
+    /// this, not `all_tool_specs` (which is the full registry, including
+    /// hidden direct-exec/spawn tools the parent never advertises). Empty
+    /// means "unknown" — callers should treat that as "no restriction".
+    pub visible_tool_names: std::collections::HashSet<String>,
+
     /// Model name the parent is currently using (after classification).
     pub model_name: String,
 
@@ -129,11 +139,23 @@ pub struct ParentExecutionContext {
     pub run_queue: Option<Arc<crate::openhuman::agent::harness::run_queue::RunQueue>>,
 }
 
+/// A context-preparation source that already ran for the current parent turn.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentContextPreparedSource {
+    pub source: String,
+    pub has_enough_context: Option<bool>,
+}
+
 tokio::task_local! {
     /// Parent execution context, scoped per agent turn. `None` for any
     /// tool invocation that happens outside an agent turn (e.g. CLI/RPC
     /// direct tool calls); `spawn_subagent` rejects in that case.
     pub static PARENT_CONTEXT: ParentExecutionContext;
+
+    /// Context-preparation sources that already ran for this parent turn.
+    /// Tools such as `agent_prepare_context` use this to avoid spawning a
+    /// second context scout after the harness has already prepared context.
+    pub static AGENT_CONTEXT_PREPARED_SOURCES: Arc<Vec<AgentContextPreparedSource>>;
 }
 
 /// Returns a clone of the current parent execution context, if one is set.
@@ -150,4 +172,26 @@ where
     F: std::future::Future<Output = R>,
 {
     PARENT_CONTEXT.scope(ctx, future).await
+}
+
+/// Returns the one-shot context-preparation sources that have already run for
+/// the current parent turn.
+pub fn current_agent_context_prepared_sources() -> Vec<AgentContextPreparedSource> {
+    AGENT_CONTEXT_PREPARED_SOURCES
+        .try_with(|sources| sources.as_ref().clone())
+        .unwrap_or_default()
+}
+
+/// Run `future` with the current turn's already-prepared context sources
+/// installed.
+pub async fn with_agent_context_prepared_sources<F, R>(
+    sources: Vec<AgentContextPreparedSource>,
+    future: F,
+) -> R
+where
+    F: std::future::Future<Output = R>,
+{
+    AGENT_CONTEXT_PREPARED_SOURCES
+        .scope(Arc::new(sources), future)
+        .await
 }

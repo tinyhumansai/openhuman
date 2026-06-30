@@ -22,6 +22,15 @@ pub struct RuntimePythonConfig {
     /// rejected even when present on `PATH`.
     #[serde(default = "default_minimum_version")]
     pub minimum_version: String,
+    /// Exclusive upper bound for the managed-runtime selector. The
+    /// `python-build-standalone` "latest" release ships every supported series
+    /// (incl. pre-release lines like 3.15.x betas, whose `bN` suffix the
+    /// version parser drops — so they look like a stable `3.15.0`). Capping
+    /// selection below this keeps us on a stable line with prebuilt wheels for
+    /// dependencies such as spaCy. Empty string disables the cap. Default
+    /// `3.14.0` → selects the latest `3.13.x`.
+    #[serde(default = "default_maximum_version")]
+    pub maximum_version: String,
     /// Absolute path to a directory reserved for future managed Python
     /// installs. Empty string means "use the runtime default cache dir".
     #[serde(default)]
@@ -49,6 +58,10 @@ fn default_minimum_version() -> String {
     "3.12.0".to_string()
 }
 
+fn default_maximum_version() -> String {
+    "3.14.0".to_string()
+}
+
 fn default_prefer_system() -> bool {
     false
 }
@@ -58,6 +71,7 @@ impl Default for RuntimePythonConfig {
         Self {
             enabled: default_enabled(),
             minimum_version: default_minimum_version(),
+            maximum_version: default_maximum_version(),
             cache_dir: String::new(),
             managed_release_tag: String::new(),
             prefer_system: default_prefer_system(),

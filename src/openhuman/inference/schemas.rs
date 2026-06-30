@@ -87,6 +87,7 @@ struct InferenceUpdateModelSettingsParams {
     reasoning_provider: Option<String>,
     agentic_provider: Option<String>,
     coding_provider: Option<String>,
+    vision_provider: Option<String>,
     memory_provider: Option<String>,
     embeddings_provider: Option<String>,
     heartbeat_provider: Option<String>,
@@ -114,6 +115,7 @@ struct InferenceUpdateLocalSettingsParams {
     usage_heartbeat: Option<bool>,
     usage_learning_reflection: Option<bool>,
     usage_subconscious: Option<bool>,
+    api_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -140,6 +142,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("update_model_settings"),
         schemas("update_local_settings"),
         schemas("list_models"),
+        schemas("provider_auth_errors"),
         schemas("device_profile"),
         schemas("presets"),
         schemas("apply_preset"),
@@ -187,6 +190,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("list_models"),
             handler: handle_inference_list_models,
+        },
+        RegisteredController {
+            schema: schemas("provider_auth_errors"),
+            handler: handle_inference_provider_auth_errors,
         },
         RegisteredController {
             schema: schemas("device_profile"),
@@ -314,6 +321,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 optional_string("reasoning_provider", "Optional reasoning workload provider string."),
                 optional_string("agentic_provider", "Optional agentic workload provider string."),
                 optional_string("coding_provider", "Optional coding workload provider string."),
+                optional_string("vision_provider", "Optional vision / multimodal workload provider string."),
                 optional_string("memory_provider", "Optional memory workload provider string."),
                 optional_string("embeddings_provider", "Optional embeddings workload provider string."),
                 optional_string("heartbeat_provider", "Optional heartbeat workload provider string."),
@@ -334,6 +342,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     "base_url",
                     "Optional local provider base URL string, or null to clear.",
                 ),
+                optional_string(
+                    "api_key",
+                    "Optional Bearer API key for a local provider that requires one (e.g. OMLX); empty string clears it.",
+                ),
                 optional_string("model_id", "Optional generic model id override."),
                 optional_string("chat_model_id", "Optional chat model id override."),
                 optional_bool("usage_embeddings", "Whether embeddings workload may use the local provider."),
@@ -349,6 +361,16 @@ pub fn schemas(function: &str) -> ControllerSchema {
             description: "Fetch the available model list from a configured inference provider's /models API.",
             inputs: vec![required_string("provider_id", "Opaque id of the cloud provider entry to query.")],
             outputs: vec![json_output("models", "Provider model list payload.")],
+        },
+        "provider_auth_errors" => ControllerSchema {
+            namespace: "inference",
+            function: "provider_auth_errors",
+            description: "List BYO provider auth failures (invalid/revoked key, 401/403) recorded this process, for the AI settings provider-error notice.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "errors",
+                "Array of {provider, status, message, timestamp_ms} provider auth errors.",
+            )],
         },
         "device_profile" => ControllerSchema {
             namespace: "inference",
@@ -746,6 +768,7 @@ fn handle_inference_update_model_settings(params: Map<String, Value>) -> Control
             reasoning_provider: update.reasoning_provider,
             agentic_provider: update.agentic_provider,
             coding_provider: update.coding_provider,
+            vision_provider: update.vision_provider,
             memory_provider: update.memory_provider,
             embeddings_provider: update.embeddings_provider,
             heartbeat_provider: update.heartbeat_provider,
@@ -776,6 +799,7 @@ fn handle_inference_update_local_settings(params: Map<String, Value>) -> Control
             usage_heartbeat: update.usage_heartbeat,
             usage_learning_reflection: update.usage_learning_reflection,
             usage_subconscious: update.usage_subconscious,
+            api_key: update.api_key,
         };
         to_json(crate::openhuman::inference::rpc::inference_update_local_settings(patch).await?)
     })
@@ -794,6 +818,12 @@ fn handle_inference_device_profile(_params: Map<String, Value>) -> ControllerFut
     Box::pin(
         async move { to_json(crate::openhuman::inference::rpc::inference_device_profile().await?) },
     )
+}
+
+fn handle_inference_provider_auth_errors(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        to_json(crate::openhuman::inference::rpc::inference_provider_auth_errors().await?)
+    })
 }
 
 fn handle_inference_presets(_params: Map<String, Value>) -> ControllerFuture {

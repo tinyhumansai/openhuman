@@ -98,6 +98,98 @@ describe('AgentProcessSourcePanel', () => {
     expect(screen.queryByTestId('subagent-view-processing')).toBeNull();
   });
 
+  it('renders the interleaved transcript (thoughts + grouped human steps) when present', () => {
+    renderPanel(
+      <AgentProcessSourcePanel
+        open
+        entries={[
+          { id: 'c1', name: 'file_read', round: 1, status: 'success' },
+          { id: 'c2', name: 'file_read', round: 1, status: 'success' },
+        ]}
+        transcript={[
+          { kind: 'narration', round: 1, seq: 0, text: 'Let me check both docs first.' },
+          { kind: 'toolCall', round: 1, seq: 1, callId: 'c1' },
+          { kind: 'toolCall', round: 1, seq: 2, callId: 'c2' },
+          { kind: 'narration', round: 1, seq: 3, text: 'Now I can see what is missing.' },
+        ]}
+        onClose={() => {}}
+      />
+    );
+    // Narration prose renders (the thoughts the user wanted surfaced).
+    expect(screen.getByText('Let me check both docs first.')).toBeInTheDocument();
+    expect(screen.getByText('Now I can see what is missing.')).toBeInTheDocument();
+    // The two consecutive reads collapse into one human-summarized group.
+    expect(screen.getByText('Read 2 files')).toBeInTheDocument();
+    expect(screen.getByTestId('processing-transcript')).toBeInTheDocument();
+  });
+
+  it('shows each sub-agent’s full activity in a "Sub-agents" deep-dive alongside the transcript', () => {
+    renderPanel(
+      <AgentProcessSourcePanel
+        open
+        entries={[
+          {
+            id: 'sa-1',
+            name: 'subagent:researcher',
+            round: 1,
+            status: 'success',
+            subagent: {
+              taskId: 'task-1',
+              agentId: 'researcher',
+              toolCalls: [],
+              transcript: [{ kind: 'thinking', iteration: 1, text: 'planning the search' }],
+            },
+          },
+        ]}
+        transcript={[{ kind: 'narration', round: 1, seq: 0, text: 'Delegating to a researcher.' }]}
+        onClose={() => {}}
+      />
+    );
+    // The parent narration shows via the transcript view…
+    expect(screen.getByText('Delegating to a researcher.')).toBeInTheDocument();
+    // …and the sub-agent's full activity (its thoughts) shows in the deep-dive,
+    // with no redundant "view full processing" button (no onView).
+    expect(screen.getByTestId('agent-source-subagent')).toBeInTheDocument();
+    const activity = screen.getByTestId('subagent-activity');
+    expect(activity.textContent).toContain('planning the search');
+    expect(screen.queryByTestId('subagent-view-processing')).toBeNull();
+  });
+
+  it('scopes to a single step when scopedEntry is set (only that step, with its name as title)', () => {
+    const scoped: ToolTimelineEntry = {
+      id: 'sa-scope',
+      name: 'subagent:researcher',
+      round: 1,
+      status: 'success',
+      subagent: {
+        taskId: 'task-9',
+        agentId: 'researcher',
+        toolCalls: [],
+        transcript: [{ kind: 'thinking', iteration: 1, text: 'scoped thought' }],
+      },
+    };
+    renderPanel(
+      <AgentProcessSourcePanel
+        open
+        entries={[
+          scoped,
+          // A second, unrelated step that must NOT show in the scoped view.
+          { id: 'other', name: 'web_fetch', round: 1, status: 'success' },
+        ]}
+        transcript={[{ kind: 'narration', round: 1, seq: 0, text: 'whole-run narration' }]}
+        scopedEntry={scoped}
+        onClose={() => {}}
+      />
+    );
+    // Header shows the step's label, not the generic title.
+    expect(screen.getByText('Researching')).toBeInTheDocument();
+    // Only the scoped step's activity renders…
+    expect(screen.getByTestId('subagent-activity').textContent).toContain('scoped thought');
+    // …and the whole-run transcript / other steps do NOT.
+    expect(screen.queryByTestId('processing-transcript')).toBeNull();
+    expect(screen.queryByText('whole-run narration')).toBeNull();
+  });
+
   it('renders no source rows when no web tools were used', () => {
     renderPanel(
       <AgentProcessSourcePanel

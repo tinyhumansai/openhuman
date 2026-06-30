@@ -2,6 +2,7 @@ use super::*;
 use crate::openhuman::config::{BrowserConfig, Config, MemoryConfig};
 use crate::openhuman::credentials::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
 use crate::openhuman::security::AuditLogger;
+use crate::openhuman::workflows::types::ToolContent;
 use tempfile::TempDir;
 
 #[path = "../integrations/test_support.rs"]
@@ -34,6 +35,13 @@ fn assert_contains_all(names: &[String], expected: &[&str]) {
             names.iter().any(|n| n == name),
             "expected tool `{name}` to be registered; got: {names:?}"
         );
+    }
+}
+
+fn only_json_content(result: &ToolResult) -> &serde_json::Value {
+    match result.content.as_slice() {
+        [ToolContent::Json { data }] => data,
+        other => panic!("expected a single JSON content block, got {other:?}"),
     }
 }
 
@@ -429,6 +437,8 @@ fn all_tools_default_registry_contains_expected_baseline_surface() {
             "spawn_subagent",
             "spawn_async_subagent",
             "spawn_parallel_agents",
+            "wait",
+            "wait_loop",
             "todo",
             "plan_exit",
             "current_time",
@@ -1126,17 +1136,37 @@ async fn all_tools_executes_apify_family_against_fake_backend() {
         }))
         .await
         .expect("apify_run_actor execute");
-    assert!(run.output().contains("apify/linkedin-profile-scraper"));
-    assert!(run.output().contains("run-apify-linkedin-profile-scraper"));
+    let run_display = run.output_for_llm(true);
+    assert!(run_display.contains("apify/linkedin-profile-scraper"));
+    assert!(!run_display.contains("run-apify-linkedin-profile-scraper"));
+    let run_payload = only_json_content(&run);
+    assert_eq!(
+        run_payload["run_id"],
+        serde_json::json!("run-apify-linkedin-profile-scraper")
+    );
 
     let status = find_tool(&tools, "apify_get_run_status")
         .execute(serde_json::json!({ "run_id": "run-apify-linkedin-profile-scraper" }))
         .await
         .expect("apify_get_run_status execute");
-    assert!(status.output().contains("Status: SUCCEEDED"));
-    assert!(status
-        .output()
-        .contains("dataset-run-apify-linkedin-profile-scraper"));
+    let status_display = status.output_for_llm(true);
+    let status_prose = status_display
+        .split("[apify_run_ref]")
+        .next()
+        .expect("status prose before ref");
+    assert!(status_display.contains("Status: SUCCEEDED"));
+    assert!(!status_prose.contains("run-apify-linkedin-profile-scraper"));
+    assert!(!status_prose.contains("dataset-run-apify-linkedin-profile-scraper"));
+    assert!(status_display.contains("[apify_run_ref]"));
+    let status_payload = only_json_content(&status);
+    assert_eq!(
+        status_payload["run_id"],
+        serde_json::json!("run-apify-linkedin-profile-scraper")
+    );
+    assert_eq!(
+        status_payload["dataset_id"],
+        serde_json::json!("dataset-run-apify-linkedin-profile-scraper")
+    );
 
     let results = find_tool(&tools, "apify_get_run_results")
         .execute(serde_json::json!({
@@ -1262,8 +1292,12 @@ async fn all_tools_executes_parallel_and_web_search_family_against_fake_backend(
         }))
         .await
         .expect("parallel_research execute");
-    assert!(research.output().contains("Run: research-core"));
-    assert!(research.output().contains("\"company\": \"Tiny Humans\""));
+    let research_display = research.output_for_llm(true);
+    assert!(research_display.contains("Status: completed"));
+    assert!(research_display.contains("\"company\": \"Tiny Humans\""));
+    assert!(!research_display.contains("research-core"));
+    let research_payload = only_json_content(&research);
+    assert!(research_payload.get("run_id").is_none());
 
     let enrich = find_tool(&tools, "parallel_enrich")
         .execute(serde_json::json!({
@@ -1273,8 +1307,12 @@ async fn all_tools_executes_parallel_and_web_search_family_against_fake_backend(
         }))
         .await
         .expect("parallel_enrich execute");
-    assert!(enrich.output().contains("Enriched entity"));
-    assert!(enrich.output().contains("\"inputEcho\": \"Tiny Humans\""));
+    let enrich_display = enrich.output_for_llm(true);
+    assert!(enrich_display.contains("Enriched entity"));
+    assert!(enrich_display.contains("\"inputEcho\": \"Tiny Humans\""));
+    assert!(!enrich_display.contains("enrich-1"));
+    let enrich_payload = only_json_content(&enrich);
+    assert!(enrich_payload.get("run_id").is_none());
 
     let dataset = find_tool(&tools, "parallel_dataset")
         .execute(serde_json::json!({
@@ -1361,7 +1399,7 @@ async fn all_tools_executes_tinyfish_family_against_fake_backend() {
         .await
         .expect("tinyfish_agent_run execute");
     assert!(run.output().contains("TinyFish automation finished."));
-    assert!(run.output().contains("run_tinyfish_fake"));
+    assert!(!run.output().contains("run_tinyfish_fake"));
     assert!(run.output().contains("\"ok\":true"));
 
     let requests = backend.requests();

@@ -17,6 +17,7 @@ fn call(id: &str) -> ConversationMessage {
             extra_content: None,
         }],
         reasoning_content: None,
+        extra_metadata: None,
     }
 }
 
@@ -388,6 +389,29 @@ fn new_exposes_tool_budget_and_markdown_preference_from_config() {
 
     assert_eq!(manager.tool_result_budget_bytes(), 4096);
     assert!(manager.prefer_markdown_tool_output());
+}
+
+#[test]
+fn super_context_enabled_reflects_config() {
+    // Default config: on.
+    let on = ContextManager::new(
+        &ContextConfig::default(),
+        MockSummarizer::ok(),
+        "m".into(),
+        SystemPromptBuilder::with_defaults(),
+    );
+    assert!(on.super_context_enabled());
+
+    // Explicitly disabled in config → getter reports off.
+    let mut config = ContextConfig::default();
+    config.super_context_enabled = false;
+    let off = ContextManager::new(
+        &config,
+        MockSummarizer::ok(),
+        "m".into(),
+        SystemPromptBuilder::with_defaults(),
+    );
+    assert!(!off.super_context_enabled());
 }
 
 #[test]

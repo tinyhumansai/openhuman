@@ -19,12 +19,11 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { CoreCronJob } from '../../utils/tauriCommands/cron';
+import ScheduledCronCard from './ScheduledCronCard';
+
 const stableT = (key: string) => key;
 vi.mock('../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: stableT }) }));
-
-import type { CoreCronJob } from '../../utils/tauriCommands/cron';
-
-import ScheduledCronCard from './ScheduledCronCard';
 
 function makeJob(overrides: Partial<CoreCronJob> = {}): CoreCronJob {
   return {
@@ -50,13 +49,7 @@ function makeJob(overrides: Partial<CoreCronJob> = {}): CoreCronJob {
 
 describe('ScheduledCronCard', () => {
   it('renders the title, cronToHuman schedule, and meta row', () => {
-    render(
-      <ScheduledCronCard
-        job={makeJob()}
-        title="dev-workflow"
-        onToggle={() => undefined}
-      />
-    );
+    render(<ScheduledCronCard job={makeJob()} title="dev-workflow" onToggle={() => undefined} />);
     expect(screen.getByTestId('scheduled-cron-job-1-title')).toHaveTextContent('dev-workflow');
     // `*/30 * * * *` → "Every 30 minutes" per cronToHuman.
     expect(screen.getByTestId('scheduled-cron-job-1-schedule')).toHaveTextContent(
@@ -132,31 +125,19 @@ describe('ScheduledCronCard', () => {
   });
 
   it('renders the ×N count badge when badgeCount > 1', () => {
-    render(
-      <ScheduledCronCard
-        job={makeJob()}
-        badgeCount={3}
-        onToggle={() => undefined}
-      />
-    );
+    render(<ScheduledCronCard job={makeJob()} badgeCount={3} onToggle={() => undefined} />);
     expect(screen.getByTestId('scheduled-cron-job-1-count-badge')).toHaveTextContent('×3');
   });
 
   it('omits the count badge when badgeCount is 1 or absent', () => {
-    const { rerender } = render(
-      <ScheduledCronCard job={makeJob()} onToggle={() => undefined} />
-    );
+    const { rerender } = render(<ScheduledCronCard job={makeJob()} onToggle={() => undefined} />);
     expect(screen.queryByTestId('scheduled-cron-job-1-count-badge')).not.toBeInTheDocument();
-    rerender(
-      <ScheduledCronCard job={makeJob()} badgeCount={1} onToggle={() => undefined} />
-    );
+    rerender(<ScheduledCronCard job={makeJob()} badgeCount={1} onToggle={() => undefined} />);
     expect(screen.queryByTestId('scheduled-cron-job-1-count-badge')).not.toBeInTheDocument();
   });
 
   it('renders the ★ Active badge when activeBadge is true', () => {
-    render(
-      <ScheduledCronCard job={makeJob()} activeBadge onToggle={() => undefined} />
-    );
+    render(<ScheduledCronCard job={makeJob()} activeBadge onToggle={() => undefined} />);
     expect(screen.getByTestId('scheduled-cron-job-1-active-badge')).toBeInTheDocument();
   });
 
@@ -250,9 +231,7 @@ describe('ScheduledCronCard', () => {
       <ScheduledCronCard job={makeJob({ enabled: true })} onToggle={() => undefined} />
     );
     expect(screen.getByTestId('scheduled-cron-job-1')).toHaveAttribute('data-active', 'true');
-    rerender(
-      <ScheduledCronCard job={makeJob({ enabled: false })} onToggle={() => undefined} />
-    );
+    rerender(<ScheduledCronCard job={makeJob({ enabled: false })} onToggle={() => undefined} />);
     expect(screen.getByTestId('scheduled-cron-job-1')).toHaveAttribute('data-active', 'false');
   });
 });

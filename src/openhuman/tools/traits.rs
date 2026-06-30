@@ -111,12 +111,143 @@ pub struct ToolCallOptions {
     pub prefer_markdown: bool,
 }
 
+/// How the harness should bound a single tool invocation in wall-clock time.
+///
+/// Returned by [`Tool::timeout_policy`]. Separates the common "use the global
+/// timeout" case from the scripting-tool cases ("no deadline" / "this exact
+/// deadline") so the harness can hard-kill genuinely hang-prone tools while
+/// letting a long-but-legitimate script run to completion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolTimeout {
+    /// Use the global, operator/config-driven tool timeout. Default for most
+    /// tools (network, MCP, etc.) — a hung call must not wedge the session.
+    Inherit,
+    /// Run without any harness-imposed deadline. Scripting tools return this
+    /// when the caller did not request an explicit budget.
+    Unbounded,
+    /// Enforce exactly this many seconds. The harness clamps it to the valid
+    /// range (`MIN_TIMEOUT_SECS..=MAX_TIMEOUT_SECS`) defensively.
+    Secs(u64),
+}
+
 /// Description of a tool for the LLM
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSpec {
     pub name: String,
     pub description: String,
     pub parameters: serde_json::Value,
+}
+
+/// Derive a Title-Cased, human-readable label from a raw tool name.
+///
+/// Strips common machine prefixes (`composio_`, `mcp_`) and turns
+/// snake_case / kebab-case into spaced Title Case:
+/// `gmail_read_message` → "Gmail Read Message". Used as the default for
+/// [`Tool::display_label`] and as a safety net for any tool that doesn't
+/// supply a curated phrase, so a timeline row never shows raw `snake_case`.
+pub fn humanize_tool_name(name: &str) -> String {
+    let trimmed = name
+        .strip_prefix("composio_")
+        .or_else(|| name.strip_prefix("mcp_"))
+        .unwrap_or(name);
+
+    let mut out = String::with_capacity(trimmed.len());
+    let mut capitalize = true;
+    for ch in trimmed.chars() {
+        if ch == '_' || ch == '-' {
+            if !out.is_empty() && !out.ends_with(' ') {
+                out.push(' ');
+            }
+            capitalize = true;
+        } else if capitalize {
+            out.extend(ch.to_uppercase());
+            capitalize = false;
+        } else {
+            out.push(ch);
+        }
+    }
+
+    let label = out.trim();
+    if label.is_empty() {
+        name.to_string()
+    } else {
+        label.to_string()
+    }
+}
+
+/// Pull the single most-relevant contextual argument out of a tool-call's
+/// args for the timeline "detail" (the bracketed context after the label).
+///
+/// Scans a prioritized list of common argument keys (recipient, query,
+/// path, command, …) and returns the first present, non-empty value as a
+/// trimmed, length-capped string — so a row can read "reading messages from
+/// steven@gmail.com" / `Read(src/openhuman/wallet/ops.rs)` without every tool
+/// hand-writing a [`Tool::display_detail`] override. Returns `None` when no
+/// recognized key carries a usable scalar.
+pub fn context_detail_from_args(args: &serde_json::Value) -> Option<String> {
+    /// Common "what is this acting on" keys, most-specific first.
+    const CONTEXT_KEYS: &[&str] = &[
+        "to",
+        "recipient",
+        "recipient_email",
+        "to_email",
+        "email",
+        "query",
+        "q",
+        "search",
+        "search_query",
+        "url",
+        "file_path",
+        "path",
+        "command",
+        "cmd",
+        "subject",
+        "title",
+        "channel",
+        "channel_id",
+        "repo",
+        "repository",
+        "name",
+        "id",
+    ];
+
+    let obj = args.as_object()?;
+    for key in CONTEXT_KEYS {
+        let Some(value) = obj.get(*key) else { continue };
+        if let Some(rendered) = render_context_value(value) {
+            return Some(rendered);
+        }
+    }
+    None
+}
+
+/// Render a single arg value to a compact detail string, or `None` when it
+/// carries nothing useful (empty string, object, null).
+fn render_context_value(value: &serde_json::Value) -> Option<String> {
+    /// Max characters for a timeline detail before it is elided.
+    const MAX_DETAIL: usize = 80;
+
+    let raw = match value {
+        serde_json::Value::String(s) => s.trim().to_string(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Array(items) => items
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
+        _ => String::new(),
+    };
+    let raw = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    if raw.is_empty() {
+        return None;
+    }
+    if raw.chars().count() > MAX_DETAIL {
+        let truncated: String = raw.chars().take(MAX_DETAIL.saturating_sub(1)).collect();
+        Some(format!("{truncated}…"))
+    } else {
+        Some(raw)
+    }
 }
 
 /// Core tool trait — implement for any capability (built-in or integration-based).
@@ -286,6 +417,22 @@ pub trait Tool: Send + Sync {
         None
     }
 
+    /// How the harness should bound this invocation in wall-clock time.
+    ///
+    /// The harness wraps every `execute()` in a deadline. Most tools want the
+    /// global, operator/config-driven timeout ([`ToolTimeout::Inherit`]) so a
+    /// hung network/MCP call can't wedge a session. Scripting tools (`shell`,
+    /// `node_exec`, `npm_exec`) instead return [`ToolTimeout::Unbounded`] when
+    /// the caller did not request a budget — a build / solver / test run
+    /// legitimately takes minutes and must not be hard-killed by a default cap
+    /// (issue #4023) — and [`ToolTimeout::Secs`] only when an explicit
+    /// `timeout_secs` was supplied.
+    ///
+    /// Default: [`ToolTimeout::Inherit`] (use the global timeout).
+    fn timeout_policy(&self, _args: &serde_json::Value) -> ToolTimeout {
+        ToolTimeout::Inherit
+    }
+
     /// Get the full spec for LLM registration
     fn spec(&self) -> ToolSpec {
         ToolSpec {
@@ -293,6 +440,31 @@ pub trait Tool: Send + Sync {
             description: self.description().to_string(),
             parameters: self.parameters_schema(),
         }
+    }
+
+    /// Short, human-readable verb phrase describing this call for the chat
+    /// "agent processing" timeline (e.g. "Reading messages", "Running
+    /// command", "Reading file"). The default derives a Title-Cased label
+    /// from [`Self::name`] via [`humanize_tool_name`]; dynamic / integration
+    /// tools (Composio, MCP, generated) and high-value built-ins override to
+    /// return a curated phrase so a row never reads as raw `snake_case`.
+    ///
+    /// Paired with [`Self::display_detail`] (the specific argument), the UI
+    /// renders `label (detail)` — Claude-style `Read(path)` /
+    /// "reading messages from steven@gmail.com".
+    fn display_label(&self, _args: &serde_json::Value) -> Option<String> {
+        Some(humanize_tool_name(self.name()))
+    }
+
+    /// The specific, contextual argument for this call — the file path, email
+    /// address, command, or query pulled from `args` — shown in brackets
+    /// after [`Self::display_label`]. The default pulls the most-relevant
+    /// common argument via [`context_detail_from_args`], so any tool reads
+    /// like "reading messages from steven@gmail.com" / `Read(path)` without a
+    /// hand-written override. Tools whose meaningful arg sits under an unusual
+    /// key override to surface the right value.
+    fn display_detail(&self, args: &serde_json::Value) -> Option<String> {
+        context_detail_from_args(args)
     }
 }
 
@@ -401,6 +573,84 @@ mod tests {
     fn default_external_effect_is_false() {
         let tool = DummyTool;
         assert!(!tool.external_effect());
+    }
+
+    // ── display_label / display_detail ─────────────────────────────
+
+    #[test]
+    fn default_display_label_humanizes_tool_name() {
+        let tool = DummyTool;
+        assert_eq!(
+            tool.display_label(&serde_json::Value::Null).as_deref(),
+            Some("Dummy Tool")
+        );
+    }
+
+    #[test]
+    fn default_display_detail_pulls_context_arg() {
+        let tool = DummyTool;
+        // No object args → nothing to surface.
+        assert!(tool.display_detail(&serde_json::Value::Null).is_none());
+        // A recognized key becomes the bracketed context.
+        assert_eq!(
+            tool.display_detail(&serde_json::json!({ "path": "src/main.rs" }))
+                .as_deref(),
+            Some("src/main.rs")
+        );
+    }
+
+    #[test]
+    fn context_detail_prefers_specific_keys_and_truncates() {
+        // `to` outranks `name` for a messaging-style call.
+        assert_eq!(
+            context_detail_from_args(&serde_json::json!({
+                "name": "ignored", "to": "steven@gmail.com"
+            }))
+            .as_deref(),
+            Some("steven@gmail.com")
+        );
+        // Long values are elided to keep the row compact.
+        let long = "x".repeat(200);
+        let detail = context_detail_from_args(&serde_json::json!({ "query": long })).unwrap();
+        assert!(detail.chars().count() <= 80);
+        assert!(detail.ends_with('…'));
+        // Whitespace is collapsed.
+        assert_eq!(
+            context_detail_from_args(&serde_json::json!({ "command": "  ls   -la  " })).as_deref(),
+            Some("ls -la")
+        );
+    }
+
+    #[test]
+    fn humanize_tool_name_title_cases_snake_case() {
+        assert_eq!(
+            humanize_tool_name("gmail_read_message"),
+            "Gmail Read Message"
+        );
+        assert_eq!(humanize_tool_name("web_fetch"), "Web Fetch");
+        assert_eq!(humanize_tool_name("shell"), "Shell");
+    }
+
+    #[test]
+    fn humanize_tool_name_strips_machine_prefixes() {
+        // Composio / MCP wrappers prefix the raw action name; the timeline
+        // label should read as the action, not the transport.
+        assert_eq!(
+            humanize_tool_name("composio_gmail_send_email"),
+            "Gmail Send Email"
+        );
+        assert_eq!(
+            humanize_tool_name("mcp_notion_create_page"),
+            "Notion Create Page"
+        );
+    }
+
+    #[test]
+    fn humanize_tool_name_handles_kebab_and_empty() {
+        assert_eq!(humanize_tool_name("read-diff"), "Read Diff");
+        // Degenerate input never panics and never yields an empty label.
+        assert_eq!(humanize_tool_name(""), "");
+        assert_eq!(humanize_tool_name("___"), "___");
     }
 
     // ── PermissionLevel ordering ───────────────────────────────────

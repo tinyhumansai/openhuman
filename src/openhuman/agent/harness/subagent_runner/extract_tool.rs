@@ -6,9 +6,13 @@
 //! That dragged along system-prompt scaffolding, a tool-loop, and an
 //! extra inference round for a workload that really only needs one
 //! completion call. So the tool now drives `provider.chat_with_system`
-//! directly against the extraction model (`"summarization-v1"` — same
-//! string [`super::definition::ModelSpec::Hint("summarization").resolve`]
-//! would have produced, so router entries keyed on it still apply).
+//! directly. Both the provider AND the model id are resolved by the runner
+//! through the `summarization` role (`create_chat_provider("summarization")`)
+//! and handed in, so this extraction follows the user's `memory_provider`
+//! routing — managed (`summarization-v1`), BYOK, or local — exactly like every
+//! other summarization path, instead of borrowing the parent agent's provider
+//! with a hardcoded tier string (which 400'd on BYOK/local providers that don't
+//! know the literal `summarization-v1`).
 //!
 //! Transcript discipline: the LLM call still costs tokens, so every
 //! extraction round-trip is persisted as its own `session_raw/` JSONL (+
@@ -33,27 +37,24 @@ use crate::openhuman::tools::{Tool, ToolCategory, ToolResult};
 
 // ── Tunables ──────────────────────────────────────────────────────────
 
-/// Model id used for `extract_from_result` LLM calls. Mirrors the
-/// resolution `ModelSpec::Hint("summarization").resolve(...)` would have
-/// produced for the retired summarizer sub-agent so routing table
-/// entries that targeted the summarizer continue to apply.
-const EXTRACT_MODEL_ID: &str = "summarization-v1";
-
 /// Temperature for extraction calls. Low but non-zero so the model can
 /// pick reasonable phrasings when rewriting identifiers into a compact
 /// answer, without straying into creative territory.
 const EXTRACT_TEMPERATURE: f64 = 0.2;
 
-/// Char budget per extraction call, derived from the extraction model's
-/// context window. A payload at or under this budget is extracted in a single
-/// shot over its **entire** content — higher quality than the chunk+concat
-/// fallback, which has no reduce stage and can miss facts that span a chunk
-/// boundary or need global context. `summarization-v1` resolves to a
-/// long-context flash model (~1M tokens), so this is large; only payloads that
-/// exceed it fall back to parallel chunked extraction. Headroom is reserved for
+/// Convert a context window (tokens) into the per-chunk char budget. A payload
+/// at or under this budget is extracted in a single shot over its **entire**
+/// content — higher quality than the chunk+concat fallback, which has no reduce
+/// stage and can miss facts that span a chunk boundary. Headroom is reserved for
 /// the extraction contract, the query, and the response.
-fn extract_chunk_char_budget() -> usize {
-    /// Fallback window (tokens) when the model id is unknown to the registry.
+///
+/// `window_tokens = None` means neither the provider nor the static registry
+/// could size the model — only reached for **cloud** models the registry doesn't
+/// know (an unknown *local* model resolves to its small provider-profile window
+/// via [`ExtractFromResultTool::extract_chunk_char_budget`], not here), so a
+/// large window is a safe assumption.
+fn chunk_char_budget_for_window(window_tokens: Option<u64>) -> usize {
+    /// Last-resort window (tokens) when the model is unsizable — see above.
     const FALLBACK_WINDOW_TOKENS: u64 = 128_000;
     /// Approximate chars per token used for budgeting.
     const CHARS_PER_TOKEN: u64 = 4;
@@ -61,9 +62,8 @@ fn extract_chunk_char_budget() -> usize {
     /// the prompt scaffolding, query, and model response.
     const USABLE_PCT: u64 = 70;
 
-    let window_tokens = crate::openhuman::inference::context_window_for_model(EXTRACT_MODEL_ID)
-        .unwrap_or(FALLBACK_WINDOW_TOKENS);
-    (window_tokens * USABLE_PCT / 100 * CHARS_PER_TOKEN) as usize
+    let window = window_tokens.unwrap_or(FALLBACK_WINDOW_TOKENS);
+    (window * USABLE_PCT / 100 * CHARS_PER_TOKEN) as usize
 }
 
 /// System prompt fed to the provider on every `extract_from_result`
@@ -86,6 +86,11 @@ empty string — do not invent information.";
 pub(super) struct ExtractFromResultTool {
     cache: Arc<ResultHandoffCache>,
     provider: Arc<dyn Provider>,
+    /// Model id for the extraction `chat_with_system` calls. Resolved by the
+    /// runner through the `summarization` role (alongside `provider`), so it
+    /// tracks the user's `memory_provider` routing + `cloud_llm_model` override
+    /// instead of a hardcoded tier string.
+    model: String,
     /// Workspace root for transcript writes.
     workspace_dir: PathBuf,
     /// Parent session chain joined with `__`, e.g.
@@ -104,6 +109,7 @@ impl ExtractFromResultTool {
     pub(super) fn new(
         cache: Arc<ResultHandoffCache>,
         provider: Arc<dyn Provider>,
+        model: String,
         workspace_dir: PathBuf,
         parent_chain: String,
         owner_agent_id: String,
@@ -111,11 +117,31 @@ impl ExtractFromResultTool {
         Self {
             cache,
             provider,
+            model,
             workspace_dir,
             parent_chain,
             owner_agent_id,
             call_seq: StdMutex::new(0),
         }
+    }
+
+    /// Resolve the per-chunk char budget for `self.model` against the chosen
+    /// provider's context window.
+    ///
+    /// Asks the **provider** first: a local runtime (Ollama / LM Studio) reports
+    /// its real loaded / profile window here (~8k tokens for Ollama), so an
+    /// unknown *local* model is budgeted against its actual small context and the
+    /// payload is chunked — instead of assuming a 128k window and sending an
+    /// oversized single-shot prompt that overflows the local context (Codex P2).
+    /// Falls back to the static registry, then the cloud-safe default in
+    /// [`chunk_char_budget_for_window`].
+    async fn extract_chunk_char_budget(&self) -> usize {
+        let window = self
+            .provider
+            .effective_context_window(&self.model)
+            .await
+            .or_else(|| crate::openhuman::inference::context_window_for_model(&self.model));
+        chunk_char_budget_for_window(window)
     }
 
     fn next_call_seq(&self) -> u64 {
@@ -187,10 +213,13 @@ impl Tool for ExtractFromResultTool {
         // Allow test harnesses to lower the chunk budget so multi-chunk
         // extraction can be exercised on compacted payloads. Never consulted
         // in production (env var absent).
-        let effective_chunk_budget = std::env::var("OPENHUMAN_TEST_EXTRACT_CHUNK_BUDGET")
+        let effective_chunk_budget = match std::env::var("OPENHUMAN_TEST_EXTRACT_CHUNK_BUDGET")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or_else(extract_chunk_char_budget);
+        {
+            Some(budget) => budget,
+            None => self.extract_chunk_char_budget().await,
+        };
 
         // Fast path: payload fits in a single provider turn.
         if cached.content.len() <= effective_chunk_budget {
@@ -244,6 +273,7 @@ impl Tool for ExtractFromResultTool {
         let workspace_dir = self.workspace_dir.clone();
         let parent_chain = self.parent_chain.clone();
         let owner_agent_id = self.owner_agent_id.clone();
+        let model = self.model.clone();
 
         // Consume `chunks` with `into_iter` so each async block owns
         // its `String` — `buffer_unordered` polls the stream lazily
@@ -255,6 +285,7 @@ impl Tool for ExtractFromResultTool {
             let workspace_dir = workspace_dir.clone();
             let parent_chain = parent_chain.clone();
             let owner_agent_id = owner_agent_id.clone();
+            let model = model.clone();
             async move {
                 let user_prompt = format!(
                     "Tool name: {tool_name}\nChunk {idx} of {total}\n\n\
@@ -271,7 +302,7 @@ impl Tool for ExtractFromResultTool {
                     .chat_with_system(
                         Some(EXTRACT_SYSTEM_PROMPT),
                         &user_prompt,
-                        EXTRACT_MODEL_ID,
+                        &model,
                         EXTRACT_TEMPERATURE,
                     )
                     .await;
@@ -296,7 +327,7 @@ impl Tool for ExtractFromResultTool {
                         Ok(s) => Ok(*s),
                         Err(s) => Err(s.as_str()),
                     },
-                    EXTRACT_MODEL_ID,
+                    &model,
                 );
 
                 (i, result)
@@ -369,7 +400,7 @@ impl ExtractFromResultTool {
             .chat_with_system(
                 Some(EXTRACT_SYSTEM_PROMPT),
                 &user_prompt,
-                EXTRACT_MODEL_ID,
+                &self.model,
                 EXTRACT_TEMPERATURE,
             )
             .await;
@@ -392,7 +423,7 @@ impl ExtractFromResultTool {
                 Ok(s) => Ok(*s),
                 Err(s) => Err(s.as_str()),
             },
-            EXTRACT_MODEL_ID,
+            &self.model,
         );
 
         match provider_result {
@@ -489,19 +520,28 @@ fn write_extract_transcript(
     // the blanks when we wire richer accounting later.
     let ts_rfc3339 = chrono::Utc::now().to_rfc3339();
     let turn_usage = TurnUsage {
+        provider: "extract_from_result".to_string(),
         model: model.to_string(),
         usage: MessageUsage {
             input: 0,
             output: 0,
             cached_input: 0,
+            context_window: 0,
             cost_usd: 0.0,
         },
         ts: ts_rfc3339.clone(),
+        reasoning_content: None,
+        tool_calls: Vec::new(),
+        iteration: 1,
     };
 
     let meta = TranscriptMeta {
         agent_name: format!("{owner_agent_id}::extract_from_result"),
+        agent_id: Some(owner_agent_id.to_string()),
+        agent_type: Some("extractor".to_string()),
         dispatcher: "native".into(),
+        provider: Some(turn_usage.provider.clone()),
+        model: Some(turn_usage.model.clone()),
         created: ts_rfc3339.clone(),
         updated: ts_rfc3339,
         turn_count: 1,
@@ -510,6 +550,7 @@ fn write_extract_transcript(
         cached_input_tokens: 0,
         charged_amount_usd: 0.0,
         thread_id: crate::openhuman::inference::provider::thread_context::current_thread_id(),
+        task_id: None,
     };
 
     if let Err(e) = write_transcript(&path, &messages, &meta, Some(&turn_usage)) {
@@ -524,5 +565,48 @@ fn write_extract_transcript(
             is_error,
             "[extract_from_result] transcript written"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The chunk budget tracks the resolved context window, so a small local
+    // window yields a much smaller budget than a long-context cloud tier — this
+    // is what forces chunking instead of an oversized single-shot prompt.
+    #[test]
+    fn chunk_budget_tracks_context_window() {
+        let summarization_window =
+            crate::openhuman::inference::context_window_for_model("summarization-v1");
+        let big = chunk_char_budget_for_window(summarization_window);
+        let small = chunk_char_budget_for_window(Some(8_192)); // Ollama local default
+        assert!(
+            big > small,
+            "long-context tier budget {big} must exceed an 8k local window budget {small}"
+        );
+    }
+
+    // Codex P2: an unknown LOCAL model resolves (via the provider) to its small
+    // ~8k profile window, NOT the 128k cloud fallback. The resulting budget must
+    // be well under a production handoff payload (~200k chars) so it chunks
+    // instead of single-shotting into a local context overflow.
+    #[test]
+    fn chunk_budget_for_small_local_window_forces_chunking() {
+        let budget = chunk_char_budget_for_window(Some(8_192));
+        // 8192 * 70% * 4 = 22_937 chars.
+        assert_eq!(budget, (8_192u64 * 70 / 100 * 4) as usize);
+        assert!(
+            budget < 200_000,
+            "an 8k local window must budget below a typical handoff payload so it chunks"
+        );
+    }
+
+    // When neither provider nor registry can size the model (cloud-unknown), the
+    // cloud-safe 128k fallback applies.
+    #[test]
+    fn chunk_budget_uses_cloud_fallback_when_unsizable() {
+        let expected = (128_000u64 * 70 / 100 * 4) as usize;
+        assert_eq!(chunk_char_budget_for_window(None), expected);
     }
 }

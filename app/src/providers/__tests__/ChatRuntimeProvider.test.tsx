@@ -8,8 +8,10 @@ import { threadApi } from '../../services/api/threadApi';
 import { store } from '../../store';
 import {
   clearAllChatRuntime,
+  enqueueFollowup,
   registerParallelRequest,
   resetSessionTokenUsage,
+  setPendingPlanReviewForThread,
 } from '../../store/chatRuntimeSlice';
 import { setStatusForUser } from '../../store/socketSlice';
 import { clearAllThreads, loadThreads, setSelectedThread } from '../../store/threadSlice';
@@ -390,6 +392,102 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       await waitFor(() => expect(mockRefetchSnapshot).toHaveBeenCalledTimes(1));
     });
 
+    it('stores a parked plan review from the plan_review_request event', () => {
+      const listeners = renderProvider();
+      act(() => {
+        listeners.onPlanReviewRequest?.({
+          thread_id: 't-plan',
+          request_id: 'pr-1',
+          message: 'Ship the release',
+          args: { steps: ['build', 'verify'] },
+        });
+      });
+      const review = store.getState().chatRuntime.pendingPlanReviewByThread['t-plan'];
+      expect(review).toEqual({
+        requestId: 'pr-1',
+        summary: 'Ship the release',
+        steps: ['build', 'verify'],
+      });
+    });
+
+    it('clears a parked plan review when the turn ends or errors', () => {
+      const listeners = renderProvider();
+      const park = () =>
+        store.dispatch(
+          setPendingPlanReviewForThread({
+            threadId: 't-plan',
+            review: { requestId: 'pr-1', summary: 'Plan', steps: ['a'] },
+          })
+        );
+
+      // chat_done clears the (possibly expired) parked review.
+      park();
+      act(() => {
+        listeners.onDone?.({
+          thread_id: 't-plan',
+          request_id: 'r-plan',
+          full_response: 'done',
+          rounds_used: 1,
+          total_input_tokens: 1,
+          total_output_tokens: 1,
+          segment_total: 1,
+        });
+      });
+      expect(store.getState().chatRuntime.pendingPlanReviewByThread['t-plan']).toBeUndefined();
+
+      // chat_error also clears it (cancelled/errored parked turn).
+      park();
+      act(() => {
+        listeners.onError?.({
+          thread_id: 't-plan',
+          request_id: 'r-plan',
+          message: 'boom',
+          error_type: 'inference',
+          round: 1,
+        });
+      });
+      expect(store.getState().chatRuntime.pendingPlanReviewByThread['t-plan']).toBeUndefined();
+    });
+
+    it('flushes queued follow-ups into the transcript when a turn ends', async () => {
+      const listeners = renderProvider();
+      store.dispatch(
+        enqueueFollowup({
+          threadId: 't-fup',
+          message: {
+            id: 'f1',
+            content: 'queued follow-up text',
+            type: 'text',
+            extraMetadata: {},
+            sender: 'user',
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+          label: 'queued follow-up text',
+        })
+      );
+
+      await act(async () => {
+        listeners.onDone?.({
+          thread_id: 't-fup',
+          request_id: 'r-fup',
+          full_response: 'assistant reply',
+          rounds_used: 1,
+          total_input_tokens: 1,
+          total_output_tokens: 1,
+        });
+      });
+
+      // The queued prompt is persisted as a real user message (survives reload,
+      // appended AFTER the assistant reply) and the pills are cleared.
+      await waitFor(() =>
+        expect(threadApi.appendMessage).toHaveBeenCalledWith(
+          't-fup',
+          expect.objectContaining({ content: 'queued follow-up text', sender: 'user' })
+        )
+      );
+      expect(store.getState().chatRuntime.queuedFollowupsByThread['t-fup']).toBeUndefined();
+    });
+
     it('processes tool_call for different rounds as distinct events', () => {
       const listeners = renderProvider();
 
@@ -421,10 +519,10 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
   });
 
   describe('proactive thread resolution', () => {
-    it('reuses the selected thread when resolving a proactive: sender', async () => {
+    it('reuses the selected thread when it is fresh (no messages)', async () => {
       store.dispatch(
         loadThreads.fulfilled(
-          { threads: [{ id: 'visible-thread', title: 'x' }] as never, count: 1 },
+          { threads: [{ id: 'visible-thread', title: 'x', messageCount: 0 }] as never, count: 1 },
           'req-id',
           undefined
         )
@@ -440,13 +538,89 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
         });
       });
 
-      // createNewThread must NOT be invoked when a visible thread already exists.
+      // createNewThread must NOT be invoked when a fresh visible thread exists.
       expect(threadApi.createNewThread).not.toHaveBeenCalled();
       await waitFor(() =>
         expect(threadApi.appendMessage).toHaveBeenCalledWith(
           'visible-thread',
           expect.objectContaining({ content: 'ping', sender: 'agent' })
         )
+      );
+    });
+
+    it('opens a new thread instead of interrupting a selected thread that has messages (#3713)', async () => {
+      vi.mocked(threadApi.createNewThread).mockResolvedValue({
+        id: 'fresh-thread',
+        title: 'new',
+      } as never);
+      vi.mocked(threadApi.getThreads).mockResolvedValue({
+        threads: [{ id: 'fresh-thread', title: 'new' }] as never,
+        count: 1,
+      });
+
+      // The user is mid-conversation: the selected thread already holds
+      // messages, so a proactive morning brief / subconscious update must
+      // NOT be injected into it.
+      store.dispatch(
+        loadThreads.fulfilled(
+          { threads: [{ id: 'busy-thread', title: 'chat', messageCount: 4 }] as never, count: 1 },
+          'req-id',
+          undefined
+        )
+      );
+      store.dispatch(setSelectedThread('busy-thread'));
+      const listeners = renderProvider();
+
+      await act(async () => {
+        listeners.onProactiveMessage?.({
+          thread_id: 'proactive:morning_briefing',
+          request_id: 'req-mb',
+          full_response: "good morning! here's your briefing",
+        });
+      });
+
+      // The active conversation must be left untouched; delivery goes to a
+      // dedicated new thread.
+      await waitFor(() => expect(threadApi.createNewThread).toHaveBeenCalledTimes(1));
+      expect(threadApi.appendMessage).toHaveBeenCalledWith(
+        'fresh-thread',
+        expect.objectContaining({ content: "good morning! here's your briefing" })
+      );
+      expect(threadApi.appendMessage).not.toHaveBeenCalledWith('busy-thread', expect.anything());
+    });
+
+    it('treats a selected thread with unknown metadata as occupied and opens a new thread', async () => {
+      vi.mocked(threadApi.createNewThread).mockResolvedValue({
+        id: 'fresh-thread',
+        title: 'new',
+      } as never);
+      vi.mocked(threadApi.getThreads).mockResolvedValue({
+        threads: [{ id: 'fresh-thread', title: 'new' }] as never,
+        count: 1,
+      });
+
+      // Only a rehydrated selection is present — the thread list hasn't loaded,
+      // so its message metadata is unknown. We must NOT assume it is fresh
+      // (it could already hold a server-side conversation). See #3713.
+      store.dispatch(setSelectedThread('rehydrated-thread'));
+      const listeners = renderProvider();
+
+      await act(async () => {
+        listeners.onProactiveMessage?.({
+          thread_id: 'proactive:morning_briefing',
+          request_id: 'req-unknown',
+          full_response: 'briefing',
+        });
+      });
+
+      await waitFor(() => expect(threadApi.createNewThread).toHaveBeenCalledTimes(1));
+      expect(threadApi.appendMessage).toHaveBeenCalledWith(
+        'fresh-thread',
+        expect.objectContaining({ content: 'briefing' })
+      );
+      expect(threadApi.appendMessage).not.toHaveBeenCalledWith(
+        'rehydrated-thread',
+        expect.anything()
       );
     });
 

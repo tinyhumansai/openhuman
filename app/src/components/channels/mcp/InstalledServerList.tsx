@@ -12,6 +12,7 @@
 import { type KeyboardEvent as ReactKeyboardEvent, useMemo, useRef } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
+import Button from '../../ui/Button';
 import type { ConnStatus, InstalledServer, ServerStatus } from './types';
 
 interface InstalledServerListProps {
@@ -27,9 +28,10 @@ interface InstalledServerListProps {
 const STATUS_DOT: Record<ServerStatus, string> = {
   connected: 'bg-sage-500',
   connecting: 'bg-amber-400',
-  disconnected: 'bg-stone-300 dark:bg-neutral-600',
+  disconnected: 'bg-surface-strong',
+  unauthorized: 'bg-amber-500',
   error: 'bg-coral-500',
-  disabled: 'bg-stone-200 dark:bg-neutral-700',
+  disabled: 'bg-surface-strong',
 };
 
 // i18n keys for the per-status tooltip on the status dot. Reuses the
@@ -40,6 +42,7 @@ const STATUS_I18N_KEYS: Record<ServerStatus, string> = {
   connected: 'channels.status.connected',
   connecting: 'channels.status.connecting',
   disconnected: 'channels.status.disconnected',
+  unauthorized: 'mcp.status.unauthorized',
   error: 'channels.status.error',
   disabled: 'mcp.status.disabled',
 };
@@ -88,34 +91,29 @@ const InstalledServerList = ({
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-xs font-semibold text-stone-500 dark:text-neutral-400 uppercase tracking-wide">
+        <h3 className="text-xs font-semibold text-content-muted uppercase tracking-wide">
           {t('mcp.installed.title')}
         </h3>
-        <button
-          type="button"
+        <Button
+          variant="tertiary"
+          size="xs"
           onClick={onBrowseCatalog}
-          className="text-xs text-primary-600 dark:text-primary-300 hover:underline font-medium">
+          className="text-primary-600 dark:text-primary-300 hover:underline">
           {t('mcp.installed.browseCatalog')}
-        </button>
+        </Button>
       </div>
 
       {servers.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center text-center gap-3 py-8">
-          <p className="text-sm text-stone-400 dark:text-neutral-500">{t('mcp.installed.empty')}</p>
-          <button
-            type="button"
-            onClick={onBrowseCatalog}
-            className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 transition-colors">
+          <p className="text-sm text-content-faint">{t('mcp.installed.empty')}</p>
+          <Button variant="primary" size="md" onClick={onBrowseCatalog}>
             {t('mcp.installed.browseCatalog')}
-          </button>
+          </Button>
         </div>
       ) : (
         <>
           {isFiltering && (
-            <p
-              role="status"
-              aria-live="polite"
-              className="mb-2 text-[11px] text-stone-500 dark:text-neutral-400">
+            <p role="status" aria-live="polite" className="mb-2 text-[11px] text-content-muted">
               {t('mcp.installed.search.countMatches')
                 .replace('{shown}', String(filteredServers.length))
                 .replace('{total}', String(servers.length))}
@@ -123,7 +121,7 @@ const InstalledServerList = ({
           )}
           {filteredServers.length === 0 ? (
             <div className="flex-1 flex items-center justify-center text-center py-8">
-              <p className="text-sm text-stone-400 dark:text-neutral-500">
+              <p className="text-sm text-content-faint">
                 {t('mcp.installed.search.noMatches').replace('{query}', filter.trim())}
               </p>
             </div>
@@ -145,18 +143,18 @@ const InstalledServerList = ({
                       className={`w-full flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition-colors ${
                         isSelected
                           ? 'bg-primary-50 dark:bg-primary-500/15 border border-primary-200 dark:border-primary-500/30'
-                          : 'hover:bg-stone-50 dark:hover:bg-neutral-800/60 border border-transparent'
+                          : 'hover:bg-surface-hover border border-transparent'
                       }`}>
                       <span
                         className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOT[status]}`}
                         title={t(STATUS_I18N_KEYS[status])}
                       />
                       <span className="flex-1 min-w-0">
-                        <span className="block text-sm font-medium text-stone-800 dark:text-neutral-100 truncate">
+                        <span className="block text-sm font-medium text-content truncate">
                           {server.display_name}
                         </span>
                         {status === 'connected' && toolCount > 0 && (
-                          <span className="block text-[11px] text-stone-400 dark:text-neutral-500">
+                          <span className="block text-[11px] text-content-faint">
                             {t(
                               toolCount === 1
                                 ? 'mcp.installed.toolSingular'

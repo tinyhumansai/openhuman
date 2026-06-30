@@ -37,6 +37,7 @@ const initialState: AccountsState = {
   messages: {},
   unread: {},
   logs: {},
+  overlayOpen: false,
 };
 
 const accountsSlice = createSlice({
@@ -141,6 +142,16 @@ const accountsSlice = createSlice({
       state.unread[accountId] = 0;
     },
 
+    /**
+     * Signals that a rail overlay (add-account modal / context menu) opened or
+     * closed. Read by the desktop shell to hide/restore the active provider
+     * webview, which composites above HTML and would otherwise paint over the
+     * overlay.
+     */
+    setAccountsOverlayOpen(state, action: PayloadAction<boolean>) {
+      state.overlayOpen = action.payload;
+    },
+
     resetAccountsState() {
       return initialState;
     },
@@ -195,6 +206,7 @@ export const {
   appendLog,
   noteWebviewNotificationFired,
   focusAccountFromNotification,
+  setAccountsOverlayOpen,
   resetAccountsState,
 } = accountsSlice.actions;
 

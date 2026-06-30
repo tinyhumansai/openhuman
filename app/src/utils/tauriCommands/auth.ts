@@ -58,8 +58,19 @@ export async function logout(): Promise<void> {
 /**
  * Store session in secure storage
  */
-export async function storeSession(token: string, user: object): Promise<void> {
-  await callCoreRpc({ method: 'openhuman.auth_store_session', params: { token, user } });
+export async function storeSession(
+  token: string,
+  user: object,
+  options?: { allowPendingBackendValidation?: boolean }
+): Promise<void> {
+  await callCoreRpc({
+    method: 'openhuman.auth_store_session',
+    params: {
+      token,
+      user,
+      ...(options?.allowPendingBackendValidation ? { allowPendingBackendValidation: true } : {}),
+    },
+  });
 }
 
 export async function openhumanEncryptSecret(plaintext: string): Promise<CommandResponse<string>> {

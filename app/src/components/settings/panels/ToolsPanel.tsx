@@ -12,9 +12,8 @@ import {
 } from '../../../utils/toolDefinitions';
 import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsRow, SettingsSection, SettingsStatusLine, SettingsSwitch } from '../controls';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 
 interface ToolsPanelProps {
   /** When true, render without the SettingsHeader chrome (used when embedded
@@ -24,7 +23,6 @@ interface ToolsPanelProps {
 
 const ToolsPanel = ({ embedded = false }: ToolsPanelProps = {}) => {
   const { t } = useT();
-  const { navigateBack } = useSettingsNavigation();
   const { snapshot, setOnboardingTasks } = useCoreState();
   const toolsByCategory = getToolsByCategory();
 
@@ -97,68 +95,71 @@ const ToolsPanel = ({ embedded = false }: ToolsPanelProps = {}) => {
     }
   };
 
-  return (
-    <PanelPage
-      className="z-10"
-      contentClassName=""
-      description={embedded ? undefined : t('pages.settings.features.toolsDesc')}
-      leading={embedded ? undefined : <SettingsBackButton onBack={navigateBack} />}>
-      <div className={embedded ? 'space-y-4' : 'p-4 pt-2 space-y-4'}>
-        <p className="text-neutral-500 dark:text-neutral-400 text-sm">
-          {t('settings.tools.chooseCapabilities')}
-        </p>
+  const body = (
+    <>
+      <p className="text-content-muted text-sm">{t('settings.tools.chooseCapabilities')}</p>
 
-        <div className="max-h-[420px] overflow-y-auto pr-1 space-y-4">
-          {TOOL_CATEGORIES.map(category => {
-            const tools = toolsByCategory[category];
-            if (tools.length === 0) return null;
-            return (
-              <SettingsSection
-                key={category}
-                title={category}
-                description={CATEGORY_DESCRIPTIONS[category]}>
-                {tools.map(tool => (
-                  <SettingsRow
-                    key={tool.id}
-                    htmlFor={`tool-switch-${tool.id}`}
-                    label={tool.displayName}
-                    description={tool.description}
-                    control={
-                      <SettingsSwitch
-                        id={`tool-switch-${tool.id}`}
-                        checked={Boolean(enabled[tool.id])}
-                        onCheckedChange={() => toggle(tool.id)}
-                        aria-label={tool.displayName}
-                      />
-                    }
-                  />
-                ))}
-              </SettingsSection>
-            );
-          })}
-        </div>
-
-        {dirty && (
-          <Button
-            type="button"
-            variant="primary"
-            size="md"
-            className="w-full"
-            onClick={() => void handleSave()}
-            disabled={saving}>
-            {saving ? t('autonomy.statusSaving') : t('settings.tools.saveChanges')}
-          </Button>
-        )}
-
-        <SettingsStatusLine
-          saving={false}
-          savedNote={saveStatus === 'saved' ? t('settings.tools.preferencesSaved') : null}
-          error={saveStatus === 'error' ? t('settings.tools.saveFailed') : null}
-          savingLabel=""
-        />
+      <div className="max-h-[420px] overflow-y-auto pr-1 space-y-4">
+        {TOOL_CATEGORIES.map(category => {
+          const tools = toolsByCategory[category];
+          if (tools.length === 0) return null;
+          return (
+            <SettingsSection
+              key={category}
+              title={category}
+              description={CATEGORY_DESCRIPTIONS[category]}>
+              {tools.map(tool => (
+                <SettingsRow
+                  key={tool.id}
+                  htmlFor={`tool-switch-${tool.id}`}
+                  label={tool.displayName}
+                  description={tool.description}
+                  control={
+                    <SettingsSwitch
+                      id={`tool-switch-${tool.id}`}
+                      checked={Boolean(enabled[tool.id])}
+                      onCheckedChange={() => toggle(tool.id)}
+                      aria-label={tool.displayName}
+                    />
+                  }
+                />
+              ))}
+            </SettingsSection>
+          );
+        })}
       </div>
-    </PanelPage>
+
+      {dirty && (
+        <Button
+          type="button"
+          variant="primary"
+          size="md"
+          className="w-full"
+          onClick={() => void handleSave()}
+          disabled={saving}>
+          {saving ? t('autonomy.statusSaving') : t('settings.tools.saveChanges')}
+        </Button>
+      )}
+
+      <SettingsStatusLine
+        saving={false}
+        savedNote={saveStatus === 'saved' ? t('settings.tools.preferencesSaved') : null}
+        error={saveStatus === 'error' ? t('settings.tools.saveFailed') : null}
+        savingLabel=""
+      />
+    </>
   );
+
+  // Embedded (onboarding custom wizard) keeps the headerless PanelPage branch.
+  if (embedded) {
+    return (
+      <PanelPage className="z-10" contentClassName="">
+        <div className="space-y-4">{body}</div>
+      </PanelPage>
+    );
+  }
+
+  return <SettingsPanel description={t('pages.settings.features.toolsDesc')}>{body}</SettingsPanel>;
 };
 
 export default ToolsPanel;

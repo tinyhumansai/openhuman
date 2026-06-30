@@ -82,15 +82,27 @@ describe('Settings - Feature Preferences', () => {
   });
 
   it('persists the default messaging channel through redux state', async () => {
-    // Phase 2: Default Messaging Channel moved to /connections (Messaging tab).
-    // Old /skills?tab=channels → /connections?tab=messaging.
+    // The messaging panel exposes "Set as default" only on *connected* channels.
+    // In a fresh workspace the only always-connected channel is Web (built-in
+    // chat), so make Telegram the default first — that turns Web into a
+    // connected, non-default tile with the control — then switch to Web.
+    await callOpenhumanRpc('openhuman.channels_set_default', { channel: 'telegram' });
+
+    // Navigate away and back so the panel re-seeds the default from the core.
+    await navigateViaHash('/home');
     await navigateViaHash('/connections?tab=messaging');
 
     await waitForText('Default Messaging Channel', 15_000);
-    // Use the stable channel-select test id — "Discord" text also appears on
-    // connection tiles and help copy, so clickText could hit the wrong node.
-    await clickSelector('[data-testid="channel-select-discord"]', 10_000);
-    await browser.waitUntil(async () => (await defaultMessagingChannelFromStore()) === 'discord', {
+    await browser.waitUntil(async () => (await defaultMessagingChannelFromStore()) === 'telegram', {
+      timeout: 10_000,
+      interval: 500,
+      timeoutMsg: 'messaging panel did not seed Telegram as the default',
+    });
+
+    // Switch to Web via its stable channel-select test id (Web is always
+    // connected, so its "Set as default" control is present).
+    await clickSelector('[data-testid="channel-select-web"]', 10_000);
+    await browser.waitUntil(async () => (await defaultMessagingChannelFromStore()) === 'web', {
       timeout: 10_000,
       interval: 500,
       timeoutMsg: 'default channel did not update',

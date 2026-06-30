@@ -21,7 +21,7 @@ const Channels = () => {
         )}
 
         {loading ? (
-          <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 text-sm text-stone-400 dark:text-neutral-500">
+          <div className="rounded-xl border border-line bg-surface p-6 text-sm text-content-faint">
             {t('common.loading')}
           </div>
         ) : (

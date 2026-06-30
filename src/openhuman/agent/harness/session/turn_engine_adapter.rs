@@ -46,6 +46,7 @@ use crate::openhuman::agent_tool_policy::ToolPolicySession;
 use crate::openhuman::context::ReductionOutcome;
 use crate::openhuman::inference::provider::{
     ChatMessage, ChatRequest, ConversationMessage, Provider, ProviderDelta, ToolCall, UsageInfo,
+    AGENT_TURN_MAX_OUTPUT_TOKENS,
 };
 use crate::openhuman::tools::{Tool, ToolSpec};
 
@@ -99,6 +100,11 @@ pub(super) struct AgentToolSource {
     pub agent_definition_id: String,
     pub prefer_markdown: bool,
     pub budget_bytes: usize,
+    /// Stage 1a kill-switch. Constant for the session, so (unlike the tool
+    /// surface) it is set once at construction and never re-synced.
+    pub compaction_enabled: bool,
+    /// Agent-level TokenJuice profile. Constant for the session.
+    pub tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression,
     pub artifact_store: Option<ToolResultArtifactStore>,
     pub should_send_specs: bool,
     pub advertised_specs: Vec<ToolSpec>,
@@ -141,6 +147,8 @@ impl ToolSource for AgentToolSource {
             agent_definition_id: &self.agent_definition_id,
             prefer_markdown: self.prefer_markdown,
             budget_bytes: self.budget_bytes,
+            compaction_enabled: self.compaction_enabled,
+            tokenjuice_compression: self.tokenjuice_compression,
             artifact_store: self.artifact_store.as_ref(),
         };
         let (exec_result, record) =
@@ -301,22 +309,34 @@ impl TurnObserver for AgentObserver<'_> {
         false
     }
 
-    fn record_usage(&mut self, model: &str, usage: &UsageInfo) {
+    fn record_usage(&mut self, provider: &str, model: &str, usage: &UsageInfo) {
         self.agent.context.record_usage(usage);
         crate::openhuman::cost::record_provider_usage(model, usage);
+        // Effective per-call cost: the backend-charged amount when the provider
+        // echoes one, else the per-model catalog estimate (#4124). Using this
+        // instead of raw `charged_amount_usd` means BYO/local providers that
+        // never bill a charge still contribute a priced cost to the session
+        // total. `cumulative_charged` is therefore the *net cost*, not strictly
+        // the backend charge.
+        let call_cost = crate::openhuman::agent::cost::call_cost_usd(model, usage);
         self.cumulative_input += usage.input_tokens;
         self.cumulative_output += usage.output_tokens;
         self.cumulative_cached += usage.cached_input_tokens;
-        self.cumulative_charged += usage.charged_amount_usd;
+        self.cumulative_charged += call_cost;
         self.last_turn_usage = Some(transcript::TurnUsage {
+            provider: provider.to_string(),
             model: model.to_string(),
             usage: transcript::MessageUsage {
                 input: usage.input_tokens,
                 output: usage.output_tokens,
                 cached_input: usage.cached_input_tokens,
-                cost_usd: usage.charged_amount_usd,
+                context_window: usage.context_window,
+                cost_usd: call_cost,
             },
             ts: chrono::Utc::now().to_rfc3339(),
+            reasoning_content: None,
+            tool_calls: Vec::new(),
+            iteration: 0,
         });
     }
 
@@ -334,6 +354,19 @@ impl TurnObserver for AgentObserver<'_> {
             let mut assistant_msg = ChatMessage::assistant(display_text.to_string());
             if let Some(rc) = reasoning_content {
                 assistant_msg.extra_metadata = Some(serde_json::json!({ "reasoning_content": rc }));
+            }
+            let mut turn_usage = None;
+            if let Some(ref mut usage) = self.last_turn_usage {
+                usage.reasoning_content = reasoning_content
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string);
+                usage.tool_calls = native_tool_calls.to_vec();
+                usage.iteration = (iteration + 1) as u32;
+                turn_usage = Some(usage.clone());
+            }
+            if let Some(turn_usage) = turn_usage.as_ref() {
+                transcript::attach_turn_usage_metadata(&mut assistant_msg, turn_usage);
             }
             self.agent
                 .history
@@ -360,6 +393,18 @@ impl TurnObserver for AgentObserver<'_> {
             &self.pending_results,
             iteration,
         );
+        if let Some(ref mut usage) = self.last_turn_usage {
+            usage.reasoning_content = reasoning_content
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string);
+            usage.tool_calls = tool_calls.clone();
+            usage.iteration = (iteration + 1) as u32;
+        }
+        let extra_metadata = self
+            .last_turn_usage
+            .as_ref()
+            .and_then(transcript::turn_usage_extra_metadata);
         self.agent
             .history
             .push(ConversationMessage::AssistantToolCalls {
@@ -373,6 +418,7 @@ impl TurnObserver for AgentObserver<'_> {
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
                     .map(ToString::to_string),
+                extra_metadata,
             });
         let mut results = std::mem::take(&mut self.pending_results);
         spill_aggregate_tool_results(
@@ -472,6 +518,8 @@ impl CheckpointStrategy for AgentCheckpoint {
                     messages: &messages,
                     tools: None,
                     stream: delta_tx_opt.as_ref(),
+                    // Reservation-pricing pre-flight budget cap (TAURI-RUST-C62).
+                    max_tokens: Some(AGENT_TURN_MAX_OUTPUT_TOKENS),
                 },
                 &self.model,
                 self.temperature,

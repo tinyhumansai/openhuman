@@ -10,6 +10,7 @@ import {
 } from '../../store/deepLinkAuthState';
 import { getStoredCoreMode } from '../configPersistence';
 import {
+  classifyAuthStoreFailure,
   registerAuthDeepLinkState,
   setupDesktopDeepLinkListener,
 } from '../desktopDeepLinkListener';
@@ -180,7 +181,11 @@ describe('desktopDeepLinkListener', () => {
     );
     await waitForAuthSettled();
 
-    expect(storeSession).toHaveBeenCalledWith('web-token', {});
+    expect(storeSession).toHaveBeenCalledWith(
+      'web-token',
+      {},
+      { allowPendingBackendValidation: true }
+    );
   });
 
   it('rejects an auth deep link whose state nonce does not match a pending one', async () => {
@@ -205,7 +210,7 @@ describe('desktopDeepLinkListener', () => {
     vi.mocked(getCurrent).mockResolvedValue([url]);
     await setupDesktopDeepLinkListener();
     await waitForAuthSettled();
-    expect(storeSession).toHaveBeenCalledWith('abc', {});
+    expect(storeSession).toHaveBeenCalledWith('abc', {}, { allowPendingBackendValidation: true });
 
     // Replay the exact same deep link — the nonce was consumed, so it fails.
     vi.mocked(storeSession).mockClear();
@@ -225,6 +230,43 @@ describe('desktopDeepLinkListener', () => {
     const state = getDeepLinkAuthState();
     expect(state.requiresAppDataReset).toBe(false);
     expect(state.errorMessage).toBe('Sign-in failed. Please try again.');
+  });
+
+  it('injection #1: store-time /auth/me failure bounces to signin — no session applied, no /home nav', async () => {
+    // Root-cause hypothesis: `auth_store_session` validates the JWT against the
+    // backend GET /auth/me BEFORE persisting (credentials/ops.rs). If that call
+    // errors/times out, store_session returns Err → applySessionToken rethrows →
+    // the session is NEVER persisted and the login event NEVER fires, so the user
+    // stays on the signin page even though OAuth "succeeded".
+    vi.mocked(storeSession).mockRejectedValueOnce(
+      new Error('Session validation failed (GET /auth/me): 503 Service Unavailable')
+    );
+
+    // The `core-state:session-token-updated` event is the ONLY trigger that drives
+    // CoreStateProvider → refresh → authenticated React state. If it never fires,
+    // the app cannot leave the signin page.
+    const sessionTokenUpdated = vi.fn();
+    window.addEventListener('core-state:session-token-updated', sessionTokenUpdated);
+    window.location.hash = '#/'; // reset any prior test's navigation
+
+    try {
+      vi.mocked(getCurrent).mockResolvedValue([authDeepLinkWithState('token=abc&key=auth')]);
+      await setupDesktopDeepLinkListener();
+      await waitForAuthSettled();
+
+      // store WAS attempted (we reached the persistence call)...
+      expect(storeSession).toHaveBeenCalledWith('abc', {}, { allowPendingBackendValidation: true });
+      // ...but it FAILED, so the session-applied event was never dispatched...
+      expect(sessionTokenUpdated).not.toHaveBeenCalled();
+      // ...and we never navigated to /home (ProtectedRoute/PublicRoute keep signin).
+      expect(window.location.hash).not.toBe('#/home');
+      // Surfaced as the generic toast; processing cleared.
+      const state = getDeepLinkAuthState();
+      expect(state.errorMessage).toBe('Sign-in failed. Please try again.');
+      expect(state.isProcessing).toBe(false);
+    } finally {
+      window.removeEventListener('core-state:session-token-updated', sessionTokenUpdated);
+    }
   });
 
   it('does not make the E2E deep-link helper wait for auth readiness', async () => {
@@ -253,7 +295,7 @@ describe('desktopDeepLinkListener', () => {
     resolveReadiness({ ready: true });
     await waitForAuthSettled();
 
-    expect(storeSession).toHaveBeenCalledWith('abc', {});
+    expect(storeSession).toHaveBeenCalledWith('abc', {}, { allowPendingBackendValidation: true });
     expect(getDeepLinkAuthState().isProcessing).toBe(false);
   });
 
@@ -286,7 +328,7 @@ describe('desktopDeepLinkListener', () => {
 
     expect(clearCoreRpcUrlCache).toHaveBeenCalledTimes(1);
     expect(clearCoreRpcTokenCache).toHaveBeenCalledTimes(1);
-    expect(storeSession).toHaveBeenCalledWith('abc', {});
+    expect(storeSession).toHaveBeenCalledWith('abc', {}, { allowPendingBackendValidation: true });
   });
 
   it('does NOT bust RPC caches before storeSession in local mode', async () => {
@@ -298,7 +340,7 @@ describe('desktopDeepLinkListener', () => {
 
     expect(clearCoreRpcUrlCache).not.toHaveBeenCalled();
     expect(clearCoreRpcTokenCache).not.toHaveBeenCalled();
-    expect(storeSession).toHaveBeenCalledWith('abc', {});
+    expect(storeSession).toHaveBeenCalledWith('abc', {}, { allowPendingBackendValidation: true });
   });
 
   it('dispatches suppress-reauth before storeSession and clears it after in cloud mode', async () => {
@@ -318,5 +360,39 @@ describe('desktopDeepLinkListener', () => {
     expect(suppressEvents[0].until).toBeGreaterThan(0);
     // Last event: until=0 (suppress cleared)
     expect(suppressEvents[suppressEvents.length - 1].until).toBe(0);
+  });
+});
+
+describe('classifyAuthStoreFailure', () => {
+  it.each([
+    ['Session validation failed (GET /auth/me): operation timed out', 'auth_me_timeout'],
+    ['error sending request: deadline has elapsed', 'auth_me_timeout'],
+    ['GET /auth/me failed (401 Unauthorized): bad token', 'auth_me_unauthorized'],
+    ['Session validation failed (GET /auth/me): 503 Service Unavailable', 'auth_me_gateway'],
+    ['upstream returned 502 Bad Gateway', 'auth_me_gateway'],
+    ['fetch failed: ECONNREFUSED', 'network'],
+    ['Session validation failed (GET /auth/me): something odd', 'auth_me_other'],
+    ['totally unrelated explosion', 'other'],
+  ])('classifies %j as %s', (message, expected) => {
+    expect(classifyAuthStoreFailure(message)).toBe(expected);
+  });
+
+  // Contract pin: the classifier matches substrings of the Rust-produced error
+  // (credentials/ops.rs: `Session validation failed (GET /auth/me): {reason}`,
+  // with {reason} from rest.rs `GET /auth/me failed ({status}): {text}` or a
+  // reqwest transport error). If Rust rewords that prefix, these must fail CI
+  // rather than letting an arm silently degrade to 'other'.
+  it('pins the real Rust store_session failure strings to meaningful kinds', () => {
+    const gateway =
+      'Session validation failed (GET /auth/me): GET /auth/me failed (503): {"error":"unavailable"}';
+    const timeout =
+      'Session validation failed (GET /auth/me): error sending request for url (https://api.tinyhumans.ai/auth/me): operation timed out';
+    const bare = 'Session validation failed (GET /auth/me): something unexpected';
+
+    expect(classifyAuthStoreFailure(gateway)).toBe('auth_me_gateway');
+    expect(classifyAuthStoreFailure(timeout)).toBe('auth_me_timeout');
+    // The bare prefix is still recognized via the auth/me anchor — NOT 'other'.
+    expect(classifyAuthStoreFailure(bare)).toBe('auth_me_other');
+    expect(classifyAuthStoreFailure(bare)).not.toBe('other');
   });
 });

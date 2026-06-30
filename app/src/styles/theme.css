@@ -558,60 +558,34 @@ body::before {
 /* ============================================
    Light Mode (Default)
    ============================================ */
+/*
+ * The legacy --color-* semantic tokens are now thin aliases over the canonical
+ * channel tokens in styles/tokens.css. Because those canonical vars already
+ * flip between :root and :root.dark, these aliases inherit dark mode for free —
+ * no separate dark override block is needed, and they theme along with the app.
+ */
 :root {
-  --color-background: #f5f5f5;
-  --color-surface: #ffffff;
-  --color-surface-elevated: #fafafa;
-  --color-border: #e5e5e5;
-  --color-border-subtle: #f5f5f5;
+  --color-background: rgb(var(--surface-canvas));
+  --color-surface: rgb(var(--surface));
+  --color-surface-elevated: rgb(var(--surface-muted));
+  --color-border: rgb(var(--line));
+  --color-border-subtle: rgb(var(--line-subtle));
 
-  --color-text-primary: #171717;
-  --color-text-secondary: #525252;
-  --color-text-tertiary: #737373;
-  --color-text-muted: #a3a3a3;
+  --color-text-primary: rgb(var(--content));
+  --color-text-secondary: rgb(var(--content-secondary));
+  --color-text-tertiary: rgb(var(--content-muted));
+  --color-text-muted: rgb(var(--content-faint));
 
-  --color-hover: #eff6ff;
-  --color-active: #dbeafe;
-  --color-focus: #2f6ef4;
+  --color-hover: rgb(var(--primary-50));
+  --color-active: rgb(var(--primary-100));
+  --color-focus: rgb(var(--primary-500));
 
-  --color-success: #34c759;
-  --color-warning: #e8a728;
-  --color-error: #ef4444;
-  --color-info: #2f6ef4;
+  --color-success: rgb(var(--sage-500));
+  --color-warning: rgb(var(--amber-500));
+  --color-error: rgb(var(--coral-500));
+  --color-info: rgb(var(--primary-500));
 
-  /* Shadow tint used by elevated surfaces. Dark mode replaces this with a
-     softer alpha so layered cards don't turn into black holes. */
-  --shadow-tint: 0, 0, 0;
-}
-
-/* ============================================
-   Dark Mode — applied when <html class="dark">
-   ============================================ */
-:root.dark {
-  /* Page bg is darker than card/surface so elevated content (cards, menus,
-     panels) stands out against it. neutral-950 (#0a0a0a) for the page,
-     neutral-900 (#171717) for cards gives ~9% lightness delta — visible
-     but calm. */
-  --color-background: #000000;
-  --color-surface: #171717;
-  --color-surface-elevated: #1f1f1f;
-  --color-border: #2d2d2d;
-  --color-border-subtle: #1f1f1f;
-
-  --color-text-primary: #f5f5f5;
-  --color-text-secondary: #a3a3a3;
-  --color-text-tertiary: #737373;
-  --color-text-muted: #525252;
-
-  --color-hover: #1e293b;
-  --color-active: #1e3a8a;
-  --color-focus: #60a5fa;
-
-  --color-success: #4ade80;
-  --color-warning: #fbbf24;
-  --color-error: #f87171;
-  --color-info: #60a5fa;
-
+  /* Shadow tint used by elevated surfaces. */
   --shadow-tint: 0, 0, 0;
 }
 

@@ -36,6 +36,7 @@ import {
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { mcpClientsApi } from '../../../services/api/mcpClientsApi';
+import Button from '../../ui/Button';
 import type { McpTool } from './types';
 
 interface McpToolPlaygroundProps {
@@ -246,26 +247,26 @@ const McpToolPlayground = ({ serverId, tool, onClose }: McpToolPlaygroundProps) 
       aria-labelledby="mcp-playground-title"
       onMouseDown={handleBackdropMouseDown}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 py-6 overflow-y-auto">
-      <div className="bg-white dark:bg-neutral-900 rounded-xl shadow-xl max-w-2xl w-full p-5 max-h-full overflow-y-auto">
+      <div className="bg-surface rounded-xl shadow-xl max-w-2xl w-full p-5 max-h-full overflow-y-auto">
         {/* Header */}
         <div className="flex items-start justify-between gap-3 mb-3">
           <div className="min-w-0">
             <h2
               id="mcp-playground-title"
-              className="text-base font-semibold text-stone-900 dark:text-neutral-100 font-mono break-words">
+              className="text-base font-semibold text-content font-mono break-words">
               {t('mcp.playground.title').replace('{name}', tool.name)}
             </h2>
             {tool.description && (
-              <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1">
-                {tool.description}
-              </p>
+              <p className="text-xs text-content-muted mt-1">{tool.description}</p>
             )}
           </div>
-          <button
-            type="button"
+          <Button
+            iconOnly
+            variant="tertiary"
+            size="sm"
             onClick={onClose}
             aria-label={t('mcp.playground.close')}
-            className="shrink-0 rounded-lg p-1.5 text-stone-400 hover:text-stone-700 dark:text-neutral-500 dark:hover:text-neutral-200 transition-colors">
+            className="shrink-0">
             <svg
               className="w-4 h-4"
               fill="none"
@@ -275,7 +276,7 @@ const McpToolPlayground = ({ serverId, tool, onClose }: McpToolPlaygroundProps) 
               aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
-          </button>
+          </Button>
         </div>
 
         {/* Input schema (collapsible) */}
@@ -284,7 +285,7 @@ const McpToolPlayground = ({ serverId, tool, onClose }: McpToolPlaygroundProps) 
             type="button"
             onClick={() => setShowSchema(prev => !prev)}
             aria-expanded={showSchema}
-            className="flex items-center gap-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:text-stone-900 dark:hover:text-neutral-100">
+            className="flex items-center gap-1.5 text-xs font-medium text-content-secondary hover:text-content">
             <span
               className={`transition-transform ${showSchema ? 'rotate-90' : ''}`}
               aria-hidden="true">
@@ -295,7 +296,7 @@ const McpToolPlayground = ({ serverId, tool, onClose }: McpToolPlaygroundProps) 
           {showSchema && (
             <pre
               data-testid="mcp-playground-schema"
-              className="mt-1.5 max-h-40 overflow-auto rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-950 p-2 text-[11px] font-mono text-stone-700 dark:text-neutral-200 whitespace-pre-wrap break-words">
+              className="mt-1.5 max-h-40 overflow-auto rounded-lg border border-line bg-surface-muted p-2 text-[11px] font-mono text-content-secondary whitespace-pre-wrap break-words">
               {schemaJson}
             </pre>
           )}
@@ -306,11 +307,11 @@ const McpToolPlayground = ({ serverId, tool, onClose }: McpToolPlaygroundProps) 
           <div className="flex items-center justify-between mb-1.5">
             <label
               htmlFor="mcp-playground-args"
-              className="text-xs font-medium text-stone-600 dark:text-neutral-300">
+              className="text-xs font-medium text-content-secondary">
               {t('mcp.playground.argsLabel')}
             </label>
             <div className="flex items-center gap-2">
-              <span className="text-[10px] text-stone-400 dark:text-neutral-500">
+              <span className="text-[10px] text-content-faint">
                 {t('mcp.playground.runShortcut')}
               </span>
               <button
@@ -332,11 +333,9 @@ const McpToolPlayground = ({ serverId, tool, onClose }: McpToolPlaygroundProps) 
             rows={6}
             aria-label={t('mcp.playground.argsLabel')}
             aria-describedby="mcp-playground-args-help"
-            className="w-full rounded-lg border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-xs font-mono text-stone-800 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-primary-400 resize-y"
+            className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-xs font-mono text-content focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-primary-400 resize-y"
           />
-          <p
-            id="mcp-playground-args-help"
-            className="mt-1 text-[10px] text-stone-400 dark:text-neutral-500">
+          <p id="mcp-playground-args-help" className="mt-1 text-[10px] text-content-faint">
             {t('mcp.playground.argsHelp')}
           </p>
           {parseError && (
@@ -348,20 +347,16 @@ const McpToolPlayground = ({ serverId, tool, onClose }: McpToolPlaygroundProps) 
 
         {/* Run button */}
         <div className="flex justify-end gap-2 mb-4">
-          <button
-            type="button"
-            onClick={() => void handleRun()}
-            disabled={isRunning}
-            className="rounded-lg bg-primary-500 px-4 py-1.5 text-xs font-semibold text-white hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed">
+          <Button variant="primary" size="sm" onClick={() => void handleRun()} disabled={isRunning}>
             {isRunning ? t('mcp.playground.running') : t('mcp.playground.run')}
-          </button>
+          </Button>
         </div>
 
         {/* Result */}
         {resultText !== null && (
           <div className="mb-4">
             <div className="flex items-center justify-between mb-1.5">
-              <p className="text-xs font-medium text-stone-600 dark:text-neutral-300">
+              <p className="text-xs font-medium text-content-secondary">
                 {resultIsError ? t('mcp.playground.resultError') : t('mcp.playground.result')}
               </p>
               <button
@@ -381,7 +376,7 @@ const McpToolPlayground = ({ serverId, tool, onClose }: McpToolPlaygroundProps) 
               className={`max-h-60 overflow-auto rounded-lg border p-2 text-[11px] font-mono whitespace-pre-wrap break-words ${
                 resultIsError
                   ? 'border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 text-coral-700 dark:text-coral-300'
-                  : 'border-sage-200 dark:border-sage-500/30 bg-sage-50 dark:bg-sage-500/10 text-stone-800 dark:text-neutral-100'
+                  : 'border-sage-200 dark:border-sage-500/30 bg-sage-50 dark:bg-sage-500/10 text-content'
               }`}>
               {resultText}
             </pre>
@@ -394,7 +389,7 @@ const McpToolPlayground = ({ serverId, tool, onClose }: McpToolPlaygroundProps) 
             type="button"
             onClick={() => setShowHistory(prev => !prev)}
             aria-expanded={showHistory}
-            className="flex items-center gap-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:text-stone-900 dark:hover:text-neutral-100">
+            className="flex items-center gap-1.5 text-xs font-medium text-content-secondary hover:text-content">
             <span
               className={`transition-transform ${showHistory ? 'rotate-90' : ''}`}
               aria-hidden="true">
@@ -405,15 +400,13 @@ const McpToolPlayground = ({ serverId, tool, onClose }: McpToolPlaygroundProps) 
           {showHistory && (
             <div className="mt-1.5">
               {history.length === 0 ? (
-                <p className="text-[11px] text-stone-400 dark:text-neutral-500">
-                  {t('mcp.playground.historyEmpty')}
-                </p>
+                <p className="text-[11px] text-content-faint">{t('mcp.playground.historyEmpty')}</p>
               ) : (
                 <ul className="space-y-1">
                   {history.map((record, idx) => (
                     <li
                       key={`${record.timestamp}-${idx}`}
-                      className="flex items-center justify-between gap-2 rounded border border-stone-200 dark:border-neutral-800 px-2 py-1">
+                      className="flex items-center justify-between gap-2 rounded border border-line px-2 py-1">
                       <div className="min-w-0 flex items-center gap-2">
                         <span
                           className={`w-1.5 h-1.5 rounded-full shrink-0 ${
@@ -421,10 +414,10 @@ const McpToolPlayground = ({ serverId, tool, onClose }: McpToolPlaygroundProps) 
                           }`}
                           aria-hidden="true"
                         />
-                        <span className="text-[10px] font-mono text-stone-500 dark:text-neutral-400">
+                        <span className="text-[10px] font-mono text-content-muted">
                           {record.timestamp}
                         </span>
-                        <span className="text-[10px] text-stone-600 dark:text-neutral-300 truncate">
+                        <span className="text-[10px] text-content-secondary truncate">
                           {record.argsJson}
                         </span>
                       </div>

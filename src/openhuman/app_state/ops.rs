@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 #[cfg(unix)]
 use std::fs::File;
@@ -16,6 +17,7 @@ use tempfile::NamedTempFile;
 
 use crate::api::config::effective_backend_api_url;
 use crate::api::jwt::bearer_authorization_value;
+use crate::api::rest::user_id_from_profile_payload;
 use crate::openhuman::autocomplete::AutocompleteStatus;
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::config::Config;
@@ -23,6 +25,7 @@ use crate::openhuman::credentials::session_support::{
     is_local_session_token, load_app_session_profile, session_state_from_profile,
     session_token_from_profile,
 };
+use crate::openhuman::credentials::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
 use crate::openhuman::inference::LocalAiStatus;
 use crate::openhuman::screen_intelligence::AccessibilityStatus;
 use crate::openhuman::service::{ServiceState, ServiceStatus};
@@ -35,6 +38,8 @@ const RUNTIME_SNAPSHOT_TTL: Duration = Duration::from_secs(2);
 const AUTH_FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 const RUNTIME_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(10);
 const SNAPSHOT_SUB_OP_TIMEOUT: Duration = Duration::from_secs(5);
+const PENDING_BACKEND_VALIDATION_FIELD: &str = "pendingBackendValidation";
+const AUTH_ME_REVALIDATION_TRANSIENT_STATUSES: &[u16] = &[408, 429, 500, 502, 503, 504, 520];
 static APP_STATE_FILE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 static CURRENT_USER_CACHE: Lazy<Mutex<Option<CachedCurrentUser>>> = Lazy::new(|| Mutex::new(None));
 static RUNTIME_SNAPSHOT_CACHE: Lazy<Mutex<Option<CachedRuntimeSnapshot>>> =
@@ -53,6 +58,41 @@ struct CachedCurrentUser {
     token: String,
     fetched_at: Instant,
     user: Value,
+}
+
+#[derive(Debug, Clone)]
+enum SnapshotCurrentUser {
+    User(Option<Value>),
+    DeferredSessionRejected,
+}
+
+impl SnapshotCurrentUser {
+    fn user(user: Option<Value>) -> Self {
+        Self::User(user)
+    }
+}
+
+type SnapshotCurrentUserResult = (SnapshotCurrentUser, Option<Box<Config>>);
+
+fn snapshot_current_user_result(user: Option<Value>) -> SnapshotCurrentUserResult {
+    (SnapshotCurrentUser::user(user), None)
+}
+
+#[derive(Debug, Clone)]
+enum CurrentUserFetchError {
+    Rejected(String),
+    TransientResponse(String),
+    FetchFailed(String),
+}
+
+impl CurrentUserFetchError {
+    fn message(&self) -> &str {
+        match self {
+            CurrentUserFetchError::Rejected(message)
+            | CurrentUserFetchError::TransientResponse(message)
+            | CurrentUserFetchError::FetchFailed(message) => message,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -288,32 +328,39 @@ fn resolve_base(config: &Config) -> Result<Url, String> {
     Ok(parsed)
 }
 
-async fn fetch_current_user(config: &Config, token: &str) -> Result<Option<Value>, String> {
-    let client = build_client()?;
-    let base = resolve_base(config)?;
+async fn fetch_current_user(
+    config: &Config,
+    token: &str,
+) -> Result<Option<Value>, CurrentUserFetchError> {
+    let client = build_client().map_err(CurrentUserFetchError::FetchFailed)?;
+    let base = resolve_base(config).map_err(CurrentUserFetchError::FetchFailed)?;
     let url = base
         .join("auth/me")
-        .map_err(|e| format!("build URL failed: {e}"))?;
+        .map_err(|e| CurrentUserFetchError::FetchFailed(format!("build URL failed: {e}")))?;
     let response = client
         .request(Method::GET, url.clone())
         .header(AUTHORIZATION, bearer_authorization_value(token))
         .send()
         .await
-        .map_err(|e| format!("request failed: {e}"))?;
+        .map_err(|e| CurrentUserFetchError::FetchFailed(format!("request failed: {e}")))?;
     let status = response.status();
-    let text = response
-        .text()
-        .await
-        .map_err(|e| format!("failed to read backend response body: {e}"))?;
+    let text = response.text().await.map_err(|e| {
+        CurrentUserFetchError::FetchFailed(format!("failed to read backend response body: {e}"))
+    })?;
 
     debug!("{LOG_PREFIX} GET /auth/me -> {}", status);
 
     if !status.is_success() {
+        let message = format!("{status} {text}");
         warn!(
             "{LOG_PREFIX} current user fetch failed: {} {}",
             status, text
         );
-        return Ok(None);
+        return if AUTH_ME_REVALIDATION_TRANSIENT_STATUSES.contains(&status.as_u16()) {
+            Err(CurrentUserFetchError::TransientResponse(message))
+        } else {
+            Err(CurrentUserFetchError::Rejected(message))
+        };
     }
 
     let raw: Value =
@@ -334,13 +381,282 @@ fn sanitize_snapshot_user(user: Option<Value>) -> Option<Value> {
     }
 }
 
-async fn fetch_current_user_cached(config: &Config, token: &str) -> Result<Option<Value>, String> {
+fn snapshot_user_pending_backend_validation(user: Option<&Value>) -> bool {
+    user.and_then(Value::as_object)
+        .and_then(|obj| obj.get(PENDING_BACKEND_VALIDATION_FIELD))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn clear_pending_backend_validation_flag(mut user: Value) -> Value {
+    if let Value::Object(ref mut map) = user {
+        map.remove(PENDING_BACKEND_VALIDATION_FIELD);
+    }
+    user
+}
+
+fn pending_session_user_id_for_cleanup(
+    stored_user: Option<&Value>,
+    metadata: &BTreeMap<String, String>,
+) -> Option<String> {
+    stored_user
+        .and_then(user_id_from_profile_payload)
+        .or_else(|| {
+            metadata
+                .get("user_id")
+                .map(String::as_str)
+                .map(str::trim)
+                .filter(|user_id| !user_id.is_empty())
+                .map(str::to_string)
+        })
+}
+
+fn config_state_dir(config: &Config) -> Option<PathBuf> {
+    config.config_path.parent().map(Path::to_path_buf)
+}
+
+fn same_config_state_dir(a: &Config, b: &Config) -> bool {
+    config_state_dir(a) == config_state_dir(b)
+}
+
+fn config_dir_for_workspace_env() -> Option<PathBuf> {
+    let workspace = std::env::var_os("OPENHUMAN_WORKSPACE")?;
+    if workspace.as_os_str().is_empty() {
+        return None;
+    }
+
+    let workspace_dir = PathBuf::from(workspace);
+    let workspace_config_dir = workspace_dir.clone();
+    if workspace_config_dir.join("config.toml").exists() {
+        return Some(workspace_config_dir);
+    }
+
+    if let Some(parent) = workspace_dir.parent() {
+        let legacy_dir = parent.join(".openhuman");
+        if legacy_dir.join("config.toml").exists()
+            || workspace_dir
+                .file_name()
+                .is_some_and(|name| name == std::ffi::OsStr::new("workspace"))
+        {
+            return Some(legacy_dir);
+        }
+    }
+
+    Some(workspace_config_dir)
+}
+
+fn config_is_workspace_env_scoped(config: &Config) -> bool {
+    let Some(config_dir) = config_state_dir(config) else {
+        return false;
+    };
+    config_dir_for_workspace_env()
+        .as_deref()
+        .is_some_and(|env_config_dir| env_config_dir == config_dir)
+}
+
+async fn activate_revalidated_user_dir(user_id: &str) -> Result<Config, String> {
+    let root_dir = crate::openhuman::config::default_root_openhuman_dir()
+        .map_err(|error| format!("failed to locate default root: {error}"))?;
+    let previous_active = crate::openhuman::config::read_active_user_id(&root_dir);
+    let user_dir = crate::openhuman::config::user_openhuman_dir(&root_dir, user_id);
+    fs::create_dir_all(&user_dir).map_err(|error| {
+        format!("failed to create user directory for revalidated pending session user_id={user_id}: {error}")
+    })?;
+    crate::openhuman::config::write_active_user_id(&root_dir, user_id).map_err(|error| {
+        format!("failed to write active_user.toml for revalidated pending session user_id={user_id}: {error}")
+    })?;
+
+    debug!(
+        "{LOG_PREFIX} activated user directory for revalidated pending session user_id={user_id}"
+    );
+    if previous_active.is_none() {
+        let pre_ws = crate::openhuman::config::pre_login_user_dir(&root_dir).join("workspace");
+        if let Err(error) = crate::openhuman::memory_conversations::purge_threads(pre_ws) {
+            debug!(
+                "{LOG_PREFIX} pre-login conversation purge skipped after pending session revalidation: {error}"
+            );
+        }
+    }
+
+    Config::load_from_default_paths().await.map_err(|error| {
+        format!("failed to reload config after pending session user activation: {error}")
+    })
+}
+
+async fn finish_revalidated_user_activation(
+    target_config: &Config,
+    user_id: &str,
+    service_rebind_source: Option<&Config>,
+) {
+    if let Err(error) = crate::openhuman::memory::global::init(target_config.workspace_dir.clone())
+    {
+        warn!(
+            "{LOG_PREFIX} failed to bind memory client after pending session revalidation: {error}"
+        );
+    }
+    crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
+        target_config.workspace_dir.clone(),
+    );
+    if let Err(error) = crate::openhuman::subconscious::global::bootstrap_after_login().await {
+        warn!("{LOG_PREFIX} subconscious bootstrap failed after pending session revalidation: {error}");
+    }
+    if let Some(source_config) = service_rebind_source {
+        crate::openhuman::credentials::stop_login_gated_services(source_config).await;
+        crate::openhuman::credentials::start_login_gated_services(target_config).await;
+    } else {
+        debug!(
+            "{LOG_PREFIX} pending session revalidation left login-gated services running without restart"
+        );
+    }
+    crate::openhuman::scheduler_gate::set_signed_out(false);
+    crate::openhuman::credentials::sentry_scope::bind(user_id);
+}
+
+async fn remove_revalidated_source_profile(config: &Config) -> Result<(), String> {
+    let config = config.clone();
+    tokio::task::spawn_blocking(move || {
+        AuthService::from_config(&config)
+            .remove_profile(APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| {
+        Err(format!(
+            "{LOG_PREFIX} revalidated source profile remove task panicked: {e}"
+        ))
+    })
+}
+
+async fn persist_revalidated_session_user(
+    config: &Config,
+    token: &str,
+    base_metadata: BTreeMap<String, String>,
+    user: Value,
+) -> Result<Box<Config>, String> {
+    let user_id = user_id_from_profile_payload(&user)
+        .ok_or_else(|| "backend user id required before clearing pending validation".to_string())?;
+    let workspace_env_scoped = config_is_workspace_env_scoped(config);
+    let target_config = if !workspace_env_scoped {
+        activate_revalidated_user_dir(&user_id).await?
+    } else {
+        debug!(
+            "{LOG_PREFIX} keeping revalidated pending session in OPENHUMAN_WORKSPACE-scoped config"
+        );
+        config.clone()
+    };
+    let source_config = config.clone();
+    let source_moved = !same_config_state_dir(config, &target_config);
+    let token = token.to_string();
+    let mut metadata: HashMap<String, String> = base_metadata.into_iter().collect();
+    metadata.insert("user_id".to_string(), user_id.clone());
+    metadata.insert("user_json".to_string(), user.to_string());
+
+    let config_for_store = target_config.clone();
+    tokio::task::spawn_blocking(move || {
+        AuthService::from_config(&config_for_store)
+            .store_provider_token(
+                APP_SESSION_PROVIDER,
+                DEFAULT_AUTH_PROFILE_NAME,
+                &token,
+                metadata,
+                true,
+            )
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| {
+        Err(format!(
+            "{LOG_PREFIX} revalidated session persist task panicked: {e}"
+        ))
+    })?;
+
+    if source_moved {
+        if let Err(error) = remove_revalidated_source_profile(&source_config).await {
+            warn!(
+                "{LOG_PREFIX} failed to remove source pending session profile after user activation: {error}"
+            );
+        }
+    }
+
+    finish_revalidated_user_activation(
+        &target_config,
+        &user_id,
+        source_moved.then_some(&source_config),
+    )
+    .await;
+
+    Ok(Box::new(target_config))
+}
+
+async fn clear_deferred_session_after_backend_rejection(
+    config: &Config,
+    pending_user_id: Option<&str>,
+) -> Result<(), String> {
+    let workspace_env_scoped = config_is_workspace_env_scoped(config);
+    let config_for_remove = config.clone();
+    let clear_result = tokio::task::spawn_blocking(move || {
+        AuthService::from_config(&config_for_remove)
+            .remove_profile(APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| {
+        Err(format!(
+            "{LOG_PREFIX} deferred session clear task panicked: {e}"
+        ))
+    });
+
+    *CURRENT_USER_CACHE.lock() = None;
+    crate::openhuman::scheduler_gate::set_signed_out(true);
+
+    match crate::openhuman::config::default_root_openhuman_dir() {
+        Ok(root_dir) => {
+            let active_user = crate::openhuman::config::read_active_user_id(&root_dir);
+            let should_clear_active_user = if workspace_env_scoped {
+                pending_user_id.is_some_and(|pending| active_user.as_deref() == Some(pending))
+            } else {
+                true
+            };
+            if should_clear_active_user {
+                if let Err(error) = crate::openhuman::config::clear_active_user(&root_dir) {
+                    warn!(
+                        "{LOG_PREFIX} failed to clear active_user.toml for rejected pending session: {error}"
+                    );
+                }
+            } else {
+                debug!(
+                    "{LOG_PREFIX} preserving default active_user.toml for rejected OPENHUMAN_WORKSPACE-scoped pending session"
+                );
+            }
+        }
+        Err(error) if !workspace_env_scoped => {
+            warn!(
+                "{LOG_PREFIX} failed to locate default root while clearing rejected pending session: {error}"
+            );
+        }
+        Err(_) => {}
+    }
+    crate::openhuman::credentials::stop_login_gated_services(config).await;
+    crate::openhuman::subconscious::global::reset_engine_for_user_switch().await;
+    crate::openhuman::credentials::sentry_scope::clear();
+
+    clear_result
+}
+
+async fn fetch_current_user_cached(
+    config: &Config,
+    token: &str,
+    allow_cache: bool,
+) -> Result<Option<Value>, CurrentUserFetchError> {
     let api_base = effective_backend_api_url(&config.api_url)
         .trim()
         .trim_end_matches('/')
         .to_string();
 
-    {
+    if allow_cache {
         let cache = CURRENT_USER_CACHE.lock();
         if let Some(entry) = cache.as_ref() {
             if entry.api_base == api_base
@@ -590,8 +906,16 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
             .await
             .unwrap_or_else(|e| Err(format!("[app_state] auth profile load task panicked: {e}")))?;
     let mut auth = session_state_from_profile(session_profile.as_ref());
-    let session_token = session_token_from_profile(session_profile.as_ref());
+    let mut session_token = session_token_from_profile(session_profile.as_ref());
     let stored_user = sanitize_snapshot_user(auth.user.clone());
+    let pending_backend_validation = snapshot_user_pending_backend_validation(stored_user.as_ref());
+    let session_metadata = session_profile
+        .as_ref()
+        .map(|profile| profile.metadata.clone())
+        .unwrap_or_default();
+    let pending_session_user_id = pending_backend_validation
+        .then(|| pending_session_user_id_for_cleanup(stored_user.as_ref(), &session_metadata))
+        .flatten();
     let auth_ms = t_auth.elapsed().as_millis();
 
     // Resolve the live current-user refresh and the runtime snapshot
@@ -603,34 +927,124 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
     // OpenHuman" (the FE clears `isBootstrapping` on this call). `tokio::join!`
     // polls both on the current task — no extra threads.
     let t_enrich = Instant::now();
-    let current_user_future = async {
+    let current_user_future = Box::pin(async {
         let Some(token) = session_token.clone().filter(|t| !t.trim().is_empty()) else {
-            return stored_user.clone();
+            return snapshot_current_user_result(stored_user.clone());
         };
         if is_local_session_token(&token) {
-            return stored_user.clone();
+            return snapshot_current_user_result(stored_user.clone());
         }
         match tokio::time::timeout(
             AUTH_FETCH_TIMEOUT,
-            fetch_current_user_cached(&config, &token),
+            fetch_current_user_cached(&config, &token, !pending_backend_validation),
         )
         .await
         {
-            Ok(Ok(fresh_user)) => fresh_user.or(stored_user.clone()),
+            Ok(Ok(Some(fresh_user))) => {
+                if pending_backend_validation && user_id_from_profile_payload(&fresh_user).is_none()
+                {
+                    warn!(
+                        "{LOG_PREFIX} pending current user refresh returned a user without an id; keeping stored pending session for retry"
+                    );
+                    return snapshot_current_user_result(stored_user.clone());
+                }
+                let fresh_user = clear_pending_backend_validation_flag(fresh_user);
+                if pending_backend_validation {
+                    let snapshot_config = match persist_revalidated_session_user(
+                        &config,
+                        &token,
+                        session_metadata.clone(),
+                        fresh_user.clone(),
+                    )
+                    .await
+                    {
+                        Ok(snapshot_config) => {
+                            debug!(
+                                "{LOG_PREFIX} cleared pending backend validation after successful current user refresh"
+                            );
+                            snapshot_config
+                        }
+                        Err(error) => {
+                            warn!(
+                                "{LOG_PREFIX} failed to persist cleared pending backend validation: {error}"
+                            );
+                            return snapshot_current_user_result(stored_user.clone());
+                        }
+                    };
+                    return (
+                        SnapshotCurrentUser::user(Some(fresh_user)),
+                        Some(snapshot_config),
+                    );
+                }
+                snapshot_current_user_result(Some(fresh_user))
+            }
+            Ok(Ok(None)) if pending_backend_validation => {
+                warn!(
+                    "{LOG_PREFIX} backend returned empty user for pending session revalidation; clearing stored app session"
+                );
+                if let Err(error) = clear_deferred_session_after_backend_rejection(
+                    &config,
+                    pending_session_user_id.as_deref(),
+                )
+                .await
+                {
+                    warn!("{LOG_PREFIX} failed to clear rejected pending session: {error}");
+                }
+                (SnapshotCurrentUser::DeferredSessionRejected, None)
+            }
+            Ok(Ok(None)) => snapshot_current_user_result(stored_user.clone()),
+            Ok(Err(CurrentUserFetchError::Rejected(error))) if pending_backend_validation => {
+                warn!(
+                    "{LOG_PREFIX} pending current user refresh was rejected; clearing stored app session: {error}"
+                );
+                if let Err(clear_error) = clear_deferred_session_after_backend_rejection(
+                    &config,
+                    pending_session_user_id.as_deref(),
+                )
+                .await
+                {
+                    warn!("{LOG_PREFIX} failed to clear rejected pending session: {clear_error}");
+                }
+                (SnapshotCurrentUser::DeferredSessionRejected, None)
+            }
+            Ok(Err(CurrentUserFetchError::FetchFailed(error))) if pending_backend_validation => {
+                warn!(
+                    "{LOG_PREFIX} pending current user refresh failed before a backend response; keeping stored pending session for retry: {error}"
+                );
+                snapshot_current_user_result(stored_user.clone())
+            }
+            Ok(Err(CurrentUserFetchError::TransientResponse(error)))
+                if pending_backend_validation =>
+            {
+                warn!(
+                    "{LOG_PREFIX} pending current user refresh received transient backend response; keeping stored pending session: {error}"
+                );
+                snapshot_current_user_result(stored_user.clone())
+            }
             Ok(Err(error)) => {
-                warn!("{LOG_PREFIX} current user refresh failed; using stored snapshot fallback: {error}");
-                stored_user.clone()
+                warn!(
+                    "{LOG_PREFIX} current user refresh failed; using stored snapshot fallback: {}",
+                    error.message()
+                );
+                snapshot_current_user_result(stored_user.clone())
+            }
+            Err(_) if pending_backend_validation => {
+                warn!(
+                    "{LOG_PREFIX} pending current user fetch timed out after {}s; keeping stored pending session for retry",
+                    AUTH_FETCH_TIMEOUT.as_secs()
+                );
+                snapshot_current_user_result(stored_user.clone())
             }
             Err(_) => {
                 warn!(
                     "{LOG_PREFIX} current user fetch timed out after {}s; using stored snapshot fallback",
                     AUTH_FETCH_TIMEOUT.as_secs()
                 );
-                stored_user.clone()
+                snapshot_current_user_result(stored_user.clone())
             }
         }
-    };
-    let runtime_future = async {
+    });
+    let runtime_future = Box::pin(async {
         match tokio::time::timeout(
             RUNTIME_SNAPSHOT_TIMEOUT,
             build_runtime_snapshot(&config, req_id),
@@ -647,13 +1061,60 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
                 degraded_runtime_snapshot(&config)
             }
         }
-    };
-    let (current_user, runtime) = tokio::join!(current_user_future, runtime_future);
+    });
+    let (current_user_result, runtime) = tokio::join!(current_user_future, runtime_future);
     let enrich_ms = t_enrich.elapsed().as_millis();
-    auth.user = current_user.clone();
+    let (current_user, revalidated_config) = current_user_result;
+    let mut snapshot_config = config.clone();
+    if let Some(revalidated_config) = revalidated_config {
+        snapshot_config = *revalidated_config;
+    }
+    let current_user = match current_user {
+        SnapshotCurrentUser::User(current_user) => {
+            if pending_backend_validation {
+                if let Some(user_id) = current_user.as_ref().and_then(user_id_from_profile_payload)
+                {
+                    auth.user_id = Some(user_id);
+                }
+            }
+            auth.user = current_user.clone();
+            current_user
+        }
+        SnapshotCurrentUser::DeferredSessionRejected => {
+            auth.is_authenticated = false;
+            auth.user_id = None;
+            auth.user = None;
+            auth.profile_id = None;
+            session_token = None;
+            None
+        }
+    };
+    let runtime = if same_config_state_dir(&config, &snapshot_config) {
+        runtime
+    } else {
+        warn!(
+            "{LOG_PREFIX} pending session revalidation changed config scope; rebuilding runtime snapshot with activated user config"
+        );
+        match tokio::time::timeout(
+            RUNTIME_SNAPSHOT_TIMEOUT,
+            build_runtime_snapshot(&snapshot_config, req_id),
+        )
+        .await
+        {
+            Ok(snapshot) => snapshot,
+            Err(_) => {
+                warn!(
+                    "{LOG_PREFIX} activated-config runtime snapshot timed out after {}s req_id={}; returning degraded runtime snapshot",
+                    RUNTIME_SNAPSHOT_TIMEOUT.as_secs(),
+                    req_id
+                );
+                degraded_runtime_snapshot(&snapshot_config)
+            }
+        }
+    };
 
     let t_local_state = Instant::now();
-    let local_state = load_stored_app_state(&config)?;
+    let local_state = load_stored_app_state(&snapshot_config)?;
     crate::openhuman::keyring_consent::policy::initialize(local_state.keyring_consent.clone());
     let local_state_ms = t_local_state.elapsed().as_millis();
 
@@ -667,10 +1128,10 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
         "{LOG_PREFIX} snapshot req_id={} auth={} onboarding={} chat_onboarding={} analytics={} meet_handoff={} si_active={} local_ai_state={} autocomplete_phase={} service_state={:?}",
         req_id,
         auth.is_authenticated,
-        config.onboarding_completed,
-        config.chat_onboarding_completed,
-        config.observability.analytics_enabled,
-        config.meet.auto_orchestrator_handoff,
+        snapshot_config.onboarding_completed,
+        snapshot_config.chat_onboarding_completed,
+        snapshot_config.observability.analytics_enabled,
+        snapshot_config.meet.auto_orchestrator_handoff,
         runtime.screen_intelligence.session.active,
         runtime.local_ai.state,
         runtime.autocomplete.phase,
@@ -684,10 +1145,10 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
             auth,
             session_token,
             current_user,
-            onboarding_completed: config.onboarding_completed,
-            chat_onboarding_completed: config.chat_onboarding_completed,
-            analytics_enabled: config.observability.analytics_enabled,
-            meet_auto_orchestrator_handoff: config.meet.auto_orchestrator_handoff,
+            onboarding_completed: snapshot_config.onboarding_completed,
+            chat_onboarding_completed: snapshot_config.chat_onboarding_completed,
+            analytics_enabled: snapshot_config.observability.analytics_enabled,
+            meet_auto_orchestrator_handoff: snapshot_config.meet.auto_orchestrator_handoff,
             local_state,
             keyring_status,
             runtime,

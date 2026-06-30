@@ -95,7 +95,7 @@ describe('Intelligence tab selection', () => {
   it('switches panel when a tab pill is clicked', async () => {
     renderAt('/intelligence?tab=tasks');
     await waitFor(() => expect(screen.getByText('TASKS_PANEL')).toBeInTheDocument());
-    // PillTabBar renders the tab labels (i18n keys); click the Workflows pill.
+    // ChipTabs renders the tab labels (i18n keys); click the Workflows pill.
     fireEvent.click(screen.getByText('memory.tab.workflows'));
     await waitFor(() => expect(screen.getByText('WORKFLOWS_PANEL')).toBeInTheDocument());
   });

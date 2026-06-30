@@ -3,9 +3,11 @@ import type { ReactNode } from 'react';
 import PanelHeader, { DEFAULT_PANEL_HEADER_BG, DEFAULT_PANEL_HEADER_CLASS } from './PanelHeader';
 
 export interface PanelScaffoldProps {
-  /** Fixed sub-title rendered in a muted tone (titles are inferred from chrome). */
+  /** Primary title rendered in the fixed header (optional; see {@link PanelHeader}). */
+  title?: ReactNode;
+  /** Fixed sub-title rendered in a muted tone, below the title. */
   description?: ReactNode;
-  /** Leading node before the description (e.g. a back button); brings its own spacing. */
+  /** Leading node before the title (e.g. a back button); brings its own spacing. */
   leading?: ReactNode;
   /** Right-aligned header action(s) (e.g. a refresh or "add" button). */
   action?: ReactNode;
@@ -38,7 +40,7 @@ export interface PanelScaffoldProps {
 }
 
 const DEFAULT_CONTENT_CLASS = 'p-4 space-y-5';
-const BODY_BORDER_CLASS = 'border-t border-stone-200 dark:border-neutral-800';
+const BODY_BORDER_CLASS = 'border-t border-line';
 
 /**
  * Standard scaffold: a fixed header ({@link PanelHeader}) carrying an optional
@@ -55,6 +57,7 @@ const BODY_BORDER_CLASS = 'border-t border-stone-200 dark:border-neutral-800';
  * more scaffolds), use {@link PanelPage}, which composes this.
  */
 export default function PanelScaffold({
+  title,
   description,
   leading,
   action,
@@ -67,17 +70,24 @@ export default function PanelScaffold({
   bodyBorder,
   testId,
 }: PanelScaffoldProps) {
-  const hasHeader = description != null || leading != null || action != null || headerExtra != null;
+  const hasHeader =
+    title != null ||
+    description != null ||
+    leading != null ||
+    action != null ||
+    headerExtra != null;
   // Only separate the body when the header carries *visible* content. `leading`
   // alone is usually a route-aware back button that renders nothing on wide
   // viewports, so it shouldn't draw a hairline under an otherwise-empty band.
-  const hasVisibleHeader = description != null || action != null || headerExtra != null;
+  const hasVisibleHeader =
+    title != null || description != null || action != null || headerExtra != null;
   const showBorder = bodyBorder ?? hasVisibleHeader;
 
   return (
     <div className={`relative flex h-full min-h-0 flex-col ${className}`} data-testid={testId}>
       {hasHeader && (
         <PanelHeader
+          title={title}
           description={description}
           leading={leading}
           action={action}

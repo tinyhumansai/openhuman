@@ -117,6 +117,20 @@ Some tool calls return enormous payloads - a Composio action dumping 200 KB of J
 
 When a tool result exceeds the summarizer's threshold, it gets routed through a dedicated `summarizer` sub-agent before entering the parent's history. The summarizer compresses the payload per an extraction contract that preserves identifiers and key facts, and the parent agent only sees the compressed summary. Hard truncation remains the backstop downstream when summarization fails or the payload is so absurdly large that paying for an LLM call on it makes no economic sense.
 
+### TokenJuice - content-aware tool-output compaction (Stage 1a)
+
+Before a fresh tool result enters history (and ahead of the byte-budget backstop), it passes through the **TokenJuice content router** (`src/openhuman/tokenjuice/`). Inspired by Headroom, the router *detects the content kind* (JSON, code, log, search, diff, HTML, plain text) from the bytes and/or a hint derived from the tool name and arguments, then dispatches to a specialised compressor:
+
+* **JSON** → SmartCrusher: array-of-objects → table (each key once), preserving rows that carry errors or numeric outliers.
+* **Code** → tree-sitter (Rust/TS/JS/Python) signature keeper that collapses function bodies; brace-depth heuristic fallback.
+* **Log** → the 100-rule engine for *command* output (git/cargo/npm/…), signal-based keep-failures otherwise.
+* **Search** → relevance-ranked top-K matches per file with a `+N more` tally.
+* **Diff** → keep changed hunks, collapse unchanged context, summarise lockfile hunks.
+* **HTML** → strip markup to readable text.
+* **Plain text** → the opt-in Python/ML "Kompress" compressor (ModernBERT), or pass-through.
+
+Every lossy compression offloads the original to the **CCR (Compress-Cache-Retrieve)** store behind a `⟦tj:<hash>⟧` marker, so compaction is effectively lossless: the agent calls `tokenjuice_retrieve` (token + optional byte/line range) to fetch the full original on demand. The same engine is exposed as a universal `compress_content(content, hint, opts)` for any large payload (file reads, web fetches), and as read-only `tokenjuice.*` debug RPCs. Configured via the `[tokenjuice]` block / `OPENHUMAN_TOKENJUICE_*` env. Agent definitions can override tool-result compression with `tokenjuice_compression = "auto" | "full" | "light" | "off"`; `auto` resolves coding-model agents (`[model] hint = "coding"`) to `light`, which disables CCR-backed lossy compression so coding agents keep raw build/test/diff/search text unless a reduction is truly lossless. Other agents default to `full`. The ML (Kompress) path runs as a `kompress` backend of the shared [`runtime_python_server`](../../../src/openhuman/runtime_python_server/) (torch + ModernBERT pip-installed at runtime), gated by the `ml_compression_enabled` flag and degrading gracefully to a native compressor when the Python runtime is unavailable.
+
 ### Self-healing for missing commands
 
 When the code-executor sub-agent runs a shell command and the runtime answers "command not found", a self-healing interceptor catches the error, spawns a `ToolMaker` sub-agent to write a polyfill script for the missing command, and retries the original call. There's a per-command attempt cap so a genuinely impossible command can't loop forever.
@@ -157,18 +171,24 @@ Each archetype lives under `agents/<name>/` with an `agent.toml` (metadata, tool
 
 Custom archetypes ship as TOML files under `$OPENHUMAN_WORKSPACE/agents/*.toml` (or `~/.openhuman/agents/*.toml` for user-global specialists). Custom definitions override built-ins on id collision.
 
-### Running a sub-agent
+### Running a reusable sub-agent
 
-When the orchestrator calls `spawn_subagent` (or one of the `delegate_*` convenience tools), the runner:
+When the orchestrator calls `spawn_subagent`, the default contract is durable and asynchronous. The tool builds a deterministic compatibility selector from the parent session/thread, agent id, toolkit scope, model override, sandbox mode, action root, and normalized task key/title. It then checks `agent_orchestration::subagent_sessions` before spawning:
+
+* If a compatible worker is already running, the instruction is injected through its `RunQueue` and the parent gets a quick `subagent_session_id` / `task_id` reference.
+* If a compatible worker is idle or paused with reusable history, the harness starts a new transient run for the same durable `subagent_session_id` and passes the saved child history through `SubagentRunOptions.initial_history`, with the new instruction appended as a user-visible follow-up.
+* If the shape is incompatible, the worker was closed, `fresh: true` was passed, or no session exists, the harness creates a new durable session and worker thread.
+
+The child run itself still uses the same runner:
 
 1. Reads the parent's execution context from a task-local - the parent's provider, sandbox mode, cancellation fence, transcript root.
 2. Resolves the sub-agent's model - inline `model` override first, then config-level pins (`[orchestrator].model`, `[teams.*].lead_model`, `[teams.*].agent_model`), then the archetype hint or inherited parent model.
 3. Filters the parent's tool registry per the definition's `tools`, `disallowed_tools`, and `skill_filter`. In `fork` mode, the parent's full registry is inherited verbatim.
 4. Builds a narrow system prompt, omitting the sections the definition asks to strip.
 5. Runs an inner tool-call loop using the same machinery as the parent.
-6. Returns one compact text result. The intra-sub-agent history is never spliced back into the parent - the orchestrator sees a single tool result and moves on.
+6. Persists the child history and worker thread pointer under the durable `subagent_session_id` so later turns can resume or inspect it.
 
-For tasks that don't need to block the orchestrator's turn, `spawn_worker_thread` runs the sub-agent in the background and the orchestrator continues immediately.
+`wait_subagent` and `steer_subagent` accept either the durable `subagent_session_id` or the transient `task_id`; durable ids are preferred across turns. `list_subagents` shows reusable children for the current parent thread, and `close_subagent` marks a worker non-reusable and cancels it if it is still running. Inline blocking is explicit via `blocking: true`; it is no longer the default.
 
 ### Spawn hierarchy and tiers
 
@@ -295,7 +315,8 @@ The harness lives entirely under `src/openhuman/agent/`. The README in that dire
 | ----------------------------- | ----------------------------------------------------------------- |
 | `harness/session/turn.rs`     | `Agent::turn` - the lifecycle described above.                    |
 | `harness/tool_loop.rs`        | The inner tool-call loop.                                         |
-| `harness/subagent_runner/`    | `run_subagent`, fork-mode, oversized-result handoff.              |
+| `harness/subagent_runner/`    | `run_subagent`, history replay, fork-mode, oversized-result handoff. |
+| `agent_orchestration/subagent_sessions/` | Durable reusable sub-agent identity, compatibility matching, persisted status/history. |
 | `harness/definition.rs`       | `AgentDefinition` - what an archetype declares.                   |
 | `harness/tool_filter.rs`      | Toolkit-action ranking for integrations sub-agents.               |
 | `harness/payload_summarizer.rs` | Oversized-tool-result detour.                                   |

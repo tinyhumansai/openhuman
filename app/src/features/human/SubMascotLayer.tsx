@@ -165,7 +165,7 @@ export const SubMascotLayer: FC<SubMascotLayerProps> = ({ entries }) => {
               </div>
             </div>
             <div
-              className="mt-1 max-w-[88px] rounded-md border border-white/70 bg-white/85 px-1.5 py-0.5 text-center text-[9px] leading-tight text-stone-600 shadow-soft backdrop-blur dark:border-neutral-700 dark:bg-neutral-900/85 dark:text-neutral-200"
+              className="mt-1 max-w-[88px] rounded-md border border-white/70 bg-surface/85 px-1.5 py-0.5 text-center text-[9px] leading-tight text-content-secondary shadow-soft backdrop-blur dark:border-line-strong dark:bg-surface/85 dark:text-neutral-200"
               data-testid="sub-mascot-bubble"
               title={`${model.label} — ${model.activity}`}>
               <div className="truncate font-medium">{model.label}</div>

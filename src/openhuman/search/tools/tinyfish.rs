@@ -122,6 +122,42 @@ struct TinyFishAgentRunResponse {
     cost_usd: Option<f64>,
 }
 
+fn format_agent_run_response(mut resp: TinyFishAgentRunResponse) -> String {
+    tracing::debug!(
+        "[tinyfish_agent_run] formatting response status_present={} steps_present={} result_present={} error_present={} cost_present={}",
+        !resp.status.is_empty(),
+        resp.num_of_steps.is_some(),
+        resp.result.is_some(),
+        resp.error.is_some(),
+        resp.cost_usd.is_some()
+    );
+
+    let mut lines = vec!["TinyFish automation finished.".to_string()];
+    if !resp.status.is_empty() {
+        tracing::debug!("[tinyfish_agent_run] adding status field");
+        lines.push(format!("Status: {}", resp.status));
+    }
+    if let Some(steps) = resp.num_of_steps {
+        tracing::debug!(steps = steps, "[tinyfish_agent_run] adding step count");
+        lines.push(format!("Steps: {steps}"));
+    }
+    if let Some(result) = resp.result.take() {
+        tracing::debug!("[tinyfish_agent_run] adding result payload");
+        lines.push("Result:".to_string());
+        lines.push(result.to_string());
+    }
+    if let Some(error) = resp.error.take() {
+        tracing::debug!("[tinyfish_agent_run] adding error payload");
+        lines.push("Error:".to_string());
+        lines.push(error.to_string());
+    }
+    if let Some(cost_usd) = resp.cost_usd {
+        tracing::debug!(cost_usd = cost_usd, "[tinyfish_agent_run] adding cost");
+        lines.push(format!("Cost: ${cost_usd:.4}"));
+    }
+    lines.join("\n")
+}
+
 /// Search the web with TinyFish Search.
 pub struct TinyFishSearchTool {
     client: Arc<IntegrationClient>,
@@ -552,28 +588,7 @@ impl Tool for TinyFishAgentRunTool {
                     has_error = resp.error.is_some(),
                     "[tinyfish_agent_run] request finished"
                 );
-                let mut lines = vec!["TinyFish automation finished.".to_string()];
-                if let Some(run_id) = resp.run_id.as_deref() {
-                    lines.push(format!("Run ID: {run_id}"));
-                }
-                if !resp.status.is_empty() {
-                    lines.push(format!("Status: {}", resp.status));
-                }
-                if let Some(steps) = resp.num_of_steps {
-                    lines.push(format!("Steps: {steps}"));
-                }
-                if let Some(result) = resp.result {
-                    lines.push("Result:".to_string());
-                    lines.push(result.to_string());
-                }
-                if let Some(error) = resp.error {
-                    lines.push("Error:".to_string());
-                    lines.push(error.to_string());
-                }
-                if let Some(cost_usd) = resp.cost_usd {
-                    lines.push(format!("Cost: ${cost_usd:.4}"));
-                }
-                Ok(ToolResult::success(lines.join("\n")))
+                Ok(ToolResult::success(format_agent_run_response(resp)))
             }
             Err(e) => {
                 tracing::debug!(

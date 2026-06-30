@@ -34,6 +34,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("turn_state_clear"),
         schemas("task_board_get"),
         schemas("task_board_put"),
+        schemas("token_usage"),
     ]
 }
 
@@ -102,6 +103,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("task_board_put"),
             handler: handle_task_board_put,
+        },
+        RegisteredController {
+            schema: schemas("token_usage"),
+            handler: handle_token_usage,
         },
     ]
 }
@@ -450,6 +455,23 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "token_usage" => ControllerSchema {
+            namespace: "threads",
+            function: "token_usage",
+            description: "Total a thread's persisted token/cost usage from its session transcripts.",
+            inputs: vec![FieldSchema {
+                name: "thread_id",
+                ty: TypeSchema::String,
+                comment: "Thread identifier.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Envelope with the thread's token/cost totals (zeros when no turns yet).",
+                required: true,
+            }],
+        },
         _other => ControllerSchema {
             namespace: "threads",
             function: "unknown",
@@ -644,6 +666,13 @@ fn handle_task_board_put(params: Map<String, Value>) -> ControllerFuture {
             "[rpc][task_board] put exit"
         );
         Ok(serde_json::json!({ "taskBoard": saved }))
+    })
+}
+
+fn handle_token_usage(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = parse::<ops::ThreadTokenUsageRequest>(params)?;
+        to_json(ops::token_usage(p).await?)
     })
 }
 

@@ -1,6 +1,7 @@
 import { type ReactNode, useCallback, useState } from 'react';
 
 import type { AuthModeSpec, ChannelConnectionStatus } from '../../types/channels';
+import Button from '../ui/Button';
 import ChannelFieldInput from './ChannelFieldInput';
 import ChannelStatusBadge from './ChannelStatusBadge';
 
@@ -59,15 +60,11 @@ export function ChannelAuthModeCard({
   lastError,
 }: ChannelAuthModeCardProps) {
   return (
-    <div className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3">
+    <div className="rounded-lg border border-line bg-surface-muted p-3">
       <div className="flex items-start justify-between gap-3">
         <div>
-          {title ? (
-            <p className="text-sm font-medium text-stone-900 dark:text-neutral-100">{title}</p>
-          ) : null}
-          <p className={`text-xs text-stone-500 dark:text-neutral-400 ${title ? 'mt-1' : ''}`}>
-            {description}
-          </p>
+          {title ? <p className="text-sm font-medium text-content">{title}</p> : null}
+          <p className={`text-xs text-content-muted ${title ? 'mt-1' : ''}`}>{description}</p>
           {lastError ? <p className="text-xs text-coral-600 mt-1">{lastError}</p> : null}
         </div>
         <ChannelStatusBadge status={status} />
@@ -138,21 +135,17 @@ export function ChannelConnectActions({
   return (
     <div className={`mt-3 flex gap-2 ${className ?? ''}`}>
       {showConnect && onConnect ? (
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onConnect}
-          className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50">
+        <Button variant="primary" size="sm" disabled={busy} onClick={onConnect}>
           {connectLabel}
-        </button>
+        </Button>
       ) : null}
-      <button
-        type="button"
+      <Button
+        variant="secondary"
+        size="sm"
         disabled={busy || status === 'disconnected'}
-        onClick={onDisconnect}
-        className="rounded-lg border border-stone-200 dark:border-neutral-800 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-700 disabled:opacity-50">
+        onClick={onDisconnect}>
         {disconnectLabel}
-      </button>
+      </Button>
     </div>
   );
 }

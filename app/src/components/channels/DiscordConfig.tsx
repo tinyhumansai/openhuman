@@ -22,6 +22,7 @@ import type {
 import { isLocalSessionToken } from '../../utils/localSession';
 import { openUrl } from '../../utils/openUrl';
 import { restartCoreProcess } from '../../utils/tauriCommands/core';
+import Button from '../ui/Button';
 import {
   ChannelAuthFields,
   ChannelAuthModeCard,
@@ -154,7 +155,10 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
 
         const credentials: Record<string, string> = {};
         for (const field of spec.fields) {
-          const val = fieldValues[key]?.[field.key]?.trim() ?? '';
+          // `rawVal` is `undefined` only when the user never touched the field;
+          // an empty string means they entered something and then cleared it.
+          const rawVal = fieldValues[key]?.[field.key];
+          const val = rawVal?.trim() ?? '';
           if (field.required && !val) {
             dispatch(
               setChannelConnectionStatus({
@@ -169,7 +173,16 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
             );
             return;
           }
-          if (val) credentials[field.key] = val;
+          if (val) {
+            credentials[field.key] = val;
+          } else if (rawVal !== undefined) {
+            // Field was edited and then cleared — submit an explicit empty value
+            // instead of omitting it, so the backend can distinguish "cleared"
+            // from "never entered". For the allowlist this is what makes clearing
+            // it on reconnect mean "allow everyone" rather than silently reusing
+            // the previously-saved list (#3794 review — Codex P2).
+            credentials[field.key] = '';
+          }
         }
 
         const result = await channelConnectionsApi.connectChannel('discord', {
@@ -275,7 +288,7 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
       {error && <ChannelConfigError message={error} />}
 
       {isLocalSession && visibleAuthModes.length !== definition.auth_modes.length && (
-        <div className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-4 py-3 text-sm text-stone-700 dark:text-neutral-200">
+        <div className="rounded-lg border border-line bg-surface-muted px-4 py-3 text-sm text-content-secondary">
           {t('channels.localManagedUnavailable')}
         </div>
       )}
@@ -318,17 +331,14 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
                   {t('channels.discord.linkTokenLabel')}
                 </p>
                 <div className="flex items-center gap-2">
-                  <code className="flex-1 rounded bg-white dark:bg-neutral-900 border border-primary-200 dark:border-primary-500/30 px-2 py-1 text-xs font-mono text-stone-800 dark:text-neutral-100 select-all break-all">
+                  <code className="flex-1 rounded bg-surface border border-primary-200 dark:border-primary-500/30 px-2 py-1 text-xs font-mono text-content select-all break-all">
                     {linkToken}
                   </code>
-                  <button
-                    type="button"
-                    onClick={copyToken}
-                    className="shrink-0 rounded-lg border border-primary-300 dark:border-primary-500/40 px-2 py-1 text-xs font-medium text-primary-700 dark:text-primary-300 hover:bg-primary-100 dark:hover:bg-primary-500/20">
+                  <Button variant="secondary" size="xs" onClick={copyToken} className="shrink-0">
                     {copied ? t('common.copied') : t('common.copy')}
-                  </button>
+                  </Button>
                 </div>
-                <p className="text-xs text-stone-500 dark:text-neutral-400">
+                <p className="text-xs text-content-muted">
                   {t('channels.discord.linkTokenInstruction').replace('{token}', linkToken)}
                 </p>
                 <p className="text-xs text-amber-600 font-medium">
@@ -340,7 +350,7 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
             {/* Connected state for managed_dm — show only Disconnect */}
             {spec.mode === 'managed_dm' && status === 'connected' ? (
               <>
-                <label className="mt-3 flex items-start gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2">
+                <label className="mt-3 flex items-start gap-2 rounded-lg border border-line bg-surface px-3 py-2">
                   <input
                     type="checkbox"
                     checked={Boolean(clearMemoryOnDisconnect[compositeKey])}
@@ -350,13 +360,13 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
                         [compositeKey]: event.currentTarget.checked,
                       }))
                     }
-                    className="mt-0.5 h-4 w-4 rounded border-stone-300 text-primary-600 focus:ring-primary-500"
+                    className="mt-0.5 h-4 w-4 rounded border-line-strong text-primary-600 focus:ring-primary-500"
                   />
                   <span className="min-w-0">
-                    <span className="block text-xs font-medium text-stone-800 dark:text-neutral-100">
+                    <span className="block text-xs font-medium text-content">
                       {t('accounts.disconnectClearMemory')}
                     </span>
-                    <span className="block text-[11px] text-stone-500 dark:text-neutral-400">
+                    <span className="block text-[11px] text-content-muted">
                       {t('accounts.disconnectClearMemoryHint')}
                     </span>
                   </span>
@@ -380,7 +390,7 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
             spec.mode !== 'managed_dm' || status !== 'connecting' ? (
               <>
                 {status === 'connected' && (
-                  <label className="mt-3 flex items-start gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2">
+                  <label className="mt-3 flex items-start gap-2 rounded-lg border border-line bg-surface px-3 py-2">
                     <input
                       type="checkbox"
                       checked={Boolean(clearMemoryOnDisconnect[compositeKey])}
@@ -390,13 +400,13 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
                           [compositeKey]: event.currentTarget.checked,
                         }))
                       }
-                      className="mt-0.5 h-4 w-4 rounded border-stone-300 text-primary-600 focus:ring-primary-500"
+                      className="mt-0.5 h-4 w-4 rounded border-line-strong text-primary-600 focus:ring-primary-500"
                     />
                     <span className="min-w-0">
-                      <span className="block text-xs font-medium text-stone-800 dark:text-neutral-100">
+                      <span className="block text-xs font-medium text-content">
                         {t('accounts.disconnectClearMemory')}
                       </span>
-                      <span className="block text-[11px] text-stone-500 dark:text-neutral-400">
+                      <span className="block text-[11px] text-content-muted">
                         {t('accounts.disconnectClearMemoryHint')}
                       </span>
                     </span>

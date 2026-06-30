@@ -5,9 +5,7 @@ import {
   openhumanGetComposioTriggerSettings,
   openhumanUpdateComposioTriggerSettings,
 } from '../../../utils/tauriCommands';
-import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsBackButton from '../components/SettingsBackButton';
 import {
   SettingsRow,
   SettingsSection,
@@ -15,11 +13,10 @@ import {
   SettingsSwitch,
   SettingsTextField,
 } from '../controls';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 
 const ComposioTriagePanel = () => {
   const { t } = useT();
-  const { navigateBack } = useSettingsNavigation();
 
   const [triageDisabled, setTriageDisabled] = useState(false);
   const [disabledToolkits, setDisabledToolkits] = useState('');
@@ -84,86 +81,72 @@ const ComposioTriagePanel = () => {
 
   if (loading) {
     return (
-      <PanelPage
-        className="z-10"
-        contentClassName=""
-        description={t('settings.developerMenu.composio.desc')}
-        leading={<SettingsBackButton onBack={navigateBack} />}>
-        <div className="p-4">
-          <p className="text-sm text-neutral-500 dark:text-neutral-400">
-            {t('settings.composio.loading')}
-          </p>
-        </div>
-      </PanelPage>
+      <SettingsPanel description={t('settings.developerMenu.composio.desc')}>
+        <p className="text-sm text-content-muted">{t('settings.composio.loading')}</p>
+      </SettingsPanel>
     );
   }
 
   return (
-    <PanelPage
-      className="z-10"
-      contentClassName=""
-      description={t('settings.developerMenu.composio.desc')}
-      leading={<SettingsBackButton onBack={navigateBack} />}>
-      <div className="p-4 pt-2 space-y-5">
-        <p className="text-sm text-neutral-500 dark:text-neutral-400">
-          {t('composio.triageDesc')}{' '}
-          <span className="font-mono">OPENHUMAN_TRIGGER_TRIAGE_DISABLED</span>{' '}
-          {t('composio.envVarOverrides')}
-        </p>
+    <SettingsPanel description={t('settings.developerMenu.composio.desc')}>
+      <p className="text-sm text-content-muted">
+        {t('composio.triageDesc')}{' '}
+        <span className="font-mono">OPENHUMAN_TRIGGER_TRIAGE_DISABLED</span>{' '}
+        {t('composio.envVarOverrides')}
+      </p>
 
-        <SettingsSection>
-          <SettingsRow
-            htmlFor="switch-triage-disabled"
-            label={t('composio.disableAllTriage')}
-            description={t('composio.triggersStillRecorded')}
-            control={
-              <SettingsSwitch
-                id="switch-triage-disabled"
-                checked={triageDisabled}
-                onCheckedChange={next => setTriageDisabled(next)}
-                aria-label={t('composio.disableAllTriage')}
-              />
-            }
-          />
-        </SettingsSection>
+      <SettingsSection>
+        <SettingsRow
+          htmlFor="switch-triage-disabled"
+          label={t('composio.disableAllTriage')}
+          description={t('composio.triggersStillRecorded')}
+          control={
+            <SettingsSwitch
+              id="switch-triage-disabled"
+              checked={triageDisabled}
+              onCheckedChange={next => setTriageDisabled(next)}
+              aria-label={t('composio.disableAllTriage')}
+            />
+          }
+        />
+      </SettingsSection>
 
-        <SettingsSection
-          title={t('composio.disableSpecificIntegrations')}
-          description={`${t('composio.integrationSlugsHelp')} ${t('composio.integrationSlugsExample')}. ${t('composio.integrationSlugsCaseInsensitive')}`}>
-          <SettingsRow
-            stacked
-            disabled={triageDisabled}
-            control={
-              <SettingsTextField
-                id="disabled-toolkits"
-                value={disabledToolkits}
-                onChange={e => setDisabledToolkits(e.target.value)}
-                placeholder={t('composio.integrationSlugsPlaceholder')}
-                disabled={triageDisabled}
-                aria-label={t('composio.disableSpecificIntegrations')}
-              />
-            }
-          />
-        </SettingsSection>
+      <SettingsSection
+        title={t('composio.disableSpecificIntegrations')}
+        description={`${t('composio.integrationSlugsHelp')} ${t('composio.integrationSlugsExample')}. ${t('composio.integrationSlugsCaseInsensitive')}`}>
+        <SettingsRow
+          stacked
+          disabled={triageDisabled}
+          control={
+            <SettingsTextField
+              id="disabled-toolkits"
+              value={disabledToolkits}
+              onChange={e => setDisabledToolkits(e.target.value)}
+              placeholder={t('composio.integrationSlugsPlaceholder')}
+              disabled={triageDisabled}
+              aria-label={t('composio.disableSpecificIntegrations')}
+            />
+          }
+        />
+      </SettingsSection>
 
-        <div className="flex items-center gap-3">
-          <Button
-            type="button"
-            variant="primary"
-            size="sm"
-            onClick={() => void handleSave()}
-            disabled={saving}>
-            {saving ? t('common.loading') : t('common.save')}
-          </Button>
-          <SettingsStatusLine
-            saving={saving}
-            savedNote={saveStatus === 'saved' ? t('composio.settingsSaved') : null}
-            error={saveStatus === 'error' ? t('composio.saveFailed') : null}
-            savingLabel={t('common.loading')}
-          />
-        </div>
+      <div className="flex items-center gap-3">
+        <Button
+          type="button"
+          variant="primary"
+          size="sm"
+          onClick={() => void handleSave()}
+          disabled={saving}>
+          {saving ? t('common.loading') : t('common.save')}
+        </Button>
+        <SettingsStatusLine
+          saving={saving}
+          savedNote={saveStatus === 'saved' ? t('composio.settingsSaved') : null}
+          error={saveStatus === 'error' ? t('composio.saveFailed') : null}
+          savingLabel={t('common.loading')}
+        />
       </div>
-    </PanelPage>
+    </SettingsPanel>
   );
 };
 

@@ -8,14 +8,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
+import GoalsPanel from '../components/intelligence/GoalsPanel';
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
 import { MemoryControls } from '../components/intelligence/MemoryControls';
 import { MemoryGraph } from '../components/intelligence/MemoryGraph';
 import { MemorySourcesRegistry } from '../components/intelligence/MemorySourcesRegistry';
 import { MemoryTreeStatusPanel } from '../components/intelligence/MemoryTreeStatusPanel';
+import SubconsciousTriggersPanel from '../components/intelligence/SubconsciousTriggersPanel';
 import { ToastContainer } from '../components/intelligence/Toast';
 import PanelPage from '../components/layout/PanelPage';
-import TwoPanelLayout from '../components/layout/TwoPanelLayout';
+import { SidebarContent } from '../components/layout/shell/SidebarSlot';
 import TwoPaneNav from '../components/layout/TwoPaneNav';
 import { SettingsLayoutProvider } from '../components/settings/layout/SettingsLayoutContext';
 import AnalysisViewsPanel from '../components/settings/panels/AnalysisViewsPanel';
@@ -24,6 +26,7 @@ import MemoryDebugPanel from '../components/settings/panels/MemoryDebugPanel';
 import BetaBanner from '../components/ui/BetaBanner';
 import { useSubconscious } from '../hooks/useSubconscious';
 import { useT } from '../lib/i18n/I18nContext';
+import { useCoreState } from '../providers/CoreStateProvider';
 import type { ToastNotification } from '../types/intelligence';
 import {
   type GraphExportResponse,
@@ -34,6 +37,7 @@ import Intelligence from './Intelligence';
 
 type BrainTab =
   | 'graph'
+  | 'goals'
   | 'sources'
   | 'sync'
   | 'intelligence'
@@ -59,6 +63,7 @@ const navIcon = (d: string) => (
 
 const BRAIN_TABS: readonly BrainTab[] = [
   'graph',
+  'goals',
   'sources',
   'sync',
   'intelligence',
@@ -91,6 +96,16 @@ export default function Brain() {
   const [mode, setMode] = useState<GraphMode>('tree');
   const [refreshKey, setRefreshKey] = useState(0);
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
+
+  // The memory graph is read from the on-disk store, but the read only fired on
+  // mount — so after a logout→login cycle the page kept whatever (empty) state
+  // it had when the core was signed-out / mid identity-flip and never refetched
+  // once auth was restored, showing an empty graph for an account whose data is
+  // still on disk (#4149). Key the load on the authenticated identity so a
+  // re-auth (null→user, or A→B) re-pulls the persisted graph, mirroring the
+  // thread-cache reload CoreStateProvider already does on identity change.
+  const { snapshot } = useCoreState();
+  const authUserId = snapshot.auth.userId;
 
   const sub = useSubconscious();
 
@@ -132,24 +147,18 @@ export default function Brain() {
       cancelled = true;
       window.removeEventListener('openhuman:memory-tree-completed', onTreeDone);
     };
-  }, [mode, refreshKey]);
+    // `authUserId` is a dependency so a logout→login (identity becomes
+    // available again) re-pulls the persisted graph instead of leaving the
+    // signed-out empty state on screen (#4149).
+  }, [mode, refreshKey, authUserId]);
 
-  const cardClass =
-    'rounded-lg border border-stone-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900';
+  const cardClass = 'rounded-lg border border-line bg-surface p-4';
 
   return (
     <div className="h-full">
-      <TwoPanelLayout
-        id="brain"
-        // Max-width applied once to the whole panel (sidebar + content) and
-        // centered, matching the settings two-pane shell.
-        className="mx-auto h-full w-full max-w-6xl p-4 pt-6"
-        defaultSidebarVisible
-        defaultSidebarWidth={210}
-        minSidebarWidth={170}
-        maxSidebarWidth={320}
-        seamless
-        sidebar={
+      {/* The Brain navigation lives in the root app sidebar's dynamic region. */}
+      <SidebarContent>
+        <div className="h-full overflow-hidden">
           <TwoPaneNav
             ariaLabel={t('nav.brain')}
             selected={activeTab}
@@ -164,6 +173,11 @@ export default function Brain() {
                     icon: navIcon(
                       'M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z'
                     ),
+                  },
+                  {
+                    value: 'goals',
+                    label: t('brain.tabs.goals'),
+                    icon: navIcon('M5 3v18M5 3l13 4-13 4M5 13l9 3-9 3'),
                   },
                   {
                     value: 'sources',
@@ -224,32 +238,32 @@ export default function Brain() {
                 ],
               },
             ]}
-            header={
-              <div className="min-w-0">
-                <h1 className="text-base font-bold text-stone-900 dark:text-neutral-100">
-                  {t('nav.brain')}
-                </h1>
-                <p className="mt-0.5 text-[11px] text-stone-500 dark:text-neutral-400">
-                  {t('brain.subtitle')}
-                </p>
-              </div>
-            }
+            header={<p className="min-w-0 text-[11px] text-content-muted">{t('brain.subtitle')}</p>}
           />
-        }>
+        </div>
+      </SidebarContent>
+      <div className="mx-auto h-full w-full max-w-5xl">
         {/* Knowledge & Memory panels relocated from Settings are themselves
             PanelPage panels (description, no title; the back button hides
             because the Brain sidebar owns navigation here), so they fill the
             content pane and own their own scroll directly. */}
         {KNOWLEDGE_TABS.has(activeTab) ? (
-          <SettingsLayoutProvider value={{ inTwoPaneShell: true }}>
-            {/* Distinct tab query key so the embedded Intelligence panel's
-                internal tab switches don't overwrite Brain's own
-                `?tab=intelligence` and unmount it. */}
-            {activeTab === 'intelligence' && <Intelligence tabParamKey="itab" />}
-            {activeTab === 'memory-data' && <MemoryDataPanel />}
-            {activeTab === 'memory-debug' && <MemoryDebugPanel />}
-            {activeTab === 'analysis-views' && <AnalysisViewsPanel />}
-          </SettingsLayoutProvider>
+          // Knowledge subpages were orphaned flush on the shell — give them a
+          // card surface (the bespoke graph/sources/etc. tabs keep their own
+          // scaffold below and stay flush).
+          <div className="h-full p-4">
+            <div className="h-full overflow-hidden rounded-2xl border border-line bg-surface shadow-soft">
+              <SettingsLayoutProvider value={{ inTwoPaneShell: true }}>
+                {/* Distinct tab query key so the embedded Intelligence panel's
+                    internal tab switches don't overwrite Brain's own
+                    `?tab=intelligence` and unmount it. */}
+                {activeTab === 'intelligence' && <Intelligence tabParamKey="itab" />}
+                {activeTab === 'memory-data' && <MemoryDataPanel />}
+                {activeTab === 'memory-debug' && <MemoryDebugPanel />}
+                {activeTab === 'analysis-views' && <AnalysisViewsPanel />}
+              </SettingsLayoutProvider>
+            </div>
+          </div>
         ) : (
           // Bespoke tabs share the standard scaffold: a single scrolling body,
           // all custom controls live inside it.
@@ -282,6 +296,8 @@ export default function Brain() {
                 </div>
               )}
 
+              {activeTab === 'goals' && <GoalsPanel />}
+
               {activeTab === 'sources' && (
                 <div className="space-y-5 animate-fade-up">
                   <MemorySourcesRegistry onToast={addToast} />
@@ -311,12 +327,13 @@ export default function Brain() {
                       setIntervalMinutes={sub.setIntervalMinutes}
                     />
                   </div>
+                  <SubconsciousTriggersPanel />
                 </div>
               )}
             </div>
           </PanelPage>
         )}
-      </TwoPanelLayout>
+      </div>
 
       <ToastContainer notifications={toasts} onRemove={removeToast} />
     </div>

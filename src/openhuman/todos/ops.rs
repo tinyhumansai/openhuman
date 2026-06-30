@@ -434,6 +434,35 @@ pub fn decide_plan(
     update_status(location, id, new_status)
 }
 
+/// Clear a parked plan for re-planning. Transitions **every**
+/// `AwaitingApproval` card on the board to `Rejected` so none stays runnable,
+/// then returns the fresh snapshot. The caller (the plan-review surface) sends
+/// the user's `feedback` back into the thread as a normal message so the
+/// orchestrator re-plans and re-parks a new plan. Lenient when nothing is
+/// awaiting — a benign no-op (returns the snapshot unchanged) rather than an
+/// error, so a racing decision can't strand the feedback message.
+pub fn revise_plan(location: &BoardLocation, feedback: &str) -> Result<TodosSnapshot, String> {
+    let _scratch_guard = maybe_scratch_lock(location);
+    let mut cards = load_cards(location)?;
+    let mut revised = 0usize;
+    for card in cards.iter_mut() {
+        if card.status == TaskCardStatus::AwaitingApproval {
+            card.status = TaskCardStatus::Rejected;
+            card.updated_at = Utc::now().to_rfc3339();
+            revised += 1;
+        }
+    }
+    tracing::info!(
+        thread_id = ?location.thread_id(),
+        revised,
+        feedback_len = feedback.len(),
+        "[todos][ops] revise_plan rejected awaiting cards for re-plan"
+    );
+    let cards = save_cards(location, cards)?;
+    emit_progress(location, &cards);
+    Ok(into_snapshot(location, cards))
+}
+
 /// Remove a card by id. Errors if `id` is unknown.
 pub fn remove(location: &BoardLocation, id: &str) -> Result<TodosSnapshot, String> {
     tracing::debug!(
@@ -786,6 +815,49 @@ mod tests {
         update_status(&loc, &id, TaskCardStatus::AwaitingApproval).unwrap();
         let rejected = decide_plan(&loc, &id, false).unwrap();
         assert_eq!(rejected.cards[0].status, TaskCardStatus::Rejected);
+    }
+
+    #[test]
+    fn revise_plan_rejects_only_awaiting_cards() {
+        let dir = tempdir().unwrap();
+        let loc = thread_loc(dir.path(), "t1");
+        // Each `add` returns the whole board; the new card is the last one.
+        let a = add(&loc, "A", CardPatch::default()).unwrap();
+        let b = add(&loc, "B", CardPatch::default()).unwrap();
+        let c = add(&loc, "C", CardPatch::default()).unwrap();
+        let a_id = a.cards.last().unwrap().id.clone();
+        let b_id = b.cards.last().unwrap().id.clone();
+        let c_id = c.cards.last().unwrap().id.clone();
+
+        // Two cards parked for review, one left as a plain todo.
+        update_status(&loc, &a_id, TaskCardStatus::AwaitingApproval).unwrap();
+        update_status(&loc, &b_id, TaskCardStatus::AwaitingApproval).unwrap();
+
+        let snap = revise_plan(&loc, "please add a verification step").unwrap();
+        let by_id = |id: &str| {
+            snap.cards
+                .iter()
+                .find(|c| c.id == id)
+                .unwrap()
+                .status
+                .clone()
+        };
+        assert_eq!(by_id(&a_id), TaskCardStatus::Rejected);
+        assert_eq!(by_id(&b_id), TaskCardStatus::Rejected);
+        // The non-awaiting card is untouched.
+        assert_eq!(by_id(&c_id), TaskCardStatus::Todo);
+    }
+
+    #[test]
+    fn revise_plan_is_noop_when_nothing_awaiting() {
+        let dir = tempdir().unwrap();
+        let loc = thread_loc(dir.path(), "t1");
+        let a = add(&loc, "A", CardPatch::default()).unwrap();
+        let a_id = a.cards[0].id.clone();
+        let snap = revise_plan(&loc, "tweak it").unwrap();
+        assert_eq!(snap.cards.len(), 1);
+        assert_eq!(snap.cards[0].id, a_id);
+        assert_eq!(snap.cards[0].status, TaskCardStatus::Todo);
     }
 
     #[test]

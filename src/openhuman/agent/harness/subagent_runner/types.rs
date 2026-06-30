@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use thiserror::Error;
 
+use crate::openhuman::agent::harness::definition::AgentTier;
 use crate::openhuman::inference::provider::ChatMessage;
 
 /// Per-spawn options that override or augment what the
@@ -107,6 +108,28 @@ pub struct SubagentRunOutcome {
     pub mode: SubagentMode,
     /// Whether the run completed or paused for user input.
     pub status: SubagentRunStatus,
+    /// Final in-memory history after the run loop exits. Durable sub-agent
+    /// sessions persist this so an idle worker can resume without rebuilding
+    /// its context from only the parent transcript.
+    pub final_history: Vec<ChatMessage>,
+    /// Token + cost accounting accumulated across every provider call this
+    /// sub-agent made. Surfaced so the parent turn can roll child spend into
+    /// the session totals (tokens + USD) and the global cost tracker. See
+    /// [`SubagentUsage`].
+    pub usage: SubagentUsage,
+}
+
+/// Token + cost totals for a single sub-agent run.
+///
+/// Mirrors the inner-loop `AggregatedUsage`, lifted into the public outcome so
+/// the parent turn can fold sub-agent spend into the session-level token/cost
+/// meters surfaced in the UI footer.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct SubagentUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cached_input_tokens: u64,
+    pub charged_amount_usd: f64,
 }
 
 /// Which prompt-construction path the runner took for a sub-agent.
@@ -172,6 +195,16 @@ pub enum SubagentRunError {
     SpawnDepthExceeded {
         attempted_depth: usize,
         max_depth: usize,
+    },
+
+    #[error(
+        "delegation blocked by the spawn-hierarchy gate: a `{parent_tier}` agent may not \
+         delegate to a `{child_tier}` agent — {reason}"
+    )]
+    TierViolation {
+        parent_tier: AgentTier,
+        child_tier: AgentTier,
+        reason: String,
     },
 
     #[error("sub-agent exceeded maximum iterations ({0})")]

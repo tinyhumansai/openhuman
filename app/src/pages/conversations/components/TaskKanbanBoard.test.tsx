@@ -28,7 +28,11 @@ vi.mock('../../../utils/tauriCommands', () => ({
 const navigateSpy = vi.hoisted(() => vi.fn());
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
-  return { ...actual, useNavigate: () => navigateSpy };
+  return {
+    ...actual,
+    useNavigate: () => navigateSpy,
+    useLocation: () => ({ pathname: '/chat', search: '', hash: '', state: null, key: 'test' }),
+  };
 });
 
 function card(partial: Partial<TaskBoardCard>): TaskBoardCard {
@@ -203,7 +207,9 @@ describe('TaskKanbanBoard approval surface', () => {
     // "Manage sources" jumps to the merged Integrations settings page
     // (task-sources was folded into /settings/integrations).
     fireEvent.click(screen.getByText('conversations.taskKanban.sources.manage'));
-    expect(navigateSpy).toHaveBeenCalledWith('/settings/integrations');
+    expect(navigateSpy).toHaveBeenCalledWith('/settings/integrations', {
+      state: { backgroundLocation: expect.objectContaining({ pathname: '/chat' }) },
+    });
   });
 
   it('shows a "View work" button on a card with a session thread and calls onViewSession', () => {

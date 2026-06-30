@@ -11,7 +11,7 @@ import { OnboardingContext, type OnboardingDraft } from './OnboardingContext';
 /**
  * Full-page chrome for the onboarding flow. Hosts the shared draft + the
  * completion side-effects (persist `onboarding_completed`, notify backend,
- * navigate to /home). Individual steps render through `<Outlet />`.
+ * navigate to /chat). Individual steps render through `<Outlet />`.
  */
 const OnboardingLayout = () => {
   const navigate = useNavigate();
@@ -66,16 +66,16 @@ const OnboardingLayout = () => {
     // Fire onboarding_complete analytics event before navigation.
     trackEvent('onboarding_complete');
 
-    // Flag the Joyride walkthrough as pending so it auto-starts on /home.
+    // Flag the Joyride walkthrough as pending so it auto-starts on the chat landing surface.
     // Best-effort: localStorage failures must not block navigation.
     try {
       setWalkthroughPending();
-      console.debug('[onboarding:layout] walkthrough pending flag set — navigating to /home');
+      console.debug('[onboarding:layout] walkthrough pending flag set — navigating to /chat');
     } catch (e) {
       console.warn('[onboarding:layout] could not set walkthrough pending flag; continuing', e);
     }
 
-    navigate('/home', { replace: true });
+    navigate('/chat', { replace: true });
   }, [draft.connectedSources, navigate, setOnboardingCompletedFlag, setOnboardingTasks, snapshot]);
 
   const value = useMemo(

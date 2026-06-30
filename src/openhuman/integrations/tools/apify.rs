@@ -52,6 +52,84 @@ fn summarize_json_array(items: &[serde_json::Value], max_items: usize) -> String
         .join("\n")
 }
 
+fn format_run_actor_response(resp: &ApifyRunResponse, sync: bool) -> String {
+    let mut lines = vec![
+        format!("Apify run started for actor: {}", resp.actor_id),
+        format!("Status: {}", resp.status),
+    ];
+
+    if let Some(items) = resp.items.as_ref() {
+        lines.push(format!("Returned {} result item(s).", items.len()));
+        if !items.is_empty() {
+            lines.push("Sample results:".to_string());
+            lines.push(summarize_json_array(items, 3));
+        }
+    } else {
+        let follow_up = if sync {
+            "No inline result items were returned. Poll with apify_get_run_status or fetch results with apify_get_run_results."
+        } else {
+            "This run is still in progress. Poll with apify_get_run_status."
+        };
+        lines.push(follow_up.to_string());
+        lines
+            .push("Use the structured reference below for follow-up Apify tool calls.".to_string());
+        lines.push(format!(
+            "[apify_run_ref]\n{}\n[/apify_run_ref]",
+            format_apify_run_ref(resp)
+        ));
+    }
+
+    lines.push(format!("Cost: ${:.4}", resp.cost_usd));
+    lines.join("\n")
+}
+
+fn format_run_status_response(resp: &ApifyRunResponse) -> String {
+    let mut lines = vec![
+        format!("Actor ID: {}", resp.actor_id),
+        format!("Status: {}", resp.status),
+    ];
+
+    lines.push("Use the structured reference below for follow-up Apify tool calls.".to_string());
+    lines.push(format!(
+        "[apify_run_ref]\n{}\n[/apify_run_ref]",
+        format_apify_run_ref(resp)
+    ));
+    lines.push(format!("Cost: ${:.4}", resp.cost_usd));
+    lines.join("\n")
+}
+
+fn format_apify_run_ref(resp: &ApifyRunResponse) -> String {
+    serde_json::to_string(&json!({
+        "run_id": resp.run_id,
+        "dataset_id": resp.dataset_id,
+        "status": resp.status,
+    }))
+    .unwrap_or_else(|_| "{}".to_string())
+}
+
+fn run_actor_payload(resp: &ApifyRunResponse, display: &str) -> serde_json::Value {
+    json!({
+        "display": display,
+        "run_id": resp.run_id,
+        "actor_id": resp.actor_id,
+        "status": resp.status,
+        "dataset_id": resp.dataset_id,
+        "items": resp.items,
+        "cost_usd": resp.cost_usd,
+    })
+}
+
+fn run_status_payload(resp: &ApifyRunResponse, display: &str) -> serde_json::Value {
+    json!({
+        "display": display,
+        "run_id": resp.run_id,
+        "actor_id": resp.actor_id,
+        "status": resp.status,
+        "dataset_id": resp.dataset_id,
+        "cost_usd": resp.cost_usd,
+    })
+}
+
 /// Start an Apify actor run for scraping or data-collection workflows.
 pub struct ApifyRunActorTool {
     client: Arc<IntegrationClient>,
@@ -170,31 +248,18 @@ impl Tool for ApifyRunActorTool {
             .await
         {
             Ok(resp) => {
-                let mut lines = vec![
-                    format!("Apify run started for actor: {}", resp.actor_id),
-                    format!("Run ID: {}", resp.run_id),
-                    format!("Status: {}", resp.status),
-                ];
-
-                if let Some(dataset_id) = resp.dataset_id.as_deref() {
-                    lines.push(format!("Dataset ID: {}", dataset_id));
-                }
-
-                if let Some(items) = resp.items.as_ref() {
-                    lines.push(format!("Returned {} result item(s).", items.len()));
-                    if !items.is_empty() {
-                        lines.push("Sample results:".to_string());
-                        lines.push(summarize_json_array(items, 3));
-                    }
-                } else if !sync {
-                    lines.push(
-                        "This run is still in progress. Poll with apify_get_run_status."
-                            .to_string(),
-                    );
-                }
-
-                lines.push(format!("Cost: ${:.4}", resp.cost_usd));
-                Ok(ToolResult::success(lines.join("\n")))
+                tracing::debug!(
+                    run_id = %resp.run_id,
+                    dataset_id = resp.dataset_id.as_deref().unwrap_or(""),
+                    status = %resp.status,
+                    cost_usd = resp.cost_usd,
+                    "[apify_run_actor] actor run accepted"
+                );
+                let display = format_run_actor_response(&resp, sync);
+                Ok(ToolResult::success_with_markdown(
+                    run_actor_payload(&resp, &display),
+                    display,
+                ))
             }
             Err(e) => Ok(ToolResult::error(format!("Apify actor run failed: {e}"))),
         }
@@ -258,16 +323,18 @@ impl Tool for ApifyGetRunStatusTool {
 
         match self.client.get::<ApifyRunResponse>(&path).await {
             Ok(resp) => {
-                let mut lines = vec![
-                    format!("Run ID: {}", resp.run_id),
-                    format!("Actor ID: {}", resp.actor_id),
-                    format!("Status: {}", resp.status),
-                ];
-                if let Some(dataset_id) = resp.dataset_id.as_deref() {
-                    lines.push(format!("Dataset ID: {}", dataset_id));
-                }
-                lines.push(format!("Cost: ${:.4}", resp.cost_usd));
-                Ok(ToolResult::success(lines.join("\n")))
+                tracing::debug!(
+                    run_id = %resp.run_id,
+                    dataset_id = resp.dataset_id.as_deref().unwrap_or(""),
+                    status = %resp.status,
+                    cost_usd = resp.cost_usd,
+                    "[apify_get_run_status] fetched run status"
+                );
+                let display = format_run_status_response(&resp);
+                Ok(ToolResult::success_with_markdown(
+                    run_status_payload(&resp, &display),
+                    display,
+                ))
             }
             Err(e) => Ok(ToolResult::error(format!(
                 "Apify get run status failed: {e}"
@@ -368,10 +435,12 @@ impl Tool for ApifyGetRunResultsTool {
         match self.client.get::<ApifyGetRunResultsResponse>(&path).await {
             Ok(resp) => {
                 if resp.items.is_empty() {
-                    return Ok(ToolResult::success(format!(
-                        "No dataset items found for run {}",
-                        run_id
-                    )));
+                    tracing::debug!(
+                        run_id = run_id,
+                        total = resp.total,
+                        "[apify_get_run_results] no dataset items found"
+                    );
+                    return Ok(ToolResult::success("No dataset items found.".to_string()));
                 }
 
                 let mut lines = vec![

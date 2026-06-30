@@ -1,11 +1,11 @@
 //! Tool: `call_memory_agent` — invoke the memory retrieval agent to walk
 //! the memory tree and return context for a query.
 //!
-//! Unlike the lower-level `memory_tree`, `memory_smart_walk`, and
-//! `memory_tree_walk` tools which are individual retrieval primitives,
-//! this tool spawns the full `agent_memory` sub-agent which autonomously
-//! decides which retrieval strategies to combine, navigates the tree
-//! across multiple turns, and returns a synthesised, cited answer.
+//! Unlike the lower-level `memory_tree` tool (whose `walk`/`smart_walk` modes
+//! now run the deterministic E2GraphRAG retriever and the other modes are
+//! individual retrieval primitives), this tool spawns the full `agent_memory`
+//! sub-agent which decides which retrieval strategies to combine and returns a
+//! synthesised, cited answer.
 //!
 //! Supports both sync (blocking) and async (fire-and-forget) modes.
 

@@ -1,4 +1,5 @@
 import type { ToolTimelineEntry } from '../store/chatRuntimeSlice';
+import type { PersistedTranscriptItem } from '../types/turnState';
 
 interface ParsedToolArgs {
   agent_id?: string;
@@ -11,6 +12,7 @@ interface ParsedToolArgs {
   pattern?: string;
   query?: string;
   tool_name?: string;
+  question?: string;
 }
 
 const TOOL_DISPLAY_NAMES: Record<string, string> = {
@@ -69,14 +71,176 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   audio_email_podcast: 'Emailing podcast',
   audio_generate_and_email_podcast: 'Generating & emailing podcast',
   composio_list_connections: 'Viewing your Connections',
+  agent_prepare_context: 'Preparing context',
 };
 
 /**
  * Format a raw tool name into a short human-readable label.
  * Used for subagent child tool rows and sub-mascot activity text.
  */
-export function formatToolName(toolName: string): string {
+export function formatToolName(toolName: string | undefined): string {
+  if (!toolName) return '';
   return TOOL_DISPLAY_NAMES[toolName] ?? humanizeIdentifier(toolName);
+}
+
+/**
+ * The fixed set of built-in / special tools this client formatter labels
+ * well on its own (with args-aware detail). For these, the client label is
+ * authoritative and a server-supplied `display_label` is ignored — the
+ * server label only wins for *dynamic* tools (Composio/MCP/integration
+ * actions) the client can't possibly know, which is where raw `snake_case`
+ * used to leak through. Keep in sync with {@link formatTimelineEntry} /
+ * {@link formatToolDetail}.
+ */
+const CLIENT_KNOWN_TOOLS = new Set<string>([
+  ...Object.keys(TOOL_DISPLAY_NAMES),
+  // args-aware built-ins handled by formatToolDetail()
+  'shell',
+  'node_exec',
+  'npm_exec',
+  'web_fetch',
+  'http_request',
+  'curl',
+  'web_search',
+  'gitbooks_search',
+  'file_read',
+  'file_write',
+  'vault_write_markdown',
+  'edit',
+  'apply_patch',
+  'grep',
+  'glob',
+  'list',
+  'git_operations',
+  'browser',
+  'browser_open',
+  'screenshot',
+  'image_info',
+  'install_tool',
+  'lsp',
+  'run_tests',
+  'run_linter',
+  'read_diff',
+  // special-cased agent / integration rows
+  'spawn_subagent',
+  'integrations_agent',
+  'researcher',
+  'agent_prepare_context',
+  'context_scout',
+  'composio_list_connections',
+  'orchestrator',
+  'critic',
+  'tools_agent',
+  'code_executor',
+]);
+
+/**
+ * Whether the client formatter recognizes this tool (so its label should win
+ * over any server-supplied one). True for built-ins, the special agent rows,
+ * and the `subagent:` / `delegate_` families that {@link formatTimelineEntry}
+ * handles explicitly.
+ */
+export function isKnownClientTool(name: string): boolean {
+  return (
+    name.startsWith('subagent:') || name.startsWith('delegate_') || CLIENT_KNOWN_TOOLS.has(name)
+  );
+}
+
+/**
+ * Strip `<tool_call>…</tool_call>` envelopes that some models emit inline in
+ * their visible / reasoning text. The structured call is already surfaced as
+ * its own timeline row, so the raw envelope is pure noise in displayed prose.
+ * Also removes a trailing, still-streaming unclosed `<tool_call>…` so a
+ * half-arrived delta never flashes raw markup. Whitespace is left intact —
+ * callers that render single-line previews collapse it themselves.
+ */
+export function stripToolCallEnvelopes(text: string | undefined | null): string {
+  if (!text) return '';
+  return text
+    .replace(/<tool_call\b[^>]*>[\s\S]*?<\/tool_call>/gi, '')
+    .replace(/<tool_call\b[^>]*>[\s\S]*$/i, '');
+}
+
+/** Broad activity category for a tool, used to group + icon timeline rows. */
+export type ToolCategory = 'read' | 'write' | 'search' | 'run' | 'fetch' | 'browse' | 'other';
+
+const TOOL_CATEGORIES: Record<string, ToolCategory> = {
+  file_read: 'read',
+  list: 'read',
+  read_diff: 'read',
+  file_write: 'write',
+  vault_write_markdown: 'write',
+  edit: 'write',
+  apply_patch: 'write',
+  grep: 'search',
+  glob: 'search',
+  web_search: 'search',
+  gitbooks_search: 'search',
+  gitbooks_get_page: 'read',
+  shell: 'run',
+  node_exec: 'run',
+  npm_exec: 'run',
+  run_tests: 'run',
+  run_linter: 'run',
+  git_operations: 'run',
+  web_fetch: 'fetch',
+  http_request: 'fetch',
+  curl: 'fetch',
+  browser: 'browse',
+  browser_open: 'browse',
+  screenshot: 'browse',
+};
+
+/** Categorize a (possibly `subagent:`-prefixed) tool name for grouping/icons. */
+export function categorizeTool(name: string): ToolCategory {
+  const base = name.replace(/^subagent:/, '');
+  return TOOL_CATEGORIES[base] ?? 'other';
+}
+
+/** Plural-aware verb phrase per category, e.g. `read` + 2 → "Read 2 files". */
+const CATEGORY_PHRASE: Record<
+  ToolCategory,
+  { verb: string; noun: [singular: string, plural: string] }
+> = {
+  read: { verb: 'Read', noun: ['file', 'files'] },
+  write: { verb: 'Edited', noun: ['file', 'files'] },
+  search: { verb: 'Ran', noun: ['search', 'searches'] },
+  run: { verb: 'Ran', noun: ['command', 'commands'] },
+  fetch: { verb: 'Fetched', noun: ['page', 'pages'] },
+  browse: { verb: 'Browsed', noun: ['page', 'pages'] },
+  other: { verb: 'Ran', noun: ['step', 'steps'] },
+};
+
+/**
+ * Summarize a group of consecutive tool rows into a single Hermes-style
+ * header — "Viewed 2 files", "Ran 3 commands", or, for a mixed group, the
+ * distinct category phrases joined ("Edited a file, read a file"). A
+ * single-row group defers to that row's specific label (more informative
+ * than a generic count). Pure + deterministic for unit testing.
+ */
+export function summarizeToolGroup(entries: ToolTimelineEntry[]): string {
+  if (entries.length === 0) return '';
+  if (entries.length === 1) {
+    return formatTimelineEntry(entries[0]).title;
+  }
+  // Count per category, preserving first-seen order.
+  const order: ToolCategory[] = [];
+  const counts = new Map<ToolCategory, number>();
+  for (const entry of entries) {
+    const cat = categorizeTool(entry.name);
+    if (!counts.has(cat)) order.push(cat);
+    counts.set(cat, (counts.get(cat) ?? 0) + 1);
+  }
+  const phrases = order.map((cat, i) => {
+    const n = counts.get(cat) ?? 0;
+    const { verb, noun } = CATEGORY_PHRASE[cat];
+    const word = n === 1 ? noun[0] : noun[1];
+    const phrase = `${verb} ${n} ${word}`;
+    // Lowercase the leading verb on all but the first phrase so the joined
+    // sentence reads naturally ("Edited a file, ran 2 commands").
+    return i === 0 ? phrase : phrase.charAt(0).toLowerCase() + phrase.slice(1);
+  });
+  return phrases.join(', ');
 }
 
 export function formatTimelineEntry(entry: ToolTimelineEntry): { title: string; detail?: string } {
@@ -106,6 +270,12 @@ export function formatTimelineEntry(entry: ToolTimelineEntry): { title: string; 
 
   if (entry.name === 'subagent:researcher' || entry.name === 'researcher') {
     return { title: 'Researching', detail: entry.detail };
+  }
+  if (entry.name === 'agent_prepare_context') {
+    return { title: 'Preparing context', detail: parsedArgs?.question?.trim() || entry.detail };
+  }
+  if (entry.name === 'subagent:context_scout' || entry.name === 'context_scout') {
+    return { title: 'Scouting context', detail: entry.detail };
   }
   if (entry.name === 'composio_list_connections') {
     return { title: 'Viewing your Connections', detail: entry.detail };
@@ -154,6 +324,70 @@ export function formatTimelineEntry(entry: ToolTimelineEntry): { title: string; 
     title: entry.displayName ?? humanizeIdentifier(entry.name),
     detail: entry.detail ?? parsedArgs?.prompt,
   };
+}
+
+/**
+ * A render block for the "View processing" panel — either a prose block
+ * (the agent's narration or hidden reasoning) or a group of consecutive
+ * tool rows under a Hermes-style summary. {@link buildProcessingBlocks}
+ * derives an ordered list of these from the interleaved transcript.
+ */
+export type ProcessingBlock =
+  | { kind: 'narration'; key: string; text: string }
+  | { kind: 'thinking'; key: string; text: string }
+  | { kind: 'toolGroup'; key: string; summary: string; entries: ToolTimelineEntry[] };
+
+/**
+ * Turn the ordered transcript (narration / thinking / tool-call pointers)
+ * plus the tool timeline into the interleaved Hermes render model: prose
+ * flows inline, and runs of consecutive tool calls collapse into one group
+ * with a summary header. Tool pointers are resolved against `entries` by id;
+ * unknown ids are skipped. Pure + deterministic for unit testing.
+ *
+ * When `transcript` is empty (legacy snapshot / pre-streaming row), returns a
+ * single tool group over all `entries` so the caller still renders the rows.
+ */
+export function buildProcessingBlocks(
+  transcript: PersistedTranscriptItem[],
+  entries: ToolTimelineEntry[]
+): ProcessingBlock[] {
+  const byId = new Map(entries.map(e => [e.id, e]));
+
+  if (transcript.length === 0) {
+    return entries.length > 0
+      ? [{ kind: 'toolGroup', key: 'all', summary: summarizeToolGroup(entries), entries }]
+      : [];
+  }
+
+  const ordered = [...transcript].sort((a, b) => a.seq - b.seq);
+  const blocks: ProcessingBlock[] = [];
+  let group: ToolTimelineEntry[] = [];
+
+  const flush = () => {
+    if (group.length === 0) return;
+    blocks.push({
+      kind: 'toolGroup',
+      key: `tg-${group[0].id}`,
+      summary: summarizeToolGroup(group),
+      entries: group,
+    });
+    group = [];
+  };
+
+  for (const item of ordered) {
+    if (item.kind === 'toolCall') {
+      const entry = byId.get(item.callId);
+      if (entry) group.push(entry);
+      continue;
+    }
+    // A prose item ends the current tool group.
+    flush();
+    const text = stripToolCallEnvelopes(item.text).trim();
+    if (!text) continue;
+    blocks.push({ kind: item.kind, key: `${item.kind}-${item.seq}`, text });
+  }
+  flush();
+  return blocks;
 }
 
 export function promptFromArgsBuffer(argsBuffer?: string): string | undefined {
@@ -413,7 +647,8 @@ function normalizeIntegrationName(value: string): string {
   }
 }
 
-function humanizeIdentifier(value: string): string {
+function humanizeIdentifier(value: string | undefined | null): string {
+  if (!value) return '';
   return value
     .replace(/^subagent:/, '')
     .replace(/^delegate_/, '')

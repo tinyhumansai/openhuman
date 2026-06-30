@@ -1119,6 +1119,7 @@ async fn composio_agent_tools_cover_metadata_missing_params_and_scope_helpers() 
             "composio_list_toolkits",
             "composio_list_connections",
             "composio_authorize",
+            "composio_connect",
             "composio_list_tools",
             "composio_execute",
         ]

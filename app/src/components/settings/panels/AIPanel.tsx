@@ -24,12 +24,14 @@ import {
   listProviderModels,
   loadAISettings,
   loadLocalProviderSnapshot,
+  loadProviderAuthErrors,
   type LocalProviderSnapshot,
   type ModelInfo,
   type ModelRegistryEntry,
   modelRegistryVision,
   OPENAI_CODEX_OAUTH_MISSING_AUTH_URL,
   OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL,
+  type ProviderAuthError,
   saveAISettings,
   setCloudProviderKey,
   testProviderModel,
@@ -41,6 +43,7 @@ import {
   type TeamUsage,
 } from '../../../services/api/creditsApi';
 import { connectOpenRouterViaOAuth } from '../../../utils/openrouterOAuth';
+import { openUrl } from '../../../utils/openUrl';
 import {
   type AuthStyle,
   openhumanUpdateLocalAiSettings,
@@ -93,6 +96,7 @@ type WorkloadId =
   | 'reasoning'
   | 'agentic'
   | 'coding'
+  | 'vision'
   | 'memory'
   | 'heartbeat'
   | 'learning'
@@ -107,7 +111,14 @@ export type ProviderRef =
   | { kind: 'local'; model: string; temperature?: number | null }
   | { kind: 'claude-code'; model: string; temperature?: number | null };
 
-type Workload = { id: WorkloadId; group: WorkloadGroup; label: string; description: string };
+type Workload = {
+  id: WorkloadId;
+  group: WorkloadGroup;
+  // i18n keys (resolved with `t()` at render) rather than literal English, so the
+  // workload labels/descriptions translate like the rest of the panel.
+  labelKey: string;
+  descriptionKey: string;
+};
 
 export type RoutingMap = Record<WorkloadId, ProviderRef>;
 type RoutingMode = 'managed' | 'own' | 'custom';
@@ -116,6 +127,7 @@ const ROUTING_WORKLOAD_IDS: WorkloadId[] = [
   'reasoning',
   'agentic',
   'coding',
+  'vision',
   'memory',
   'heartbeat',
   'learning',
@@ -128,12 +140,14 @@ const BUILTIN_RESERVED_SLUGS = [
   'custom',
   'ollama',
   'lmstudio',
+  'omlx',
   // Claude Code is a CLI-backed peer provider surfaced via a dedicated
   // connect button (not a chip), so reserve its slug so it never renders in
   // the generic custom-provider chip list.
   'claude-code',
   ...BUILTIN_CLOUD_PROVIDER_SLUGS,
 ];
+const KIMI_PLATFORM_URL = 'https://platform.kimi.ai?aff=openhuman';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Static catalog
@@ -157,70 +171,98 @@ const WORKLOADS: Workload[] = [
   {
     id: 'chat',
     group: 'chat',
-    label: 'Chat',
-    description: 'Direct conversational back-and-forth — “Quick” mode in Conversations',
+    labelKey: 'settings.ai.routing.workload.chat.label',
+    descriptionKey: 'settings.ai.routing.workload.chat.description',
   },
   {
     id: 'reasoning',
     group: 'chat',
-    label: 'Reasoning',
-    description: 'Main chat agent, meeting summarizer — “Reasoning” mode in Conversations',
+    labelKey: 'settings.ai.routing.workload.reasoning.label',
+    descriptionKey: 'settings.ai.routing.workload.reasoning.description',
   },
   {
     id: 'agentic',
     group: 'chat',
-    label: 'Agentic',
-    description: 'Sub-agent runners, tool loops, GIF decisions',
+    labelKey: 'settings.ai.routing.workload.agentic.label',
+    descriptionKey: 'settings.ai.routing.workload.agentic.description',
   },
   {
     id: 'coding',
     group: 'chat',
-    label: 'Coding',
-    description: 'Code generation and refactor passes',
+    labelKey: 'settings.ai.routing.workload.coding.label',
+    descriptionKey: 'settings.ai.routing.workload.coding.description',
+  },
+  {
+    id: 'vision',
+    group: 'chat',
+    labelKey: 'settings.ai.routing.workload.vision.label',
+    descriptionKey: 'settings.ai.routing.workload.vision.description',
   },
   {
     id: 'memory',
     group: 'background',
-    label: 'Memory summarization',
-    description: 'Tree-extracts and consolidations',
+    labelKey: 'settings.ai.routing.workload.memory.label',
+    descriptionKey: 'settings.ai.routing.workload.memory.description',
   },
   {
     id: 'heartbeat',
     group: 'background',
-    label: 'Heartbeat',
-    description: 'Background reasoning between user turns',
+    labelKey: 'settings.ai.routing.workload.heartbeat.label',
+    descriptionKey: 'settings.ai.routing.workload.heartbeat.description',
   },
   {
     id: 'learning',
     group: 'background',
-    label: 'Learning · Reflections',
-    description: 'Periodic reflection over recent history',
+    labelKey: 'settings.ai.routing.workload.learning.label',
+    descriptionKey: 'settings.ai.routing.workload.learning.description',
   },
   {
     id: 'subconscious',
     group: 'background',
-    label: 'Subconscious',
-    description: 'Eventfulness scoring + drift checks',
+    labelKey: 'settings.ai.routing.workload.subconscious.label',
+    descriptionKey: 'settings.ai.routing.workload.subconscious.description',
   },
 ];
 
-const WORKLOAD_MODEL_HINTS: Record<WorkloadId, string> = {
-  chat: 'Recommended: a cheap or mid-cost fast chat model with high tokens/sec and low latency. Open-source local models can work well here if they feel responsive.',
-  reasoning:
-    'Recommended: a more expensive frontier or strong reasoning model for deep thinking. This is used for the main chat agent, meeting summaries, and heavier answer synthesis.',
-  agentic:
-    'Recommended: a reliable instruction-following model with strong tool use. Mid-cost frontier models are usually safest; capable open-source models can work if tool calling is stable.',
-  coding:
-    'Recommended: a coding-tuned model with strong instruction following, edit quality, and long-context performance. This is usually worth spending more on.',
-  memory:
-    'Recommended: a cheaper summarization model. It should be consistent and compact, but it does not need premium frontier-level reasoning.',
-  heartbeat:
-    'Recommended: a cheap, efficient background model. This runs often between turns, so low cost matters more than maximum intelligence.',
-  learning:
-    'Recommended: a stronger reflective model. This can be mid-cost or premium because it benefits from better synthesis over recent history.',
-  subconscious:
-    'Recommended: a very cheap monitoring model, ideally one that is lightweight and predictable. This is for eventfulness scoring, drift checks, and quiet background evaluation.',
+// i18n keys for the per-workload "Recommended: …" hints (resolved with `t()`).
+const WORKLOAD_MODEL_HINT_KEYS: Record<WorkloadId, string> = {
+  chat: 'settings.ai.routing.workload.chat.hint',
+  reasoning: 'settings.ai.routing.workload.reasoning.hint',
+  agentic: 'settings.ai.routing.workload.agentic.hint',
+  coding: 'settings.ai.routing.workload.coding.hint',
+  vision: 'settings.ai.routing.workload.vision.hint',
+  memory: 'settings.ai.routing.workload.memory.hint',
+  heartbeat: 'settings.ai.routing.workload.heartbeat.hint',
+  learning: 'settings.ai.routing.workload.learning.hint',
+  subconscious: 'settings.ai.routing.workload.subconscious.hint',
 };
+
+// Build the "pending routing changes" summary: one `"<label> → <target>"`
+// entry per workload whose draft route differs from the saved route. Extracted
+// as a pure, exported function so the (translated) formatting is unit-testable
+// without rendering the whole panel.
+export function buildRoutingDiffSummary(
+  saved: RoutingMap,
+  draft: RoutingMap,
+  t: (key: string) => string
+): string[] {
+  const describe = (r: ProviderRef): string => {
+    if (r.kind === 'openhuman') return 'openhuman';
+    if (r.kind === 'default') return 'cloud';
+    const tempSuffix = r.temperature != null ? `@${r.temperature.toFixed(2)}` : '';
+    if (r.kind === 'cloud') return `${r.providerSlug}:${r.model}${tempSuffix}`;
+    return `local:${r.model}${tempSuffix}`;
+  };
+  const out: string[] = [];
+  for (const w of WORKLOADS) {
+    const a = saved[w.id];
+    const b = draft[w.id];
+    if (JSON.stringify(a) !== JSON.stringify(b)) {
+      out.push(`${t(w.labelKey)} → ${describe(b)}`);
+    }
+  }
+  return out;
+}
 
 // TIER_PRESETS removed alongside the Local provider section.
 
@@ -243,6 +285,7 @@ const EMPTY_ROUTING: RoutingMap = {
   reasoning: { kind: 'default' },
   agentic: { kind: 'default' },
   coding: { kind: 'default' },
+  vision: { kind: 'default' },
   memory: { kind: 'default' },
   heartbeat: { kind: 'default' },
   learning: { kind: 'default' },
@@ -275,6 +318,7 @@ function slugifyCustomProviderName(name: string): string {
 function authStyleForSlug(slug: string): AuthStyle {
   if (slug === 'openhuman') return 'openhuman_jwt';
   if (slug === 'lmstudio' || slug === 'ollama') return 'none';
+  if (slug === 'omlx') return 'bearer';
   // Claude Code authenticates via the local CLI, never an HTTP key.
   if (slug === 'claude-code') return 'none';
   return authStyleForBuiltinCloudProvider(slug) ?? 'bearer';
@@ -300,6 +344,7 @@ function toPanelRoutingFromApi(api: ApiAISettings): { panel: AISettings } {
     reasoning: liftRef(api.routing.reasoning),
     agentic: liftRef(api.routing.agentic),
     coding: liftRef(api.routing.coding),
+    vision: liftRef(api.routing.vision),
     memory: liftRef(api.routing.memory),
     heartbeat: liftRef(api.routing.heartbeat),
     learning: liftRef(api.routing.learning),
@@ -323,6 +368,7 @@ function toApiSettings(panel: AISettings): ApiAISettings {
       reasoning: panel.routing.reasoning,
       agentic: panel.routing.agentic,
       coding: panel.routing.coding,
+      vision: panel.routing.vision,
       memory: panel.routing.memory,
       heartbeat: panel.routing.heartbeat,
       learning: panel.routing.learning,
@@ -522,15 +568,20 @@ function useInstalledModels(snapshot: LocalProviderSnapshot | null): OllamaModel
 
 // Local-runtime chip slugs (Ollama / LM Studio) that aren't actual slugs in
 // the cloud_providers list but need the same chip affordance.
-type LocalChipSlug = 'lmstudio' | 'ollama';
+type LocalChipSlug = 'lmstudio' | 'ollama' | 'omlx';
 
 // Tints per local-runtime chip slug.
 const LOCAL_CHIP_TONE: Record<LocalChipSlug, string> = {
   lmstudio: 'bg-cyan-50 dark:bg-cyan-500/10 ring-cyan-200 text-cyan-900 dark:text-cyan-100',
   ollama: 'bg-violet-50 dark:bg-violet-500/10 ring-violet-200 text-violet-900 dark:text-violet-100',
+  omlx: 'bg-amber-50 dark:bg-amber-500/10 ring-amber-200 text-amber-900 dark:text-amber-100',
 };
 
-const LOCAL_CHIP_LABEL: Record<LocalChipSlug, string> = { lmstudio: 'LM Studio', ollama: 'Ollama' };
+const LOCAL_CHIP_LABEL: Record<LocalChipSlug, string> = {
+  lmstudio: 'LM Studio',
+  ollama: 'Ollama',
+  omlx: 'OMLX',
+};
 
 function providerToggleAriaLabel(
   t: (key: string, fallback?: string) => string,
@@ -551,10 +602,7 @@ function formatI18n(template: string, vars: Record<string, string | number>): st
 }
 
 function slugTone(slug: string): string {
-  return (
-    BUILTIN_PROVIDER_META[slug]?.tone ??
-    'bg-neutral-100 dark:bg-neutral-800 ring-neutral-300 text-neutral-900 dark:text-neutral-100'
-  );
+  return BUILTIN_PROVIDER_META[slug]?.tone ?? 'bg-surface-subtle ring-neutral-300 text-content';
 }
 
 const ProviderToggleChip = ({
@@ -563,6 +611,7 @@ const ProviderToggleChip = ({
   enabled,
   busy,
   locked = false,
+  alwaysOn = false,
   onToggle,
 }: {
   slug: string;
@@ -570,7 +619,11 @@ const ProviderToggleChip = ({
   enabled: boolean;
   busy?: boolean;
   locked?: boolean;
-  onToggle: () => void;
+  // When true the provider is permanently available (e.g. Managed) and renders
+  // a static "Always on" indicator instead of a toggle. A locked toggle reads
+  // as switchable-but-broken (#3760); a badge has no affordance to fight.
+  alwaysOn?: boolean;
+  onToggle?: () => void;
 }) => {
   const { t } = useT();
   const tone = slugTone(slug);
@@ -578,13 +631,20 @@ const ProviderToggleChip = ({
     <div
       className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ring-1 transition-colors dark:ring-neutral-700 ${tone}`}>
       <span>{label}</span>
-      <SettingsSwitch
-        id={`provider-toggle-${slug}`}
-        checked={enabled}
-        onCheckedChange={onToggle}
-        disabled={busy || locked}
-        aria-label={providerToggleAriaLabel(t, enabled, label)}
-      />
+      {alwaysOn ? (
+        <span className="inline-flex items-center gap-1 opacity-80">
+          <LuCheck className="h-3 w-3" />
+          {t('settings.ai.routing.managedAlwaysOn')}
+        </span>
+      ) : (
+        <SettingsSwitch
+          id={`provider-toggle-${slug}`}
+          checked={enabled}
+          onCheckedChange={() => onToggle?.()}
+          disabled={busy || locked}
+          aria-label={providerToggleAriaLabel(t, enabled, label)}
+        />
+      )}
     </div>
   );
 };
@@ -603,7 +663,9 @@ const ProviderKeyDialog = ({
   slug,
   label,
   isLocalRuntime,
+  endpointKeyMode = false,
   initialValue,
+  initialKeyValue,
   oauthAction,
   onCancel,
   onSubmit,
@@ -612,18 +674,30 @@ const ProviderKeyDialog = ({
   label: string;
   /** When true, render an "Endpoint URL" field instead of API key. */
   isLocalRuntime: boolean;
+  /**
+   * When true (OMLX), render BOTH an "Endpoint URL" field AND an "API key"
+   * field. `onSubmit` then receives the API key as `value` and the endpoint
+   * via the `endpoint` argument.
+   */
+  endpointKeyMode?: boolean;
   /** Pre-populate the field when editing an existing provider's endpoint. */
   initialValue?: string;
+  /** Pre-populate the API key field in `endpointKeyMode`. */
+  initialKeyValue?: string;
   oauthAction?: { label: string; description?: string; onClick: () => Promise<void> | void } | null;
   onCancel: () => void;
-  /** Returns the entered value. For local runtimes this is the endpoint URL;
-   *  for cloud providers it's the API key. */
-  onSubmit: (value: string) => Promise<void> | void;
+  /** Returns the entered value(s). For plain local runtimes this is the
+   *  endpoint URL; for cloud providers it's the API key. In `endpointKeyMode`
+   *  the API key is `value` and the endpoint URL is `endpoint`. */
+  onSubmit: (value: string, endpoint?: string) => Promise<void> | void;
 }) => {
   const { t } = useT();
+  // In `endpointKeyMode`, `value` holds the endpoint URL and `keyValue` holds
+  // the API key. Otherwise `value` is either the endpoint (local) or key (cloud).
   const [value, setValue] = useState<string>(
     initialValue ?? (isLocalRuntime ? defaultEndpointFor(slug) : '')
   );
+  const [keyValue, setKeyValue] = useState<string>(initialKeyValue ?? '');
   const [phase, setPhase] = useState<'idle' | 'saving' | 'oauth'>('idle');
   const [error, setError] = useState<string | null>(null);
   const busy = phase !== 'idle';
@@ -631,6 +705,7 @@ const ProviderKeyDialog = ({
   const placeholder = isLocalRuntime
     ? defaultEndpointFor(slug) || t('settings.ai.defaultLocalEndpoint')
     : (builtinCloudProvider(slug)?.keyPlaceholder ?? 'your-api-key');
+  const keyPlaceholder = builtinCloudProvider(slug)?.keyPlaceholder ?? 'your-api-key';
 
   const fieldLabel = isLocalRuntime
     ? t('settings.ai.endpointUrlLabel')
@@ -638,9 +713,11 @@ const ProviderKeyDialog = ({
   const helper = isLocalRuntime
     ? formatI18n(t('settings.ai.localRuntimeHelper'), { label })
     : t('settings.ai.apiKeyStoredEncrypted');
+  const platformLinkUrl = slug === 'moonshot' && !isLocalRuntime ? KIMI_PLATFORM_URL : null;
 
   const handleSave = async () => {
     const trimmed = value.trim();
+    const trimmedKey = keyValue.trim();
     if (!trimmed) {
       setError(
         isLocalRuntime ? t('settings.ai.endpointUrlRequired') : t('settings.ai.apiKeyRequired')
@@ -651,6 +728,10 @@ const ProviderKeyDialog = ({
       setError(t('settings.ai.endpointProtocolRequired'));
       return;
     }
+    if (endpointKeyMode && !trimmedKey) {
+      setError(t('settings.ai.apiKeyRequired'));
+      return;
+    }
     setError(null);
 
     // A provider credential is being saved. This adds/updates a `cloudProviders`
@@ -659,12 +740,18 @@ const ProviderKeyDialog = ({
     console.debug('[ai-settings][routing] saving provider credential', {
       slug,
       local_runtime: isLocalRuntime,
-      kind: isLocalRuntime ? 'endpoint' : 'apiKey',
+      kind: endpointKeyMode ? 'endpointKey' : isLocalRuntime ? 'endpoint' : 'apiKey',
     });
 
     setPhase('saving');
     try {
-      await onSubmit(trimmed);
+      // In endpointKeyMode the API key is the primary value, endpoint is the
+      // second arg; otherwise the single field is the primary value.
+      if (endpointKeyMode) {
+        await onSubmit(trimmedKey, trimmed);
+      } else {
+        await onSubmit(trimmed);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.warn('[ai-settings] provider setup failed', {
@@ -700,16 +787,35 @@ const ProviderKeyDialog = ({
       aria-modal="true"
       aria-label={formatI18n(t('settings.ai.connectProviderDialog'), { label })}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-      <div className="w-full max-w-md rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 shadow-soft">
-        <div className="mb-4">
-          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">{`${t('settings.ai.connectProvider')} ${label}`}</h3>
-          <p className="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">{helper}</p>
+      <div className="relative w-full max-w-md rounded-2xl border border-line bg-surface p-6 shadow-soft">
+        {platformLinkUrl ? (
+          <a
+            href={platformLinkUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ insetInlineEnd: '1.5rem' }}
+            onClick={event => {
+              event.preventDefault();
+              void openUrl(platformLinkUrl).catch(err => {
+                console.warn('[ai-settings] provider platform link open failed', {
+                  slug,
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              });
+            }}
+            className="absolute top-6 text-xs font-medium leading-6 text-primary-600 hover:text-primary-700 dark:text-primary-300 dark:hover:text-primary-200">
+            {t('settings.ai.getProviderApiKey')}
+          </a>
+        ) : null}
+        <div className="mb-4" style={platformLinkUrl ? { paddingInlineEnd: '9rem' } : undefined}>
+          <h3 className="text-base font-semibold text-content">{`${t('settings.ai.connectProvider')} ${label}`}</h3>
+          <p className="mt-0.5 text-xs text-content-muted">{helper}</p>
         </div>
 
         <div className="flex flex-col gap-1.5">
           <label
             htmlFor="provider-key-input"
-            className="text-xs font-medium text-neutral-700 dark:text-neutral-200">
+            className="text-xs font-medium text-content-secondary">
             {fieldLabel}
           </label>
           <SettingsTextField
@@ -731,15 +837,45 @@ const ProviderKeyDialog = ({
               setError(null);
             }}
           />
+          {/* OMLX (endpointKeyMode): render the API key field in addition to
+              the endpoint field above — the runtime is OpenAI-compatible but
+              gated behind a Bearer key. */}
+          {endpointKeyMode ? (
+            <>
+              <label
+                htmlFor="provider-key-input-key"
+                className="mt-3 text-xs font-medium text-content-secondary">
+                {t('settings.ai.apiKeyFieldLabel')}
+              </label>
+              <SettingsTextField
+                id="provider-key-input-key"
+                type="text"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                data-form-type="other"
+                data-lpignore="true"
+                data-1p-ignore="true"
+                value={keyValue}
+                placeholder={keyPlaceholder}
+                disabled={busy}
+                onChange={e => {
+                  setKeyValue(e.target.value);
+                  setError(null);
+                }}
+              />
+            </>
+          ) : null}
           {error ? <ProviderSetupErrorNotice error={error} /> : null}
         </div>
 
         {oauthAction ? (
-          <div className="mt-4 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50 p-3">
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+          <div className="mt-4 rounded-xl border border-line bg-surface-muted dark:bg-surface-muted/50 p-3">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-content-muted">
               {t('settings.ai.or')}
             </div>
-            <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+            <p className="mt-1 text-xs text-content-muted">
               {oauthAction.description ?? t('settings.ai.openRouterOauthDescription')}
             </p>
             <Button
@@ -897,10 +1033,10 @@ const LoopToggle = ({
   busy: boolean;
   onToggle: () => void;
 }) => (
-  <div className="flex items-center justify-between gap-3 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2">
+  <div className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface px-3 py-2">
     <div className="min-w-0">
-      <div className="text-sm font-medium text-neutral-900 dark:text-neutral-100">{label}</div>
-      <div className="text-xs text-neutral-500 dark:text-neutral-400">{description}</div>
+      <div className="text-sm font-medium text-content">{label}</div>
+      <div className="text-xs text-content-muted">{description}</div>
     </div>
     <SettingsSwitch
       id={`loop-toggle-${label.toLowerCase().replace(/[^a-z0-9]/g, '-')}`}
@@ -921,32 +1057,22 @@ const MetricTile = ({
   value: string;
   detail?: string;
 }) => (
-  <div className="min-w-0 overflow-hidden rounded-md bg-neutral-50 dark:bg-neutral-800/60 px-3 py-2">
-    <div className="truncate text-[10px] font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+  <div className="min-w-0 overflow-hidden rounded-md bg-surface-muted px-3 py-2">
+    <div className="truncate text-[10px] font-semibold uppercase tracking-wide text-content-faint">
       {label}
     </div>
-    <div className="mt-1 truncate text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-      {value}
-    </div>
-    {detail ? (
-      <div className="mt-0.5 truncate text-[11px] text-neutral-500 dark:text-neutral-400">
-        {detail}
-      </div>
-    ) : null}
+    <div className="mt-1 truncate text-sm font-semibold text-content">{value}</div>
+    {detail ? <div className="mt-0.5 truncate text-[11px] text-content-muted">{detail}</div> : null}
   </div>
 );
 
 const FormulaRow = ({ label, value, detail }: { label: string; value: string; detail: string }) => (
-  <div className="min-w-0 overflow-hidden rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2">
+  <div className="min-w-0 overflow-hidden rounded-md border border-line bg-surface px-3 py-2">
     <div className="flex items-center justify-between gap-3">
-      <span className="min-w-0 truncate text-xs font-medium text-neutral-800 dark:text-neutral-100">
-        {label}
-      </span>
-      <span className="shrink-0 font-mono text-xs text-neutral-600 dark:text-neutral-300">
-        {value}
-      </span>
+      <span className="min-w-0 truncate text-xs font-medium text-content">{label}</span>
+      <span className="shrink-0 font-mono text-xs text-content-secondary">{value}</span>
     </div>
-    <div className="mt-1 truncate text-[11px] text-neutral-500 dark:text-neutral-400">{detail}</div>
+    <div className="mt-1 truncate text-[11px] text-content-muted">{detail}</div>
   </div>
 );
 
@@ -1187,11 +1313,11 @@ export const BackgroundLoopControls = ({
   return (
     <div className="space-y-4">
       {!hideHeader && (
-        <div className="border-b border-neutral-200 dark:border-neutral-800 pb-2">
-          <h2 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
+        <div className="border-b border-line pb-2">
+          <h2 className="text-base font-semibold text-content">
             {t('settings.ai.backgroundLoops')}
           </h2>
-          <p className="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
+          <p className="mt-0.5 text-xs text-content-muted">
             {t('settings.ai.backgroundLoopsDesc')}
           </p>
         </div>
@@ -1202,13 +1328,13 @@ export const BackgroundLoopControls = ({
       <section className={`grid gap-3 ${gridCols}`}>
         {showHeartbeat && (
           <div className="space-y-3">
-            <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 p-3">
+            <div className="rounded-lg border border-line bg-surface-muted p-3">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
-                  <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                  <div className="text-sm font-semibold text-content">
                     {t('settings.ai.heartbeatControls')}
                   </div>
-                  <div className="text-xs text-neutral-500 dark:text-neutral-400">
+                  <div className="text-xs text-content-muted">
                     {t('settings.ai.heartbeatControlsDesc')}
                   </div>
                 </div>
@@ -1249,8 +1375,8 @@ export const BackgroundLoopControls = ({
                       void applyHeartbeatPatch({ notify_meetings: !settings.notify_meetings })
                     }
                   />
-                  <div className="grid gap-2 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 sm:grid-cols-3">
-                    <label className="min-w-0 space-y-1 text-xs font-medium text-neutral-700 dark:text-neutral-200">
+                  <div className="grid gap-2 rounded-lg border border-line bg-surface px-3 py-2 sm:grid-cols-3">
+                    <label className="min-w-0 space-y-1 text-xs font-medium text-content-secondary">
                       <span className="whitespace-nowrap">{t('settings.ai.calendarCap')}</span>
                       <SettingsSelect
                         aria-label={t('settings.ai.calendarCap')}
@@ -1270,7 +1396,7 @@ export const BackgroundLoopControls = ({
                         ))}
                       </SettingsSelect>
                     </label>
-                    <label className="min-w-0 space-y-1 text-xs font-medium text-neutral-700 dark:text-neutral-200">
+                    <label className="min-w-0 space-y-1 text-xs font-medium text-content-secondary">
                       <span className="whitespace-nowrap">{t('settings.ai.meetingLookahead')}</span>
                       <SettingsSelect
                         aria-label={t('settings.ai.meetingLookahead')}
@@ -1290,7 +1416,7 @@ export const BackgroundLoopControls = ({
                         ))}
                       </SettingsSelect>
                     </label>
-                    <label className="min-w-0 space-y-1 text-xs font-medium text-neutral-700 dark:text-neutral-200">
+                    <label className="min-w-0 space-y-1 text-xs font-medium text-content-secondary">
                       <span className="whitespace-nowrap">
                         {t('settings.ai.reminderLookahead')}
                       </span>
@@ -1345,9 +1471,9 @@ export const BackgroundLoopControls = ({
                     }
                   />
 
-                  <div className="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface px-3 py-2">
                     <label
-                      className="text-xs font-medium text-neutral-700 dark:text-neutral-200"
+                      className="text-xs font-medium text-content-secondary"
                       htmlFor="heartbeat-interval">
                       {t('settings.ai.interval')}
                     </label>
@@ -1387,7 +1513,7 @@ export const BackgroundLoopControls = ({
                   )}
                 </div>
               ) : (
-                <div className="text-xs text-neutral-500 dark:text-neutral-400">
+                <div className="text-xs text-content-muted">
                   {loading
                     ? t('settings.ai.loadingHeartbeatControls')
                     : t('settings.ai.heartbeatControlsUnavailable')}
@@ -1395,28 +1521,26 @@ export const BackgroundLoopControls = ({
               )}
             </div>
 
-            <div className="overflow-hidden rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60">
-              <div className="border-b border-neutral-200 dark:border-neutral-800 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+            <div className="overflow-hidden rounded-lg border border-line bg-surface-muted">
+              <div className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-content-faint">
                 {t('settings.ai.loopMap')}
               </div>
-              <div className="divide-y divide-neutral-200 dark:divide-neutral-800">
+              <div className="divide-y divide-line dark:divide-neutral-800">
                 {loops.map(loop => (
                   <div key={loop.name} className="grid gap-2 px-3 py-3 md:grid-cols-[150px_1fr]">
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                        {loop.name}
-                      </div>
-                      <div className="mt-0.5 flex flex-wrap gap-1 text-[11px] text-neutral-500 dark:text-neutral-400">
+                      <div className="truncate text-sm font-medium text-content">{loop.name}</div>
+                      <div className="mt-0.5 flex flex-wrap gap-1 text-[11px] text-content-muted">
                         <span>{loop.enabled ? t('settings.ai.on') : t('settings.ai.off')}</span>
                         <span>{loop.cadence}</span>
                       </div>
                     </div>
-                    <div className="min-w-0 text-xs text-neutral-600 dark:text-neutral-300">
+                    <div className="min-w-0 text-xs text-content-secondary">
                       <div>{loop.work}</div>
-                      <div className="mt-1 font-mono text-[11px] text-neutral-500 dark:text-neutral-400">
+                      <div className="mt-1 font-mono text-[11px] text-content-muted">
                         {t('settings.ai.routeLabel').replace('{route}', loop.route)}
                       </div>
-                      <div className="mt-1 text-neutral-500 dark:text-neutral-400">{loop.risk}</div>
+                      <div className="mt-1 text-content-muted">{loop.risk}</div>
                     </div>
                   </div>
                 ))}
@@ -1426,13 +1550,13 @@ export const BackgroundLoopControls = ({
         )}
 
         {showLedger && (
-          <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3">
+          <div className="rounded-lg border border-line bg-surface p-3">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                <div className="text-sm font-semibold text-content">
                   {t('settings.ai.recentUsageLedger')}
                 </div>
-                <div className="text-xs text-neutral-500 dark:text-neutral-400">
+                <div className="text-xs text-content-muted">
                   {t('settings.ai.recentUsageLedgerDesc')}
                 </div>
               </div>
@@ -1483,8 +1607,8 @@ export const BackgroundLoopControls = ({
               />
             </div>
 
-            <div className="mt-3 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 p-3">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+            <div className="mt-3 rounded-lg border border-line bg-surface-muted p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-content-faint">
                 {t('settings.ai.budgetMath')}
               </div>
               <div className="mt-2 grid gap-2">
@@ -1546,8 +1670,8 @@ export const BackgroundLoopControls = ({
               </div>
             </div>
 
-            <div className="mt-3 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 p-3">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+            <div className="mt-3 rounded-lg border border-line bg-surface-muted p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-content-faint">
                 {t('settings.ai.loopCallBudget')}
               </div>
               <div className="mt-2 grid gap-2">
@@ -1598,7 +1722,7 @@ export const BackgroundLoopControls = ({
             </div>
 
             {latestSpend && (
-              <div className="mt-3 rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 px-3 py-2 text-xs text-neutral-600 dark:text-neutral-300">
+              <div className="mt-3 rounded-md border border-line bg-surface-muted px-3 py-2 text-xs text-content-secondary">
                 {t('settings.ai.latestSpend')
                   .replace('{amount}', formatUsd(spendAmount(latestSpend)))
                   .replace('{time}', new Date(latestSpend.createdAt).toLocaleString())
@@ -1608,7 +1732,7 @@ export const BackgroundLoopControls = ({
 
             <div className="mt-3 space-y-3">
               <div>
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-content-faint">
                   {t('settings.ai.topActions')}
                 </div>
                 <div className="mt-1 space-y-1">
@@ -1616,23 +1740,21 @@ export const BackgroundLoopControls = ({
                     actionSummary.map(([action, count, total]) => (
                       <div
                         key={action}
-                        className="flex items-center justify-between gap-2 text-xs text-neutral-600 dark:text-neutral-300">
+                        className="flex items-center justify-between gap-2 text-xs text-content-secondary">
                         <span className="truncate font-mono">{action}</span>
-                        <span className="shrink-0 text-neutral-500 dark:text-neutral-400">
+                        <span className="shrink-0 text-content-muted">
                           {count} / {formatUsd(total)}
                         </span>
                       </div>
                     ))
                   ) : (
-                    <div className="text-xs text-neutral-500 dark:text-neutral-400">
-                      {t('settings.ai.noSpendRows')}
-                    </div>
+                    <div className="text-xs text-content-muted">{t('settings.ai.noSpendRows')}</div>
                   )}
                 </div>
               </div>
 
               <div>
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-content-faint">
                   {t('settings.ai.topHours')}
                 </div>
                 <div className="mt-1 space-y-1">
@@ -1640,15 +1762,13 @@ export const BackgroundLoopControls = ({
                     hourSummary.map(([hour, total]) => (
                       <div
                         key={hour}
-                        className="flex items-center justify-between gap-2 text-xs text-neutral-600 dark:text-neutral-300">
+                        className="flex items-center justify-between gap-2 text-xs text-content-secondary">
                         <span>{hour}</span>
-                        <span className="font-mono text-neutral-500 dark:text-neutral-400">
-                          {formatUsd(total)}
-                        </span>
+                        <span className="font-mono text-content-muted">{formatUsd(total)}</span>
                       </div>
                     ))
                   ) : (
-                    <div className="text-xs text-neutral-500 dark:text-neutral-400">
+                    <div className="text-xs text-content-muted">
                       {t('settings.ai.noHourlySpend')}
                     </div>
                   )}
@@ -1698,26 +1818,20 @@ const WorkloadRow = ({
   return (
     <div className="flex items-center justify-between gap-3 py-3 transition-colors">
       <div className="min-w-0 flex-1 space-y-1">
-        <div className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-          {workload.label}
-        </div>
-        <div className="text-xs leading-5 text-neutral-500 dark:text-neutral-400">
-          {workload.description}
-        </div>
-        <div className="text-[11px] leading-5 text-neutral-500 dark:text-neutral-400">
-          {WORKLOAD_MODEL_HINTS[workload.id]}
+        <div className="text-sm font-medium text-content">{t(workload.labelKey)}</div>
+        <div className="text-xs leading-5 text-content-muted">{t(workload.descriptionKey)}</div>
+        <div className="text-[11px] leading-5 text-content-muted">
+          {t(WORKLOAD_MODEL_HINT_KEYS[workload.id])}
         </div>
         {resolved ? (
           <div
             className={`font-mono text-[11px] truncate ${
-              isCustom ? 'text-sky-700 dark:text-sky-200' : 'text-neutral-500 dark:text-neutral-400'
+              isCustom ? 'text-sky-700 dark:text-sky-200' : 'text-content-muted'
             }`}>
             {resolved}
           </div>
         ) : (
-          <div className="text-[11px] text-neutral-400 dark:text-neutral-500">
-            {t('settings.ai.workload.noModel')}
-          </div>
+          <div className="text-[11px] text-content-faint">{t('settings.ai.workload.noModel')}</div>
         )}
       </div>
       <Button
@@ -1812,6 +1926,7 @@ function routingWithAllWorkloads(next: ProviderRef): RoutingMap {
     reasoning: next,
     agentic: next,
     coding: next,
+    vision: next,
     memory: next,
     heartbeat: next,
     learning: next,
@@ -1906,23 +2021,33 @@ const CustomRoutingDialog = ({
           ? 'claude-code'
           : null;
 
+  // The Vision workload always feeds the multimodal `vision-v1` path, so any
+  // model routed here is treated as image-capable regardless of the per-model
+  // registry flag. Force the flag on and lock the checkbox for this workload.
+  const visionLocked = workload.id === 'vision';
+
   // User-set vision flag for this (provider, model). Prefilled from the registry,
-  // re-prefilled whenever the selected provider/model changes.
+  // re-prefilled whenever the selected provider/model changes. Always on (and
+  // not user-editable) for the Vision workload.
   const [vision, setVision] = useState<boolean>(() =>
-    registrySlug && model.trim()
-      ? modelRegistryVision(modelRegistry, registrySlug, model.trim())
-      : false
+    visionLocked
+      ? true
+      : registrySlug && model.trim()
+        ? modelRegistryVision(modelRegistry, registrySlug, model.trim())
+        : false
   );
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setVision(
-      registrySlug && model.trim()
-        ? modelRegistryVision(modelRegistry, registrySlug, model.trim())
-        : false
+      visionLocked
+        ? true
+        : registrySlug && model.trim()
+          ? modelRegistryVision(modelRegistry, registrySlug, model.trim())
+          : false
     );
     // modelRegistry is stable for the dialog's lifetime (prop doesn't change mid-open).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [registrySlug, model]);
+  }, [registrySlug, model, visionLocked]);
 
   const selectedCloud =
     source?.kind === 'cloud' ? customCloud.find(c => c.slug === source.providerSlug) : undefined;
@@ -2043,24 +2168,24 @@ const CustomRoutingDialog = ({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label={formatI18n(t('settings.ai.customRoutingForWorkload'), { label: workload.label })}
+      aria-label={formatI18n(t('settings.ai.customRoutingForWorkload'), {
+        label: t(workload.labelKey),
+      })}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-      <div className="w-full max-w-md rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 shadow-soft">
+      <div className="w-full max-w-md rounded-2xl border border-line bg-surface p-6 shadow-soft">
         <div className="flex items-start justify-between gap-3 mb-4">
           <div>
-            <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
+            <h3 className="text-base font-semibold text-content">
               {t('settings.ai.customRouting')}
             </h3>
-            <p className="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
-              {workload.label}
-            </p>
-            <p className="mt-2 max-w-md text-xs leading-5 text-neutral-500 dark:text-neutral-400">
-              {WORKLOAD_MODEL_HINTS[workload.id]}
+            <p className="mt-0.5 text-xs text-content-muted">{t(workload.labelKey)}</p>
+            <p className="mt-2 max-w-md text-xs leading-5 text-content-muted">
+              {t(WORKLOAD_MODEL_HINT_KEYS[workload.id])}
             </p>
           </div>
           <Button
             type="button"
-            variant="ghost"
+            variant="tertiary"
             size="xs"
             onClick={onClose}
             aria-label={t('common.close')}>
@@ -2082,7 +2207,7 @@ const CustomRoutingDialog = ({
         ) : (
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-neutral-700 dark:text-neutral-200">
+              <label className="text-xs font-medium text-content-secondary">
                 {t('settings.ai.providerLabel')}
               </label>
               <SettingsSelect
@@ -2124,7 +2249,7 @@ const CustomRoutingDialog = ({
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-neutral-700 dark:text-neutral-200">
+              <label className="text-xs font-medium text-content-secondary">
                 {t('settings.ai.modelLabel')}
               </label>
               {source?.kind === 'local' ? (
@@ -2150,7 +2275,7 @@ const CustomRoutingDialog = ({
                     onChange={e => setModel(e.target.value)}
                     placeholder="sonnet"
                   />
-                  <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                  <p className="text-[11px] text-content-muted">
                     A model id the <code>claude</code> CLI accepts — an alias (<code>sonnet</code>,{' '}
                     <code>opus</code>) or full name (<code>claude-sonnet-4-5</code>). Passed
                     verbatim to <code>claude --model</code>; marketing strings like{' '}
@@ -2167,13 +2292,14 @@ const CustomRoutingDialog = ({
                     {cloudModelsError}
                   </div>
                   <div className="flex items-center gap-2">
-                    <button
+                    <Button
                       type="button"
-                      onClick={() => setModelsKey(k => k + 1)}
-                      className="text-xs text-primary-600 dark:text-primary-400 hover:underline">
+                      variant="tertiary"
+                      size="xs"
+                      onClick={() => setModelsKey(k => k + 1)}>
                       {t('common.retry')}
-                    </button>
-                    <span className="text-xs text-neutral-400 dark:text-neutral-500">
+                    </Button>
+                    <span className="text-xs text-content-faint">
                       {t('settings.ai.enterModelIdManually')}
                     </span>
                   </div>
@@ -2236,7 +2362,7 @@ const CustomRoutingDialog = ({
             {/* Temperature override (optional). When unchecked, the workload
                 inherits the provider/global default temperature. */}
             <div className="flex flex-col gap-1.5">
-              <label className="flex items-center justify-between gap-2 text-xs font-medium text-neutral-700 dark:text-neutral-200">
+              <label className="flex items-center justify-between gap-2 text-xs font-medium text-content-secondary">
                 <span className="inline-flex items-center gap-2">
                   <input
                     type="checkbox"
@@ -2245,12 +2371,12 @@ const CustomRoutingDialog = ({
                       resetTestState();
                       setTemperature(e.target.checked ? 0.7 : null);
                     }}
-                    className="h-3.5 w-3.5 rounded border-neutral-300 dark:border-neutral-700 text-primary-500 focus:ring-primary-500"
+                    className="h-3.5 w-3.5 rounded border-line-strong text-primary-500 focus:ring-primary-500"
                   />
                   {t('settings.ai.temperatureOverride')}
                 </span>
                 {temperature != null && (
-                  <span className="font-mono text-[11px] text-neutral-500 dark:text-neutral-400">
+                  <span className="font-mono text-[11px] text-content-muted">
                     {temperature.toFixed(2)}
                   </span>
                 )}
@@ -2284,11 +2410,11 @@ const CustomRoutingDialog = ({
                         setTemperature(Math.max(0, Math.min(2, v)));
                       }
                     }}
-                    className="w-16 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-xs font-mono text-neutral-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                    className="w-16 rounded-lg border border-line-strong bg-surface px-2 py-1 text-xs font-mono text-content focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
                   />
                 </div>
               )}
-              <p className="text-[11px] text-neutral-400 dark:text-neutral-500">
+              <p className="text-[11px] text-content-faint">
                 {t('settings.ai.temperatureOverrideDesc')}
               </p>
             </div>
@@ -2298,18 +2424,17 @@ const CustomRoutingDialog = ({
                 attachments for it. Only shown once a concrete model is chosen. */}
             {registrySlug && model.trim().length > 0 && (
               <div className="flex flex-col gap-1.5">
-                <label className="inline-flex items-center gap-2 text-xs font-medium text-neutral-700 dark:text-neutral-200">
+                <label className="inline-flex items-center gap-2 text-xs font-medium text-content-secondary">
                   <input
                     type="checkbox"
-                    checked={vision}
+                    checked={visionLocked ? true : vision}
                     onChange={e => setVision(e.target.checked)}
-                    className="h-3.5 w-3.5 rounded border-neutral-300 dark:border-neutral-700 text-primary-500 focus:ring-primary-500"
+                    disabled={visionLocked}
+                    className="h-3.5 w-3.5 rounded border-line-strong text-primary-500 focus:ring-primary-500 disabled:opacity-60 disabled:cursor-not-allowed"
                   />
                   {t('settings.ai.modelVision')}
                 </label>
-                <p className="text-[11px] text-neutral-400 dark:text-neutral-500">
-                  {t('settings.ai.modelVisionDesc')}
-                </p>
+                <p className="text-[11px] text-content-faint">{t('settings.ai.modelVisionDesc')}</p>
               </div>
             )}
 
@@ -2346,11 +2471,11 @@ const CustomRoutingDialog = ({
                   )}
                 </div>
                 {testBusy ? (
-                  <div className="mt-2 rounded-md border border-current/15 bg-white/50 px-3 py-2 text-[12px] dark:bg-black/10">
+                  <div className="mt-2 rounded-md border border-current/15 bg-surface/50 px-3 py-2 text-[12px] dark:bg-black/10">
                     {t('settings.ai.waitingForModelResponse')}
                   </div>
                 ) : testError ? (
-                  <div className="mt-2 rounded-md border border-current/15 bg-white/50 px-3 py-2 font-mono text-[11px] whitespace-pre-wrap break-words dark:bg-black/10">
+                  <div className="mt-2 rounded-md border border-current/15 bg-surface/50 px-3 py-2 font-mono text-[11px] whitespace-pre-wrap break-words dark:bg-black/10">
                     {testError}
                   </div>
                 ) : (
@@ -2358,7 +2483,7 @@ const CustomRoutingDialog = ({
                     <div className="text-[11px] font-semibold uppercase tracking-wide text-current/80">
                       {t('settings.ai.response')}
                     </div>
-                    <div className="rounded-md border border-current/15 bg-white/70 px-3 py-3 text-[13px] leading-relaxed text-neutral-900 whitespace-pre-wrap break-words dark:bg-black/10 dark:text-neutral-100">
+                    <div className="rounded-md border border-current/15 bg-surface/70 px-3 py-3 text-[13px] leading-relaxed text-content whitespace-pre-wrap break-words dark:bg-black/10">
                       {testReply}
                     </div>
                   </div>
@@ -2412,17 +2537,17 @@ const SaveBar = ({
   const { t } = useT();
   return (
     <div className="pointer-events-none sticky bottom-3 z-20 flex justify-center px-4">
-      <div className="pointer-events-auto flex w-full items-center gap-2 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white/95 dark:bg-neutral-900/95 px-3 py-2 shadow-float backdrop-blur-md animate-fade-up">
+      <div className="pointer-events-auto flex w-full items-center gap-2 rounded-lg border border-line bg-surface/95 px-3 py-2 shadow-float backdrop-blur-md animate-fade-up">
         <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-300">
           <LuCircleAlert className="h-3.5 w-3.5" />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-xs font-medium text-neutral-900 dark:text-neutral-100">
+          <div className="text-xs font-medium text-content">
             {changeCount === 1
               ? t('settings.ai.unsavedChange')
               : `${String(changeCount)} ${t('settings.ai.unsavedChanges')}`}
           </div>
-          <div className="truncate font-mono text-[10px] text-neutral-500 dark:text-neutral-400">
+          <div className="truncate font-mono text-[10px] text-content-muted">
             {diffSummary.slice(0, 2).join(' · ')}
             {diffSummary.length > 2 ? ` · +${diffSummary.length - 2}` : ''}
           </div>
@@ -2597,11 +2722,9 @@ const GlobalOwnModelSelector = ({
   };
 
   return (
-    <div className="space-y-4 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
+    <div className="space-y-4 rounded-xl border border-line bg-surface p-4">
       <div className="space-y-1">
-        <div className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-          {t('settings.ai.globalModel.title')}
-        </div>
+        <div className="text-sm font-medium text-content">{t('settings.ai.globalModel.title')}</div>
         <p className="text-xs text-amber-700 dark:text-amber-200">
           {t('settings.ai.globalModel.desc')}
         </p>
@@ -2615,7 +2738,7 @@ const GlobalOwnModelSelector = ({
         <>
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-neutral-700 dark:text-neutral-200">
+              <label className="text-xs font-medium text-content-secondary">
                 {t('settings.ai.globalModel.provider')}
               </label>
               <SettingsSelect
@@ -2658,7 +2781,7 @@ const GlobalOwnModelSelector = ({
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-neutral-700 dark:text-neutral-200">
+              <label className="text-xs font-medium text-content-secondary">
                 {t('settings.ai.globalModel.model')}
               </label>
               {source?.kind === 'local' ? (
@@ -2700,23 +2823,23 @@ const GlobalOwnModelSelector = ({
             </div>
           </div>
           {registrySlug && model.trim().length > 0 && (
-            <label className="flex items-start gap-2 text-xs font-medium text-neutral-700 dark:text-neutral-200">
+            <label className="flex items-start gap-2 text-xs font-medium text-content-secondary">
               <input
                 type="checkbox"
                 checked={vision}
                 onChange={e => setVision(e.target.checked)}
-                className="mt-0.5 h-3.5 w-3.5 rounded border-neutral-300 dark:border-neutral-700 text-primary-500 focus:ring-primary-500"
+                className="mt-0.5 h-3.5 w-3.5 rounded border-line-strong text-primary-500 focus:ring-primary-500"
               />
               <span>
                 {t('settings.ai.modelVision')}
-                <span className="block font-normal text-[11px] text-neutral-400 dark:text-neutral-500">
+                <span className="block font-normal text-[11px] text-content-faint">
                   {t('settings.ai.modelVisionDesc')}
                 </span>
               </span>
             </label>
           )}
 
-          <div className="rounded-lg bg-neutral-50 dark:bg-neutral-800/60 px-3 py-2 text-xs text-neutral-500 dark:text-neutral-400">
+          <div className="rounded-lg bg-surface-muted px-3 py-2 text-xs text-content-muted">
             {t('settings.ai.globalModel.appliesToAll')}
           </div>
 
@@ -2773,20 +2896,64 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
   // chip can find it again. Cleared when the dialog closes.
   const [pendingLocalLabel, setPendingLocalLabel] = useState<string | null>(null);
   const openRouterOauthAbortRef = useRef<AbortController | null>(null);
+  // BYO provider keys that the provider rejected at runtime (401/403). The
+  // raw error is demoted from Sentry as unactionable user-state, so this
+  // inline notice is how the user learns a key broke — most often in a silent
+  // background loop (memory summarization, TAURI-RUST-4RC) that never surfaces
+  // an error on its own. Re-fetched whenever settings reload (a key
+  // save/remove clears the matching entry core-side).
+  const [providerAuthErrors, setProviderAuthErrors] = useState<ProviderAuthError[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void loadProviderAuthErrors()
+      .then(errs => {
+        if (!cancelled) {
+          setProviderAuthErrors(errs);
+        }
+      })
+      .catch(() => {
+        // Best-effort surface — a fetch failure must not break the panel.
+        // Drop any prior notice too: a key save/remove already cleared the
+        // entry core-side, so keeping a stale banner would misreport a
+        // rejection the user has resolved.
+        if (!cancelled) {
+          setProviderAuthErrors([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [saved]);
 
   const connectProvider = useCallback(
     async ({
       slug,
       localLabel = null,
       value,
+      endpoint: endpointOverride,
       credentialMode,
     }: {
       slug: string;
       localLabel?: string | null;
       value: string;
-      credentialMode: 'api_key' | 'oauth' | 'codex_oauth' | 'endpoint' | 'cli_login';
+      /**
+       * For `endpoint_key` runtimes (OMLX): the endpoint URL. `value` carries
+       * the API key in that mode, so the endpoint comes in separately. Ignored
+       * for `endpoint` mode, where `value` IS the endpoint.
+       */
+      endpoint?: string | null;
+      credentialMode:
+        | 'api_key'
+        | 'oauth'
+        | 'codex_oauth'
+        | 'endpoint'
+        | 'endpoint_key'
+        | 'cli_login';
     }) => {
-      const isLocalRuntime = credentialMode === 'endpoint';
+      const isLocalRuntime = credentialMode === 'endpoint' || credentialMode === 'endpoint_key';
+      // `endpoint_key` (OMLX) carries the API key in `value` and the endpoint
+      // separately; `endpoint` mode carries the endpoint URL in `value`.
+      const isEndpointKey = credentialMode === 'endpoint_key';
       const isCodexOAuth = credentialMode === 'codex_oauth';
       // CLI-backed login (Claude Code): no API key is written and no HTTP
       // /models probe is made — auth + execution both go through the local
@@ -2796,9 +2963,13 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
 
       try {
         const trimmed = value.trim();
+        // For `endpoint_key` (OMLX), the endpoint URL arrives via `endpointOverride`
+        // (the dialog's endpoint field) and `trimmed` is the API key. For plain
+        // `endpoint` runtimes, `trimmed` itself is the endpoint URL.
+        const rawEndpoint = isEndpointKey ? (endpointOverride ?? '').trim() : trimmed;
         const endpoint = isLocalRuntime
           ? (() => {
-              const url = new URL(trimmed);
+              const url = new URL(rawEndpoint);
               if (!/^https?:$/.test(url.protocol)) {
                 throw new Error('Endpoint must start with http:// or https://');
               }
@@ -2842,6 +3013,17 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
           await openhumanUpdateLocalAiSettings({
             base_url: endpoint,
             provider: 'lm_studio',
+            runtime_enabled: true,
+            opt_in_confirmed: true,
+          });
+        } else if (isLocalRuntime && slug === 'omlx') {
+          // OMLX: OpenAI-compatible local runtime that also requires a Bearer
+          // key. Persist both the endpoint and the key into local_ai (the Rust
+          // factory's omlx branch reads `local_ai.api_key` as the Bearer token).
+          await openhumanUpdateLocalAiSettings({
+            base_url: endpoint,
+            api_key: trimmed,
+            provider: 'omlx',
             runtime_enabled: true,
             opt_in_confirmed: true,
           });
@@ -2919,24 +3101,10 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
   // applyPreset removed alongside the Cloud / Local / Mixed preset pills —
   // the new Default/Custom binary toggle handles routing per workload.
 
-  const diffSummary = useMemo(() => {
-    const out: string[] = [];
-    for (const w of WORKLOADS) {
-      const a = saved.routing[w.id];
-      const b = draft.routing[w.id];
-      if (JSON.stringify(a) !== JSON.stringify(b)) {
-        const describe = (r: ProviderRef) => {
-          if (r.kind === 'openhuman') return 'openhuman';
-          if (r.kind === 'default') return 'cloud';
-          const tempSuffix = r.temperature != null ? `@${r.temperature.toFixed(2)}` : '';
-          if (r.kind === 'cloud') return `${r.providerSlug}:${r.model}${tempSuffix}`;
-          return `local:${r.model}${tempSuffix}`;
-        };
-        out.push(`${w.label} → ${describe(b)}`);
-      }
-    }
-    return out;
-  }, [saved, draft]);
+  const diffSummary = useMemo(
+    () => buildRoutingDiffSummary(saved.routing, draft.routing, t),
+    [saved, draft, t]
+  );
 
   const chatRows = WORKLOADS.filter(w => w.group === 'chat');
   const bgRows = WORKLOADS.filter(w => w.group === 'background');
@@ -2974,40 +3142,45 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
       contentClassName=""
       description={embedded ? undefined : t('pages.settings.ai.llmDesc')}
       leading={embedded ? undefined : <SettingsBackButton onBack={navigateBack} />}>
-      <div className={embedded ? 'space-y-6' : 'space-y-6 p-4'}>
+      <div className={embedded ? 'space-y-5' : 'space-y-5 p-4'}>
         {/* ═══════════════════════════════════════════════════════════════
             AUTH — provider authentication (cloud providers + local Ollama
             setup). Everything the user needs to wire a model up.
             ═══════════════════════════════════════════════════════════════ */}
-        <div className="space-y-4">
-          <div className="border-b border-neutral-200 dark:border-neutral-800 pb-2">
-            <h2 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
+        <div className="space-y-5">
+          <div className="border-b border-line pb-2">
+            <h2 className="text-base font-semibold text-content">
               {t('settings.ai.llmProviders')}
             </h2>
-            <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-              {t('settings.ai.llmProvidersDesc')}
-            </p>
+            <p className="text-xs text-content-muted mt-0.5">{t('settings.ai.llmProvidersDesc')}</p>
           </div>
+
+          {/* ─── Rejected-key notices ─────────────────────────────────────────
+              A BYO key the provider rejected at runtime (401/403). Surfaced
+              here, next to the key editor, because the failing path is often a
+              silent background loop and the raw error is demoted from Sentry. */}
+          {providerAuthErrors.length > 0 && (
+            <div className="space-y-2">
+              {providerAuthErrors.map(err => (
+                <ProviderSetupErrorNotice key={err.provider} error={err.message} />
+              ))}
+            </div>
+          )}
 
           {/* ─── Provider chip-toggle list ────────────────────────────────── */}
           <section className="space-y-3">
-            {loading && (
-              <div className="text-xs text-neutral-500 dark:text-neutral-400">
-                {t('common.loading')}
-              </div>
-            )}
+            {loading && <div className="text-xs text-content-muted">{t('common.loading')}</div>}
             {error && (
               <SettingsStatusLine saving={false} error={error} savedNote={null} savingLabel="" />
             )}
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-1.5">
               <ProviderToggleChip
                 key="openhuman"
                 slug="openhuman"
                 label={t('settings.ai.routing.managed')}
                 enabled
-                locked
-                onToggle={() => {}}
+                alwaysOn
               />
 
               {/* Built-in cloud providers */}
@@ -3071,7 +3244,7 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
 
               {/* LM Studio + Ollama — local runtimes stored with a slug of
                   "lmstudio" / "ollama" so they're distinct from generic custom. */}
-              {(['lmstudio', 'ollama'] as const).map(localKind => {
+              {(['lmstudio', 'ollama', 'omlx'] as const).map(localKind => {
                 const label = LOCAL_CHIP_LABEL[localKind];
                 const tone = LOCAL_CHIP_TONE[localKind];
                 const existing = draft.cloudProviders.find(cp => cp.slug === localKind);
@@ -3084,17 +3257,19 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                     className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ring-1 transition-colors ${tone}`}>
                     <span>{label}</span>
                     {enabled && (
-                      <button
+                      <Button
                         type="button"
+                        iconOnly
+                        variant="tertiary"
+                        size="xs"
                         aria-label={t('settings.ai.editEndpoint')}
                         title={t('settings.ai.editEndpoint')}
                         onClick={() => {
                           setKeyDialogFor(localKind);
                           setPendingLocalLabel(label);
-                        }}
-                        className="rounded p-0.5 hover:bg-black/10 dark:hover:bg-white/10 transition-colors">
+                        }}>
                         <LuPencil className="h-3 w-3" />
-                      </button>
+                      </Button>
                     )}
                     <SettingsSwitch
                       id={`local-runtime-toggle-${localKind}`}
@@ -3127,6 +3302,11 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
               })}
             </div>
 
+            {/* #3760: Managed is always-on and can't be turned off; point users
+                who want a local model at the Routing card below instead of
+                letting them fight the (now badge, formerly locked) Managed chip. */}
+            <p className="text-xs text-content-muted">{t('settings.ai.routing.managedHint')}</p>
+
             <div className="flex flex-col gap-2 pt-1">
               {/* Codex — imports the existing Codex CLI login as an OpenAI credential. */}
               <div className="flex flex-wrap items-center gap-2">
@@ -3141,7 +3321,7 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                     ? t('settings.ai.connecting')
                     : t('settings.ai.codexAuthButton', 'Codex 인증')}
                 </Button>
-                <span className="text-xs text-neutral-500 dark:text-neutral-400">
+                <span className="text-xs text-content-muted">
                   {t(
                     'settings.ai.codexAuthHelper',
                     'Uses the existing Codex CLI login from ~/.codex/auth.json.'
@@ -3192,14 +3372,10 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
             Own = one provider/model for everything. Custom = fine-grained
             per-workload routing.
             ═══════════════════════════════════════════════════════════════ */}
-        <div className="space-y-4">
-          <div className="border-b border-neutral-200 dark:border-neutral-800 pb-2">
-            <h2 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
-              {t('settings.ai.routing')}
-            </h2>
-            <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-              {t('settings.ai.routingDesc')}
-            </p>
+        <div className="space-y-5">
+          <div className="border-b border-line pb-2">
+            <h2 className="text-base font-semibold text-content">{t('settings.ai.routing')}</h2>
+            <p className="text-xs text-content-muted mt-0.5">{t('settings.ai.routingDesc')}</p>
           </div>
 
           <section className="space-y-3">
@@ -3216,12 +3392,12 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                 className={`flex h-full min-h-[152px] flex-col rounded-2xl border p-4 text-left transition-colors ${
                   effectiveRoutingMode === 'managed'
                     ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-500/40 dark:bg-emerald-500/10'
-                    : 'border-neutral-200 bg-white hover:bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800'
+                    : 'border-line bg-surface hover:bg-surface-hover'
                 }`}>
-                <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                <div className="text-sm font-semibold text-content">
                   {t('settings.ai.routing.managed')}
                 </div>
-                <p className="mt-2 text-xs leading-5 text-neutral-600 dark:text-neutral-300">
+                <p className="mt-2 text-xs leading-5 text-content-secondary">
                   {t('settings.ai.routing.managedDesc')}
                 </p>
               </button>
@@ -3232,12 +3408,12 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                 className={`flex h-full min-h-[152px] flex-col rounded-2xl border p-4 text-left transition-colors ${
                   effectiveRoutingMode === 'own'
                     ? 'border-sky-300 bg-sky-50 dark:border-sky-500/40 dark:bg-sky-500/10'
-                    : 'border-neutral-200 bg-white hover:bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800'
+                    : 'border-line bg-surface hover:bg-surface-hover'
                 }`}>
-                <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                <div className="text-sm font-semibold text-content">
                   {t('settings.ai.routing.useYourOwn')}
                 </div>
-                <p className="mt-2 text-xs leading-5 text-neutral-600 dark:text-neutral-300">
+                <p className="mt-2 text-xs leading-5 text-content-secondary">
                   {t('settings.ai.routing.useYourOwnDesc')}
                 </p>
               </button>
@@ -3248,12 +3424,12 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                 className={`flex h-full min-h-[152px] flex-col rounded-2xl border p-4 text-left transition-colors ${
                   effectiveRoutingMode === 'custom'
                     ? 'border-sky-300 bg-sky-50 dark:border-sky-500/40 dark:bg-sky-500/10'
-                    : 'border-neutral-200 bg-white hover:bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800'
+                    : 'border-line bg-surface hover:bg-surface-hover'
                 }`}>
-                <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                <div className="text-sm font-semibold text-content">
                   {t('settings.ai.routing.advanced')}
                 </div>
-                <p className="mt-2 text-xs leading-5 text-neutral-600 dark:text-neutral-300">
+                <p className="mt-2 text-xs leading-5 text-content-secondary">
                   {t('settings.ai.routing.advancedDesc')}
                 </p>
               </button>
@@ -3300,16 +3476,16 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                 </div>
 
                 <div className="space-y-3">
-                  <div className="overflow-hidden rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 px-3">
-                    <div className="border-b border-neutral-200 dark:border-neutral-800 py-3">
-                      <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                  <div className="overflow-hidden rounded-lg border border-line bg-surface-muted px-3">
+                    <div className="border-b border-line py-3">
+                      <div className="text-sm font-semibold text-content">
                         {t('settings.ai.routing.chatAndConversations')}
                       </div>
-                      <div className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                      <div className="mt-1 text-xs text-content-muted">
                         {t('settings.ai.routing.chatDesc')}
                       </div>
                     </div>
-                    <div className="divide-y divide-neutral-200 dark:divide-neutral-800">
+                    <div className="divide-y divide-line dark:divide-neutral-800">
                       {chatRows.map(w => (
                         <WorkloadRow
                           key={w.id}
@@ -3322,16 +3498,16 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                     </div>
                   </div>
 
-                  <div className="overflow-hidden rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 px-3">
-                    <div className="border-b border-neutral-200 dark:border-neutral-800 py-3">
-                      <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                  <div className="overflow-hidden rounded-lg border border-line bg-surface-muted px-3">
+                    <div className="border-b border-line py-3">
+                      <div className="text-sm font-semibold text-content">
                         {t('settings.ai.routing.backgroundTasks')}
                       </div>
-                      <div className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                      <div className="mt-1 text-xs text-content-muted">
                         {t('settings.ai.routing.bgTasksDesc')}
                       </div>
                     </div>
-                    <div className="divide-y divide-neutral-200 dark:divide-neutral-800">
+                    <div className="divide-y divide-line dark:divide-neutral-800">
                       {bgRows.map(w => (
                         <WorkloadRow
                           key={w.id}
@@ -3505,9 +3681,13 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
           slug={keyDialogFor}
           label={pendingLocalLabel ?? BUILTIN_PROVIDER_META[keyDialogFor]?.label ?? keyDialogFor}
           isLocalRuntime={Boolean(pendingLocalLabel)}
+          // OMLX is the only endpoint+key local runtime: render both an endpoint
+          // field (prefilled with the localhost default) and an API key field.
+          endpointKeyMode={keyDialogFor === 'omlx'}
           initialValue={
             pendingLocalLabel
-              ? (draft.cloudProviders.find(cp => cp.slug === keyDialogFor)?.endpoint ?? undefined)
+              ? (draft.cloudProviders.find(cp => cp.slug === keyDialogFor)?.endpoint ??
+                (keyDialogFor === 'omlx' ? defaultEndpointFor('omlx') : undefined))
               : undefined
           }
           oauthAction={
@@ -3539,12 +3719,20 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
             setKeyDialogFor(null);
             setPendingLocalLabel(null);
           }}
-          onSubmit={async value =>
+          onSubmit={async (value, endpoint) =>
             await connectProvider({
               slug: keyDialogFor,
               localLabel: pendingLocalLabel,
+              // In endpoint_key (OMLX) mode the dialog hands back the API key as
+              // `value` and the endpoint URL as `endpoint`.
               value,
-              credentialMode: pendingLocalLabel ? 'endpoint' : 'api_key',
+              endpoint,
+              credentialMode:
+                keyDialogFor === 'omlx'
+                  ? 'endpoint_key'
+                  : pendingLocalLabel
+                    ? 'endpoint'
+                    : 'api_key',
             })
           }
         />
@@ -3589,14 +3777,14 @@ const CloudProviderEditor = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/30 p-4">
-      <div className="w-full max-w-md rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-float">
-        <div className="border-b border-neutral-200 dark:border-neutral-800 px-4 py-3">
-          <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+      <div className="w-full max-w-md rounded-lg border border-line bg-surface shadow-float">
+        <div className="border-b border-line px-4 py-3">
+          <div className="text-sm font-semibold text-content">
             {initial
               ? formatI18n(t('settings.ai.editProvider'), { label: initial.label })
               : t('settings.ai.addCloudProvider')}
           </div>
-          <div className="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
+          <div className="mt-0.5 text-xs text-content-muted">
             {t('settings.ai.apiKeysEncrypted')}{' '}
             <span className="font-mono">auth-profiles.json</span>.
           </div>
@@ -3605,7 +3793,7 @@ const CloudProviderEditor = ({
           <div>
             <label
               htmlFor="cloud-provider-name"
-              className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+              className="text-[10px] font-semibold uppercase tracking-wide text-content-muted">
               {t('common.name')}
             </label>
             <SettingsTextField
@@ -3615,9 +3803,9 @@ const CloudProviderEditor = ({
               className="mt-1"
               placeholder={t('settings.ai.providerNamePlaceholder')}
             />
-            <div className="mt-1 text-[11px] text-neutral-500 dark:text-neutral-400">
+            <div className="mt-1 text-[11px] text-content-muted">
               {t('settings.ai.slugLabel')}{' '}
-              <span className="font-mono text-neutral-700 dark:text-neutral-200">
+              <span className="font-mono text-content-secondary">
                 {slug || t('settings.ai.noneDash')}
               </span>
             </div>
@@ -3628,7 +3816,7 @@ const CloudProviderEditor = ({
           <div>
             <label
               htmlFor="cloud-provider-openai-url"
-              className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+              className="text-[10px] font-semibold uppercase tracking-wide text-content-muted">
               {t('settings.ai.openAiUrlLabel')}
             </label>
             <SettingsTextField
@@ -3641,14 +3829,17 @@ const CloudProviderEditor = ({
             />
           </div>
           <div>
-            <label className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+            <label className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-content-muted">
               <span>{t('settings.ai.apiKeyFieldLabel')}</span>
               {hasExistingKey && (
-                <button
-                  onClick={() => void onClearKey(slug)}
-                  className="text-[10px] font-medium normal-case text-coral-600 dark:text-coral-300 hover:text-coral-700">
+                <Button
+                  variant="tertiary"
+                  tone="danger"
+                  size="xs"
+                  className="text-[10px] font-medium normal-case"
+                  onClick={() => void onClearKey(slug)}>
                   {t('settings.ai.clearStoredKey')}
-                </button>
+                </Button>
               )}
             </label>
             <SettingsTextField
@@ -3670,7 +3861,7 @@ const CloudProviderEditor = ({
           </div>
           {submitError ? <ProviderSetupErrorNotice error={submitError} /> : null}
         </div>
-        <div className="flex items-center justify-end gap-2 border-t border-neutral-200 dark:border-neutral-800 px-4 py-3">
+        <div className="flex items-center justify-end gap-2 border-t border-line px-4 py-3">
           <Button variant="secondary" size="xs" onClick={onClose} disabled={saving}>
             {t('common.cancel')}
           </Button>
@@ -3739,6 +3930,8 @@ function defaultEndpointFor(slug: string): string {
       return 'http://localhost:11434/v1';
     case 'lmstudio':
       return 'http://localhost:1234/v1';
+    case 'omlx':
+      return 'http://localhost:8000/v1';
     default:
       return '';
   }

@@ -88,6 +88,11 @@ impl Agent {
         Arc::clone(&self.tool_specs)
     }
 
+    #[cfg(test)]
+    pub(crate) fn visible_tool_names_for_test(&self) -> &std::collections::HashSet<String> {
+        &self.visible_tool_names
+    }
+
     /// Borrow the agent's memory backing store as an `Arc`.
     pub fn memory_arc(&self) -> Arc<dyn Memory> {
         Arc::clone(&self.memory)
@@ -340,6 +345,15 @@ impl Agent {
         &mut self,
     ) -> Vec<crate::openhuman::agent::memory_loader::MemoryCitation> {
         std::mem::take(&mut self.last_turn_citations)
+    }
+
+    /// Drain and return the holistic token/cost/context totals for the latest
+    /// completed turn (parent + sub-agents). `None` until a turn has run.
+    /// Consumed by web-channel delivery to populate the `chat_done` usage fields.
+    pub fn take_last_turn_usage_totals(
+        &mut self,
+    ) -> Option<crate::openhuman::agent::harness::turn_subagent_usage::LastTurnUsage> {
+        self.last_turn_usage_totals.take()
     }
 
     // ─────────────────────────────────────────────────────────────────

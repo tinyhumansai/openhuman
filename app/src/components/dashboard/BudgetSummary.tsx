@@ -53,9 +53,9 @@ const BudgetSummary = ({
       {/* Hero tile: 7-day total + status badge + progress bar */}
       <div
         data-testid="metric-total-spend"
-        className="md:col-span-2 rounded-2xl border border-stone-200 dark:border-neutral-800 bg-gradient-to-br from-ocean-50 to-white dark:from-neutral-900 dark:to-neutral-950 p-5 flex flex-col gap-3 shadow-soft">
+        className="md:col-span-2 rounded-2xl border border-line bg-gradient-to-br from-ocean-50 to-white dark:from-neutral-900 dark:to-neutral-950 p-5 flex flex-col gap-3 shadow-soft">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-stone-500 dark:text-neutral-400">
+          <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-content-muted">
             <WalletIcon className="h-4 w-4" />
             <span>{t('settings.costDashboard.totalSpend')}</span>
           </div>
@@ -64,21 +64,21 @@ const BudgetSummary = ({
             className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium text-white ${STATUS_BG[status]}`}>
             <span
               aria-hidden
-              className="inline-block h-1.5 w-1.5 rounded-full bg-white/80 animate-pulse"
+              className="inline-block h-1.5 w-1.5 rounded-full bg-surface/80 animate-pulse"
             />
             {t(STATUS_LABEL_KEY[status])}
           </span>
         </div>
         <div className="flex items-baseline gap-3">
-          <span className="text-3xl md:text-4xl font-semibold tabular-nums text-stone-900 dark:text-neutral-50">
+          <span className="text-3xl md:text-4xl font-semibold tabular-nums text-content">
             {formatCurrency(periodTotalUsd, currency)}
           </span>
-          <span className="text-xs text-stone-500 dark:text-neutral-400">
+          <span className="text-xs text-content-muted">
             {t('settings.costDashboard.lastSevenDays')}
           </span>
         </div>
         <div className="flex flex-col gap-1">
-          <div className="flex items-center justify-between text-[11px] text-stone-500 dark:text-neutral-400">
+          <div className="flex items-center justify-between text-[11px] text-content-muted">
             <span>
               {budgetLimitMonthlyUsd > 0
                 ? `${formatCurrency(monthToDateUsd, currency)} ${t('settings.costDashboard.utilizationOf')} ${formatCurrency(budgetLimitMonthlyUsd, currency)} ${t('settings.costDashboard.thisMonth')}`
@@ -88,9 +88,7 @@ const BudgetSummary = ({
               {`${utilizationPct}%`}
             </span>
           </div>
-          <div
-            aria-hidden
-            className="h-2 w-full rounded-full bg-stone-200 dark:bg-neutral-800 overflow-hidden">
+          <div aria-hidden className="h-2 w-full rounded-full bg-surface-strong overflow-hidden">
             <div
               data-testid="utilization-fill"
               className={`h-full rounded-full transition-all duration-300 ${STATUS_BG[status]}`}
@@ -136,14 +134,12 @@ const SmallMetric = ({ icon, label, value, hint, testId }: SmallMetricProps) => 
   <div
     data-testid={testId}
     title={hint}
-    className="rounded-2xl border border-stone-200 dark:border-neutral-800 p-3 flex flex-col gap-1 hover:border-ocean-300 dark:hover:border-ocean-700 transition-colors">
-    <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-stone-500 dark:text-neutral-400">
+    className="rounded-2xl border border-line p-3 flex flex-col gap-1 hover:border-ocean-300 dark:hover:border-ocean-700 transition-colors">
+    <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-content-muted">
       {icon}
       <span>{label}</span>
     </div>
-    <span className="text-lg font-semibold tabular-nums text-stone-800 dark:text-neutral-100">
-      {value}
-    </span>
+    <span className="text-lg font-semibold tabular-nums text-content">{value}</span>
   </div>
 );
 

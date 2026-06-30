@@ -34,6 +34,7 @@ import {
   openhumanCronRuns,
   openhumanCronUpdate,
 } from '../../utils/tauriCommands/cron';
+import Button from '../ui/Button';
 import CreateSkillModal from './CreateSkillModal';
 import BranchPicker from './inputs/BranchPicker';
 import RepoPicker from './inputs/RepoPicker';
@@ -460,7 +461,8 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
     setSkillsLoading(true);
     setSkillsError(null);
     workflowsApi
-      .listWorkflows()
+      // Include `skills/`-root installs so registry-installed skills are runnable here.
+      .listWorkflows({ includeSkills: true })
       .then(list => {
         if (cancelled) return;
         // Hide the codegraph-smoke skill — internal smoke-test only.
@@ -944,13 +946,13 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
     const commonLabel = (
       <label
         htmlFor={id}
-        className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
+        className="block text-sm font-medium text-content-secondary dark:text-stone-300 mb-1">
         {inp.name}
         {requiredMark}
       </label>
     );
     const desc = inp.description ? (
-      <p className="text-xs text-stone-500 dark:text-stone-400 mt-1">{inp.description}</p>
+      <p className="text-xs text-content-muted dark:text-stone-400 mt-1">{inp.description}</p>
     ) : null;
 
     // Rich picker: repo-shaped input → Composio github_repo picker.
@@ -986,7 +988,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
         <div key={inp.name}>
           <label
             htmlFor={id}
-            className="flex items-center gap-2 text-sm font-medium text-stone-700 dark:text-stone-300">
+            className="flex items-center gap-2 text-sm font-medium text-content-secondary dark:text-stone-300">
             <input
               id={id}
               type="checkbox"
@@ -1013,7 +1015,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
             value={typeof value === 'number' ? value : (value as string)}
             onChange={e => onChange(e.target.value)}
             placeholder={inp.required ? t('settings.skillsRunner.placeholder.required') : ''}
-            className="w-full rounded border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-800 px-3 py-2 text-sm text-stone-900 dark:text-stone-100"
+            className="w-full rounded border border-line-strong dark:border-stone-600 bg-surface px-3 py-2 text-sm text-content dark:text-stone-100"
           />
           {desc}
         </div>
@@ -1030,7 +1032,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
           value={value as string}
           onChange={e => onChange(e.target.value)}
           placeholder={inp.required ? t('settings.skillsRunner.placeholder.required') : ''}
-          className="w-full rounded border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-800 px-3 py-2 text-sm text-stone-900 dark:text-stone-100"
+          className="w-full rounded border border-line-strong dark:border-stone-600 bg-surface px-3 py-2 text-sm text-content dark:text-stone-100"
         />
         {desc}
       </div>
@@ -1040,7 +1042,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
   // ── Render ─────────────────────────────────────────────────────────
   return (
     <div className={className ?? 'space-y-6'}>
-      <div className="text-sm text-stone-600 dark:text-stone-400">
+      <div className="text-sm text-content-secondary dark:text-stone-400">
         {headerText ?? t('settings.developerMenu.skillsRunner.panelDesc')}
       </div>
 
@@ -1052,7 +1054,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
           <div className="flex items-center gap-2">
             <h2
               data-testid="skills-runner-skill-locked"
-              className="min-w-0 truncate text-lg font-semibold text-stone-900 dark:text-stone-100">
+              className="min-w-0 truncate text-lg font-semibold text-content dark:text-stone-100">
               {selectedWorkflow?.name || selectedSkillId}
             </h2>
           </div>
@@ -1060,7 +1062,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
           <>
             <label
               htmlFor="skills-runner-skill"
-              className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
+              className="block text-sm font-medium text-content-secondary dark:text-stone-300 mb-1">
               {t('settings.skillsRunner.skill')}
             </label>
             <select
@@ -1068,7 +1070,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
               value={selectedSkillId}
               onChange={e => setSelectedSkillId(e.target.value)}
               disabled={skillsLoading || skillsError !== null}
-              className="w-full rounded border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-800 px-3 py-2 text-sm text-stone-900 dark:text-stone-100">
+              className="w-full rounded border border-line-strong dark:border-stone-600 bg-surface px-3 py-2 text-sm text-content dark:text-stone-100">
               <option value="">
                 {skillsLoading
                   ? t('settings.skillsRunner.loadingSkills')
@@ -1093,7 +1095,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
       {selectedSkillId && (
         <>
           {descLoading && (
-            <div className="text-sm text-stone-500 dark:text-stone-400">
+            <div className="text-sm text-content-muted dark:text-stone-400">
               {t('settings.skillsRunner.loadingDescription')}
             </div>
           )}
@@ -1109,15 +1111,15 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
                     save a recurring schedule that snapshots them. */}
               <div
                 id="workflow-schedule"
-                className="space-y-4 rounded-2xl border border-stone-200/90 dark:border-stone-700/80 bg-gradient-to-br from-stone-50 via-white to-stone-100 dark:from-stone-900 dark:via-stone-900 dark:to-stone-800/80 px-4 py-4 shadow-soft">
-                <div className="rounded border border-stone-200 dark:border-stone-700 bg-white/70 dark:bg-stone-900/60 p-3">
-                  <p className="text-sm text-stone-700 dark:text-stone-300 whitespace-pre-wrap">
+                className="space-y-4 rounded-2xl border border-line/90 dark:border-stone-700/80 bg-gradient-to-br from-stone-50 via-white to-stone-100 dark:from-stone-900 dark:via-stone-900 dark:to-stone-800/80 px-4 py-4 shadow-soft">
+                <div className="rounded border border-line dark:border-stone-700 bg-surface/70 dark:bg-stone-900/60 p-3">
+                  <p className="text-sm text-content-secondary dark:text-stone-300 whitespace-pre-wrap">
                     {description.when_to_use}
                   </p>
                 </div>
 
                 {description.inputs.length === 0 ? (
-                  <p className="text-sm italic text-stone-500 dark:text-stone-400">
+                  <p className="text-sm italic text-content-muted dark:text-stone-400">
                     {t('settings.skillsRunner.noInputs')}
                   </p>
                 ) : (
@@ -1170,27 +1172,26 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
                 {/* Run now + Edit — act on this workflow with the inputs above. */}
                 <div className="flex flex-col gap-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
+                    <Button
+                      variant="primary"
                       onClick={() => void handleRun()}
                       disabled={
                         run.status === 'submitting' || runBusy || missingRequired.length > 0
-                      }
-                      className="rounded bg-primary-600 hover:bg-primary-700 disabled:opacity-50 px-4 py-2 text-sm font-medium text-white">
+                      }>
                       {run.status === 'submitting'
                         ? t('settings.skillsRunner.starting')
                         : t('settings.skillsRunner.runNow')}
-                    </button>
+                    </Button>
                     {selectedWorkflow &&
                       selectedWorkflow.scope === 'user' &&
                       !selectedWorkflow.legacy && (
-                        <button
-                          type="button"
+                        <Button
+                          variant="secondary"
                           data-testid="skills-runner-edit"
                           onClick={() => setEditOpen(true)}
-                          className="inline-flex items-center gap-1 rounded border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-800 px-3 py-2 text-sm font-medium text-stone-700 dark:text-stone-200 hover:bg-stone-50 dark:hover:bg-stone-700">
-                          <span aria-hidden="true">✎</span> {t('common.edit')}
-                        </button>
+                          leadingIcon={<span aria-hidden="true">✎</span>}>
+                          {t('common.edit')}
+                        </Button>
                       )}
                   </div>
 
@@ -1242,22 +1243,22 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
                 </div>
 
                 {/* Same inputs, second action: run it on a schedule. */}
-                <div className="border-t border-stone-200/70 dark:border-stone-700/70 pt-3">
-                  <h3 className="mb-2 text-sm font-semibold text-stone-800 dark:text-stone-200">
+                <div className="border-t border-line/70 dark:border-stone-700/70 pt-3">
+                  <h3 className="mb-2 text-sm font-semibold text-content dark:text-stone-200">
                     {t('settings.skillsRunner.schedule.heading')}
                   </h3>
                   <div className="flex flex-col sm:flex-row sm:items-end gap-2">
                     <div className="flex-1">
                       <label
                         htmlFor="skills-runner-schedule"
-                        className="block text-xs font-semibold uppercase tracking-wide text-stone-600 dark:text-stone-300 mb-1.5">
+                        className="block text-xs font-semibold uppercase tracking-wide text-content-secondary dark:text-stone-300 mb-1.5">
                         {t('settings.skillsRunner.schedule.frequency')}
                       </label>
                       <select
                         id="skills-runner-schedule"
                         value={schedule}
                         onChange={e => setSchedule(e.target.value)}
-                        className="w-full rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-800 px-3 py-2 text-sm text-stone-900 dark:text-stone-100 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500">
+                        className="w-full rounded-xl border border-line-strong dark:border-stone-600 bg-surface px-3 py-2 text-sm text-content dark:text-stone-100 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500">
                         {SCHEDULE_PRESETS.map(p => (
                           <option key={p.value} value={p.value}>
                             {t(p.labelKey)}
@@ -1265,15 +1266,15 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
                         ))}
                       </select>
                     </div>
-                    <button
-                      type="button"
+                    <Button
+                      variant="primary"
                       onClick={() => void handleSaveSchedule()}
                       disabled={savingSchedule || missingRequired.length > 0}
-                      className="rounded-xl border border-primary-700/30 bg-primary-600 hover:bg-primary-700 active:bg-primary-800 disabled:bg-stone-300 disabled:border-stone-300 dark:disabled:bg-stone-700 dark:disabled:border-stone-700 disabled:text-stone-600 dark:disabled:text-stone-300 px-4 py-2 text-sm font-semibold text-white shadow-soft transition-colors">
+                      className="shadow-soft">
                       {savingSchedule
                         ? t('settings.skillsRunner.schedule.saving')
                         : t('settings.skillsRunner.schedule.save')}
-                    </button>
+                    </Button>
                   </div>
 
                   {scheduleSaved && (
@@ -1290,19 +1291,19 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
               </div>
 
               {/* Second box — saved schedules for this workflow. */}
-              <div className="space-y-2 rounded-2xl border border-stone-200/90 dark:border-stone-700/80 bg-white dark:bg-stone-900 px-4 py-4 shadow-soft">
+              <div className="space-y-2 rounded-2xl border border-line/90 dark:border-stone-700/80 bg-surface dark:bg-stone-900 px-4 py-4 shadow-soft">
                 {/* Existing scheduled jobs for this skill */}
                 {scheduledJobsLoading ? (
-                  <p className="mt-3 text-xs text-stone-500 dark:text-stone-400">
+                  <p className="mt-3 text-xs text-content-muted dark:text-stone-400">
                     {t('settings.skillsRunner.schedule.loadingJobs')}
                   </p>
                 ) : scheduledJobs.length === 0 ? (
-                  <p className="mt-3 text-xs italic text-stone-500 dark:text-stone-400">
+                  <p className="mt-3 text-xs italic text-content-muted dark:text-stone-400">
                     {t('settings.skillsRunner.schedule.noJobs')}
                   </p>
                 ) : (
-                  <div className="mt-3 space-y-2 rounded-2xl border border-stone-200/80 dark:border-stone-800 bg-stone-50/70 dark:bg-stone-900/40 p-2.5">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-stone-600 dark:text-stone-400 px-1">
+                  <div className="mt-3 space-y-2 rounded-2xl border border-line/80 dark:border-stone-800 bg-surface-muted/70 dark:bg-stone-900/40 p-2.5">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-content-secondary dark:text-stone-400 px-1">
                       {t('settings.skillsRunner.schedule.existing')}
                     </div>
                     {/* Per-skill saved-schedule list — uses the shared
@@ -1332,19 +1333,20 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
                           testIdRoot={`scheduled-job-${job.id}`}
                           actions={
                             <>
-                              <button
-                                type="button"
+                              <Button
+                                variant="primary"
+                                size="sm"
                                 disabled={runBusy}
-                                onClick={() => void handleRunJobNow(job)}
-                                className="rounded-lg border border-primary-700/30 bg-primary-600 hover:bg-primary-700 active:bg-primary-800 disabled:opacity-50 px-2.5 py-1 text-xs font-semibold text-white transition-colors">
+                                onClick={() => void handleRunJobNow(job)}>
                                 {t('settings.skillsRunner.schedule.runNow')}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => void handleRemoveJob(job.id)}
-                                className="rounded-lg border border-red-700/40 bg-red-600 hover:bg-red-700 active:bg-red-800 px-2.5 py-1 text-xs font-semibold text-white transition-colors">
+                              </Button>
+                              <Button
+                                variant="primary"
+                                tone="danger"
+                                size="sm"
+                                onClick={() => void handleRemoveJob(job.id)}>
                                 {t('settings.skillsRunner.schedule.remove')}
-                              </button>
+                              </Button>
                             </>
                           }>
                           {/* The inputs this schedule was created with —
@@ -1353,19 +1355,19 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
                           <div data-testid={`scheduled-job-${job.id}-inputs`} className="px-4 pt-2">
                             {jobInputs.length > 0 ? (
                               <div className="flex flex-wrap items-center gap-1">
-                                <span className="text-[10px] font-semibold uppercase tracking-wide text-stone-500 dark:text-stone-400">
+                                <span className="text-[10px] font-semibold uppercase tracking-wide text-content-muted dark:text-stone-400">
                                   {t('settings.skillsRunner.schedule.inputsLabel')}
                                 </span>
                                 {jobInputs.map(inp => (
                                   <span
                                     key={inp.key}
-                                    className="rounded bg-stone-100 dark:bg-stone-800 px-1.5 py-0.5 font-mono text-[10px] text-stone-700 dark:text-stone-300">
+                                    className="rounded bg-surface-subtle dark:bg-stone-800 px-1.5 py-0.5 font-mono text-[10px] text-content-secondary dark:text-stone-300">
                                     {inp.key}: {inp.value}
                                   </span>
                                 ))}
                               </div>
                             ) : (
-                              <span className="text-[10px] italic text-stone-400 dark:text-stone-500">
+                              <span className="text-[10px] italic text-content-faint dark:text-stone-500">
                                 {t('settings.skillsRunner.schedule.inputsNone')}
                               </span>
                             )}
@@ -1375,13 +1377,13 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
                                 a disclosure toggle reveals up to 5 runs
                                 each with status badge + duration; click
                                 a run to expand its captured output. */}
-                          <div className="px-4 pb-3 border-t border-stone-100 dark:border-stone-800">
+                          <div className="px-4 pb-3 border-t border-line-subtle dark:border-stone-800">
                             <button
                               type="button"
                               onClick={() => toggleJobHistory(job.id)}
                               aria-expanded={Boolean(hist?.expanded)}
                               data-testid={`history-toggle-${job.id}`}
-                              className="mt-2 text-[11px] text-stone-600 dark:text-stone-400 hover:underline">
+                              className="mt-2 text-[11px] text-content-secondary dark:text-stone-400 hover:underline">
                               {hist?.expanded ? '▾' : '▸'}{' '}
                               {t('settings.skillsRunner.schedule.history')}
                               {hist?.runs?.length ? ` (${hist.runs.length})` : ''}
@@ -1389,11 +1391,11 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
                             {hist?.expanded && (
                               <div className="mt-1.5 space-y-1">
                                 {hist.loading && hist.runs.length === 0 ? (
-                                  <p className="text-[11px] text-stone-500 dark:text-stone-400">
+                                  <p className="text-[11px] text-content-muted dark:text-stone-400">
                                     {t('settings.skillsRunner.schedule.historyLoading')}
                                   </p>
                                 ) : hist.runs.length === 0 ? (
-                                  <p className="text-[11px] italic text-stone-500 dark:text-stone-400">
+                                  <p className="text-[11px] italic text-content-muted dark:text-stone-400">
                                     {t('settings.skillsRunner.schedule.historyEmpty')}
                                   </p>
                                 ) : (
@@ -1406,24 +1408,24 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
                                     return (
                                       <div
                                         key={r.id}
-                                        className="rounded bg-white dark:bg-stone-800">
+                                        className="rounded bg-surface">
                                         <button
                                           type="button"
                                           onClick={() => toggleHistoryRun(job.id, r.id)}
                                           aria-expanded={open}
                                           data-testid={`history-run-${job.id}-${r.id}`}
-                                          className="w-full flex items-center justify-between px-2 py-1.5 hover:bg-stone-50 dark:hover:bg-stone-700 rounded">
+                                          className="w-full flex items-center justify-between px-2 py-1.5 hover:bg-surface-muted dark:hover:bg-stone-700 rounded">
                                           <div className="flex items-center gap-2">
-                                            <span className="text-stone-400">
+                                            <span className="text-content-faint">
                                               {open ? '▾' : '▸'}
                                             </span>
-                                            <span className="text-stone-600 dark:text-stone-400">
+                                            <span className="text-content-secondary dark:text-stone-400">
                                               {new Date(r.started_at).toLocaleString()}
                                             </span>
                                           </div>
                                           <div className="flex items-center gap-2">
                                             {r.duration_ms != null && (
-                                              <span className="text-stone-500">
+                                              <span className="text-content-muted">
                                                 {(r.duration_ms / 1000).toFixed(1)}s
                                               </span>
                                             )}
@@ -1434,12 +1436,12 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
                                           </div>
                                         </button>
                                         {open && r.output && (
-                                          <pre className="mx-2 mb-2 px-3 py-2 rounded-md bg-stone-100 dark:bg-stone-900 border border-stone-200 dark:border-stone-700 text-[11px] text-stone-700 dark:text-stone-300 font-mono whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
+                                          <pre className="mx-2 mb-2 px-3 py-2 rounded-md bg-surface-subtle dark:bg-stone-900 border border-line dark:border-stone-700 text-[11px] text-content-secondary dark:text-stone-300 font-mono whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
                                             {r.output}
                                           </pre>
                                         )}
                                         {open && !r.output && (
-                                          <div className="mx-2 mb-2 px-3 py-2 text-[11px] italic text-stone-400 dark:text-stone-500">
+                                          <div className="mx-2 mb-2 px-3 py-2 text-[11px] italic text-content-faint dark:text-stone-500">
                                             {t('settings.skillsRunner.schedule.historyNoOutput')}
                                           </div>
                                         )}
@@ -1462,26 +1464,27 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
       )}
 
       {/* Recent runs (cross-skill if no skill picked; otherwise scoped) */}
-      <div className="pt-4 border-t border-stone-200 dark:border-stone-700 space-y-2">
+      <div className="pt-4 border-t border-line dark:border-stone-700 space-y-2">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-stone-700 dark:text-stone-300">
+          <h3 className="text-sm font-semibold text-content-secondary dark:text-stone-300">
             {selectedSkillId
               ? t('settings.skillsRunner.recentRuns.headingForSkill')
               : t('settings.skillsRunner.recentRuns.headingAll')}
           </h3>
-          <button
-            type="button"
+          <Button
+            variant="tertiary"
+            size="xs"
             onClick={() => setRecentRunsRefreshNonce(n => n + 1)}
-            className="text-xs text-stone-600 dark:text-stone-400 hover:underline">
+            className="px-0 text-content-secondary hover:bg-transparent hover:underline dark:text-stone-400">
             {t('settings.skillsRunner.recentRuns.refresh')}
-          </button>
+          </Button>
         </div>
         {recentRunsLoading ? (
-          <p className="text-xs text-stone-500 dark:text-stone-400">
+          <p className="text-xs text-content-muted dark:text-stone-400">
             {t('settings.skillsRunner.recentRuns.loading')}
           </p>
         ) : recentRuns.length === 0 ? (
-          <p className="text-xs italic text-stone-500 dark:text-stone-400">
+          <p className="text-xs italic text-content-muted dark:text-stone-400">
             {t('settings.skillsRunner.recentRuns.empty')}
           </p>
         ) : (
@@ -1502,56 +1505,58 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
               return (
                 <div
                   key={r.run_id}
-                  className="rounded border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-900 text-xs overflow-hidden">
+                  className="rounded border border-line dark:border-stone-700 bg-surface-muted dark:bg-stone-900 text-xs overflow-hidden">
                   <button
                     type="button"
                     onClick={() => toggleExpand(r.run_id)}
-                    className="w-full text-left px-3 py-2 hover:bg-stone-100 dark:hover:bg-stone-800 focus:outline-none focus:bg-stone-100 dark:focus:bg-stone-800"
+                    className="w-full text-left px-3 py-2 hover:bg-surface-subtle dark:hover:bg-stone-800 focus:outline-none focus:bg-surface-subtle dark:focus:bg-stone-800"
                     aria-expanded={expanded}>
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="text-stone-500 dark:text-stone-400">
+                      <span className="text-content-muted dark:text-stone-400">
                         {expanded ? '▾' : '▸'}
                       </span>
                       <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${badgeClass}`}>
                         {r.status}
                       </span>
-                      <span className="font-mono text-stone-700 dark:text-stone-300">
+                      <span className="font-mono text-content-secondary dark:text-stone-300">
                         {r.run_id.slice(0, 8)}
                       </span>
-                      <span className="text-stone-600 dark:text-stone-400">{r.workflow_id}</span>
-                      <span className="text-stone-500 dark:text-stone-400 ml-auto">{dur}</span>
+                      <span className="text-content-secondary dark:text-stone-400">{r.workflow_id}</span>
+                      <span className="text-content-muted dark:text-stone-400 ml-auto">{dur}</span>
                     </div>
-                    <div className="text-stone-500 dark:text-stone-400 truncate pl-5">
+                    <div className="text-content-muted dark:text-stone-400 truncate pl-5">
                       {r.started}
                     </div>
-                    <div className="text-stone-400 dark:text-stone-500 font-mono text-[10px] truncate pl-5">
+                    <div className="text-content-faint dark:text-stone-500 font-mono text-[10px] truncate pl-5">
                       {r.log_path}
                     </div>
                   </button>
 
                   {r.status === 'RUNNING' && (
                     <div className="px-3 pb-2 pl-8">
-                      <button
-                        type="button"
+                      <Button
+                        variant="secondary"
+                        tone="danger"
+                        size="xs"
                         data-testid={`run-stop-${r.run_id}`}
                         onClick={() => void handleStopRun(r.run_id)}
-                        className="inline-flex items-center gap-1 rounded border border-coral-300 bg-coral-50 px-2 py-0.5 text-[11px] font-medium text-coral-700 hover:bg-coral-100">
-                        <span aria-hidden="true">◼</span> {t('autocomplete.stop')}
-                      </button>
+                        leadingIcon={<span aria-hidden="true">◼</span>}>
+                        {t('autocomplete.stop')}
+                      </Button>
                     </div>
                   )}
 
                   {expanded && (
-                    <div className="border-t border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-950">
+                    <div className="border-t border-line dark:border-stone-700 bg-surface dark:bg-stone-950">
                       {/* Live indicator while tailing */}
                       {!v?.complete && (
-                        <div className="px-3 py-1.5 text-[10px] text-stone-500 dark:text-stone-400 border-b border-stone-100 dark:border-stone-800 flex items-center gap-2">
+                        <div className="px-3 py-1.5 text-[10px] text-content-muted dark:text-stone-400 border-b border-line-subtle dark:border-stone-800 flex items-center gap-2">
                           <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse" />
                           <span>
                             {t('settings.skillsRunner.viewer.tailing')}
                             {v?.loading ? ` · ${t('settings.skillsRunner.viewer.fetching')}` : ''}
                           </span>
-                          <span className="ml-auto text-stone-400 dark:text-stone-500">
+                          <span className="ml-auto text-content-faint dark:text-stone-500">
                             {v?.offset ?? 0} B
                           </span>
                         </div>
@@ -1561,7 +1566,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
                           {t('settings.skillsRunner.viewer.error')} {v.error}
                         </div>
                       )}
-                      <pre className="px-3 py-2 m-0 max-h-96 overflow-auto font-mono text-[11px] leading-snug whitespace-pre-wrap break-words text-stone-800 dark:text-stone-200">
+                      <pre className="px-3 py-2 m-0 max-h-96 overflow-auto font-mono text-[11px] leading-snug whitespace-pre-wrap break-words text-content dark:text-stone-200">
                         {v?.content ??
                           (v?.loading ? t('settings.skillsRunner.viewer.loading') : '')}
                       </pre>
@@ -1583,7 +1588,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
           onCreated={() => {
             setEditOpen(false);
             void workflowsApi
-              .listWorkflows()
+              .listWorkflows({ includeSkills: true })
               .then(list => setSkills(list.filter(s => s.id !== 'codegraph-smoke')))
               .catch(() => {});
             void workflowsApi

@@ -392,10 +392,34 @@ pub fn persist_score(
                 timestamp_ms,
                 tree_id,
             )?;
+            // E2GraphRAG: accumulate the chunk's entity co-occurrence edges so
+            // query-time hop-distance filtering has a graph to walk.
+            persist_cooccurrence_edges(config, &result.canonical_entities, timestamp_ms);
         }
     }
 
     Ok(())
+}
+
+/// Build and persist the undirected co-occurrence edges implied by a chunk's
+/// canonical entities. Best-effort: a graph write failure must never block the
+/// (already-committed) score/entity-index write, so errors are logged and
+/// swallowed. Co-occurrence = two entities mentioned in the same chunk.
+fn persist_cooccurrence_edges(
+    config: &crate::openhuman::config::Config,
+    entities: &[crate::openhuman::memory_tree::score::resolver::CanonicalEntity],
+    timestamp_ms: i64,
+) {
+    use crate::openhuman::memory_tree::graph;
+    let ids: Vec<String> = entities.iter().map(|e| e.canonical_id.clone()).collect();
+    let pairs = graph::pairs_from_entities(&ids);
+    if pairs.is_empty() {
+        return;
+    }
+    match graph::upsert_edges(config, &pairs, timestamp_ms) {
+        Ok(n) => log::debug!("[memory_tree::graph] indexed cooccurrence edges count={n}"),
+        Err(e) => log::warn!("[memory_tree::graph] edge upsert failed (non-fatal): {e:#}"),
+    }
 }
 
 pub(crate) fn persist_score_tx(
@@ -419,6 +443,17 @@ pub(crate) fn persist_score_tx(
                 timestamp_ms,
                 tree_id,
             )?;
+            // E2GraphRAG: accumulate co-occurrence edges in the SAME transaction
+            // so the graph never diverges from the entity index.
+            let ids: Vec<String> = result
+                .canonical_entities
+                .iter()
+                .map(|e| e.canonical_id.clone())
+                .collect();
+            let pairs = crate::openhuman::memory_tree::graph::pairs_from_entities(&ids);
+            let n =
+                crate::openhuman::memory_tree::graph::upsert_edges_tx(tx, &pairs, timestamp_ms)?;
+            log::debug!("[memory_tree::graph] indexed cooccurrence edges (tx) count={n}");
         }
     }
 

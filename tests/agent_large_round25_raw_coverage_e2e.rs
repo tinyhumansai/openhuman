@@ -15,6 +15,7 @@ use openhuman_core::openhuman::inference::provider::{
 use openhuman_core::openhuman::memory::{
     Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts,
 };
+use openhuman_core::openhuman::tokenjuice::AgentTokenjuiceCompression;
 use openhuman_core::openhuman::tools::{PermissionLevel, Tool, ToolResult};
 use parking_lot::Mutex;
 use serde_json::json;
@@ -291,10 +292,12 @@ fn integrations_definition() -> AgentDefinition {
         max_iterations: 4,
         iteration_policy: Default::default(),
         max_result_chars: None,
+        max_turn_output_tokens: None,
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,
         background: false,
         trigger_memory_agent: Default::default(),
+        tokenjuice_compression: AgentTokenjuiceCompression::Auto,
         subagents: Vec::new(),
         delegate_name: None,
         agent_tier: Default::default(),
@@ -317,6 +320,7 @@ fn parent(workspace_dir: PathBuf, provider: Arc<ScriptedProvider>) -> ParentExec
         provider,
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(specs),
+        visible_tool_names: std::collections::HashSet::new(),
         model_name: "round25-parent-model".to_string(),
         temperature: 0.0,
         workspace_dir,

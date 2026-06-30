@@ -130,9 +130,9 @@ function useInsightCategoryLabels() {
     other: {
       label: t('insights.other'),
       icon: 'M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z',
-      color: 'text-stone-600 dark:text-neutral-300',
-      bgColor: 'bg-stone-100 dark:bg-neutral-800',
-      borderColor: 'border-stone-200 dark:border-neutral-800',
+      color: 'text-content-secondary',
+      bgColor: 'bg-surface-subtle',
+      borderColor: 'border-line',
     },
   } as const;
 }
@@ -140,7 +140,7 @@ function useInsightCategoryLabels() {
 /** Small inline badge that displays an entity type (e.g. "person", "project"). */
 function EntityTypeBadge({ type }: { type: string }) {
   return (
-    <span className="inline-block ml-1 px-1 py-px rounded text-[9px] leading-tight font-medium bg-white/8 text-stone-400 dark:text-neutral-500 border border-white/6 uppercase tracking-wide">
+    <span className="inline-block ml-1 px-1 py-px rounded text-[9px] leading-tight font-medium bg-surface/8 text-content-faint border border-white/6 uppercase tracking-wide">
       {type}
     </span>
   );
@@ -192,16 +192,11 @@ export function MemoryInsights({ relations, loading }: MemoryInsightsProps) {
 
   if (loading) {
     return (
-      <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-5">
-        <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100 mb-4">
-          {t('insights.title')}
-        </h3>
+      <div className="rounded-xl border border-line bg-surface-muted p-5">
+        <h3 className="text-sm font-semibold text-content mb-4">{t('insights.title')}</h3>
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
           {[1, 2, 3].map(i => (
-            <div
-              key={i}
-              className="h-28 rounded-lg bg-stone-200 dark:bg-neutral-800 animate-pulse"
-            />
+            <div key={i} className="h-28 rounded-lg bg-surface-strong animate-pulse" />
           ))}
         </div>
       </div>
@@ -210,23 +205,19 @@ export function MemoryInsights({ relations, loading }: MemoryInsightsProps) {
 
   if (groups.length === 0) {
     return (
-      <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-5">
-        <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100 mb-2">
-          {t('insights.title')}
-        </h3>
-        <p className="text-sm text-stone-600 dark:text-neutral-300">{t('insights.empty')}</p>
+      <div className="rounded-xl border border-line bg-surface-muted p-5">
+        <h3 className="text-sm font-semibold text-content mb-2">{t('insights.title')}</h3>
+        <p className="text-sm text-content-secondary">{t('insights.empty')}</p>
       </div>
     );
   }
 
   return (
-    <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-5">
+    <div className="rounded-xl border border-line bg-surface-muted p-5">
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-            {t('insights.title')}
-          </h3>
-          <p className="text-xs text-stone-500 dark:text-neutral-400 mt-0.5">
+          <h3 className="text-sm font-semibold text-content">{t('insights.title')}</h3>
+          <p className="text-xs text-content-muted mt-0.5">
             {t('insights.description').replace('{count}', String(relations.length))}
           </p>
         </div>
@@ -263,12 +254,12 @@ export function MemoryInsights({ relations, loading }: MemoryInsightsProps) {
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className={`text-xs font-medium ${group.color}`}>{group.label}</div>
-                  <div className="text-[10px] text-stone-500 dark:text-neutral-400">
+                  <div className="text-[10px] text-content-muted">
                     {group.items.length} {t('insights.items')}
                   </div>
                 </div>
                 <svg
-                  className={`w-3.5 h-3.5 text-stone-500 dark:text-neutral-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                  className={`w-3.5 h-3.5 text-content-muted transition-transform ${isExpanded ? 'rotate-180' : ''}`}
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24">
@@ -287,29 +278,25 @@ export function MemoryInsights({ relations, loading }: MemoryInsightsProps) {
                     key={`${item.subject}-${item.predicate}-${item.object}-${idx}`}
                     className="flex items-start gap-1.5 text-[11px] leading-relaxed">
                     <span
-                      className="text-stone-900 dark:text-neutral-100 font-medium shrink-0 max-w-[30%] truncate"
+                      className="text-content font-medium shrink-0 max-w-[30%] truncate"
                       title={item.subject}>
                       {item.subject}
                       {item.subjectType && <EntityTypeBadge type={item.subjectType} />}
                     </span>
-                    <span className="text-stone-500 dark:text-neutral-400 shrink-0 italic">
-                      {item.predicate}
-                    </span>
-                    <span
-                      className="text-stone-600 dark:text-neutral-300 truncate"
-                      title={item.object}>
+                    <span className="text-content-muted shrink-0 italic">{item.predicate}</span>
+                    <span className="text-content-secondary truncate" title={item.object}>
                       {item.object}
                       {item.objectType && <EntityTypeBadge type={item.objectType} />}
                     </span>
                     {item.evidenceCount > 1 && (
-                      <span className="ml-auto text-[9px] text-stone-600 dark:text-neutral-300 shrink-0 tabular-nums">
+                      <span className="ml-auto text-[9px] text-content-secondary shrink-0 tabular-nums">
                         x{item.evidenceCount}
                       </span>
                     )}
                   </div>
                 ))}
                 {!isExpanded && group.items.length > 3 && (
-                  <div className="text-[10px] text-stone-500 dark:text-neutral-400 pt-0.5">
+                  <div className="text-[10px] text-content-muted pt-0.5">
                     +{group.items.length - 3} {t('insights.more')}
                   </div>
                 )}

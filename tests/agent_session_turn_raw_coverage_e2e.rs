@@ -22,6 +22,7 @@ use openhuman_core::openhuman::memory::{
     Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts,
 };
 use openhuman_core::openhuman::memory_store;
+use openhuman_core::openhuman::tokenjuice::AgentTokenjuiceCompression;
 use openhuman_core::openhuman::tools::traits::ToolCallOptions;
 use openhuman_core::openhuman::tools::{
     PermissionLevel, Tool, ToolContent, ToolResult, ToolScope as RuntimeToolScope,
@@ -900,6 +901,7 @@ async fn subagent_runner_parent_context_filters_tools_caps_output_and_reports_er
         provider: provider.clone(),
         all_tools: Arc::new(all_tools),
         all_tool_specs: Arc::new(all_specs),
+        visible_tool_names: std::collections::HashSet::new(),
         model_name: "parent-model".to_string(),
         temperature: 0.22,
         workspace_dir: workspace_path.clone(),
@@ -1015,10 +1017,12 @@ fn definition(
         max_iterations,
         iteration_policy: Default::default(),
         max_result_chars,
+        max_turn_output_tokens: None,
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,
         background: false,
         trigger_memory_agent: Default::default(),
+        tokenjuice_compression: AgentTokenjuiceCompression::Auto,
         subagents: Vec::new(),
         delegate_name: None,
         agent_tier: AgentTier::Worker,

@@ -68,7 +68,7 @@ vi.mock('../components/BootCheckGate/BootCheckGate', () => ({
   default: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 vi.mock('../components/MeshGradient', () => ({ default: () => null }));
-vi.mock('../components/BottomTabBar', () => ({ default: () => null }));
+vi.mock('../components/layout/shell/AppSidebar', () => ({ default: () => null }));
 vi.mock('../components/AppUpdatePrompt', () => ({ default: () => null }));
 vi.mock('../components/LocalAIDownloadSnackbar', () => ({ default: () => null }));
 vi.mock('../components/daemon/ServiceBlockingGate', () => ({
