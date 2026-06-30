@@ -14,12 +14,38 @@
 use serde::Deserialize;
 
 use crate::core::event_bus::BackendMeetTurn;
+use crate::openhuman::config::schema::AutoSummarizePolicy;
 use crate::openhuman::config::Config;
 use crate::openhuman::inference::provider::create_chat_provider;
 
 use super::types::{ActionItem, ActionItemKind, MeetingSummary};
 
 const LOG_PREFIX: &str = "[agent_meetings::summary]";
+
+/// What the call-end pipeline should do about the post-call summary, derived
+/// from the user's `auto_summarize_policy`. Centralising the mapping keeps the
+/// (previously dead) setting honest: `bus.rs` switches on this instead of
+/// summarising unconditionally.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SummaryAction {
+    /// Generate + post the summary automatically (policy `Always`).
+    Generate,
+    /// Don't auto-generate; surface an approval card so the user can opt in
+    /// after the call ends (policy `Ask`).
+    Ask,
+    /// Don't generate anything — the plain transcript thread/detail stand on
+    /// their own (policy `Never`).
+    Skip,
+}
+
+/// Map the persisted [`AutoSummarizePolicy`] to the call-end [`SummaryAction`].
+pub fn summary_action(policy: AutoSummarizePolicy) -> SummaryAction {
+    match policy {
+        AutoSummarizePolicy::Always => SummaryAction::Generate,
+        AutoSummarizePolicy::Ask => SummaryAction::Ask,
+        AutoSummarizePolicy::Never => SummaryAction::Skip,
+    }
+}
 
 /// Cap on the transcript size (in **bytes**, matching `str::len`) fed to the
 /// model so a marathon call doesn't blow the context window. The tail is kept
@@ -339,6 +365,21 @@ mod tests {
             role: role.to_string(),
             content: content.to_string(),
         }
+    }
+
+    #[test]
+    fn summary_action_maps_every_policy() {
+        // The whole point of the issue: each policy drives a distinct action so
+        // Ask/Always/Never stop being a dead toggle.
+        assert_eq!(
+            summary_action(AutoSummarizePolicy::Always),
+            SummaryAction::Generate
+        );
+        assert_eq!(summary_action(AutoSummarizePolicy::Ask), SummaryAction::Ask);
+        assert_eq!(
+            summary_action(AutoSummarizePolicy::Never),
+            SummaryAction::Skip
+        );
     }
 
     #[test]

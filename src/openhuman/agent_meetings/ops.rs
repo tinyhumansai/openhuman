@@ -218,9 +218,22 @@ pub async fn ingest_backend_meeting_transcript(
     );
 
     // Create a meeting thread with the transcript for the thread system. This
-    // path has no pre-generated summary, so the thread generates its own.
-    if let Err(e) =
-        create_meeting_thread_with_transcript(&turns, duration_ms, correlation_id, None).await
+    // path has no pre-generated summary, so the thread self-generates one —
+    // but only when the user's policy permits an automatic summary, so the
+    // memory-ingest path honours `auto_summarize_policy` just like the
+    // primary call-end pipeline.
+    let allow_self_summarize = matches!(
+        super::summary::summary_action(config.meet.auto_summarize_policy),
+        super::summary::SummaryAction::Generate
+    );
+    if let Err(e) = create_meeting_thread_with_transcript(
+        &turns,
+        duration_ms,
+        correlation_id,
+        None,
+        allow_self_summarize,
+    )
+    .await
     {
         tracing::warn!("[agent_meetings] meeting thread creation failed: {e}");
     }
@@ -235,14 +248,23 @@ pub async fn ingest_backend_meeting_transcript(
 /// a new thread.
 /// `generated` lets the caller pass a summary it already produced so the
 /// call-end pipeline can share one generation across the recent-call detail
-/// store and this thread. When `None`, the summary is generated here (bounded)
-/// — preserving the behaviour of callers that don't pre-generate.
+/// store and this thread.
+///
+/// `allow_self_summarize` gates the fallback self-generation when `generated`
+/// is `None`: it must be `true` only when the user's `auto_summarize_policy`
+/// permits an automatic summary (`Always`). Under `Ask`/`Never` callers pass
+/// `false`, so the thread is created with the transcript alone and no summary
+/// LLM call is made — this is what makes the (previously dead) policy honest.
+///
+/// Returns the id of the created meeting thread so callers (e.g. the on-demand
+/// summarise RPC) can hand it back to the UI.
 pub async fn create_meeting_thread_with_transcript(
     turns: &[BackendMeetTurn],
     duration_ms: u64,
     correlation_id: Option<String>,
     generated: Option<&super::summary::GeneratedSummary>,
-) -> Result<(), String> {
+    allow_self_summarize: bool,
+) -> Result<String, String> {
     use crate::openhuman::memory::{
         AppendConversationMessageRequest, ConversationMessageRecord,
         CreateConversationThreadRequest, UpdateConversationThreadTitleRequest,
@@ -250,14 +272,19 @@ pub async fn create_meeting_thread_with_transcript(
     use crate::openhuman::threads::ops;
 
     if turns.is_empty() {
-        return Ok(());
+        return Ok(String::new());
     }
 
     // Format the transcript body first — this is the durable artifact and must
     // not depend on (or wait on) the summarisation LLM call.
     let mut body = String::new();
+    // Duration is unknown on the on-demand re-summarise path (the transcript is
+    // re-read from persisted detail, which doesn't carry it) — omit the line
+    // rather than print a misleading "Duration: 0 min".
     let duration_min = duration_ms / 60_000;
-    body.push_str(&format!("Duration: {duration_min} min\n\n"));
+    if duration_ms > 0 {
+        body.push_str(&format!("Duration: {duration_min} min\n\n"));
+    }
     if let Some(cid) = &correlation_id {
         body.push_str(&format!("Correlation ID: {cid}\n\n"));
     }
@@ -319,10 +346,11 @@ pub async fn create_meeting_thread_with_transcript(
 
     // 3. Best-effort enrichment: reuse a summary the caller already generated
     //    (the call-end pipeline shares one across the recent-call detail store
-    //    and this thread); otherwise generate one here, bounded so a slow/flaky
-    //    provider can never dominate the path. Any failure or timeout leaves the
-    //    plain-transcript thread untouched.
-    let owned_generated = if generated.is_none() {
+    //    and this thread); otherwise generate one here — but only when the
+    //    user's policy permits an automatic summary (`allow_self_summarize`).
+    //    Bounded so a slow/flaky provider can never dominate the path; any
+    //    failure/timeout leaves the plain-transcript thread untouched.
+    let owned_generated = if generated.is_none() && allow_self_summarize {
         super::summary::generate_meeting_summary_bounded(turns, correlation_id.as_deref()).await
     } else {
         None
@@ -376,7 +404,92 @@ pub async fn create_meeting_thread_with_transcript(
         summarized = generated.is_some(),
         "[agent_meetings] meeting thread created"
     );
-    Ok(())
+    Ok(thread_id)
+}
+
+/// Reconstruct summariser-shaped turns from a persisted call detail. The stored
+/// role is already normalised to "assistant"/"participant"; the summariser only
+/// distinguishes assistant vs. everything-else, so this round-trips faithfully.
+fn detail_to_turns(
+    detail: &crate::openhuman::meet_agent::store::MeetCallDetail,
+) -> Vec<BackendMeetTurn> {
+    detail
+        .transcript
+        .iter()
+        .map(|line| BackendMeetTurn {
+            role: line.role.clone(),
+            content: line.content.clone(),
+        })
+        .collect()
+}
+
+/// Generate a post-call summary on demand for a previously-recorded call,
+/// identified by its `meeting_id` (which equals the recent-call `request_id`
+/// and the join correlation id). Re-reads the persisted transcript, summarises
+/// it, patches the stored call detail so the recent-calls panel shows the
+/// summary, and posts it into a fresh meeting thread. Returns the thread id.
+///
+/// Used by both the manual `agent_meetings_generate_summary` RPC and the
+/// "Ask" approval card's confirm action, so a user who chose Ask/Never can
+/// still summarise a specific call without it happening automatically.
+pub async fn generate_summary_on_demand(meeting_id: &str) -> Result<String, String> {
+    let meeting_id = meeting_id.trim();
+    if meeting_id.is_empty() {
+        return Err("[agent_meetings] meeting_id is required".to_string());
+    }
+
+    let detail = crate::openhuman::meet_agent::store::read_detail(meeting_id)
+        .await?
+        .ok_or_else(|| format!("[agent_meetings] no recorded call for meeting_id={meeting_id}"))?;
+
+    let turns = detail_to_turns(&detail);
+    if turns.is_empty() {
+        return Err(format!(
+            "[agent_meetings] call {meeting_id} has no transcript to summarise"
+        ));
+    }
+
+    let generated = super::summary::generate_meeting_summary_bounded(&turns, Some(meeting_id))
+        .await
+        .ok_or_else(|| "[agent_meetings] summary generation failed".to_string())?;
+
+    // Patch the persisted detail so the recent-call panel surfaces the summary.
+    super::recent_calls::record_backend_call_detail(meeting_id, &turns, Some(&generated)).await;
+
+    // Post the summary into a fresh meeting thread (duration is unknown on this
+    // path → omitted from the body) and hand the id back to the caller. The
+    // summary is already in hand, so self-generation is disabled.
+    let thread_id = create_meeting_thread_with_transcript(
+        &turns,
+        0,
+        Some(meeting_id.to_string()),
+        Some(&generated),
+        false,
+    )
+    .await?;
+
+    tracing::info!(
+        meeting_id = %meeting_id,
+        thread_id = %thread_id,
+        "[agent_meetings] on-demand summary generated"
+    );
+    Ok(thread_id)
+}
+
+/// Handle `openhuman.agent_meetings_generate_summary` — generate + post a
+/// summary for a recorded call on demand. Returns `{ ok, thread_id }`.
+pub async fn handle_generate_summary(params: Map<String, Value>) -> Result<Value, String> {
+    let meeting_id = params
+        .get("meeting_id")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "[agent_meetings] meeting_id is required".to_string())?
+        .to_string();
+
+    let thread_id = generate_summary_on_demand(&meeting_id).await?;
+    let outcome = RpcOutcome::new(json!({ "ok": true, "thread_id": thread_id }), vec![]);
+    outcome.into_cli_compatible_json()
 }
 
 // ---------------------------------------------------------------------------
@@ -914,6 +1027,21 @@ pub async fn handle_notification_action(params: Map<String, Value>) -> Result<Va
             );
 
             handle_join(join).await
+        }
+        // Post-call summary "Ask" card (auto_summarize_policy = Ask). The card
+        // carries the recorded call's id as payload.meetingId.
+        "summarize" => {
+            let meeting_id = meeting_id
+                .ok_or_else(|| "[agent_meetings] payload.meetingId is required".to_string())?;
+            let thread_id = generate_summary_on_demand(&meeting_id).await?;
+            let outcome = RpcOutcome::new(json!({ "ok": true, "thread_id": thread_id }), vec![]);
+            outcome.into_cli_compatible_json()
+        }
+        "dismiss" => {
+            // User declined the summary — nothing to do; the plain transcript
+            // thread/detail already stand on their own.
+            let outcome = RpcOutcome::new(json!({ "ok": true }), vec![]);
+            outcome.into_cli_compatible_json()
         }
         other => Err(format!("[agent_meetings] unknown action_id: {other}")),
     }
@@ -1746,5 +1874,163 @@ mod tests {
             resolve_effective_join_policy(Some("evt-zoom-2"), Some("zoom"), &config),
             "auto"
         );
+    }
+
+    // ── post-call summary: on-demand generation (#4305) ─────────
+
+    struct ScriptedSummaryProvider {
+        reply: String,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::openhuman::inference::provider::Provider for ScriptedSummaryProvider {
+        async fn chat_with_system(
+            &self,
+            _system_prompt: Option<&str>,
+            _message: &str,
+            _model: &str,
+            _temperature: f64,
+        ) -> anyhow::Result<String> {
+            Ok(self.reply.clone())
+        }
+    }
+
+    /// Scoped `OPENHUMAN_WORKSPACE` override so store reads/writes land in a temp
+    /// dir. Restores the previous value on drop.
+    struct WorkspaceEnvGuard {
+        old: Option<std::ffi::OsString>,
+    }
+
+    impl WorkspaceEnvGuard {
+        fn set(path: &std::path::Path) -> Self {
+            let old = std::env::var_os("OPENHUMAN_WORKSPACE");
+            std::env::set_var("OPENHUMAN_WORKSPACE", path.as_os_str());
+            Self { old }
+        }
+    }
+
+    impl Drop for WorkspaceEnvGuard {
+        fn drop(&mut self) {
+            match &self.old {
+                Some(v) => std::env::set_var("OPENHUMAN_WORKSPACE", v),
+                None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
+            }
+        }
+    }
+
+    #[test]
+    fn detail_to_turns_round_trips_transcript_lines() {
+        use crate::openhuman::meet_agent::store::{MeetCallDetail, MeetCallTranscriptLine};
+        let detail = MeetCallDetail {
+            request_id: "c1".into(),
+            summary: None,
+            transcript: vec![
+                MeetCallTranscriptLine {
+                    role: "participant".into(),
+                    content: "[00:01] [Sam] hi".into(),
+                },
+                MeetCallTranscriptLine {
+                    role: "assistant".into(),
+                    content: "[00:02] [Tiny] hello".into(),
+                },
+            ],
+        };
+        let turns = detail_to_turns(&detail);
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].role, "participant");
+        assert_eq!(turns[0].content, "[00:01] [Sam] hi");
+        assert_eq!(turns[1].role, "assistant");
+    }
+
+    #[tokio::test]
+    async fn generate_summary_on_demand_rejects_blank_meeting_id() {
+        let err = generate_summary_on_demand("   ").await.unwrap_err();
+        assert!(err.contains("meeting_id is required"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn handle_generate_summary_requires_meeting_id() {
+        let err = handle_generate_summary(Map::new()).await.unwrap_err();
+        assert!(err.contains("meeting_id is required"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn notification_action_dismiss_is_ok() {
+        let mut params = Map::new();
+        params.insert("action_id".to_string(), json!("dismiss"));
+        let out = handle_notification_action(params)
+            .await
+            .expect("dismiss should succeed");
+        assert!(out.to_string().contains("\"ok\":true"), "got: {out}");
+    }
+
+    #[tokio::test]
+    async fn notification_action_summarize_requires_meeting_id() {
+        let mut params = Map::new();
+        params.insert("action_id".to_string(), json!("summarize"));
+        // No payload.meetingId → the handler can't find a call to summarise.
+        let err = handle_notification_action(params).await.unwrap_err();
+        assert!(err.contains("meetingId"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn generate_summary_on_demand_reads_detail_then_summarises() {
+        use crate::openhuman::meet_agent::store::{self, MeetCallDetail, MeetCallTranscriptLine};
+
+        // Serialise against other env-mutating tests, then point the store at a
+        // throwaway workspace.
+        let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let workspace = tempfile::tempdir().expect("workspace");
+        let _guard = WorkspaceEnvGuard::set(workspace.path());
+
+        // Nothing recorded yet → a clear, actionable error.
+        let err = generate_summary_on_demand("missing-call")
+            .await
+            .unwrap_err();
+        assert!(err.contains("no recorded call"), "got: {err}");
+
+        // Persist a transcript-only detail — exactly the state a call ends in
+        // under the Ask/Never policies.
+        let detail = MeetCallDetail {
+            request_id: "call-1".into(),
+            summary: None,
+            transcript: vec![
+                MeetCallTranscriptLine {
+                    role: "participant".into(),
+                    content: "[00:01] [Sam] let's ship Friday".into(),
+                },
+                MeetCallTranscriptLine {
+                    role: "assistant".into(),
+                    content: "[00:02] [Tiny] noted".into(),
+                },
+            ],
+        };
+        store::write_detail(&detail).await.expect("write detail");
+
+        // Scripted provider keeps summarisation network-free.
+        let reply = "{\"label\":\"Ship Plan\",\"headline\":\"Agreed to ship Friday.\",\
+            \"key_points\":[\"Ship Friday\"],\"action_items\":[]}";
+        let _provider =
+            crate::openhuman::inference::provider::factory::test_provider_override::install(
+                std::sync::Arc::new(ScriptedSummaryProvider {
+                    reply: reply.to_string(),
+                }),
+            );
+
+        let thread_id = generate_summary_on_demand("call-1")
+            .await
+            .expect("summary generated on demand");
+        assert!(!thread_id.is_empty(), "a meeting thread id is returned");
+
+        // The persisted detail is patched with the generated summary so the
+        // recent-call panel can surface it.
+        let patched = store::read_detail("call-1")
+            .await
+            .expect("read detail")
+            .expect("detail present");
+        let summary = patched.summary.expect("summary patched in");
+        assert_eq!(summary.headline, "Agreed to ship Friday.");
     }
 }

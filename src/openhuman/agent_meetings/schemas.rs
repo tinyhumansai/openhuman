@@ -42,6 +42,11 @@ const DEFS: &[BackendMeetControllerDef] = &[
         handler: handle_notification_action_wrap,
     },
     BackendMeetControllerDef {
+        function: "generate_summary",
+        schema: schema_generate_summary,
+        handler: handle_generate_summary_wrap,
+    },
+    BackendMeetControllerDef {
         function: "list_upcoming",
         schema: schema_list_upcoming,
         handler: handle_list_upcoming_wrap,
@@ -294,6 +299,43 @@ fn handle_notification_action_wrap(params: Map<String, Value>) -> ControllerFutu
     Box::pin(async move { super::ops::handle_notification_action(params).await })
 }
 
+fn schema_generate_summary() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "agent_meetings",
+        function: "generate_summary",
+        description: "Generate and post a post-call summary on demand for a previously-recorded \
+                      meeting, identified by its meeting_id (the recent-call request_id / join \
+                      correlation id). Re-reads the persisted transcript, summarises it, patches \
+                      the recent-call detail, and posts the summary into a new meeting thread. \
+                      Used for manual re-summarising and to back the 'Ask' post-call card when \
+                      auto_summarize_policy is Ask.",
+        inputs: vec![FieldSchema {
+            name: "meeting_id",
+            ty: TypeSchema::String,
+            comment: "The recorded call id (recent-call request_id / join correlation id).",
+            required: true,
+        }],
+        outputs: vec![
+            FieldSchema {
+                name: "ok",
+                ty: TypeSchema::Bool,
+                comment: "True when the summary was generated and posted.",
+                required: true,
+            },
+            FieldSchema {
+                name: "thread_id",
+                ty: TypeSchema::String,
+                comment: "Id of the meeting thread the summary was posted into.",
+                required: true,
+            },
+        ],
+    }
+}
+
+fn handle_generate_summary_wrap(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { super::ops::handle_generate_summary(params).await })
+}
+
 fn schema_list_upcoming() -> ControllerSchema {
     ControllerSchema {
         // NOTE: namespace is "meet" (not "agent_meetings") so the RPC name is
@@ -435,6 +477,7 @@ mod tests {
                 "harness_response",
                 "speak",
                 "notification_action",
+                "generate_summary",
                 "list_upcoming",
                 "set_event_policy",
                 "get_event_policies",
