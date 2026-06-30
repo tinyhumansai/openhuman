@@ -31,6 +31,7 @@ import {
 } from '../../utils/tauriCommands/workspacePaths';
 import Button from '../ui/Button';
 import { MEMORY_CONTENT_WORKSPACE_PATH } from './memoryWorkspacePaths';
+import { resolveVaultHostMatch } from './vaultHostMatch';
 
 /** localStorage key for the optional Obsidian config-dir override. */
 const CONFIG_DIR_KEY = 'openhuman.obsidian.configDir';
@@ -58,6 +59,9 @@ export function ObsidianVaultSection({ contentRootAbs, onToast }: ObsidianVaultS
   const [configFound, setConfigFound] = useState<boolean | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [configDir, setConfigDir] = useState<string>(readConfigDirOverride);
+  // #4278: set to the core host OS when the vault lives on a different-OS core
+  // host, so local actions (Reveal / Open in Obsidian) are disabled + explained.
+  const [crossHostOs, setCrossHostOs] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const closePanel = useCallback(() => setExpanded(false), []);
@@ -175,10 +179,23 @@ export function ObsidianVaultSection({ contentRootAbs, onToast }: ObsidianVaultS
         const override = configDir.trim();
         const status = await memoryTreeObsidianVaultStatus(override || undefined);
         console.debug(
-          '[ui-flow][obsidian-vault] status registered=%s config_found=%s',
+          '[ui-flow][obsidian-vault] status registered=%s config_found=%s host_os=%s',
           status.registered,
-          status.config_found
+          status.config_found,
+          status.host_os
         );
+
+        // #4278: when the vault lives on a core host running a different OS, the
+        // path is not local — guide instead of firing a doomed deep link / reveal.
+        const match = await resolveVaultHostMatch(status.host_os);
+        if (!match.local) {
+          console.debug('[ui-flow][obsidian-vault] cross-host vault host_os=%s', match.hostOs);
+          setCrossHostOs(match.hostOs ?? status.host_os ?? '');
+          setConfigFound(status.config_found);
+          setExpanded(true);
+          return;
+        }
+        setCrossHostOs(null);
         setConfigFound(status.config_found);
 
         if (status.registered) {
@@ -216,8 +233,9 @@ export function ObsidianVaultSection({ contentRootAbs, onToast }: ObsidianVaultS
     handleViewVault();
   }, [configDir, handleViewVault]);
 
-  const helpText =
-    configFound === false
+  const helpText = crossHostOs
+    ? `${t('crossHostVault.title')} ${t('crossHostVault.message').replace('{os}', crossHostOs)}`
+    : configFound === false
       ? t('workspace.obsidianNotFoundHelp')
       : t('workspace.vaultNotRegisteredHelp');
 
@@ -266,15 +284,21 @@ export function ObsidianVaultSection({ contentRootAbs, onToast }: ObsidianVaultS
           </code>
 
           <div className="mt-3 flex flex-wrap gap-2">
-            <Button variant="secondary" size="sm" onClick={reveal} data-testid="obsidian-reveal">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={reveal}
+              disabled={crossHostOs !== null}
+              data-testid="obsidian-reveal">
               {t('workspace.revealFolder')}
             </Button>
             <button
               type="button"
               onClick={openAnyway}
+              disabled={crossHostOs !== null}
               data-testid="obsidian-open-anyway"
               className="rounded-md border border-violet-300 bg-surface px-3 py-1.5 text-xs font-semibold
-                         text-violet-700 hover:bg-violet-50 dark:border-violet-500/40
+                         text-violet-700 hover:bg-violet-50 disabled:opacity-50 dark:border-violet-500/40
                          dark:bg-surface-muted dark:text-violet-300">
               {t('workspace.openAnyway')}
             </button>

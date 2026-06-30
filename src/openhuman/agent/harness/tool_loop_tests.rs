@@ -2085,3 +2085,106 @@ fn repeat_output_guard_resets_on_changed_signature() {
         "a fresh THRESHOLD-long identical streak should trip after a reset"
     );
 }
+
+#[test]
+fn repeat_call_guard_trips_on_identical_batch() {
+    // The #4095 gap: an identical `(tool, args)` batch repeated back-to-back
+    // must trip even though each call would "succeed" — the repeat-call guard
+    // never sees success/failure, only the call signature.
+    let mut g = RepeatCallGuard::new();
+    let mut last = None;
+    for _ in 0..REPEAT_CALL_THRESHOLD {
+        last = g.record("list_dir\u{1}{\"path\":\"/app\"}");
+    }
+    let halt = last.expect("identical (tool,args) batch repeated to threshold should trip");
+    assert!(
+        halt.contains("same tool call") && halt.contains("identical arguments"),
+        "halt summary should name the no-progress repeat: {halt}"
+    );
+}
+
+#[test]
+fn repeat_call_guard_resets_on_distinct_call() {
+    // The read -> write -> read pattern: the write is a distinct intervening
+    // call, so the two reads are NOT back-to-back and must not trip.
+    let mut g = RepeatCallGuard::new();
+    assert!(g.record("read_file\u{1}{\"path\":\"a\"}").is_none());
+    assert!(g.record("read_file\u{1}{\"path\":\"a\"}").is_none());
+    assert!(
+        g.record("write_file\u{1}{\"path\":\"a\"}").is_none(),
+        "a distinct intervening call must reset the streak, not trip"
+    );
+    assert!(g.record("read_file\u{1}{\"path\":\"a\"}").is_none());
+    // It then takes a fresh full streak of the original call to trip.
+    let mut last = None;
+    for _ in 1..REPEAT_CALL_THRESHOLD {
+        last = g.record("read_file\u{1}{\"path\":\"a\"}");
+    }
+    assert!(
+        last.is_some(),
+        "a fresh THRESHOLD-long identical streak trips after a reset"
+    );
+}
+
+#[test]
+fn repeat_call_guard_does_not_trip_on_varied_args() {
+    // Enumeration: same tool, DIFFERENT argument value each time = real
+    // progress. Distinct signatures keep resetting the streak, so it never trips.
+    let mut g = RepeatCallGuard::new();
+    for path in ["a.txt", "b.txt", "c.txt", "d.txt", "e.txt"] {
+        assert!(
+            g.record(&format!("read_file\u{1}{{\"path\":\"{path}\"}}"))
+                .is_none(),
+            "varied-arg calls are progress and must never trip"
+        );
+    }
+}
+
+#[test]
+fn repeat_call_guard_collapses_reordered_keys() {
+    // Load-bearing assumption: `Value::to_string()` is key-sorted and
+    // whitespace-free in this tree (no `preserve_order` feature), so the SAME
+    // call expressed with reordered JSON keys canonicalizes identically and
+    // cannot evade the guard. If serde_json's map backing ever changes, the
+    // first assert fails loudly.
+    let a = serde_json::json!({"path": "/app", "recursive": false}).to_string();
+    let b = serde_json::json!({"recursive": false, "path": "/app"}).to_string();
+    assert_eq!(
+        a, b,
+        "reordered-key argument JSON must canonicalize identically"
+    );
+
+    let mut g = RepeatCallGuard::new();
+    let sig_a = format!("read_file\u{1}{a}");
+    let sig_b = format!("read_file\u{1}{b}");
+    assert!(g.record(&sig_a).is_none());
+    // Reordered-key form of the SAME call — treated as identical, streak continues.
+    assert!(g.record(&sig_b).is_none());
+    assert!(
+        g.record(&sig_a).is_some(),
+        "key-reordered repeats of the same call must accumulate and trip"
+    );
+}
+
+#[test]
+fn polling_tools_are_repeat_exempt() {
+    // wait_subagent is contractually re-invoked with identical args; ordinary
+    // tools are not exempt.
+    assert!(is_repeat_call_exempt("wait_subagent"));
+    assert!(!is_repeat_call_exempt("list_dir"));
+    assert!(!is_repeat_call_exempt("read_file"));
+}
+
+#[test]
+fn repeat_call_guard_reset_clears_streak() {
+    // reset() (called for an all-poll iteration) drops the streak so a
+    // legitimate repeated wait never reaches the trip threshold.
+    let mut g = RepeatCallGuard::new();
+    assert!(g.record("wait_subagent\u{1}{}").is_none());
+    assert!(g.record("wait_subagent\u{1}{}").is_none()); // streak == 2
+    g.reset();
+    // Without the reset this 3rd identical call would trip; after reset it is
+    // only the 1st of a fresh streak.
+    assert!(g.record("wait_subagent\u{1}{}").is_none());
+    assert!(g.record("wait_subagent\u{1}{}").is_none());
+}

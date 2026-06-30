@@ -33,6 +33,8 @@ use crate::openhuman::file_state::with_file_state_agent_id;
 use crate::openhuman::inference::provider::AGENT_TURN_MAX_OUTPUT_TOKENS;
 use crate::openhuman::tools::{Tool, ToolCategory, ToolSpec};
 
+use crate::openhuman::agent::harness::engine::TurnStop;
+
 use super::loop_::run_inner_loop;
 use super::prompt::{append_subagent_role_contract, dedup_tool_specs_by_name};
 use super::provider::{
@@ -798,7 +800,7 @@ async fn run_typed_mode(
         model_vision,
         "[subagent_runner] resolved sub-agent model vision capability"
     );
-    let (output, iterations, agg_usage, early_exit_tool) = Box::pin(run_inner_loop(
+    let (output, iterations, agg_usage, early_exit_tool, stop) = Box::pin(run_inner_loop(
         subagent_provider.as_ref(),
         &mut history,
         &parent.all_tools,
@@ -887,7 +889,26 @@ async fn run_typed_mode(
             options: options_vec,
         }
     } else {
-        crate::openhuman::agent::harness::subagent_runner::types::SubagentRunStatus::Completed
+        use crate::openhuman::agent::harness::subagent_runner::types::SubagentRunStatus;
+        match stop {
+            // A circuit-breaker halt (stuck) or the iteration cap means the
+            // sub-agent stopped WITHOUT reaching its goal. Surface it as
+            // Incomplete so the delegating agent relays the partial result +
+            // blocker instead of treating the summary as a finished answer or
+            // re-spinning the identical delegation (#4096).
+            TurnStop::Halted => SubagentRunStatus::Incomplete {
+                reason:
+                    "got stuck and stopped making progress (a no-progress circuit breaker tripped)"
+                        .into(),
+            },
+            TurnStop::Cap => SubagentRunStatus::Incomplete {
+                reason: "reached its tool-call limit before finishing".into(),
+            },
+            // A clean final response. (An `ask_user_clarification` early-exit is
+            // already handled by the branch above, so EarlyExit here — which
+            // sub-agents only reach via that tool — folds into Completed.)
+            TurnStop::Final | TurnStop::EarlyExit => SubagentRunStatus::Completed,
+        }
     };
 
     // Surface this run's token/cost totals so the parent turn can roll them

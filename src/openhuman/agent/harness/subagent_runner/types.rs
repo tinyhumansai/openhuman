@@ -89,6 +89,17 @@ pub enum SubagentRunStatus {
         question: String,
         options: Option<Vec<String>>,
     },
+    /// The sub-agent stopped WITHOUT reaching its goal — a circuit breaker
+    /// halted it (stuck: repeated identical call / repeated output / repeated
+    /// failure) or it hit the iteration cap. The run's `output` carries whatever
+    /// partial progress / checkpoint summary it produced; `reason` is a short,
+    /// machine-set explanation of why it stopped. The delegating agent must NOT
+    /// treat this as a completed result, and must not re-run the identical
+    /// delegation unchanged.
+    Incomplete {
+        /// Short, machine-set reason the run stopped short (stuck vs. cap).
+        reason: String,
+    },
 }
 
 /// Outcome of a single sub-agent run, returned to the parent.

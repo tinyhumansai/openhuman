@@ -98,14 +98,17 @@ fn handle_session_jwt_unauthorized(method: &str, path: &str, url: &str, detail: 
          (401 for {url}: {detail}) — sign in again to resume"
     );
 
+    let soft = is_composio_soft_auth_path(method, path);
+
     tracing::warn!(
         path = %path,
         method = %method,
-        "[integrations] backend rejected session JWT (401) — publishing SessionExpired to drive re-login"
+        soft_auth = soft,
+        "[integrations] backend rejected session JWT (401)"
     );
 
     // Demote from Sentry (SESSION_EXPIRED classifies as expected) — keeps the
-    // noise suppression the prior fix established.
+    // noise suppression the prior fix established. Applies to both paths.
     crate::core::observability::report_error_or_expected(
         message.as_str(),
         "integrations",
@@ -116,6 +119,16 @@ fn handle_session_jwt_unauthorized(method: &str, path: &str, url: &str, detail: 
             ("failure", "session_jwt"),
         ],
     );
+
+    // Soft path: surface the sentinel to the caller (→ in-place CTA) WITHOUT
+    // the global sign-out. See `is_composio_soft_auth_path`.
+    if soft {
+        tracing::debug!(
+            path = %path,
+            "[integrations] soft composio auth path — returning SESSION_EXPIRED to the panel without publishing global SessionExpired (#4281)"
+        );
+        return message;
+    }
 
     // Drive recovery: publish SessionExpired so the credentials subscriber
     // clears the stale token and the UI prompts re-sign-in. The reason string
@@ -128,6 +141,37 @@ fn handle_session_jwt_unauthorized(method: &str, path: &str, url: &str, detail: 
     });
 
     message
+}
+
+/// Composio **trigger-catalog reads** (`GET /agent-integrations/composio/triggers…`)
+/// where a 401 is a single recoverable read failure rather than whole-session
+/// death. The connection itself is still active — `list_connections` uses the
+/// *same* session JWT and succeeds, so signing the user out on a triggers-only
+/// 401 over-reacts and (per #2286) must not happen.
+///
+/// For these reads [`handle_session_jwt_unauthorized`] still builds the
+/// `SESSION_EXPIRED:` sentinel (so the trigger panel can classify the error and
+/// render an in-place "Sign in again" CTA) and still demotes from Sentry, but
+/// it does **not** publish [`DomainEvent::SessionExpired`] — that global
+/// teardown would unmount the panel before the CTA is usable (#4281). A
+/// genuinely dead session is still caught by the authoritative paths
+/// (app-state snapshot, connections poll), which keep driving re-login.
+///
+/// Scoped to `GET` deliberately: trigger **writes** (`POST` enable / disable /
+/// create) keep the standard global-sign-out on a 401 — they are not the
+/// "catalog won't load" surface this issue addresses, and a write that 401s on
+/// a dead session has no in-place CTA to fall back to (its error renders as a
+/// per-row toggle failure, not the panel banner).
+fn is_composio_soft_auth_path(method: &str, path: &str) -> bool {
+    // Match on a real path boundary, not a bare prefix: `…/triggers` exact,
+    // `…/triggers/…` (the `available` catalog), or `…/triggers?…` (the active
+    // list with a `toolkit` query). A bare `starts_with` would also match an
+    // unrelated `…/triggersXYZ` route and wrongly suppress the global sign-out.
+    const BASE: &str = "/agent-integrations/composio/triggers";
+    method.eq_ignore_ascii_case("GET")
+        && path
+            .strip_prefix(BASE)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/') || rest.starts_with('?'))
 }
 
 /// Strip any inference-style path that snuck into a backend URL before

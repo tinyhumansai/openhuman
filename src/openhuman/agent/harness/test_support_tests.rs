@@ -955,12 +955,19 @@ async fn run_tool_call_loop_returns_max_iterations_error() {
     }])
     // First turn: kick it off
     .with_fallback("end");
-    provider.push_forced_response(ChatResponse {
-        text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
-        tool_calls: vec![],
-        usage: None,
-        reasoning_content: None,
-    });
+    // Vary the args each turn so the repeat-CALL breaker (which halts identical
+    // (tool,args) loops) doesn't fire before the iteration cap — this test
+    // exercises the max-iterations error path specifically.
+    for i in 0..6 {
+        provider.push_forced_response(ChatResponse {
+            text: Some(format!(
+                "<tool_call>{{\"name\":\"echo\",\"arguments\":{{\"i\":{i}}}}}</tool_call>"
+            )),
+            tool_calls: vec![],
+            usage: None,
+            reasoning_content: None,
+        });
+    }
 
     let (echo_tool, _) = RecordingTool::echo("echo");
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(echo_tool)];

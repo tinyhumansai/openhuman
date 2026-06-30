@@ -58,7 +58,7 @@ Dedicated SQLite DB managed by `PeopleStore` (open via `open_at(path)` or `open_
 - `handle_aliases` — `(kind, value)` primary key → `person_id` (FK, `ON DELETE CASCADE`); `value` is the canonicalized form. This table *is* the resolver index.
 - `interactions` — `(person_id, ts, is_outbound, length)` rows the scorer aggregates; indexed by `(person_id, ts DESC)` and `ts DESC`.
 
-Migrations are tracked in `_people_migrations` and applied idempotently in a transaction. The store is exposed process-globally through a `tokio::sync::OnceCell` (`init` once at startup, `get` from controller handlers). Note: no `people::store::init` call was found outside the module — controller handlers will return "people store not initialised" until something seeds it.
+Migrations are tracked in `_people_migrations` and applied idempotently in a transaction. The store is exposed process-globally through a `tokio::sync::OnceCell` (`get` from controller handlers). Core boot seeds it via `store::init_from_workspace(workspace_dir)` (`src/core/jsonrpc.rs`, alongside `memory::global` and `whatsapp_data::global`), opening `<workspace>/people/people.db`; tests construct stores directly with `open_in_memory`.
 
 ## Dependencies
 

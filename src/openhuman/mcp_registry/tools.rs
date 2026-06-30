@@ -56,14 +56,16 @@ impl Tool for McpRegistrySearchTool {
         "mcp_registry_search"
     }
     fn description(&self) -> &str {
-        "Search the MCP server registry catalog by `query`, paginated by `page` \
-         / `page_size`. Use to discover installable MCP servers."
+        "Search the MCP server registry catalog by `query`, optionally filtered by \
+         `transport` (\"stdio\" | \"hosted\" | \"all\"), paginated by `page` / \
+         `page_size`. Use to discover installable MCP servers."
     }
     fn parameters_schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
             "properties": {
                 "query": { "type": "string" },
+                "transport": { "type": "string", "enum": ["stdio", "hosted", "all"] },
                 "page": { "type": "integer", "minimum": 1 },
                 "page_size": { "type": "integer", "minimum": 1 }
             }
@@ -79,8 +81,12 @@ impl Tool for McpRegistrySearchTool {
             .get("page_size")
             .and_then(Value::as_u64)
             .map(|v| v as u32);
+        let transport = args
+            .get("transport")
+            .and_then(Value::as_str)
+            .map(str::to_string);
         emit!(
-            ops::mcp_clients_registry_search(&self.config, query, page, page_size).await,
+            ops::mcp_clients_registry_search(&self.config, query, transport, page, page_size).await,
             "mcp_registry_search"
         )
     }

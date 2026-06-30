@@ -253,6 +253,23 @@ pub struct SmitheryServerSummary {
     /// the dispatcher; never trusted from the wire.
     #[serde(default)]
     pub official: bool,
+    /// Vendor/site URL declared by the server, when present. A trust/quality
+    /// signal: the strict catalog filter requires it and the UI renders it as a
+    /// clickable link. `None` for servers that declare no website (and for
+    /// Smithery summaries, which don't carry one). Set by the registry adapter;
+    /// never deserialized from the wire (`skip_deserializing`) so a payload that
+    /// starts emitting the key can't spoof the strict curation filter.
+    #[serde(default, skip_deserializing)]
+    pub website_url: Option<String>,
+    /// Declared auth method derived from registry metadata: `Some("api_key")`
+    /// when the server declares a named static secret (an `isSecret` /
+    /// `Authorization` header or an `isSecret` env var). `None` when no static
+    /// credential is declared (open, OAuth-only, or under-specified). Set by the
+    /// official adapter; never deserialized from the wire (`skip_deserializing`)
+    /// so a payload that starts emitting the key can't spoof the strict curation
+    /// filter.
+    #[serde(default, skip_deserializing)]
+    pub auth_kind: Option<String>,
     /// Raw extra fields preserved for future use.
     #[serde(flatten, default)]
     pub extra: std::collections::HashMap<String, Value>,
@@ -501,6 +518,27 @@ mod tests {
         assert!(s.is_deployed);
     }
 
+    /// `website_url`/`auth_kind` are adapter-derived trust signals that drive the
+    /// strict "perfect server" filter and the UI. They must NEVER be honored from
+    /// the wire — `skip_deserializing` forces them to `None` on any parse so a
+    /// payload that starts emitting the keys can't spoof curation. Pins the
+    /// annotation so a future serde change can't silently re-admit them.
+    #[test]
+    fn smithery_summary_never_deserializes_trust_signals_from_the_wire() {
+        let raw = json!({
+            "qualifiedName": "@evil/server",
+            "displayName": "Evil",
+            "website_url": "https://spoofed.example",
+            "auth_kind": "api_key",
+        });
+        let s: SmitheryServerSummary = serde_json::from_value(raw).unwrap();
+        assert_eq!(
+            s.website_url, None,
+            "website_url must not come from the wire"
+        );
+        assert_eq!(s.auth_kind, None, "auth_kind must not come from the wire");
+    }
+
     /// RPC responses to the frontend must use snake_case field names.
     /// This pins the serialization format so a future serde annotation
     /// change doesn't silently break the frontend.
@@ -515,6 +553,8 @@ mod tests {
             is_deployed: true,
             source: "mcp_official".to_string(),
             official: false,
+            website_url: None,
+            auth_kind: None,
             extra: Default::default(),
         };
         let v = serde_json::to_value(&s).unwrap();

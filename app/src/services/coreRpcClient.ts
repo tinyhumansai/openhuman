@@ -26,6 +26,20 @@ interface CoreRpcRelayRequest {
    * [MIN, MAX] window as the global default.
    */
   timeoutMs?: number;
+  /**
+   * When `true`, an `auth_expired` classification does NOT broadcast the
+   * global `core-rpc-auth-expired` event (which drives `CoreStateProvider` to
+   * `clearSession()` → sign the user out → unmount the current screen). The
+   * `CoreRpcError` is still thrown with `kind: 'auth_expired'` so the caller
+   * can surface a *local*, recoverable re-auth affordance instead.
+   *
+   * Use ONLY for narrow, non-authoritative reads where a single 401 must not
+   * be treated as whole-session death — e.g. the Composio trigger catalog
+   * fetches, where the connection itself is still active and the panel shows
+   * an in-place "Sign in again" CTA (#4281, #2286). Genuine session death is
+   * still caught by the authoritative paths (app snapshot, connections).
+   */
+  suppressAuthExpiredEvent?: boolean;
 }
 
 /** Mirror of `parseCoreRpcTimeoutMs` bounds in `utils/config.ts`. */
@@ -598,6 +612,7 @@ export async function callCoreRpc<T>({
   params,
   serviceManaged = false, // kept for compatibility; direct frontend RPC does not use relay-level routing.
   timeoutMs,
+  suppressAuthExpiredEvent = false,
 }: CoreRpcRelayRequest): Promise<T> {
   void serviceManaged;
 
@@ -692,7 +707,7 @@ export async function callCoreRpc<T>({
       const text = await response.text();
       const httpMessage = `Core RPC HTTP ${response.status}: ${text || response.statusText}`;
       const kind = classifyRpcError(text || response.statusText, response.status);
-      if (kind === 'auth_expired')
+      if (kind === 'auth_expired' && !suppressAuthExpiredEvent)
         dispatchAuthExpired(
           payload.method,
           classifyAuthExpiredReason(text || response.statusText, response.status)
@@ -710,7 +725,7 @@ export async function callCoreRpc<T>({
       });
       const rawMessage = json.error.message || 'Core RPC returned an error';
       const kind = classifyRpcError(rawMessage, undefined, json.error.data);
-      if (kind === 'auth_expired')
+      if (kind === 'auth_expired' && !suppressAuthExpiredEvent)
         dispatchAuthExpired(payload.method, classifyAuthExpiredReason(rawMessage, undefined));
       throw new CoreRpcError(rawMessage, kind, undefined, json.error.data);
     }

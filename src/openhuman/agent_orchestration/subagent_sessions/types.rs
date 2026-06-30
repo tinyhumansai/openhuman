@@ -20,6 +20,10 @@ impl DurableSubagentStatus {
         match status {
             SubagentRunStatus::Completed => Self::Idle,
             SubagentRunStatus::AwaitingUser { .. } => Self::AwaitingUser,
+            // Stopped short (stuck halt / iteration cap). The run is no longer
+            // active and can be resumed/reused, so it maps to Idle — not Failed
+            // (no hard error) and not AwaitingUser (not paused for input).
+            SubagentRunStatus::Incomplete { .. } => Self::Idle,
         }
     }
 

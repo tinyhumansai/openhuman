@@ -3,6 +3,10 @@ import type { TranslationMap } from './types';
 // Bengali (বাংলা) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Cross-host vault (#4278)
+  'crossHostVault.title': 'ভল্টটি কোর হোস্টে রয়েছে।',
+  'crossHostVault.message':
+    'এই মেমরি ভল্টটি openhuman-core হোস্টে ({os}) সংরক্ষিত আছে। এটি কেবল সেই মেশিনেই খোলা বা দেখানো যায়, এই ডিভাইস থেকে নয়।',
   'conversations.backgroundTasks.title': 'Background tasks',
   'nav.feedback': 'মতামত দিন',
   'feedback.board': 'মতামত বোর্ড',
@@ -1374,6 +1378,7 @@ const messages: TranslationMap = {
   'mcp.catalog.loadMore': 'আরও লোড করুন',
   'mcp.configAssistant.title': 'কনফিগারেশন সহকারী',
   'mcp.configAssistant.empty': 'কনফিগারেশন জানার জন্য, বিবিধ বৈশিষ্ট্য অথবা প্রস্তুতির প্রয়োজন।',
+  'mcp.configAssistant.autoPromptCta': 'ধাপে ধাপে সেটআপ সহায়তা নিন',
   'mcp.configAssistant.suggestedValues': 'প্রস্তাবিত মান:',
   'mcp.configAssistant.valueHidden': '(মান লুকানো)',
   'mcp.configAssistant.applySuggested': 'প্রস্তাবিত মান প্রয়োগ করুন',
@@ -1519,13 +1524,15 @@ const messages: TranslationMap = {
   'mcp.tab.filter.registry': 'রেজিস্ট্রি',
   'mcp.tab.column.name': 'নাম',
   'mcp.tab.column.description': 'বিবরণ',
-  'mcp.tab.column.source': 'উৎস',
+  'mcp.tab.column.type': 'ধরন',
   'mcp.tab.column.author': 'লেখক',
   'mcp.tab.column.action': 'ক্রিয়া',
-  'mcp.tab.source.official': 'অফিসিয়াল',
-  'mcp.tab.source.smithery': 'Smithery',
   'mcp.tab.transport.hosted': 'হোস্টেড',
-  'mcp.tab.transport.local': 'লোকাল',
+  'mcp.tab.transport.local': 'Stdio',
+  'mcp.tab.transportFilter.label': 'ধরন',
+  'mcp.tab.transportFilter.aria': 'ট্রান্সপোর্ট অনুযায়ী সার্ভার ফিল্টার করুন',
+  'mcp.tab.link.website': 'ওয়েবসাইট',
+  'mcp.tab.link.repo': 'রিপোজিটরি',
   'mcp.tab.transport.hostedHint':
     'একটি দূরবর্তী সার্ভারে চলে — ইনস্টলের সময় সাইন-ইন বা টোকেন সেট করা হয়',
   'mcp.tab.transport.localHint': 'আপনার ডিভাইসে চলে — ইনস্টলের সময় টোকেন লাগতে পারে',
@@ -1552,11 +1559,7 @@ const messages: TranslationMap = {
   'mcp.install.button': 'ইনস্টল করুন',
   'mcp.install.installing': 'ইনস্টল করা হচ্ছে...',
   'mcp.install.by': 'দ্বারা',
-  'mcp.install.transportLocal': 'স্থানীয়ভাবে চলে',
-  'mcp.install.transportRemote': 'ক্লাউডে হোস্ট করা',
   'mcp.install.useCount': '{count} ইনস্টলেশন',
-  'mcp.install.deployed': 'স্থাপিত',
-  'mcp.install.requiresConfig': 'কনফিগারেশন প্রয়োজন',
   'mcp.install.connections': 'উপলব্ধ সংযোগ',
   'mcp.install.published': 'প্রকাশিত',
   'mcp.install.configureAndInstall': 'কনফিগার করুন ও ইনস্টল করুন',
@@ -3151,6 +3154,8 @@ const messages: TranslationMap = {
   'composio.triggers.heading': 'ট্রিগার',
   'composio.triggers.listenFrom': 'ইভেন্টের জন্য শুনুন',
   'composio.triggers.loadError': 'ট্রিগার লোড করা যায়নি',
+  'composio.triggers.sessionExpired':
+    'আপনার OpenHuman সেশনের মেয়াদ শেষ হয়েছে। ট্রিগার লোড করতে আবার সাইন ইন করুন।',
   'composio.triggers.needsConfiguration': 'কনফিগারেশন প্রয়োজন',
   'composio.triggers.noneAvailable': 'বর্তমানে কোনো ট্রিগার উপলব্ধ নেই',
   'conversations.taskKanban.moveLeft': 'বামে সরান',

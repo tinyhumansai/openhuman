@@ -953,7 +953,7 @@ impl Agent {
 
             // Auto-save a short memory of the final reply (not on a capped turn,
             // matching the prior behavior).
-            if self.auto_save && !outcome.hit_cap {
+            if self.auto_save && outcome.stop != super::super::super::engine::TurnStop::Cap {
                 let summary = truncate_with_ellipsis(&outcome.text, 100);
                 let _ = self
                     .memory

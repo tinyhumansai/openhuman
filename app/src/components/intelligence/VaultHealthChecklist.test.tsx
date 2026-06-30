@@ -12,6 +12,10 @@ vi.mock('../../utils/openUrl', () => ({
   revealPath: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock('./vaultHostMatch', () => ({
+  resolveVaultHostMatch: vi.fn().mockResolvedValue({ local: true }),
+}));
+
 const { memoryTreeVaultHealthCheck } = (await import('../../utils/tauriCommands')) as unknown as {
   memoryTreeVaultHealthCheck: Mock;
 };
@@ -19,6 +23,10 @@ const { memoryTreeVaultHealthCheck } = (await import('../../utils/tauriCommands'
 const { openUrl, revealPath } = (await import('../../utils/openUrl')) as unknown as {
   openUrl: Mock;
   revealPath: Mock;
+};
+
+const { resolveVaultHostMatch } = (await import('./vaultHostMatch')) as unknown as {
+  resolveVaultHostMatch: Mock;
 };
 
 function health(overrides: Partial<VaultHealthCheck> = {}): VaultHealthCheck {
@@ -88,5 +96,37 @@ describe('<VaultHealthChecklist />', () => {
     await waitFor(() => {
       expect(revealPath).toHaveBeenCalledWith('/tmp/workspace/memory_tree/content');
     });
+  });
+
+  // #4278: vault on a different-OS core host — surface a banner and disable the
+  // local-FS actions instead of letting them act on a foreign path.
+  it('warns and disables local actions when the vault is on a different-OS core host', async () => {
+    memoryTreeVaultHealthCheck.mockResolvedValueOnce(health({ host_os: 'linux' }));
+    resolveVaultHostMatch.mockResolvedValueOnce({ local: false, hostOs: 'linux' });
+    renderWithProviders(<VaultHealthChecklist />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('vault-health-cross-host')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('vault-health-cross-host')).toHaveTextContent('linux');
+    expect(screen.getByTestId('vault-health-reveal')).toBeDisabled();
+    expect(screen.getByTestId('vault-health-open-obsidian')).toBeDisabled();
+
+    fireEvent.click(screen.getByTestId('vault-health-reveal'));
+    fireEvent.click(screen.getByTestId('vault-health-open-obsidian'));
+    expect(revealPath).not.toHaveBeenCalled();
+    expect(openUrl).not.toHaveBeenCalled();
+  });
+
+  it('keeps local actions enabled for a same-host vault (regression)', async () => {
+    memoryTreeVaultHealthCheck.mockResolvedValueOnce(health({ host_os: 'macos' }));
+    resolveVaultHostMatch.mockResolvedValueOnce({ local: true, hostOs: 'macos' });
+    renderWithProviders(<VaultHealthChecklist />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('vault-health-reveal')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('vault-health-cross-host')).not.toBeInTheDocument();
+    expect(screen.getByTestId('vault-health-reveal')).not.toBeDisabled();
   });
 });
