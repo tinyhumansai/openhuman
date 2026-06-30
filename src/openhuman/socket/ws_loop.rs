@@ -157,6 +157,13 @@ pub(super) async fn ws_loop(
         )
         .await;
 
+        // The connection attempt has ended (lost, failed, or shutdown), so any
+        // in-flight `emit_with_ack` waiter can never receive its ACK now. Cancel
+        // them here — covering server-driven disconnects (`Lost`) and the
+        // session-expired escalation below — not just explicit
+        // `SocketManager::disconnect()` (CodeRabbit #4355).
+        shared.ack_registry.cancel_all();
+
         match outcome {
             ConnectionOutcome::Shutdown => {
                 log::info!("[socket] Clean shutdown");

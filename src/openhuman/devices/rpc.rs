@@ -119,6 +119,29 @@ pub async fn devices_create_pairing(
         .unwrap()
         .insert(reg.channel_id.clone(), Arc::new(keypair));
 
+    // Best-effort LAN URL detection (non-fatal if it fails).
+    let rpc_url = detect_lan_rpc_url();
+    if let Some(ref url) = rpc_url {
+        log::debug!("[devices/rpc] LAN rpc_url detected: {}", url);
+    }
+
+    let expires_at = reg.pairing_expires_at.clone();
+
+    // Insert the pending session BEFORE opening the tunnel: `emit_connect`
+    // starts `tunnel:frame` handling, and `bus.rs` now derives the persisted
+    // pairing credential from this map, so a fast inbound frame must never race
+    // ahead of the entry (CodeRabbit #4355).
+    PENDING_SESSIONS.lock().unwrap().insert(
+        reg.channel_id.clone(),
+        PairingSession {
+            channel_id: reg.channel_id.clone(),
+            pairing_token: reg.pairing_token.clone(),
+            core_pubkey: core_pubkey.clone(),
+            rpc_url: rpc_url.clone(),
+            expires_at: expires_at.clone(),
+        },
+    );
+
     // Connect as "core" role to start listening on this channel.
     tunnel_client::emit_connect(&reg.channel_id)
         .await
@@ -130,25 +153,6 @@ pub async fn devices_create_pairing(
     log::debug!(
         "[devices/rpc] tunnel:connect emitted channel_id={}",
         reg.channel_id
-    );
-
-    // Best-effort LAN URL detection (non-fatal if it fails).
-    let rpc_url = detect_lan_rpc_url();
-    if let Some(ref url) = rpc_url {
-        log::debug!("[devices/rpc] LAN rpc_url detected: {}", url);
-    }
-
-    let expires_at = reg.pairing_expires_at.clone();
-
-    PENDING_SESSIONS.lock().unwrap().insert(
-        reg.channel_id.clone(),
-        PairingSession {
-            channel_id: reg.channel_id.clone(),
-            pairing_token: reg.pairing_token.clone(),
-            core_pubkey: core_pubkey.clone(),
-            rpc_url: rpc_url.clone(),
-            expires_at: expires_at.clone(),
-        },
     );
 
     log::info!(
