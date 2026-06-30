@@ -50,11 +50,30 @@ pub(super) struct AgentToolExecCtx<'a> {
 }
 
 fn available_tool_names_for_ctx(ctx: &AgentToolExecCtx<'_>) -> Vec<String> {
-    if ctx.visible_tool_names.is_empty() {
-        sorted_tool_names(ctx.tools.iter().map(|tool| tool.name()))
-    } else {
-        sorted_tool_names(ctx.visible_tool_names.iter().map(|name| name.as_str()))
+    let mut names = Vec::new();
+    let mut filtered_out = Vec::new();
+    for tool in ctx.tools {
+        let name = tool.name();
+        let visible_by_scope =
+            ctx.visible_tool_names.is_empty() || ctx.visible_tool_names.contains(name);
+        let allowed_by_policy = ctx.tool_policy_session.is_allowed(name);
+
+        if visible_by_scope && allowed_by_policy {
+            names.push(name);
+        } else if visible_by_scope {
+            filtered_out.push(name.to_string());
+        }
     }
+
+    if !filtered_out.is_empty() {
+        log::debug!(
+            "[agent] filtered unavailable tools from unknown-tool hint channel={} tools={:?}",
+            ctx.event_channel,
+            filtered_out
+        );
+    }
+
+    sorted_tool_names(names.into_iter())
 }
 
 /// Execute one parsed tool call end-to-end with the Agent's semantics, emitting
@@ -415,6 +434,7 @@ mod tests {
     use crate::openhuman::agent::tool_policy::AllowAllToolPolicy;
     use crate::openhuman::agent_tool_policy::ToolPolicyEngine;
     use crate::openhuman::tools::traits::{ToolResult, ToolTimeout};
+    use crate::openhuman::tools::PermissionLevel;
     use async_trait::async_trait;
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
@@ -422,6 +442,11 @@ mod tests {
     use std::time::Duration;
 
     struct HangingTool;
+    struct PermissionedTool {
+        name: &'static str,
+        permission: PermissionLevel,
+    }
+
     struct TestProgress {
         completed: AtomicUsize,
         timeout_completions: AtomicUsize,
@@ -466,6 +491,29 @@ mod tests {
 
         fn timeout_policy(&self, _args: &serde_json::Value) -> ToolTimeout {
             ToolTimeout::Secs(1)
+        }
+    }
+
+    #[async_trait]
+    impl Tool for PermissionedTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn description(&self) -> &str {
+            "test permissioned tool"
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            json!({ "type": "object", "properties": {} })
+        }
+
+        async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
+            Ok(ToolResult::success("ok"))
+        }
+
+        fn permission_level(&self) -> PermissionLevel {
+            self.permission
         }
     }
 
@@ -514,6 +562,66 @@ mod tests {
         assert!(result.output.contains("Available tools: memory_tree"));
         assert!(!record.success);
         assert_eq!(progress.completed.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn session_tool_executor_unknown_tool_hint_uses_policy_filtered_tools() {
+        let tools: Vec<Box<dyn Tool>> = vec![
+            Box::new(PermissionedTool {
+                name: "read_notes",
+                permission: PermissionLevel::ReadOnly,
+            }),
+            Box::new(PermissionedTool {
+                name: "write_notes",
+                permission: PermissionLevel::Write,
+            }),
+        ];
+        let visible_tool_names = HashSet::new();
+        let channel_permissions = HashMap::from([("web".to_string(), "readonly".to_string())]);
+        let policy_session = ToolPolicyEngine::build_session(
+            "context_scout",
+            "web",
+            "test",
+            &channel_permissions,
+            &tools,
+            &visible_tool_names,
+        );
+        let tool_policy = AllowAllToolPolicy;
+        let ctx = AgentToolExecCtx {
+            tools: &tools,
+            visible_tool_names: &visible_tool_names,
+            tool_policy_session: &policy_session,
+            tool_policy: &tool_policy,
+            payload_summarizer: None,
+            event_session_id: "session-1",
+            event_channel: "web",
+            agent_definition_id: "context_scout",
+            prefer_markdown: false,
+            budget_bytes: 4096,
+            compaction_enabled: false,
+            tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression::Off,
+            artifact_store: None,
+        };
+        let call = ParsedToolCall {
+            name: "missing_tool".to_string(),
+            arguments: json!({}),
+            tool_call_id: Some("call-unknown".to_string()),
+        };
+        let progress = TestProgress {
+            completed: AtomicUsize::new(0),
+            timeout_completions: AtomicUsize::new(0),
+        };
+
+        let (result, _record) = run_agent_tool_call(&ctx, &progress, &call, 0).await;
+
+        assert!(!result.success);
+        assert!(result.output.contains("Unknown tool: missing_tool"));
+        assert!(result.output.contains("Available tools: read_notes"));
+        assert!(
+            !result.output.contains("write_notes"),
+            "unknown-tool hints must not advertise policy-denied tools: {}",
+            result.output
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
