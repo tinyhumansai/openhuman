@@ -143,7 +143,9 @@ pub fn looks_like_diff(content: &str) -> bool {
 /// True if `content` looks like an HTML document: a doctype / `<html`/`<body`
 /// marker, or a high density of angle-bracket tags over the first lines.
 pub fn looks_like_html(content: &str) -> bool {
-    let head = &content[..content.len().min(8192)];
+    // Snap to a UTF-8 char boundary: a raw `&content[..8192]` panics when byte
+    // 8192 lands inside a multi-byte codepoint (CJK/emoji in large tool output).
+    let head = crate::openhuman::util::utf8_safe_prefix_at_byte_boundary(content, 8192);
     let lower = head.to_ascii_lowercase();
     if lower.contains("<!doctype html")
         || lower.contains("<html")
@@ -398,6 +400,24 @@ mod tests {
     fn detect_html() {
         let c = "<!DOCTYPE html>\n<html><head><title>x</title></head><body><p>hi</p></body></html>";
         assert_eq!(detect_content_kind(c, &hint()), ContentKind::Html);
+    }
+
+    #[test]
+    fn looks_like_html_handles_multibyte_at_byte_cutoff() {
+        // Build content longer than the 8192-byte head window with a multi-byte
+        // char (4-byte emoji) straddling byte index 8192, so a raw byte slice
+        // would panic on the non-char-boundary cut. Detection must not panic.
+        let mut content = "a".repeat(8190);
+        content.push('🦀'); // 4 bytes spanning indices 8190..8194 — crosses 8192
+        content.push_str(&"b".repeat(2000));
+        assert!(content.len() > 8192);
+        // Plain text with no tags: just assert it returns without panicking.
+        assert!(!looks_like_html(&content));
+        // And the full detector stays reachable on the same input.
+        assert_eq!(
+            detect_content_kind(&content, &hint()),
+            ContentKind::PlainText
+        );
     }
 
     #[test]

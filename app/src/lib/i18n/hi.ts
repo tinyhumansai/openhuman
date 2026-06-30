@@ -5141,6 +5141,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.bannerTitle': 'बैनर शीर्षक',
   'skills.meetingBots.busyTitle': 'OpenHuman व्यस्त है',
   'skills.meetingBots.comingSoon': 'जल्द आ रहा है',
+  'skills.meetingBots.couldNotLeaveTitle': 'मीटिंग से नहीं निकल सके',
   'skills.meetingBots.couldNotStartTitle': 'OpenHuman प्रारंभ नहीं हो सका',
   'skills.meetingBots.displayName': 'डिस्प्ले नाम',
   'skills.meetingBots.failedToStart': 'OpenHuman शुरू नहीं हो पाया।',
@@ -5155,9 +5156,11 @@ const messages: TranslationMap = {
   'skills.meetingBots.platformComingSoon': '{label} समर्थन जल्द ही आ रहा है।',
   'skills.meetingBots.platformHints.gmeet': 'meet.google.com/abc-defg-hij',
   'skills.meetingBots.platformHints.teams': 'Teams.microsoft.com/...',
+  'skills.meetingBots.platformHints.webex': 'webex.com/meet/...',
   'skills.meetingBots.platformHints.zoom': 'Zoom.us/j/...',
   'skills.meetingBots.platforms.gmeet': 'Google मिलें',
   'skills.meetingBots.platforms.teams': 'माइक्रोसॉफ्ट टीमें',
+  'skills.meetingBots.platforms.webex': 'Webex',
   'skills.meetingBots.platforms.zoom': 'ज़ूम करें',
   'skills.meetingBots.sendTo': 'भेजें',
   'skills.meetingBots.serverOverloaded':
@@ -5191,6 +5194,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.liveStatusEnded': 'मीटिंग समाप्त',
   'skills.meetingBots.liveStatusError': 'शामिल होने में विफल',
   'skills.meetingBots.leaveButton': 'छोड़ें',
+  'skills.meetingBots.leavingButton': 'छोड़ रहे हैं…',
   'skills.meetingBots.respondToParticipant': 'इस मीटिंग में आपका नाम',
   'skills.meetingBots.respondToParticipantHint': 'जैसे: अनीता (कॉल में आपका प्रदर्शन नाम)',
   'skills.meetingBots.respondToParticipantDesc':
@@ -5201,6 +5205,61 @@ const messages: TranslationMap = {
   'skills.meetingBots.activeMode': 'जब मैं बुलाऊँ तब जवाब दे',
   'skills.meetingBots.activeModeDesc':
     'चालू होने पर, वेक फ़्रेज़ कहने के बाद बॉट बोलकर जवाब देता है। बंद होने पर, यह सिर्फ़ सुनता और ट्रांसक्राइब करता है।',
+  'skills.meetingBots.history.allPlatforms': 'सभी प्लेटफ़ॉर्म',
+  'skills.meetingBots.history.copyTranscript': 'कॉपी करें',
+  'skills.meetingBots.history.downloadTranscript': 'डाउनलोड',
+  'skills.meetingBots.history.earlier': 'पहले',
+  'skills.meetingBots.history.participantCount': '{count} प्रतिभागी',
+  'skills.meetingBots.history.participantCountPlural': '{count} प्रतिभागी',
+  'skills.meetingBots.history.runWithOpenHuman': 'OpenHuman के साथ चलाएँ',
+  'skills.meetingBots.history.searchPlaceholder': 'कॉल खोजें…',
+  'skills.meetingBots.history.selectPrompt': 'सारांश और ट्रांसक्रिप्ट देखने के लिए एक कॉल चुनें।',
+  'skills.meetingBots.history.today': 'आज',
+  'skills.meetingBots.history.yesterday': 'कल',
+  'skills.meetingBots.upcoming.heading': 'आगामी',
+  'skills.meetingBots.upcoming.when': 'कब',
+  'skills.meetingBots.upcoming.meeting': 'मीटिंग',
+  'skills.meetingBots.upcoming.platform': 'प्लेटफ़ॉर्म',
+  'skills.meetingBots.upcoming.people': 'लोग',
+  'skills.meetingBots.upcoming.joinPolicy': 'जॉइन नीति',
+  'skills.meetingBots.upcoming.joinNow': 'अभी जॉइन करें',
+  'skills.meetingBots.upcoming.joinNowAriaLabel': '{title} जॉइन करें',
+  'skills.meetingBots.upcoming.join': 'जॉइन करें',
+  'skills.meetingBots.upcoming.auto': 'ऑटो',
+  'skills.meetingBots.upcoming.ask': 'पूछें',
+  'skills.meetingBots.upcoming.skip': 'छोड़ें',
+  'skills.meetingBots.upcoming.today': 'आज',
+  'skills.meetingBots.upcoming.tomorrow': 'कल',
+  'skills.meetingBots.upcoming.empty':
+    'कोई आगामी मीटिंग नहीं — यहाँ देखने के लिए Google Calendar कनेक्ट करें।',
+  'skills.meetingBots.upcoming.error': 'आगामी मीटिंग लोड नहीं हो सकीं।',
+  'skills.meetingBots.upcoming.retry': 'पुनः प्रयास करें',
+  'skills.meetingBots.upcoming.refresh': 'रिफ्रेश करें',
+  'skills.meetingBots.upcoming.filterAll': 'सभी प्लेटफ़ॉर्म',
+  'skills.meetingBots.upcoming.participants': '{count} प्रतिभागी',
+  'skills.meetingBots.upcoming.imminent': 'जल्द शुरू हो रही है',
+  'skills.meetingBots.upcoming.autoJoinsAt': 'ऑटो-जॉइन ~{time} पर',
+  'skills.meetingBots.upcoming.asksAtStart': 'शुरुआत में पूछता है',
+  'skills.meetingBots.upcoming.watchCalendarHint':
+    "ऑटो/पूछें प्रभावी करने के लिए डिफ़ॉल्ट (गियर आइकन) में 'मेरा कैलेंडर देखें' चालू करें — अन्यथा ये नीतियाँ सहेजी जाती हैं लेकिन ट्रिगर नहीं होंगी।",
+  'skills.meetingBots.relative.now': 'अभी',
+  'skills.meetingBots.relative.inMinutes': '{count}म में',
+  'skills.meetingBots.relative.inHours': '{count}घ में',
+  'skills.meetingBots.relative.minutesAgo': '{count}म पहले',
+  'skills.meetingBots.relative.hoursAgo': '{count}घ पहले',
+  'skills.meetingBots.relative.daysAgo': '{count}दि पहले',
+  'skills.meetingBots.relative.yesterday': 'कल',
+  'skills.meetingBots.defaults.drawerTitle': 'मीटिंग डिफ़ॉल्ट',
+  'skills.meetingBots.defaults.closeDrawer': 'बंद करें',
+  'skills.meetingBots.defaults.openDefaults': 'मीटिंग सेटिंग',
+  'skills.meetingBots.defaults.watchCalendar': 'मेरा कैलेंडर देखें',
+  'skills.meetingBots.defaults.watchCalendarDesc':
+    'OpenHuman को अपना कनेक्टेड कैलेंडर देखने दें ताकि यह नीचे दी गई नीतियों के आधार पर बैठकों में स्वचालित रूप से शामिल हो सके या संकेत दे सके। यह बैठक अनुस्मारक सूचनाओं से अलग है।',
+  'skills.meetingBots.defaults.globalPolicy': 'वैश्विक ऑटो-जॉइन नीति',
+  'skills.meetingBots.defaults.perPlatformTitle': 'प्रति-प्लेटफ़ॉर्म ओवरराइड',
+  'skills.meetingBots.defaults.perPlatformDesc':
+    'विशिष्ट प्लेटफ़ॉर्म के लिए वैश्विक नीति को ओवरराइड करें।',
+  'skills.meetingBots.defaults.useDefault': 'डिफ़ॉल्ट उपयोग करें',
   'skills.resource.preview.closeAriaLabel': 'प्रीव्यू बंद करें',
   'skills.resource.preview.failed': 'पूर्वावलोकन विफल',
   'skills.resource.preview.loading': 'प्रीव्यू लोड हो रहा है…',
@@ -5974,6 +6033,8 @@ const messages: TranslationMap = {
     'सारांश ट्री बनाएँ के लिए कोई सारांश प्रदाता उपलब्ध नहीं है। स्थानीय AI (Ollama) सक्षम करें, या सेटिंग्स → AI → मेमोरी में क्लाउड सारांश सक्षम करें।',
   'memory.health.remediation.empty_input_refused':
     'एक मेमोरी आइटम छोड़ दिया गया क्योंकि उसका टेक्स्ट खाली था। कोई कार्रवाई आवश्यक नहीं — नए आइटम सामान्य रूप से एम्बेड होते रहेंगे।',
+  'memory.health.remediation.storage_unavailable':
+    'OpenHuman अपने मेमोरी स्टोरेज में नहीं लिख पा रहा है — डिस्क या SD कार्ड खराब, भरा हुआ या केवल-पढ़ने योग्य लगता है। ड्राइव जाँचें और कुछ जगह खाली करें; स्टोरेज के फिर से लिखने योग्य होते ही मेमोरी प्रोसेसिंग अपने आप फिर शुरू हो जाएगी।',
   'memory.health.remediation.transient':
     'एक अस्थायी त्रुटि ने मेमोरी प्रोसेसिंग को बाधित किया। स्वचालित रूप से पुनः प्रयास किया जाएगा।',
   'memory.health.remediation.unknown':
@@ -6257,7 +6318,11 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.title': 'प्रदाता क्रेडिट आवश्यक',
   'userErrors.insufficientCredits.body':
     'AI प्रदाता के क्रेडिट समाप्त। रिचार्ज करें या API कुंजी बदलें।',
+  'userErrors.apiKeyMissing.title': 'API कुंजी आवश्यक',
+  'userErrors.apiKeyMissing.body':
+    'आपके AI प्रदाता के लिए कोई API कुंजी सेट नहीं है। जारी रखने के लिए प्रदाता सेटिंग्स में एक जोड़ें।',
   'userErrors.scope.chat': 'चैट',
+  'userErrors.scope.cron': 'निर्धारित कार्य',
   // Agent World — Identity trading (confirm-before-spend + balance gate)
   'agentWorld.trading.amountLabel': 'राशि',
   'agentWorld.trading.networkLabel': 'नेटवर्क',
@@ -6290,6 +6355,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.amountTooManyDecimals': 'इस राशि में बहुत अधिक दशमलव स्थान हैं।',
   'agentWorld.trading.amountMustBePositive': 'शून्य से बड़ी राशि दर्ज करें।',
   'agentWorld.trading.amountInvalid': 'एक मान्य राशि दर्ज करें।',
+
+  // Code block chrome
+  'codeBlock.copy': 'कॉपी करें',
+  'codeBlock.copied': 'कॉपी हो गया!',
 };
 
 export default messages;

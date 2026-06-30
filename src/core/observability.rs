@@ -294,6 +294,45 @@ pub enum ExpectedErrorKind {
     /// couldn't parse, and the FE *does* page for it, F8). See
     /// [`crate::openhuman::inference::provider::backend_error_code_skips_sentry`].
     BackendErrorCodeOwned,
+    /// A provider embedding call (Cohere `/v2/embed`, OpenAI/Voyage embed,
+    /// custom OpenAI-compatible embed) returned a **403/Forbidden gateway
+    /// HTML page** instead of the provider's JSON error envelope — the
+    /// signature of an edge/CDN/WAF or regional block sitting *in front of*
+    /// the provider API (the request never reached the provider app). The
+    /// endpoint is correct and a key was sent (the empty-key fast-fail guard
+    /// already passed), so there is no local lever: retry won't clear an edge
+    /// policy keyed on the user's network reputation / geo / IP. The
+    /// embedding caller already degrades gracefully and the UI surfaces the
+    /// failure; Sentry has no remediation path.
+    ///
+    /// Anchored on HTML gateway markers (`<!doctype html`, `<title>403`,
+    /// `403 forbidden`) **and the absence of a JSON envelope** so an
+    /// actionable JSON 4xx (Cohere's `{"message": …}`, a real request-shape
+    /// bug in our client) still classifies `None` and reaches Sentry. See
+    /// [`is_upstream_edge_block_message`].
+    ///
+    /// Drops Sentry TAURI-RUST-8S3 (~1.7 k events / 3 users on
+    /// openhuman@0.57.53, `Cohere embed API error (403 Forbidden):
+    /// <!doctype html>…<title>403</title>…`).
+    UpstreamEdgeBlock,
+    /// `approval_decide` (`src/openhuman/approval/rpc.rs`) resolved a request_id
+    /// whose pending row was **already decided, lazily expired, or superseded**
+    /// — `store::decide` updated 0 rows because `decided_at` was already set,
+    /// and `store::get_decision` confirms a persisted decision exists. The
+    /// inline-approvals design spec
+    /// (`docs/superpowers/specs/2026-05-23-telegram-inline-approvals-design.md`)
+    /// classifies "no pending approval found" as a **benign** outcome: the
+    /// frontend `ApprovalRequestCard.decide` and the Telegram callback both call
+    /// `approval_decide` without server-confirmed dedupe, so double-taps, two
+    /// operators racing, and expiry-while-live all land here harmlessly.
+    ///
+    /// Drops the benign half of Sentry TAURI-RUST-5EH (~1,995 events / 8 users
+    /// on `openhuman@0.57.53`). Anchored to the benign `"no pending approval
+    /// found"` wording emitted ONLY when `get_decision` confirms the row was
+    /// resolved; a genuine **never-registered** id raises the distinct
+    /// `"no pending approval ever registered"` string (no anchor) so a real
+    /// lost-registration defect still reaches Sentry.
+    ApprovalNoPendingRace,
     /// A remote MCP server answered the connect handshake with HTTP 401 — it
     /// needs OAuth sign-in, not a code fix. `McpHttpClient::read_response`
     /// (`src/openhuman/mcp_client/client.rs`) raises the typed
@@ -353,6 +392,17 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if lower.contains("codex cli auth") || lower.contains(".codex/auth.json") {
         return Some(ExpectedErrorKind::CodexCliAuthUnavailable);
     }
+    // TAURI-RUST-5EH — `approval_decide` resolved a request_id whose row was
+    // already decided / lazily expired / superseded (benign race per the
+    // inline-approvals design spec). `rpc::approval_decide` emits this exact
+    // `"no pending approval found"` wording ONLY after `store::get_decision`
+    // confirms a persisted decision exists; the genuine never-registered case
+    // raises `"no pending approval ever registered"` (matched by neither this
+    // arm nor any below), so a real lost-registration defect still reaches
+    // Sentry. See `ExpectedErrorKind::ApprovalNoPendingRace`.
+    if lower.contains("no pending approval found") {
+        return Some(ExpectedErrorKind::ApprovalNoPendingRace);
+    }
     // TAURI-RUST-CGP — a remote MCP server answered the connect handshake with
     // HTTP 401 (`McpUnauthorizedError`). `connections::connect` already stores a
     // `needs_auth` flag so the UI prompts for OAuth sign-in (#3733 / #3719), but
@@ -380,11 +430,7 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     // guard now fast-fails before issuing that request, but this arm demotes
     // any residual 401 of that shape — older clients, or a present-but-rejected
     // key — so the flood (TAURI-RUST-52S) stays out of Sentry either way.
-    if lower.contains("api key not set")
-        || lower.contains("missing api key")
-        || lower.contains("no api key is configured")
-        || lower.contains("no api key supplied")
-    {
+    if is_api_key_unset_message(&lower) {
         return Some(ExpectedErrorKind::ApiKeyMissing);
     }
     // Check `ChannelSupervisorRestart` BEFORE `is_loopback_unavailable` and
@@ -420,6 +466,14 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     }
     if is_network_unreachable_message(&lower) {
         return Some(ExpectedErrorKind::NetworkUnreachable);
+    }
+    // Check `is_upstream_edge_block_message` BEFORE the transient/backend
+    // matchers: an HTML 403 gateway page from a provider embed call carries a
+    // `403`/`forbidden` token that no other matcher claims, but routing it to
+    // its own bucket keeps "edge/CDN block" distinct from genuine transient
+    // 5xx and from the actionable JSON 4xx that must still page (TAURI-RUST-8S3).
+    if is_upstream_edge_block_message(&lower) {
+        return Some(ExpectedErrorKind::UpstreamEdgeBlock);
     }
     if is_transient_upstream_http_message(&lower) {
         return Some(ExpectedErrorKind::TransientUpstreamHttp);
@@ -966,6 +1020,30 @@ fn is_mcp_server_needs_auth_message(lower: &str) -> bool {
     lower.contains("mcp unauthorized for ") && lower.contains("(http 401")
 }
 
+/// Detect the "a configured provider has no API key" user-config state.
+///
+/// Single source of truth for the `ApiKeyMissing` wording so the
+/// `expected_error_kind` demotion arm and the cron scheduler's halt-on-first
+/// classifier (`is_api_key_unset_failure`, TAURI-RUST-HCK) can never drift
+/// apart. The phrasing is emitted deterministically, before any HTTP, by the
+/// credential guards:
+///   - `inference/provider/compatible_request.rs::credential_for_request`
+///     ("<provider> API key not set. Configure via the web UI …")
+///   - the embeddings credential guards (cohere/openai) + the composio
+///     direct-mode factory bail ("no api key is configured" / "no api key
+///     supplied").
+///
+/// Distinct from a *rejected* key (a provider 401 "Invalid API key"): that is a
+/// present-but-wrong key and stays actionable in Sentry — this matcher is for
+/// the **absent** key only, which has no Sentry remediation path.
+pub fn is_api_key_unset_message(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("api key not set")
+        || lower.contains("missing api key")
+        || lower.contains("no api key is configured")
+        || lower.contains("no api key supplied")
+}
+
 /// Detect the in-process-core boot-window shape: a sibling component
 /// (frontend RPC relay, agent-integrations / composio HTTP clients) tried to
 /// reach the embedded core's `127.0.0.1:<port>` listener before it finished
@@ -1280,6 +1358,57 @@ fn is_transient_upstream_http_message(lower: &str) -> bool {
             || lower.contains(&format!("http error: {code}\n"))
             || lower.contains(&format!("http error: {code}:"))
     })
+}
+
+/// Detect a non-2xx **HTML 403/Forbidden gateway page** returned to a provider
+/// embedding call — the signature of an edge/CDN/WAF or regional block sitting
+/// in front of the provider API, where the request never reached the provider
+/// app and the body is a generic gateway error page rather than the provider's
+/// JSON error envelope.
+///
+/// Canonical wire shape (TAURI-RUST-8S3, `CohereEmbedding::embed` emit site):
+/// `"Cohere embed API error (403 Forbidden): <!doctype html>…<title>403</title>403 Forbidden"`.
+/// The same shape also covers the OpenAI/Voyage and custom OpenAI-compatible
+/// embed paths when their upstream is fronted by the same edge tier, so we do
+/// not pin to a single provider prefix.
+///
+/// Two conditions must BOTH hold:
+///
+/// 1. A **403 token** is present — either the `403` status inside the embed
+///    error prefix or a bare `403 forbidden` in the body.
+/// 2. An **HTML gateway marker** is present (`<!doctype html`, `<html`,
+///    `<title>403`) — proving the body is a gateway page, not the provider's
+///    structured error.
+///
+/// And the body must **not** look like a JSON envelope (no `{` … `"message"` /
+/// `"error"` JSON shape). This is the discrimination guard: Cohere's real JSON
+/// 403 (`{"message": "invalid api key"}`) and any genuine request-shape bug in
+/// our client that round-trips a JSON 4xx stay classified `None` and keep
+/// reaching Sentry. Only the bodiless edge HTML page is demoted.
+///
+/// `genuinely-unpreventable`: endpoint correct, key sent, retry can't clear an
+/// edge policy keyed on the user's network reputation / geo / IP — Sentry has
+/// no remediation path.
+fn is_upstream_edge_block_message(lower: &str) -> bool {
+    // Must originate from an embedding call so we don't silence an HTML 403
+    // surfaced by some unrelated path.
+    let is_embed = lower.contains("embed");
+    if !is_embed {
+        return false;
+    }
+    // A JSON envelope means the provider's app answered with a structured
+    // error — actionable, must page. Don't demote.
+    let looks_like_json = lower.contains('{')
+        && (lower.contains("\"message\"")
+            || lower.contains("\"error\"")
+            || lower.contains("\"detail\""));
+    if looks_like_json {
+        return false;
+    }
+    let has_403 = lower.contains("(403 ") || lower.contains("403 forbidden");
+    let has_html_marker =
+        lower.contains("<!doctype html") || lower.contains("<html") || lower.contains("<title>403");
+    has_403 && has_html_marker
 }
 
 /// Detect non-2xx HTTP failures returned from the backend integrations / composio
@@ -2062,6 +2191,37 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 kind = "backend_error_code",
                 error_code = %code,
                 "[observability] {domain}.{operation} skipped backend-owned errorCode={code} error: {message}"
+            );
+        }
+        ExpectedErrorKind::UpstreamEdgeBlock => {
+            // Provider embed call hit an edge/CDN/WAF or regional 403 block —
+            // the body is a generic HTML gateway page, not the provider's JSON
+            // error. Endpoint correct, key sent, retry can't clear an edge
+            // policy; the embedding caller degrades gracefully and the UI
+            // surfaces it. Demote at `warn!` so the breadcrumb retains the
+            // shape for triage without spawning an event (TAURI-RUST-8S3).
+            tracing::warn!(
+                domain = domain,
+                operation = operation,
+                kind = "upstream_edge_block",
+                error = %message,
+                "[observability] {domain}.{operation} skipped upstream edge/CDN 403 block: {message}"
+            );
+        }
+        ExpectedErrorKind::ApprovalNoPendingRace => {
+            // Benign approval race (TAURI-RUST-5EH): the request_id was already
+            // decided / lazily expired / superseded — `store::get_decision`
+            // confirmed a persisted decision exists, so this is a double-tap,
+            // two-operator, or expiry-while-live race classified benign by the
+            // inline-approvals design spec, not a lost registration. Demote at
+            // `warn!` so a sustained spike still shows in operator dashboards
+            // without paging. The genuine never-registered case takes the
+            // capture path (distinct wording) and stays a Sentry signal.
+            tracing::warn!(
+                domain = domain,
+                operation = operation,
+                kind = "approval_no_pending_race",
+                "[observability] {domain}.{operation} skipped benign already-decided/expired approval race: {message}"
             );
         }
     }
@@ -2877,6 +3037,43 @@ mod tests {
         assert_eq!(format!("{wrapped:#}"), "outer ctx: inner cause");
     }
 
+    /// Sentry TAURI-RUST-5EH: the benign already-decided/expired approval race
+    /// (`rpc::approval_decide` after `get_decision` confirms a persisted
+    /// decision) must classify as `ApprovalNoPendingRace` so the ~1,995-event
+    /// flood is demoted — while a genuine never-registered id (distinct
+    /// "ever registered" wording) must stay reportable (`None`).
+    #[test]
+    fn classifies_benign_approval_race_but_keeps_genuine_loss() {
+        assert_eq!(
+            expected_error_kind(
+                "rpc.invoke_method failed: no pending approval found for request_id \
+                 '4f1c…' (already decided or expired)"
+            ),
+            Some(ExpectedErrorKind::ApprovalNoPendingRace),
+            "benign already-decided/expired race must be demoted"
+        );
+        assert_eq!(
+            expected_error_kind(
+                "rpc.invoke_method failed: no pending approval ever registered \
+                 for request_id '4f1c…'"
+            ),
+            None,
+            "a genuine lost registration must remain a Sentry signal"
+        );
+    }
+
+    /// Exercise the full demotion path (classifier -> report arm) for a benign
+    /// approval race: it must take the expected branch and not panic.
+    #[test]
+    fn report_error_or_expected_demotes_benign_approval_race() {
+        report_error_or_expected(
+            "no pending approval found for request_id 'abc' (already decided or expired)",
+            "rpc",
+            "invoke_method",
+            &[],
+        );
+    }
+
     #[test]
     fn classifies_expected_config_errors() {
         assert_eq!(
@@ -3069,6 +3266,28 @@ mod tests {
         );
     }
 
+    /// TAURI-RUST-HCK — the single-source `is_api_key_unset_message` matcher
+    /// (consumed by the cron scheduler's halt-on-first classifier) must match
+    /// the VERBATIM wording emitted by the inference credential guard
+    /// (`credential_for_request`), so a wording drift fails CI instead of
+    /// silently re-opening the cron flood. It must NOT match a present-but-
+    /// rejected key (401 "Invalid API key") nor an ordinary provider error.
+    #[test]
+    fn is_api_key_unset_message_matches_verbatim_credential_guard_wording() {
+        assert!(is_api_key_unset_message(
+            "openrouter API key not set. Configure via the web UI or set the appropriate env var."
+        ));
+        assert!(is_api_key_unset_message(
+            "Cohere embed API error (401 Unauthorized): {\"message\":\"no api key supplied\"}"
+        ));
+        assert!(!is_api_key_unset_message(
+            "OpenAI API error (401 Unauthorized): invalid_api_key"
+        ));
+        assert!(!is_api_key_unset_message(
+            "OpenHuman API error (500 Internal Server Error): {\"error\":\"Internal server error\"}"
+        ));
+    }
+
     /// Guard against over-suppression: a genuine BYO-key auth failure
     /// (wrong/expired key the upstream rejected) is an actionable bug
     /// shape and MUST still reach Sentry (stay `None`), not get demoted by
@@ -3122,6 +3341,86 @@ mod tests {
             expected_error_kind(cohere_cap_msg),
             Some(ExpectedErrorKind::TransientUpstreamHttp),
             "Cohere retry-cap bail message must classify as TransientUpstreamHttp: {cohere_cap_msg}"
+        );
+    }
+
+    #[test]
+    fn classifies_embedding_html_403_edge_block_as_upstream_edge_block() {
+        // TAURI-RUST-8S3: edge/CDN/WAF or regional 403 block in front of
+        // api.cohere.com — the body is a generic HTML gateway page, not
+        // Cohere's JSON error envelope. Endpoint correct, key sent, no local
+        // lever → demote.
+        let cohere_html_403 = "Cohere embed API error (403 Forbidden): <!doctype html>\
+            <html><head><title>403</title></head><body>403 Forbidden</body></html>";
+        assert_eq!(
+            expected_error_kind(cohere_html_403),
+            Some(ExpectedErrorKind::UpstreamEdgeBlock),
+            "HTML 403 gateway page from an embed call must classify as UpstreamEdgeBlock: {cohere_html_403}"
+        );
+
+        // Generic embed shape (openai/voyage/custom embed path) fronted by the
+        // same edge tier — also demoted (matcher is not pinned to one provider).
+        let openai_html_403 =
+            "Embedding API error (403 Forbidden): <!DOCTYPE html><title>403 Forbidden</title>";
+        assert_eq!(
+            expected_error_kind(openai_html_403),
+            Some(ExpectedErrorKind::UpstreamEdgeBlock),
+            "generic embed HTML 403 must classify as UpstreamEdgeBlock: {openai_html_403}"
+        );
+    }
+
+    #[test]
+    fn does_not_classify_embedding_json_403_as_edge_block() {
+        // A JSON 403 envelope means the provider's app answered with a
+        // structured, actionable error (bad key, blocked org) — must stay in
+        // Sentry. The discrimination guard for TAURI-RUST-8S3.
+        let cohere_json_403 =
+            r#"Cohere embed API error (403 Forbidden): {"message": "invalid api token"}"#;
+        assert_eq!(
+            expected_error_kind(cohere_json_403),
+            None,
+            "JSON 403 envelope must NOT be demoted — stays actionable: {cohere_json_403}"
+        );
+
+        // A non-embed HTML 403 from some unrelated path must not be silenced by
+        // this embed-scoped matcher.
+        let non_embed_html_403 =
+            "page fetch failed (403 Forbidden): <!doctype html><title>403</title>";
+        assert_eq!(
+            expected_error_kind(non_embed_html_403),
+            None,
+            "non-embed HTML 403 must not match the embed edge-block matcher: {non_embed_html_403}"
+        );
+    }
+
+    #[test]
+    fn report_error_or_expected_demotes_embedding_html_403_edge_block() {
+        // Drive the full demote path (`report_error_or_expected` →
+        // `report_expected_message`'s `UpstreamEdgeBlock` arm) so the added
+        // logging branch is exercised, not just the classifier. The HTML 403
+        // edge-block body must take the demoted `warn!` arm and must NOT fall
+        // through to the hard `report_error_message` capture path.
+        let cohere_html_403 = anyhow::anyhow!(
+            "Cohere embed API error (403 Forbidden): <!doctype html>\
+             <html><head><title>403</title></head><body>403 Forbidden</body></html>"
+        );
+        // Confirm the classifier routes it to the demoted arm…
+        assert_eq!(
+            expected_error_kind(&format!("{cohere_html_403:#}")),
+            Some(ExpectedErrorKind::UpstreamEdgeBlock),
+            "edge-block 403 must classify so report_error_or_expected demotes it"
+        );
+        // …then actually invoke the report path to cover the logging arm.
+        report_error_or_expected(&cohere_html_403, "embeddings", "embed", &[]);
+
+        // Companion: a JSON 403 envelope is actionable — it must NOT be demoted
+        // (classifier returns None, so the hard report path is taken instead).
+        let cohere_json_403 =
+            r#"Cohere embed API error (403 Forbidden): {"message": "invalid api token"}"#;
+        assert_eq!(
+            expected_error_kind(cohere_json_403),
+            None,
+            "JSON 403 envelope must stay actionable — not routed to the demote arm"
         );
     }
 

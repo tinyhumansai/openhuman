@@ -97,4 +97,14 @@ describe('Intelligence URL-backed tab', () => {
     expect(screen.getByTestId('tab-council')).toBeInTheDocument();
     expect(screen.getByText('selected:council')).toBeInTheDocument();
   });
+
+  // Regression for #4267: rendered inside Brain's `overflow-hidden` card, the
+  // panel must own a vertical scroll region that wraps the tab content, or the
+  // content is clipped with no scrollbar.
+  it('wraps the tab content in an overflow-y-auto scroll container', () => {
+    renderAt('/intelligence');
+    const scroll = screen.getByTestId('intelligence-scroll');
+    expect(scroll).toHaveClass('overflow-y-auto');
+    expect(scroll).toContainElement(screen.getByTestId('tab-tasks'));
+  });
 });

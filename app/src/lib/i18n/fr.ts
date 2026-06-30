@@ -5254,6 +5254,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.bannerTitle': 'Titre de la bannière',
   'skills.meetingBots.busyTitle': 'OpenHuman est occupé',
   'skills.meetingBots.comingSoon': 'Bientôt disponible',
+  'skills.meetingBots.couldNotLeaveTitle': 'Impossible de quitter la réunion',
   'skills.meetingBots.couldNotStartTitle': 'Impossible de démarrer OpenHuman',
   'skills.meetingBots.displayName': "Nom d'affichage",
   'skills.meetingBots.failedToStart': "Échec du démarrage d'OpenHuman.",
@@ -5268,9 +5269,11 @@ const messages: TranslationMap = {
   'skills.meetingBots.platformComingSoon': '{label} sera bientôt disponible.',
   'skills.meetingBots.platformHints.gmeet': 'meet.google.com/abc-defg-hij',
   'skills.meetingBots.platformHints.teams': 'teams.microsoft.com/...',
+  'skills.meetingBots.platformHints.webex': 'webex.com/meet/...',
   'skills.meetingBots.platformHints.zoom': 'zoom.us/j/...',
   'skills.meetingBots.platforms.gmeet': 'Google Meet',
   'skills.meetingBots.platforms.teams': 'Microsoft Teams',
+  'skills.meetingBots.platforms.webex': 'Webex',
   'skills.meetingBots.platforms.zoom': 'Zoom',
   'skills.meetingBots.sendTo': 'Envoyer à',
   'skills.meetingBots.serverOverloaded':
@@ -5304,6 +5307,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.liveStatusEnded': 'Réunion terminée',
   'skills.meetingBots.liveStatusError': 'Échec de connexion',
   'skills.meetingBots.leaveButton': 'Quitter',
+  'skills.meetingBots.leavingButton': 'Sortie en cours…',
   'skills.meetingBots.respondToParticipant': 'Votre nom dans cette réunion',
   'skills.meetingBots.respondToParticipantHint': 'ex. Alice (votre nom affiché dans l\u2019appel)',
   'skills.meetingBots.respondToParticipantDesc':
@@ -5314,6 +5318,62 @@ const messages: TranslationMap = {
   'skills.meetingBots.activeMode': 'Répondre quand je m’adresse à lui',
   'skills.meetingBots.activeModeDesc':
     'Activé, le bot répond à voix haute après que vous prononcez sa phrase d’activation. Désactivé, il se contente d’écouter et de transcrire.',
+  'skills.meetingBots.history.allPlatforms': 'Toutes les plateformes',
+  'skills.meetingBots.history.copyTranscript': 'Copier',
+  'skills.meetingBots.history.downloadTranscript': 'Télécharger',
+  'skills.meetingBots.history.earlier': 'Plus tôt',
+  'skills.meetingBots.history.participantCount': '{count} participant',
+  'skills.meetingBots.history.participantCountPlural': '{count} participants',
+  'skills.meetingBots.history.runWithOpenHuman': 'Exécuter avec OpenHuman',
+  'skills.meetingBots.history.searchPlaceholder': 'Rechercher des appels…',
+  'skills.meetingBots.history.selectPrompt':
+    'Sélectionnez un appel pour voir son résumé et sa transcription.',
+  'skills.meetingBots.history.today': "Aujourd'hui",
+  'skills.meetingBots.history.yesterday': 'Hier',
+  'skills.meetingBots.upcoming.heading': 'À venir',
+  'skills.meetingBots.upcoming.when': 'Quand',
+  'skills.meetingBots.upcoming.meeting': 'Réunion',
+  'skills.meetingBots.upcoming.platform': 'Plateforme',
+  'skills.meetingBots.upcoming.people': 'Personnes',
+  'skills.meetingBots.upcoming.joinPolicy': 'Politique de participation',
+  'skills.meetingBots.upcoming.joinNow': 'Rejoindre maintenant',
+  'skills.meetingBots.upcoming.joinNowAriaLabel': 'Rejoindre {title}',
+  'skills.meetingBots.upcoming.join': 'Rejoindre',
+  'skills.meetingBots.upcoming.auto': 'Auto',
+  'skills.meetingBots.upcoming.ask': 'Demander',
+  'skills.meetingBots.upcoming.skip': 'Ignorer',
+  'skills.meetingBots.upcoming.today': "Aujourd'hui",
+  'skills.meetingBots.upcoming.tomorrow': 'Demain',
+  'skills.meetingBots.upcoming.empty':
+    'Aucune réunion à venir — connectez Google Calendar pour les voir ici.',
+  'skills.meetingBots.upcoming.error': 'Impossible de charger les réunions à venir.',
+  'skills.meetingBots.upcoming.retry': 'Réessayer',
+  'skills.meetingBots.upcoming.refresh': 'Actualiser',
+  'skills.meetingBots.upcoming.filterAll': 'Toutes les plateformes',
+  'skills.meetingBots.upcoming.participants': '{count} participants',
+  'skills.meetingBots.upcoming.imminent': 'Commence bientôt',
+  'skills.meetingBots.upcoming.autoJoinsAt': 'Rejoint automatiquement ~à {time}',
+  'skills.meetingBots.upcoming.asksAtStart': 'Demande au début',
+  'skills.meetingBots.upcoming.watchCalendarHint':
+    "Activez 'Surveiller mon agenda' dans les Paramètres (icône engrenage) pour que Auto/Demander prenne effet — sinon ces politiques sont enregistrées mais ne se déclencheront pas.",
+  'skills.meetingBots.relative.now': 'maintenant',
+  'skills.meetingBots.relative.inMinutes': 'dans {count}m',
+  'skills.meetingBots.relative.inHours': 'dans {count}h',
+  'skills.meetingBots.relative.minutesAgo': 'il y a {count}m',
+  'skills.meetingBots.relative.hoursAgo': 'il y a {count}h',
+  'skills.meetingBots.relative.daysAgo': 'il y a {count}j',
+  'skills.meetingBots.relative.yesterday': 'hier',
+  'skills.meetingBots.defaults.drawerTitle': 'Paramètres de réunion',
+  'skills.meetingBots.defaults.closeDrawer': 'Fermer',
+  'skills.meetingBots.defaults.openDefaults': 'Paramètres de réunion',
+  'skills.meetingBots.defaults.watchCalendar': 'Surveiller mon agenda',
+  'skills.meetingBots.defaults.watchCalendarDesc':
+    "Laissez OpenHuman surveiller votre agenda connecté pour qu'il puisse rejoindre automatiquement ou vous inviter à des réunions selon les politiques ci-dessous. Cela est indépendant des notifications de rappel de réunion.",
+  'skills.meetingBots.defaults.globalPolicy': "Politique d'adhésion automatique globale",
+  'skills.meetingBots.defaults.perPlatformTitle': 'Paramètres par plateforme',
+  'skills.meetingBots.defaults.perPlatformDesc':
+    'Remplacer la politique globale pour des plateformes spécifiques.',
+  'skills.meetingBots.defaults.useDefault': 'Utiliser par défaut',
   'skills.resource.preview.closeAriaLabel': "Fermer l'aperçu",
   'skills.resource.preview.failed': "Échec de l'aperçu",
   'skills.resource.preview.loading': "Chargement de l'aperçu…",
@@ -6107,6 +6167,8 @@ const messages: TranslationMap = {
     "Aucun fournisseur de résumé n'est disponible pour Créer des arbres de résumé. Activez l'IA locale (Ollama) ou activez la synthèse cloud dans Paramètres → IA → Mémoire.",
   'memory.health.remediation.empty_input_refused':
     "Un élément de mémoire a été ignoré car son texte était vide. Aucune action requise — les nouveaux éléments continuent de s'intégrer normalement.",
+  'memory.health.remediation.storage_unavailable':
+    "OpenHuman ne peut pas écrire dans son stockage de mémoire — le disque ou la carte SD semble défaillant, plein ou en lecture seule. Vérifiez le lecteur et libérez de l'espace ; le traitement de la mémoire reprendra automatiquement une fois le stockage de nouveau accessible en écriture.",
   'memory.health.remediation.transient':
     'Une erreur temporaire a interrompu le traitement de la mémoire. Une nouvelle tentative aura lieu automatiquement.',
   'memory.health.remediation.unknown':
@@ -6405,7 +6467,11 @@ const messages: TranslationMap = {
   'userErrors.insufficientCredits.title': 'Crédits du fournisseur requis',
   'userErrors.insufficientCredits.body':
     "Votre fournisseur IA n'a plus de crédits. Rechargez-le ou mettez à jour sa clé API.",
+  'userErrors.apiKeyMissing.title': 'Clé API requise',
+  'userErrors.apiKeyMissing.body':
+    "Aucune clé API n'est définie pour votre fournisseur d'IA. Ajoutez-en une dans les paramètres du fournisseur pour continuer.",
   'userErrors.scope.chat': 'Chat',
+  'userErrors.scope.cron': 'Tâche planifiée',
   // Agent World — Identity trading (confirm-before-spend + balance gate)
   'agentWorld.trading.amountLabel': 'Montant',
   'agentWorld.trading.networkLabel': 'Réseau',
@@ -6438,6 +6504,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.amountTooManyDecimals': 'Ce montant comporte trop de décimales.',
   'agentWorld.trading.amountMustBePositive': 'Saisissez un montant supérieur à zéro.',
   'agentWorld.trading.amountInvalid': 'Saisissez un montant valide.',
+
+  // Code block chrome
+  'codeBlock.copy': 'Copier',
+  'codeBlock.copied': 'Copié !',
 };
 
 export default messages;

@@ -21,6 +21,9 @@ import agentProfileReducer from '../../store/agentProfileSlice';
 import chatRuntimeReducer, {
   appendProcessingProse,
   beginInferenceTurn,
+  bumpInferenceHeartbeatForThread,
+  clearFollowupsForThread,
+  enqueueFollowup,
   setInferenceStatusForThread,
   setPendingPlanReviewForThread,
   setTaskBoardForThread,
@@ -1294,6 +1297,84 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     }
   });
 
+  it('rearms the silence timer on inference heartbeat beats during a silent reasoning phase (#4270)', async () => {
+    // Repro for #4270: a long prefill on a large context, or a reasoning-tier
+    // model that buffers `reasoning_content` server-side, streams NO status /
+    // text / tool / board signal for minutes. The core now emits a periodic
+    // `inference_heartbeat`; the rearm effect must treat it as liveness so the
+    // 120s silence timer never false-fires while the turn is genuinely working.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { textarea, store, thread } = await renderSelectedConversation();
+
+      await act(async () => {
+        fireEvent.change(textarea, {
+          target: { value: 'summarize a big codebase in reasoning mode' },
+        });
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      });
+      await waitFor(() => {
+        expect(chatSend).toHaveBeenCalledTimes(1);
+      });
+
+      // 200s elapse in 20s steps — only a heartbeat each step, nothing else.
+      // Without the #4270 fix the 120s timer would fire around the 6th step.
+      for (let i = 0; i < 10; i++) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(20_000);
+        });
+        await act(async () => {
+          store!.dispatch(bumpInferenceHeartbeatForThread({ threadId: thread.id }));
+        });
+      }
+
+      // The beats kept rearming the timer → the turn is still marked active
+      // (a fired safety timeout would have dispatched `clearThreadInferenceActive`).
+      expect(store!.getState().thread.activeThreadIds[thread.id]).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('still fails fast when heartbeats stop — genuine disconnect surfaces (#4270 regression safety)', async () => {
+    // Regression safety: the heartbeat is the liveness signal, so a real
+    // connectivity drop (core/socket dead → no more beats) MUST still trip the
+    // 120s silence timer rather than hanging forever.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { textarea, store, thread } = await renderSelectedConversation();
+
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: 'task whose connection dies' } });
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      });
+      await waitFor(() => {
+        expect(chatSend).toHaveBeenCalledTimes(1);
+      });
+
+      // A couple of early beats, then silence (the socket died).
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20_000);
+      });
+      await act(async () => {
+        store!.dispatch(bumpInferenceHeartbeatForThread({ threadId: thread.id }));
+      });
+
+      // No more beats for a full 120s window → the silence timer fires and
+      // drops the thread from the active set.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120_000);
+      });
+      expect(store!.getState().thread.activeThreadIds[thread.id]).toBeFalsy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('does NOT rearm the silence timer on an unrelated thread’s updates', async () => {
     // Regression for the per-thread dependency scoping: the rearm effect must
     // react only to the SENDING thread's slices. A different thread churning
@@ -2393,5 +2474,168 @@ describe('Conversations — queued follow-ups while a turn streams', () => {
     await waitFor(() => expect(chatSend).toHaveBeenCalled());
     expect(screen.queryByTestId('queued-followups')).not.toBeInTheDocument();
     expect(textarea).toHaveValue('keep me on failure');
+  });
+});
+
+describe('Conversations — message list reserves room for the floating composer footer (#4268)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetThreads.mockResolvedValue({ threads: [], count: 0 });
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+  });
+
+  function followupMessage(id: string, content: string): ThreadMessage {
+    return {
+      id,
+      sender: 'user',
+      type: 'text',
+      content,
+      extraMetadata: {},
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+  }
+
+  // Page-variant conversation with a visible message and an active (streaming)
+  // turn, so the message list, the follow-up composer, and the queued-followups
+  // panel all render together — the exact state where the overlap bug appeared.
+  async function renderActiveConversationWithMessages() {
+    const thread = makeThread({ id: 'pad-thread', title: 'Pad Thread' });
+    const messages: ThreadMessage[] = [
+      {
+        id: 'm-agent',
+        sender: 'agent',
+        type: 'text',
+        content: 'Streaming agent reply tail that must stay visible.',
+        extraMetadata: {},
+        createdAt: '2026-01-01T00:01:00.000Z',
+      },
+    ];
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    mockGetThreadMessages.mockResolvedValue({ messages, count: messages.length });
+    let store: ReturnType<typeof buildStore> | undefined;
+    await act(async () => {
+      store = await renderConversations({
+        thread: {
+          ...selectedThreadState(thread),
+          messagesByThreadId: { [thread.id]: messages },
+          messages,
+          activeThreadIds: { [thread.id]: true },
+        },
+        socket: socketState('connected'),
+      });
+    });
+    return { store: store as ReturnType<typeof buildStore>, thread };
+  }
+
+  function paddingBottomPx(): number {
+    return parseInt(screen.getByTestId('chat-message-list').style.paddingBottom || '0', 10);
+  }
+
+  it('reserves bottom padding via an inline style, not the static pb-32 (0 follow-ups)', async () => {
+    await renderActiveConversationWithMessages();
+    const list = screen.getByTestId('chat-message-list');
+    // The old static `pb-32` is gone; spacing is reserved by a dynamic inline
+    // style so it can grow with the footer.
+    expect(list.className).not.toMatch(/\bpb-32\b/);
+    expect(list.style.paddingBottom).not.toBe('');
+    expect(paddingBottomPx()).toBeGreaterThan(0);
+    expect(screen.queryByTestId('queued-followups')).not.toBeInTheDocument();
+  });
+
+  it('keeps content padded when a single follow-up is queued', async () => {
+    const { store, thread } = await renderActiveConversationWithMessages();
+    await act(async () => {
+      store.dispatch(
+        enqueueFollowup({
+          threadId: thread.id,
+          message: followupMessage('f1', 'and the pricing?'),
+          label: 'and the pricing?',
+        })
+      );
+    });
+    expect(await screen.findByTestId('queued-followups')).toBeInTheDocument();
+    expect(paddingBottomPx()).toBeGreaterThan(0);
+  });
+
+  it('keeps content padded with multiple queued follow-ups', async () => {
+    const { store, thread } = await renderActiveConversationWithMessages();
+    await act(async () => {
+      store.dispatch(
+        enqueueFollowup({
+          threadId: thread.id,
+          message: followupMessage('f1', 'one'),
+          label: 'one',
+        })
+      );
+      store.dispatch(
+        enqueueFollowup({
+          threadId: thread.id,
+          message: followupMessage('f2', 'two'),
+          label: 'two',
+        })
+      );
+      store.dispatch(
+        enqueueFollowup({
+          threadId: thread.id,
+          message: followupMessage('f3', 'three'),
+          label: 'three',
+        })
+      );
+    });
+    const strip = await screen.findByTestId('queued-followups');
+    expect(within(strip).getByText('one')).toBeInTheDocument();
+    expect(within(strip).getByText('three')).toBeInTheDocument();
+    expect(paddingBottomPx()).toBeGreaterThan(0);
+  });
+
+  it('restores normal layout after the queued follow-ups are dismissed', async () => {
+    const { store, thread } = await renderActiveConversationWithMessages();
+    await act(async () => {
+      store.dispatch(
+        enqueueFollowup({
+          threadId: thread.id,
+          message: followupMessage('f1', 'dismiss me'),
+          label: 'dismiss me',
+        })
+      );
+    });
+    expect(await screen.findByTestId('queued-followups')).toBeInTheDocument();
+    await act(async () => {
+      store.dispatch(clearFollowupsForThread({ threadId: thread.id }));
+    });
+    await waitFor(() => expect(screen.queryByTestId('queued-followups')).not.toBeInTheDocument());
+    // Baseline padding stays reserved so the layout is still correct.
+    expect(paddingBottomPx()).toBeGreaterThan(0);
+  });
+
+  it('grows the reserved padding to the footer height reported by the ResizeObserver', async () => {
+    // jsdom performs no layout, so the polyfilled ResizeObserver never fires.
+    // Drive it manually: capture the observed element + callback, report a
+    // concrete footer height, and assert the list reserves that height + the
+    // 16px gap.
+    const original = globalThis.ResizeObserver;
+    const handle: { cb: ResizeObserverCallback | null } = { cb: null };
+    class MockResizeObserver {
+      constructor(cb: ResizeObserverCallback) {
+        handle.cb = cb;
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    globalThis.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
+    try {
+      await renderActiveConversationWithMessages();
+      const footer = document.querySelector('[data-walkthrough="home-cta"]') as HTMLElement | null;
+      expect(footer).not.toBeNull();
+      (footer as HTMLElement).getBoundingClientRect = () => ({ height: 240 }) as DOMRect;
+      await act(async () => {
+        handle.cb?.([], {} as ResizeObserver);
+      });
+      // 240px measured footer + 16px gap.
+      expect(paddingBottomPx()).toBe(256);
+    } finally {
+      globalThis.ResizeObserver = original;
+    }
   });
 });

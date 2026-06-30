@@ -1,6 +1,6 @@
 {
   "name": "openhuman-app",
-  "version": "0.58.2",
+  "version": "0.58.5",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
@@ -111,6 +111,7 @@
     "react-router-dom": "^7.13.0",
     "recharts": "^2.15.0",
     "redux-persist": "^6.0.0",
+    "rehype-highlight": "^7.0.2",
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",

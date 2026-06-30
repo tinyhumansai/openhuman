@@ -5,7 +5,7 @@ import '../../test/mockDefaultSkillStatusHooks';
 import { renderWithProviders } from '../../test/test-utils';
 import Skills from '../Skills';
 
-vi.mock('../../components/skills/MeetingBotsCard', () => ({
+vi.mock('../../components/meetings/MeetingsPage', () => ({
   default: () => <div data-testid="meeting-bots-card">Meeting bot CTA</div>,
 }));
 

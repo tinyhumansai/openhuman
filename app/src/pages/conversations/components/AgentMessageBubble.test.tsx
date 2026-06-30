@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { AgentMessageText, BubbleMarkdown, TableCellMarkdown } from './AgentMessageBubble';
 
@@ -11,6 +11,18 @@ vi.mock('../../../utils/openUrl', () => ({ openUrl: mocks.openUrl }));
 vi.mock('../../../utils/tauriCommands/workspacePaths', () => ({
   openWorkspacePath: mocks.openWorkspacePath,
 }));
+
+// Clipboard mock shared by syntax-highlighting tests below.
+let clipboardWriteMock: ReturnType<typeof vi.fn>;
+
+beforeEach(() => {
+  clipboardWriteMock = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText: clipboardWriteMock } });
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('AgentMessageBubble markdown links', () => {
   beforeEach(() => {
@@ -150,5 +162,31 @@ describe('AgentMessageText', () => {
     expect(screen.getByRole('table')).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'Name' })).toBeInTheDocument();
     expect(screen.getByRole('cell', { name: 'OpenHuman' })).toBeInTheDocument();
+  });
+});
+
+describe('BubbleMarkdown — syntax highlighting', () => {
+  test('fenced code block with a language tag gets hljs token classes in the output', () => {
+    const { container } = render(
+      <BubbleMarkdown content={'```typescript\nconst x: number = 1;\n```'} />
+    );
+    // rehype-highlight adds hljs-* classes to tokens; the keyword "const"
+    // should be wrapped in a span with an hljs class.
+    const highlighted = container.querySelector('[class*="hljs"]');
+    expect(highlighted).not.toBeNull();
+  });
+
+  test('language label shows in the code block header', () => {
+    render(<BubbleMarkdown content={'```javascript\nconsole.log("test");\n```'} />);
+    // "javascript" is >4 chars, so the factory title-cases it → "Javascript".
+    // (≤4-char tags like "js" would instead be uppercased to "JS".)
+    expect(screen.getByText('Javascript')).toBeInTheDocument();
+  });
+
+  test('inline code does NOT receive the code block chrome (no header bar)', () => {
+    render(<BubbleMarkdown content={'Use `console.log` to debug.'} />);
+    // Inline code is rendered as <code>, not wrapped in the CodeBlock <pre> chrome.
+    // The copy button should NOT appear for inline code.
+    expect(screen.queryByRole('button', { name: /copy/i })).toBeNull();
   });
 });

@@ -1,7 +1,6 @@
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { MeetCallRecord } from '../../../services/meetCallService';
 import { setBackendMeetError, setBackendMeetJoined } from '../../../store/backendMeetSlice';
 import { renderWithProviders } from '../../../test/test-utils';
 import MeetingBotsCard from '../MeetingBotsCard';
@@ -290,14 +289,17 @@ describe('MeetingBotsCard — ActiveMeetingView', () => {
     expect(screen.getByText(/hi there/i)).toBeInTheDocument();
   });
 
-  it('shows the inline form (not ActiveMeetingView) while status is joining', () => {
+  it('shows the active banner (not the inline form) while status is joining', () => {
+    // The redesigned composer shows the live banner for 'joining' (not the inline
+    // form). The banner shows the LIVE badge and "Joining…" status text. The
+    // composer unmounts so there is no meeting-link input while joining.
     renderWithProviders(<MeetingBotsCard />, {
       preloadedState: {
         backendMeet: { ...activeMeetState.backendMeet, status: 'joining' as const },
       },
     });
-    expect(screen.getByLabelText(/meeting link/i)).toBeInTheDocument();
-    expect(screen.queryByText(/live in meeting/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/meeting link/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/joining/i)).toBeInTheDocument();
   });
 
   it('shows the inline form (not ActiveMeetingView) when status is ended', () => {
@@ -319,194 +321,3 @@ describe('MeetingBotsCard — ActiveMeetingView', () => {
   });
 });
 
-// ── RecentCallsSection / RecentCallRow tests ──────────────────────────────────
-
-function makeCallRecord(overrides: Partial<MeetCallRecord> = {}): MeetCallRecord {
-  return {
-    request_id: 'req-1',
-    meet_url: 'https://meet.google.com/abc-defg-hij',
-    bot_display_name: 'OpenHuman',
-    owner_display_name: 'Alice',
-    started_at_ms: Date.now() - 5 * 60 * 1000,
-    ended_at_ms: Date.now() - 4 * 60 * 1000,
-    listened_seconds: 30,
-    spoken_seconds: 30,
-    turn_count: 3,
-    ...overrides,
-  };
-}
-
-describe('MeetingBotsCard — recent calls section', () => {
-  afterEach(() => cleanup());
-
-  it('shows a loading hint while listMeetCalls is pending', () => {
-    listMock.mockReturnValue(new Promise(() => {}));
-    renderWithProviders(<MeetingBotsCard />);
-    expect(screen.getByText(/loading…/i)).toBeInTheDocument();
-  });
-
-  it('shows an empty-state message when listMeetCalls returns an empty array', async () => {
-    listMock.mockResolvedValueOnce([]);
-    renderWithProviders(<MeetingBotsCard />);
-    await waitFor(() => {
-      expect(screen.getByText(/no previous calls yet/i)).toBeInTheDocument();
-    });
-  });
-
-  it('renders a row for each returned call record', async () => {
-    const records = [
-      makeCallRecord({
-        request_id: 'req-1',
-        meet_url: 'https://meet.google.com/aaa-bbbb-ccc',
-        turn_count: 2,
-      }),
-      makeCallRecord({
-        request_id: 'req-2',
-        meet_url: 'https://meet.google.com/ddd-eeee-fff',
-        turn_count: 5,
-      }),
-    ];
-    listMock.mockResolvedValueOnce(records);
-    renderWithProviders(<MeetingBotsCard />);
-    await waitFor(() => {
-      expect(screen.getByText('aaa-bbbb-ccc')).toBeInTheDocument();
-      expect(screen.getByText('ddd-eeee-fff')).toBeInTheDocument();
-    });
-    expect(screen.getByText(/2 turns/i)).toBeInTheDocument();
-    expect(screen.getByText(/5 turns/i)).toBeInTheDocument();
-  });
-
-  it('renders the owner and participant names on a call row', async () => {
-    listMock.mockResolvedValueOnce([
-      makeCallRecord({
-        owner_display_name: 'Shanu Goyanka',
-        participants: ['Shanu Goyanka', 'Alex Rivera'],
-      }),
-    ]);
-    renderWithProviders(<MeetingBotsCard />);
-    await waitFor(() => {
-      expect(screen.getByText(/added by shanu goyanka/i)).toBeInTheDocument();
-    });
-    expect(screen.getByText(/with shanu goyanka, alex rivera/i)).toBeInTheDocument();
-  });
-
-  it('omits the participants line when the record has none', async () => {
-    listMock.mockResolvedValueOnce([makeCallRecord({ owner_display_name: '', participants: [] })]);
-    renderWithProviders(<MeetingBotsCard />);
-    await waitFor(() => {
-      expect(screen.getByText(/3 turns/i)).toBeInTheDocument();
-    });
-    expect(screen.queryByText(/^with /i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/added by/i)).not.toBeInTheDocument();
-  });
-
-  it('shows the count badge when there is at least one record', async () => {
-    listMock.mockResolvedValueOnce([makeCallRecord()]);
-    renderWithProviders(<MeetingBotsCard />);
-    await waitFor(() => {
-      expect(screen.getByText('(1)')).toBeInTheDocument();
-    });
-  });
-
-  it('shows an error hint and an empty list when listMeetCalls rejects', async () => {
-    listMock.mockRejectedValueOnce(new Error('Network timeout'));
-    renderWithProviders(<MeetingBotsCard />);
-    await waitFor(() => {
-      expect(screen.getByText(/network timeout/i)).toBeInTheDocument();
-    });
-    expect(screen.queryByText(/loading…/i)).not.toBeInTheDocument();
-  });
-
-  it('strips the https://meet.google.com/ prefix and shows only the meeting code', async () => {
-    listMock.mockResolvedValueOnce([
-      makeCallRecord({ meet_url: 'https://meet.google.com/xyz-1234-abc' }),
-    ]);
-    renderWithProviders(<MeetingBotsCard />);
-    await waitFor(() => {
-      expect(screen.getByText('xyz-1234-abc')).toBeInTheDocument();
-    });
-    expect(screen.queryByText('https://meet.google.com/xyz-1234-abc')).not.toBeInTheDocument();
-  });
-
-  it('shows duration as combined spoken + listened seconds', async () => {
-    listMock.mockResolvedValueOnce([makeCallRecord({ spoken_seconds: 40, listened_seconds: 20 })]);
-    renderWithProviders(<MeetingBotsCard />);
-    await waitFor(() => {
-      expect(screen.getByText(/60s on call/i)).toBeInTheDocument();
-    });
-  });
-
-  it('shows a relative timestamp for recent calls', async () => {
-    listMock.mockResolvedValueOnce([makeCallRecord({ started_at_ms: Date.now() - 5 * 60 * 1000 })]);
-    renderWithProviders(<MeetingBotsCard />);
-    await waitFor(() => {
-      expect(screen.getByText(/\dm ago/)).toBeInTheDocument();
-    });
-  });
-
-  it('shows "—" for a zero started_at_ms timestamp', async () => {
-    listMock.mockResolvedValueOnce([makeCallRecord({ started_at_ms: 0 })]);
-    renderWithProviders(<MeetingBotsCard />);
-    await waitFor(() => {
-      expect(screen.getByText('—')).toBeInTheDocument();
-    });
-  });
-
-  it('shows singular "turn" (not "turns") when turn_count is 1', async () => {
-    listMock.mockResolvedValueOnce([makeCallRecord({ turn_count: 1 })]);
-    renderWithProviders(<MeetingBotsCard />);
-    await waitFor(() => {
-      expect(screen.getByText(/1 turn$/)).toBeInTheDocument();
-    });
-    expect(screen.queryByText(/1 turns/)).not.toBeInTheDocument();
-  });
-
-  it('falls back to the raw URL when it cannot be parsed', async () => {
-    listMock.mockResolvedValueOnce([makeCallRecord({ meet_url: 'not-a-valid-url' })]);
-    renderWithProviders(<MeetingBotsCard />);
-    await waitFor(() => {
-      expect(screen.getByText('not-a-valid-url')).toBeInTheDocument();
-    });
-  });
-
-  it('shows hours-ago label for a timestamp a few hours old', async () => {
-    listMock.mockResolvedValueOnce([
-      makeCallRecord({ started_at_ms: Date.now() - 3 * 60 * 60 * 1000 }),
-    ]);
-    renderWithProviders(<MeetingBotsCard />);
-    await waitFor(() => {
-      expect(screen.getByText(/3h ago/)).toBeInTheDocument();
-    });
-  });
-
-  it('shows "yesterday" for a timestamp ~24 hours ago', async () => {
-    listMock.mockResolvedValueOnce([
-      makeCallRecord({ started_at_ms: Date.now() - 25 * 60 * 60 * 1000 }),
-    ]);
-    renderWithProviders(<MeetingBotsCard />);
-    await waitFor(() => {
-      expect(screen.getByText('yesterday')).toBeInTheDocument();
-    });
-  });
-
-  it('shows Nd-ago label for a timestamp a few days old (< 7)', async () => {
-    listMock.mockResolvedValueOnce([
-      makeCallRecord({ started_at_ms: Date.now() - 3 * 24 * 60 * 60 * 1000 }),
-    ]);
-    renderWithProviders(<MeetingBotsCard />);
-    await waitFor(() => {
-      expect(screen.getByText(/3d ago/)).toBeInTheDocument();
-    });
-  });
-
-  it('shows a locale date string for a timestamp older than 7 days', async () => {
-    listMock.mockResolvedValueOnce([
-      makeCallRecord({ started_at_ms: Date.now() - 10 * 24 * 60 * 60 * 1000 }),
-    ]);
-    renderWithProviders(<MeetingBotsCard />);
-    await waitFor(() => {
-      const timestamp = screen.queryByText(/ago|yesterday|\dm|\dh/);
-      expect(timestamp).not.toBeInTheDocument();
-    });
-  });
-});

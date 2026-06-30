@@ -151,10 +151,19 @@ pub(super) async fn validate_tts_provider_key(
     }
 }
 
-/// Generate a minimal WAV file with ~0.1s of silence (8kHz mono 16-bit PCM).
+/// Generate a minimal WAV file with ~0.1s of silence (16kHz mono 16-bit PCM).
+///
+/// The rate is deliberately **16kHz**, not 8kHz: the local Whisper provider
+/// prefers the bundled in-process `whisper-rs` engine, whose decoder only
+/// accepts 16kHz. An 8kHz fixture is rejected during decode and silently
+/// falls back to the `whisper-cli` subprocess — which then errors with
+/// "binary not found" on a machine that intentionally has no external binary
+/// (the whole point of issue #3425). Generating the test clip at the rate the
+/// in-process engine supports lets "Test STT" exercise the real, binary-free
+/// path instead of failing on a missing subprocess.
 pub(super) fn generate_silent_wav() -> Vec<u8> {
-    let sample_rate: u32 = 8000;
-    let num_samples: u32 = 800; // 0.1s
+    let sample_rate: u32 = 16_000;
+    let num_samples: u32 = 1_600; // 0.1s
     let bits_per_sample: u16 = 16;
     let num_channels: u16 = 1;
     let byte_rate = sample_rate * u32::from(num_channels) * u32::from(bits_per_sample) / 8;

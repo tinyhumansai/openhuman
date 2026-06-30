@@ -507,6 +507,7 @@ fn handle_update_browser_settings(params: Map<String, Value>) -> ControllerFutur
         let update = deserialize_params::<BrowserSettingsUpdate>(params)?;
         let patch = config_rpc::BrowserSettingsPatch {
             enabled: update.enabled,
+            backend: update.backend,
         };
         to_json(config_rpc::load_and_apply_browser_settings(patch).await?)
     })
@@ -608,6 +609,44 @@ fn handle_get_dashboard_settings(_params: Map<String, Value>) -> ControllerFutur
     Box::pin(async { to_json(config_rpc::get_dashboard_settings().await?) })
 }
 
+/// Known platform slugs for per-platform auto-join policies.
+const KNOWN_PLATFORM_SLUGS: &[&str] = &["gmeet", "zoom", "teams", "webex"];
+
+/// Parse and validate a raw `platform_auto_join_policies` map.
+///
+/// Rejects any unknown platform slug (not in `KNOWN_PLATFORM_SLUGS`) and any
+/// unknown policy value, returning a descriptive error. This keeps the config
+/// table free of unmappable entries that would silently persist.
+fn parse_platform_auto_join_policies(
+    raw_map: std::collections::HashMap<String, String>,
+) -> Result<std::collections::HashMap<String, AutoJoinPolicy>, String> {
+    let mut parsed = std::collections::HashMap::new();
+    for (platform, policy_str) in raw_map {
+        if !KNOWN_PLATFORM_SLUGS.contains(&platform.as_str()) {
+            log::warn!("[config][rpc] update_meet_settings unknown platform slug: {platform}");
+            return Err(format!(
+                "unknown platform slug: {platform} (valid: {})",
+                KNOWN_PLATFORM_SLUGS.join(", ")
+            ));
+        }
+        let policy = match policy_str.as_str() {
+            "ask_each_time" => AutoJoinPolicy::AskEachTime,
+            "always" => AutoJoinPolicy::Always,
+            "never" => AutoJoinPolicy::Never,
+            other => {
+                log::warn!(
+                    "[config][rpc] update_meet_settings invalid platform policy {platform}={other}"
+                );
+                return Err(format!(
+                    "invalid policy for platform {platform}: {other} (valid: ask_each_time, always, never)"
+                ));
+            }
+        };
+        parsed.insert(platform, policy);
+    }
+    Ok(parsed)
+}
+
 fn handle_update_meet_settings(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         log::debug!("[config][rpc] update_meet_settings enter");
@@ -644,13 +683,23 @@ fn handle_update_meet_settings(params: Map<String, Value>) -> ControllerFuture {
                 ));
             }
         };
+        // Parse and validate platform_auto_join_policies: rejects unknown platform
+        // slugs and invalid policy values before touching config.
+        let platform_auto_join_policies = if let Some(raw_map) = update.platform_auto_join_policies
+        {
+            Some(parse_platform_auto_join_policies(raw_map)?)
+        } else {
+            None
+        };
         log::debug!(
-            "[config][rpc] update_meet_settings patch auto_orchestrator_handoff={:?} auto_join_policy={:?} auto_summarize_policy={:?} listen_only_default={:?} ingest_backend_transcripts={:?}",
+            "[config][rpc] update_meet_settings patch auto_orchestrator_handoff={:?} auto_join_policy={:?} auto_summarize_policy={:?} listen_only_default={:?} ingest_backend_transcripts={:?} platform_auto_join_policies={:?} watch_calendar={:?}",
             update.auto_orchestrator_handoff,
             auto_join_policy,
             auto_summarize_policy,
             update.listen_only_default,
-            update.ingest_backend_transcripts
+            update.ingest_backend_transcripts,
+            platform_auto_join_policies.as_ref().map(|m| m.len()),
+            update.watch_calendar,
         );
         let patch = config_rpc::MeetSettingsPatch {
             auto_orchestrator_handoff: update.auto_orchestrator_handoff,
@@ -658,6 +707,8 @@ fn handle_update_meet_settings(params: Map<String, Value>) -> ControllerFuture {
             auto_summarize_policy,
             listen_only_default: update.listen_only_default,
             ingest_backend_transcripts: update.ingest_backend_transcripts,
+            platform_auto_join_policies,
+            watch_calendar: update.watch_calendar,
         };
         match config_rpc::load_and_apply_meet_settings(patch).await {
             Ok(outcome) => {
@@ -685,11 +736,12 @@ fn handle_get_meet_settings(_params: Map<String, Value>) -> ControllerFuture {
         };
         let auto_orchestrator_handoff = config.meet.auto_orchestrator_handoff;
         log::debug!(
-            "[config][rpc] get_meet_settings ok auto_orchestrator_handoff={auto_orchestrator_handoff} auto_join_policy={:?} auto_summarize_policy={:?} listen_only_default={} ingest_backend_transcripts={}",
+            "[config][rpc] get_meet_settings ok auto_orchestrator_handoff={auto_orchestrator_handoff} auto_join_policy={:?} auto_summarize_policy={:?} listen_only_default={} ingest_backend_transcripts={} watch_calendar={}",
             config.meet.auto_join_policy,
             config.meet.auto_summarize_policy,
             config.meet.listen_only_default,
-            config.meet.ingest_backend_transcripts
+            config.meet.ingest_backend_transcripts,
+            config.meet.watch_calendar,
         );
         // Enums serialize via `#[serde(rename_all = "snake_case")]` →
         // "ask_each_time"/"always"/"never" and "ask"/"always"/"never".
@@ -699,6 +751,8 @@ fn handle_get_meet_settings(_params: Map<String, Value>) -> ControllerFuture {
             "auto_summarize_policy": config.meet.auto_summarize_policy,
             "listen_only_default": config.meet.listen_only_default,
             "ingest_backend_transcripts": config.meet.ingest_backend_transcripts,
+            "platform_auto_join_policies": config.meet.platform_auto_join_policies,
+            "watch_calendar": config.meet.watch_calendar,
         });
         to_json(RpcOutcome::new(
             result,
@@ -990,4 +1044,75 @@ fn handle_update_sandbox_settings(params: Map<String, Value>) -> ControllerFutur
         };
         to_json(config_rpc::load_and_apply_sandbox_settings(patch).await?)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── platform slug validation (finding #6) ───────────────────
+
+    #[test]
+    fn parse_platform_policies_accepts_all_known_slugs() {
+        use std::collections::HashMap;
+        let mut raw = HashMap::new();
+        raw.insert("gmeet".to_string(), "always".to_string());
+        raw.insert("zoom".to_string(), "ask_each_time".to_string());
+        raw.insert("teams".to_string(), "never".to_string());
+        raw.insert("webex".to_string(), "always".to_string());
+        let result = parse_platform_auto_join_policies(raw).unwrap();
+        assert_eq!(result.len(), 4);
+        assert!(matches!(result["gmeet"], AutoJoinPolicy::Always));
+        assert!(matches!(result["zoom"], AutoJoinPolicy::AskEachTime));
+        assert!(matches!(result["teams"], AutoJoinPolicy::Never));
+        assert!(matches!(result["webex"], AutoJoinPolicy::Always));
+    }
+
+    #[test]
+    fn parse_platform_policies_rejects_unknown_slug() {
+        use std::collections::HashMap;
+        let mut raw = HashMap::new();
+        raw.insert("discord".to_string(), "always".to_string());
+        let err = parse_platform_auto_join_policies(raw).unwrap_err();
+        assert!(
+            err.contains("discord"),
+            "error must identify the unknown slug: {err}"
+        );
+        assert!(
+            err.contains("gmeet") || err.contains("valid"),
+            "error must hint at valid slugs: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_platform_policies_rejects_non_meeting_platforms() {
+        use std::collections::HashMap;
+        for bad in &["slack", "meet", "google", "microsoft", "jitsi", ""] {
+            let mut raw = HashMap::new();
+            raw.insert(bad.to_string(), "always".to_string());
+            assert!(
+                parse_platform_auto_join_policies(raw).is_err(),
+                "slug {bad:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_platform_policies_rejects_invalid_policy_value() {
+        use std::collections::HashMap;
+        let mut raw = HashMap::new();
+        raw.insert("zoom".to_string(), "sometimes".to_string());
+        let err = parse_platform_auto_join_policies(raw).unwrap_err();
+        assert!(
+            err.contains("sometimes") || err.contains("invalid"),
+            "error must identify the bad policy: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_platform_policies_empty_map_is_ok() {
+        use std::collections::HashMap;
+        let result = parse_platform_auto_join_policies(HashMap::new()).unwrap();
+        assert!(result.is_empty());
+    }
 }

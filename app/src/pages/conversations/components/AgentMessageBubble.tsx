@@ -1,9 +1,11 @@
-import type { ReactNode } from 'react';
+import { type ReactNode, useMemo } from 'react';
 import Markdown, { defaultUrlTransform } from 'react-markdown';
+import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 
+import { createCodeBlockPre } from '../../../components/markdown/CodeBlock';
 import { OPENHUMAN_LINK_EVENT } from '../../../components/OpenhumanLinkModal';
 import { parseMarkdownTable } from '../../../utils/agentMessageBubbles';
 import { hasLatexContent, normalizeLatexDelimiters } from '../../../utils/latex';
@@ -19,8 +21,10 @@ import {
 
 const GFM_REMARK_PLUGINS = [remarkGfm];
 const MATH_REMARK_PLUGINS = [remarkGfm, remarkMath];
-const MATH_REHYPE_PLUGINS = [rehypeKatex];
-const EMPTY_PLUGINS: [] = [];
+// rehype-highlight must come before rehypeKatex so code blocks inside math
+// environments are not double-processed.
+const HIGHLIGHT_REHYPE_PLUGINS = [rehypeHighlight];
+const MATH_REHYPE_PLUGINS = [rehypeHighlight, rehypeKatex];
 type ParsedMarkdownTable = NonNullable<ReturnType<typeof parseMarkdownTable>>;
 
 /**
@@ -93,16 +97,26 @@ export function BubbleMarkdown({
   const hasMath = hasLatexContent(content);
   const rendered = hasMath ? normalizeLatexDelimiters(content) : content;
 
+  // Memoize the `pre` override so it stays reference-stable across re-renders
+  // that don't change tone (avoids remounting code blocks on every keystroke).
+  const markdownComponents = useMemo(
+    () => ({ a: MarkdownAnchor, pre: createCodeBlockPre(tone) }),
+    [tone]
+  );
+
   return (
+    // prose-pre:my-2 and prose-pre:rounded-lg are kept to style the outer
+    // wrapper div emitted by CodeBlock.tsx (it is not a <pre> itself, but
+    // Tailwind prose targets the <pre> inside it via the child selector).
+    // prose-pre:bg-* classes are intentionally removed: CodeBlock owns the
+    // background colours on both the header bar and the code body.
     <div
-      className={`text-sm prose prose-sm max-w-none prose-p:my-1 prose-pre:my-2 prose-pre:rounded-lg prose-code:text-xs prose-headings:font-semibold prose-ul:my-0 prose-ol:my-0 prose-li:my-0 ${proseTone} ${
-        tone === 'user' ? 'prose-pre:bg-white/10' : 'prose-pre:bg-stone-300/50'
-      } [&_ul]:my-0 [&_ol]:my-0 [&_ul]:pl-0 [&_ol]:pl-0 [&_ul]:list-inside [&_ol]:list-inside [&_li]:my-0 [&_li]:pl-0 [&_li_p]:inline [&_li_p]:m-0`}>
+      className={`text-sm prose prose-sm max-w-none prose-p:my-1 prose-pre:my-0 prose-code:text-xs prose-headings:font-semibold prose-ul:my-0 prose-ol:my-0 prose-li:my-0 ${proseTone} [&_ul]:my-0 [&_ol]:my-0 [&_ul]:pl-0 [&_ol]:pl-0 [&_ul]:list-inside [&_ol]:list-inside [&_li]:my-0 [&_li]:pl-0 [&_li_p]:inline [&_li_p]:m-0`}>
       <Markdown
         urlTransform={transformMarkdownUrl}
-        components={{ a: MarkdownAnchor }}
+        components={markdownComponents}
         remarkPlugins={hasMath ? MATH_REMARK_PLUGINS : GFM_REMARK_PLUGINS}
-        rehypePlugins={hasMath ? MATH_REHYPE_PLUGINS : EMPTY_PLUGINS}>
+        rehypePlugins={hasMath ? MATH_REHYPE_PLUGINS : HIGHLIGHT_REHYPE_PLUGINS}>
         {rendered}
       </Markdown>
     </div>
@@ -112,13 +126,16 @@ export function BubbleMarkdown({
 export function TableCellMarkdown({ content }: { content: string }) {
   const hasMath = hasLatexContent(content);
   const rendered = hasMath ? normalizeLatexDelimiters(content) : content;
+  // Table cells are compact — we add rehypeHighlight for token colouring but
+  // intentionally skip the CodeBlock chrome (no header bar / copy button) to
+  // avoid layout disruption inside narrow table cells.
   return (
     <div className="prose prose-sm dark:prose-invert max-w-none text-sm text-content-secondary prose-p:my-0 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-code:text-xs prose-code:text-primary-700 dark:prose-code:text-primary-300 prose-a:text-primary-500 prose-strong:text-stone-900 dark:prose-strong:text-neutral-100 prose-headings:text-sm prose-headings:font-semibold [&_li::marker]:text-stone-700 dark:[&_li::marker]:text-neutral-300 [&_ul]:my-0 [&_ol]:my-0 [&_ul]:pl-0 [&_ol]:pl-0 [&_ul]:list-inside [&_ol]:list-inside [&_li]:pl-0 [&_li_p]:inline [&_li_p]:m-0">
       <Markdown
         urlTransform={transformMarkdownUrl}
         components={{ a: MarkdownAnchor }}
         remarkPlugins={hasMath ? MATH_REMARK_PLUGINS : GFM_REMARK_PLUGINS}
-        rehypePlugins={hasMath ? MATH_REHYPE_PLUGINS : EMPTY_PLUGINS}>
+        rehypePlugins={hasMath ? MATH_REHYPE_PLUGINS : HIGHLIGHT_REHYPE_PLUGINS}>
         {rendered}
       </Markdown>
     </div>

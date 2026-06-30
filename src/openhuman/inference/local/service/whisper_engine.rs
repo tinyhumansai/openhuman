@@ -328,6 +328,33 @@ pub fn transcribe_wav_file(
     transcribe_pcm_f32(handle, &audio_f32, language, initial_prompt)
 }
 
+/// Cheap header sniff: does this blob look like a RIFF/WAVE container?
+///
+/// Used by callers (e.g. the voice STT factory) to decide whether to even
+/// attempt the in-process engine — which only understands 16 kHz WAV — or
+/// hand the blob straight to the container-aware `whisper-cli` subprocess.
+/// This does NOT validate the sample rate; `transcribe_wav_bytes` does that
+/// during decode and errors if it isn't 16 kHz, so callers fall back then.
+pub(crate) fn looks_like_wav(bytes: &[u8]) -> bool {
+    bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WAVE"
+}
+
+/// Decode in-memory 16 kHz mono WAV bytes and transcribe in-process.
+///
+/// Returns an error if the bytes are not a 16 kHz WAV the engine can decode
+/// (the caller should then fall back to the subprocess path) or if the
+/// engine is not loaded. Mirrors [`transcribe_wav_file`] but takes bytes so
+/// the factory doesn't have to stage a temp file.
+pub(crate) fn transcribe_wav_bytes(
+    handle: &WhisperEngineHandle,
+    wav_bytes: &[u8],
+    language: Option<&str>,
+    initial_prompt: Option<&str>,
+) -> Result<TranscriptionResult, String> {
+    let audio_f32 = decode_wav_to_f32(wav_bytes)?;
+    transcribe_pcm_f32(handle, &audio_f32, language, initial_prompt)
+}
+
 /// Minimal WAV decoder — extracts PCM samples as f32 from a standard
 /// RIFF/WAVE file. Supports 16-bit integer and 32-bit float formats.
 /// Resampling is NOT performed; the input should already be 16 kHz mono.
@@ -475,6 +502,71 @@ mod tests {
     fn decode_wav_rejects_non_wav() {
         let result = decode_wav_to_f32(&[0u8; 44]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn looks_like_wav_detects_riff_wave_header() {
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&[0u8; 4]); // chunk size (ignored by the sniff)
+        wav.extend_from_slice(b"WAVE");
+        assert!(looks_like_wav(&wav));
+
+        // webm/opus and ogg blobs must NOT be mistaken for WAV.
+        assert!(!looks_like_wav(b"\x1aE\xdf\xa3 webm-ish bytes"));
+        assert!(!looks_like_wav(b"OggS...."));
+        // Too short to hold the magic.
+        assert!(!looks_like_wav(b"RIFF"));
+        assert!(!looks_like_wav(&[]));
+    }
+
+    #[test]
+    fn transcribe_wav_bytes_rejects_non_wav() {
+        let handle = new_handle();
+        // Not a WAV → decode fails before the engine-loaded check.
+        let err = transcribe_wav_bytes(&handle, b"not a wav at all", None, None)
+            .expect_err("non-WAV bytes must error");
+        assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn transcribe_wav_bytes_rejects_non_16khz() {
+        // Build a valid 8 kHz mono PCM16 WAV; the decoder must reject it
+        // (the in-process engine requires 16 kHz) so the caller falls back.
+        let wav = build_pcm16_wav(8000, 1, &[0i16; 16]);
+        let handle = new_handle();
+        let err = transcribe_wav_bytes(&handle, &wav, None, None)
+            .expect_err("8 kHz WAV must be rejected");
+        assert!(
+            err.contains("16000"),
+            "should cite the required rate: {err}"
+        );
+    }
+
+    /// Build a minimal RIFF/WAVE PCM16 file for decoder tests.
+    fn build_pcm16_wav(sample_rate: u32, channels: u16, samples: &[i16]) -> Vec<u8> {
+        let bits = 16u16;
+        let block_align = channels * bits / 8;
+        let byte_rate = sample_rate * block_align as u32;
+        let data_len = (samples.len() * 2) as u32;
+        let mut w = Vec::new();
+        w.extend_from_slice(b"RIFF");
+        w.extend_from_slice(&(36 + data_len).to_le_bytes());
+        w.extend_from_slice(b"WAVE");
+        w.extend_from_slice(b"fmt ");
+        w.extend_from_slice(&16u32.to_le_bytes());
+        w.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        w.extend_from_slice(&channels.to_le_bytes());
+        w.extend_from_slice(&sample_rate.to_le_bytes());
+        w.extend_from_slice(&byte_rate.to_le_bytes());
+        w.extend_from_slice(&block_align.to_le_bytes());
+        w.extend_from_slice(&bits.to_le_bytes());
+        w.extend_from_slice(b"data");
+        w.extend_from_slice(&data_len.to_le_bytes());
+        for s in samples {
+            w.extend_from_slice(&s.to_le_bytes());
+        }
+        w
     }
 
     #[test]

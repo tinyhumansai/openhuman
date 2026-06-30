@@ -707,6 +707,13 @@ function TradingTab() {
   const [buying, setBuying] = useState<IdentityListing | null>(null);
   const buy = useX402Buy((id, opts) => apiClient.marketplace.buyIdentity(id, opts));
   const bs = buy.state;
+  // A buy is "in flight" only while the probe/confirm/pay round-trip is active.
+  // Once it reaches a terminal banner (success/error) the Buy buttons must
+  // re-enable so the user can buy again. Otherwise `buying` stays set forever —
+  // `closeBuy` is only reachable from the dialog, which unmounts on success/error
+  // — and `disabled={buying !== null}` leaves every Buy button permanently
+  // greyed out after the first attempt (#4196).
+  const buyInFlight = buying !== null && bs.phase !== 'success' && bs.phase !== 'error';
   function startBuy(listing: IdentityListing) {
     setBuying(listing);
     buy.begin(listing.listingId);
@@ -810,7 +817,7 @@ function TradingTab() {
                       variant="primary"
                       size="xs"
                       className="flex-1"
-                      disabled={buying !== null}
+                      disabled={buyInFlight}
                       onClick={() => startBuy(listing)}>
                       Buy
                     </Button>
@@ -876,7 +883,16 @@ function TradingTab() {
           <div
             className="mt-3 rounded-md border border-green-500/30 bg-green-500/10 p-3"
             data-testid="buy-identity-success">
-            <p className="text-xs font-medium text-green-500">Purchased {buying.name}</p>
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-xs font-medium text-green-500">Purchased {buying.name}</p>
+              <Button
+                variant="secondary"
+                size="xs"
+                onClick={closeBuy}
+                data-testid="buy-identity-dismiss">
+                Dismiss
+              </Button>
+            </div>
             {bs.onChainTx && (
               <a
                 href={buyExplorerTxUrl(bs.onChainTx, bs.network)}
@@ -892,9 +908,18 @@ function TradingTab() {
           <div
             className="mt-3 rounded-md border border-red-500/30 bg-red-500/10 p-3"
             data-testid="buy-identity-error">
-            <p className="text-xs font-medium text-red-500">
-              {bs.onChainTx ? 'Payment sent but purchase did not complete.' : 'Purchase failed.'}
-            </p>
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-xs font-medium text-red-500">
+                {bs.onChainTx ? 'Payment sent but purchase did not complete.' : 'Purchase failed.'}
+              </p>
+              <Button
+                variant="secondary"
+                size="xs"
+                onClick={closeBuy}
+                data-testid="buy-identity-dismiss">
+                Dismiss
+              </Button>
+            </div>
             <p className="mt-1 text-xs text-content-muted">{bs.message}</p>
           </div>
         )}

@@ -68,6 +68,22 @@ describe('chatService.subscribeChatEvents', () => {
     expect(subscribedEvents).not.toContain('chat:error');
   });
 
+  it('forwards inference_heartbeat through onInferenceHeartbeat (#4270)', () => {
+    const socket = createMockSocket();
+    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    const onInferenceHeartbeat = vi.fn();
+
+    subscribeChatEvents({ onInferenceHeartbeat });
+
+    const subscribedEvents = socket.on.mock.calls.map(call => call[0]);
+    expect(subscribedEvents).toEqual(['inference_heartbeat']);
+
+    const beat = { thread_id: 't1', request_id: 'r1' };
+    socket.emit('inference_heartbeat', beat);
+    expect(onInferenceHeartbeat).toHaveBeenCalledTimes(1);
+    expect(onInferenceHeartbeat).toHaveBeenCalledWith(beat);
+  });
+
   it('does not process alias events when only canonical subscriptions are active', () => {
     const socket = createMockSocket();
     vi.mocked(socketService.getSocket).mockReturnValue(socket as never);

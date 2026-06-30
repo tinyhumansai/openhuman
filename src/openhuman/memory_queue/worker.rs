@@ -23,7 +23,9 @@ use crate::openhuman::memory_queue::store::{
     recover_stale_locks, release_running_locks, DEFAULT_LOCK_DURATION_MS,
 };
 use crate::openhuman::memory_queue::types::{Job, JobKind, JobOutcome};
-use crate::openhuman::memory_tree::health::PipelineFailure;
+use crate::openhuman::memory_tree::health::{
+    clear_storage_degraded, mark_storage_degraded, FailureCode, PipelineFailure,
+};
 
 /// Number of concurrent job-worker tasks. Each worker claims one job
 /// at a time via `claim_next` (atomic UPDATE under SQLite WAL with
@@ -54,6 +56,15 @@ static STARTED: std::sync::Once = std::sync::Once::new();
 /// page once. Without this, 4 workers polling a wedged DB re-page ~1/sec
 /// (Sentry TAURI-RUST-E93: 1,633 events in ~17 min from one host).
 static CORRUPT_REPORTED: AtomicBool = AtomicBool::new(false);
+
+/// Process-wide latch so a persistent host-filesystem failure (EIO/ENOSPC/
+/// EROFS on the memory_tree dir/DB path) is reported to Sentry **once**, not on
+/// every poll from every worker. Set on the first host-I/O failure; cleared on
+/// the next successful claim (storage recovered) so a genuinely-new, later
+/// failure can still page once. Without this, 4 workers re-polling a dead disk
+/// flood the dashboard (Sentry CORE-RUST-19J: ~10k events in ~50 min from one
+/// Raspberry Pi with a failing SD card).
+static STORAGE_IO_REPORTED: AtomicBool = AtomicBool::new(false);
 
 /// Notify any idle workers so they re-poll immediately instead of waiting
 /// out [`POLL_INTERVAL`]. Cheap no-op before [`start`] has run.
@@ -116,8 +127,24 @@ pub fn start(config: Config) {
             tokio::spawn(async move {
                 loop {
                     match run_once(&cfg).await {
-                        Ok(true) => continue,
-                        Ok(false) => {
+                        Ok(processed) => {
+                            // A successful claim proves the memory_tree DB
+                            // opened, so the host filesystem is healthy again.
+                            // Clear any prior host-I/O degradation so the status
+                            // banner self-heals and a genuinely-new later failure
+                            // can page once more. Guarded on the latch swap so the
+                            // clear + info log fire only on the recovery edge, not
+                            // every poll.
+                            if STORAGE_IO_REPORTED.swap(false, Ordering::Relaxed) {
+                                clear_storage_degraded();
+                                log::info!(
+                                    "[memory::jobs] worker {idx} storage recovered; \
+                                     cleared host-I/O degraded flag"
+                                );
+                            }
+                            if processed {
+                                continue;
+                            }
                             tokio::select! {
                                 _ = notify.notified() => {}
                                 _ = tokio::time::sleep(POLL_INTERVAL) => {}
@@ -183,6 +210,42 @@ pub fn start(config: Config) {
                                 // `notify` still wakes us on new enqueues once the
                                 // rebuild succeeds.
                                 recover_corrupt_db_once(idx, &err, &cfg);
+                                tokio::time::sleep(Duration::from_secs(300)).await;
+                            } else if is_host_io_error(&err) {
+                                // Persistent host-filesystem failure (EIO 5 /
+                                // ENOSPC 28 / EROFS 30) creating or opening the
+                                // memory_tree dir/DB — e.g. a failing or
+                                // disconnected SD card, or a volume the kernel
+                                // remounted read-only. Like SQLITE_FULL/CORRUPT
+                                // this is a persistent host condition only the
+                                // user can clear (reseat/replace/free storage),
+                                // so re-polling every second and paging Sentry on
+                                // each failure floods the dashboard (CORE-RUST-19J:
+                                // ~10k events in ~50 min from one Raspberry Pi).
+                                //
+                                // Resolution, not just suppression: mark the
+                                // memory_tree degraded with `StorageUnavailable`
+                                // so the status panel shows the user an actionable
+                                // "check your disk" banner — they own the only
+                                // lever. Report ONCE (process-wide latch) for dev
+                                // telemetry, then back off 300s and stay silent.
+                                // Jobs stay `ready` and resume when storage
+                                // returns; the degraded flag + latch clear on the
+                                // next successful claim.
+                                mark_storage_degraded(FailureCode::StorageUnavailable);
+                                if !STORAGE_IO_REPORTED.swap(true, Ordering::Relaxed) {
+                                    crate::core::observability::report_error(
+                                        &err,
+                                        "memory",
+                                        "tree_jobs_worker_host_io",
+                                        &[("worker_idx", &idx.to_string())],
+                                    );
+                                }
+                                log::warn!(
+                                    "[memory::jobs] worker {idx} hit host filesystem I/O error \
+                                     (EIO/ENOSPC/EROFS — failing or read-only storage), \
+                                     backing off 300s: {err:#}"
+                                );
                                 tokio::time::sleep(Duration::from_secs(300)).await;
                             } else {
                                 crate::core::observability::report_error(
@@ -464,6 +527,40 @@ fn is_sqlite_corrupt(err: &anyhow::Error) -> bool {
     }
     let msg = format!("{err:#}").to_ascii_lowercase();
     msg.contains("database disk image is malformed") || msg.contains("file is not a database")
+}
+
+/// Classify whether an error is a **persistent host-filesystem failure** —
+/// `std::fs::create_dir_all` / file open returning an OS-level I/O error on the
+/// memory_tree path. Matches the three persistent, user-only-fixable POSIX
+/// codes:
+/// - **EIO `5`** — the block device can't service I/O (failing/disconnected SD
+///   card or USB drive). This is the CORE-RUST-19J signal:
+///   `"Failed to create memory_tree dir: …: Input/output error (os error 5)"`.
+/// - **ENOSPC `28`** — no space left at the *filesystem* layer (distinct from
+///   `SQLITE_FULL`, which is the SQLite-write code handled separately).
+/// - **EROFS `30`** — read-only filesystem; Linux remounts a failing SD card
+///   read-only, so this is the common next stage of the same Pi failure.
+///
+/// Unlike the SQLite busy/transient family, these are persistent host
+/// conditions the app has no lever to fix: re-polling every second and paging
+/// Sentry on each failure turns one dead disk into a flood. The worker backs
+/// off long, surfaces a `StorageUnavailable` degradation to the user, and stays
+/// silent after a single report.
+///
+/// Matching on `raw_os_error()` is platform-stable. The text fallback covers
+/// the case where the `io::Error` was flattened to a plain `anyhow!` string
+/// across `.context()` layers (anyhow renders `"… (os error N)"`); it anchors
+/// on the unambiguous os-error number, not the loose phrase, so a network
+/// "input/output" string can't false-positive. A non-OS error has
+/// `raw_os_error() == None` and matches neither path.
+fn is_host_io_error(err: &anyhow::Error) -> bool {
+    if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
+        if matches!(io_err.raw_os_error(), Some(5) | Some(28) | Some(30)) {
+            return true;
+        }
+    }
+    let msg = format!("{err:#}").to_ascii_lowercase();
+    msg.contains("(os error 5)") || msg.contains("(os error 28)") || msg.contains("(os error 30)")
 }
 
 /// Handle a confirmed `SQLITE_CORRUPT` failure from the worker loop: report it
@@ -861,6 +958,84 @@ mod tests {
         assert!(!is_sqlite_corrupt(&anyhow::Error::from(constraint)));
 
         assert!(!is_sqlite_corrupt(&anyhow::anyhow!(
+            "upstream returned 500: internal server error"
+        )));
+    }
+
+    // ── is_host_io_error tests (CORE-RUST-19J) ───────────────────────────────
+
+    /// EIO (`os error 5`) is the CORE-RUST-19J signal: `create_dir_all` on a
+    /// failing/disconnected SD card. Must classify so the worker surfaces a
+    /// `StorageUnavailable` degradation + backs off long instead of paging
+    /// Sentry every second.
+    #[test]
+    fn is_host_io_error_matches_eio() {
+        let err = anyhow::Error::from(std::io::Error::from_raw_os_error(5));
+        assert!(is_host_io_error(&err));
+    }
+
+    /// ENOSPC (28, filesystem-level out-of-space on `create_dir`) and EROFS (30,
+    /// kernel-remounted-read-only — the common next stage of a dying SD card)
+    /// are the same persistent, user-only-fixable host condition.
+    #[test]
+    fn is_host_io_error_matches_enospc_and_erofs() {
+        for code in [28, 30] {
+            let err = anyhow::Error::from(std::io::Error::from_raw_os_error(code));
+            assert!(
+                is_host_io_error(&err),
+                "os error {code} must classify as host I/O"
+            );
+        }
+    }
+
+    /// The production shape: the `io::Error` bubbles out of `open_and_init`
+    /// wrapped in `.with_context("Failed to create memory_tree dir: …")` then
+    /// the `with_connection` layer. The downcast must still find it through the
+    /// anyhow context chain (regression guard: don't rely on the top-level type).
+    #[test]
+    fn is_host_io_error_matches_through_context_layers() {
+        let wrapped = anyhow::Error::from(std::io::Error::from_raw_os_error(5))
+            .context("Failed to create memory_tree dir: /home/x/.openhuman-workspace/workspace/memory_tree")
+            .context("with_connection closure failed");
+        assert!(is_host_io_error(&wrapped));
+    }
+
+    /// Text fallback: when no `io::Error` is available to downcast (flattened to
+    /// a plain `anyhow!` string), the exact flattened CORE-RUST-19J message is
+    /// still classified via the os-error-number anchor.
+    #[test]
+    fn is_host_io_error_text_fallback() {
+        let err = anyhow::anyhow!(
+            "Failed to create memory_tree dir: /home/x/.openhuman-workspace/workspace/memory_tree: \
+             Input/output error (os error 5)"
+        );
+        assert!(is_host_io_error(&err));
+    }
+
+    /// Permission-denied (13), not-found (2), a SQLite disk-full failure (its
+    /// own arm), and unrelated errors must NOT be swallowed as host I/O — those
+    /// are real bugs / handled elsewhere and must keep reporting.
+    #[test]
+    fn is_host_io_error_does_not_match_other_errors() {
+        // EACCES — a genuine permission bug, not failing hardware.
+        assert!(!is_host_io_error(&anyhow::Error::from(
+            std::io::Error::from_raw_os_error(13)
+        )));
+        // ENOENT.
+        assert!(!is_host_io_error(&anyhow::Error::from(
+            std::io::Error::from_raw_os_error(2)
+        )));
+        // SQLITE_FULL stays in is_sqlite_disk_full's arm, not here.
+        let disk_full = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::DiskFull,
+                extended_code: 13,
+            },
+            Some("database or disk is full".into()),
+        );
+        assert!(!is_host_io_error(&anyhow::Error::from(disk_full)));
+        // Unrelated.
+        assert!(!is_host_io_error(&anyhow::anyhow!(
             "upstream returned 500: internal server error"
         )));
     }
