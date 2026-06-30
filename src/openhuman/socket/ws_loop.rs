@@ -15,6 +15,8 @@ use crate::api::models::socket::ConnectionStatus;
 use crate::openhuman::util::utf8_safe_prefix_at_byte_boundary;
 
 use super::event_handlers::{handle_sio_event, parse_sio_event};
+#[cfg(test)]
+use super::manager::AckRegistry;
 use super::manager::{emit_state_change, SharedState};
 use super::token_provider::{is_invalid_token_error, TokenProvider};
 use super::types::{ConnectionOutcome, WsStream};
@@ -681,6 +683,21 @@ fn handle_sio_packet(
                 );
             }
         }
+        b'3' => {
+            // Socket.IO ACK: 3<ackId>[ackPayload]
+            if let Some((ack_id, data)) = parse_sio_ack(&text[1..]) {
+                if shared.ack_registry.resolve(ack_id, data) {
+                    log::debug!("[socket] SIO ACK resolved ack_id={ack_id}");
+                } else {
+                    log::warn!("[socket] SIO ACK had no pending waiter ack_id={ack_id}");
+                }
+            } else {
+                log::warn!(
+                    "[socket] Failed to parse SIO ACK: {}",
+                    utf8_safe_prefix_at_byte_boundary(text, 80)
+                );
+            }
+        }
         b'0' => {
             // Socket.IO CONNECT (re-ack during reconnection) — update sid
             log::debug!("[socket] SIO CONNECT re-ack");
@@ -716,6 +733,21 @@ fn handle_sio_packet(
             );
         }
     }
+}
+
+fn parse_sio_ack(text: &str) -> Option<(u64, serde_json::Value)> {
+    let json_start = text.find('[')?;
+    if json_start == 0 {
+        return None;
+    }
+    let ack_id = text[..json_start].parse::<u64>().ok()?;
+    let mut args: Vec<serde_json::Value> = serde_json::from_str(&text[json_start..]).ok()?;
+    let data = if args.len() == 1 {
+        args.pop().unwrap_or(serde_json::Value::Null)
+    } else {
+        serde_json::Value::Array(args)
+    };
+    Some((ack_id, data))
 }
 
 // ---------------------------------------------------------------------------

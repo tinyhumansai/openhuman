@@ -207,34 +207,6 @@ pub(super) fn handle_sio_event(
                 }
             }
         }
-        // Device tunnel — backend ack for tunnel:register.
-        "tunnel:registered" => {
-            log::info!("[socket] tunnel:registered received");
-            let channel_id = data
-                .get("channelId")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let pairing_token = data
-                .get("pairingToken")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let session_token = data
-                .get("sessionToken")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            if !channel_id.is_empty() {
-                publish_global(DomainEvent::DeviceTunnelRegistered {
-                    channel_id,
-                    pairing_token,
-                    session_token,
-                });
-            } else {
-                log::warn!("[socket] tunnel:registered missing channelId");
-            }
-        }
         // Device tunnel — backend evicted the channel (TTL / server restart).
         "tunnel:evicted" => {
             let channel_id = data
@@ -537,6 +509,7 @@ mod tests {
     fn make_shared() -> Arc<SharedState> {
         Arc::new(SharedState {
             webhook_router: RwLock::new(None),
+            ack_registry: super::super::manager::AckRegistry::default(),
             status: RwLock::new(ConnectionStatus::Disconnected),
             socket_id: RwLock::new(None),
             error: RwLock::new(None),

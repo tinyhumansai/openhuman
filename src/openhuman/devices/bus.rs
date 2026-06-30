@@ -6,7 +6,6 @@
 //! - Completing the X25519 handshake when the device sends its pubkey.
 //! - Persisting the `PairedDevice` record after a successful handshake.
 //! - Publishing `DomainEvent::DevicePaired / DevicePeerOnline / DevicePeerOffline`.
-//! - Resolving `tunnel:registered` acks for `tunnel_client`.
 
 use std::sync::{Arc, OnceLock};
 
@@ -18,9 +17,7 @@ use crate::openhuman::devices::rpc::{
     ACTIVE_CIPHERS, PEER_STATUS, PENDING_KEYPAIRS, PENDING_SESSIONS,
 };
 use crate::openhuman::devices::store;
-use crate::openhuman::devices::tunnel_client::{
-    emit_frame, resolve_register_ack, TunnelRegisterResponse,
-};
+use crate::openhuman::devices::tunnel_client::emit_frame;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -85,13 +82,6 @@ impl EventHandler for DeviceTunnelSubscriber {
                 payload_b64,
             } => {
                 handle_tunnel_frame(channel_id, payload_b64).await;
-            }
-            DomainEvent::DeviceTunnelRegistered {
-                channel_id,
-                pairing_token,
-                session_token,
-            } => {
-                handle_registered(channel_id, pairing_token, session_token);
             }
             _ => {}
         }
@@ -341,12 +331,15 @@ async fn handle_tunnel_frame(channel_id: &str, payload_b64: &str) {
         .map(|s| s.channel_id.clone()) // use channel_id as fallback label
         .unwrap_or_else(|| channel_id.to_string());
 
+    // Legacy DB column name is `core_session_token_hash`; the backend no
+    // longer mints a core session token, so persist a hash of the pairing
+    // credential available for this channel.
     let session_token_hash = hash_session_token(
         &PENDING_SESSIONS
             .lock()
             .unwrap()
             .get(channel_id)
-            .map(|s| s.core_session_token.clone())
+            .map(|s| s.pairing_token.clone())
             .unwrap_or_default(),
     );
 
@@ -610,20 +603,6 @@ async fn emit_tunnel_response(
             channel_id
         );
     }
-}
-
-/// Resolve the pending `tunnel:register` ack in `tunnel_client`.
-fn handle_registered(channel_id: &str, pairing_token: &str, session_token: &str) {
-    log::debug!(
-        "[devices/bus] tunnel:registered channel_id={} token_len={}",
-        channel_id,
-        pairing_token.len()
-    );
-    resolve_register_ack(TunnelRegisterResponse {
-        channel_id: channel_id.to_string(),
-        pairing_token: pairing_token.to_string(),
-        session_token: session_token.to_string(),
-    });
 }
 
 fn hash_session_token(token: &str) -> String {

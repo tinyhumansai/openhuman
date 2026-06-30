@@ -13,8 +13,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use chrono::Utc;
-
 use crate::openhuman::config::Config;
 use crate::openhuman::devices::crypto::{
     base64url_decode, base64url_encode, DeviceKeypair, TunnelCipher,
@@ -63,7 +61,7 @@ pub(crate) static ACTIVE_CIPHERS: once_cell::sync::Lazy<
 /// `openhuman.devices_create_pairing`
 ///
 /// 1. Calls `tunnel:register` on the shared socket — backend returns
-///    `{channelId, pairingToken, sessionToken}`.
+///    `{channelId, pairingToken, pairingExpiresAt}` via Socket.IO ACK.
 /// 2. Generates an X25519 keypair and persists the private half in-memory.
 /// 3. Emits `tunnel:connect` with `role:"core"` so the core starts listening.
 /// 4. Detects the local LAN IP for the optional direct fast-path `rpc_url`.
@@ -122,7 +120,7 @@ pub async fn devices_create_pairing(
         .insert(reg.channel_id.clone(), Arc::new(keypair));
 
     // Connect as "core" role to start listening on this channel.
-    tunnel_client::emit_connect(&reg.channel_id, &reg.session_token)
+    tunnel_client::emit_connect(&reg.channel_id)
         .await
         .map_err(|e| {
             log::error!("[devices/rpc] tunnel:connect failed: {e}");
@@ -140,15 +138,13 @@ pub async fn devices_create_pairing(
         log::debug!("[devices/rpc] LAN rpc_url detected: {}", url);
     }
 
-    // Pairing token expires in 10 minutes (backend enforces the real TTL).
-    let expires_at = (Utc::now() + chrono::Duration::minutes(10)).to_rfc3339();
+    let expires_at = reg.pairing_expires_at.clone();
 
     PENDING_SESSIONS.lock().unwrap().insert(
         reg.channel_id.clone(),
         PairingSession {
             channel_id: reg.channel_id.clone(),
             pairing_token: reg.pairing_token.clone(),
-            core_session_token: reg.session_token.clone(),
             core_pubkey: core_pubkey.clone(),
             rpc_url: rpc_url.clone(),
             expires_at: expires_at.clone(),
