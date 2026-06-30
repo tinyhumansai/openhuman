@@ -271,6 +271,52 @@ impl Drop for WorkspaceEnvGuard {
     }
 }
 
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var_os(key);
+        unsafe {
+            std::env::set_var(key, value);
+        }
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        match self.previous.take() {
+            Some(prev) => unsafe {
+                std::env::set_var(self.key, prev);
+            },
+            None => unsafe {
+                std::env::remove_var(self.key);
+            },
+        }
+    }
+}
+
+struct DirectAuthFailureGuard {
+    key_id: u64,
+}
+
+impl DirectAuthFailureGuard {
+    fn new(api_key: &str) -> Self {
+        let key_id = crate::openhuman::composio::direct_auth::fingerprint_api_key(api_key);
+        crate::openhuman::composio::direct_auth::reset_direct_auth_failure(key_id);
+        Self { key_id }
+    }
+}
+
+impl Drop for DirectAuthFailureGuard {
+    fn drop(&mut self) {
+        crate::openhuman::composio::direct_auth::reset_direct_auth_failure(self.key_id);
+    }
+}
+
 async fn start_mock_backend(app: Router) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -1923,6 +1969,43 @@ async fn composio_list_connections_returns_empty_when_direct_mode_no_key() {
         outcome.logs.iter().any(|l| l.contains("no api key")),
         "log must explain the empty list is the no-key setup state, got {:?}",
         outcome.logs
+    );
+}
+
+#[tokio::test]
+async fn composio_set_api_key_rejects_invalid_direct_key_before_persisting() {
+    use crate::openhuman::config::TEST_ENV_LOCK;
+    use crate::openhuman::credentials::get_composio_api_key;
+
+    let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let app = Router::new().route(
+        "/connected_accounts",
+        get(|| async {
+            (
+                axum::http::StatusCode::UNAUTHORIZED,
+                Json(json!({ "error": { "message": "Invalid API key" } })),
+            )
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let _base_v2 = EnvVarGuard::set("OPENHUMAN_COMPOSIO_DIRECT_BASE_V2", &base);
+    let _base_v3 = EnvVarGuard::set("OPENHUMAN_COMPOSIO_DIRECT_BASE_V3", &base);
+
+    let tmp = tempfile::tempdir().unwrap();
+    let config = direct_mode_no_key_config(&tmp);
+    let _auth_guard = DirectAuthFailureGuard::new("ck_invalid_direct");
+
+    let err = composio_set_api_key(&config, "ck_invalid_direct", false)
+        .await
+        .expect_err("invalid direct-mode key must be rejected before persistence");
+    assert!(
+        err.contains("Invalid Composio API key"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(
+        get_composio_api_key(&config).expect("read composio key after failed save"),
+        None,
+        "invalid key must not be stored"
     );
 }
 

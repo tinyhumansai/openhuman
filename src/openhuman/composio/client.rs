@@ -836,7 +836,7 @@ pub fn create_composio_client(
 // direct-mode plumbing can see the full envelope-translation surface
 // in one place.
 
-use super::types::ComposioConnection;
+use super::{direct_auth, types::ComposioConnection};
 
 /// Direct-mode counterpart to [`ComposioClient::authorize`]. Calls
 /// Composio v3 `/connected_accounts/link` via
@@ -963,7 +963,44 @@ pub async fn direct_list_connections(
     direct: &Arc<crate::openhuman::tools::ComposioTool>,
 ) -> anyhow::Result<ComposioConnectionsResponse> {
     tracing::debug!("[composio-direct] list_connections: GET v3 /connected_accounts");
-    let items = direct.list_connected_accounts().await?;
+    let key_id = direct.auth_key_fingerprint();
+    if let Some(error) = direct_auth::direct_auth_backoff_error(key_id) {
+        tracing::warn!(
+            "[composio-direct] list_connections: direct API key backoff gate open; \
+             skipping v3 /connected_accounts"
+        );
+        anyhow::bail!("{error}");
+    }
+
+    let items = match direct.list_connected_accounts().await {
+        Ok(items) => {
+            direct_auth::record_direct_auth_success(key_id);
+            items
+        }
+        Err(error) => {
+            let rendered = format!("{error:#}");
+            match direct_auth::record_direct_auth_failure(key_id, &rendered) {
+                direct_auth::DirectAuthFailureDecision::NotAuthFailure => {}
+                direct_auth::DirectAuthFailureDecision::RetryAllowed { consecutive } => {
+                    tracing::warn!(
+                        consecutive,
+                        threshold = direct_auth::DIRECT_INVALID_API_KEY_THRESHOLD,
+                        "[composio-direct] list_connections: direct API key rejected"
+                    );
+                }
+                direct_auth::DirectAuthFailureDecision::CircuitOpened { consecutive } => {
+                    let backoff = direct_auth::invalid_api_key_backoff_message(consecutive);
+                    tracing::warn!(
+                        consecutive,
+                        threshold = direct_auth::DIRECT_INVALID_API_KEY_THRESHOLD,
+                        "[composio-direct] list_connections: direct API key backoff gate opened"
+                    );
+                    anyhow::bail!("{backoff}");
+                }
+            }
+            return Err(error);
+        }
+    };
     let connections: Vec<ComposioConnection> = items
         .into_iter()
         .filter_map(|item| {
