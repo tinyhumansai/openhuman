@@ -498,8 +498,14 @@ describe('reconnectErrorMessage (#4289)', () => {
   });
 
   it('401 with no/unknown hint falls back to generic reconnect copy', () => {
-    const msg = reconnectErrorMessage({ status: 'unauthorized' }, tEn);
-    expect(msg).toBe(tEn('mcp.connectAuth.reconnectFailed'));
+    // Missing hint…
+    expect(reconnectErrorMessage({ status: 'unauthorized' }, tEn)).toBe(
+      tEn('mcp.connectAuth.reconnectFailed')
+    );
+    // …and an unrecognized code (forward-compat with a future core reason).
+    expect(
+      reconnectErrorMessage({ status: 'unauthorized', auth_hint: 'brand_new_reason' }, tEn)
+    ).toBe(tEn('mcp.connectAuth.reconnectFailed'));
   });
 
   it('a generic (non-401) failure surfaces its own message', () => {
