@@ -508,7 +508,7 @@ mod tests {
             .expect("global memory client should initialize for action scope test");
         crate::openhuman::composio::providers::user_scopes::save(
             &memory,
-            "gmail",
+            "testkit",
             crate::openhuman::composio::providers::UserScopePref {
                 read: true,
                 write: false,
@@ -520,8 +520,8 @@ mod tests {
 
         let t = ComposioActionTool::new(
             fake_config(),
-            "GMAIL_SEND_EMAIL".to_string(),
-            "send a gmail message".to_string(),
+            "TESTKIT_SEND_MESSAGE".to_string(),
+            "send a testkit message".to_string(),
             None,
         );
         let result = t.execute(serde_json::json!({})).await.unwrap();
@@ -533,6 +533,13 @@ mod tests {
         assert!(msg.contains("disabled"), "got: {msg}");
         assert!(msg.contains("`write`"), "got: {msg}");
         assert!(msg.contains("Connections"), "got: {msg}");
+        crate::openhuman::composio::providers::user_scopes::save(
+            &memory,
+            "testkit",
+            crate::openhuman::composio::providers::UserScopePref::default(),
+        )
+        .await
+        .expect("testkit scope pref should restore after action scope test");
     }
 
     // ── Factory routing (#1710) ──────────────────────────────────────

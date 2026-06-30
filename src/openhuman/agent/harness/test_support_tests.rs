@@ -13,6 +13,7 @@ use crate::openhuman::inference::provider::{ChatMessage, ChatRequest, ChatRespon
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCategory, ToolResult, ToolScope};
 use async_trait::async_trait;
 use serde_json::json;
+use std::path::Path;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
@@ -24,6 +25,41 @@ fn mm() -> crate::openhuman::config::MultimodalConfig {
 
 fn mff() -> crate::openhuman::config::MultimodalFileConfig {
     crate::openhuman::config::MultimodalFileConfig::default()
+}
+
+struct WorkspaceEnvGuard {
+    previous: Option<std::ffi::OsString>,
+}
+
+impl WorkspaceEnvGuard {
+    fn set(path: &Path) -> Self {
+        let previous = std::env::var_os("OPENHUMAN_WORKSPACE");
+        unsafe {
+            std::env::set_var("OPENHUMAN_WORKSPACE", path);
+        }
+        Self { previous }
+    }
+}
+
+impl Drop for WorkspaceEnvGuard {
+    fn drop(&mut self) {
+        unsafe {
+            match self.previous.take() {
+                Some(value) => std::env::set_var("OPENHUMAN_WORKSPACE", value),
+                None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
+            }
+        }
+    }
+}
+
+async fn allow_gmail_scope_for_test(memory: &crate::openhuman::memory_store::MemoryClientRef) {
+    crate::openhuman::composio::providers::user_scopes::save(
+        memory,
+        "gmail",
+        crate::openhuman::composio::providers::UserScopePref::default(),
+    )
+    .await
+    .expect("gmail scope pref should reset for isolated harness test");
 }
 
 #[tokio::test]
@@ -1369,13 +1405,17 @@ async fn harness_invokes_composio_action_tool_against_fake_backend() {
     // only routes to the fake backend if it is the live on-disk config.
     // Hold `TEST_ENV_LOCK` and point `OPENHUMAN_WORKSPACE` at the
     // persisted fake-backend workspace.
+    let _memory_guard = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+        .lock()
+        .await;
     let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     let backend = spawn_fake_composio_backend(ComposioFixture::realistic()).await;
     let (config, workspace_root) = backend.config_persisted().await;
-    unsafe {
-        std::env::set_var("OPENHUMAN_WORKSPACE", &workspace_root);
-    }
+    let _workspace_guard = WorkspaceEnvGuard::set(&workspace_root);
+    let memory = crate::openhuman::memory::global::init(config.workspace_dir.clone())
+        .expect("global memory client should initialize for harness Composio test");
+    allow_gmail_scope_for_test(&memory).await;
 
     let tool = ComposioActionTool::new(
         config,
@@ -1430,9 +1470,7 @@ async fn harness_invokes_composio_action_tool_against_fake_backend() {
     assert_eq!(exec.2["tool"], "GMAIL_SEND_EMAIL");
     assert_eq!(exec.2["arguments"]["recipient_email"], "alice@example.com");
 
-    unsafe {
-        std::env::remove_var("OPENHUMAN_WORKSPACE");
-    }
+    allow_gmail_scope_for_test(&memory).await;
 }
 
 // ── 13. Orchestrator-prompt → delegation → Composio round-trip ────
@@ -1581,6 +1619,9 @@ async fn orchestrator_prompt_drives_composio_call_via_delegation_chain() {
     // `load_config_with_timeout()` per call. Hold `TEST_ENV_LOCK` and
     // point `OPENHUMAN_WORKSPACE` at the persisted fake-backend
     // workspace so the tool routes to the fake backend.
+    let _memory_guard = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+        .lock()
+        .await;
     let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     // ── 1. Build the orchestrator's system prompt with gmail wired in.
@@ -1629,9 +1670,10 @@ async fn orchestrator_prompt_drives_composio_call_via_delegation_chain() {
     // ── 2. Spawn the fake Composio backend + wire a ComposioActionTool.
     let backend = spawn_fake_composio_backend(ComposioFixture::realistic()).await;
     let (composio_config, workspace_root) = backend.config_persisted().await;
-    unsafe {
-        std::env::set_var("OPENHUMAN_WORKSPACE", &workspace_root);
-    }
+    let _workspace_guard = WorkspaceEnvGuard::set(&workspace_root);
+    let memory = crate::openhuman::memory::global::init(composio_config.workspace_dir.clone())
+        .expect("global memory client should initialize for orchestration Composio test");
+    allow_gmail_scope_for_test(&memory).await;
     let gmail_action_tool: Box<dyn Tool> = Box::new(ComposioActionTool::new(
         composio_config,
         "GMAIL_SEND_EMAIL".to_string(),
@@ -1744,7 +1786,5 @@ async fn orchestrator_prompt_drives_composio_call_via_delegation_chain() {
         "integrations agent must have matched its tool-call rule"
     );
 
-    unsafe {
-        std::env::remove_var("OPENHUMAN_WORKSPACE");
-    }
+    allow_gmail_scope_for_test(&memory).await;
 }

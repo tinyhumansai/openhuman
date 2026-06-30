@@ -225,6 +225,15 @@ impl Drop for WorkspaceEnvGuard {
     }
 }
 
+async fn save_gmail_scope_for_test(
+    memory: &crate::openhuman::memory_store::MemoryClientRef,
+    pref: crate::openhuman::composio::providers::UserScopePref,
+) {
+    crate::openhuman::composio::providers::user_scopes::save(memory, "gmail", pref)
+        .await
+        .expect("gmail scope pref should persist for isolated test");
+}
+
 /// Mock provider whose response queue can be inspected by the test
 /// to verify the bytes that arrive at the model.
 #[derive(Clone)]
@@ -724,9 +733,13 @@ async fn typed_mode_filters_tools_by_skill_filter() {
 
 #[tokio::test]
 async fn integrations_agent_reuses_cached_toolkit_actions_without_refetching_list_tools() {
+    let _memory_guard = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+        .lock()
+        .await;
     let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
+    let _cache_guard = crate::openhuman::composio::composio_cache_test_lock();
     crate::openhuman::composio::invalidate_connected_integrations_cache();
 
     let mut fixture = crate::openhuman::agent::harness::test_support::ComposioFixture::realistic();
@@ -750,6 +763,13 @@ async fn integrations_agent_reuses_cached_toolkit_actions_without_refetching_lis
         crate::openhuman::agent::harness::test_support::spawn_fake_composio_backend(fixture).await;
     let (config, workspace_root) = backend.config_persisted().await;
     let _workspace = WorkspaceEnvGuard::set(&workspace_root);
+    let memory = crate::openhuman::memory::global::init(config.workspace_dir.clone())
+        .expect("global memory client should initialize for cache reuse test");
+    save_gmail_scope_for_test(
+        &memory,
+        crate::openhuman::composio::providers::UserScopePref::default(),
+    )
+    .await;
 
     let integrations = crate::openhuman::composio::fetch_connected_integrations(&config).await;
     let gmail = integrations
@@ -804,12 +824,13 @@ async fn integrations_agent_reuses_cached_toolkit_actions_without_refetching_lis
 
 #[tokio::test]
 async fn integrations_agent_refilters_cached_actions_with_current_user_scope() {
-    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     let _memory_guard = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
         .lock()
         .await;
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _cache_guard = crate::openhuman::composio::composio_cache_test_lock();
     crate::openhuman::composio::invalidate_connected_integrations_cache();
 
     let mut fixture = crate::openhuman::agent::harness::test_support::ComposioFixture::realistic();
@@ -850,6 +871,11 @@ async fn integrations_agent_refilters_cached_actions_with_current_user_scope() {
     let _workspace = WorkspaceEnvGuard::set(&workspace_root);
     let memory = crate::openhuman::memory::global::init(config.workspace_dir.clone())
         .expect("global memory client should initialize for scope filtering test");
+    save_gmail_scope_for_test(
+        &memory,
+        crate::openhuman::composio::providers::UserScopePref::default(),
+    )
+    .await;
 
     let integrations = crate::openhuman::composio::fetch_connected_integrations(&config).await;
     let gmail = integrations
@@ -934,6 +960,11 @@ async fn integrations_agent_refilters_cached_actions_with_current_user_scope() {
         "scope re-filtering should not re-fetch list_tools; requests: {requests_after:?}"
     );
 
+    save_gmail_scope_for_test(
+        &memory,
+        crate::openhuman::composio::providers::UserScopePref::default(),
+    )
+    .await;
     crate::openhuman::composio::invalidate_connected_integrations_cache();
 }
 
