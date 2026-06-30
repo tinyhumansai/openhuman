@@ -1625,6 +1625,12 @@ const messages: TranslationMap = {
   'mcp.connectAuth.oauthOrToken':
     'Sudah punya token akses? Tempelkan sebagai header Authorization di bawah ini saja.',
   'mcp.connectAuth.oauthTimeout': 'Waktu menunggu proses masuk lewat browser habis. Coba lagi.',
+  'mcp.connectAuth.authError.oauthRequired':
+    'Server ini menggunakan OAuth. Gunakan “Masuk dengan browser” — token yang ditempelkan tidak akan diterima.',
+  'mcp.connectAuth.authError.tokenRejected':
+    'Server menolak token ini. Pastikan token benar dan belum kedaluwarsa.',
+  'mcp.connectAuth.authError.credentialRequired':
+    'Server ini memerlukan autentikasi. Tambahkan token, atau masuk.',
   'onboarding.skipForNow': 'Lewati Sekarang',
   'onboarding.localAI.continueWithCloud': 'Lanjutkan dengan Cloud',
   'onboarding.localAI.useLocalAnyway':

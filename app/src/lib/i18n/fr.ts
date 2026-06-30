@@ -1661,6 +1661,12 @@ const messages: TranslationMap = {
     "Vous avez déjà un jeton d'accès ? Collez-le plutôt ci-dessous comme en-tête Authorization.",
   'mcp.connectAuth.oauthTimeout':
     'Délai dépassé en attendant la connexion via le navigateur. Réessayez.',
+  'mcp.connectAuth.authError.oauthRequired':
+    'Ce serveur utilise OAuth. Utilisez “Se connecter avec le navigateur” — un jeton collé ne sera pas accepté.',
+  'mcp.connectAuth.authError.tokenRejected':
+    "Le serveur a rejeté ce jeton. Vérifiez qu'il est correct et qu'il n'a pas expiré.",
+  'mcp.connectAuth.authError.credentialRequired':
+    'Ce serveur nécessite une authentification. Ajoutez un jeton ou connectez-vous.',
   'onboarding.skipForNow': "Passer pour l'instant",
   'onboarding.localAI.continueWithCloud': 'Continuer avec Cloud',
   'onboarding.localAI.useLocalAnyway':

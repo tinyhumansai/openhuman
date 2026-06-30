@@ -1617,6 +1617,12 @@ const messages: TranslationMap = {
     'ইতিমধ্যে একটি অ্যাক্সেস টোকেন আছে? এর পরিবর্তে নিচে Authorization হেডার হিসেবে পেস্ট করুন।',
   'mcp.connectAuth.oauthTimeout':
     'ব্রাউজার সাইন-ইনের জন্য অপেক্ষার সময় শেষ হয়েছে। আবার চেষ্টা করুন।',
+  'mcp.connectAuth.authError.oauthRequired':
+    'এই সার্ভারটি OAuth ব্যবহার করে। “ব্রাউজার দিয়ে সাইন ইন করুন” ব্যবহার করুন — পেস্ট করা টোকেন গ্রহণ করা হবে না।',
+  'mcp.connectAuth.authError.tokenRejected':
+    'সার্ভার এই টোকেনটি প্রত্যাখ্যান করেছে। এটি সঠিক এবং এর মেয়াদ শেষ হয়নি তা যাচাই করুন।',
+  'mcp.connectAuth.authError.credentialRequired':
+    'এই সার্ভারের জন্য প্রমাণীকরণ প্রয়োজন। একটি টোকেন যোগ করুন, অথবা সাইন ইন করুন।',
   'onboarding.skipForNow': 'এখনই এড়িয়ে যান',
   'onboarding.localAI.continueWithCloud': 'ক্লাউডের সাথে চালিয়ে যান',
   'onboarding.localAI.useLocalAnyway':

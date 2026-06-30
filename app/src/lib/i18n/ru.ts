@@ -1635,6 +1635,12 @@ const messages: TranslationMap = {
   'mcp.connectAuth.oauthOrToken':
     'Уже есть токен доступа? Вставьте его ниже как заголовок Authorization.',
   'mcp.connectAuth.oauthTimeout': 'Истекло время ожидания входа через браузер. Попробуйте снова.',
+  'mcp.connectAuth.authError.oauthRequired':
+    'Этот сервер использует OAuth. Используйте “Войти через браузер” — вставленный токен не будет принят.',
+  'mcp.connectAuth.authError.tokenRejected':
+    'Сервер отклонил этот токен. Убедитесь, что он правильный и не истёк.',
+  'mcp.connectAuth.authError.credentialRequired':
+    'Этот сервер требует аутентификации. Добавьте токен или войдите.',
   'onboarding.skipForNow': 'Пропустить сейчас',
   'onboarding.localAI.continueWithCloud': 'Продолжить с Облако',
   'onboarding.localAI.useLocalAnyway':

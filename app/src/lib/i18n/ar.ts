@@ -1585,6 +1585,12 @@ const messages: TranslationMap = {
   'mcp.connectAuth.oauthOrToken':
     'هل لديك بالفعل رمز وصول؟ الصقه بدلاً من ذلك كرأس Authorization أدناه.',
   'mcp.connectAuth.oauthTimeout': 'انتهت مهلة انتظار تسجيل الدخول عبر المتصفح. حاول مرة أخرى.',
+  'mcp.connectAuth.authError.oauthRequired':
+    'يستخدم هذا الخادم OAuth. استخدم “تسجيل الدخول عبر المتصفح” — لن يتم قبول رمز مميز ملصوق.',
+  'mcp.connectAuth.authError.tokenRejected':
+    'رفض الخادم هذا الرمز المميز. تأكد من أنه صحيح وأن صلاحيته لم تنتهِ.',
+  'mcp.connectAuth.authError.credentialRequired':
+    'يتطلب هذا الخادم مصادقة. أضف رمزًا مميزًا أو سجّل الدخول.',
   'onboarding.skipForNow': 'التخطي الآن',
   'onboarding.localAI.continueWithCloud': 'متابعة مع السحابة',
   'onboarding.localAI.useLocalAnyway':

@@ -1616,6 +1616,12 @@ const messages: TranslationMap = {
     'क्या आपके पास पहले से एक एक्सेस टोकन है? इसके बजाय इसे नीचे Authorization हेडर के रूप में पेस्ट करें।',
   'mcp.connectAuth.oauthTimeout':
     'ब्राउज़र साइन-इन की प्रतीक्षा का समय समाप्त हो गया। पुनः प्रयास करें।',
+  'mcp.connectAuth.authError.oauthRequired':
+    'यह सर्वर OAuth का उपयोग करता है। “ब्राउज़र से साइन इन करें” का उपयोग करें — पेस्ट किया गया टोकन स्वीकार नहीं किया जाएगा।',
+  'mcp.connectAuth.authError.tokenRejected':
+    'सर्वर ने इस टोकन को अस्वीकार कर दिया। जाँचें कि यह सही है और इसकी समय-सीमा समाप्त नहीं हुई है।',
+  'mcp.connectAuth.authError.credentialRequired':
+    'इस सर्वर के लिए प्रमाणीकरण आवश्यक है। एक टोकन जोड़ें, या साइन इन करें।',
   'onboarding.skipForNow': 'अभी के लिए छोड़ें',
   'onboarding.localAI.continueWithCloud': 'बादल के साथ जारी रखें',
   'onboarding.localAI.useLocalAnyway':

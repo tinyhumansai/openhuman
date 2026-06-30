@@ -1655,6 +1655,12 @@ const messages: TranslationMap = {
     'Já tem um token de acesso? Cole-o abaixo como cabeçalho Authorization.',
   'mcp.connectAuth.oauthTimeout':
     'Tempo esgotado aguardando o login no navegador. Tente novamente.',
+  'mcp.connectAuth.authError.oauthRequired':
+    'Este servidor usa OAuth. Use “Entrar com o navegador” — um token colado não será aceito.',
+  'mcp.connectAuth.authError.tokenRejected':
+    'O servidor rejeitou este token. Verifique se está correto e se não expirou.',
+  'mcp.connectAuth.authError.credentialRequired':
+    'Este servidor requer autenticação. Adicione um token ou entre.',
   'onboarding.skipForNow': 'Ignorar por agora',
   'onboarding.localAI.continueWithCloud': 'Continuar com a nuvem',
   'onboarding.localAI.useLocalAnyway':

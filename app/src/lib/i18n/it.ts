@@ -1650,6 +1650,12 @@ const messages: TranslationMap = {
   'mcp.connectAuth.oauthOrToken':
     'Hai già un token di accesso? Incollalo invece come intestazione Authorization qui sotto.',
   'mcp.connectAuth.oauthTimeout': "Tempo scaduto in attesa dell'accesso dal browser. Riprova.",
+  'mcp.connectAuth.authError.oauthRequired':
+    'Questo server usa OAuth. Usa “Accedi con il browser” — un token incollato non verrà accettato.',
+  'mcp.connectAuth.authError.tokenRejected':
+    'Il server ha rifiutato questo token. Verifica che sia corretto e che non sia scaduto.',
+  'mcp.connectAuth.authError.credentialRequired':
+    "Questo server richiede l'autenticazione. Aggiungi un token oppure accedi.",
   'onboarding.skipForNow': 'Salta per ora',
   'onboarding.localAI.continueWithCloud': 'Continua con Cloud',
   'onboarding.localAI.useLocalAnyway':

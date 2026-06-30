@@ -1652,6 +1652,12 @@ const messages: TranslationMap = {
     '¿Ya tienes un token de acceso? Pégalo abajo como encabezado Authorization en su lugar.',
   'mcp.connectAuth.oauthTimeout':
     'Se agotó el tiempo de espera del inicio de sesión en el navegador. Inténtalo de nuevo.',
+  'mcp.connectAuth.authError.oauthRequired':
+    'Este servidor usa OAuth. Usa “Iniciar sesión con el navegador” — no se aceptará un token pegado.',
+  'mcp.connectAuth.authError.tokenRejected':
+    'El servidor rechazó este token. Comprueba que sea correcto y que no haya caducado.',
+  'mcp.connectAuth.authError.credentialRequired':
+    'Este servidor requiere autenticación. Agrega un token o inicia sesión.',
   'onboarding.skipForNow': 'Saltar por ahora',
   'onboarding.localAI.continueWithCloud': 'Continuar con la nube',
   'onboarding.localAI.useLocalAnyway':

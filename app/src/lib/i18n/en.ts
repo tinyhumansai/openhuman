@@ -1961,6 +1961,12 @@ const en: TranslationMap = {
   'mcp.connectAuth.oauthOrToken':
     'Already have an access token? Paste it as an Authorization header below instead.',
   'mcp.connectAuth.oauthTimeout': 'Timed out waiting for browser sign-in. Try again.',
+  'mcp.connectAuth.authError.oauthRequired':
+    'This server uses OAuth. Use “Sign in with browser” — a pasted token will not be accepted.',
+  'mcp.connectAuth.authError.tokenRejected':
+    'The server rejected this token. Check that it is correct and has not expired.',
+  'mcp.connectAuth.authError.credentialRequired':
+    'This server requires authentication. Add a token, or sign in.',
   'mcp.detail.enable': 'Enable',
   'mcp.detail.disable': 'Disable',
   'mcp.status.disabled': 'Disabled',
