@@ -28,6 +28,7 @@
 import debug from 'debug';
 import { useEffect, useRef } from 'react';
 
+import { useT } from '../lib/i18n/I18nContext';
 import {
   setChannelConnectionStatus,
   upsertChannelConnection,
@@ -99,6 +100,7 @@ export function useOAuthConnectionListener({
   capabilitiesOnSuccess = DEFAULT_OAUTH_CAPABILITIES,
 }: UseOAuthConnectionListenerOptions): void {
   const dispatch = useAppDispatch();
+  const { t } = useT();
 
   // Current status for this channel/authMode. Drives whether recovery watchers
   // are armed (only while `connecting`). `statusRef` mirrors it so the deferred
@@ -186,7 +188,10 @@ export function useOAuthConnectionListener({
           channel,
           authMode,
           status: 'error',
-          lastError: `Couldn't finish connecting ${channelLabel}. The sign-in window closed before access was granted — try again.`,
+          lastError: t(
+            'channels.oauth.connectRecoverFailed',
+            "Couldn't finish connecting {channel}. The sign-in window closed before access was granted — try again."
+          ).replace('{channel}', channelLabel),
         })
       );
     };
@@ -214,5 +219,5 @@ export function useOAuthConnectionListener({
       document.removeEventListener('visibilitychange', handleVisibility);
       clearTimers();
     };
-  }, [dispatch, channel, authMode, capabilitiesOnSuccess, status]);
+  }, [dispatch, channel, authMode, capabilitiesOnSuccess, status, t]);
 }

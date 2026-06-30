@@ -229,7 +229,10 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
                     channel: 'discord',
                     authMode: spec.mode,
                     status: 'error',
-                    lastError: "Couldn't start Discord sign-in. Try again.",
+                    lastError: t(
+                      'channels.discord.oauthStartFailed',
+                      "Couldn't start Discord sign-in. Try again."
+                    ),
                   })
                 );
               }
