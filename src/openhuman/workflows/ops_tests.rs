@@ -1244,6 +1244,23 @@ async fn install_workflow_from_url_is_idempotent_when_skill_already_exists() {
     assert!(second.stdout.contains("already installed"), "{second:?}");
 }
 
+#[test]
+fn install_fetch_status_reporting_suppresses_client_errors_only() {
+    assert!(!should_report_install_fetch_status(reqwest::StatusCode::OK));
+    assert!(!should_report_install_fetch_status(
+        reqwest::StatusCode::NOT_FOUND
+    ));
+    assert!(!should_report_install_fetch_status(
+        reqwest::StatusCode::GONE
+    ));
+    assert!(should_report_install_fetch_status(
+        reqwest::StatusCode::INTERNAL_SERVER_ERROR
+    ));
+    assert!(should_report_install_fetch_status(
+        reqwest::StatusCode::BAD_GATEWAY
+    ));
+}
+
 /// Happy path: install a SKILL.md under a synthetic user home, verify
 /// discovery sees it, uninstall, verify discovery no longer sees it and
 /// the on-disk dir is gone.

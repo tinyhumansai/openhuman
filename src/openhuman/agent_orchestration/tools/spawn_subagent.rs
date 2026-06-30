@@ -532,19 +532,11 @@ impl Tool for SpawnSubagentTool {
                                 })
                                 .await;
                         }
-                        let wt_display = worker_thread_id.as_deref().unwrap_or("(none)");
-                        let envelope = format!(
-                            "[SUBAGENT_AWAITING_USER]\n\
-                             task_id: {}\n\
-                             agent_id: {}\n\
-                             worker_thread_id: {}\n\
-                             question: {}\n\
-                             [/SUBAGENT_AWAITING_USER]\n\n\
-                             The sub-agent needs clarification before it can continue. \
-                             Surface the above question to the user. When the user responds, \
-                             call continue_subagent with the task_id, agent_id, and the \
-                             user's answer as the message parameter.",
-                            outcome.task_id, outcome.agent_id, wt_display, question,
+                        let envelope = super::awaiting_user::awaiting_user_envelope(
+                            &outcome.task_id,
+                            &outcome.agent_id,
+                            worker_thread_id.as_deref(),
+                            question,
                         );
                         Ok(ToolResult::success(envelope))
                     }

@@ -219,9 +219,38 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
               });
               if (oauthResponse.result?.oauthUrl) {
                 await openUrl(oauthResponse.result.oauthUrl);
+              } else {
+                // No URL means the core couldn't start the flow. Surface it now
+                // instead of leaving the badge pinned at `connecting` until the
+                // listener's timeout fires (#4299).
+                log('oauth_connect returned no oauthUrl for discord');
+                dispatch(
+                  setChannelConnectionStatus({
+                    channel: 'discord',
+                    authMode: spec.mode,
+                    status: 'error',
+                    lastError: t(
+                      'channels.discord.oauthStartFailed',
+                      "Couldn't start Discord sign-in. Try again."
+                    ),
+                  })
+                );
               }
-            } catch {
-              // best-effort
+            } catch (err) {
+              // Opening the browser / starting the flow failed — don't swallow
+              // it, or the badge hangs at `connecting` (#4299).
+              log('oauth_connect failed for discord: %o', err);
+              dispatch(
+                setChannelConnectionStatus({
+                  channel: 'discord',
+                  authMode: spec.mode,
+                  status: 'error',
+                  lastError: t(
+                    'channels.discord.oauthStartFailed',
+                    "Couldn't start Discord sign-in. Try again."
+                  ),
+                })
+              );
             }
           }
           return;

@@ -1652,6 +1652,12 @@ const messages: TranslationMap = {
     '¿Ya tienes un token de acceso? Pégalo abajo como encabezado Authorization en su lugar.',
   'mcp.connectAuth.oauthTimeout':
     'Se agotó el tiempo de espera del inicio de sesión en el navegador. Inténtalo de nuevo.',
+  'mcp.connectAuth.authError.oauthRequired':
+    'Este servidor usa OAuth. Usa “Iniciar sesión con el navegador” — no se aceptará un token pegado.',
+  'mcp.connectAuth.authError.tokenRejected':
+    'El servidor rechazó este token. Comprueba que sea correcto y que no haya caducado.',
+  'mcp.connectAuth.authError.credentialRequired':
+    'Este servidor requiere autenticación. Agrega un token o inicia sesión.',
   'onboarding.skipForNow': 'Saltar por ahora',
   'onboarding.localAI.continueWithCloud': 'Continuar con la nube',
   'onboarding.localAI.useLocalAnyway':
@@ -2308,6 +2314,10 @@ const messages: TranslationMap = {
   'chat.attachment.remove': 'Eliminar {name}',
   'chat.attachment.tooMany': 'Máximo {max} imágenes por mensaje',
   'chat.attachment.tooManyFiles': 'Máximo {max} archivos por mensaje',
+  'chat.attachment.tooManyVideos': 'Máximo {max} vídeos por mensaje',
+  'chat.attachment.videoNotSupported':
+    'Este modelo no puede leer vídeos. Puedes usar el nivel Razonamiento de OpenHuman para adjuntar tu vídeo.',
+  'chat.attachment.dropToAttach': 'Suelta los archivos para adjuntar',
   'chat.attachment.tooLarge': 'La imagen supera el límite de tamaño de {max}',
   'chat.attachment.unsupportedType':
     'Tipo de archivo no compatible. Use una imagen (PNG, JPEG, WebP, GIF, BMP) o un archivo PDF, TXT o Markdown.',

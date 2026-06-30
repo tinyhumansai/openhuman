@@ -1538,6 +1538,10 @@ const messages: TranslationMap = {
   'mcp.connectAuth.oauthWaiting': '正在等待登录…',
   'mcp.connectAuth.oauthOrToken': '已经有访问令牌？请改为在下方将其粘贴为 Authorization 请求头。',
   'mcp.connectAuth.oauthTimeout': '等待浏览器登录超时。请重试。',
+  'mcp.connectAuth.authError.oauthRequired':
+    '此服务器使用 OAuth。请使用“使用浏览器登录”——粘贴的令牌将不被接受。',
+  'mcp.connectAuth.authError.tokenRejected': '服务器拒绝了此令牌。请检查它是否正确且尚未过期。',
+  'mcp.connectAuth.authError.credentialRequired': '此服务器需要身份验证。请添加令牌或登录。',
   'onboarding.skipForNow': '暂时跳过',
   'onboarding.localAI.continueWithCloud': '继续使用云',
   'onboarding.localAI.useLocalAnyway': '无论如何使用本地人工智能（不推荐用于您的设备）',
@@ -2145,6 +2149,10 @@ const messages: TranslationMap = {
   'chat.attachment.remove': '移除 {name}',
   'chat.attachment.tooMany': '每条消息最多 {max} 张图片',
   'chat.attachment.tooManyFiles': '每条消息最多 {max} 个文件',
+  'chat.attachment.tooManyVideos': '每条消息最多 {max} 个视频',
+  'chat.attachment.videoNotSupported':
+    '此模型无法读取视频。您可以使用 OpenHuman 推理层级来附加视频。',
+  'chat.attachment.dropToAttach': '拖放文件以添加',
   'chat.attachment.tooLarge': '图片超过 {max} 大小限制',
   'chat.attachment.unsupportedType':
     '不支持的文件类型。请使用图片（PNG、JPEG、WebP、GIF、BMP）或 PDF、TXT、Markdown 文件。',

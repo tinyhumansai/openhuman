@@ -1638,6 +1638,12 @@ const messages: TranslationMap = {
     'Masz już token dostępu? Wklej go zamiast tego poniżej jako nagłówek Authorization.',
   'mcp.connectAuth.oauthTimeout':
     'Upłynął limit czasu oczekiwania na logowanie w przeglądarce. Spróbuj ponownie.',
+  'mcp.connectAuth.authError.oauthRequired':
+    'Ten serwer używa OAuth. Użyj “Zaloguj się przez przeglądarkę” — wklejony token nie zostanie zaakceptowany.',
+  'mcp.connectAuth.authError.tokenRejected':
+    'Serwer odrzucił ten token. Sprawdź, czy jest poprawny i czy nie wygasł.',
+  'mcp.connectAuth.authError.credentialRequired':
+    'Ten serwer wymaga uwierzytelnienia. Dodaj token lub zaloguj się.',
   'onboarding.skipForNow': 'Pomiń na razie',
   'onboarding.localAI.continueWithCloud': 'Kontynuuj z chmurą',
   'onboarding.localAI.useLocalAnyway':
@@ -2288,6 +2294,10 @@ const messages: TranslationMap = {
   'chat.attachment.remove': 'Usuń {name}',
   'chat.attachment.tooMany': 'Maksymalnie {max} obrazów na wiadomość',
   'chat.attachment.tooManyFiles': 'Maksymalnie {max} plików na wiadomość',
+  'chat.attachment.tooManyVideos': 'Maksymalnie {max} filmów na wiadomość',
+  'chat.attachment.videoNotSupported':
+    'Ten model nie odczytuje filmów. Możesz użyć poziomu Rozumowanie OpenHuman, aby dołączyć film.',
+  'chat.attachment.dropToAttach': 'Upuść pliki, aby je dołączyć',
   'chat.attachment.tooLarge': 'Obraz przekracza limit rozmiaru {max}',
   'chat.attachment.unsupportedType':
     'Nieobsługiwany typ pliku. Użyj obrazu (PNG, JPEG, WebP, GIF, BMP) lub pliku PDF, TXT albo Markdown.',

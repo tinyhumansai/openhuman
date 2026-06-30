@@ -122,6 +122,10 @@ pub async fn install_workflow_from_url(
     install_workflow_from_url_with_home(workspace_dir, params, home.as_deref()).await
 }
 
+pub(crate) fn should_report_install_fetch_status(status: reqwest::StatusCode) -> bool {
+    !status.is_success() && !status.is_client_error()
+}
+
 pub(crate) async fn install_workflow_from_url_with_home(
     workspace_dir: &Path,
     params: InstallWorkflowFromUrlParams,
@@ -196,8 +200,6 @@ pub(crate) async fn install_workflow_from_url_with_home(
 
     let status = response.status();
     if !status.is_success() {
-        let code = status.as_u16();
-        let msg = format!("fetch failed: {fetch_url} returned status {code}");
         // A 4xx (esp. 404/410) means the requested SKILL.md is gone or the URL
         // is wrong — expected user/catalog input state, surfaced to the UI as
         // "skill not found". Don't page Sentry for it (TAURI-RUST-CGE: ~1,446
@@ -205,9 +207,16 @@ pub(crate) async fn install_workflow_from_url_with_home(
         // reporting 5xx — a genuine remote failure is still Sentry-actionable.
         // The `Err(msg)` return is unchanged in both cases so the UI always
         // surfaces the failure.
-        if !status.is_client_error() {
-            let status_str = code.to_string();
-            let report_msg = format!("fetch failed: {redacted_fetch_url} returned status {code}");
+        let status_str = status.as_u16().to_string();
+        let msg = format!(
+            "fetch failed: {fetch_url} returned status {}",
+            status.as_u16()
+        );
+        let report_msg = format!(
+            "fetch failed: {redacted_fetch_url} returned status {}",
+            status.as_u16()
+        );
+        if should_report_install_fetch_status(status) {
             crate::core::observability::report_error(
                 report_msg.as_str(),
                 "skills",
@@ -217,6 +226,12 @@ pub(crate) async fn install_workflow_from_url_with_home(
                     ("status", status_str.as_str()),
                     ("failure", "non_2xx"),
                 ],
+            );
+        } else {
+            tracing::debug!(
+                fetch_url = %redacted_fetch_url,
+                status = status.as_u16(),
+                "[skills] install_workflow_from_url: skipped Sentry report for user/catalog fetch status"
             );
         }
         return Err(msg);

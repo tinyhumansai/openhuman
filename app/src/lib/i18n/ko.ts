@@ -1607,6 +1607,12 @@ const messages: TranslationMap = {
   'mcp.connectAuth.oauthOrToken':
     '이미 액세스 토큰이 있나요? 대신 아래에 Authorization 헤더로 붙여넣으세요.',
   'mcp.connectAuth.oauthTimeout': '브라우저 로그인 대기 시간이 초과되었습니다. 다시 시도하세요.',
+  'mcp.connectAuth.authError.oauthRequired':
+    '이 서버는 OAuth를 사용합니다. “브라우저로 로그인”을 사용하세요. 붙여넣은 토큰은 사용할 수 없습니다.',
+  'mcp.connectAuth.authError.tokenRejected':
+    '서버가 이 토큰을 거부했습니다. 토큰이 올바르고 만료되지 않았는지 확인하세요.',
+  'mcp.connectAuth.authError.credentialRequired':
+    '이 서버는 인증이 필요합니다. 토큰을 추가하거나 로그인하세요.',
   'onboarding.skipForNow': '지금 건너뛰기',
   'onboarding.localAI.continueWithCloud': '클라우드 계속하기',
   'onboarding.localAI.useLocalAnyway': '어쨌든 로컬 AI 사용(기기에 권장되지 않음)',
@@ -2242,6 +2248,10 @@ const messages: TranslationMap = {
   'chat.attachment.remove': '{name} 제거',
   'chat.attachment.tooMany': '메시지당 최대 {max}개 이미지',
   'chat.attachment.tooManyFiles': '메시지당 최대 {max}개 파일',
+  'chat.attachment.tooManyVideos': '메시지당 최대 {max}개 동영상',
+  'chat.attachment.videoNotSupported':
+    '이 모델은 동영상을 읽을 수 없습니다. 동영상을 첨부하려면 OpenHuman 추론 등급을 사용할 수 있습니다.',
+  'chat.attachment.dropToAttach': '파일을 놓아 첨부',
   'chat.attachment.tooLarge': '이미지가 {max} 크기 제한을 초과합니다',
   'chat.attachment.unsupportedType':
     '지원되지 않는 파일 형식입니다. 이미지(PNG, JPEG, WebP, GIF, BMP) 또는 PDF, TXT, Markdown 파일을 사용하세요.',

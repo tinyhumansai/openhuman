@@ -199,6 +199,15 @@ export function handleIntegrations(ctx) {
   // ── Composio ───────────────────────────────────────────────
   if (
     method === "GET" &&
+    /^\/(?:api\/v3\/)?connected_accounts\/?(\?.*)?$/.test(url)
+  ) {
+    const items = parseBehaviorJson("composioDirectConnectedAccounts", []);
+    json(res, 200, { items });
+    return true;
+  }
+
+  if (
+    method === "GET" &&
     /^\/agent-integrations\/composio\/toolkits\/?(\?.*)?$/.test(url)
   ) {
     const toolkits = parseBehaviorJson("composioToolkits", ["gmail"]);

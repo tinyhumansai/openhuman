@@ -1585,6 +1585,12 @@ const messages: TranslationMap = {
   'mcp.connectAuth.oauthOrToken':
     'هل لديك بالفعل رمز وصول؟ الصقه بدلاً من ذلك كرأس Authorization أدناه.',
   'mcp.connectAuth.oauthTimeout': 'انتهت مهلة انتظار تسجيل الدخول عبر المتصفح. حاول مرة أخرى.',
+  'mcp.connectAuth.authError.oauthRequired':
+    'يستخدم هذا الخادم OAuth. استخدم “تسجيل الدخول عبر المتصفح” — لن يتم قبول رمز مميز ملصوق.',
+  'mcp.connectAuth.authError.tokenRejected':
+    'رفض الخادم هذا الرمز المميز. تأكد من أنه صحيح وأن صلاحيته لم تنتهِ.',
+  'mcp.connectAuth.authError.credentialRequired':
+    'يتطلب هذا الخادم مصادقة. أضف رمزًا مميزًا أو سجّل الدخول.',
   'onboarding.skipForNow': 'التخطي الآن',
   'onboarding.localAI.continueWithCloud': 'متابعة مع السحابة',
   'onboarding.localAI.useLocalAnyway':
@@ -2216,6 +2222,10 @@ const messages: TranslationMap = {
   'chat.attachment.remove': 'إزالة {name}',
   'chat.attachment.tooMany': 'الحد الأقصى {max} صور لكل رسالة',
   'chat.attachment.tooManyFiles': 'الحد الأقصى {max} ملفات لكل رسالة',
+  'chat.attachment.tooManyVideos': 'الحد الأقصى {max} مقاطع فيديو لكل رسالة',
+  'chat.attachment.videoNotSupported':
+    'لا يمكن لهذا النموذج قراءة مقاطع الفيديو. يمكنك استخدام مستوى التفكير من OpenHuman لإرفاق الفيديو.',
+  'chat.attachment.dropToAttach': 'أفلت الملفات لإرفاقها',
   'chat.attachment.tooLarge': 'حجم الصورة يتجاوز الحد المسموح {max}',
   'chat.attachment.unsupportedType':
     'نوع ملف غير مدعوم. استخدم صورة (PNG أو JPEG أو WebP أو GIF أو BMP) أو ملف PDF أو TXT أو Markdown.',

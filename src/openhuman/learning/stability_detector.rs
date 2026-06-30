@@ -226,7 +226,7 @@ impl StabilityDetector {
             let final_stability = stability(
                 dominant_cue(cands, existing),
                 total_evidence_count(cands, existing),
-                most_recent_reinforcement(cands, existing, now),
+                most_recent_reinforcement(cands, existing, now, *class),
                 now,
                 *class,
                 has_explicit,
@@ -500,10 +500,18 @@ fn total_evidence_count(cands: &[LearningCandidate], existing: Option<&ProfileFa
 }
 
 /// The most recent observation timestamp across candidates and the existing row.
+///
+/// The result is floored at `now - half_life(class)` so a facet's recency decay
+/// in [`stability`] bottoms out at one (class-specific) half-life. The floor
+/// must use the facet's own `class`: every other per-group computation in
+/// `rebuild` is class-scoped, and the half-lives span 7d (Channel) to 90d
+/// (Identity), so a hardcoded class would over-retain longer-lived facets and
+/// evict shorter-lived ones too early.
 fn most_recent_reinforcement(
     cands: &[LearningCandidate],
     existing: Option<&ProfileFacet>,
     now: f64,
+    class: FacetClass,
 ) -> f64 {
     let newest_cand = cands
         .iter()
@@ -512,9 +520,7 @@ fn most_recent_reinforcement(
     let existing_ts = existing
         .map(|f| f.last_seen_at)
         .unwrap_or(f64::NEG_INFINITY);
-    newest_cand
-        .max(existing_ts)
-        .max(now - half_life(FacetClass::Style))
+    newest_cand.max(existing_ts).max(now - half_life(class))
 }
 
 /// Map a stability score + user_state to a lifecycle state.
@@ -841,5 +847,38 @@ mod tests {
         assert_eq!(class_budget(FacetClass::Veto), 3);
         assert_eq!(class_budget(FacetClass::Goal), 3);
         assert_eq!(class_budget(FacetClass::Channel), 1);
+    }
+
+    // ── most_recent_reinforcement floor ───────────────────────────────────────
+
+    #[test]
+    fn reinforcement_floor_scopes_to_facet_class() {
+        // With no candidates and no existing row, the result is purely the
+        // class-scoped floor `now - half_life(class)`. This pins that the floor
+        // tracks the facet's own class rather than a hardcoded one — the longer
+        // half-lives (Goal, Identity) must floor further in the past than Style,
+        // and Channel (shortest) closer to now.
+        let now = 10_000_000.0;
+        for class in [
+            FacetClass::Identity,
+            FacetClass::Veto,
+            FacetClass::Tooling,
+            FacetClass::Goal,
+            FacetClass::Style,
+            FacetClass::Channel,
+        ] {
+            let floor = most_recent_reinforcement(&[], None, now, class);
+            assert_eq!(
+                floor,
+                now - half_life(class),
+                "floor must use {class:?}'s own half-life"
+            );
+        }
+        // Guard against a regression to a single hardcoded class: a class with a
+        // different half-life than Style must produce a different floor.
+        assert_ne!(
+            most_recent_reinforcement(&[], None, now, FacetClass::Goal),
+            most_recent_reinforcement(&[], None, now, FacetClass::Style),
+        );
     }
 }

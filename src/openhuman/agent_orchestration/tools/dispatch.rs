@@ -3,7 +3,9 @@
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::harness::fork_context::current_parent;
-use crate::openhuman::agent::harness::subagent_runner::{run_subagent, SubagentRunOptions};
+use crate::openhuman::agent::harness::subagent_runner::{
+    run_subagent, SubagentRunOptions, SubagentRunStatus,
+};
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::tools::traits::ToolResult;
 
@@ -149,24 +151,63 @@ pub(crate) async fn dispatch_subagent(
     };
 
     match run_subagent(definition, prompt, options).await {
-        Ok(outcome) => {
-            publish_global(DomainEvent::SubagentCompleted {
-                parent_session,
-                task_id: outcome.task_id.clone(),
-                agent_id: outcome.agent_id.clone(),
-                elapsed_ms: outcome.elapsed.as_millis() as u64,
-                output_chars: outcome.output.chars().count(),
-                iterations: outcome.iterations,
-            });
-            log::info!(
-                "[agent] {} completed via {} iterations={} output_chars={}",
-                agent_id,
-                tool_name,
-                outcome.iterations,
-                outcome.output.chars().count()
-            );
-            Ok(ToolResult::success(outcome.output))
-        }
+        Ok(outcome) => match &outcome.status {
+            // The delegated sub-agent paused on `ask_user_clarification`.
+            // The runner has already checkpointed its conversation, so the
+            // orchestrator must relay the question and resume via
+            // `continue_subagent` — NOT re-spawn a fresh, stateless
+            // sub-agent. Dropping this status was the #4291 infinite re-spawn
+            // loop: a paused mcp_setup was reported as a plain success, the
+            // orchestrator's only continuation was to re-delegate, and the new
+            // run paused again. Mirrors the `spawn_subagent` AwaitingUser path.
+            SubagentRunStatus::AwaitingUser { question, .. } => {
+                publish_global(DomainEvent::SubagentAwaitingUser {
+                    parent_session,
+                    task_id: outcome.task_id.clone(),
+                    agent_id: outcome.agent_id.clone(),
+                    question: question.clone(),
+                });
+                if let Some(progress) = current_parent().and_then(|p| p.on_progress.clone()) {
+                    let _ = progress
+                        .send(AgentProgress::SubagentAwaitingUser {
+                            agent_id: outcome.agent_id.clone(),
+                            task_id: outcome.task_id.clone(),
+                            question: question.clone(),
+                            // Synchronous delegate dispatch has no worker
+                            // sub-thread (that is a `spawn_subagent` concept).
+                            worker_thread_id: None,
+                        })
+                        .await;
+                }
+                log::info!(
+                    "[agent] {} paused for user input via {} (task_id={}) — \
+                     returning awaiting-user envelope; orchestrator must resume \
+                     with continue_subagent, not re-delegate",
+                    agent_id,
+                    tool_name,
+                    outcome.task_id,
+                );
+                Ok(awaiting_outcome_to_tool_result(&outcome, question))
+            }
+            SubagentRunStatus::Completed => {
+                publish_global(DomainEvent::SubagentCompleted {
+                    parent_session,
+                    task_id: outcome.task_id.clone(),
+                    agent_id: outcome.agent_id.clone(),
+                    elapsed_ms: outcome.elapsed.as_millis() as u64,
+                    output_chars: outcome.output.chars().count(),
+                    iterations: outcome.iterations,
+                });
+                log::info!(
+                    "[agent] {} completed via {} iterations={} output_chars={}",
+                    agent_id,
+                    tool_name,
+                    outcome.iterations,
+                    outcome.output.chars().count()
+                );
+                Ok(ToolResult::success(outcome.output))
+            }
+        },
         Err(err) => {
             let message = err.to_string();
             publish_global(DomainEvent::SubagentFailed {
@@ -186,6 +227,25 @@ pub(crate) async fn dispatch_subagent(
             )))
         }
     }
+}
+
+/// Map a paused (`AwaitingUser`) sub-agent outcome to the tool result handed
+/// back to the orchestrator: a successful `ToolResult` carrying the
+/// `[SUBAGENT_AWAITING_USER]` envelope (task_id/agent_id/question + the
+/// instruction to resume via `continue_subagent`). Kept as a standalone,
+/// side-effect-free fn so the paused-path mapping is unit-testable without a
+/// registry or a real model — the #4291 regression guard. Synchronous delegate
+/// dispatch has no worker sub-thread, so `worker_thread_id` is always `None`.
+fn awaiting_outcome_to_tool_result(
+    outcome: &crate::openhuman::agent::harness::subagent_runner::SubagentRunOutcome,
+    question: &str,
+) -> ToolResult {
+    ToolResult::success(super::awaiting_user::awaiting_user_envelope(
+        &outcome.task_id,
+        &outcome.agent_id,
+        None,
+        question,
+    ))
 }
 
 /// Format a subagent-delegation failure so the orchestrator cannot mistake it
@@ -235,6 +295,47 @@ mod tests {
         assert!(
             out.contains("registry not initialised") || out.contains("not found in registry"),
             "unexpected graceful-failure message: {out}"
+        );
+    }
+
+    #[test]
+    fn awaiting_user_outcome_maps_to_resume_envelope_not_bare_success() {
+        // #4291: a delegated sub-agent that pauses on `ask_user_clarification`
+        // must come back as the `[SUBAGENT_AWAITING_USER]` envelope (so the
+        // orchestrator resumes via continue_subagent) — NOT a plain success
+        // carrying the question as if the task were done, which made the
+        // orchestrator re-spawn a fresh mcp_setup and loop.
+        use crate::openhuman::agent::harness::subagent_runner::{
+            SubagentMode, SubagentRunOutcome, SubagentRunStatus, SubagentUsage,
+        };
+        use std::time::Duration;
+
+        let question = "Which MCP server would you like to install?".to_string();
+        let outcome = SubagentRunOutcome {
+            task_id: "sub-xyz789".to_string(),
+            agent_id: "mcp_setup".to_string(),
+            output: String::new(),
+            iterations: 1,
+            elapsed: Duration::from_secs(0),
+            mode: SubagentMode::Typed,
+            status: SubagentRunStatus::AwaitingUser {
+                question: question.clone(),
+                options: None,
+            },
+            final_history: Vec::new(),
+            usage: SubagentUsage::default(),
+        };
+
+        let res = awaiting_outcome_to_tool_result(&outcome, &question);
+        assert!(!res.is_error, "awaiting-user is not a failure");
+        let out = res.output();
+        assert!(out.contains("[SUBAGENT_AWAITING_USER]"), "envelope: {out}");
+        assert!(out.contains("task_id: sub-xyz789"), "envelope: {out}");
+        assert!(out.contains("agent_id: mcp_setup"), "envelope: {out}");
+        assert!(out.contains("continue_subagent"), "envelope: {out}");
+        assert!(
+            out.contains(&question),
+            "envelope must carry question: {out}"
         );
     }
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ALLOWED_ATTACHMENT_MIME_TYPES,
@@ -6,12 +6,19 @@ import {
   ATTACHMENT_MAX_FILE_SIZE_BYTES,
   ATTACHMENT_MAX_IMAGES,
   ATTACHMENT_MAX_SIZE_BYTES,
+  ATTACHMENT_MAX_VIDEO_SIZE_BYTES,
+  attachmentKindForMime,
   buildMessageWithAttachments,
+  extractVideoFrames,
   fileToDataUri,
   formatFileSize,
+  imageMarkerCost,
   isAllowedMimeType,
+  isVideoMimeType,
   parseMessageImages,
   validateAndReadFile,
+  VIDEO_FRAME_COUNT,
+  videoFrameExtractor,
 } from './attachments';
 
 function makeFile(name: string, type: string, size = 1024): File {
@@ -188,9 +195,209 @@ describe('validateAndReadFile', () => {
   });
 });
 
+describe('video attachments', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('classifies video MIME types as the video kind', () => {
+    expect(isVideoMimeType('video/mp4')).toBe(true);
+    expect(isVideoMimeType('video/quicktime')).toBe(true);
+    expect(isVideoMimeType('video/webm')).toBe(true);
+    expect(isVideoMimeType('image/png')).toBe(false);
+    expect(attachmentKindForMime('video/mp4')).toBe('video');
+  });
+
+  it('costs 1 image marker per image and VIDEO_FRAME_COUNT per video', () => {
+    expect(imageMarkerCost('image')).toBe(1);
+    expect(imageMarkerCost('video')).toBe(VIDEO_FRAME_COUNT);
+    expect(imageMarkerCost('file')).toBe(0);
+  });
+
+  it('rejects video when allowImages is false (non-vision model)', async () => {
+    const result = await validateAndReadFile(makeFile('clip.mp4', 'video/mp4', 8), 0, 0, false);
+    expect('error' in result && result.error.code).toBe('video_not_supported');
+  });
+
+  it('rejects video over the video size limit', async () => {
+    const big = makeFile('big.mp4', 'video/mp4', ATTACHMENT_MAX_VIDEO_SIZE_BYTES + 1);
+    const result = await validateAndReadFile(big, 0, 0, true);
+    expect('error' in result && result.error.code).toBe('too_large');
+  });
+
+  it('rejects video when its frames would exceed the shared image-marker budget', async () => {
+    // Budget full of images already → no room for a video's frames.
+    const result = await validateAndReadFile(
+      makeFile('clip.mp4', 'video/mp4', 8),
+      ATTACHMENT_MAX_IMAGES,
+      0,
+      true
+    );
+    expect('error' in result && result.error.code).toBe('too_many');
+    // Reported as the image budget (frames are images to the model).
+    expect('error' in result && result.error.code === 'too_many' && result.error.kind).toBe(
+      'image'
+    );
+  });
+
+  it('rejects a video that partially overflows the budget (images + frames)', async () => {
+    // One image used (1 marker); a video costs VIDEO_FRAME_COUNT more. With the
+    // default budget of 4, 1 + 2 = 3 fits, but seed close to the cap to overflow.
+    const used = ATTACHMENT_MAX_IMAGES - (VIDEO_FRAME_COUNT - 1); // leaves < cost
+    const result = await validateAndReadFile(makeFile('c.mp4', 'video/mp4', 8), used, 0, true);
+    expect('error' in result && result.error.code).toBe('too_many');
+  });
+
+  it('samples frames and returns a video attachment within budget', async () => {
+    const frames = ['data:image/jpeg;base64,f1', 'data:image/jpeg;base64,f2'];
+    vi.spyOn(videoFrameExtractor, 'extract').mockResolvedValue(frames);
+    const file = makeFile('clip.mp4', 'video/mp4', 4096);
+    const result = await validateAndReadFile(file, 0, 0, true);
+    expect('attachment' in result).toBe(true);
+    if ('attachment' in result) {
+      expect(result.attachment.kind).toBe('video');
+      expect(result.attachment.frames).toEqual(frames);
+      expect(result.attachment.previewUri).toBe(frames[0]);
+      expect(result.attachment.file).toBe(file);
+    }
+  });
+
+  it('fails when no frames could be extracted', async () => {
+    vi.spyOn(videoFrameExtractor, 'extract').mockResolvedValue([]);
+    const result = await validateAndReadFile(makeFile('clip.mp4', 'video/mp4', 8), 0, 0, true);
+    expect('error' in result && result.error.code).toBe('read_failed');
+  });
+});
+
+describe('extractVideoFrames (DOM-mocked)', () => {
+  // jsdom has no video codec, so stub <video>/<canvas> + URL to exercise the
+  // real decode/seek/paint path deterministically.
+  let realCreateObjectURL: typeof URL.createObjectURL;
+  let realRevokeObjectURL: typeof URL.revokeObjectURL;
+
+  function makeFakeVideo(duration: number) {
+    const listeners: Record<string, Array<() => void>> = {};
+    let ct = 0;
+    return {
+      muted: false,
+      preload: '',
+      _src: '',
+      duration,
+      videoWidth: 320,
+      videoHeight: 240,
+      onloadedmetadata: null as null | (() => void),
+      onerror: null as null | (() => void),
+      set src(v: string) {
+        this._src = v;
+        // Fire metadata asynchronously after the impl assigns the handler.
+        void Promise.resolve().then(() => this.onloadedmetadata?.());
+      },
+      get src() {
+        return this._src;
+      },
+      get currentTime() {
+        return ct;
+      },
+      set currentTime(v: number) {
+        ct = v;
+        (listeners['seeked'] ?? []).forEach(cb => cb());
+      },
+      addEventListener(ev: string, cb: () => void) {
+        (listeners[ev] ??= []).push(cb);
+      },
+      removeEventListener(ev: string, cb: () => void) {
+        listeners[ev] = (listeners[ev] ?? []).filter(f => f !== cb);
+      },
+      removeAttribute() {},
+    };
+  }
+
+  function makeFakeCanvas() {
+    return {
+      width: 0,
+      height: 0,
+      getContext: () => ({ drawImage() {} }),
+      toDataURL: () => 'data:image/jpeg;base64,FRAME',
+    };
+  }
+
+  function installDom(duration: number) {
+    const realCreate = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      if (tag === 'video') return makeFakeVideo(duration) as unknown as HTMLElement;
+      if (tag === 'canvas') return makeFakeCanvas() as unknown as HTMLElement;
+      return realCreate(tag as keyof HTMLElementTagNameMap);
+    });
+  }
+
+  beforeEach(() => {
+    realCreateObjectURL = URL.createObjectURL;
+    realRevokeObjectURL = URL.revokeObjectURL;
+    URL.createObjectURL = vi.fn(() => 'blob:fake');
+    URL.revokeObjectURL = vi.fn();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    URL.createObjectURL = realCreateObjectURL;
+    URL.revokeObjectURL = realRevokeObjectURL;
+  });
+
+  it('samples one frame per seek point for a normal clip', async () => {
+    installDom(10);
+    const frames = await extractVideoFrames(makeFile('c.mp4', 'video/mp4', 8), 2);
+    expect(frames).toEqual(['data:image/jpeg;base64,FRAME', 'data:image/jpeg;base64,FRAME']);
+  });
+
+  it('handles a zero-duration clip without hanging (seek short-circuits)', async () => {
+    installDom(0);
+    const frames = await extractVideoFrames(makeFile('z.mp4', 'video/mp4', 8), 2);
+    expect(frames.length).toBe(2);
+  });
+
+  it('propagates a read_failed error when the video fails to decode', async () => {
+    const realCreate = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      if (tag === 'video') {
+        const v = makeFakeVideo(10);
+        // Override src to fire onerror instead of onloadedmetadata.
+        Object.defineProperty(v, 'src', {
+          set(value: string) {
+            this._src = value;
+            void Promise.resolve().then(() => this.onerror?.());
+          },
+          get() {
+            return this._src;
+          },
+        });
+        return v as unknown as HTMLElement;
+      }
+      if (tag === 'canvas') return makeFakeCanvas() as unknown as HTMLElement;
+      return realCreate(tag as keyof HTMLElementTagNameMap);
+    });
+    const result = await validateAndReadFile(makeFile('bad.mp4', 'video/mp4', 8), 0, 0, true);
+    expect('error' in result && result.error.code).toBe('read_failed');
+  });
+});
+
 describe('buildMessageWithAttachments', () => {
   it('returns text unchanged when no attachments', () => {
     expect(buildMessageWithAttachments('hello', [])).toBe('hello');
+  });
+
+  it('expands a video into one IMAGE marker per sampled frame', () => {
+    const video = makeAttachment({
+      kind: 'video',
+      file: makeFile('clip.mp4', 'video/mp4'),
+      mimeType: 'video/mp4',
+      dataUri: 'data:image/jpeg;base64,f1',
+      previewUri: 'data:image/jpeg;base64,f1',
+      frames: ['data:image/jpeg;base64,f1', 'data:image/jpeg;base64,f2'],
+    });
+    const result = buildMessageWithAttachments('watch', [video]);
+    expect(result).toBe(
+      'watch [IMAGE:data:image/jpeg;base64,f1] [IMAGE:data:image/jpeg;base64,f2]'
+    );
   });
 
   it('appends IMAGE markers after the text', () => {

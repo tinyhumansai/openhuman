@@ -48,7 +48,8 @@ Applies to every release, all platforms.
 
 ### Linux
 
-- [ ] **`.deb` and/or `.AppImage` install on a clean Ubuntu 22.04** — `sudo dpkg -i openhuman_*.deb` or `chmod +x openhuman-*.AppImage && ./openhuman-*.AppImage`. Expected: no missing-dependency errors; app launches.
+- [ ] **Public `install.sh` prefers the `.deb` path on clean Ubuntu 24.04** — Run `curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash` on a host with `apt-get` and `dpkg`. Expected: the script resolves `OpenHuman_*_amd64.deb` or `OpenHuman_*_arm64.deb`, installs it with `apt-get`, and launch does not fail on missing CEF runtime libraries such as `libgbm.so.1`.
+- [ ] **`.deb` and/or `.AppImage` install on a clean Ubuntu 22.04** — `sudo apt-get install -y --no-install-recommends ./OpenHuman_*.deb` or `chmod +x OpenHuman_*.AppImage && ./OpenHuman_*.AppImage`. Expected: no missing-dependency errors; app launches.
 - [ ] **`.AppImage` launches on a clean Ubuntu 24.04 host without a sibling extracted tree** — Run the downloaded AppImage directly from an empty directory. Expected: no `Interpreter not found!` error; `sharun` finds its bundled dynamic linker and the app reaches the first window.
 - [ ] **OS-native notification toasts fire** — Trigger a notification from inside the app (e.g. memory captured, agent finished). Expected: a libnotify-style toast appears outside the app window. (CI Linux sees only Xvfb; this surface verifies on a real desktop.)
 - [ ] **Headless supervisor update stages without self-exit** — On a Linux service deployment with `[update] restart_strategy = "supervisor"` and `rpc_mutations_enabled = false`, stage a new core binary through the documented operator flow. Expected: the running process stays up until the supervisor restart, the staged binary is present on disk, and `systemctl restart openhuman` (or equivalent) picks up the new version.
