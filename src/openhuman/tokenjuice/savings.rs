@@ -52,6 +52,24 @@ pub struct SavingsAggregate {
     pub by_compressor: HashMap<String, SavingsBucket>,
 }
 
+impl SavingsAggregate {
+    /// Fold one compaction's savings into the aggregate, attributed to `model`.
+    /// Caller guarantees `original > compacted`. Pure (no global state) so it is
+    /// unit-testable without touching the process-global aggregate.
+    fn record_saving(&mut self, model: &str, compressor: &str, original: u64, compacted: u64) {
+        let cost = cost_saved_usd(model, original.saturating_sub(compacted));
+        self.total.add(original, compacted, cost);
+        self.by_model
+            .entry(model.to_string())
+            .or_default()
+            .add(original, compacted, cost);
+        self.by_compressor
+            .entry(compressor.to_string())
+            .or_default()
+            .add(original, compacted, cost);
+    }
+}
+
 struct State {
     aggregate: SavingsAggregate,
     /// Model used to price the saved input tokens (the configured default).
@@ -73,6 +91,38 @@ impl Default for State {
 fn state() -> &'static Mutex<State> {
     static STATE: OnceLock<Mutex<State>> = OnceLock::new();
     STATE.get_or_init(|| Mutex::new(State::default()))
+}
+
+tokio::task_local! {
+    /// The model actually running the current turn/sub-agent, scoped by the
+    /// agent loop around `run_turn_engine` (mirrors
+    /// [`crate::openhuman::agent::harness::model_vision_context`]). When set,
+    /// compaction savings are priced against *this* model instead of the
+    /// process-global configured default (issue #4122). Unset ⇒ fall back to
+    /// the configured default, so non-harness callers and tests are unaffected
+    /// — strictly additive.
+    pub static TURN_MODEL: String;
+}
+
+/// Run `future` with `model` installed as the per-turn attribution model used
+/// to price compaction savings. Intended call site is around each
+/// `run_turn_engine` invocation, alongside the other per-turn `*_context`
+/// scopes (issue #4122).
+pub async fn with_turn_model<F, R>(model: String, future: F) -> R
+where
+    F: std::future::Future<Output = R>,
+{
+    TURN_MODEL.scope(model, future).await
+}
+
+/// The model to attribute savings to: the per-turn [`TURN_MODEL`] when scoped
+/// and non-empty, otherwise the process-global configured `default`.
+fn resolve_attribution_model(default: &str) -> String {
+    TURN_MODEL
+        .try_with(|m| m.clone())
+        .ok()
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or_else(|| default.to_string())
 }
 
 /// Install the attribution model and snapshot location, loading any prior
@@ -104,25 +154,17 @@ pub fn record(
     if original_tokens <= compacted_tokens {
         return;
     }
-    let saved = original_tokens - compacted_tokens;
-
     let mut st = state().lock().unwrap_or_else(|p| p.into_inner());
-    let model = st.attribution_model.clone();
-    let cost = cost_saved_usd(&model, saved);
-
-    st.aggregate
-        .total
-        .add(original_tokens, compacted_tokens, cost);
-    st.aggregate
-        .by_model
-        .entry(model)
-        .or_default()
-        .add(original_tokens, compacted_tokens, cost);
-    st.aggregate
-        .by_compressor
-        .entry(compressor.as_str().to_string())
-        .or_default()
-        .add(original_tokens, compacted_tokens, cost);
+    // Attribute the saving to the per-turn model the agent loop scoped via
+    // `with_turn_model` (issue #4122); fall back to the configured default when
+    // unscoped (non-harness callers, tests).
+    let model = resolve_attribution_model(&st.attribution_model);
+    st.aggregate.record_saving(
+        &model,
+        compressor.as_str(),
+        original_tokens,
+        compacted_tokens,
+    );
 
     let _ = content_kind; // reserved for a future by-kind breakdown
     persist(&st);
@@ -210,5 +252,45 @@ mod tests {
         record(ContentKind::Json, CompressorKind::SmartCrusher, 100, 100);
         record(ContentKind::Json, CompressorKind::SmartCrusher, 50, 100);
         assert_eq!(stats().total.events, before, "no-op when not smaller");
+    }
+
+    #[test]
+    fn record_saving_attributes_to_given_model() {
+        // Pure aggregation on a LOCAL aggregate — no process-global state, so it
+        // cannot race the other tests in this module.
+        let mut agg = SavingsAggregate::default();
+        agg.record_saving("turn-model-x", "smartcrusher", 2000, 1000);
+        assert_eq!(agg.total.tokens_saved, 1000);
+        assert!(
+            agg.by_model.contains_key("turn-model-x"),
+            "saving must be attributed to the supplied model"
+        );
+        assert!(agg.by_model["turn-model-x"].cost_saved_usd > 0.0);
+    }
+
+    #[tokio::test]
+    async fn attribution_model_falls_back_to_default_when_unscoped() {
+        assert_eq!(resolve_attribution_model("default-model"), "default-model");
+    }
+
+    #[tokio::test]
+    async fn attribution_model_prefers_scoped_turn_model() {
+        let got = with_turn_model("turn-model".to_string(), async {
+            resolve_attribution_model("default-model")
+        })
+        .await;
+        assert_eq!(
+            got, "turn-model",
+            "scoped per-turn model wins (issue #4122)"
+        );
+    }
+
+    #[tokio::test]
+    async fn blank_turn_model_falls_back_to_default() {
+        let got = with_turn_model("   ".to_string(), async {
+            resolve_attribution_model("default-model")
+        })
+        .await;
+        assert_eq!(got, "default-model", "blank scoped model is ignored");
     }
 }

@@ -6113,6 +6113,8 @@ const messages: TranslationMap = {
     'Brak dostępnego dostawcy podsumowań dla funkcji Twórz drzewa podsumowań. Włącz lokalną AI (Ollama) lub włącz podsumowywanie w chmurze w Ustawienia → AI → Pamięć.',
   'memory.health.remediation.empty_input_refused':
     'Pominięto element pamięci, ponieważ jego tekst był pusty. Żadne działanie nie jest wymagane — nowe elementy są nadal osadzane normalnie.',
+  'memory.health.remediation.storage_unavailable':
+    'OpenHuman nie może zapisywać w pamięci — dysk lub karta SD wydaje się uszkodzona, pełna lub tylko do odczytu. Sprawdź dysk i zwolnij miejsce; przetwarzanie pamięci wznowi się automatycznie, gdy zapis znów będzie możliwy.',
   'memory.health.remediation.transient':
     'Tymczasowy błąd przerwał przetwarzanie pamięci. Ponowna próba nastąpi automatycznie.',
   'memory.health.remediation.unknown':

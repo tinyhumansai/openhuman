@@ -6129,6 +6129,8 @@ const messages: TranslationMap = {
     "Nessun provider di riepilogo è disponibile per Crea alberi di riepilogo. Abilita l'IA locale (Ollama) o abilita il riepilogo cloud in Impostazioni → IA → Memoria.",
   'memory.health.remediation.empty_input_refused':
     'Un elemento di memoria è stato saltato perché il suo testo era vuoto. Nessuna azione necessaria — i nuovi elementi continuano a essere incorporati normalmente.',
+  'memory.health.remediation.storage_unavailable':
+    "OpenHuman non riesce a scrivere nella sua memoria — il disco o la scheda SD sembra guasto, pieno o di sola lettura. Controlla l'unità e libera spazio; l'elaborazione della memoria riprenderà automaticamente quando lo spazio di archiviazione tornerà scrivibile.",
   'memory.health.remediation.transient':
     "Un errore temporaneo ha interrotto l'elaborazione della memoria. Verrà riprovato automaticamente.",
   'memory.health.remediation.unknown':

@@ -5720,6 +5720,8 @@ const messages: TranslationMap = {
     '没有可用于构建摘要树的摘要提供方。请启用本地 AI（Ollama），或在设置 → AI → 记忆中启用云端摘要。',
   'memory.health.remediation.empty_input_refused':
     '由于文本为空，一项记忆已被跳过。无需操作 — 新条目继续正常嵌入。',
+  'memory.health.remediation.storage_unavailable':
+    'OpenHuman 无法写入其记忆存储 — 磁盘或 SD 卡似乎已损坏、已满或为只读。请检查驱动器并释放空间；存储恢复可写后，记忆处理将自动继续。',
   'memory.health.remediation.transient': '临时错误中断了记忆处理。将自动重试。',
   'memory.health.remediation.unknown': '记忆处理遇到问题。请在设置 → AI 中检查配置。',
   // Chat — agent-generated artifacts (#2779)

@@ -354,6 +354,12 @@ const Conversations = ({
   const streamingAssistantByThread = useAppSelector(
     state => state.chatRuntime.streamingAssistantByThread
   );
+  // #4270: per-thread liveness counter bumped on each `inference_heartbeat`.
+  // Watched by the silence-timer rearm effect so a long prefill / buffered
+  // reasoning phase that streams no other progress still keeps the timer armed.
+  const inferenceHeartbeatByThread = useAppSelector(
+    state => state.chatRuntime.inferenceHeartbeatByThread
+  );
   const parallelStreamsByThread = useAppSelector(
     state => state.chatRuntime.parallelStreamsByThread
   );
@@ -798,6 +804,10 @@ const Conversations = ({
         streamingAssistantByThread[threadId],
         toolTimelineByThread[threadId],
         taskBoardByThread[threadId],
+        // #4270: liveness beat. Kept LAST so the done-transition probe on
+        // `current[0]` (status) is unaffected; a beat alone still flips the
+        // `changed` check and rearms the timer through a silent reasoning phase.
+        inferenceHeartbeatByThread[threadId],
       ] as const;
       const previous = turnSignatureByThreadRef.current.get(threadId);
       const status = current[0];
@@ -820,6 +830,7 @@ const Conversations = ({
     streamingAssistantByThread,
     toolTimelineByThread,
     taskBoardByThread,
+    inferenceHeartbeatByThread,
   ]);
 
   useEffect(() => {

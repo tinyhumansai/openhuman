@@ -6,6 +6,18 @@ use crate::openhuman::threads::turn_state::{TurnStateMirror, TurnStateStore};
 use super::event_bus::publish_web_channel_event;
 use super::types::ChatRequestMetadata;
 
+/// Cadence of the `inference_heartbeat` liveness beat the bridge emits while a
+/// turn is in flight (issue #4270). The frontend silence timer in
+/// `Conversations.tsx` only fires after ~120s with NO progress signal of any
+/// kind; a long prefill on a large context, or a reasoning-tier model that
+/// buffers `reasoning_content` server-side, can legitimately stream nothing for
+/// minutes — tripping a false "no response after 2 minutes" timeout that
+/// discards the live turn. A wall-clock beat every 20s rides the same socket as
+/// the real progress events, so it keeps the timer armed while work is genuinely
+/// progressing yet stops the instant the socket/core dies — preserving the
+/// genuine-disconnect error path (6 missed beats before the 120s window lapses).
+const INFERENCE_HEARTBEAT_SECS: u64 = 20;
+
 /// Current wall-clock time as Unix-epoch milliseconds, used to stamp tracing
 /// spans (issue #3886). Saturates to `0` if the clock is before the epoch.
 fn unix_epoch_ms() -> u64 {
@@ -155,7 +167,48 @@ pub(crate) fn spawn_progress_bridge(
             None
         };
 
-        while let Some(event) = rx.recv().await {
+        // #4270: emit a periodic liveness beat for the whole in-flight turn so
+        // the frontend silence timer never false-fires during a long prefill or
+        // a buffered-reasoning phase that streams no progress events. The beat
+        // is gated on `turn_active` (set once `TurnStarted` is observed) so we
+        // never emit before the turn's `inference_start` has armed the timer.
+        let mut heartbeat =
+            tokio::time::interval(std::time::Duration::from_secs(INFERENCE_HEARTBEAT_SECS));
+        // Wall-clock cadence: a slow turn must not produce a burst of catch-up
+        // beats once it finally yields control.
+        heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // `interval`'s first tick resolves immediately — consume it so the first
+        // real beat lands one full interval after the turn begins.
+        heartbeat.tick().await;
+        let mut turn_active = false;
+
+        loop {
+            let event = tokio::select! {
+                // Drain real progress events preferentially over the timer so a
+                // busy turn never starves event handling to emit a beat.
+                biased;
+                maybe = rx.recv() => match maybe {
+                    Some(ev) => ev,
+                    None => break,
+                },
+                _ = heartbeat.tick() => {
+                    if turn_active {
+                        log::trace!(
+                            "[web_channel][bridge] inference_heartbeat thread_id={} request_id={}",
+                            thread_id,
+                            request_id,
+                        );
+                        publish_web_channel_event(WebChannelEvent {
+                            event: "inference_heartbeat".to_string(),
+                            client_id: client_id.clone(),
+                            thread_id: thread_id.clone(),
+                            request_id: request_id.clone(),
+                            ..Default::default()
+                        });
+                    }
+                    continue;
+                }
+            };
             events_seen += 1;
             turn_state.observe(&event);
             if let Some(collector) = span_collector.as_mut() {
@@ -245,6 +298,8 @@ pub(crate) fn spawn_progress_bridge(
             }
             match event {
                 AgentProgress::TurnStarted => {
+                    // Turn is live — start emitting liveness beats (issue #4270).
+                    turn_active = true;
                     ledger_upsert_agent_run(
                         &config,
                         AgentRunUpsert {
@@ -953,6 +1008,10 @@ pub(crate) fn spawn_progress_bridge(
                 }
                 AgentProgress::TurnCompleted { iterations } => {
                     parent_completed = true;
+                    // Turn is done — stop liveness beats (issue #4270). The FE
+                    // clears its silence timer on `chat_done`/`chat_error`; this
+                    // also prevents a stray beat racing the channel close.
+                    turn_active = false;
                     let completed_at = chrono::Utc::now();
                     ledger_upsert_agent_run(
                         &config,
@@ -1128,5 +1187,157 @@ mod tests {
             Some(vec!["src/lib.rs".to_string(), "README.md".to_string()])
         );
         assert_eq!(d.dirty_status, Some(true));
+    }
+
+    // ── #4270 inference heartbeat ────────────────────────────────────────────
+
+    use crate::openhuman::agent::progress::AgentProgress;
+    use crate::openhuman::config::Config;
+    use std::time::Duration;
+    use tokio::sync::broadcast::error::TryRecvError;
+
+    /// Await the next web-channel event published for `thread_id`, skipping
+    /// events for other threads (the bus is a process-global broadcast) and
+    /// tolerating broadcast lag. Panics if the channel closes first.
+    async fn recv_for_thread(
+        rx: &mut tokio::sync::broadcast::Receiver<WebChannelEvent>,
+        thread_id: &str,
+    ) -> WebChannelEvent {
+        loop {
+            match rx.recv().await {
+                Ok(ev) if ev.thread_id == thread_id => return ev,
+                Ok(_) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(err) => panic!("web-channel bus closed before event: {err}"),
+            }
+        }
+    }
+
+    fn spawn_test_bridge(
+        thread_id: &str,
+        request_id: &str,
+    ) -> tokio::sync::mpsc::Sender<AgentProgress> {
+        let (tx, rx) = tokio::sync::mpsc::channel::<AgentProgress>(16);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = TurnStateStore::new(dir.path().to_path_buf());
+        // Keep the tempdir alive for the bridge task's lifetime by leaking it —
+        // a test-only allocation; the OS reclaims it on process exit.
+        std::mem::forget(dir);
+        spawn_progress_bridge(
+            rx,
+            "client-hb-4270".to_string(),
+            thread_id.to_string(),
+            request_id.to_string(),
+            store,
+            ChatRequestMetadata::default(),
+            Config::default(),
+        );
+        tx
+    }
+
+    /// Repro-gone guard: once a turn is in flight, the bridge emits a periodic
+    /// `inference_heartbeat` even though no other progress event has streamed —
+    /// this is the signal the FE silence timer rearms on to avoid the false
+    /// "no response after 2 minutes" timeout (#4270).
+    #[tokio::test(start_paused = true)]
+    async fn emits_inference_heartbeat_while_turn_in_flight() {
+        let mut events = super::super::event_bus::subscribe_web_channel_events();
+        let thread_id = "thread-hb-emit-4270";
+        let request_id = "req-hb-emit-4270";
+        let tx = spawn_test_bridge(thread_id, request_id);
+
+        // Turn begins — arms the liveness beat.
+        tx.send(AgentProgress::TurnStarted).await.unwrap();
+
+        // inference_start first, then a heartbeat after the interval elapses
+        // (the paused clock auto-advances while the test awaits the bus).
+        let start = recv_for_thread(&mut events, thread_id).await;
+        assert_eq!(start.event, "inference_start");
+
+        let beat = recv_for_thread(&mut events, thread_id).await;
+        assert_eq!(beat.event, "inference_heartbeat");
+        assert_eq!(beat.thread_id, thread_id);
+        assert_eq!(beat.request_id, request_id);
+
+        drop(tx);
+    }
+
+    /// Lifecycle: once `TurnCompleted` lands the bridge stops beating, so a beat
+    /// can't race the channel close after the FE has already cleared its timer
+    /// on `chat_done`/`chat_error`. Exercises the `turn_active = false` arm and
+    /// the channel-closed `break`.
+    #[tokio::test(start_paused = true)]
+    async fn stops_heartbeat_after_turn_completed() {
+        let mut events = super::super::event_bus::subscribe_web_channel_events();
+        let thread_id = "thread-hb-stop-4270";
+        let tx = spawn_test_bridge(thread_id, "req-hb-stop-4270");
+
+        tx.send(AgentProgress::TurnStarted).await.unwrap();
+        // Drain through the first heartbeat to prove the turn was beating.
+        loop {
+            if recv_for_thread(&mut events, thread_id).await.event == "inference_heartbeat" {
+                break;
+            }
+        }
+
+        // Complete the turn, then drop the sender so the bridge loop breaks.
+        tx.send(AgentProgress::TurnCompleted { iterations: 1 })
+            .await
+            .unwrap();
+        drop(tx);
+
+        // Let the bridge process TurnCompleted + observe the closed channel.
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // Advance well past several intervals — no further beats must appear.
+        tokio::time::advance(Duration::from_secs(INFERENCE_HEARTBEAT_SECS * 4)).await;
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+
+        loop {
+            match events.try_recv() {
+                Ok(ev) => assert_ne!(
+                    (ev.thread_id.as_str(), ev.event.as_str()),
+                    (thread_id, "inference_heartbeat"),
+                    "heartbeat emitted after TurnCompleted"
+                ),
+                Err(TryRecvError::Empty | TryRecvError::Closed) => break,
+                Err(TryRecvError::Lagged(_)) => continue,
+            }
+        }
+    }
+
+    /// Gate check: before `TurnStarted` the bridge must NOT beat — otherwise a
+    /// beat could land before the FE has armed its timer. Exercises the
+    /// `turn_active == false` branch of the heartbeat tick.
+    #[tokio::test(start_paused = true)]
+    async fn no_heartbeat_before_turn_started() {
+        let mut events = super::super::event_bus::subscribe_web_channel_events();
+        let thread_id = "thread-hb-gate-4270";
+        let tx = spawn_test_bridge(thread_id, "req-hb-gate-4270");
+
+        // Advance well past several heartbeat intervals with no TurnStarted.
+        tokio::time::advance(Duration::from_secs(INFERENCE_HEARTBEAT_SECS * 4)).await;
+        // Let the bridge task run its (no-op) heartbeat ticks.
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+
+        // No event of any kind should have been published for this thread.
+        loop {
+            match events.try_recv() {
+                Ok(ev) => assert_ne!(
+                    ev.thread_id, thread_id,
+                    "unexpected pre-turn event {} for {thread_id}",
+                    ev.event
+                ),
+                Err(TryRecvError::Empty | TryRecvError::Closed) => break,
+                Err(TryRecvError::Lagged(_)) => continue,
+            }
+        }
+
+        drop(tx);
     }
 }

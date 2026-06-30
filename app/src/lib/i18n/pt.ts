@@ -6124,6 +6124,8 @@ const messages: TranslationMap = {
     'Nenhum provedor de resumo está disponível para Criar árvores de resumo. Ative a IA local (Ollama) ou ative o resumo na nuvem em Configurações → IA → Memória.',
   'memory.health.remediation.empty_input_refused':
     'Um item de memória foi ignorado porque o texto estava vazio. Nenhuma ação necessária — itens novos continuam a ser incorporados normalmente.',
+  'memory.health.remediation.storage_unavailable':
+    'O OpenHuman não consegue gravar no seu armazenamento de memória — o disco ou cartão SD parece estar com falha, cheio ou somente leitura. Verifique a unidade e libere espaço; o processamento da memória será retomado automaticamente assim que o armazenamento voltar a permitir gravação.',
   'memory.health.remediation.transient':
     'Um erro temporário interrompeu o processamento da memória. Será repetido automaticamente.',
   'memory.health.remediation.unknown':

@@ -109,6 +109,31 @@ pub fn run_doctor(config: &Config) -> DoctorReport {
 
     let mut stages = Vec::new();
 
+    // 0. Storage health — the foundational layer. If the host filesystem can't
+    //    service the memory_tree path (EIO/ENOSPC/EROFS on dir-create / DB
+    //    open, flagged by the queue worker's host-I/O arm), nothing downstream
+    //    can run. Pushed FIRST so it becomes `first_blocking_cause` and the
+    //    status panel leads the user to the disk fix instead of a misleading
+    //    "configure embeddings" message. Only the user owns this lever.
+    if degraded.storage {
+        let cause = degraded
+            .cause
+            .clone()
+            .filter(|c| c.code == FailureCode::StorageUnavailable)
+            .unwrap_or_else(|| PipelineFailure::new(FailureCode::StorageUnavailable));
+        stages.push(StageHealth::bad(
+            "storage",
+            cause,
+            "memory storage path is unavailable — the host filesystem returned a \
+             persistent I/O error (failing/read-only disk or SD card)",
+        ));
+    } else {
+        stages.push(StageHealth::ok(
+            "storage",
+            "memory storage path is writable",
+        ));
+    }
+
     // 1. Routing/config sanity — is *any* embeddings provider configured?
     //    (`build_write_embedder` skips embedding when none is, so this is the
     //    most common "empty wiki" root cause.)
@@ -397,6 +422,36 @@ mod tests {
             "unexpected summary_tree note: {}",
             tree.note
         );
+    }
+
+    /// A host-FS storage failure must surface as the doctor's
+    /// `first_blocking_cause` (stage 0), outranking everything else — even a
+    /// fully-misconfigured embeddings setup — so the user is told to fix their
+    /// disk, not their provider config.
+    #[test]
+    fn storage_failure_is_first_blocking_cause() {
+        let _g = super::super::test_guard();
+        let (_tmp, mut cfg) = test_config();
+        // Deliberately also break embeddings so we prove storage wins.
+        cfg.embeddings_provider = None;
+        cfg.local_ai.runtime_enabled = false;
+        super::super::mark_storage_degraded(FailureCode::StorageUnavailable);
+
+        let report = run_doctor(&cfg);
+        assert!(!report.healthy);
+        let cause = report.first_blocking_cause.expect("should have a cause");
+        assert_eq!(
+            cause.code,
+            FailureCode::StorageUnavailable,
+            "storage must outrank the embeddings misconfig"
+        );
+        let storage = report
+            .stages
+            .iter()
+            .find(|s| s.stage == "storage")
+            .expect("storage stage present");
+        assert!(!storage.ok);
+        assert!(report.degraded.storage);
     }
 
     #[test]

@@ -815,6 +815,15 @@ impl Agent {
                     user_message,
                 );
             let (outcome_result, subagent_usage_entries) =
+                crate::openhuman::tokenjuice::savings::with_turn_model(
+                    effective_model.clone(),
+                    // Box the per-turn context chain onto the heap so the added
+                    // `with_turn_model` scope does not deepen the worker stack —
+                    // the same stack-accumulation guard the sub-agent path uses
+                    // around `run_turn_engine`. Without this the cron agent-job
+                    // lib test overflows its stack under llvm-cov instrumentation
+                    // (issue #4122 review).
+                    Box::pin(
                 super::super::super::turn_subagent_usage::with_turn_collector(
                 super::super::super::turn_attachments_context::with_current_turn_image_placeholders(
                     turn_image_placeholders,
@@ -843,6 +852,8 @@ impl Agent {
                         )),
                     ),
                 ),
+                )
+                    ),
                 )
                 .await;
             let outcome = outcome_result?;
