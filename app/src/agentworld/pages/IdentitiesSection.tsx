@@ -282,6 +282,27 @@ function formatPrice(amount: string, asset: string): string {
   return formatAssetAmount(amount, asset);
 }
 
+// Indicative handle-registration pricing, by handle length. These mirror
+// tiny.place's authoritative per-character tiers (`domain-pricing.ts`:
+// 2,000 / 1,000 / 500 / 100 / 1 USDC for 1 / 2 / 3 / 4 / 5+ chars). The old
+// table here showed `$250 / $50 / $10` for only the 3 / 4 / 5+ tiers — wrong
+// units (USD not USDC), wrong amounts, and missing the 1- and 2-char tiers —
+// so users saw a price that bore no relation to what they were charged
+// (#3825, a billing-integrity bug). The binding amount is always the
+// server-quoted x402 challenge shown in the confirm dialog below; this table
+// is reference only.
+export const IDENTITY_PRICING_TIERS: ReadonlyArray<{
+  label: string;
+  example: string;
+  fee: string;
+}> = [
+  { label: '1 char', example: '@a', fee: '2,000 USDC' },
+  { label: '2 chars', example: '@ab', fee: '1,000 USDC' },
+  { label: '3 chars', example: '@abc', fee: '500 USDC' },
+  { label: '4 chars', example: '@abcd', fee: '100 USDC' },
+  { label: '5+ chars', example: '@abcde', fee: '1 USDC' },
+];
+
 // ── Register tab ──────────────────────────────────────────────────────────────
 
 // Devnet/mainnet Solana explorer link for a settled payment tx.
@@ -522,11 +543,7 @@ function RegisterTab({ onRegistered }: { onRegistered?: () => void }) {
       <div className="rounded-lg border border-line bg-surface-muted p-4">
         <h4 className="text-xs font-semibold text-content mb-2">Pricing tiers</h4>
         <div className="space-y-1">
-          {[
-            { label: '3 chars', example: '@abc', fee: '$250/yr' },
-            { label: '4 chars', example: '@abcd', fee: '$50/yr' },
-            { label: '5+ chars', example: '@abcde', fee: '$10/yr' },
-          ].map(tier => (
+          {IDENTITY_PRICING_TIERS.map(tier => (
             <div
               key={tier.label}
               className="flex items-center justify-between text-xs text-content-muted">
@@ -537,6 +554,9 @@ function RegisterTab({ onRegistered }: { onRegistered?: () => void }) {
             </div>
           ))}
         </div>
+        <p className="mt-2 text-[11px] leading-relaxed text-content-faint">
+          Indicative only — the exact price is confirmed at checkout from the on-chain x402 quote.
+        </p>
       </div>
 
       {/* Confirm-before-spend dialog (only while a challenge is pending). */}

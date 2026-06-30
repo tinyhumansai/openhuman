@@ -507,6 +507,7 @@ fn handle_update_browser_settings(params: Map<String, Value>) -> ControllerFutur
         let update = deserialize_params::<BrowserSettingsUpdate>(params)?;
         let patch = config_rpc::BrowserSettingsPatch {
             enabled: update.enabled,
+            backend: update.backend,
         };
         to_json(config_rpc::load_and_apply_browser_settings(patch).await?)
     })

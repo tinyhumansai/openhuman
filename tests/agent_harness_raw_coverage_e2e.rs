@@ -318,6 +318,7 @@ fn coverage_definition() -> AgentDefinition {
         max_iterations: 3,
         iteration_policy: Default::default(),
         max_result_chars: Some(18),
+        max_turn_output_tokens: None,
         timeout_secs: None,
         sandbox_mode: SandboxMode::ReadOnly,
         background: false,

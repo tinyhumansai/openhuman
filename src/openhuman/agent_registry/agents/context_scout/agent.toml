@@ -32,9 +32,11 @@ omit_profile = false
 omit_memory_md = false
 
 [model]
-# Multi-step gathering loop (recall → maybe fetch → assess), so the agentic
-# tier fits — not the slow reasoning tier (the scout is meant to be cheap).
-hint = "agentic"
+# Multi-step gathering loop (recall → maybe fetch → assess). Rides the
+# high-throughput `burst` tier: the scout is a cheap, latency-tolerant,
+# non-reasoning pre-flight pass, so raw throughput on a fast model beats the
+# pricier agentic/reasoning tiers. Resolves to `burst-v1` on the managed backend.
+hint = "burst"
 
 [tools]
 # Curated read-only context-gathering surface. No writes, no shell, no

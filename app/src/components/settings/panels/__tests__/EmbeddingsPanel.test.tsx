@@ -522,6 +522,37 @@ describe('EmbeddingsPanel', () => {
     expect(screen.getByPlaceholderText(/https:\/\/your-endpoint/i)).toBeInTheDocument();
   });
 
+  it('appends the underlying probe detail to the verification error so the user can self-diagnose (#4056)', async () => {
+    // The issue asks for the underlying HTTP status / error body, not just the
+    // generic message. When the backend supplies `detail`, the panel appends it.
+    const settings = makeSettings({
+      providers: [
+        makeProvider('managed', { requires_api_key: false }),
+        makeProvider('custom', { requires_api_key: false, requires_endpoint: true }),
+      ],
+    });
+    vi.mocked(loadEmbeddingsSettings).mockResolvedValue(settings);
+    vi.mocked(updateEmbeddingsSettings).mockResolvedValue({
+      error: 'EMBEDDINGS_VERIFICATION_FAILED',
+      message: "Couldn't verify the embeddings endpoint — the test embed failed.",
+      detail: 'Embedding API error (401 Unauthorized): invalid api key',
+    });
+
+    renderWithProviders(<EmbeddingsPanel />);
+    await screen.findByText('Custom');
+
+    fireEvent.click(screen.getByRole('radio', { name: /custom/i }));
+    await screen.findByPlaceholderText(/https:\/\/your-endpoint/i);
+    fireEvent.change(screen.getByPlaceholderText(/https:\/\/your-endpoint/i), {
+      target: { value: 'https://api.example.com/v1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save.*switch/i }));
+
+    // The detail (HTTP status + body) is shown alongside the generic message.
+    await screen.findByText(/401 Unauthorized/i);
+    expect(screen.getByPlaceholderText(/https:\/\/your-endpoint/i)).toBeInTheDocument();
+  });
+
   // ─── Confirm wipe dialog ──────────────────────────────────────────────────
 
   it('shows confirm-wipe dialog when updateEmbeddingsSettings returns DIMENSION_CHANGE error', async () => {

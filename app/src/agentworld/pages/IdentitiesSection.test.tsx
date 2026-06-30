@@ -18,7 +18,7 @@ import {
   PaymentRequiredError,
 } from '../../lib/agentworld/invokeApiClient';
 import { apiClient } from '../AgentWorldShell';
-import IdentitiesSection from './IdentitiesSection';
+import IdentitiesSection, { IDENTITY_PRICING_TIERS } from './IdentitiesSection';
 
 // ── Mock apiClient ────────────────────────────────────────────────────────────
 // Replace every namespace/method IdentitiesSection calls through.
@@ -217,9 +217,11 @@ describe('Register tab — handle availability', () => {
   test('renders the pricing tiers', () => {
     render(<IdentitiesSection />);
     expect(screen.getByText('Pricing tiers')).toBeInTheDocument();
-    expect(screen.getByText('$250/yr')).toBeInTheDocument();
-    expect(screen.getByText('$50/yr')).toBeInTheDocument();
-    expect(screen.getByText('$10/yr')).toBeInTheDocument();
+    // Authoritative tiny.place per-character USDC tiers (#3825), replacing the
+    // old incorrect "$250 / $50 / $10 per year" labels.
+    expect(screen.getByText('2,000 USDC')).toBeInTheDocument();
+    expect(screen.getByText('500 USDC')).toBeInTheDocument();
+    expect(screen.getByText('1 USDC')).toBeInTheDocument();
   });
 
   test('shows a Register button only when the handle is available', async () => {
@@ -1173,5 +1175,37 @@ describe('Trading tab — bid / offer commitments', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
     expect(screen.queryByTestId('commit-submit')).not.toBeInTheDocument();
     expect(apiClient.marketplace.offer).not.toHaveBeenCalled();
+  });
+});
+
+// ── Pricing tiers (#3825 — displayed price must match what is charged) ─────────
+
+describe('IDENTITY_PRICING_TIERS', () => {
+  test('mirrors tiny.place authoritative per-character USDC tiers', () => {
+    // The old table showed $250 / $50 / $10 for only 3 / 4 / 5+ chars — wrong
+    // units, wrong amounts, missing the 1- and 2-char tiers. Pin the corrected
+    // authoritative tiers so a regression to USD or the old values fails CI.
+    expect(IDENTITY_PRICING_TIERS.map(t => [t.label, t.fee])).toEqual([
+      ['1 char', '2,000 USDC'],
+      ['2 chars', '1,000 USDC'],
+      ['3 chars', '500 USDC'],
+      ['4 chars', '100 USDC'],
+      ['5+ chars', '1 USDC'],
+    ]);
+  });
+
+  test('quotes every tier in USDC, never the old per-year USD format', () => {
+    for (const tier of IDENTITY_PRICING_TIERS) {
+      expect(tier.fee).toMatch(/USDC$/);
+      expect(tier.fee).not.toMatch(/\$|\/yr/);
+    }
+  });
+
+  test('renders the corrected tiers (and not the old USD prices) on the Register tab', () => {
+    render(<IdentitiesSection />);
+    expect(screen.getByText('2,000 USDC')).toBeInTheDocument();
+    expect(screen.getByText('100 USDC')).toBeInTheDocument();
+    expect(screen.queryByText('$250/yr')).not.toBeInTheDocument();
+    expect(screen.queryByText('$10/yr')).not.toBeInTheDocument();
   });
 });

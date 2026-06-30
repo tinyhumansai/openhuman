@@ -62,6 +62,7 @@ const INTENTIONAL_ENGLISH = new Set([
   "intelligence.diagram.skillInstallCommand",
   "intelligence.memoryChunk.detail.embeddingInfo",
   "mcp.playground.argsLabel",
+  "mcp.tab.source.smithery",
   "memorySources.globPatternPlaceholder",
   "modelCouncil.editCouncilAria",
   "modelCouncil.jurorLabel",

@@ -11,7 +11,7 @@ omit_safety_preamble = false
 omit_skills_catalog = true
 
 [model]
-hint = "agentic"
+hint = "burst"
 
 [tools]
 # Composio-only surface: this agent drives a single Composio toolkit per

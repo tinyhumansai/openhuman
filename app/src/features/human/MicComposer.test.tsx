@@ -626,6 +626,37 @@ describe('MicComposer', () => {
     expect(encodeBlobToWavMock).toHaveBeenCalledTimes(1);
   });
 
+  it('skips native retries on a missing local binary and falls straight to WAV/in-process', async () => {
+    // On a no-binary macOS install (#3425) the native webm codec routes to the
+    // whisper-cli subprocess and errors "binary not found". That can never
+    // succeed on retry, and only 16kHz WAV can use the in-process engine — so
+    // the native codec must bail immediately (no backoff) and the WAV re-encode
+    // must run, where the in-process route transcribes with no external binary.
+    transcribeWithFactoryMock
+      .mockRejectedValueOnce(
+        new Error('[voice-stt] whisper.cpp binary not found. Set WHISPER_BIN to the absolute path…')
+      )
+      .mockResolvedValueOnce('in-process ok');
+    encodeBlobToWavMock.mockResolvedValueOnce(
+      new Blob([new Uint8Array([0])], { type: 'audio/wav' })
+    );
+    const onSubmit = vi.fn();
+    render(<MicComposer disabled={false} onSubmit={onSubmit} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+    await waitFor(() => expect(getUserMediaMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /stop recording and send/i })).toBeInTheDocument()
+    );
+    fireEvent.click(screen.getByRole('button', { name: /stop recording and send/i }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('in-process ok'));
+    // Exactly 1 native attempt (no retries) + 1 WAV attempt — the missing
+    // binary short-circuits the native backoff loop.
+    expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(2);
+    expect(encodeBlobToWavMock).toHaveBeenCalledTimes(1);
+  });
+
   it('does not continue retrying after unmount during STT backoff', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     transcribeWithFactoryMock

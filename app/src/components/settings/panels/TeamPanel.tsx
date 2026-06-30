@@ -12,6 +12,7 @@ import Button from '../../ui/Button';
 import { SettingsBadge, SettingsSection, SettingsTextField } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 import SettingsPanel from '../layout/SettingsPanel';
+import { teamErrorMessage } from './teamErrorMessage';
 
 const log = debug('core-rpc:error');
 
@@ -21,10 +22,8 @@ const TeamPanel = () => {
   const { snapshot, teams, refresh, refreshTeams } = useCoreState();
   const user = snapshot.currentUser;
 
-  const [newTeamName, setNewTeamName] = useState('');
   const [joinCode, setJoinCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isCreating, setIsCreating] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
   const [isSwitching, setIsSwitching] = useState<string | null>(null);
   const [isLeaving, setIsLeaving] = useState<string | null>(null);
@@ -60,26 +59,6 @@ const TeamPanel = () => {
     });
   }, [refreshTeamsWithLoading]);
 
-  const handleCreateTeam = async () => {
-    const name = newTeamName.trim();
-    if (!name) return;
-    setIsCreating(true);
-    setError(null);
-    try {
-      await teamApi.createTeam(name);
-      setNewTeamName('');
-      await refreshTeamsWithLoading();
-    } catch (err) {
-      setError(
-        err && typeof err === 'object' && 'error' in err
-          ? String(err.error)
-          : t('team.failedToCreate')
-      );
-    } finally {
-      setIsCreating(false);
-    }
-  };
-
   const handleJoinTeam = async () => {
     const code = joinCode.trim();
     if (!code) return;
@@ -90,11 +69,7 @@ const TeamPanel = () => {
       setJoinCode('');
       await Promise.all([refresh(), refreshTeamsWithLoading()]);
     } catch (err) {
-      setError(
-        err && typeof err === 'object' && 'error' in err
-          ? String(err.error)
-          : t('team.invalidInviteCode')
-      );
+      setError(teamErrorMessage(err, t('team.invalidInviteCode')));
     } finally {
       setIsJoining(false);
     }
@@ -108,11 +83,7 @@ const TeamPanel = () => {
       await teamApi.switchTeam(teamId);
       await Promise.all([refresh(), refreshTeamsWithLoading()]);
     } catch (err) {
-      setError(
-        err && typeof err === 'object' && 'error' in err
-          ? String(err.error)
-          : t('team.failedToSwitch')
-      );
+      setError(teamErrorMessage(err, t('team.failedToSwitch')));
     } finally {
       setIsSwitching(null);
     }
@@ -133,11 +104,7 @@ const TeamPanel = () => {
       await Promise.all([refresh(), refreshTeamsWithLoading()]);
       setTeamToLeave(null);
     } catch (err) {
-      setError(
-        err && typeof err === 'object' && 'error' in err
-          ? String(err.error)
-          : t('team.failedToLeave')
-      );
+      setError(teamErrorMessage(err, t('team.failedToLeave')));
     } finally {
       setIsLeaving(null);
     }
@@ -260,29 +227,8 @@ const TeamPanel = () => {
         </SettingsSection>
       )}
 
-      <SettingsSection title={t('team.createNewTeam')}>
-        <div className="flex gap-2 px-4 py-3">
-          <SettingsTextField
-            className="flex-1"
-            value={newTeamName}
-            onChange={e => setNewTeamName(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && void handleCreateTeam()}
-            placeholder={t('team.teamName')}
-            aria-label={t('team.teamName')}
-            inputSize="sm"
-          />
-          <Button
-            type="button"
-            variant="primary"
-            size="sm"
-            onClick={() => void handleCreateTeam()}
-            disabled={isCreating || !newTeamName.trim()}>
-            {isCreating ? t('team.creating') : t('common.create')}
-          </Button>
-        </div>
-      </SettingsSection>
-
       <SettingsSection title={t('team.joinExistingTeam')}>
+        <p className="px-4 pt-3 text-xs text-content-muted">{t('team.personalAutoCreatedNote')}</p>
         <div className="flex gap-2 px-4 py-3">
           <SettingsTextField
             mono

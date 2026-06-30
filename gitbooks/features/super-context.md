@@ -22,7 +22,7 @@ On the **first turn of a new thread**, if SuperContext is enabled, the harness:
 3. The bundle is validated, then prepended to your message under a `Prepared context (super context)` header before the orchestrator model ever sees the turn.
 4. The model answers your message already grounded in that context.
 
-```
+```text
 New thread, first message
         │
         ▼
@@ -43,6 +43,8 @@ New thread, first message
 ```
 
 Because the scout is **read-only**, it can never take an action on a fresh thread — it only reads and summarizes. And because it runs in the harness rather than as an optional tool, the redundant `agent_prepare_context` tool is suppressed for that turn, so the agent doesn't do the work twice.
+
+The scout runs on the **`burst` tier** (`hint = "burst"` → `burst-v1` on the managed backend) — a cheap, high-throughput, non-reasoning model. The sweep is a latency-tolerant pre-flight pass, so raw throughput on a fast model is a better fit than the pricier agentic/reasoning tiers. See [Automatic Model Routing](model-routing/README.md).
 
 ***
 

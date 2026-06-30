@@ -1,13 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { CustomGifMascot, RiveMascot } from '../../../features/human/Mascot';
-import { BackendMascot } from '../../../features/human/Mascot/backend/BackendMascot';
-import { BackendRiveMascot } from '../../../features/human/Mascot/backend/BackendRiveMascot';
-import {
-  isRiveMascotDetail,
-  type MascotDetailUnion,
-  type MascotSummary,
-} from '../../../features/human/Mascot/backend/types';
+import { CustomGifMascot, ManifestRiveMascot, RiveMascot } from '../../../features/human/Mascot';
+import { useMascotManifest } from '../../../features/human/Mascot/manifest/useMascotManifest';
 import {
   getMascotPalette,
   hexToArgbInt,
@@ -15,7 +9,6 @@ import {
 } from '../../../features/human/Mascot/mascotPalette';
 import { synthesizeSpeech } from '../../../features/human/voice/ttsClient';
 import { useT } from '../../../lib/i18n/I18nContext';
-import { fetchMascotList, getCachedMascotDetail } from '../../../services/mascotService';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import {
   DEFAULT_MASCOT_COLOR,
@@ -83,13 +76,16 @@ const MascotPanel = ({ embedded = false }: MascotPanelProps) => {
   const useLocaleDefault = useAppSelector(selectMascotVoiceUseLocaleDefault);
   const effectiveVoiceId = useAppSelector(selectEffectiveMascotVoiceId);
 
-  // Backend mascot library (PR tinyhumansai/backend#770). The list endpoint
-  // is cheap (no SVG bytes); per-id detail is fetched on demand so the
-  // animated preview only pays for the active selection.
-  const [backendList, setBackendList] = useState<MascotSummary[] | null>(null);
-  const [backendListError, setBackendListError] = useState<string | null>(null);
-  const [activeDetail, setActiveDetail] = useState<MascotDetailUnion | null>(null);
-  const [detailError, setDetailError] = useState<string | null>(null);
+  // Mascot library, sourced from the published GitHub manifest
+  // (tinyhumansai/mascots). `entry` is the resolved active mascot (selection
+  // or default); `manifest.mascots` drives the picker list. Each entry carries
+  // its full stateEngine inline, so there is no per-id detail round trip.
+  const {
+    manifest,
+    entry: activeEntry,
+    loading: manifestLoading,
+    error: manifestError,
+  } = useMascotManifest();
   const [customGifDraft, setCustomGifDraft] = useState<string>(customMascotGifUrl ?? '');
   const [customGifError, setCustomGifError] = useState<string | null>(null);
 
@@ -108,45 +104,6 @@ const MascotPanel = ({ embedded = false }: MascotPanelProps) => {
   // earlier audio-only cleanup missed.
   const previewRequestIdRef = useRef(0);
 
-  useEffect(() => {
-    let cancelled = false;
-    fetchMascotList()
-      .then(list => {
-        if (cancelled) return;
-        setBackendList(list);
-        setBackendListError(null);
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        const message = err instanceof Error ? err.message : t('settings.mascot.loadLibraryError');
-        setBackendListError(message);
-        setBackendList([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [t]);
-
-  useEffect(() => {
-    if (!selectedMascotId) return;
-    let cancelled = false;
-    getCachedMascotDetail(selectedMascotId)
-      .then(detail => {
-        if (cancelled) return;
-        setActiveDetail(detail);
-        setDetailError(null);
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        const message = err instanceof Error ? err.message : t('settings.mascot.loadDetailError');
-        setDetailError(message);
-        setActiveDetail(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedMascotId, t]);
-
   // Stop any in-flight preview audio when the panel unmounts. Also
   // bump the preview request id so a `synthesizeSpeech(...)` that
   // resolves after unmount can detect the staleness and bail.
@@ -161,15 +118,14 @@ const MascotPanel = ({ embedded = false }: MascotPanelProps) => {
     };
   }, []);
 
-  const handleSelectBackend = (id: string | null) => {
+  const handleSelectMascot = (id: string | null) => {
     dispatch(setSelectedMascotId(id));
     setCustomGifError(null);
-    if (id == null) {
-      setCustomGifDraft('');
-      dispatch(setCustomMascotGifUrl(null));
-    } else {
-      setCustomGifDraft('');
-    }
+    setCustomGifDraft('');
+    // Selecting a mascot id already clears the custom GIF in the reducer; the
+    // null ("default") case has to clear it here so the stage falls back to
+    // the default manifest mascot rather than the GIF.
+    if (id == null) dispatch(setCustomMascotGifUrl(null));
   };
 
   const onSaveCustomGif = () => {
@@ -305,8 +261,6 @@ const MascotPanel = ({ embedded = false }: MascotPanelProps) => {
   const presetPickerDisabled = useLocaleDefault;
   const isCustomVoice =
     !presetPickerDisabled && (voicePasteMode || !isCuratedVoicePreset(effectiveVoiceId));
-  const visibleActiveDetail = selectedMascotId ? activeDetail : null;
-  const visibleDetailError = selectedMascotId ? detailError : null;
 
   const activePalette = getMascotPalette(activeColor);
   const primaryColorArgb = useMemo(
@@ -629,25 +583,25 @@ const MascotPanel = ({ embedded = false }: MascotPanelProps) => {
           )}
         </div>
 
-        {/* Backend mascot library */}
+        {/* Mascot manifest library (tinyhumansai/mascots) */}
         <div className="bg-surface rounded-xl border border-line overflow-hidden">
-          {backendListError && (
+          {manifestError && (
             <p className="p-4 text-sm text-coral-700 dark:text-coral-300">
-              {t('settings.mascot.libraryUnavailable')}: {backendListError}
+              {t('settings.mascot.libraryUnavailable')}: {manifestError.message}
             </p>
           )}
-          {!backendListError && backendList === null && (
+          {!manifestError && manifestLoading && (
             <p className="p-4 text-sm text-content-muted">{t('settings.mascot.loadingLibrary')}</p>
           )}
-          {backendList && backendList.length === 0 && !backendListError && (
+          {manifest && manifest.mascots.length === 0 && !manifestError && (
             <p className="p-4 text-sm text-content-muted">{t('settings.mascot.noCharacters')}</p>
           )}
-          {backendList && backendList.length > 0 && (
+          {manifest && manifest.mascots.length > 0 && (
             <ul className="divide-y divide-line-subtle dark:divide-neutral-800">
               <li>
                 <button
                   type="button"
-                  onClick={() => handleSelectBackend(null)}
+                  onClick={() => handleSelectMascot(null)}
                   aria-pressed={selectedMascotId == null && customMascotGifUrl == null}
                   className={`flex w-full items-center justify-between px-4 py-3 text-left text-sm hover:bg-surface-hover ${
                     selectedMascotId == null && customMascotGifUrl == null
@@ -662,29 +616,35 @@ const MascotPanel = ({ embedded = false }: MascotPanelProps) => {
                   )}
                 </button>
               </li>
-              {backendList.map(summary => {
-                const active = summary.id === selectedMascotId;
+              {manifest.mascots.map(mascot => {
+                const active = mascot.id === selectedMascotId;
+                const poseCount = new Set([
+                  ...mascot.stateEngine.idlePoseCycle,
+                  ...Object.values(mascot.stateEngine.states),
+                ]).size;
+                const visemeCount = mascot.stateEngine.visemeCodes.length;
                 return (
-                  <li key={summary.id}>
+                  <li key={mascot.id}>
                     <button
                       type="button"
-                      onClick={() => handleSelectBackend(summary.id)}
+                      onClick={() => handleSelectMascot(mascot.id)}
                       aria-pressed={active}
-                      data-testid={`backend-mascot-${summary.id}`}
+                      data-testid={`manifest-mascot-${mascot.id}`}
                       className={`flex w-full items-center justify-between px-4 py-3 text-left text-sm hover:bg-surface-hover ${
                         active ? 'bg-surface-muted font-medium' : ''
                       }`}>
                       <span className="flex flex-col">
-                        <span>{summary.name}</span>
+                        <span className="flex items-center gap-2">
+                          {mascot.name}
+                          {mascot.status === 'draft' && (
+                            <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-amber-700 dark:bg-amber-500/20 dark:text-amber-200">
+                              {t('settings.mascot.characterDraft')}
+                            </span>
+                          )}
+                        </span>
                         <span className="text-[10px] text-content-muted">
-                          v{summary.version}
-                          {summary.format === 'rive'
-                            ? ` · ${Object.keys(summary.stateToPose ?? {}).length} ${t('settings.mascot.characterStates')}`
-                            : ` · ${summary.states?.length ?? 0} ${t('settings.mascot.characterStates')}${
-                                summary.hasVisemes
-                                  ? ` · ${t('settings.mascot.characterVisemes')}`
-                                  : ''
-                              }`}
+                          {poseCount} {t('settings.mascot.characterStates')} · {visemeCount}{' '}
+                          {t('settings.mascot.characterVisemes')}
                         </span>
                       </span>
                       {active && (
@@ -700,30 +660,24 @@ const MascotPanel = ({ embedded = false }: MascotPanelProps) => {
           )}
         </div>
 
-        {visibleActiveDetail && (
+        {activeEntry && !customMascotGifUrl && (
           <div className="mt-3 rounded-xl border border-line bg-surface-muted p-4">
             <p className="text-[11px] font-medium uppercase tracking-wide text-content-muted mb-2">
-              {t('settings.mascot.characterPreview')} · {visibleActiveDetail.name}
+              {t('settings.mascot.characterPreview')} · {activeEntry.name}
             </p>
             <div className="flex justify-center">
               <div style={{ width: 160, height: 160 }}>
-                {isRiveMascotDetail(visibleActiveDetail) ? (
-                  <BackendRiveMascot
-                    key={visibleActiveDetail.id}
-                    mascotId={visibleActiveDetail.id}
-                    size={160}
-                  />
-                ) : (
-                  <BackendMascot mascot={visibleActiveDetail} />
-                )}
+                <ManifestRiveMascot
+                  key={activeEntry.id}
+                  entry={activeEntry}
+                  size={160}
+                  primaryColor={primaryColorArgb}
+                  secondaryColor={secondaryColorArgb}
+                  idlePoseRotation
+                />
               </div>
             </div>
           </div>
-        )}
-        {visibleDetailError && (
-          <p className="mt-2 text-xs text-coral-700 dark:text-coral-300 px-1">
-            {visibleDetailError}
-          </p>
         )}
         <p className="text-xs text-content-muted leading-relaxed px-1 mt-2">
           {t('settings.mascot.characterDesc')}

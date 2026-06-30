@@ -53,6 +53,7 @@
 pub mod boot;
 pub mod bus;
 pub mod connections;
+mod curation;
 pub mod oauth;
 pub mod ops;
 mod registries;

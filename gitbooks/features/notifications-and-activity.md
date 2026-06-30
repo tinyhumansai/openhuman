@@ -94,5 +94,3 @@ Routines surface and manage the scheduled jobs; the underlying scheduling engine
 * [Subconscious Loop](subconscious.md) — the background engine behind the Background Activity tab.
 * [Cron / scheduled tasks](native-tools/cron.md) — the scheduling engine and agent tools behind Routines.
 * [Triggers](integrations/triggers.md) — webhooks and inbound events that can raise notifications.
-</content>
-</invoke>

@@ -34,7 +34,7 @@
 
 <p align="center">
  <a href="https://discord.tinyhumans.ai/">ڈسکارڈ</a> •
- <a href="https://www.reddit.com/r/tinyhumansai/">ریڈٹ</a> •
+ <a href="https://github.com/tinyhumansai/openhuman/discussions">Discussions</a> •
  <a href="https://x.com/intent/follow?screen_name=tinyhumansai">X/ٹویٹر</a> •
  <a href="https://tinyhumans.gitbook.io/openhuman/">دستاویزات</a> •
  <a href="https://x.com/intent/follow?screen_name=senamakel">فالو کریں @senamakel (مصنف)</a>
@@ -152,7 +152,7 @@ OpenHuman ایک اوپن سورس ایجنٹک اسسٹنٹ ہے جو آپ کی
 
 - **[میموری ٹری](https://tinyhumans.gitbook.io/openhuman/features/memory-tree) + [Obsidian Wiki](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki)**: ایک مقامی اول علم کا ذخیرہ جو آپ کے ڈیٹا اور سرگرمی سے بنایا گیا ہے۔ آپ جو کچھ بھی جوڑتے ہیں وہ ≤3k-token کے Markdown ٹکڑوں میں معیاری ہو جاتا ہے، اسکور کیا جاتا ہے، اور درجہ بندی کے خلاصے کے درختوں میں جوڑ دیا جاتا ہے جو **آپ کی مشین پر SQLite** میں محفوظ ہوتے ہیں۔ وہی ٹکڑے Obsidian-مطابق والٹ میں `.md` فائلوں کے طور پر اترتے ہیں جسے آپ کھول سکتے ہیں، براؤز اور ایڈٹ کر سکتے ہیں، کارپیتھی کے [obsidian-wiki ورک فلو](https://x.com/karpathy/status/2039805659525644595) سے متاثر۔
 
-- **سب کچھ شامل ہے**: ویب سرچ، ایک ویب فیچ [سکریپر](https://tinyhumans.gitbook.io/openhuman/features/native-tools)، ایک مکمل کوڈر ٹول سیٹ (فائل سسٹم، گٹ، لنٹ، ٹیسٹ، گریپ)، اور [مقامی آواز](https://tinyhumans.gitbook.io/openhuman/features/voice) (STT ان پٹ، ElevenLabs TTS آؤٹ پٹ، مسکاٹ لپ سنک، لائیو Google Meet ایجنٹ) ڈیفالٹ طور پر وائرڈ ہیں۔ ڈیفالٹ طور پر، [ماڈل روٹنگ](https://tinyhumans.gitbook.io/openhuman/features/model-routing) ہر ورک لوڈ (reasoning، fast، یا vision) کے لیے صحیح LLM کو منتخب اور پروکسی کرنے کے لیے OpenHuman بیک اینڈ استعمال کرتی ہے۔ ایک سبسکرپشن میں تمام ماڈلز شامل ہیں۔ کوئی "فائل پڑھنے کے لیے پلگ ان انسٹال کریں" رگڑ نہیں۔ تعاون یافتہ ڈیوائس پر ورک لوڈز کے لیے [Ollama کے ذریعے اختیاری مقامی AI](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai) استعمال کریں۔
+- **سب کچھ شامل ہے**: ویب سرچ، ایک ویب فیچ [سکریپر](https://tinyhumans.gitbook.io/openhuman/features/native-tools)، ایک مکمل کوڈر ٹول سیٹ (فائل سسٹم، گٹ، لنٹ، ٹیسٹ، گریپ)، اور [مقامی آواز](https://tinyhumans.gitbook.io/openhuman/features/native-tools/voice) (STT ان پٹ، ElevenLabs TTS آؤٹ پٹ، مسکاٹ لپ سنک، لائیو Google Meet ایجنٹ) ڈیفالٹ طور پر وائرڈ ہیں۔ ڈیفالٹ طور پر، [ماڈل روٹنگ](https://tinyhumans.gitbook.io/openhuman/features/model-routing) ہر ورک لوڈ (reasoning، fast، یا vision) کے لیے صحیح LLM کو منتخب اور پروکسی کرنے کے لیے OpenHuman بیک اینڈ استعمال کرتی ہے۔ ایک سبسکرپشن میں تمام ماڈلز شامل ہیں۔ کوئی "فائل پڑھنے کے لیے پلگ ان انسٹال کریں" رگڑ نہیں۔ تعاون یافتہ ڈیوائس پر ورک لوڈز کے لیے [Ollama کے ذریعے اختیاری مقامی AI](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai) استعمال کریں۔
 
 - **[اسمارٹ ٹوکن کمپریشن (TokenJuice)](https://tinyhumans.gitbook.io/openhuman/features/token-compression)**: ہر ٹول کال، سکریپ نتیجہ، ای میل باڈی، اور سرچ پے لوڈ کسی بھی LLM ماڈل کو چھونے سے پہلے ٹوکن کمپریشن پرت سے گزرتا ہے۔ HTML کو Markdown میں تبدیل کیا جاتا ہے، لمبے URLs کو چھوٹا کیا جاتا ہے، اور لمبے ٹول آؤٹ پٹ کو ایک قابل ترتیب اصول اوورلے وغیرہ کے ذریعے ڈیڈپ اور خلاصہ کیا جاتا ہے... CJK، ایموجی، اور دیگر ملٹی بائٹ ٹیکسٹ گرافیم بہ گرافیم محفوظ رہتے ہیں — کبھی نہیں ہٹائے جاتے۔ آپ کو وہی معلومات ملتی ہیں لیکن ٹوکنز کے ایک حصے میں۔ لاگت اور تاخیر کو 80% تک کم کرنا۔
 
@@ -225,7 +225,7 @@ _AGI اور مصنوعی شعور کی طرف بڑھ رہے ہیں؟ ریپو ک
 <div dir="ltr">
 
 <p align="center">
- <a href="https://www.star-history.com/#tinyhumansai/openhuman&type=date&legend=top-left">
+ <a href="https://www.star-history.com">
  <picture>
  <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&theme=dark&legend=top-left" />
  <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left" />

@@ -1293,6 +1293,8 @@ const messages: TranslationMap = {
   'settings.embeddings.testing': 'Menguji…',
   'settings.embeddings.testSuccess': 'Terhubung — {dims} dimensi',
   'settings.embeddings.connectionTestFailed': 'Pengujian gagal',
+  'settings.embeddings.verifyFallback':
+    'Tidak dapat memverifikasi endpoint embeddings. Pastikan endpoint berjalan dan menyediakan model embedding, lalu simpan lagi.',
   'settings.embeddings.testFailed': 'Gagal: {error}',
   'settings.embeddings.saving': 'Menyimpan…',
   'settings.embeddings.saved': 'Tersimpan.',
@@ -1529,6 +1531,15 @@ const messages: TranslationMap = {
   'mcp.tab.column.source': 'Sumber',
   'mcp.tab.column.author': 'Penulis',
   'mcp.tab.column.action': 'Aksi',
+  'mcp.tab.source.official': 'Resmi',
+  'mcp.tab.source.smithery': 'Smithery',
+  'mcp.tab.transport.hosted': 'Terhosting',
+  'mcp.tab.transport.local': 'Lokal',
+  'mcp.tab.transport.hostedHint':
+    'Berjalan di server jarak jauh — masuk atau token diatur saat memasang',
+  'mcp.tab.transport.localHint': 'Berjalan di perangkat Anda — mungkin perlu token saat memasang',
+  'mcp.tab.officialBadge': 'Resmi',
+  'mcp.tab.officialHint': 'Server resmi dari vendor',
   'mcp.tab.badge.installed': 'Terpasang',
   'mcp.tab.badge.registry': 'Registri',
   'mcp.tab.action.manage': 'Kelola',
@@ -1600,6 +1611,8 @@ const messages: TranslationMap = {
   'mcp.connectAuth.headerValue': 'Nilai',
   'mcp.connectAuth.removeHeader': 'Hapus header',
   'mcp.connectAuth.howToGetToken': 'Bantuan & konfigurasi',
+  'mcp.connectAuth.tokenProvider': 'Dapatkan token Anda di:',
+  'mcp.connectAuth.findToken': 'Di mana saya mendapatkan token?',
   'mcp.connectAuth.hideHelp': 'Sembunyikan bantuan',
   'mcp.connectAuth.schemeLabel': 'Cara mengirim nilai',
   'mcp.connectAuth.schemeBearer': 'Bearer',
@@ -1799,6 +1812,8 @@ const messages: TranslationMap = {
   'team.teamName': 'Nama tim',
   'team.creating': 'Membuat...',
   'team.joinExistingTeam': 'Bergabung dengan Tim yang Ada',
+  'team.personalAutoCreatedNote':
+    'Tim pribadi Anda dibuat secara otomatis. Untuk berkolaborasi, gabung ke tim yang sudah ada dengan kode undangan di bawah.',
   'team.inviteCode': 'Kode undangan',
   'team.joining': 'Bergabung...',
   'team.join': 'Bergabung',
@@ -4848,6 +4863,7 @@ const messages: TranslationMap = {
     'Tampilkan balasan asisten sebagai teks tanpa bingkai, sementara pesan Anda tetap dalam gelembung.',
   'settings.mascot.active': 'Aktif',
   'settings.mascot.characterDesc': 'Deskripsi karakter',
+  'settings.mascot.characterDraft': 'Draf',
   'settings.mascot.characterHeading': 'Judul karakter',
   'settings.mascot.customGifError':
     'Masukkan HTTPS .gif URL, loopback HTTP .gif URL, file:// .gif URL, atau jalur .gif lokal.',
@@ -5154,6 +5170,8 @@ const messages: TranslationMap = {
   'skills.meetingBots.platforms.teams': 'Microsoft Teams',
   'skills.meetingBots.platforms.zoom': 'Zoom',
   'skills.meetingBots.sendTo': 'Kirim ke',
+  'skills.meetingBots.serverOverloaded':
+    'OpenHuman sedang menerima beban tinggi saat ini. Silakan coba lagi dalam beberapa menit.',
   'skills.meetingBots.soonSuffix': 'segera',
   'skills.meetingBots.starting': 'Memulai...',
   'skills.meetingBots.recentCallsAriaLabel': 'Panggilan rapat terbaru',
@@ -6290,6 +6308,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.amountTooManyDecimals': 'Jumlah ini memiliki terlalu banyak angka desimal.',
   'agentWorld.trading.amountMustBePositive': 'Masukkan jumlah lebih besar dari nol.',
   'agentWorld.trading.amountInvalid': 'Masukkan jumlah yang valid.',
+
+  // Code block chrome
+  'codeBlock.copy': 'Salin',
+  'codeBlock.copied': 'Disalin!',
 };
 
 export default messages;

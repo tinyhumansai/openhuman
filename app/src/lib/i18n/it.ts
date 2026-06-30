@@ -1311,6 +1311,8 @@ const messages: TranslationMap = {
   'settings.embeddings.testing': 'Test in corso…',
   'settings.embeddings.testSuccess': 'Connesso — {dims} dimensioni',
   'settings.embeddings.connectionTestFailed': 'Test non riuscito',
+  'settings.embeddings.verifyFallback':
+    "Impossibile verificare l'endpoint di embedding. Assicurati che sia in esecuzione e fornisca un modello di embedding, poi salva di nuovo.",
   'settings.embeddings.testFailed': 'Fallito: {error}',
   'settings.embeddings.saving': 'Salvataggio…',
   'settings.embeddings.saved': 'Salvato.',
@@ -1553,6 +1555,16 @@ const messages: TranslationMap = {
   'mcp.tab.column.source': 'Origine',
   'mcp.tab.column.author': 'Autore',
   'mcp.tab.column.action': 'Azione',
+  'mcp.tab.source.official': 'Ufficiale',
+  'mcp.tab.source.smithery': 'Smithery',
+  'mcp.tab.transport.hosted': 'Ospitato',
+  'mcp.tab.transport.local': 'Locale',
+  'mcp.tab.transport.hostedHint':
+    "Funziona su un server remoto: l'accesso o il token si configura durante l'installazione",
+  'mcp.tab.transport.localHint':
+    "Funziona sul tuo dispositivo: potrebbe richiedere un token durante l'installazione",
+  'mcp.tab.officialBadge': 'Ufficiale',
+  'mcp.tab.officialHint': 'Server ufficiale del fornitore',
   'mcp.tab.badge.installed': 'Installato',
   'mcp.tab.badge.registry': 'Registro',
   'mcp.tab.action.manage': 'Gestisci',
@@ -1624,6 +1636,8 @@ const messages: TranslationMap = {
   'mcp.connectAuth.headerValue': 'Valore',
   'mcp.connectAuth.removeHeader': 'Rimuovi intestazione',
   'mcp.connectAuth.howToGetToken': 'Aiuto e configurazione',
+  'mcp.connectAuth.tokenProvider': 'Ottieni il token da:',
+  'mcp.connectAuth.findToken': 'Dove ottengo il token?',
   'mcp.connectAuth.hideHelp': 'Nascondi aiuto',
   'mcp.connectAuth.schemeLabel': 'Come inviare il valore',
   'mcp.connectAuth.schemeBearer': 'Bearer',
@@ -1823,6 +1837,8 @@ const messages: TranslationMap = {
   'team.teamName': 'Nome team',
   'team.creating': 'Creazione...',
   'team.joinExistingTeam': 'Unisciti a un team esistente',
+  'team.personalAutoCreatedNote':
+    'Il tuo team personale viene creato automaticamente. Per collaborare, unisciti a un team esistente con un codice di invito qui sotto.',
   'team.inviteCode': 'Codice invito',
   'team.joining': 'Adesione...',
   'team.join': 'Unisciti',
@@ -4912,6 +4928,7 @@ const messages: TranslationMap = {
     "Mostra le risposte dell'assistente come testo senza cornice mantenendo i tuoi messaggi nei fumetti.",
   'settings.mascot.active': 'Attivo',
   'settings.mascot.characterDesc': 'Descrizione personaggio',
+  'settings.mascot.characterDraft': 'Bozza',
   'settings.mascot.characterHeading': 'Intestazione personaggio',
   'settings.mascot.customGifError':
     'Immettere un HTTPS .gif URL, loopback HTTP .gif URL, file:// .gif URL o un percorso .gif locale.',
@@ -5220,6 +5237,8 @@ const messages: TranslationMap = {
   'skills.meetingBots.platforms.teams': 'Microsoft Teams',
   'skills.meetingBots.platforms.zoom': 'Zoom',
   'skills.meetingBots.sendTo': 'Invia a',
+  'skills.meetingBots.serverOverloaded':
+    'OpenHuman è sottoposto a un carico elevato in questo momento. Riprova tra qualche minuto.',
   'skills.meetingBots.soonSuffix': 'presto',
   'skills.meetingBots.starting': 'Avvio…',
   'skills.meetingBots.recentCallsAriaLabel': 'Chiamate recenti delle riunioni',
@@ -6382,6 +6401,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.amountTooManyDecimals': 'Questo importo ha troppe cifre decimali.',
   'agentWorld.trading.amountMustBePositive': 'Inserisci un importo maggiore di zero.',
   'agentWorld.trading.amountInvalid': 'Inserisci un importo valido.',
+
+  // Code block chrome
+  'codeBlock.copy': 'Copia',
+  'codeBlock.copied': 'Copiato!',
 };
 
 export default messages;

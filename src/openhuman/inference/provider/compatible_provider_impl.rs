@@ -163,6 +163,15 @@ impl Provider for OpenAiCompatibleProvider {
                     Some(model),
                     status,
                 );
+            } else if super::super::is_local_provider_no_model_loaded(status, &error) {
+                // Local inference server up but no model loaded — pure local
+                // user-state, demote instead of paging (TAURI-RUST-DMQ).
+                super::super::log_local_provider_no_model_loaded(
+                    "chat_completions",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
             } else if super::super::is_custom_openai_upstream_bad_request_http_400(
                 self.name.as_str(),
                 status,
@@ -749,6 +758,19 @@ impl Provider for OpenAiCompatibleProvider {
                     Some(model),
                     status,
                 );
+            } else if super::super::is_local_provider_no_model_loaded(status, &error) {
+                // Local inference server (LM Studio etc.) is up but has no model
+                // loaded — pure local user-state, nothing we sent is malformed.
+                // Demote instead of paging on every retry, and replace the body
+                // with actionable "load a model" guidance (TAURI-RUST-DMQ,
+                // mirrors the embeddings #3688 special-case).
+                super::super::log_local_provider_no_model_loaded(
+                    "native_chat",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+                message = super::super::local_provider_no_model_loaded_user_message();
             } else if super::super::is_custom_openai_upstream_bad_request_http_400(
                 self.name.as_str(),
                 status,
@@ -988,6 +1010,17 @@ impl Provider for OpenAiCompatibleProvider {
                         Some(model_owned.as_str()),
                         status,
                     );
+                } else if crate::openhuman::inference::provider::is_local_provider_no_model_loaded(
+                    status, &raw_error,
+                ) {
+                    // Local inference server up but no model loaded — pure local
+                    // user-state, demote instead of paging (TAURI-RUST-DMQ).
+                    crate::openhuman::inference::provider::log_local_provider_no_model_loaded(
+                        "stream_chat",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
                 } else if crate::openhuman::inference::provider::is_custom_openai_upstream_bad_request_http_400(
                     provider_name.as_str(),
                     status,
@@ -1217,6 +1250,17 @@ impl Provider for OpenAiCompatibleProvider {
                     status, &raw_error,
                 ) {
                     crate::openhuman::inference::provider::log_budget_exhausted_http_400(
+                        "stream_chat_history",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
+                } else if crate::openhuman::inference::provider::is_local_provider_no_model_loaded(
+                    status, &raw_error,
+                ) {
+                    // Local inference server up but no model loaded — pure local
+                    // user-state, demote instead of paging (TAURI-RUST-DMQ).
+                    crate::openhuman::inference::provider::log_local_provider_no_model_loaded(
                         "stream_chat_history",
                         provider_name.as_str(),
                         Some(model_owned.as_str()),

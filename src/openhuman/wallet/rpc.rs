@@ -26,7 +26,7 @@ static SHARED_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
         .expect("wallet RPC client builder must succeed with default settings")
 });
 
-fn redact_rpc_url(raw: &str) -> String {
+pub(crate) fn redact_rpc_url(raw: &str) -> String {
     match reqwest::Url::parse(raw) {
         Ok(url) => match url.host_str() {
             Some(host) => format!("{}://{}", url.scheme(), host),

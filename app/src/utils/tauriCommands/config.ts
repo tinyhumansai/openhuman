@@ -150,6 +150,7 @@ export interface RuntimeSettingsUpdate {
 
 export interface BrowserSettingsUpdate {
   enabled?: boolean | null;
+  backend?: 'agent_browser' | 'playwright' | 'rust_native' | 'computer_use' | 'auto' | null;
 }
 
 export interface ScreenIntelligenceSettingsUpdate {

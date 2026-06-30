@@ -1264,6 +1264,8 @@ const messages: TranslationMap = {
   'settings.embeddings.testing': 'جارٍ الاختبار…',
   'settings.embeddings.testSuccess': 'متصل — {dims} بُعد',
   'settings.embeddings.connectionTestFailed': 'فشل الاختبار',
+  'settings.embeddings.verifyFallback':
+    'تعذّر التحقق من نقطة نهاية التضمين. تأكد من أنها قيد التشغيل وتوفّر نموذج تضمين، ثم احفظ مرة أخرى.',
   'settings.embeddings.testFailed': 'فشل: {error}',
   'settings.embeddings.saving': 'جارٍ الحفظ…',
   'settings.embeddings.saved': 'تم الحفظ.',
@@ -1492,6 +1494,14 @@ const messages: TranslationMap = {
   'mcp.tab.column.source': 'المصدر',
   'mcp.tab.column.author': 'المؤلف',
   'mcp.tab.column.action': 'الإجراء',
+  'mcp.tab.source.official': 'رسمي',
+  'mcp.tab.source.smithery': 'Smithery',
+  'mcp.tab.transport.hosted': 'مستضاف',
+  'mcp.tab.transport.local': 'محلي',
+  'mcp.tab.transport.hostedHint': 'يعمل على خادم بعيد — يُعدّ تسجيل الدخول أو الرمز عند التثبيت',
+  'mcp.tab.transport.localHint': 'يعمل على جهازك — قد يحتاج إلى رمز عند التثبيت',
+  'mcp.tab.officialBadge': 'رسمي',
+  'mcp.tab.officialHint': 'خادم رسمي من المزوّد',
   'mcp.tab.badge.installed': 'مثبت',
   'mcp.tab.badge.registry': 'السجل',
   'mcp.tab.action.manage': 'إدارة',
@@ -1561,6 +1571,8 @@ const messages: TranslationMap = {
   'mcp.connectAuth.headerValue': 'القيمة',
   'mcp.connectAuth.removeHeader': 'إزالة الرأس',
   'mcp.connectAuth.howToGetToken': 'المساعدة والإعداد',
+  'mcp.connectAuth.tokenProvider': 'احصل على الرمز من:',
+  'mcp.connectAuth.findToken': 'من أين أحصل على الرمز؟',
   'mcp.connectAuth.hideHelp': 'إخفاء المساعدة',
   'mcp.connectAuth.schemeLabel': 'كيفية إرسال القيمة',
   'mcp.connectAuth.schemeBearer': 'Bearer',
@@ -1755,6 +1767,8 @@ const messages: TranslationMap = {
   'team.teamName': 'اسم الفريق',
   'team.creating': 'جارٍ الإنشاء...',
   'team.joinExistingTeam': 'الانضمام إلى فريق موجود',
+  'team.personalAutoCreatedNote':
+    'يتم إنشاء فريقك الشخصي تلقائيًا. للتعاون، انضم إلى فريق موجود باستخدام رمز دعوة أدناه.',
   'team.inviteCode': 'رمز الدعوة',
   'team.joining': 'جارٍ الانضمام...',
   'team.join': 'انضمام',
@@ -4734,6 +4748,7 @@ const messages: TranslationMap = {
     'اعرض ردود المساعد كنص بلا إطار مع إبقاء رسائلك داخل فقاعات.',
   'settings.mascot.active': 'نشط',
   'settings.mascot.characterDesc': 'وصف الشخصية',
+  'settings.mascot.characterDraft': 'مسودة',
   'settings.mascot.characterHeading': 'عنوان الشخصية',
   'settings.mascot.customGifError':
     'أدخل HTTPS .gif URL، أو الاسترجاع HTTP .gif URL، أو file:// .gif URL، أو مسار .gif المحلي.',
@@ -5033,6 +5048,8 @@ const messages: TranslationMap = {
   'skills.meetingBots.platforms.teams': 'Microsoft Teams',
   'skills.meetingBots.platforms.zoom': 'تكبير',
   'skills.meetingBots.sendTo': 'إرسال إلى',
+  'skills.meetingBots.serverOverloaded':
+    'يشهد OpenHuman ضغطًا كبيرًا في الوقت الحالي. يُرجى المحاولة مرة أخرى بعد بضع دقائق.',
   'skills.meetingBots.soonSuffix': 'قريبًا',
   'skills.meetingBots.starting': 'جارٍ البدء…',
   'skills.meetingBots.recentCallsAriaLabel': 'مكالمات الاجتماعات الأخيرة',
@@ -6136,6 +6153,10 @@ const messages: TranslationMap = {
     'يحتوي هذا المبلغ على عدد كبير جدًا من المنازل العشرية.',
   'agentWorld.trading.amountMustBePositive': 'أدخل مبلغًا أكبر من صفر.',
   'agentWorld.trading.amountInvalid': 'أدخل مبلغًا صالحًا.',
+
+  // Code block chrome
+  'codeBlock.copy': 'نسخ',
+  'codeBlock.copied': 'تم النسخ!',
 };
 
 export default messages;

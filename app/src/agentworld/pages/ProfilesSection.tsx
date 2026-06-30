@@ -77,13 +77,17 @@ type ProfileState =
 
 // ── Data hook ─────────────────────────────────────────────────────────────────
 
-/** Pick the primary handle, else the first, from a reverse-lookup result. */
-function pickPrimary(identities: OwnedIdentity[]): OwnedIdentity | undefined {
+/** Pick the primary handle, else the first, from a reverse-lookup result.
+ *  Generic over the identity shape so it accepts both the bare directory
+ *  `OwnedIdentity` and the richer GraphQL `Identity` (it only reads `primary`). */
+function pickPrimary<T extends { primary?: boolean }>(identities: T[]): T | undefined {
   return identities.find(i => i.primary) ?? identities[0];
 }
 
-/** Load the wallet's own identity: wallet_status → reverse-lookup → primary handle. */
-function useMyIdentity(): ProfileState {
+/** Load the wallet's own identity: wallet_status → reverse-lookup → primary handle.
+ *  `reloadKey` is bumped by the active-handle switch so the profile refetches and
+ *  the newly-promoted primary is reflected (#4198). */
+function useMyIdentity(reloadKey: number): ProfileState {
   const [state, setState] = useState<ProfileState>({ status: 'loading' });
 
   useEffect(() => {
@@ -157,18 +161,21 @@ function useMyIdentity(): ProfileState {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadKey]);
 
   return state;
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function AgentProfileCard({ data }: { data: ProfileData }) {
+function AgentProfileCard({ data, onSwitched }: { data: ProfileData; onSwitched?: () => void }) {
   const [followStats, setFollowStats] = useState<FollowStats | null>(null);
   const [exportData, setExportData] = useState<IdentityExport | null>(null);
   const [exportLoading, setExportLoading] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  // Handle currently being promoted to primary (in-flight), and any error.
+  const [switchingHandle, setSwitchingHandle] = useState<string | null>(null);
+  const [switchError, setSwitchError] = useState<string | null>(null);
 
   // ── Extract display fields from either data source ─────────────────────────
   const isGraphql = data.source === 'graphql';
@@ -176,10 +183,13 @@ function AgentProfileCard({ data }: { data: ProfileData }) {
   const identity = isGraphql ? null : data.identity;
 
   // Determine the display name / handle.
-  // GraphQL with a registered identity → @username.
+  // GraphQL with a registered identity → @username (the wallet's PRIMARY handle,
+  // not merely identities[0] — a user with several handles can mark any one
+  // primary, #4198).
   // GraphQL without identities (null) → displayName (no @ prefix, not a handle).
   // Directory fallback → @username from identity.
-  const primaryIdentityUsername = isGraphql ? (profile!.identities?.[0]?.username ?? null) : null;
+  const primaryIdentity = isGraphql ? pickPrimary(profile!.identities ?? []) : undefined;
+  const primaryIdentityUsername = isGraphql ? (primaryIdentity?.username ?? null) : null;
   const hasHandle = isGraphql
     ? primaryIdentityUsername !== null
     : (identity!.username ?? null) !== null;
@@ -225,6 +235,26 @@ function AgentProfileCard({ data }: { data: ProfileData }) {
       setExportLoading(false);
     }
   }, [exportLoading, exportData, handle]);
+
+  // Promote one of the wallet's handles to primary (active), then ask the
+  // parent to refetch so the new primary is reflected everywhere (#4198).
+  const handleSetActive = useCallback(
+    async (username: string) => {
+      const name = username.replace(/^@+/, '');
+      if (switchingHandle) return;
+      setSwitchError(null);
+      setSwitchingHandle(name);
+      try {
+        await apiClient.registry.assignPrimary(name);
+        onSwitched?.();
+      } catch (err) {
+        setSwitchError(String(err));
+      } finally {
+        setSwitchingHandle(null);
+      }
+    },
+    [switchingHandle, onSwitched]
+  );
 
   useEffect(() => {
     if (!agentId) return;
@@ -326,10 +356,20 @@ function AgentProfileCard({ data }: { data: ProfileData }) {
                   @{id.username.replace(/^@+/, '')}
                 </span>
                 <span className="flex items-center gap-2">
-                  {id.primary && (
+                  {id.primary ? (
                     <span className="rounded-full bg-primary-50 px-1.5 py-0.5 text-[10px] font-medium text-primary-600 dark:bg-primary-900/30 dark:text-primary-300">
-                      primary
+                      active
                     </span>
+                  ) : (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={switchingHandle !== null}
+                      onClick={() => void handleSetActive(id.username)}>
+                      {switchingHandle === id.username.replace(/^@+/, '')
+                        ? 'Switching…'
+                        : 'Make active'}
+                    </Button>
                   )}
                   <span className="text-[10px] uppercase tracking-wide text-content-faint">
                     {id.status}
@@ -338,6 +378,9 @@ function AgentProfileCard({ data }: { data: ProfileData }) {
               </div>
             ))}
           </div>
+          {switchError && (
+            <p className="mt-2 text-xs text-red-600 dark:text-red-400">{switchError}</p>
+          )}
         </div>
       )}
 
@@ -399,7 +442,8 @@ function StatusBlock({ tone, title, body }: { tone: string; title: string; body?
 // ── Main export ───────────────────────────────────────────────────────────────
 
 export default function ProfilesSection() {
-  const state = useMyIdentity();
+  const [reloadKey, setReloadKey] = useState(0);
+  const state = useMyIdentity(reloadKey);
 
   let body: React.ReactNode;
 
@@ -444,7 +488,7 @@ export default function ProfilesSection() {
   } else {
     // Render the wallet's own profile with either rich GraphQL data or bare
     // directory.reverse identity. AgentProfileCard handles both shapes internally.
-    body = <AgentProfileCard data={state.data} />;
+    body = <AgentProfileCard data={state.data} onSwitched={() => setReloadKey(k => k + 1)} />;
   }
 
   return <PanelScaffold description="Your agent profile">{body}</PanelScaffold>;

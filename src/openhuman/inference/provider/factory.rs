@@ -25,7 +25,8 @@
 //! Unknown slugs and missing-creds configurations produce actionable errors.
 
 use crate::openhuman::config::schema::cloud_providers::{
-    builtin_cloud_supports_responses_api, is_builtin_cloud_slug, AuthStyle,
+    builtin_cloud_supports_responses_api, endpoint_host_is_chat_completions_only,
+    is_builtin_cloud_slug, AuthStyle,
 };
 use crate::openhuman::config::Config;
 use crate::openhuman::credentials::AuthService;
@@ -76,7 +77,7 @@ pub(crate) const NO_MODEL_CONFIGURED_ANCHOR: &str = "resolved to an empty model 
 
 fn is_abstract_tier_model(model: &str) -> bool {
     use crate::openhuman::config::{
-        MODEL_AGENTIC_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1,
+        MODEL_AGENTIC_V1, MODEL_BURST_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1,
         MODEL_REASONING_V1, MODEL_SUMMARIZATION_V1, MODEL_VISION_V1,
     };
     let trimmed = model.trim();
@@ -84,6 +85,7 @@ fn is_abstract_tier_model(model: &str) -> bool {
         || trimmed == MODEL_REASONING_QUICK_V1
         || trimmed == MODEL_CHAT_V1
         || trimmed == MODEL_AGENTIC_V1
+        || trimmed == MODEL_BURST_V1
         || trimmed == MODEL_CODING_V1
         || trimmed == MODEL_VISION_V1
         || trimmed == MODEL_SUMMARIZATION_V1
@@ -107,6 +109,7 @@ pub fn resolve_model_for_hint(hint_or_tier: &str, config: &Config) -> String {
         ("reasoning", crate::openhuman::config::MODEL_REASONING_V1),
         ("chat", crate::openhuman::config::MODEL_CHAT_V1),
         ("agentic", crate::openhuman::config::MODEL_AGENTIC_V1),
+        ("burst", crate::openhuman::config::MODEL_BURST_V1),
         ("coding", crate::openhuman::config::MODEL_CODING_V1),
         ("vision", crate::openhuman::config::MODEL_VISION_V1),
         (
@@ -123,6 +126,7 @@ pub fn resolve_model_for_hint(hint_or_tier: &str, config: &Config) -> String {
         (crate::openhuman::config::MODEL_CHAT_V1, "chat"),
         (crate::openhuman::config::MODEL_REASONING_QUICK_V1, "chat"),
         (crate::openhuman::config::MODEL_AGENTIC_V1, "agentic"),
+        (crate::openhuman::config::MODEL_BURST_V1, "burst"),
         (crate::openhuman::config::MODEL_CODING_V1, "coding"),
         (crate::openhuman::config::MODEL_VISION_V1, "vision"),
         (
@@ -183,7 +187,7 @@ pub fn resolve_model_for_hint(hint_or_tier: &str, config: &Config) -> String {
 /// to the backend.
 pub(crate) fn is_known_openhuman_tier(model: &str) -> bool {
     use crate::openhuman::config::{
-        MODEL_AGENTIC_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1,
+        MODEL_AGENTIC_V1, MODEL_BURST_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1,
         MODEL_REASONING_V1, MODEL_SUMMARIZATION_V1, MODEL_VISION_V1,
     };
     matches!(
@@ -191,6 +195,7 @@ pub(crate) fn is_known_openhuman_tier(model: &str) -> bool {
         MODEL_REASONING_V1
             | MODEL_CHAT_V1
             | MODEL_AGENTIC_V1
+            | MODEL_BURST_V1
             | MODEL_CODING_V1
             | MODEL_REASONING_QUICK_V1
             | MODEL_SUMMARIZATION_V1
@@ -198,6 +203,7 @@ pub(crate) fn is_known_openhuman_tier(model: &str) -> bool {
             | "hint:reasoning"
             | "hint:chat"
             | "hint:agentic"
+            | "hint:burst"
             | "hint:coding"
             | "hint:summarization"
             | "hint:vision"
@@ -218,7 +224,7 @@ pub(crate) fn is_known_openhuman_tier(model: &str) -> bool {
 /// ([`crate::openhuman::inference::model_context::model_vision_enabled`]).
 pub(crate) fn oh_tier_supports_vision(model: &str) -> bool {
     use crate::openhuman::config::{
-        MODEL_AGENTIC_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1,
+        MODEL_AGENTIC_V1, MODEL_BURST_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1,
         MODEL_REASONING_V1, MODEL_SUMMARIZATION_V1, MODEL_VISION_V1,
     };
     match model {
@@ -229,6 +235,8 @@ pub(crate) fn oh_tier_supports_vision(model: &str) -> bool {
         MODEL_CHAT_V1 | "hint:chat" => false,
         MODEL_REASONING_QUICK_V1 => false,
         MODEL_AGENTIC_V1 | "hint:agentic" => false,
+        // Burst is a text-only tier.
+        MODEL_BURST_V1 | "hint:burst" => false,
         MODEL_CODING_V1 | "hint:coding" => false,
         MODEL_SUMMARIZATION_V1 | "hint:summarization" => false,
         _ => false,
@@ -244,9 +252,10 @@ pub(crate) fn oh_tier_supports_vision(model: &str) -> bool {
 ///
 /// Only `chat`, `reasoning`, and `coding` participate in BYOK inheritance.
 /// Background workloads (`memory`, `embeddings`, `heartbeat`, `learning`,
-/// `subconscious`) and the `agentic` workload always fall through to
-/// `primary_cloud` — they use tier-specific models that BYOK providers don't
-/// understand, and their providers are configured independently.
+/// `subconscious`) and the `agentic`/`burst` workloads always fall through to
+/// `primary_cloud` when their explicit provider route is unset — they use
+/// tier-specific models that BYOK providers don't understand, and their
+/// providers are configured independently.
 ///
 /// For backwards compatibility, a legacy external `inference_url` takes
 /// precedence when `primary_cloud` still points at OpenHuman because
@@ -258,6 +267,10 @@ pub fn provider_for_role(role: &str, config: &Config) -> String {
         "reasoning" => config.reasoning_provider.as_deref(),
         "agentic" => config.agentic_provider.as_deref(),
         "coding" => config.coding_provider.as_deref(),
+        // Burst uses the existing Agentic workload route for BYOK/local parity.
+        // If unset, it falls through to the managed backend and is pinned to
+        // `burst-v1` by `managed_tier_for_role`.
+        "burst" => config.agentic_provider.as_deref(),
         // Tier-specific multimodal model; like `agentic` it is NOT part of the
         // chat-tier BYOK inheritance below — when unset it falls through to
         // `primary_cloud` (→ managed `vision-v1`).
@@ -278,9 +291,9 @@ pub fn provider_for_role(role: &str, config: &Config) -> String {
     if s.is_empty() || s == "cloud" {
         // BYOK inheritance is scoped to the three chat-tier roles only.
         // Background workloads (memory, embeddings, heartbeat, learning,
-        // subconscious) and the agentic workload must stay on the managed
-        // backend — they use tier-specific models that BYOK providers don't
-        // understand, and their providers are configured separately.
+        // subconscious) and the agentic/burst workloads must stay on the managed
+        // backend when unset — they use tier-specific models that BYOK providers
+        // don't understand, and their providers are configured separately.
         if matches!(role, "chat" | "reasoning" | "coding") {
             if let Some(byok) = resolve_byok_fallback_provider_string(config) {
                 log::debug!(
@@ -298,13 +311,17 @@ pub fn provider_for_role(role: &str, config: &Config) -> String {
         if !matches!(role, "chat" | "reasoning" | "coding") {
             if let Some(chat) = config.chat_provider.as_deref() {
                 if crate::openhuman::inference::local::profile::is_local_provider_string(chat) {
+                    let override_hint = if role == "burst" {
+                        "set agentic_provider explicitly to override".to_string()
+                    } else {
+                        format!("set {role}_provider explicitly to override")
+                    };
                     log::info!(
                         "[providers][local-fallback] role={} using managed backend (chat is \
-                         local '{}' but background workloads require cloud — set \
-                         {}_provider explicitly to override)",
+                         local '{}' but background workloads require cloud — {})",
                         role,
                         chat,
-                        role
+                        override_hint
                     );
                 }
             }
@@ -870,12 +887,18 @@ pub(crate) fn create_local_chat_provider_from_string(
 /// every attached image — leaving the managed vision sub-agent blind.
 fn managed_tier_for_role(role: &str) -> Option<&'static str> {
     use crate::openhuman::config::{
-        MODEL_AGENTIC_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_V1, MODEL_VISION_V1,
+        MODEL_AGENTIC_V1, MODEL_BURST_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_V1,
+        MODEL_VISION_V1,
     };
     match role {
         "reasoning" => Some(MODEL_REASONING_V1),
         "agentic" => Some(MODEL_AGENTIC_V1),
         "coding" => Some(MODEL_CODING_V1),
+        // Burst rides the managed backend's high-throughput tier. Pinned here
+        // (rather than collapsing to `default_model`) so the `hint = "burst"`
+        // sub-agent — the super-context scout — actually reaches `burst-v1`.
+        // There is no `burst_provider` knob: burst is managed-only.
+        "burst" => Some(MODEL_BURST_V1),
         "vision" => Some(MODEL_VISION_V1),
         // Background subconscious tick/triage: pinned to the lightweight chat
         // tier (see the doc above for why it is pinned despite being background).
@@ -975,6 +998,7 @@ fn make_openhuman_backend(
         Some("reasoning") => crate::openhuman::config::MODEL_REASONING_V1.to_string(),
         Some("chat") => crate::openhuman::config::MODEL_CHAT_V1.to_string(),
         Some("agentic") => crate::openhuman::config::MODEL_AGENTIC_V1.to_string(),
+        Some("burst") => crate::openhuman::config::MODEL_BURST_V1.to_string(),
         Some("coding") => crate::openhuman::config::MODEL_CODING_V1.to_string(),
         Some("summarization") => crate::openhuman::config::MODEL_SUMMARIZATION_V1.to_string(),
         Some("vision") => crate::openhuman::config::MODEL_VISION_V1.to_string(),
@@ -988,7 +1012,7 @@ fn make_openhuman_backend(
             } else {
                 log::warn!(
                     "[providers][chat-factory] model '{}' is not a recognized OpenHuman \
-                     backend tier (valid: reasoning-v1, chat-v1, agentic-v1, coding-v1, \
+                     backend tier (valid: reasoning-v1, chat-v1, agentic-v1, burst-v1, coding-v1, \
                      reasoning-quick-v1, summarization-v1, vision-v1); falling back to '{}'",
                     model,
                     crate::openhuman::config::MODEL_REASONING_V1,
@@ -1639,8 +1663,16 @@ fn make_cloud_provider_by_slug(
             // local-provider TAURI-RUST-59Y fix). OpenAI keeps the fallback
             // (genuine `/responses`), and so do custom / unknown slugs, whose
             // endpoint may be a real OpenAI proxy.
-            let responses_fallback =
-                !is_builtin_cloud_slug(slug) || builtin_cloud_supports_responses_api(slug);
+            //
+            // The builtin-slug gate alone leaks for a *custom* slug pointed at a
+            // known chat-only host (e.g. a user slug at
+            // `integrate.api.nvidia.com`): `is_builtin_cloud_slug` is false so
+            // the fallback stayed on and `/responses` 404'd (TAURI-RUST-5A1).
+            // Also consult the endpoint host so a chat-only host disables the
+            // fallback regardless of slug; an unknown proxy host still keeps it.
+            let responses_fallback = (!is_builtin_cloud_slug(slug)
+                || builtin_cloud_supports_responses_api(slug))
+                && !endpoint_host_is_chat_completions_only(&openai_codex_routing.endpoint);
             let credential = (!key.trim().is_empty()).then_some(key.as_str());
             let base_provider = if responses_fallback {
                 OpenAiCompatibleProvider::new(

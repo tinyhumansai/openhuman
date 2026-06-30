@@ -3204,6 +3204,52 @@ fn reasoning_and_reasoning_content_both_present_in_stream_delta_does_not_error()
     );
 }
 
+/// Regression for Sentry TAURI-RUST-85R: NVIDIA's OpenAI-compat endpoint returns
+/// `reasoning_content` TWICE in the same message object for some thinking models
+/// (e.g. `stepfun-ai/step-3.7-flash`). The derived `Shadow` struct strict-rejected
+/// the repeated key with `duplicate field \`reasoning_content\``, dropping the
+/// whole completion (2,037 events). The map-fold deserializer tolerates it —
+/// the last non-null copy wins.
+#[test]
+fn duplicate_reasoning_content_key_does_not_error() {
+    let json = r#"{"choices":[{"message":{"content":null,"reasoning_content":"first cot","reasoning_content":"second cot"}}]}"#;
+    let resp: ApiChatResponse = serde_json::from_str(json)
+        .expect("a repeated reasoning_content key must parse without a duplicate-field error");
+    assert_eq!(
+        resp.choices[0].message.reasoning_content.as_deref(),
+        Some("second cot"),
+        "the last non-null reasoning_content copy wins"
+    );
+}
+
+/// A repeated `reasoning_content` whose second copy is `null` must not clobber
+/// the real first value — the CoT has to survive to be replayed verbatim.
+#[test]
+fn duplicate_reasoning_content_key_null_second_copy_keeps_value() {
+    let json = r#"{"choices":[{"message":{"content":null,"reasoning_content":"real cot","reasoning_content":null}}]}"#;
+    let resp: ApiChatResponse = serde_json::from_str(json)
+        .expect("a repeated reasoning_content key must parse without a duplicate-field error");
+    assert_eq!(
+        resp.choices[0].message.reasoning_content.as_deref(),
+        Some("real cot"),
+        "a null second copy must not clobber the real value"
+    );
+}
+
+/// Same duplicate-key regression on the streaming delta path (TAURI-RUST-85R
+/// also hits the native stream parser at `compatible_stream_native.rs`).
+#[test]
+fn duplicate_reasoning_content_key_in_stream_delta_does_not_error() {
+    let json = r#"{"choices":[{"delta":{"reasoning_content":"first cot","reasoning_content":"second cot"},"finish_reason":null}]}"#;
+    let chunk: StreamChunkResponse = serde_json::from_str(json)
+        .expect("a repeated reasoning_content key must parse without a duplicate-field error");
+    assert_eq!(
+        chunk.choices[0].delta.reasoning_content.as_deref(),
+        Some("second cot"),
+        "the last non-null reasoning_content copy wins"
+    );
+}
+
 /// End-to-end: a tool-call turn whose reasoning arrived under the `reasoning`
 /// alias must still be surfaced by `parse_native_response` so the agent loop
 /// can replay it on the follow-up request (the issue #3094 failure path).
@@ -4487,4 +4533,101 @@ fn extract_usage_defaults_cached_tokens_to_zero_when_absent() {
     let usage = OpenAiCompatibleProvider::extract_usage(&resp).expect("usage present");
     assert_eq!(usage.cached_input_tokens, 0);
     assert_eq!(usage.input_tokens, 500);
+}
+
+/// Minimal valid Responses SSE body so the Codex OAuth streamed-aggregate
+/// path returns `Ok("hi")`.
+const CODEX_RESPONSES_SSE_OK: &str =
+    "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n\
+     data: {\"type\":\"response.completed\",\"response\":{\"output_text\":\"hi\"}}\n\n\
+     data: [DONE]\n";
+
+/// TAURI-RUST-AHX: the ChatGPT-OAuth Codex Responses endpoint
+/// (`chatgpt.com/backend-api/codex/responses`) rejects the `auto` model
+/// sentinel with a 400 (`The 'auto' model is not supported when using Codex
+/// with a ChatGPT account.`). `chat_via_responses` must remap `auto` to a
+/// concrete Codex-class model before the request leaves, so the provider
+/// never sees `auto`.
+#[tokio::test]
+async fn codex_oauth_responses_remaps_auto_model() {
+    let mock_server = MockServer::start().await;
+
+    // Codex OAuth base-URL shape: the path carries `backend-api/codex`, so
+    // `is_codex_oauth_responses` fires and `responses_url()` resolves to
+    // `<base>/responses`.
+    let base_url = format!("{}/backend-api/codex", mock_server.uri());
+
+    Mock::given(method("POST"))
+        .and(path("/backend-api/codex/responses"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(CODEX_RESPONSES_SSE_OK))
+        .mount(&mock_server)
+        .await;
+
+    let provider = make_provider("openai", &base_url, Some("oauth-access-token"));
+    let messages = vec![ChatMessage {
+        id: None,
+        role: "user".to_string(),
+        content: "hello".to_string(),
+        extra_metadata: None,
+    }];
+
+    let out = provider
+        .chat_via_responses(Some("oauth-access-token"), &messages, "auto", None)
+        .await
+        .expect("codex oauth responses call should succeed");
+    assert_eq!(out, "hi");
+
+    // The model on the wire must be a concrete Codex-class model, never `auto`.
+    let requests = mock_server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1, "expected exactly one responses request");
+    let body: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+    let sent_model = body
+        .get("model")
+        .and_then(|m| m.as_str())
+        .unwrap_or_default();
+    assert_ne!(
+        sent_model, "auto",
+        "auto sentinel must not leak to the Codex OAuth endpoint"
+    );
+    assert_eq!(
+        sent_model,
+        super::super::openai_codex::OPENAI_CODEX_MODEL_HINTS[0],
+        "auto must be remapped to the preferred concrete Codex model"
+    );
+}
+
+/// Scope guard for TAURI-RUST-AHX: only the `auto` sentinel is remapped — a
+/// concrete model the user pinned must pass through to the Codex OAuth
+/// endpoint untouched.
+#[tokio::test]
+async fn codex_oauth_responses_preserves_concrete_model() {
+    let mock_server = MockServer::start().await;
+    let base_url = format!("{}/backend-api/codex", mock_server.uri());
+
+    Mock::given(method("POST"))
+        .and(path("/backend-api/codex/responses"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(CODEX_RESPONSES_SSE_OK))
+        .mount(&mock_server)
+        .await;
+
+    let provider = make_provider("openai", &base_url, Some("oauth-access-token"));
+    let messages = vec![ChatMessage {
+        id: None,
+        role: "user".to_string(),
+        content: "hello".to_string(),
+        extra_metadata: None,
+    }];
+
+    provider
+        .chat_via_responses(Some("oauth-access-token"), &messages, "gpt-5.3-codex", None)
+        .await
+        .expect("codex oauth responses call should succeed");
+
+    let requests = mock_server.received_requests().await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+    assert_eq!(
+        body.get("model").and_then(|m| m.as_str()),
+        Some("gpt-5.3-codex"),
+        "a concrete pinned model must not be remapped"
+    );
 }

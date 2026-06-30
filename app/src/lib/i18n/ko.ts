@@ -1281,6 +1281,8 @@ const messages: TranslationMap = {
   'settings.embeddings.testing': '테스트 중…',
   'settings.embeddings.testSuccess': '연결됨 — {dims} 차원',
   'settings.embeddings.connectionTestFailed': '테스트 실패',
+  'settings.embeddings.verifyFallback':
+    '임베딩 엔드포인트를 확인할 수 없습니다. 엔드포인트가 실행 중이고 임베딩 모델을 제공하는지 확인한 후 다시 저장하세요.',
   'settings.embeddings.testFailed': '실패: {error}',
   'settings.embeddings.saving': '저장 중…',
   'settings.embeddings.saved': '저장됨.',
@@ -1513,6 +1515,14 @@ const messages: TranslationMap = {
   'mcp.tab.column.source': '출처',
   'mcp.tab.column.author': '작성자',
   'mcp.tab.column.action': '작업',
+  'mcp.tab.source.official': '공식',
+  'mcp.tab.source.smithery': 'Smithery',
+  'mcp.tab.transport.hosted': '호스팅됨',
+  'mcp.tab.transport.local': '로컬',
+  'mcp.tab.transport.hostedHint': '원격 서버에서 실행 — 설치 시 로그인 또는 토큰을 설정합니다',
+  'mcp.tab.transport.localHint': '기기에서 실행 — 설치 시 토큰이 필요할 수 있습니다',
+  'mcp.tab.officialBadge': '공식',
+  'mcp.tab.officialHint': '공급업체의 공식 서버',
   'mcp.tab.badge.installed': '설치됨',
   'mcp.tab.badge.registry': '레지스트리',
   'mcp.tab.action.manage': '관리',
@@ -1583,6 +1593,8 @@ const messages: TranslationMap = {
   'mcp.connectAuth.headerValue': '값',
   'mcp.connectAuth.removeHeader': '헤더 제거',
   'mcp.connectAuth.howToGetToken': '도움말 및 구성',
+  'mcp.connectAuth.tokenProvider': '토큰 받는 곳:',
+  'mcp.connectAuth.findToken': '토큰은 어디서 받나요?',
   'mcp.connectAuth.hideHelp': '도움말 숨기기',
   'mcp.connectAuth.schemeLabel': '값을 보내는 방법',
   'mcp.connectAuth.schemeBearer': 'Bearer',
@@ -1775,6 +1787,8 @@ const messages: TranslationMap = {
   'team.teamName': '팀 이름',
   'team.creating': '생성 중...',
   'team.joinExistingTeam': '기존 팀 참가',
+  'team.personalAutoCreatedNote':
+    '개인 팀은 자동으로 생성됩니다. 협업하려면 아래 초대 코드로 기존 팀에 참여하세요.',
   'team.inviteCode': '초대 코드',
   'team.joining': '참가 중...',
   'team.join': '참가',
@@ -4784,6 +4798,7 @@ const messages: TranslationMap = {
     '사용자 메시지는 말풍선으로 유지하고 어시스턴트 답변은 프레임 없는 텍스트로 표시합니다.',
   'settings.mascot.active': '활성',
   'settings.mascot.characterDesc': '캐릭터 설명',
+  'settings.mascot.characterDraft': '초안',
   'settings.mascot.characterHeading': '캐릭터 제목',
   'settings.mascot.customGifError':
     'HTTPS .gif URL, loopback HTTP .gif URL, file:// .gif URL 또는 로컬 .gif 경로를 입력하세요.',
@@ -5089,6 +5104,8 @@ const messages: TranslationMap = {
   'skills.meetingBots.platforms.teams': 'Microsoft Teams',
   'skills.meetingBots.platforms.zoom': 'Zoom',
   'skills.meetingBots.sendTo': '보내기',
+  'skills.meetingBots.serverOverloaded':
+    '현재 OpenHuman의 부하가 매우 높습니다. 몇 분 후에 다시 시도해 주세요.',
   'skills.meetingBots.soonSuffix': '곧',
   'skills.meetingBots.starting': '시작 중…',
   'skills.meetingBots.recentCallsAriaLabel': '최근 회의 통화',
@@ -6204,6 +6221,10 @@ const messages: TranslationMap = {
   'agentWorld.trading.amountTooManyDecimals': '이 금액의 소수점 자릿수가 너무 많습니다.',
   'agentWorld.trading.amountMustBePositive': '0보다 큰 금액을 입력하세요.',
   'agentWorld.trading.amountInvalid': '유효한 금액을 입력하세요.',
+
+  // Code block chrome
+  'codeBlock.copy': '복사',
+  'codeBlock.copied': '복사됨!',
 };
 
 export default messages;

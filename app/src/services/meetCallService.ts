@@ -334,12 +334,33 @@ export interface MascotJoinMeetingResult {
 }
 
 /**
- * The 429 capacity-gate message the backend emits for free users. Treated
- * as the canonical user-facing copy so the UI can show a tailored notice
- * without leaking the underlying paid-plan rule.
+ * Tailored, actionable user-facing copy shown when the backend's capacity gate
+ * trips — replaces the backend's terse "…Please try again later." with retry
+ * guidance, without leaking the underlying paid-plan rule.
  */
 export const SERVER_OVERLOADED_MESSAGE =
   'OpenHuman is under heavy load right now. Please try again in a few minutes.';
+
+/**
+ * Recognize the backend's free-user capacity-gate response (`SERVER_OVERLOADED`,
+ * backend `paidPlan.ts` → `"Mascot streaming capacity is exhausted. Please try
+ * again later."`).
+ *
+ * The shared `apiClient` drops `errorCode` from error bodies (`apiClient.ts`
+ * only forwards `error` + `message`), so the message text is the only signal
+ * that survives. Detection therefore MUST key on the backend wording — it used
+ * to be compared for exact equality against [`SERVER_OVERLOADED_MESSAGE`], but
+ * that constant was changed to friendlier copy and no longer matches the
+ * backend string, so the check silently never fired and the raw generic
+ * "…try again later." leaked to the user instead of the tailored notice
+ * (#4151). Match a stable substring, case-insensitively, so minor wording drift
+ * on either side still resolves to the actionable message.
+ */
+export function isCapacityGateMessage(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const t = text.toLowerCase();
+  return t.includes('streaming capacity') || t.includes('capacity is exhausted');
+}
 
 export interface MascotJoinMeetingError {
   /** User-safe error text. Falls back to a generic message. */
@@ -379,8 +400,13 @@ export async function joinMeetingViaMascotBot(
       : err instanceof Error
         ? err.message
         : 'Failed to start meeting bot.';
-    const isCapacityGated = text === SERVER_OVERLOADED_MESSAGE;
-    const wrapped: MascotJoinMeetingError = { message: text, isCapacityGated };
+    const isCapacityGated = isCapacityGateMessage(text);
+    // When capacity-gated, surface the tailored, actionable copy instead of the
+    // backend's raw "…try again later." string (#4151).
+    const wrapped: MascotJoinMeetingError = {
+      message: isCapacityGated ? SERVER_OVERLOADED_MESSAGE : text,
+      isCapacityGated,
+    };
     throw wrapped;
   }
 }

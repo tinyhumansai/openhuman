@@ -94,6 +94,7 @@ pub(super) struct RuntimeSettingsUpdate {
 #[derive(Debug, Deserialize)]
 pub(super) struct BrowserSettingsUpdate {
     pub(super) enabled: Option<bool>,
+    pub(super) backend: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

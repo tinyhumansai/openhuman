@@ -358,6 +358,47 @@ describe('SkillsExplorerTab', () => {
     expect(within(tile).getByTestId('registry-install-built-in/apple-notes')).toBeInTheDocument();
   });
 
+  // #4150: a successful install must flip the card to "Installed" even when the
+  // refetched installed list does NOT map back to the catalog entry via the
+  // install-key heuristic — otherwise the card reverted to "Install" and the
+  // only signal of success was a fleeting toast.
+  it('marks a catalog entry installed on success even when the refetched list does not map back', async () => {
+    const { workflowsApi } = await import('../../../services/api/workflowsApi');
+    const { skillRegistryApi } = await import('../../../services/api/skillRegistryApi');
+    const catalogEntry = {
+      ...MOCK_CATALOG_ENTRY,
+      id: 'built-in/apple-notes',
+      name: 'Apple Notes',
+      docs_path: 'skills/apple-notes/SKILL.md',
+    };
+    // The installed list never resolves to anything that maps back to the entry
+    // (simulates a post-install id/location the heuristic can't match).
+    vi.mocked(workflowsApi.listWorkflows).mockResolvedValue([]);
+    vi.mocked(skillRegistryApi.browse).mockResolvedValue([catalogEntry]);
+    vi.mocked(skillRegistryApi.install).mockResolvedValue({
+      url: '',
+      stdout: '',
+      stderr: '',
+      newSkills: ['apple-notes'],
+    });
+
+    render(<SkillsExplorerTab />);
+
+    const installBtn = await screen.findByTestId('registry-install-built-in/apple-notes');
+    await act(async () => {
+      fireEvent.click(installBtn);
+    });
+
+    const tile = screen.getByTestId('registry-tile-built-in/apple-notes');
+    await waitFor(() => {
+      expect(within(tile).getByText('Installed')).toBeInTheDocument();
+    });
+    expect(skillRegistryApi.install).toHaveBeenCalledWith('built-in/apple-notes');
+    expect(
+      within(tile).queryByTestId('registry-install-built-in/apple-notes')
+    ).not.toBeInTheDocument();
+  });
+
   it('has an install from URL button', async () => {
     const { workflowsApi } = await import('../../../services/api/workflowsApi');
     vi.mocked(workflowsApi.listWorkflows).mockResolvedValue([]);
