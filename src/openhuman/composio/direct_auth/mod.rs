@@ -37,7 +37,6 @@ pub(crate) fn is_invalid_api_key_error(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
     lower.contains("invalid api key")
         || (lower.contains("401") && lower.contains("api key") && lower.contains("invalid"))
-        || lower.contains("http 401")
 }
 
 pub(crate) fn record_direct_auth_success(key_id: u64) {
@@ -54,6 +53,7 @@ pub(crate) fn reset_all_direct_auth_failures() {
 
 pub(crate) fn record_direct_auth_failure(key_id: u64, message: &str) -> DirectAuthFailureDecision {
     if !is_invalid_api_key_error(message) {
+        reset_direct_auth_failure(key_id);
         return DirectAuthFailureDecision::NotAuthFailure;
     }
 
@@ -82,4 +82,44 @@ pub(crate) fn invalid_api_key_backoff_message(consecutive: u32) -> String {
     format!(
         "Direct-mode Composio API key was rejected {consecutive} consecutive times with HTTP 401 Invalid API key; re-enter a valid key in Settings > Connections > Composio to resume polling."
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generic_http_401_is_not_classified_as_invalid_api_key() {
+        assert!(!is_invalid_api_key_error("HTTP 401"));
+        assert!(is_invalid_api_key_error("HTTP 401: Invalid API key"));
+    }
+
+    #[test]
+    fn non_auth_failure_resets_invalid_key_streak() {
+        let key_id = fingerprint_api_key("ck_test_streak_reset");
+        reset_direct_auth_failure(key_id);
+
+        assert_eq!(
+            record_direct_auth_failure(key_id, "HTTP 401: Invalid API key"),
+            DirectAuthFailureDecision::RetryAllowed { consecutive: 1 }
+        );
+        assert_eq!(
+            record_direct_auth_failure(key_id, "HTTP 401: Invalid API key"),
+            DirectAuthFailureDecision::RetryAllowed { consecutive: 2 }
+        );
+        assert_eq!(
+            record_direct_auth_failure(key_id, "HTTP 500: upstream unavailable"),
+            DirectAuthFailureDecision::NotAuthFailure
+        );
+        assert!(
+            direct_auth_backoff_error(key_id).is_none(),
+            "non-auth failures must clear stale invalid-key counts"
+        );
+        assert_eq!(
+            record_direct_auth_failure(key_id, "HTTP 401: Invalid API key"),
+            DirectAuthFailureDecision::RetryAllowed { consecutive: 1 }
+        );
+
+        reset_direct_auth_failure(key_id);
+    }
 }

@@ -1142,8 +1142,15 @@ fn direct_tool_for_test() -> std::sync::Arc<crate::openhuman::tools::ComposioToo
 /// Like [`direct_tool_for_test`] but with the v3 base pointed at a local
 /// mock server so HTTP paths (e.g. `direct_list_tools`) can be asserted.
 fn direct_tool_for_mock(base_v3: String) -> std::sync::Arc<crate::openhuman::tools::ComposioTool> {
+    direct_tool_for_mock_with_key(base_v3, "ck_test_direct")
+}
+
+fn direct_tool_for_mock_with_key(
+    base_v3: String,
+    api_key: &str,
+) -> std::sync::Arc<crate::openhuman::tools::ComposioTool> {
     std::sync::Arc::new(crate::openhuman::tools::ComposioTool::new_with_v3_base(
-        "ck_test_direct",
+        api_key,
         Some("default"),
         std::sync::Arc::new(crate::openhuman::security::SecurityPolicy::default()),
         base_v3,
@@ -1184,7 +1191,7 @@ async fn direct_list_connections_stops_hitting_composio_after_repeated_invalid_a
         )
         .with_state(hits.clone());
     let base = start_mock_backend(app).await;
-    let tool = direct_tool_for_mock(base);
+    let tool = direct_tool_for_mock_with_key(base, "ck_test_direct_invalid_backoff");
     let _auth_guard = DirectAuthFailureGuard::for_tool(&tool);
 
     for _ in 0..2 {

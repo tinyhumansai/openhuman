@@ -135,7 +135,6 @@ pub async fn composio_set_api_key(
 /// `config.composio.mode` back to `"backend"`.
 pub async fn composio_clear_api_key(config: &Config) -> OpResult<RpcOutcome<serde_json::Value>> {
     tracing::debug!("[composio-direct] clear_api_key");
-    direct_auth::reset_all_direct_auth_failures();
     crate::openhuman::credentials::clear_composio_api_key(config)
         .await
         .map_err(|e| format!("[composio-direct] clear_composio_api_key failed: {e}"))?;
@@ -148,6 +147,7 @@ pub async fn composio_clear_api_key(config: &Config) -> OpResult<RpcOutcome<serd
         .save()
         .await
         .map_err(|e| format!("[composio-direct] save config failed: {e}"))?;
+    direct_auth::reset_all_direct_auth_failures();
 
     crate::core::event_bus::publish_global(
         crate::core::event_bus::DomainEvent::ComposioConfigChanged {
