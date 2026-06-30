@@ -305,11 +305,6 @@ impl SocketManager {
         data: serde_json::Value,
         timeout: Duration,
     ) -> Result<serde_json::Value, String> {
-        if !self.is_connected() {
-            log::warn!("[socket] emit_with_ack rejected while disconnected event={event}");
-            return Err("Not connected".to_string());
-        }
-
         let tx = self
             .emit_tx
             .lock()
@@ -443,6 +438,28 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err, "Not connected");
+    }
+
+    #[tokio::test]
+    async fn emit_with_ack_uses_emit_queue_while_connecting() {
+        let mgr = SocketManager::new();
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        *mgr.emit_tx.lock().await = Some(tx);
+        *mgr.shared.status.write() = ConnectionStatus::Connecting;
+
+        let result = mgr
+            .emit_with_ack("test.event", json!({"k": "v"}), Duration::from_millis(10))
+            .await;
+
+        let queued = rx
+            .try_recv()
+            .unwrap_or_else(|_| panic!("expected queued ACK emit, got result={result:?}"));
+        assert_eq!(queued, r#"421["test.event",{"k":"v"}]"#);
+        let err = result.unwrap_err();
+        assert!(
+            err.starts_with("Socket ack timeout for event test.event ack_id=1"),
+            "unexpected error: {err}"
+        );
     }
 
     #[tokio::test]
