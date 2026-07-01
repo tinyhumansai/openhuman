@@ -1,5 +1,6 @@
 import { configureStore } from '@reduxjs/toolkit';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -75,5 +76,15 @@ describe('VaultSetupStep', () => {
 
     expect(screen.getByTestId('onboarding-custom-vault-step-default')).toBeInTheDocument();
     expect(screen.getByTestId('onboarding-custom-vault-step-configure')).toBeInTheDocument();
+  });
+
+  it('advances to the readiness step on continue', async () => {
+    sessionToken = 'header.payload.remote';
+    renderPage();
+
+    await userEvent.click(screen.getByTestId('onboarding-custom-vault-step-default'));
+    await userEvent.click(screen.getByTestId('onboarding-next-button'));
+
+    expect(navigateMock).toHaveBeenCalledWith('/onboarding/custom/readiness');
   });
 });

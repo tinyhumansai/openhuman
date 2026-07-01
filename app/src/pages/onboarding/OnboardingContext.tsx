@@ -10,7 +10,8 @@ export type CustomStepKey =
   | 'embeddings'
   | 'memory'
   | 'activity'
-  | 'vault';
+  | 'vault'
+  | 'readiness';
 export type CustomStepChoice = 'default' | 'configure';
 
 export interface OnboardingDraft {

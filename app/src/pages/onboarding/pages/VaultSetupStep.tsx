@@ -16,14 +16,13 @@ export default function VaultSetupStep() {
   const { t } = useT();
   const navigate = useNavigate();
   const { snapshot } = useCoreState();
-  const { draft, setDraft, completeAndExit } = useOnboardingContext();
+  const { draft, setDraft } = useOnboardingContext();
   const stepIndex = CUSTOM_WIZARD_STEPS.indexOf(STEP_KEY);
   const isLocalSession = isLocalSessionToken(snapshot.sessionToken);
 
   const appliedLocalRef = useRef(false);
   const initialChoice = isLocalSession ? 'configure' : (draft.customChoices?.[STEP_KEY] ?? null);
   const [choice, setChoice] = useState<CustomStepChoice | null>(initialChoice);
-  const [exitError, setExitError] = useState<string | null>(null);
 
   if (isLocalSession && !appliedLocalRef.current) {
     appliedLocalRef.current = true;
@@ -65,29 +64,15 @@ export default function VaultSetupStep() {
         choice={choice}
         onChoiceChange={persistChoice}
         onBack={() => navigate(CUSTOM_WIZARD_ROUTES[CUSTOM_WIZARD_STEPS[stepIndex - 1]])}
-        onContinue={async () => {
-          setExitError(null);
+        onContinue={() => {
           trackEvent('onboarding_step_complete', {
             step_name: 'custom_vault',
             choice: choice ?? 'default',
           });
-          try {
-            await completeAndExit();
-          } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            console.error('[onboarding:custom-vault] completeAndExit failed', err);
-            setExitError(message);
-          }
+          navigate(CUSTOM_WIZARD_ROUTES[CUSTOM_WIZARD_STEPS[stepIndex + 1]]);
         }}
-        continueLabel={t('onboarding.custom.finish')}
+        continueLabel={t('onboarding.custom.continue')}
       />
-      {exitError ? (
-        <div
-          className="mt-3 rounded-xl border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-4 py-3 text-sm text-coral-700 dark:text-coral-300"
-          data-testid="onboarding-vault-exit-error">
-          {t('onboarding.custom.vault.exitError')}
-        </div>
-      ) : null}
     </>
   );
 }

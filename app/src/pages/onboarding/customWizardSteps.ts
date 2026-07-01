@@ -11,6 +11,7 @@ export const CUSTOM_WIZARD_STEPS: CustomStepKey[] = [
   'activity',
   'vault',
   // 'memory',
+  'readiness',
 ];
 
 export const CUSTOM_WIZARD_ROUTES: Record<CustomStepKey, string> = {
@@ -22,6 +23,7 @@ export const CUSTOM_WIZARD_ROUTES: Record<CustomStepKey, string> = {
   activity: '/onboarding/custom/activity',
   memory: '/onboarding/custom/memory',
   vault: '/onboarding/custom/vault',
+  readiness: '/onboarding/custom/readiness',
 };
 
 /** Deep-link target inside Settings for users who pick "Configure" and want
@@ -35,4 +37,5 @@ export const CUSTOM_WIZARD_SETTINGS_ROUTES: Record<CustomStepKey, string> = {
   activity: '/settings/activity-level',
   memory: '/settings/memory-data',
   vault: '/settings/memory-data',
+  readiness: '/settings/readiness',
 };

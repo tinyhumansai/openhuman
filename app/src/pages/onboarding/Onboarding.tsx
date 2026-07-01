@@ -5,6 +5,7 @@ import CustomActivityPage from './pages/CustomActivityPage';
 import CustomEmbeddingsPage from './pages/CustomEmbeddingsPage';
 import CustomInferencePage from './pages/CustomInferencePage';
 import CustomOAuthPage from './pages/CustomOAuthPage';
+import CustomReadinessStep from './pages/CustomReadinessStep';
 import CustomSearchPage from './pages/CustomSearchPage';
 import CustomVoicePage from './pages/CustomVoicePage';
 import RuntimeChoicePage from './pages/RuntimeChoicePage';
@@ -40,6 +41,7 @@ const Onboarding = () => {
         <Route path="custom/embeddings" element={<CustomEmbeddingsPage />} />
         <Route path="custom/activity" element={<CustomActivityPage />} />
         <Route path="custom/vault" element={<VaultSetupStep />} />
+        <Route path="custom/readiness" element={<CustomReadinessStep />} />
         {/* <Route path="custom/memory" element={<CustomMemoryPage />} /> */}
         <Route path="*" element={<Navigate to="welcome" replace />} />
       </Route>
