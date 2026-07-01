@@ -723,8 +723,7 @@ impl ToolMiddleware<()> for ToolPolicyMiddleware {
                     .and_then(|v| v.as_str())
                     .unwrap_or_default();
                 if !requested.is_empty() && !self.visible_tool_names.contains(requested) {
-                    let content =
-                        format!("Tool '{requested}' is not available to this agent");
+                    let content = format!("Tool '{requested}' is not available to this agent");
                     return Ok(MiddlewareToolOutcome::Result(TaToolResult {
                         call_id: call.id,
                         name: call.name,
@@ -1428,7 +1427,9 @@ mod tests {
         let mut result = tool_result("capped", &"y".repeat(500));
         mw.after_tool(&mut ctx(), &(), &mut result).await.unwrap();
         assert!(
-            result.content.contains("truncated by tool cap: 480 more chars not shown"),
+            result
+                .content
+                .contains("truncated by tool cap: 480 more chars not shown"),
             "the tool's own 20-char cap should truncate with the tool-cap marker: {}",
             result.content
         );
@@ -1499,7 +1500,11 @@ mod tests {
     #[tokio::test]
     async fn repeated_tool_failure_pauses_only_after_the_threshold() {
         let handle = SteeringHandle::allow_all();
-        let mw = RepeatedToolFailureMiddleware::new(handle.clone(), 3, std::sync::Arc::new(std::sync::Mutex::new(None)));
+        let mw = RepeatedToolFailureMiddleware::new(
+            handle.clone(),
+            3,
+            std::sync::Arc::new(std::sync::Mutex::new(None)),
+        );
         // Two identical failures: below the threshold, no pause.
         for _ in 0..2 {
             let mut r = failing_result("flaky", "boom");
@@ -1518,7 +1523,11 @@ mod tests {
     #[tokio::test]
     async fn repeated_tool_failure_resets_on_a_success() {
         let handle = SteeringHandle::allow_all();
-        let mw = RepeatedToolFailureMiddleware::new(handle.clone(), 3, std::sync::Arc::new(std::sync::Mutex::new(None)));
+        let mw = RepeatedToolFailureMiddleware::new(
+            handle.clone(),
+            3,
+            std::sync::Arc::new(std::sync::Mutex::new(None)),
+        );
         // Two failures, then a success clears the counter.
         for _ in 0..2 {
             let mut r = failing_result("t", "boom");
@@ -1537,7 +1546,11 @@ mod tests {
     #[tokio::test]
     async fn repeated_tool_failure_ignores_distinct_errors() {
         let handle = SteeringHandle::allow_all();
-        let mw = RepeatedToolFailureMiddleware::new(handle.clone(), 3, std::sync::Arc::new(std::sync::Mutex::new(None)));
+        let mw = RepeatedToolFailureMiddleware::new(
+            handle.clone(),
+            3,
+            std::sync::Arc::new(std::sync::Mutex::new(None)),
+        );
         // Three *different* errors never trip the breaker — only an identical,
         // deterministic failure loop does.
         for err in ["e1", "e2", "e3"] {

@@ -933,15 +933,13 @@ impl Agent {
                     context_mw,
                     // Enforce the builder-configured tool policy at the tool
                     // boundary (the tinyagents path otherwise bypasses it).
-                    tool_policy: Some(
-                        crate::openhuman::tinyagents::ToolPolicyEnforcement {
-                            policy: self.tool_policy.clone(),
-                            session: self.tool_policy_session.clone(),
-                            session_id: self.event_session_id.clone(),
-                            channel: self.event_channel().to_string(),
-                            agent_definition_id: self.agent_definition_id.clone(),
-                        },
-                    ),
+                    tool_policy: Some(crate::openhuman::tinyagents::ToolPolicyEnforcement {
+                        policy: self.tool_policy.clone(),
+                        session: self.tool_policy_session.clone(),
+                        session_id: self.event_session_id.clone(),
+                        channel: self.event_channel().to_string(),
+                        agent_definition_id: self.agent_definition_id.clone(),
+                    }),
                 }),
             )
             .await;
@@ -1094,7 +1092,10 @@ impl Agent {
             let ctx = TurnContext {
                 user_message: user_message.to_string(),
                 assistant_response: reply.clone(),
-                tool_calls: tool_records_from_conversation(&outcome.conversation, &outcome.tool_outcomes),
+                tool_calls: tool_records_from_conversation(
+                    &outcome.conversation,
+                    &outcome.tool_outcomes,
+                ),
                 turn_duration_ms: turn_started.elapsed().as_millis() as u64,
                 session_id: Some(self.event_session_id.clone())
                     .filter(|session_id| !session_id.trim().is_empty()),

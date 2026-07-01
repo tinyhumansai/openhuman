@@ -212,7 +212,8 @@ fn response_to_model_response(response: &ChatResponse) -> ModelResponse {
     // on a provider-extension content block. It stays out of `Message::text()`
     // (which only concatenates `Text` blocks) but survives into persistence and
     // the next turn's request — where thinking-mode providers require it back.
-    if let Some(block) = super::convert::reasoning_content_block(response.reasoning_content.as_deref())
+    if let Some(block) =
+        super::convert::reasoning_content_block(response.reasoning_content.as_deref())
     {
         content.push(block);
     }
