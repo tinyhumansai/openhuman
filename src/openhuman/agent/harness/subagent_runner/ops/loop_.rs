@@ -7,6 +7,7 @@
 
 use std::collections::HashSet;
 
+use crate::openhuman::agent::harness::engine::TurnStop;
 use crate::openhuman::agent::harness::fork_context::ParentExecutionContext;
 use crate::openhuman::agent::harness::subagent_runner::handoff::ResultHandoffCache;
 use crate::openhuman::agent::harness::subagent_runner::types::SubagentRunError;
@@ -66,7 +67,7 @@ pub(super) async fn run_inner_loop(
     // steer/collect messages at iteration boundaries so the parent can
     // `steer_subagent` a running async sub-agent. `None` = non-steerable.
     run_queue: Option<std::sync::Arc<crate::openhuman::agent::harness::run_queue::RunQueue>>,
-) -> Result<(String, usize, AggregatedUsage, Option<String>), SubagentRunError> {
+) -> Result<(String, usize, AggregatedUsage, Option<String>, TurnStop), SubagentRunError> {
     // An autonomous skill run (set via `with_autonomous_iter_cap`) lifts the
     // per-agent cap so sub-agents run until done / the circuit breaker trips.
     let max_iterations = super::super::autonomous::autonomous_iter_cap()
@@ -237,6 +238,7 @@ pub(super) async fn run_inner_loop(
         outcome.iterations as usize,
         observer.usage,
         outcome.early_exit_tool,
+        outcome.stop,
     ))
 }
 

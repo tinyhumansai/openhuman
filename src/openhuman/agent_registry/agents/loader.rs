@@ -598,6 +598,7 @@ mod tests {
             "integrations_agent",
             "tools_agent",
             "crypto_agent",
+            "scheduler_agent",
             "tinyplace_agent",
         ] {
             let def = find(id);
@@ -894,6 +895,7 @@ mod tests {
     #[test]
     fn specialist_agents_are_registered_with_narrow_tools() {
         let scheduler = find("scheduler_agent");
+        assert!(matches!(scheduler.model, ModelSpec::Hint(ref h) if h == "burst"));
         match &scheduler.tools {
             ToolScope::Named(names) => {
                 for required in ["current_time", "cron_add", "cron_list", "cron_remove"] {

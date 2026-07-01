@@ -1,7 +1,8 @@
-import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { MeetCallDetail, MeetCallRecord } from '../../../services/meetCallService';
+import { setBackendMeetJoined, setBackendMeetLeft } from '../../../store/backendMeetSlice';
 import { renderWithProviders } from '../../../test/test-utils';
 import HistorySection from '../HistorySection';
 
@@ -172,5 +173,102 @@ describe('HistorySection', () => {
         screen.getByText('Select a call to see its summary and transcript.')
       ).toBeInTheDocument();
     });
+  });
+
+  // ── Auto-refresh when a meeting ends (#4341) ──────────────────────────────
+
+  // These two use fake timers so the mount fetch's 1.2s/3s retry batch is fully
+  // drained before the mock is changed — otherwise a leftover mount retry could
+  // satisfy the assertion (or load the new call early) without the status
+  // transition driving it.
+  it('re-fetches recent calls when the meeting status transitions to ended', async () => {
+    vi.useFakeTimers();
+    try {
+      listMeetCallsMock.mockResolvedValue([todayCall]);
+      const { store } = renderWithProviders(<HistorySection />);
+
+      // Drain the mount fetch + its delayed retries so none linger.
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(screen.getAllByText('abc-def-ghi').length).toBeGreaterThan(0);
+
+      listMeetCallsMock.mockClear();
+
+      // Going active must NOT trigger a refetch — only the end does.
+      act(() => {
+        store.dispatch(setBackendMeetJoined({ meetUrl: 'https://meet.google.com/abc-def-ghi' }));
+      });
+      expect(listMeetCallsMock).not.toHaveBeenCalled();
+
+      act(() => {
+        store.dispatch(setBackendMeetLeft({ reason: 'left' }));
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      expect(listMeetCallsMock).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('auto-selects the just-finished call after a meeting ends', async () => {
+    vi.useFakeTimers();
+    try {
+      const newCall: MeetCallRecord = {
+        request_id: 'req-new',
+        meet_url: 'https://meet.google.com/new-call-xyz',
+        bot_display_name: 'OpenHuman',
+        owner_display_name: 'Alice',
+        started_at_ms: NOW - 1000,
+        ended_at_ms: NOW,
+        listened_seconds: 5,
+        spoken_seconds: 0,
+        turn_count: 2,
+        participants: ['Alice'],
+      };
+
+      // Initially two calls; the user manually selects the older (yesterday) one.
+      listMeetCallsMock.mockResolvedValue([todayCall, yesterdayCall]);
+      const { store } = renderWithProviders(<HistorySection />);
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      fireEvent.click(screen.getByText('j/999888'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(getMeetCallDetailMock).toHaveBeenCalledWith('req-yesterday');
+
+      getMeetCallDetailMock.mockClear();
+      // After the meeting ends the list gains a brand-new call at the top.
+      listMeetCallsMock.mockResolvedValue([newCall, todayCall, yesterdayCall]);
+
+      act(() => {
+        store.dispatch(setBackendMeetJoined({ meetUrl: newCall.meet_url }));
+      });
+      act(() => {
+        store.dispatch(setBackendMeetLeft({ reason: 'left' }));
+      });
+      // First drain runs the end-of-meeting refetch, which moves the selection
+      // onto the new call. The second drain fires HistoryDetail's selection
+      // effect (a setTimeout(0) scheduled at the act boundary) that loads the
+      // newly-selected call's detail.
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // Selection should jump from the manually-picked older call to the
+      // newly-finished one, so its detail is fetched.
+      expect(getMeetCallDetailMock).toHaveBeenCalledWith('req-new');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

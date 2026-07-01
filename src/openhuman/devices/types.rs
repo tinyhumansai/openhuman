@@ -33,8 +33,6 @@ pub struct PairingSession {
     pub channel_id: String,
     /// Base64url pairing token (single-use, TTL'd, hashed at rest on backend).
     pub pairing_token: String,
-    /// Core's reconnect credential for this channel (hashed at rest in SQLite).
-    pub core_session_token: String,
     /// Base64url-encoded X25519 public key generated for this pairing.
     pub core_pubkey: String,
     /// Optional LAN URL for the direct HTTP fast path.

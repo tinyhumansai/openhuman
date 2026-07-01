@@ -515,6 +515,42 @@ async fn typed_mode_returns_text_through_runner() {
 }
 
 #[tokio::test]
+async fn stuck_subagent_returns_incomplete_status() {
+    use crate::openhuman::agent::harness::subagent_runner::SubagentRunStatus;
+    // A sub-agent that re-issues the identical (succeeding) tool call makes no
+    // progress. The repeat-call breaker halts it, and the runner reports
+    // `Incomplete` (NOT `Completed`) so the orchestrator gets a structured
+    // handback instead of mistaking the no-progress summary for a result (#4096).
+    let provider = ScriptedProvider::new(vec![
+        tool_response("file_read", "{\"path\":\"a\"}"),
+        tool_response("file_read", "{\"path\":\"a\"}"),
+        tool_response("file_read", "{\"path\":\"a\"}"),
+        tool_response("file_read", "{\"path\":\"a\"}"),
+    ]);
+    let parent = make_parent(provider.clone(), vec![stub("file_read")]);
+    let def = make_def_named_tools(&["file_read"]);
+
+    let outcome = with_parent_context(parent, async {
+        run_subagent(&def, "read the file", SubagentRunOptions::default()).await
+    })
+    .await
+    .expect("a stuck halt is still Ok (not Err)");
+
+    match outcome.status {
+        SubagentRunStatus::Incomplete { reason } => assert!(
+            reason.contains("stuck") || reason.contains("progress"),
+            "incomplete reason should describe the stuck stop: {reason}"
+        ),
+        other => panic!("expected Incomplete, got {other:?}"),
+    }
+    assert!(
+        outcome.output.contains("same tool call"),
+        "the partial output should carry the repeat-call no-progress summary: {}",
+        outcome.output
+    );
+}
+
+#[tokio::test]
 async fn run_queue_steer_lands_in_subagent_history() {
     // End-to-end proof that flipping the subagent loop's run-queue arg from
     // `None` to `Some(queue)` wires steering all the way through: a message

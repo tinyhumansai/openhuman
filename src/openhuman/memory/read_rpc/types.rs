@@ -160,6 +160,11 @@ pub struct ObsidianVaultStatusResponse {
     pub registered: bool,
     pub config_found: bool,
     pub content_root_abs: String,
+    /// OS of the host the core runs on (`std::env::consts::OS`:
+    /// `"macos"` / `"linux"` / `"windows"`). `content_root_abs` is a path on
+    /// THIS host's filesystem; a frontend attached from a different OS must not
+    /// treat it as a local path (issue #4278).
+    pub host_os: String,
 }
 
 /// Response shape for [`vault_health_check_rpc`].
@@ -172,4 +177,9 @@ pub struct VaultHealthCheckResponse {
     pub obsidian_registered: bool,
     pub pipeline_healthy: bool,
     pub last_sync_ms: i64,
+    /// OS of the host the core runs on (`std::env::consts::OS`). The
+    /// `exists` / `readable` / `writable` probes describe THIS host's
+    /// filesystem; a frontend on a different OS cannot open `content_root_abs`
+    /// locally even when these report healthy (issue #4278).
+    pub host_os: String,
 }

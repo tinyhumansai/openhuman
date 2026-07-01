@@ -1,12 +1,14 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { CoreRpcError } from '../../services/coreRpcClient';
 import TriggerToggles, { activeTriggerSignature, triggerSignature } from './TriggerToggles';
 
 const mockListAvailable = vi.fn();
 const mockListTriggers = vi.fn();
 const mockEnable = vi.fn();
 const mockDisable = vi.fn();
+const mockClearSession = vi.fn();
 
 vi.mock('../../lib/composio/composioApi', () => ({
   listAvailableTriggers: (toolkit: string, conn?: string) => mockListAvailable(toolkit, conn),
@@ -16,11 +18,16 @@ vi.mock('../../lib/composio/composioApi', () => ({
   disableTrigger: (id: string) => mockDisable(id),
 }));
 
+vi.mock('../../providers/CoreStateProvider', () => ({
+  useCoreState: () => ({ clearSession: mockClearSession }),
+}));
+
 beforeEach(() => {
   mockListAvailable.mockReset();
   mockListTriggers.mockReset();
   mockEnable.mockReset();
   mockDisable.mockReset();
+  mockClearSession.mockReset();
 });
 
 describe('triggerSignature / activeTriggerSignature', () => {
@@ -97,6 +104,47 @@ describe('<TriggerToggles>', () => {
     await waitFor(() =>
       expect(screen.getByText(/Couldn't load triggers: boom/)).toBeInTheDocument()
     );
+    // A generic (non-session) failure stays a plain message — no re-auth CTA.
+    expect(screen.queryByRole('button', { name: 'Sign in again' })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('trigger-session-expired')).not.toBeInTheDocument();
+  });
+
+  it('does not show the re-auth CTA for a downstream provider 401 (provider_auth)', async () => {
+    // A Composio-side 401 classifies as `provider_auth`, not `auth_expired`,
+    // so it must NOT trigger the session-expired CTA (#4281, AC#4).
+    mockListAvailable.mockRejectedValue(
+      new CoreRpcError('Composio v3 API error: HTTP 401: Unauthorized', 'provider_auth')
+    );
+    mockListTriggers.mockResolvedValue({ triggers: [] });
+
+    render(<TriggerToggles toolkitSlug="gmail" toolkitName="Gmail" connectionId="c1" />);
+
+    await waitFor(() => expect(screen.getByText(/Couldn't load triggers:/)).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: 'Sign in again' })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('trigger-session-expired')).not.toBeInTheDocument();
+  });
+
+  it('shows an actionable re-auth CTA when the session expired', async () => {
+    mockListAvailable.mockRejectedValue(
+      new CoreRpcError(
+        'SESSION_EXPIRED: backend rejected session token on GET /agent-integrations/composio/triggers/available — sign in again to resume',
+        'auth_expired'
+      )
+    );
+    mockListTriggers.mockResolvedValue({ triggers: [] });
+
+    render(<TriggerToggles toolkitSlug="gmail" toolkitName="Gmail" connectionId="c1" />);
+
+    await waitFor(() => expect(screen.getByTestId('trigger-session-expired')).toBeInTheDocument());
+    // The raw SESSION_EXPIRED blob is not surfaced; a clean message is.
+    expect(screen.queryByText(/SESSION_EXPIRED/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText('Your OpenHuman session expired. Sign in again to load triggers.')
+    ).toBeInTheDocument();
+
+    const button = screen.getByRole('button', { name: 'Sign in again' });
+    fireEvent.click(button);
+    expect(mockClearSession).toHaveBeenCalledTimes(1);
   });
 
   it('marks a trigger as enabled when present in active list (matched by signature)', async () => {

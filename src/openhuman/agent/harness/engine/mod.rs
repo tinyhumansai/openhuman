@@ -23,7 +23,7 @@ pub(crate) mod tool_source;
 pub(crate) mod tools;
 
 pub(crate) use checkpoint::{CheckpointOutcome, CheckpointStrategy, ErrorCheckpoint};
-pub(crate) use core::run_turn_engine;
+pub(crate) use core::{run_turn_engine, TurnStop};
 pub(crate) use parser::{DefaultParser, DispatcherParser};
 pub(crate) use progress::{ProgressReporter, SubagentProgress, TurnProgress};
 pub(crate) use state::{NullObserver, TurnObserver};

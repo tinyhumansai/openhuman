@@ -207,6 +207,35 @@ pub(crate) async fn dispatch_subagent(
                 );
                 Ok(ToolResult::success(outcome.output))
             }
+            // A stuck halt / iteration-cap stop returns `Incomplete`; frame the
+            // partial progress so the orchestrator can't mistake it for a
+            // finished result or re-run the identical delegation unchanged
+            // (#4096). Still a lifecycle-completed run, so publish
+            // SubagentCompleted like the `Completed` arm.
+            SubagentRunStatus::Incomplete { reason } => {
+                publish_global(DomainEvent::SubagentCompleted {
+                    parent_session,
+                    task_id: outcome.task_id.clone(),
+                    agent_id: outcome.agent_id.clone(),
+                    elapsed_ms: outcome.elapsed.as_millis() as u64,
+                    output_chars: outcome.output.chars().count(),
+                    iterations: outcome.iterations,
+                });
+                log::info!(
+                    "[agent] {} stopped incomplete via {} (task_id={}) iterations={} — \
+                     returning partial-progress envelope, not a finished result",
+                    agent_id,
+                    tool_name,
+                    outcome.task_id,
+                    outcome.iterations,
+                );
+                Ok(ToolResult::success(format!(
+                    "[SUBAGENT_INCOMPLETE] the {tool_name} sub-agent {reason} and did not \
+                         finish. Below is partial progress only — do NOT report it as done or \
+                         re-run the identical delegation unchanged.\n\nPartial progress:\n{}",
+                    outcome.output
+                )))
+            }
         },
         Err(err) => {
             let message = err.to_string();

@@ -18,8 +18,8 @@ Persistent, Rust-native Socket.IO client to the OpenHuman backend. The `socket` 
 | File | Role |
 | --- | --- |
 | `src/openhuman/socket/mod.rs` | Module docstring + exports only. Re-exports `SocketManager`, `global_socket_manager`, `set_global_socket_manager`, and the `all_socket_controller_schemas` / `all_socket_registered_controllers` pair. |
-| `src/openhuman/socket/manager.rs` | `SocketManager` handle + `SharedState`; global `OnceLock` accessor; `connect` / `connect_with_provider` / `disconnect` / `emit` / `get_state`; spawns the background `ws_loop`. Holds emit/shutdown channels and the loop join handle. |
-| `src/openhuman/socket/ws_loop.rs` | The background reconnection loop and a single connection attempt: Engine.IO/Socket.IO handshake, redirect-following connect, ping-timeout deadline, backoff, invalid-token decision logic, failure-escalation logging. |
+| `src/openhuman/socket/manager.rs` | `SocketManager` handle + `SharedState`; global `OnceLock` accessor; `connect` / `connect_with_provider` / `disconnect` / `emit` / `emit_with_ack` / `get_state`; spawns the background `ws_loop`. Holds emit/shutdown channels, ACK waiters, and the loop join handle. |
+| `src/openhuman/socket/ws_loop.rs` | The background reconnection loop and a single connection attempt: Engine.IO/Socket.IO handshake, Socket.IO ACK packet dispatch, redirect-following connect, ping-timeout deadline, backoff, invalid-token decision logic, failure-escalation logging. |
 | `src/openhuman/socket/event_handlers.rs` | Inbound SIO event dispatch (`handle_sio_event`), SIO frame parsing (`parse_sio_event`), outbound frame helper (`emit_via_channel`). Maps event names → `DomainEvent` publishes. Redacts payload content from logs. |
 | `src/openhuman/socket/token_provider.rs` | `TokenProvider` type alias + `static_token_provider`, `token_provider_from_config`, and `is_invalid_token_error` (strict double-anchor matcher). |
 | `src/openhuman/socket/schemas.rs` | Controller schemas + RPC handlers for the `socket` namespace. |
@@ -28,7 +28,7 @@ Persistent, Rust-native Socket.IO client to the OpenHuman backend. The `socket` 
 
 ## Public surface
 
-- `SocketManager` — the connection handle. Key methods: `new`, `connect(url, token)`, `connect_with_provider(url, provider)`, `disconnect`, `emit(event, data)`, `get_state() -> SocketState`, `is_connected`, `set_webhook_router` / `webhook_router`.
+- `SocketManager` — the connection handle. Key methods: `new`, `connect(url, token)`, `connect_with_provider(url, provider)`, `disconnect`, `emit(event, data)`, `emit_with_ack(event, data, timeout)`, `get_state() -> SocketState`, `is_connected`, `set_webhook_router` / `webhook_router`.
 - `global_socket_manager() -> Option<&'static Arc<SocketManager>>` and `set_global_socket_manager(Arc<SocketManager>)` — the process-global singleton (set once at bootstrap).
 - `all_socket_controller_schemas` / `all_socket_registered_controllers` — controller-registry exports wired into `src/core/all.rs`.
 
@@ -58,7 +58,6 @@ All handlers go through `require_manager()` and error with `"SocketManager not i
 | `composio:trigger` | `ComposioTriggerReceived { toolkit, trigger, metadata_id, metadata_uuid, payload }` | composio |
 | `tunnel:peer-status` | `DevicePeerOnline` / `DevicePeerOffline` | devices |
 | `tunnel:frame` | `DeviceTunnelFrame` | devices |
-| `tunnel:registered` | `DeviceTunnelRegistered` | devices |
 | `tunnel:evicted` | `DevicePeerOffline` | devices |
 | `*:message` (suffix match) | `ChannelInboundMessage { event_name, channel, message, sender, reply_target, thread_ts, raw_data }` | channels |
 
@@ -66,7 +65,7 @@ This module is a **publisher only** — it owns no `bus.rs` / `EventHandler` imp
 
 ## Persistence
 
-None of its own. State (`status`, `socket_id`, `error`, attached `WebhookRouter`) lives in-memory in `SharedState` behind `parking_lot::RwLock`. The session token is read on demand from the profile store via `crate::api::jwt::get_session_token` (live-refresh path); there is no `store.rs`.
+None of its own. State (`status`, `socket_id`, `error`, attached `WebhookRouter`, pending ACK waiters) lives in-memory in `SharedState`. The session token is read on demand from the profile store via `crate::api::jwt::get_session_token` (live-refresh path); there is no `store.rs`.
 
 ## Dependencies
 

@@ -2665,6 +2665,29 @@ pub fn is_transient_backend_api_failure(event: &sentry::protocol::Event<'_>) -> 
     is_transient_domain_failure(event, "backend_api")
 }
 
+/// Defense-in-depth `before_send` filter for skill-install fetch 4xx statuses.
+///
+/// A user/catalog-supplied `SKILL.md` URL returning 4xx means the remote skill
+/// path is missing, private, or otherwise unavailable to that user. The install
+/// RPC still returns the error so the UI can surface it, but Sentry should keep
+/// reporting server-side and transport failures only.
+pub fn is_skill_install_user_fetch_failure(event: &sentry::protocol::Event<'_>) -> bool {
+    let tags = &event.tags;
+    if tags.get("domain").map(String::as_str) != Some("skills") {
+        return false;
+    }
+    if tags.get("operation").map(String::as_str) != Some("install_fetch") {
+        return false;
+    }
+    if tags.get("failure").map(String::as_str) != Some("non_2xx") {
+        return false;
+    }
+
+    tags.get("status")
+        .and_then(|status| status.parse::<u16>().ok())
+        .is_some_and(|status| (400..500).contains(&status))
+}
+
 /// Transient integrations / Composio failures (timeout, connection reset,
 /// gateway hiccups).
 ///
@@ -6102,6 +6125,65 @@ mod tests {
             !is_transient_backend_api_failure(&non_matching_transport),
             "transport failures without an allowlisted phrase must stay visible"
         );
+    }
+
+    #[test]
+    fn skills_install_fetch_filter_drops_client_error_statuses() {
+        for status in ["400", "401", "403", "404", "410", "499"] {
+            let event = event_with_tags(&[
+                ("domain", "skills"),
+                ("operation", "install_fetch"),
+                ("failure", "non_2xx"),
+                ("status", status),
+            ]);
+            assert!(
+                is_skill_install_user_fetch_failure(&event),
+                "skills install_fetch status {status} must be treated as user/catalog state"
+            );
+        }
+    }
+
+    #[test]
+    fn skills_install_fetch_filter_keeps_server_and_wrong_shape_failures() {
+        for status in ["500", "502", "503"] {
+            let event = event_with_tags(&[
+                ("domain", "skills"),
+                ("operation", "install_fetch"),
+                ("failure", "non_2xx"),
+                ("status", status),
+            ]);
+            assert!(
+                !is_skill_install_user_fetch_failure(&event),
+                "skills install_fetch status {status} must remain reportable"
+            );
+        }
+
+        for tags in [
+            [
+                ("domain", "skills"),
+                ("operation", "install_fetch"),
+                ("failure", "transport"),
+                ("status", "404"),
+            ],
+            [
+                ("domain", "skills"),
+                ("operation", "run"),
+                ("failure", "non_2xx"),
+                ("status", "404"),
+            ],
+            [
+                ("domain", "backend_api"),
+                ("operation", "install_fetch"),
+                ("failure", "non_2xx"),
+                ("status", "404"),
+            ],
+        ] {
+            let event = event_with_tags(&tags);
+            assert!(
+                !is_skill_install_user_fetch_failure(&event),
+                "only skills.install_fetch non_2xx 4xx events may be filtered: {tags:?}"
+            );
+        }
     }
 
     #[test]

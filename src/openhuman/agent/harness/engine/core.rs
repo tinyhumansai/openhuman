@@ -34,12 +34,32 @@ use super::super::parse::build_native_assistant_history;
 use super::super::run_queue::RunQueue;
 use super::super::session::transcript::{self, MessageUsage, TurnUsage};
 use super::super::token_budget::trim_chat_messages_to_budget;
-use super::super::tool_loop::{RepeatFailureGuard, RepeatOutputGuard, STREAM_CHUNK_MIN_CHARS};
+use super::super::tool_loop::{
+    RepeatCallGuard, RepeatFailureGuard, RepeatOutputGuard, STREAM_CHUNK_MIN_CHARS,
+};
 use super::checkpoint::CheckpointStrategy;
 use super::parser::ResponseParser;
 use super::progress::ProgressReporter;
 use super::state::TurnObserver;
 use super::tool_source::ToolSource;
+
+/// Why a turn ended. Both `Halted` and `Cap` produce a summary `text` but mean
+/// the task did NOT reach its goal — stateful callers (notably the sub-agent
+/// runner) use this to tell a genuine finish apart from a stuck stop, instead of
+/// having to sniff the summary prose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TurnStop {
+    /// The model returned a final response with no tool calls — a real finish.
+    Final,
+    /// A circuit breaker halted the run (repeated identical call / repeated
+    /// output / repeated failure). `text` is the no-progress halt summary.
+    Halted,
+    /// The iteration cap was reached; `text` is the checkpoint summary.
+    Cap,
+    /// An early-exit tool (e.g. `ask_user_clarification`) requested the stop;
+    /// the tool name is in [`TurnEngineOutcome::early_exit_tool`].
+    EarlyExit,
+}
 
 fn transcript_turn_usage(
     provider: &str,
@@ -77,11 +97,10 @@ pub(crate) struct TurnEngineOutcome {
     pub text: String,
     pub iterations: u32,
     pub cost: TurnCost,
-    /// True when the turn stopped because it hit the iteration cap (the
-    /// `CheckpointStrategy` produced `text`), false for a normal final response
-    /// or an early circuit-breaker halt. `Agent::turn` keys its checkpoint-only
-    /// history/transcript handling off this.
-    pub hit_cap: bool,
+    /// Why the turn ended. `Agent::turn` keys its checkpoint-only
+    /// history/transcript handling off `Cap`; the sub-agent runner maps
+    /// `Halted`/`Cap` to an incomplete status.
+    pub stop: TurnStop,
     /// When set, the turn exited early because a specific tool requested
     /// it (e.g. `ask_user_clarification` inside a sub-agent). The tool
     /// result is in `text`. Callers use this to propagate pause semantics
@@ -216,6 +235,11 @@ pub(crate) async fn run_turn_engine(
     // response + tool call across iterations even when each call "succeeds"
     // (the gap left by the failure guard + per-generation frequency_penalty).
     let mut repeat_guard = RepeatOutputGuard::new();
+    // Repeated-CALL breaker — trips when the model re-issues the identical
+    // `(tool, args)` batch back-to-back even when each call SUCCEEDS (the gap
+    // left by the failure guard, which resets on success, and the repeat-output
+    // guard, which also keys on narration text so varied prose evades it).
+    let mut call_guard = RepeatCallGuard::new();
     let mut halt_reason: Option<String> = None;
     for iteration in 0..max_iterations {
         progress
@@ -758,9 +782,23 @@ pub(crate) async fn run_turn_engine(
                 text: final_out,
                 iterations: (iteration + 1) as u32,
                 cost: turn_cost,
-                hit_cap: false,
+                stop: TurnStop::Final,
                 early_exit_tool: None,
             });
+        }
+
+        // Polling/wait tools (e.g. `wait_subagent`) are contractually re-invoked
+        // with identical args + narration on each timeout while the work is still
+        // running, so an all-poll batch is legitimate progress, not a no-progress
+        // repeat. Exempt them from the no-progress breakers: reset the
+        // repeat-output guard here and skip its check, and skip the
+        // post-execution repeat-call guard below (Codex P1 on #4230). The
+        // iteration cap + cost budget still bound the wait.
+        let all_poll_exempt = tool_calls
+            .iter()
+            .all(|c| super::super::tool_loop::is_repeat_call_exempt(&c.name));
+        if all_poll_exempt {
+            repeat_guard.reset();
         }
 
         // No-progress narration breaker: if this iteration's assistant output
@@ -768,7 +806,7 @@ pub(crate) async fn run_turn_engine(
         // row, the run is stuck re-issuing the same step. Halt with a summary
         // rather than grinding to the iteration cap. Checked BEFORE executing
         // the (repeated) tool call so we don't burn another no-op iteration.
-        {
+        if !all_poll_exempt {
             let mut sig = response_text.trim().to_string();
             for call in &tool_calls {
                 sig.push('\u{1}');
@@ -813,7 +851,7 @@ pub(crate) async fn run_turn_engine(
                     text: reason,
                     iterations: (iteration + 1) as u32,
                     cost: turn_cost,
-                    hit_cap: false,
+                    stop: TurnStop::Halted,
                     early_exit_tool: None,
                 });
             }
@@ -831,6 +869,11 @@ pub(crate) async fn run_turn_engine(
         let mut tool_results = String::new();
         let mut individual_results: Vec<String> = Vec::new();
         let mut early_exit_tool: Option<String> = None;
+        // Tracks whether every executed call this iteration succeeded — feeds the
+        // success-gated repeat-call breaker below (#4095). Failures are the
+        // failure guard's domain (with its per-class thresholds), so a batch with
+        // any failure resets the repeat-call streak instead of counting it.
+        let mut all_calls_succeeded = true;
         for (call_idx, call) in tool_calls.iter().enumerate() {
             // Stable id threaded through the start/complete pair. The fallback
             // includes `call_idx` to stay unique when the same tool name
@@ -846,6 +889,9 @@ pub(crate) async fn run_turn_engine(
                 .await;
 
             individual_results.push(outcome.text.clone());
+            if !outcome.success {
+                all_calls_succeeded = false;
+            }
             let _ = writeln!(
                 tool_results,
                 "<tool_result name=\"{}\">\n{}\n</tool_result>",
@@ -1022,9 +1068,37 @@ pub(crate) async fn run_turn_engine(
                 text: exit_text,
                 iterations: (iteration + 1) as u32,
                 cost: turn_cost,
-                hit_cap: false,
+                stop: TurnStop::EarlyExit,
                 early_exit_tool,
             });
+        }
+
+        // Repeat-call breaker for SUCCESSFUL no-op loops (#4095). The failure
+        // guard above owns repeated *failures* (with per-class thresholds) and
+        // resets on success, so an identical call that keeps SUCCEEDING with no
+        // new result slips past it. Count it here — post-execution and gated on
+        // success — so failing batches stay the failure guard's domain and
+        // poll/wait tools (`wait_subagent`) stay exempt. Sets `halt_reason`,
+        // handled just below; tool results are already in `history`.
+        if halt_reason.is_none() {
+            if all_poll_exempt || !all_calls_succeeded {
+                call_guard.reset();
+            } else {
+                let mut call_sig = String::new();
+                for call in &tool_calls {
+                    call_sig.push('\u{1}');
+                    call_sig.push_str(&call.name);
+                    call_sig.push('\u{1}');
+                    call_sig.push_str(&call.arguments.to_string());
+                }
+                if let Some(reason) = call_guard.record(&call_sig) {
+                    tracing::warn!(
+                        iteration,
+                        "[agent_loop] repeat-call circuit breaker tripped — identical successful (tool,args) batch repeated; halting with no-progress summary"
+                    );
+                    halt_reason = Some(reason);
+                }
+            }
         }
 
         // Circuit breaker tripped this iteration: return the root-cause summary
@@ -1038,7 +1112,7 @@ pub(crate) async fn run_turn_engine(
                 text: reason,
                 iterations: (iteration + 1) as u32,
                 cost: turn_cost,
-                hit_cap: false,
+                stop: TurnStop::Halted,
                 early_exit_tool: None,
             });
         }
@@ -1067,7 +1141,7 @@ pub(crate) async fn run_turn_engine(
         text: co.text,
         iterations: max_iterations as u32,
         cost: turn_cost,
-        hit_cap: true,
+        stop: TurnStop::Cap,
         early_exit_tool: None,
     })
 }

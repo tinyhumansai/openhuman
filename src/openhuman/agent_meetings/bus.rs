@@ -11,7 +11,10 @@ use async_trait::async_trait;
 
 use crate::core::event_bus::{DomainEvent, EventHandler, SubscriptionHandle};
 
-use super::ops::{create_meeting_thread_with_transcript, ingest_backend_meeting_transcript};
+use super::ops::{
+    append_summary_prompt_message, create_meeting_thread_with_transcript_with_summary_mode,
+    ingest_backend_meeting_transcript, SummaryGenerationMode,
+};
 
 static MEETING_EVENT_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
 
@@ -81,14 +84,44 @@ impl EventHandler for MeetingEventSubscriber {
                 //    patched in by step 4 once it's ready.
                 super::recent_calls::record_backend_call_detail(&request_id, turns, None).await;
 
-                // 3. Generate the post-call summary once. Shared by the call-detail
-                //    store (step 4) and the meeting thread (step 5) so the
-                //    summarisation LLM call isn't paid for twice.
-                let generated = super::summary::generate_meeting_summary_bounded(
-                    turns,
-                    correlation_id.as_deref(),
-                )
-                .await;
+                let (policy, summary_decision) =
+                    match crate::openhuman::config::Config::load_or_init().await {
+                        Ok(config) => {
+                            let policy = config.meet.auto_summarize_policy;
+                            (
+                                Some(policy),
+                                super::summary::post_call_summary_decision(policy),
+                            )
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "{LOG_PREFIX} config load failed while resolving summary policy; skipping auto-summary: {e}"
+                            );
+                            (None, super::summary::PostCallSummaryDecision::Skip)
+                        }
+                    };
+                tracing::info!(
+                    policy = ?policy,
+                    decision = ?summary_decision,
+                    request_id = %request_id,
+                    "{LOG_PREFIX} resolved post-call summary policy"
+                );
+
+                // 3. Generate the post-call summary only when the user chose
+                //    Always. Ask/Never keep the transcript durable without
+                //    spending an LLM call.
+                let generated = if matches!(
+                    summary_decision,
+                    super::summary::PostCallSummaryDecision::Generate
+                ) {
+                    super::summary::generate_meeting_summary_bounded(
+                        turns,
+                        correlation_id.as_deref(),
+                    )
+                    .await
+                } else {
+                    None
+                };
 
                 // 4. Upgrade the stored detail with the summary once it's ready.
                 //    Skipped when summarisation failed/timed out — the transcript
@@ -104,15 +137,30 @@ impl EventHandler for MeetingEventSubscriber {
 
                 // 5. Create the meeting thread with transcript, reusing the
                 //    summary generated in step 3.
-                if let Err(e) = create_meeting_thread_with_transcript(
+                match create_meeting_thread_with_transcript_with_summary_mode(
                     turns,
                     *duration_ms,
                     correlation_id.clone(),
                     generated.as_ref(),
+                    SummaryGenerationMode::UseProvidedOnly,
                 )
                 .await
                 {
-                    tracing::warn!("{LOG_PREFIX} meeting thread creation failed: {e}");
+                    Ok(thread_id) => {
+                        if matches!(
+                            summary_decision,
+                            super::summary::PostCallSummaryDecision::Prompt
+                        ) {
+                            if let Err(e) =
+                                append_summary_prompt_message(&thread_id, &request_id).await
+                            {
+                                tracing::warn!("{LOG_PREFIX} summary prompt append failed: {e}");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("{LOG_PREFIX} meeting thread creation failed: {e}");
+                    }
                 }
 
                 // Also ingest into memory tree (existing pipeline).
@@ -244,6 +292,8 @@ impl EventHandler for MeetingEventSubscriber {
 mod tests {
     use super::*;
 
+    use crate::openhuman::config::AutoSummarizePolicy;
+
     #[test]
     fn subscriber_name_is_correct() {
         let subscriber = MeetingEventSubscriber;
@@ -254,5 +304,114 @@ mod tests {
     fn subscriber_domains_filter_to_agent_meetings() {
         let subscriber = MeetingEventSubscriber;
         assert_eq!(subscriber.domains(), Some(&["agent_meetings"][..]));
+    }
+
+    struct EnvGuard {
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set_workspace(path: &std::path::Path) -> Self {
+            let previous = std::env::var_os("OPENHUMAN_WORKSPACE");
+            std::env::set_var("OPENHUMAN_WORKSPACE", path);
+            Self { previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => std::env::set_var("OPENHUMAN_WORKSPACE", value),
+                None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
+            }
+        }
+    }
+
+    async fn save_summary_policy(policy: AutoSummarizePolicy) {
+        let mut config = crate::openhuman::config::Config::load_or_init()
+            .await
+            .expect("config loads in temp workspace");
+        config.meet.auto_summarize_policy = policy;
+        config.meet.ingest_backend_transcripts = false;
+        config.save().await.expect("config saves policy");
+    }
+
+    async fn send_transcript_for_policy(policy: AutoSummarizePolicy, correlation_id: &str) {
+        save_summary_policy(policy).await;
+        let event = DomainEvent::BackendMeetTranscript {
+            turns: vec![crate::core::event_bus::BackendMeetTurn {
+                role: "user".to_string(),
+                content: "[00:01] [Alice] ship it".to_string(),
+            }],
+            duration_ms: 60_000,
+            correlation_id: Some(correlation_id.to_string()),
+        };
+        MeetingEventSubscriber.handle(&event).await;
+    }
+
+    async fn has_summary_prompt_marker(meeting_id: &str) -> bool {
+        use crate::openhuman::memory::rpc_models::{ConversationMessagesRequest, EmptyRequest};
+
+        let threads = crate::openhuman::threads::ops::threads_list(EmptyRequest {})
+            .await
+            .expect("list threads")
+            .value
+            .data
+            .expect("threads data")
+            .threads;
+        for thread in threads {
+            let messages =
+                crate::openhuman::threads::ops::messages_list(ConversationMessagesRequest {
+                    thread_id: thread.id,
+                })
+                .await
+                .expect("list messages")
+                .value
+                .data
+                .expect("messages data")
+                .messages;
+            if messages.iter().any(|message| {
+                message
+                    .extra_metadata
+                    .get("kind")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("meeting_summary_prompt")
+                    && message
+                        .extra_metadata
+                        .get("meeting_id")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(meeting_id)
+            }) {
+                return true;
+            }
+        }
+        false
+    }
+
+    #[tokio::test]
+    async fn transcript_policy_respects_never_and_ask_without_summary() {
+        let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::TempDir::new().unwrap();
+        let _env = EnvGuard::set_workspace(tmp.path());
+
+        send_transcript_for_policy(AutoSummarizePolicy::Never, "policy-never").await;
+        let never_detail = crate::openhuman::meet_agent::store::read_detail("policy-never")
+            .await
+            .expect("read never detail")
+            .expect("never detail exists");
+        assert!(never_detail.summary.is_none());
+
+        send_transcript_for_policy(AutoSummarizePolicy::Ask, "policy-ask").await;
+        let ask_detail = crate::openhuman::meet_agent::store::read_detail("policy-ask")
+            .await
+            .expect("read ask detail")
+            .expect("ask detail exists");
+        assert!(ask_detail.summary.is_none());
+        assert!(
+            has_summary_prompt_marker("policy-ask").await,
+            "Ask policy should append a summary prompt marker"
+        );
     }
 }

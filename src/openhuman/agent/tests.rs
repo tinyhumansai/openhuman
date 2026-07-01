@@ -463,7 +463,10 @@ async fn turn_emits_checkpoint_at_max_iterations() {
         responses.push(tool_response(vec![ToolCall {
             id: format!("tc{i}"),
             name: "echo".into(),
-            arguments: r#"{"message": "loop"}"#.into(),
+            // Vary the args each turn so the repeat-CALL breaker (which halts
+            // identical (tool,args) loops) doesn't fire before the iteration
+            // cap — this test exercises the max-iterations checkpoint path.
+            arguments: format!(r#"{{"message": "loop {i}"}}"#),
             extra_content: None,
         }]));
     }

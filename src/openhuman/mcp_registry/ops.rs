@@ -23,6 +23,7 @@ use super::types::{CommandKind, ConnStatus, InstalledServer};
 pub async fn mcp_clients_registry_search(
     config: &Config,
     query: Option<String>,
+    transport: Option<String>,
     page: Option<u32>,
     page_size: Option<u32>,
 ) -> Result<RpcOutcome<Value>, String> {
@@ -30,16 +31,22 @@ pub async fn mcp_clients_registry_search(
     let page_size = page_size.unwrap_or(20);
 
     tracing::debug!(
-        "[mcp-client] registry_search query={:?} page={} page_size={}",
+        "[mcp-client] registry_search query={:?} transport={:?} page={} page_size={}",
         query,
+        transport,
         page,
         page_size
     );
 
-    let (servers, total_pages) =
-        registry::registry_search(config, query.as_deref(), page, page_size)
-            .await
-            .map_err(|e| e.to_string())?;
+    let (servers, total_pages) = registry::registry_search(
+        config,
+        query.as_deref(),
+        transport.as_deref(),
+        page,
+        page_size,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
 
     Ok(RpcOutcome::new(
         json!({ "servers": servers, "page": page, "total_pages": total_pages }),

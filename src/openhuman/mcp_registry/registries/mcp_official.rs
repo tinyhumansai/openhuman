@@ -563,9 +563,40 @@ struct OfficialServer {
     /// Installable subprocess packages (npm, pip, brew, …).
     #[serde(default)]
     packages: Vec<OfficialPackage>,
+    /// Vendor/site URL, when declared. Trust/quality signal required by the
+    /// strict "perfect server" catalog filter and rendered as a clickable link.
+    #[serde(default, rename = "websiteUrl")]
+    website_url: Option<String>,
 }
 
 impl OfficialServer {
+    /// Non-empty declared `websiteUrl`, if any.
+    fn website(&self) -> Option<String> {
+        self.website_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    }
+
+    /// Whether the server *declares* a named static secret credential in its
+    /// schema — a secret/`Authorization` header or a secret env var. This is the
+    /// metadata signal for "static API key / token", with no probe and no
+    /// guessing; it drives `auth_kind == "api_key"`.
+    fn declares_secret_credential(&self) -> bool {
+        let header = self.remotes.iter().any(|r| {
+            r.headers
+                .iter()
+                .any(|h| h.is_secret == Some(true) || h.name.eq_ignore_ascii_case("authorization"))
+        });
+        let env = self.packages.iter().any(|p| {
+            p.environment_variables
+                .iter()
+                .any(|e| e.is_secret == Some(true))
+        });
+        header || env
+    }
+
     fn display_name(&self) -> String {
         if let Some(title) = self.title.as_deref().filter(|s| !s.trim().is_empty()) {
             return title.to_string();
@@ -584,6 +615,12 @@ impl OfficialServer {
 
     fn into_summary(self) -> SmitheryServerSummary {
         let display = self.display_name();
+        let website_url = self.website();
+        let auth_kind = if self.declares_secret_credential() {
+            Some("api_key".to_string())
+        } else {
+            None
+        };
         SmitheryServerSummary {
             qualified_name: self.name.clone(),
             display_name: display,
@@ -593,6 +630,8 @@ impl OfficialServer {
             is_deployed: !self.remotes.is_empty(),
             source: SOURCE_MCP_OFFICIAL.to_string(),
             official: false, // tagged later by the registry dispatcher
+            website_url,
+            auth_kind,
             extra: std::collections::HashMap::new(),
         }
     }
@@ -817,6 +856,63 @@ mod tests {
         let sum = s.into_summary();
         assert_eq!(sum.qualified_name, "io.github.example/server");
         assert_eq!(sum.source, SOURCE_MCP_OFFICIAL);
+    }
+
+    #[test]
+    fn into_summary_stamps_website_and_api_key_from_declared_secret_header() {
+        // A server declaring a secret Authorization header + a websiteUrl is a
+        // "perfect" server: auth_kind=api_key (from metadata, no probe) + site.
+        let s: OfficialServer = serde_json::from_value(json!({
+            "name": "com.acme/mcp",
+            "websiteUrl": "https://www.acme.ai",
+            "remotes": [{
+                "url": "https://api.acme.ai/mcp",
+                "headers": [{ "name": "Authorization", "isSecret": true }],
+            }],
+        }))
+        .unwrap();
+        let sum = s.into_summary();
+        assert_eq!(sum.website_url.as_deref(), Some("https://www.acme.ai"));
+        assert_eq!(sum.auth_kind.as_deref(), Some("api_key"));
+    }
+
+    #[test]
+    fn into_summary_secret_env_var_also_counts_as_api_key() {
+        let s: OfficialServer = serde_json::from_value(json!({
+            "name": "io.github.x/y",
+            "websiteUrl": "https://site.example",
+            "packages": [{
+                "registryType": "npm",
+                "environmentVariables": [{ "name": "API_KEY", "isSecret": true }],
+            }],
+        }))
+        .unwrap();
+        assert_eq!(s.into_summary().auth_kind.as_deref(), Some("api_key"));
+    }
+
+    #[test]
+    fn into_summary_no_auth_kind_when_no_secret_declared() {
+        // OAuth/open servers declare no key in metadata → auth_kind=None. The
+        // strict catalog filter drops these even though they carry a website.
+        let s: OfficialServer = serde_json::from_value(json!({
+            "name": "open/server",
+            "websiteUrl": "https://x.example",
+            "remotes": [{ "url": "https://open.example.com/mcp" }],
+        }))
+        .unwrap();
+        let sum = s.into_summary();
+        assert_eq!(sum.website_url.as_deref(), Some("https://x.example"));
+        assert_eq!(sum.auth_kind, None);
+    }
+
+    #[test]
+    fn into_summary_trims_blank_website_to_none() {
+        let s: OfficialServer = serde_json::from_value(json!({
+            "name": "blank/site",
+            "websiteUrl": "   ",
+        }))
+        .unwrap();
+        assert_eq!(s.into_summary().website_url, None);
     }
 
     #[test]

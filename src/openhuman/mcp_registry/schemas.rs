@@ -149,6 +149,12 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     required: false,
                 },
                 FieldSchema {
+                    name: "transport",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Transport filter: \"stdio\", \"hosted\", or \"all\"/omitted.",
+                    required: false,
+                },
+                FieldSchema {
                     name: "page",
                     ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
                     comment: "1-based page number (default: 1).",
@@ -671,11 +677,12 @@ fn handle_registry_search(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         let query = read_optional_string(&params, "query")?;
+        let transport = read_optional_string(&params, "transport")?;
         let page = read_optional_u32(&params, "page")?;
         let page_size = read_optional_u32(&params, "page_size")?;
         to_json(
             crate::openhuman::mcp_registry::ops::mcp_clients_registry_search(
-                &config, query, page, page_size,
+                &config, query, transport, page, page_size,
             )
             .await?,
         )
