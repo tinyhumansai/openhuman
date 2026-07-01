@@ -494,6 +494,16 @@ async fn finish_revalidated_user_activation(
             "{LOG_PREFIX} failed to bind memory client after pending session revalidation: {error}"
         );
     }
+    // Rebind the people store to the activated user's workspace, mirroring the
+    // memory-client rebind so people controllers/tools follow the active user
+    // instead of the pre-switch workspace (#4378).
+    if let Err(error) =
+        crate::openhuman::people::store::init_from_workspace(&target_config.workspace_dir)
+    {
+        warn!(
+            "{LOG_PREFIX} failed to bind people store after pending session revalidation: {error}"
+        );
+    }
     crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
         target_config.workspace_dir.clone(),
     );
