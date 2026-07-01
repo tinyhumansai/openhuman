@@ -1825,8 +1825,7 @@ async fn run_server_inner(
                 // initialised" (Sentry TAURI-RUST-8NM). Sits inside this
                 // Ok(cfg) arm so it inherits the wrong-workspace guard above
                 // (never seed against a Config::default fallback).
-                match crate::openhuman::people::store::init_from_workspace(&cfg.workspace_dir).await
-                {
+                match crate::openhuman::people::store::init_from_workspace(&cfg.workspace_dir) {
                     Ok(_) => log::info!(
                         "[boot] people::store initialized (workspace={})",
                         cfg.workspace_dir.display()
