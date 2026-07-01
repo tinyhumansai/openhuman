@@ -15,6 +15,7 @@ vi.mock('../../utils/tauriCommands/core', () => ({ restartCoreProcess: vi.fn() }
 
 const larkDefinition = FALLBACK_DEFINITIONS.find(def => def.id === 'lark')!;
 const dingtalkDefinition = FALLBACK_DEFINITIONS.find(def => def.id === 'dingtalk')!;
+const emailDefinition = FALLBACK_DEFINITIONS.find(def => def.id === 'email')!;
 
 const connectChannelMock = vi.mocked(channelConnectionsApi.connectChannel);
 const disconnectChannelMock = vi.mocked(channelConnectionsApi.disconnectChannel);
@@ -126,5 +127,40 @@ describe('<CredentialChannelConfig />', () => {
     fireEvent.click(screen.getByText('Disconnect'));
     await waitFor(() => expect(disconnectChannelMock).toHaveBeenCalledTimes(1));
     expect(disconnectChannelMock).toHaveBeenCalledWith('dingtalk', 'api_key');
+  });
+
+  it('renders and connects the native IMAP/SMTP email channel (#4280)', async () => {
+    renderWithProviders(<CredentialChannelConfig definition={emailDefinition} />);
+
+    // The reused form renders the email server fields from the definition,
+    // including the TLS boolean as a checkbox.
+    expect(screen.getByPlaceholderText('imap.fastmail.com')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('smtp.fastmail.com')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox')).toBeInTheDocument(); // smtp_tls
+
+    fireEvent.change(screen.getByPlaceholderText('imap.fastmail.com'), {
+      target: { value: 'imap.fastmail.com' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('you@example.com'), {
+      target: { value: 'me@fastmail.com' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('App-specific password (recommended)'), {
+      target: { value: 'fmapp-pass' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('smtp.fastmail.com'), {
+      target: { value: 'smtp.fastmail.com' },
+    });
+    fireEvent.click(screen.getByText('Connect'));
+
+    await waitFor(() => expect(connectChannelMock).toHaveBeenCalledTimes(1));
+    expect(connectChannelMock).toHaveBeenCalledWith('email', {
+      authMode: 'api_key',
+      credentials: {
+        imap_host: 'imap.fastmail.com',
+        username: 'me@fastmail.com',
+        password: 'fmapp-pass',
+        smtp_host: 'smtp.fastmail.com',
+      },
+    });
   });
 });
