@@ -87,6 +87,21 @@ async fn forward_steers(queue: &RunQueue, handle: &SteeringHandle) {
     }
 }
 
+/// Forward any queued **collect** messages (orchestrator/monitor lines enqueued
+/// via `QueueMode::Collect`) into the run as injected user turns so they reach the
+/// next LLM call as additional context. The in-house loop drained these each
+/// iteration (`drain_collects`); the tinyagents rewrite wired only `forward_steers`
+/// (issue #4249), so monitor lines never reached the model. Mirrors the legacy
+/// `[Additional context from user]:` framing the model was taught to read.
+async fn forward_collects(queue: &RunQueue, handle: &SteeringHandle) {
+    for msg in queue.drain_collects().await {
+        handle.send(SteeringCommand::InjectMessage(TaMessage::user(format!(
+            "[Additional context from user]: {}",
+            msg.text
+        ))));
+    }
+}
+
 /// Build the harness [`RunPolicy`] for an openhuman turn.
 ///
 /// The loop enforces limits from `self.policy.limits` (not the per-run
@@ -601,6 +616,7 @@ pub async fn run_turn_via_tinyagents_shared(
     let steering_forwarder = if let Some(handle) = handle {
         if let Some(queue) = run_queue.clone() {
             forward_steers(&queue, &handle).await;
+            forward_collects(&queue, &handle).await;
         }
         ctx = ctx.with_steering(handle.clone());
         run_queue.map(|queue| {
@@ -608,6 +624,7 @@ pub async fn run_turn_via_tinyagents_shared(
                 loop {
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                     forward_steers(&queue, &handle).await;
+                    forward_collects(&queue, &handle).await;
                 }
             })
         })
