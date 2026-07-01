@@ -141,9 +141,14 @@ fn build_chat_inputs(
     } else {
         super::convert::messages_to_text_mode_chat(&request.messages)
     };
+    // The unknown-tool sentinel is a recovery adapter, never a real capability —
+    // its contract (see `tools::UNKNOWN_TOOL_SENTINEL`) is that it is never
+    // advertised to the model. Filter it out of the advertised specs so it never
+    // leaks into the provider's tool list.
     let specs = request
         .tools
         .iter()
+        .filter(|s| s.name != super::tools::UNKNOWN_TOOL_SENTINEL)
         .map(|s| ToolSpec {
             name: s.name.clone(),
             description: s.description.clone(),
