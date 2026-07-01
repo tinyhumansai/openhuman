@@ -165,24 +165,28 @@ fn parse_port_field(
     key: &str,
     default: u16,
 ) -> Result<u16, String> {
+    // Port 0 is the OS "any" sentinel — never a valid mailbox port — so reject it
+    // up front rather than letting it fail later with a generic connect error.
+    let invalid = || format!("invalid {key}: must be a port number 1-65535");
     match creds.get(key) {
         Some(Value::Number(n)) => n
             .as_u64()
-            .filter(|v| *v <= u64::from(u16::MAX))
+            .filter(|v| (1..=u64::from(u16::MAX)).contains(v))
             .map(|v| v as u16)
-            .ok_or_else(|| format!("invalid {key}: must be a port number 0-65535")),
+            .ok_or_else(invalid),
         Some(Value::String(s)) => {
             let trimmed = s.trim();
             if trimmed.is_empty() {
                 Ok(default)
             } else {
-                trimmed
-                    .parse::<u16>()
-                    .map_err(|_| format!("invalid {key}: '{trimmed}' is not a valid port number"))
+                match trimmed.parse::<u16>() {
+                    Ok(0) | Err(_) => Err(invalid()),
+                    Ok(port) => Ok(port),
+                }
             }
         }
         None | Some(Value::Null) => Ok(default),
-        _ => Err(format!("invalid {key}: must be a port number")),
+        _ => Err(invalid()),
     }
 }
 
@@ -249,13 +253,21 @@ fn build_email_config(
 /// so a wrong host/password fails fast in the UI instead of silently wedging
 /// the listener on the next core restart.
 async fn verify_email_credentials(cfg: &EmailConfig) -> Result<(), String> {
-    if EmailChannel::new(cfg.clone()).health_check().await {
-        Ok(())
-    } else {
-        Err(
+    // The probe dials IMAP + logs in over the network on the connect/test RPC
+    // path, so bound it: a blackholed host or stalled TLS handshake must not
+    // hang the UI. `health_check` has its own inner budget; this is a hard outer
+    // cap that also distinguishes a timeout from an auth failure for the user.
+    let probe = EmailChannel::new(cfg.clone());
+    match tokio::time::timeout(std::time::Duration::from_secs(20), probe.health_check()).await {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(
             "IMAP connection failed — check the host, port, email address, and app password"
                 .to_string(),
-        )
+        ),
+        Err(_) => Err(format!(
+            "IMAP connection to {} timed out — check the host and port",
+            cfg.imap_host
+        )),
     }
 }
 
@@ -263,12 +275,19 @@ async fn verify_email_credentials(cfg: &EmailConfig) -> Result<(), String> {
 /// `channels_config.email` so the supervised IMAP/SMTP listener picks it up on
 /// the next restart. Kept separate from the verify step so persistence is unit
 /// testable without a live mailbox.
+///
+/// The `password` is deliberately **not** written to `config.toml` — the secret
+/// lives only in the encrypted credentials store (written on the generic connect
+/// path under `channel:email:api_key`) and is re-hydrated at startup by
+/// `resolve_email_password`. Mirrors the Yuanbao `app_secret` handling.
 pub(super) async fn persist_email_config(
     config: &Config,
-    email_cfg: EmailConfig,
+    mut email_cfg: EmailConfig,
 ) -> Result<(), String> {
     let allowed_senders_count = email_cfg.allowed_senders.len();
     let smtp_tls = email_cfg.smtp_tls;
+    // Strip the secret before it ever touches disk.
+    email_cfg.password = String::new();
 
     let mut persisted = config.clone();
     persisted.channels_config.email = Some(email_cfg);
@@ -281,7 +300,7 @@ pub(super) async fn persist_email_config(
         target: "openhuman::channels",
         allowed_senders_count,
         smtp_tls,
-        "[email] connect_channel: wrote channels_config.email; restart core for IMAP/SMTP listener"
+        "[email] connect_channel: wrote channels_config.email (password kept in credentials store); restart core for IMAP/SMTP listener"
     );
     Ok(())
 }
@@ -1036,12 +1055,18 @@ mod email_config_tests {
 
     #[test]
     fn parse_port_field_variants() {
-        let c = creds(json!({ "p_str": "8143", "p_blank": "  ", "p_num": 143, "p_bad": "abc" }));
+        let c = creds(json!({
+            "p_str": "8143", "p_blank": "  ", "p_num": 143, "p_bad": "abc",
+            "p_zero_str": "0", "p_zero_num": 0
+        }));
         assert_eq!(parse_port_field(&c, "p_str", 993).unwrap(), 8143);
         assert_eq!(parse_port_field(&c, "p_blank", 993).unwrap(), 993);
         assert_eq!(parse_port_field(&c, "p_num", 993).unwrap(), 143);
         assert_eq!(parse_port_field(&c, "absent", 465).unwrap(), 465);
         assert!(parse_port_field(&c, "p_bad", 993).is_err());
+        // Port 0 is the OS "any" sentinel, never valid for a mailbox.
+        assert!(parse_port_field(&c, "p_zero_str", 993).is_err());
+        assert!(parse_port_field(&c, "p_zero_num", 993).is_err());
     }
 
     #[test]

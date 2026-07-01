@@ -1292,6 +1292,12 @@ async fn persist_email_config_writes_channels_config_email() {
         email.get("smtp_host").and_then(toml::Value::as_str),
         Some("smtp.fastmail.com")
     );
+    // The secret must never hit disk — it lives only in the credentials store.
+    assert_eq!(
+        email.get("password").and_then(toml::Value::as_str),
+        Some(""),
+        "password must not be persisted to config.toml"
+    );
 }
 
 #[tokio::test]
