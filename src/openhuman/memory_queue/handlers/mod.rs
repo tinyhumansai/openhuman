@@ -738,7 +738,9 @@ fn try_mark_summary_reembed_skipped(
 /// Failure semantics are preserved verbatim from #1574 §6:
 /// - body read failure → log + persistent tombstone (`"body read failed: {e}"`)
 /// - embed wrong dim → log + tombstone (`"embed wrong dim"`)
-/// - embed error → log + tombstone (`"embed failed: {e}"`)
+/// - per-row unrecoverable embed error → log + tombstone (`"embed failed: {e}"`)
+/// - global cloud-auth absence → fail the backfill without tombstoning rows, so
+///   signing in later can re-embed the same signature.
 ///
 /// The single difference vs the old code is the embed call shape: one
 /// `embed_batch` (which collapses N provider round-trips into one for batch-
@@ -809,6 +811,19 @@ async fn reembed_collect(
             }
             Err(e) => {
                 let failure = crate::openhuman::memory_tree::health::classify_embed_error(&e);
+                if matches!(
+                    failure.code,
+                    crate::openhuman::memory_tree::health::FailureCode::AuthMissing
+                ) {
+                    log::warn!(
+                        "[memory::jobs] reembed_backfill: {label} {id} embed failed with \
+                         global auth-missing error; failing backfill without tombstone \
+                         so rows stay re-embeddable (sig={active_sig}): {e:#}"
+                    );
+                    return Err(anyhow::Error::new(failure).context(format!(
+                        "reembed_backfill: {label} {id} cloud auth missing (sig={active_sig}): {e:#}"
+                    )));
+                }
                 if !failure.is_unrecoverable() {
                     return Err(anyhow::Error::new(failure).context(format!(
                         "reembed_backfill: {label} {id} transient embed failed (sig={active_sig}): {e:#}"
@@ -910,14 +925,18 @@ async fn handle_reembed_backfill(config: &Config, job: &Job) -> Result<JobOutcom
     // errors are skipped (logged) so a single bad row can't strand memory.
     //
     // #1574 §6 fix: terminal failures (body file missing on disk, embed
-    // wrong dim, embed unrecoverable error) are *persistently* tombstoned
-    // via `mark_chunk_reembed_skipped` / `mark_summary_reembed_skipped`.
+    // wrong dim, per-row unrecoverable embed error) are *persistently*
+    // tombstoned via `mark_chunk_reembed_skipped` /
+    // `mark_summary_reembed_skipped`.
     // The worklist queries above exclude these tombstones, so a single
     // unembeddable row is attempted at most ONCE per signature instead of
     // re-selected on every batch forever (the original bug: 16 orphans
     // generating ~128k warns across ~8k defers, observed in the wild).
     // Tombstone writes are best-effort: failures are logged so the row can
     // be retried on a later batch instead of spinning forever.
+    // Global cloud-auth absence is not row-specific and returns a typed
+    // `AuthMissing` failure without tombstoning, preserving the fail-fast
+    // banner while leaving rows re-embeddable after sign-in.
     // #002 (FR-002): use the WRITE-path factory. Re-embed is a write path, so a
     // missing/unusable provider must SKIP rather than fall back to an
     // `InertEmbedder` whose all-zero vectors would pass `pack_checked` and get

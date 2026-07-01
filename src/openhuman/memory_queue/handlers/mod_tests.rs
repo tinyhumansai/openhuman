@@ -8,6 +8,10 @@ use crate::openhuman::memory_tree::tree::bucket_seal::{append_leaf_deferred, Lea
 use crate::openhuman::memory_tree::tree::store as src_store;
 use chrono::TimeZone;
 use rusqlite::params;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 use tempfile::TempDir;
 
 fn test_config() -> (TempDir, Config) {
@@ -429,6 +433,57 @@ async fn reembed_backfill_tombstones_orphan_and_terminates() {
     assert!(
         !probe_uncovered,
         "after tombstoning the only orphan, the ensure_reembed_backfill probe must report covered"
+    );
+}
+
+struct MissingSessionEmbedder;
+
+#[async_trait::async_trait]
+impl crate::openhuman::memory_tree::score::embed::Embedder for MissingSessionEmbedder {
+    fn name(&self) -> &'static str {
+        "missing-session"
+    }
+
+    async fn embed(&self, _text: &str) -> anyhow::Result<Vec<f32>> {
+        anyhow::bail!(
+            "No backend session for cloud embeddings: log in to OpenHuman, or set \
+             memory.embedding_provider to \"ollama\" / \"none\" in config.toml"
+        )
+    }
+}
+
+#[tokio::test]
+async fn reembed_backfill_auth_missing_fails_without_tombstone() {
+    use crate::openhuman::memory_tree::health::{FailureCode, PipelineFailure};
+
+    let (_tmp, cfg) = test_config();
+    let ids = vec!["chunk-auth-missing".to_string()];
+    let skipped = Arc::new(AtomicUsize::new(0));
+    let skipped_for_mark = Arc::clone(&skipped);
+
+    let err = reembed_collect(
+        &cfg,
+        &MissingSessionEmbedder,
+        "provider=cloud;model=embedding-v1;dims=1024",
+        &ids,
+        "chunk",
+        |_cfg, id| Ok(format!("body for {id}")),
+        move |_cfg, _id, _sig, _reason| {
+            skipped_for_mark.fetch_add(1, Ordering::SeqCst);
+        },
+    )
+    .await
+    .expect_err("missing cloud auth should fail the backfill without tombstoning rows");
+
+    let failure = err
+        .downcast_ref::<PipelineFailure>()
+        .expect("auth-missing backfill error should carry typed PipelineFailure");
+    assert_eq!(failure.code, FailureCode::AuthMissing);
+    assert!(failure.is_unrecoverable());
+    assert_eq!(
+        skipped.load(Ordering::SeqCst),
+        0,
+        "global missing-session failures must leave rows re-embeddable"
     );
 }
 
