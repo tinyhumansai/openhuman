@@ -126,6 +126,8 @@ pub(crate) async fn run_channel_turn_via_graph(
         // Context middlewares: cache-align + default tool-result byte cap (the
         // channel path has no session `ContextManager` to source config from).
         crate::openhuman::tinyagents::TurnContextMiddleware::defaults(),
+        // Channel/CLI path carries its own gating; no session `.tool_policy()`.
+        None,
     )
     .await?;
     // Append only this turn's typed suffix (assistant tool-calls + tool results +

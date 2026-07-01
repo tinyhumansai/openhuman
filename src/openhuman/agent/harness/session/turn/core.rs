@@ -923,6 +923,17 @@ impl Agent {
                     context_window,
                     run_queue: self.run_queue.clone(),
                     context_mw,
+                    // Enforce the builder-configured tool policy at the tool
+                    // boundary (the tinyagents path otherwise bypasses it).
+                    tool_policy: Some(
+                        crate::openhuman::tinyagents::ToolPolicyEnforcement {
+                            policy: self.tool_policy.clone(),
+                            session: self.tool_policy_session.clone(),
+                            session_id: self.event_session_id.clone(),
+                            channel: self.event_channel().to_string(),
+                            agent_definition_id: self.agent_definition_id.clone(),
+                        },
+                    ),
                 }),
             )
             .await;

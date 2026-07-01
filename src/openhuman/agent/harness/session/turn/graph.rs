@@ -69,6 +69,9 @@ pub(crate) struct ChatTurnGraph {
     /// openhuman context middlewares (cache-align, microcompact, tool-output
     /// budget + payload summarizer) sourced from the session's `ContextManager`.
     pub context_mw: TurnContextMiddleware,
+    /// The agent's builder-configured tool policy + session context, enforced at
+    /// the tool boundary. `None` when the session has no explicit policy.
+    pub tool_policy: Option<crate::openhuman::tinyagents::ToolPolicyEnforcement>,
 }
 
 /// Drive the chat turn graph: a thin wrapper over the shared tinyagents seam
@@ -102,6 +105,8 @@ pub(crate) async fn run_chat_turn_graph(graph: ChatTurnGraph) -> Result<Tinyagen
         Some(AGENT_TURN_MAX_OUTPUT_TOKENS),
         // Context middlewares sourced from the session's ContextManager.
         graph.context_mw,
+        // Builder-configured tool policy enforcement (session chat path).
+        graph.tool_policy,
     )
     .await
 }

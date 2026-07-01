@@ -155,6 +155,9 @@ pub(super) async fn run_subagent_via_graph(
         // Context middlewares: cache-align + default tool-result byte cap so a
         // sub-agent's (often large) tool outputs stay bounded in its transcript.
         crate::openhuman::tinyagents::TurnContextMiddleware::defaults(),
+        // Sub-agents gate via their own SubagentToolSource policy path, not the
+        // session `.tool_policy()`; no enforcement threaded here.
+        None,
     ))
     .await
     .map_err(SubagentRunError::Provider)?;

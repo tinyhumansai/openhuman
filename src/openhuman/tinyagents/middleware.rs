@@ -515,6 +515,218 @@ impl ToolMiddleware<()> for ApprovalSecurityMiddleware {
     }
 }
 
+/// `wrap_tool`: enforce the agent's builder-configured [`ToolPolicy`] at the tool
+/// boundary (issue #4249). The in-house engine ran this check in
+/// `agent_tool_exec` (`ctx.tool_policy.check(...)`); the tinyagents path bypassed
+/// it, so a `.tool_policy()` deny/require-approval silently no-opped and the tool
+/// executed anyway — a security regression. This middleware restores it: a
+/// blocking decision short-circuits with a model-consumable result carrying the
+/// same `"Tool '<name>' <denied|requires approval> by policy '<policy>': <reason>"`
+/// wording the engine produced.
+pub struct ToolPolicyMiddleware {
+    policy: Arc<dyn crate::openhuman::agent::tool_policy::ToolPolicy>,
+    /// The session's channel-permission snapshot — enforces the per-channel deny
+    /// + per-call permission-level ceiling the engine ran in `agent_tool_exec`.
+    session: crate::openhuman::agent_tool_policy::ToolPolicySession,
+    /// Shared tool sets (same `Arc`s the runner registers) so a call's OpenHuman
+    /// `Tool` can be resolved for its generated-tool runtime context and its
+    /// per-call permission level.
+    tool_sets: Vec<Arc<Vec<Box<dyn Tool>>>>,
+    /// The advertised (visible) tool-name whitelist. Non-empty = restricted; a
+    /// call outside it is "not available to this agent" (the engine's first gate).
+    /// A non-visible tool is never registered, so it reaches here rewritten onto
+    /// the recovery sentinel — its original name rides `requested_tool`.
+    visible_tool_names: HashSet<String>,
+    session_id: String,
+    channel: String,
+    agent_definition_id: String,
+}
+
+impl ToolPolicyMiddleware {
+    pub fn new(
+        policy: Arc<dyn crate::openhuman::agent::tool_policy::ToolPolicy>,
+        session: crate::openhuman::agent_tool_policy::ToolPolicySession,
+        tool_sets: Vec<Arc<Vec<Box<dyn Tool>>>>,
+        visible_tool_names: HashSet<String>,
+        session_id: String,
+        channel: String,
+        agent_definition_id: String,
+    ) -> Self {
+        Self {
+            policy,
+            session,
+            tool_sets,
+            visible_tool_names,
+            session_id,
+            channel,
+            agent_definition_id,
+        }
+    }
+
+    fn resolve_tool(&self, name: &str) -> Option<&Box<dyn Tool>> {
+        self.tool_sets
+            .iter()
+            .flat_map(|set| set.iter())
+            .find(|t| t.name() == name)
+    }
+
+    /// The channel-permission gate the engine ran before the builder policy: a
+    /// session-level deny, then a per-call permission-level ceiling check. Returns
+    /// the blocking message when the call must not execute.
+    fn channel_permission_block(&self, call: &TaToolCall) -> Option<String> {
+        let decision = self.session.decision_for(&call.name);
+        if decision.is_denied() {
+            let required = decision
+                .required_permission
+                .map(|permission| permission.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            return Some(format!(
+                "Tool '{}' blocked by tool policy: requires {}, channel '{}' allows {}",
+                call.name, required, self.channel, decision.allowed_permission
+            ));
+        }
+        let tool = self.resolve_tool(&call.name)?;
+        let call_required = tool.permission_level_with_args(&call.arguments);
+        if call_required > decision.allowed_permission {
+            return Some(format!(
+                "Tool '{}' action requires {} permission, channel '{}' allows {}",
+                call.name, call_required, self.channel, decision.allowed_permission
+            ));
+        }
+        None
+    }
+
+    fn generated_context(
+        &self,
+        name: &str,
+        args: &serde_json::Value,
+    ) -> Option<crate::openhuman::agent::tool_policy::GeneratedToolRuntimeContext> {
+        self.tool_sets
+            .iter()
+            .flat_map(|set| set.iter())
+            .find(|t| t.name() == name)
+            .and_then(|t| t.generated_runtime_context(args))
+    }
+}
+
+#[async_trait]
+impl ToolMiddleware<()> for ToolPolicyMiddleware {
+    fn name(&self) -> &str {
+        "tool_policy"
+    }
+
+    async fn wrap_tool(
+        &self,
+        ctx: &mut RunContext<()>,
+        state: &(),
+        call: TaToolCall,
+        next: ToolHandler<'_, (), ()>,
+    ) -> TaResult<MiddlewareToolOutcome> {
+        use crate::openhuman::agent::tool_policy::{
+            ToolCallContext, ToolPolicyDecision, ToolPolicyRequest,
+        };
+
+        // A call the model made to a tool outside the visible set was registered
+        // nowhere, so it arrives rewritten onto the recovery sentinel with the
+        // original name on `requested_tool`. When the session restricts visibility
+        // (non-empty set) and that original tool isn't visible, the engine's first
+        // gate produced "not available to this agent" — reproduce it here (takes
+        // precedence over the generic "Unknown tool" sentinel wording). A genuinely
+        // unknown call with no visibility restriction still falls through to the
+        // sentinel's "Unknown tool" result.
+        if call.name == UNKNOWN_TOOL_SENTINEL {
+            if !self.visible_tool_names.is_empty() {
+                let requested = call
+                    .arguments
+                    .get("requested_tool")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                if !requested.is_empty() && !self.visible_tool_names.contains(requested) {
+                    let content =
+                        format!("Tool '{requested}' is not available to this agent");
+                    return Ok(MiddlewareToolOutcome::Result(TaToolResult {
+                        call_id: call.id,
+                        name: call.name,
+                        content: content.clone(),
+                        raw: None,
+                        error: Some(content),
+                        elapsed_ms: 0,
+                    }));
+                }
+            }
+            return next.run(ctx, state, call).await;
+        }
+
+        // Channel-permission ceiling first (session deny + per-call permission
+        // level), mirroring the engine order in `agent_tool_exec`.
+        if let Some(message) = self.channel_permission_block(&call) {
+            tracing::debug!(
+                tool = call.name.as_str(),
+                channel = self.channel.as_str(),
+                "[tinyagents::mw] tool blocked by channel permission ceiling"
+            );
+            return Ok(MiddlewareToolOutcome::Result(TaToolResult {
+                call_id: call.id,
+                name: call.name,
+                content: message.clone(),
+                raw: None,
+                error: Some(message),
+                elapsed_ms: 0,
+            }));
+        }
+
+        let context = ToolCallContext::session(
+            self.session_id.clone(),
+            self.channel.clone(),
+            self.agent_definition_id.clone(),
+            call.id.clone(),
+            1,
+        );
+        let mut request =
+            ToolPolicyRequest::new(call.name.clone(), call.arguments.clone(), context);
+        if let Some(generated) = self.generated_context(&call.name, &call.arguments) {
+            request = request.with_generated_tool_context(generated);
+        }
+
+        let decision = self.policy.check(&request).await;
+        if let Some(reason) = decision.blocking_reason() {
+            let blocked_action = match &decision {
+                ToolPolicyDecision::RequireApproval { .. } => "requires approval",
+                ToolPolicyDecision::Deny { .. } => "denied",
+                ToolPolicyDecision::Allow => "allowed",
+            };
+            crate::openhuman::tool_registry::denials::record(
+                call.name.as_str(),
+                self.policy.name(),
+                blocked_action,
+                reason,
+            );
+            tracing::debug!(
+                tool = call.name.as_str(),
+                policy = self.policy.name(),
+                action = blocked_action,
+                reason = %reason,
+                "[tinyagents::mw] tool blocked by policy"
+            );
+            let content = format!(
+                "Tool '{}' {blocked_action} by policy '{}': {reason}",
+                call.name,
+                self.policy.name()
+            );
+            return Ok(MiddlewareToolOutcome::Result(TaToolResult {
+                call_id: call.id,
+                name: call.name,
+                content: content.clone(),
+                raw: None,
+                error: Some(content),
+                elapsed_ms: 0,
+            }));
+        }
+
+        next.run(ctx, state, call).await
+    }
+}
+
 /// `before_tool`: rewrite a call to an **unadvertised** tool onto the recovery
 /// sentinel (issue #4249, Phase 1 Task B) so a hallucinated tool name is a
 /// recoverable [`UnknownToolAdapter`](super::tools::UnknownToolAdapter) result

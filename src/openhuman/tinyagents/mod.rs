@@ -55,7 +55,24 @@ pub use tools::{
 };
 
 use std::collections::HashSet;
+use std::sync::Arc as StdArc;
 use tokio::sync::mpsc::Sender;
+
+/// The builder-configured [`ToolPolicy`](crate::openhuman::agent::tool_policy::ToolPolicy)
+/// plus the session context a policy check needs, handed to the shared turn seam
+/// so it can install the [`ToolPolicyMiddleware`](middleware::ToolPolicyMiddleware).
+/// `None` means "no policy enforcement on this turn" (the channel/CLI + sub-agent
+/// paths, which carry their own gating).
+pub struct ToolPolicyEnforcement {
+    pub policy: StdArc<dyn crate::openhuman::agent::tool_policy::ToolPolicy>,
+    /// The session's channel-permission snapshot — enforces the per-channel
+    /// permission ceiling (deny + per-call permission-level gate) the in-house
+    /// engine ran in `agent_tool_exec`.
+    pub session: crate::openhuman::agent_tool_policy::ToolPolicySession,
+    pub session_id: String,
+    pub channel: String,
+    pub agent_definition_id: String,
+}
 
 /// Drain the run queue's pending steer messages and forward them to the
 /// tinyagents [`SteeringHandle`] as injected user turns (the harness applies
@@ -268,6 +285,7 @@ pub async fn run_turn_via_tinyagents_shared(
     pause_at_cap: bool,
     max_output_tokens: Option<u32>,
     context_mw: TurnContextMiddleware,
+    tool_policy: Option<ToolPolicyEnforcement>,
 ) -> Result<TinyagentsTurnOutcome> {
     // `0` means "unset" → the legacy default (a native-bus / test convention);
     // otherwise the harness model-call cap would be zero and abort the run before
@@ -453,6 +471,23 @@ pub async fn run_turn_via_tinyagents_shared(
     harness.push_tool_middleware(Arc::new(middleware::ApprovalSecurityMiddleware::new(
         tool_sets.clone(),
     )));
+
+    // Builder-configured tool policy (`.tool_policy()`), enforced at the tool
+    // boundary. The in-house engine ran this in `agent_tool_exec`; the tinyagents
+    // path bypassed it, so a deny/require-approval silently no-opped (security
+    // regression). Installed only when the caller threads an enforcement context
+    // (the session chat path); channel/CLI + sub-agent paths pass `None`.
+    if let Some(enforcement) = tool_policy {
+        harness.push_tool_middleware(Arc::new(middleware::ToolPolicyMiddleware::new(
+            enforcement.policy,
+            enforcement.session,
+            tool_sets.clone(),
+            allowed.clone(),
+            enforcement.session_id,
+            enforcement.channel,
+            enforcement.agent_definition_id,
+        )));
+    }
 
     // Unknown-tool recovery as a `before_tool` middleware (issue #4249, Phase 1
     // Task B): a call to an unadvertised tool is rewritten onto the recovery
