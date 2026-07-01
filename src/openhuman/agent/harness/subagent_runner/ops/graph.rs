@@ -243,6 +243,24 @@ pub(super) async fn run_subagent_via_graph(
     // the observer but only mirrored to the worker thread, so per-child
     // transcripts stopped being written — breaking downstream learning ingestion
     // (`learning/transcript_ingest`, which reads `session_raw/*.jsonl`).
+    // On a cap-hit / early-exit, `outcome.text` is the checkpoint (or clarifying
+    // question) that stands in for a final assistant turn — append it so the
+    // persisted transcript reflects the actual final state, not the pre-checkpoint
+    // history. `history` already carries this turn's typed suffix.
+    let transcript_history;
+    let history_for_transcript: &[ChatMessage] = if (outcome.hit_cap
+        || outcome.early_exit_tool.is_some())
+        && !outcome.text.trim().is_empty()
+    {
+        transcript_history = {
+            let mut messages = history.clone();
+            messages.push(ChatMessage::assistant(outcome.text.clone()));
+            messages
+        };
+        &transcript_history
+    } else {
+        history.as_slice()
+    };
     persist_subagent_transcript(
         &workspace_dir,
         transcript_stem,
@@ -250,9 +268,13 @@ pub(super) async fn run_subagent_via_graph(
         task_id,
         provider_label,
         model,
-        history,
+        history_for_transcript,
         &usage,
         context_window.unwrap_or(0),
+        // Match the dispatcher the history was actually serialized with (text-mode
+        // integrations turns write XML), and the real iteration count.
+        if native_tools { "native" } else { "xml" },
+        outcome.model_calls as u32,
     );
 
     // Mirror this turn's conversation to the spawn's worker thread (when one is
@@ -303,6 +325,8 @@ fn persist_subagent_transcript(
     history: &[ChatMessage],
     usage: &AggregatedUsage,
     context_window: u64,
+    dispatcher: &str,
+    iteration: u32,
 ) {
     use crate::openhuman::agent::harness::session::transcript;
 
@@ -331,13 +355,13 @@ fn persist_subagent_transcript(
         ts: now.clone(),
         reasoning_content: None,
         tool_calls: Vec::new(),
-        iteration: 1,
+        iteration,
     };
     let meta = transcript::TranscriptMeta {
         agent_name: agent_id.to_string(),
         agent_id: Some(agent_id.to_string()),
         agent_type: Some("subagent".to_string()),
-        dispatcher: "native".into(),
+        dispatcher: dispatcher.into(),
         provider: Some(turn_usage.provider.clone()),
         model: Some(turn_usage.model.clone()),
         created: now.clone(),
@@ -557,7 +581,7 @@ mod tests {
             std::env::temp_dir(),
             1024,
             false,
-            "root-session__child",
+            "root-session__real_tools",
             "mock-channel",
             None,
         )
@@ -644,7 +668,7 @@ mod tests {
             std::env::temp_dir(),
             1024,
             false,
-            "root-session__child",
+            "root-session__scoped_deltas",
             "mock-channel",
             None,
         )
@@ -789,7 +813,7 @@ mod tests {
             std::env::temp_dir(),
             1024,
             false,
-            "root-session__child",
+            "root-session__clarification",
             "mock-channel",
             None,
         )
@@ -894,7 +918,7 @@ mod tests {
             std::env::temp_dir(),
             1024,
             false,
-            "root-session__child",
+            "root-session__cap_hit",
             "mock-channel",
             None,
         )
