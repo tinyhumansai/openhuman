@@ -1085,6 +1085,12 @@ pub struct RepeatedToolFailureMiddleware {
     identical_threshold: usize,
     halt_summary: super::HaltSummarySlot,
     state: std::sync::Mutex<FailureState>,
+    /// call_id → argument fingerprint, captured in `before_tool` (the tool result
+    /// carries no arguments). Folded into the identical-repeat signature so the
+    /// "identical arguments" halt only trips on the *same* args — two different
+    /// argument sets that happen to share a first error line don't count as a
+    /// repeat and can't pre-empt the generic no-progress backstop.
+    arg_sigs: std::sync::Mutex<std::collections::HashMap<String, String>>,
 }
 
 #[derive(Default)]
@@ -1107,8 +1113,18 @@ impl RepeatedToolFailureMiddleware {
             identical_threshold: identical_threshold.max(2),
             halt_summary,
             state: std::sync::Mutex::new(FailureState::default()),
+            arg_sigs: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
+}
+
+/// A stable, bounded fingerprint of a tool call's arguments for the identical-
+/// repeat signature (hashed so a huge payload doesn't bloat the map/comparison).
+fn args_fingerprint(arguments: &serde_json::Value) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    arguments.to_string().hash(&mut hasher);
+    format!("{:x}", hasher.finish())
 }
 
 /// Trim a tool error for inclusion in a halt summary (keep it bounded but retain
@@ -1124,6 +1140,20 @@ impl Middleware<()> for RepeatedToolFailureMiddleware {
         "repeated_tool_failure"
     }
 
+    async fn before_tool(
+        &self,
+        _ctx: &mut RunContext<()>,
+        _state: &(),
+        call: &mut TaToolCall,
+    ) -> TaResult<()> {
+        // The tool result carries no arguments, so capture a fingerprint here and
+        // correlate it by call_id in `after_tool`.
+        if let Ok(mut sigs) = self.arg_sigs.lock() {
+            sigs.insert(call.id.clone(), args_fingerprint(&call.arguments));
+        }
+        Ok(())
+    }
+
     async fn after_tool(
         &self,
         _ctx: &mut RunContext<()>,
@@ -1131,16 +1161,24 @@ impl Middleware<()> for RepeatedToolFailureMiddleware {
         result: &mut TaToolResult,
     ) -> TaResult<()> {
         let mut state = self.state.lock().unwrap();
+        let arg_fp = self
+            .arg_sigs
+            .lock()
+            .ok()
+            .and_then(|mut sigs| sigs.remove(&result.call_id))
+            .unwrap_or_default();
         let Some(err) = result.error.as_deref() else {
             // Success → progress was made; reset every counter.
             *state = FailureState::default();
             return Ok(());
         };
 
-        // Signature: tool name + first error line (the deterministic part; a huge
-        // payload tail must not dominate the identical-repeat comparison).
+        // Signature: tool name + argument fingerprint + first error line (the
+        // deterministic parts; a huge payload tail must not dominate the
+        // identical-repeat comparison). Including the args means the "identical
+        // arguments" halt only fires when the args truly repeat.
         let err_line = err.lines().next().unwrap_or(err);
-        let sig = format!("{}\u{1f}{err_line}", result.name);
+        let sig = format!("{}\u{1f}{arg_fp}\u{1f}{err_line}", result.name);
         // The unknown-tool recovery is a failure the model can correct (it got the
         // "unknown tool" feedback), so it must NOT feed the generic *any*-failure
         // no-progress counter — else a turn that recovers from one bad tool name
