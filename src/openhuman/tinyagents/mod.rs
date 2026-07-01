@@ -586,6 +586,11 @@ pub async fn run_turn_via_tinyagents_shared(
     let mut ctx = RunContext::new(config, ());
 
     let streaming = on_progress.is_some();
+    // Retain a clone of the progress sink so the turn can emit a terminal
+    // `TurnCompleted` after the run (the harness event stream the bridge mirrors
+    // has no run-completed event). Parent turns only — a sub-agent turn reports
+    // via its `Subagent*` events, not a top-level `TurnCompleted`.
+    let turn_completed_sink = subagent_scope.is_none().then(|| on_progress.clone()).flatten();
     // A sink is needed to mirror progress (bridge) or to observe model-call
     // completions for the cap pauser.
     let events = (on_progress.is_some() || pause_at_cap).then(EventSink::new);
@@ -678,6 +683,15 @@ pub async fn run_turn_via_tinyagents_shared(
             return Err(anyhow::anyhow!("tinyagents harness run failed: {e}"));
         }
     };
+    // Terminal turn event (parity with the legacy engine's `progress::emit`): the
+    // harness stream has no run-completed event, so emit `TurnCompleted` here with
+    // the model-call count as the iteration total. Parent turns only; best-effort.
+    if let Some(sink) = &turn_completed_sink {
+        let _ = sink.try_send(AgentProgress::TurnCompleted {
+            iterations: run.model_calls as u32,
+        });
+    }
+
     let bridge_totals = bridge.map(|bridge| bridge.totals_with_cost());
 
     // Prefer the bridge's accumulated usage (per-call, authoritative — including
