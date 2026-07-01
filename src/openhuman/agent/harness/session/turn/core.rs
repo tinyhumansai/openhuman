@@ -1016,13 +1016,33 @@ impl Agent {
         );
 
         let persisted = self.tool_dispatcher.to_provider_messages(&self.history);
+        // Carry the turn's provider (event channel) + effective model and usage
+        // into the persisted transcript meta. Passing `None` here dropped
+        // `provider`/`model` from every transcript (they are `TranscriptMeta`
+        // fields sourced from the turn usage) — parity with the legacy engine,
+        // which handed `self.last_turn_usage.as_ref()` to this call.
+        let turn_usage = crate::openhuman::agent::harness::session::transcript::TurnUsage {
+            provider: self.event_channel().to_string(),
+            model: self.model_name.clone(),
+            usage: crate::openhuman::agent::harness::session::transcript::MessageUsage {
+                input: input_tokens,
+                output: output_tokens,
+                cached_input: cached_input_tokens,
+                context_window: context_window.unwrap_or(0),
+                cost_usd: charged_amount_usd,
+            },
+            ts: chrono::Utc::now().to_rfc3339(),
+            reasoning_content: None,
+            tool_calls: Vec::new(),
+            iteration: outcome.model_calls as u32,
+        };
         self.persist_session_transcript(
             &persisted,
             input_tokens,
             output_tokens,
             cached_input_tokens,
             charged_amount_usd,
-            None,
+            Some(&turn_usage),
         );
 
         // Charge this turn's usage against the thread's active goal (parity with
