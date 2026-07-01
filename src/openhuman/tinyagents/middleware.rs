@@ -837,6 +837,39 @@ impl Middleware<()> for UnknownToolRewriteMiddleware {
     }
 }
 
+/// `before_tool`: coerce a tool call's arguments to an empty object when they
+/// are not a JSON object (issue #4249). A model can emit malformed native
+/// arguments (invalid JSON, or a bare scalar/array); the model adapter parses
+/// those to `Value::Null`, which the harness then rejects against an object
+/// schema and aborts the whole turn. The in-house engine recovered such a call by
+/// running the tool with `{}`; restore that so a single bad tool call is
+/// recoverable rather than fatal. The recovery sentinel's own
+/// `{ "requested_tool": … }` payload is already an object, so it is untouched.
+pub struct ArgRecoveryMiddleware;
+
+#[async_trait]
+impl Middleware<()> for ArgRecoveryMiddleware {
+    fn name(&self) -> &str {
+        "arg_recovery"
+    }
+
+    async fn before_tool(
+        &self,
+        _ctx: &mut RunContext<()>,
+        _state: &(),
+        call: &mut TaToolCall,
+    ) -> TaResult<()> {
+        if !call.arguments.is_object() {
+            tracing::debug!(
+                tool = call.name.as_str(),
+                "[tinyagents::mw] recovering non-object tool arguments to {{}}"
+            );
+            call.arguments = serde_json::json!({});
+        }
+        Ok(())
+    }
+}
+
 /// `before_model`: enforce OpenHuman's daily/monthly cost budgets **before** a
 /// model call spends (issue #4249, Phase 5). Reads the global
 /// [`CostTracker`](crate::openhuman::cost) and, when cost budgets are configured

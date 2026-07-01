@@ -505,6 +505,12 @@ pub async fn run_turn_via_tinyagents_shared(
         valid_tools,
     )));
 
+    // Malformed-argument recovery (`before_tool`): coerce a call's non-object
+    // arguments (invalid JSON parses to Null) to `{}` so a single bad tool call is
+    // recoverable — the harness would otherwise reject it against an object schema
+    // and abort the whole turn. Engine parity.
+    harness.push_middleware(Arc::new(middleware::ArgRecoveryMiddleware));
+
     let config = RunConfig::new("agent_turn")
         .with_max_model_calls(max_iterations)
         .with_max_tool_calls(max_iterations.saturating_mul(8).max(8));
