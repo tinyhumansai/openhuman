@@ -2485,7 +2485,6 @@ mod streaming_support {
             })
             .auto_save(true)
             .explicit_preferences_enabled(false)
-            .unified_compaction_enabled(false)
             .build()
             .unwrap()
     }

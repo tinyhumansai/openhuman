@@ -580,7 +580,6 @@ async fn agent_builder_prompt_and_debug_dump_cover_public_session_paths() {
         .event_context("round15-session", "round15-channel")
         .omit_profile(false)
         .omit_memory_md(false)
-        .unified_compaction_enabled(false)
         .build()
         .unwrap();
 
