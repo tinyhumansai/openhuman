@@ -242,6 +242,15 @@ pub fn classify_embed_error_str(msg: &str) -> PipelineFailure {
             .with_detail(truncate_detail(msg));
     }
 
+    // Cloud embeddings require the desktop/backend session bearer before any
+    // provider round-trip. Without this explicit match, a logged-out app is
+    // treated like a retryable transport error and the worker keeps retrying
+    // instead of surfacing the login remediation.
+    if lower.contains("no backend session") {
+        log::debug!("[memory_tree] classified cloud embedding auth state as auth_missing");
+        return PipelineFailure::new(FailureCode::AuthMissing).with_detail(truncate_detail(msg));
+    }
+
     // Dimension mismatch — the trait validator / CloudEmbedder rejects a
     // vector whose length isn't EMBEDDING_DIM. Check before status parsing:
     // it's a 2xx-but-wrong-shape case with no HTTP status to match.
@@ -674,6 +683,18 @@ mod tests {
             assert_eq!(f.code, FailureCode::AuthInvalid, "status {status}");
             assert!(f.is_unrecoverable());
         }
+    }
+
+    #[test]
+    fn classify_cloud_backend_session_missing_as_auth_missing() {
+        let f = classify_embed_error_str(
+            "No backend session for cloud embeddings: log in to OpenHuman, or set \
+             memory.embedding_provider to \"ollama\" / \"none\" in config.toml",
+        );
+        assert_eq!(f.code, FailureCode::AuthMissing);
+        assert_eq!(f.class, FailureClass::Unrecoverable);
+        assert_eq!(f.remediation_key, "memory.health.remediation.auth_missing");
+        assert!(f.is_unrecoverable());
     }
 
     #[test]
