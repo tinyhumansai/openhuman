@@ -259,6 +259,33 @@ async fn verify_email_credentials(cfg: &EmailConfig) -> Result<(), String> {
     }
 }
 
+/// Persist an already-built + verified [`EmailConfig`] into
+/// `channels_config.email` so the supervised IMAP/SMTP listener picks it up on
+/// the next restart. Kept separate from the verify step so persistence is unit
+/// testable without a live mailbox.
+pub(super) async fn persist_email_config(
+    config: &Config,
+    email_cfg: EmailConfig,
+) -> Result<(), String> {
+    let allowed_senders_count = email_cfg.allowed_senders.len();
+    let smtp_tls = email_cfg.smtp_tls;
+
+    let mut persisted = config.clone();
+    persisted.channels_config.email = Some(email_cfg);
+    persisted
+        .save()
+        .await
+        .map_err(|e| format!("failed to persist email config.toml: {e}"))?;
+
+    tracing::info!(
+        target: "openhuman::channels",
+        allowed_senders_count,
+        smtp_tls,
+        "[email] connect_channel: wrote channels_config.email; restart core for IMAP/SMTP listener"
+    );
+    Ok(())
+}
+
 fn clear_channel_memory(config: &Config, channel_id: &str) -> anyhow::Result<usize> {
     let exact = memory_tree_store::delete_chunks_by_source(config, SourceKind::Chat, channel_id)?;
     let prefixed = memory_tree_store::delete_chunks_by_source_prefix(
@@ -566,24 +593,7 @@ pub async fn connect_channel(
         let email_cfg = prebuilt_email_config.take().ok_or_else(|| {
             "internal error: email config not built before persistence".to_string()
         })?;
-
-        let allowed_senders_count = email_cfg.allowed_senders.len();
-        let smtp_tls = email_cfg.smtp_tls;
-
-        let mut persisted = config.clone();
-        persisted.channels_config.email = Some(email_cfg);
-
-        persisted
-            .save()
-            .await
-            .map_err(|e| format!("failed to persist email config.toml: {e}"))?;
-
-        tracing::info!(
-            target: "openhuman::channels",
-            allowed_senders_count,
-            smtp_tls,
-            "[email] connect_channel: wrote channels_config.email; restart core for IMAP/SMTP listener"
-        );
+        persist_email_config(config, email_cfg).await?;
     }
 
     Ok(RpcOutcome::single_log(

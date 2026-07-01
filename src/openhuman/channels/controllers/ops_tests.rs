@@ -1255,3 +1255,117 @@ async fn connect_yuanbao_persists_env_override() {
         Some("canary")
     );
 }
+
+// ── email (IMAP/SMTP) channel — #4280 ──────────────────────────────
+
+#[tokio::test]
+async fn persist_email_config_writes_channels_config_email() {
+    let (_tmp, config) = isolated_test_config();
+    let cfg = EmailConfig {
+        imap_host: "imap.fastmail.com".into(),
+        smtp_host: "smtp.fastmail.com".into(),
+        username: "me@fastmail.com".into(),
+        password: "app-pass".into(),
+        from_address: "me@fastmail.com".into(),
+        allowed_senders: vec!["*".into()],
+        ..EmailConfig::default()
+    };
+
+    super::connect::persist_email_config(&config, cfg)
+        .await
+        .expect("persist should succeed");
+
+    let raw = tokio::fs::read_to_string(&config.config_path)
+        .await
+        .expect("saved config should exist");
+    let parsed: toml::Value = toml::from_str(&raw).expect("saved config should parse");
+    let email = parsed
+        .get("channels_config")
+        .and_then(|v| v.get("email"))
+        .and_then(toml::Value::as_table)
+        .expect("channels_config.email persisted");
+    assert_eq!(
+        email.get("imap_host").and_then(toml::Value::as_str),
+        Some("imap.fastmail.com")
+    );
+    assert_eq!(
+        email.get("smtp_host").and_then(toml::Value::as_str),
+        Some("smtp.fastmail.com")
+    );
+}
+
+#[tokio::test]
+async fn disconnect_email_clears_channels_config() {
+    let (_tmp, mut config) = isolated_test_config();
+    config.channels_config.email = Some(EmailConfig {
+        imap_host: "imap.x".into(),
+        smtp_host: "smtp.x".into(),
+        username: "u@x".into(),
+        password: "p".into(),
+        from_address: "u@x".into(),
+        allowed_senders: vec!["*".into()],
+        ..EmailConfig::default()
+    });
+    config
+        .save()
+        .await
+        .expect("preloaded config should be persisted");
+
+    disconnect_channel(&config, "email", ChannelAuthMode::ApiKey, false)
+        .await
+        .expect("email disconnect should succeed");
+
+    let raw = tokio::fs::read_to_string(&config.config_path)
+        .await
+        .expect("saved config should exist");
+    let parsed: toml::Value = toml::from_str(&raw).expect("saved config should parse");
+    assert!(
+        parsed
+            .get("channels_config")
+            .and_then(|v| v.get("email"))
+            .is_none(),
+        "channels_config.email should be removed after disconnect"
+    );
+}
+
+#[tokio::test]
+async fn connect_email_rejects_invalid_port_before_network() {
+    // All required fields present so validation passes; a non-numeric port makes
+    // build_email_config fail in the pre-verify step, before any IMAP dial.
+    let config = Config::default();
+    let err = connect_channel(
+        &config,
+        "email",
+        ChannelAuthMode::ApiKey,
+        serde_json::json!({
+            "imap_host": "imap.x.com",
+            "imap_port": "not-a-port",
+            "username": "u@x.com",
+            "password": "secret",
+            "smtp_host": "smtp.x.com",
+        }),
+    )
+    .await
+    .expect_err("invalid port must be rejected");
+    assert!(err.contains("imap_port"), "{err}");
+}
+
+#[tokio::test]
+async fn test_channel_email_rejects_invalid_port_before_network() {
+    let config = Config::default();
+    let err = test_channel(
+        &config,
+        "email",
+        ChannelAuthMode::ApiKey,
+        serde_json::json!({
+            "imap_host": "imap.x.com",
+            "username": "u@x.com",
+            "password": "secret",
+            "smtp_host": "smtp.x.com",
+            "smtp_port": "nope",
+        }),
+    )
+    .await
+    .expect_err("invalid smtp port must be rejected");
+    assert!(err.contains("smtp_port"), "{err}");
+}
