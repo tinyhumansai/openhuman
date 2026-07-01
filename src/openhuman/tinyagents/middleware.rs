@@ -354,16 +354,13 @@ struct ToolOutputMiddleware {
 }
 
 impl ToolOutputMiddleware {
-    /// Effective byte cap for `name`: the tool's own `max_result_size_chars`
-    /// when it declares one (treated as bytes — a conservative approximation),
-    /// else the shared fallback `budget_bytes`.
-    fn effective_budget(&self, name: &str) -> usize {
+    /// The tool's own declared character cap, if any.
+    fn tool_char_cap(&self, name: &str) -> Option<usize> {
         self.tool_sets
             .iter()
             .flat_map(|set| set.iter())
             .find(|t| t.name() == name)
             .and_then(|t| t.max_result_size_chars())
-            .unwrap_or(self.budget_bytes)
     }
 }
 
@@ -397,12 +394,35 @@ impl Middleware<()> for ToolOutputMiddleware {
             }
         }
 
-        // 2. Hard byte cap backstop — truncate at a UTF-8 boundary with a marker.
-        //    Honor the tool's own declared cap first, else the shared fallback.
-        let budget = self.effective_budget(&result.name);
-        if budget > 0 {
+        // 2. Per-tool **char** cap — a tool that declares `max_result_size_chars`
+        //    caps its own output in characters, with the tool-cap marker the model
+        //    was taught to read (legacy engine parity). Distinct from the generic
+        //    byte budget below: the tool cap is the tool's own contract.
+        let tool_cap = self.tool_char_cap(&result.name);
+        if let Some(cap) = tool_cap {
+            let char_count = result.content.chars().count();
+            if char_count > cap {
+                let truncated: String = result.content.chars().take(cap).collect();
+                let dropped = char_count - cap;
+                tracing::debug!(
+                    tool = %result.name,
+                    cap,
+                    char_count,
+                    dropped,
+                    "[tinyagents::mw] per-tool char cap applied"
+                );
+                result.content = format!(
+                    "{truncated}\n\n[truncated by tool cap: {dropped} more chars not shown]"
+                );
+            }
+        }
+
+        // 3. Shared byte-cap backstop — truncate at a UTF-8 boundary with a marker.
+        //    Only for tools with no cap of their own (a capped tool already bounded
+        //    itself above; stacking the two markers would double-truncate).
+        if tool_cap.is_none() && self.budget_bytes > 0 {
             let (capped, outcome) =
-                apply_tool_result_budget(std::mem::take(&mut result.content), budget);
+                apply_tool_result_budget(std::mem::take(&mut result.content), self.budget_bytes);
             if outcome.truncated {
                 tracing::debug!(
                     tool = %result.name,
@@ -1368,7 +1388,7 @@ mod tests {
     }
 
     #[test]
-    fn effective_budget_prefers_the_tools_own_cap() {
+    fn tool_char_cap_reads_the_tools_own_declared_cap() {
         let tools: Arc<Vec<Box<dyn Tool>>> = Arc::new(vec![Box::new(FakeTool {
             name: "big",
             cap: Some(10),
@@ -1379,10 +1399,10 @@ mod tests {
             payload_summarizer: None,
             tool_sets: vec![tools],
         };
-        // Tool declares its own cap → used instead of the flat fallback.
-        assert_eq!(mw.effective_budget("big"), 10);
-        // Unknown tool → the flat fallback.
-        assert_eq!(mw.effective_budget("other"), 1_000);
+        // Tool declares its own char cap → surfaced for the per-tool truncation.
+        assert_eq!(mw.tool_char_cap("big"), Some(10));
+        // Unknown tool → no per-tool cap (the flat byte budget applies instead).
+        assert_eq!(mw.tool_char_cap("other"), None);
     }
 
     #[tokio::test]
@@ -1400,8 +1420,8 @@ mod tests {
         let mut result = tool_result("capped", &"y".repeat(500));
         mw.after_tool(&mut ctx(), &(), &mut result).await.unwrap();
         assert!(
-            result.content.contains("truncated by tool_result_budget"),
-            "the tool's own 20-byte cap should truncate: {}",
+            result.content.contains("truncated by tool cap: 480 more chars not shown"),
+            "the tool's own 20-char cap should truncate with the tool-cap marker: {}",
             result.content
         );
     }
