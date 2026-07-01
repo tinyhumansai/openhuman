@@ -950,4 +950,35 @@ mod tests {
         assert!(probe_dir_writable(&nested));
         assert!(nested.is_dir());
     }
+
+    /// Drives the async probe wrappers + RPC entry points end-to-end against a
+    /// temp-scoped default config. `doctor::run_models` is a no-op offline (all
+    /// providers Skipped) and there is no local Ollama in CI, so this executes
+    /// every gather/probe branch without network or panics.
+    #[tokio::test]
+    async fn gather_inputs_and_rpc_entry_points_execute() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut config = crate::openhuman::config::Config::default();
+        config.action_dir = tmp.path().to_path_buf();
+
+        let inputs = gather_inputs(&config).await;
+        assert_eq!(inputs.host_os, std::env::consts::OS);
+        // file-access probe wrote into our writable tempdir
+        assert!(inputs.storage.action_dir_writable);
+
+        let report = evaluate(&inputs);
+        assert_eq!(report.checks.len(), 6);
+
+        // RPC surfaces succeed and carry a report/probe payload.
+        let all = readiness_check_all(&config).await.unwrap();
+        assert_eq!(all.value.checks.len(), 6);
+
+        // run_models marks everything Skipped offline → gate not ok, call ok.
+        let model = validate_model_connection(&config).await.unwrap();
+        assert!(!model.value.ok);
+
+        // No local Ollama in CI → unreachable, empty models; call still ok.
+        let ollama = ollama_models().await.unwrap();
+        assert!(ollama.value.models.is_empty() || ollama.value.reachable);
+    }
 }

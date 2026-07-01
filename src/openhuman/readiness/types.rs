@@ -25,19 +25,6 @@ pub enum CheckStatus {
     Skipped,
 }
 
-impl CheckStatus {
-    /// Rank for rolling several statuses up into an overall status. Higher =
-    /// worse. `Skipped` is treated as neutral (does not worsen the rollup).
-    fn severity(self) -> u8 {
-        match self {
-            CheckStatus::Ok => 0,
-            CheckStatus::Skipped => 0,
-            CheckStatus::Warn => 1,
-            CheckStatus::Fail => 2,
-        }
-    }
-}
-
 /// A single plain-language readiness check surfaced in the setup flow.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReadinessCheck {
