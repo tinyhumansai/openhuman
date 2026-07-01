@@ -533,12 +533,18 @@ mod tests {
     fn usage_failure_cache_freshness_window() {
         let cache = UsageFailureCache::new();
         let base = Instant::now();
-        assert!(!cache.is_fresh(FAIL_KEY, base, TTL), "empty cache is never fresh");
+        assert!(
+            !cache.is_fresh(FAIL_KEY, base, TTL),
+            "empty cache is never fresh"
+        );
         cache.record(FAIL_KEY, base);
         assert!(cache.is_fresh(FAIL_KEY, base + Duration::from_secs(5), TTL));
         assert!(!cache.is_fresh(FAIL_KEY, base + Duration::from_secs(61), TTL));
         cache.clear();
-        assert!(!cache.is_fresh(FAIL_KEY, base, TTL), "cleared cache is never fresh");
+        assert!(
+            !cache.is_fresh(FAIL_KEY, base, TTL),
+            "cleared cache is never fresh"
+        );
     }
 
     // GH #4153: a failure anchored under one backend key must NOT suppress a
@@ -585,12 +591,13 @@ mod tests {
         let base = Instant::now();
         cache.record(FAIL_KEY, base);
         let calls = AtomicUsize::new(0);
-        let err = get_usage_with_cache(&cache, FAIL_KEY, TTL, base + Duration::from_secs(5), || {
-            calls.fetch_add(1, Ordering::SeqCst);
-            async { panic!("fetch must not run inside the backoff window") }
-        })
-        .await
-        .unwrap_err();
+        let err =
+            get_usage_with_cache(&cache, FAIL_KEY, TTL, base + Duration::from_secs(5), || {
+                calls.fetch_add(1, Ordering::SeqCst);
+                async { panic!("fetch must not run inside the backoff window") }
+            })
+            .await
+            .unwrap_err();
         assert_eq!(
             calls.load(Ordering::SeqCst),
             0,
@@ -640,7 +647,10 @@ mod tests {
         .await
         .expect("success");
         assert_eq!(outcome.value["remainingUsd"], 5.0);
-        assert!(!cache.is_fresh(FAIL_KEY, later, TTL), "success cleared the streak");
+        assert!(
+            !cache.is_fresh(FAIL_KEY, later, TTL),
+            "success cleared the streak"
+        );
     }
 
     // T5 — session-expiry must flow verbatim and must NOT anchor the window
