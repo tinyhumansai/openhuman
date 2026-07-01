@@ -821,6 +821,22 @@ async fn turn_xml_failures_checkpoint_policy_visibility_and_hooks_are_publicly_e
     let hooks = hook_calls.lock().await;
     assert_eq!(hooks[0].assistant_response, checkpoint);
     assert_eq!(hooks[0].tool_calls.len(), 6);
+    let tool_names = hooks[0]
+        .tool_calls
+        .iter()
+        .map(|record| record.name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        tool_names,
+        vec![
+            "hidden_tool",
+            "cli_only",
+            "round17_error",
+            "round17_boom",
+            "round17_write",
+            "round17_ok",
+        ]
+    );
 
     let joined = provider
         .requests()
@@ -829,7 +845,21 @@ async fn turn_xml_failures_checkpoint_policy_visibility_and_hooks_are_publicly_e
         .map(|message| message.content)
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(joined.contains("not available to this agent"));
+    assert!(joined.contains("<tool_result name=\"hidden_tool\" status=\"error\">"));
+    let allowed_tool_lines = joined
+        .lines()
+        .filter(|line| line.starts_with("- Allowed tools:"))
+        .collect::<Vec<_>>();
+    assert!(
+        !allowed_tool_lines.is_empty(),
+        "expected policy boundary allowed-tools line in provider context"
+    );
+    assert!(
+        allowed_tool_lines
+            .iter()
+            .all(|line| !line.contains("round17_write")),
+        "write tool should not be advertised as policy-allowed: {allowed_tool_lines:?}"
+    );
     assert!(joined.contains("semantic failure"));
     assert!(joined.contains("Error executing round17_boom"));
     assert!(joined.contains("denied by policy 'round17-deny'"));
