@@ -82,6 +82,7 @@ import {
   THREAD_NOT_FOUND_MESSAGE,
   updateThreadTitle,
 } from '../store/threadSlice';
+import type { AgentProfile } from '../types/agentProfile';
 import type { ConfirmationModal as ConfirmationModalType } from '../types/intelligence';
 import type { ThreadMessage } from '../types/thread';
 import { splitAgentMessageIntoBubbles } from '../utils/agentMessageBubbles';
@@ -217,6 +218,14 @@ export function isImeCompositionKeyEvent(event: ImeKeyboardEventLike): boolean {
  * Exported so the mount-effect's `.catch` stays a one-liner and the message
  * shape can be unit-tested without mounting the full page.
  */
+export function sortAgentProfiles(profiles: AgentProfile[], locale: string): AgentProfile[] {
+  return profiles
+    .filter(p => !p.builtIn)
+    .sort(
+      (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.name.localeCompare(b.name, locale)
+    );
+}
+
 export function formatThreadLoadError(err: unknown): string {
   if (err instanceof Error) return err.message;
   if (err && typeof err === 'object' && 'message' in err) {
@@ -2952,6 +2961,22 @@ const Conversations = ({
                   }`}>
                   {t('chat.agentProfile.reasoning')}
                 </button>
+                {sortAgentProfiles(agentProfiles, uiLocale).map(profile => (
+                  <button
+                    key={profile.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={selectedAgentProfileId === profile.id}
+                    data-analytics-id={`chat-header-mode-${profile.id}`}
+                    onClick={() => void handleSelectAgentProfile(profile.id)}
+                    className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-all ${
+                      selectedAgentProfileId === profile.id
+                        ? 'bg-surface text-content shadow-sm'
+                        : 'text-content-muted hover:text-content-secondary'
+                    }`}>
+                    {profile.name}
+                  </button>
+                ))}
               </div>
               {/* Super context is read at thread construction, so it only
                   affects NEW threads. Hide the toggle once the thread has ANY
