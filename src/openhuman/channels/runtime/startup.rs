@@ -604,7 +604,8 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     }
 
     if let Some(ref email_cfg) = config.channels_config.email {
-        channels.push(Arc::new(EmailChannel::new(email_cfg.clone())));
+        let hydrated = resolve_email_password(email_cfg.clone(), &config);
+        channels.push(Arc::new(EmailChannel::new(hydrated)));
     }
 
     if let Some(ref irc) = config.channels_config.irc {
@@ -904,6 +905,48 @@ fn resolve_yuanbao_app_secret(
     yb_cfg
 }
 
+/// Best-effort fill of `email_cfg.password` from the encrypted credentials store
+/// when TOML doesn't already carry one.
+///
+/// The IMAP/SMTP `password` is intentionally not persisted in `config.toml` (see
+/// `persist_email_config` in `controllers/ops/connect.rs`); it lives only in the
+/// credentials store under `channel:email:api_key`. Existing TOML values still
+/// win so manually-installed deployments keep working. The stored secret is only
+/// copied when the stored profile's `username` matches, so editing `username` in
+/// `config.toml` can't silently pair a fresh account with a stale password.
+fn resolve_email_password(
+    mut email_cfg: crate::openhuman::channels::email_channel::EmailConfig,
+    config: &Config,
+) -> crate::openhuman::channels::email_channel::EmailConfig {
+    if !email_cfg.password.is_empty() {
+        return email_cfg;
+    }
+    let auth = crate::openhuman::credentials::AuthService::from_config(config);
+    match auth.get_profile("channel:email:api_key", None) {
+        Ok(Some(profile)) => {
+            let stored_username = profile.metadata.get("username").map(String::as_str);
+            if stored_username != Some(email_cfg.username.as_str()) {
+                tracing::warn!(
+                    "[channels] email stored credentials are for a different username (toml={:?}, store={:?}); reconnect the channel to refresh the password",
+                    email_cfg.username,
+                    stored_username,
+                );
+            } else if let Some(password) = profile.metadata.get("password") {
+                email_cfg.password = password.clone();
+            }
+        }
+        Ok(None) => {
+            tracing::warn!(
+                "[channels] email credentials missing — connect the channel again from the UI"
+            );
+        }
+        Err(e) => {
+            tracing::warn!("[channels] failed to load email credentials: {e}");
+        }
+    }
+    email_cfg
+}
+
 #[cfg(any(test, debug_assertions))]
 pub mod test_support {
     use super::*;
@@ -1012,6 +1055,78 @@ mod yuanbao_secret_tests {
         assert_eq!(
             resolved.app_secret, "",
             "stale profile keyed to OLD-KEY must not hydrate NEW-KEY's secret",
+        );
+    }
+}
+
+#[cfg(test)]
+mod email_secret_tests {
+    use super::*;
+    use crate::openhuman::channels::email_channel::EmailConfig;
+    use crate::openhuman::credentials::AuthService;
+    use std::collections::HashMap;
+    use tempfile::tempdir;
+
+    fn isolated_config() -> (tempfile::TempDir, Config) {
+        let tmp = tempdir().expect("tempdir");
+        let mut config = Config::default();
+        config.workspace_dir = tmp.path().join("workspace");
+        config.config_path = tmp.path().join("config.toml");
+        std::fs::create_dir_all(&config.workspace_dir).expect("workspace dir");
+        (tmp, config)
+    }
+
+    fn store_email_creds(config: &Config, username: &str, password: &str) {
+        let auth = AuthService::from_config(config);
+        let mut metadata = HashMap::new();
+        metadata.insert("username".to_string(), username.to_string());
+        metadata.insert("password".to_string(), password.to_string());
+        auth.store_provider_token("channel:email:api_key", "default", "", metadata, true)
+            .expect("store credentials");
+    }
+
+    #[test]
+    fn loads_password_from_credentials_when_toml_empty() {
+        let (_tmp, config) = isolated_config();
+        store_email_creds(&config, "me@example.com", "from-credentials");
+
+        let cfg = EmailConfig {
+            username: "me@example.com".into(),
+            password: String::new(),
+            ..EmailConfig::default()
+        };
+        let resolved = resolve_email_password(cfg, &config);
+        assert_eq!(resolved.password, "from-credentials");
+    }
+
+    #[test]
+    fn preserves_existing_toml_password_without_consulting_store() {
+        let (_tmp, config) = isolated_config();
+        let cfg = EmailConfig {
+            username: "me@example.com".into(),
+            password: "from-toml".into(),
+            ..EmailConfig::default()
+        };
+        let resolved = resolve_email_password(cfg, &config);
+        assert_eq!(resolved.password, "from-toml");
+    }
+
+    #[test]
+    fn skips_hydration_when_stored_profile_has_different_username() {
+        // User changed `username` in config.toml; the stored profile is for the
+        // old account. The resolver must not graft the old password onto it.
+        let (_tmp, config) = isolated_config();
+        store_email_creds(&config, "old@example.com", "old-password-do-not-use");
+
+        let cfg = EmailConfig {
+            username: "new@example.com".into(),
+            password: String::new(),
+            ..EmailConfig::default()
+        };
+        let resolved = resolve_email_password(cfg, &config);
+        assert_eq!(
+            resolved.password, "",
+            "stale profile for old username must not hydrate the new account",
         );
     }
 }
