@@ -1043,7 +1043,9 @@ impl Agent {
         // which handed `self.last_turn_usage.as_ref()` to this call.
         let turn_usage = crate::openhuman::agent::harness::session::transcript::TurnUsage {
             provider: self.event_channel().to_string(),
-            model: self.model_name.clone(),
+            // The model that actually ran this turn (a per-turn override can
+            // diverge from `self.model_name`); attribute usage to it.
+            model: effective_model.to_string(),
             usage: crate::openhuman::agent::harness::session::transcript::MessageUsage {
                 input: input_tokens,
                 output: output_tokens,
