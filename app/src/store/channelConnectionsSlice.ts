@@ -31,6 +31,8 @@ const initialState: ChannelConnectionsState = {
     // populates them when the user wires up credentials.
     lark: makeEmptyChannelModes(),
     dingtalk: makeEmptyChannelModes(),
+    // Native IMAP/SMTP email channel (#4280).
+    email: makeEmptyChannelModes(),
     // MCP Servers tab is a virtual channel — no auth-mode connections,
     // but must be present to satisfy Record<ChannelType, …>.
     mcp: makeEmptyChannelModes(),
