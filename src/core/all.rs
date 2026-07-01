@@ -140,6 +140,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::harness_init::all_harness_init_registered_controllers());
     // Diagnostic tools
     controllers.extend(crate::openhuman::doctor::all_doctor_registered_controllers());
+    // First-run readiness aggregator (guided setup checks)
+    controllers.extend(crate::openhuman::readiness::all_readiness_registered_controllers());
     // Secret storage and encryption
     controllers.extend(crate::openhuman::encryption::all_encryption_registered_controllers());
     // Keyring consent — user approval before local secret storage fallback
@@ -372,6 +374,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::health::all_health_controller_schemas());
     schemas.extend(crate::openhuman::harness_init::all_harness_init_controller_schemas());
     schemas.extend(crate::openhuman::doctor::all_doctor_controller_schemas());
+    schemas.extend(crate::openhuman::readiness::all_readiness_controller_schemas());
     schemas.extend(crate::openhuman::encryption::all_encryption_controller_schemas());
     schemas.extend(crate::openhuman::keyring_consent::all_keyring_consent_controller_schemas());
     schemas.extend(crate::openhuman::security::all_security_controller_schemas());
@@ -533,6 +536,7 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "doctor" => Some("Run diagnostics for workspace and runtime health."),
         "encrypt" => Some("Encrypt secure values managed by secret storage."),
         "health" => Some("Process and component health snapshots."),
+        "readiness" => Some("First-run readiness checks for guided setup: core, storage, permissions, model connection, and local Ollama."),
         "inference" => Some("Connect to configured text, vision, and embedding inference runtimes."),
         "migrate" => Some("Data migration utilities."),
         "javascript" => Some("First-class JavaScript runtime bridge for listing and dispatching tools."),
