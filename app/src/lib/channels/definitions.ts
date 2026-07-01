@@ -318,6 +318,7 @@ export const FALLBACK_DEFINITIONS: ChannelDefinition[] = [
             field_type: 'boolean',
             required: false,
             placeholder: 'On = TLS (recommended)',
+            default_bool: true,
           },
           {
             key: 'from_address',

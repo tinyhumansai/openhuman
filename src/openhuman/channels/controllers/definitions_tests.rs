@@ -418,6 +418,9 @@ fn email_definition_field_shape_matches_email_config() {
     }
     let smtp_tls = spec.fields.iter().find(|f| f.key == "smtp_tls").unwrap();
     assert_eq!(smtp_tls.field_type, "boolean");
+    // Default-on so the UI checkbox is pre-checked and a fresh connect keeps TLS
+    // rather than silently reverting the default when the box is left untouched.
+    assert_eq!(smtp_tls.default_bool, Some(true));
 }
 
 #[test]

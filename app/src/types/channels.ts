@@ -71,6 +71,9 @@ export interface FieldRequirement {
   field_type: string; // "string" | "secret" | "boolean"
   required: boolean;
   placeholder: string;
+  /** Default state for boolean fields; seeds the checkbox so its visible state
+   *  matches what persists when untouched (e.g. smtp_tls defaults on). */
+  default_bool?: boolean;
 }
 
 export interface AuthModeSpec {

@@ -48,9 +48,11 @@ describe('<CredentialChannelConfig />', () => {
     fireEvent.click(screen.getByText('Connect'));
 
     await waitFor(() => expect(connectChannelMock).toHaveBeenCalledTimes(1));
+    // Booleans are always submitted (use_feishu defaults off) so a default-on
+    // field can be turned off from the form; strings only when filled.
     expect(connectChannelMock).toHaveBeenCalledWith('lark', {
       authMode: 'api_key',
-      credentials: { app_id: 'cli_abc123', app_secret: 'shh-secret' },
+      credentials: { app_id: 'cli_abc123', app_secret: 'shh-secret', use_feishu: 'false' },
     });
     await waitFor(() => expect(restartCoreProcessMock).toHaveBeenCalledTimes(1));
   });
@@ -153,6 +155,8 @@ describe('<CredentialChannelConfig />', () => {
     fireEvent.click(screen.getByText('Connect'));
 
     await waitFor(() => expect(connectChannelMock).toHaveBeenCalledTimes(1));
+    // smtp_tls is a default-on boolean: it is submitted as 'true' even when the
+    // (pre-checked) box is left untouched, so the persisted value matches the UI.
     expect(connectChannelMock).toHaveBeenCalledWith('email', {
       authMode: 'api_key',
       credentials: {
@@ -160,7 +164,34 @@ describe('<CredentialChannelConfig />', () => {
         username: 'me@fastmail.com',
         password: 'fmapp-pass',
         smtp_host: 'smtp.fastmail.com',
+        smtp_tls: 'true',
       },
     });
+  });
+
+  it('lets the user turn smtp_tls off from the pre-checked box (#4280 review)', async () => {
+    renderWithProviders(<CredentialChannelConfig definition={emailDefinition} />);
+
+    // Default-on: the box renders checked before any interaction.
+    const tls = screen.getByRole('checkbox') as HTMLInputElement;
+    expect(tls.checked).toBe(true);
+    fireEvent.click(tls); // turn TLS off
+
+    fireEvent.change(screen.getByPlaceholderText('imap.fastmail.com'), {
+      target: { value: 'mail.self.host' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('you@example.com'), {
+      target: { value: 'me@self.host' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('App-specific password (recommended)'), {
+      target: { value: 'pw' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('smtp.fastmail.com'), {
+      target: { value: 'mail.self.host' },
+    });
+    fireEvent.click(screen.getByText('Connect'));
+
+    await waitFor(() => expect(connectChannelMock).toHaveBeenCalledTimes(1));
+    expect(connectChannelMock.mock.calls[0][1].credentials?.smtp_tls).toBe('false');
   });
 });
