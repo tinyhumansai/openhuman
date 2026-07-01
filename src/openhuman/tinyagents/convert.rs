@@ -34,8 +34,11 @@ pub(super) const REASONING_EXT_KEY: &str = "reasoning_content";
 /// Build the [`ContentBlock`] that stashes a response's `reasoning_content` on an
 /// assistant message, if any.
 pub(super) fn reasoning_content_block(reasoning: Option<&str>) -> Option<ContentBlock> {
-    let reasoning = reasoning?.trim();
-    (!reasoning.is_empty()).then(|| {
+    let reasoning = reasoning?;
+    // Store verbatim (only gate on non-empty after a trim): thinking-mode
+    // providers validate the prior reasoning block byte-for-byte on a resumed
+    // multi-turn request, so trimming boundary whitespace could break replay.
+    (!reasoning.trim().is_empty()).then(|| {
         ContentBlock::ProviderExtension(serde_json::json!({ REASONING_EXT_KEY: reasoning }))
     })
 }
