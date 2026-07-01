@@ -160,6 +160,7 @@ pub fn all_channel_definitions() -> Vec<ChannelDefinition> {
         imessage_definition(),
         lark_definition(),
         dingtalk_definition(),
+        email_definition(),
         yuanbao_definition(),
     ]
 }
@@ -457,6 +458,109 @@ fn dingtalk_definition() -> ChannelDefinition {
             auth_action: None,
         }],
         capabilities: vec![ChannelCapability::SendText, ChannelCapability::ReceiveText],
+    }
+}
+
+/// Native IMAP/SMTP email channel for any standard mailbox (Fastmail, Proton
+/// Bridge, iCloud, self-hosted, …) — the option non-Gmail/non-Outlook users
+/// lacked (#4280). The IMAP IDLE + SMTP wire-protocol already lives in
+/// `src/openhuman/channels/providers/email_channel.rs`; this definition exposes
+/// its config surface to the Connections UI so users no longer need to
+/// hand-edit `config.toml`.
+///
+/// Field keys map 1:1 to `config::schema::channels::EmailConfig` so the
+/// frontend persists credentials through the same `channels_connect` RPC every
+/// other channel uses. `imap_port` / `smtp_port` are typed as plain strings
+/// (FieldRequirement only supports string/secret/boolean); `connect_channel`
+/// parses them back to `u16`.
+fn email_definition() -> ChannelDefinition {
+    ChannelDefinition {
+        id: "email",
+        display_name: "Email (IMAP/SMTP)",
+        description: "Send and receive email via any standard IMAP/SMTP mailbox.",
+        icon: "email",
+        auth_modes: vec![AuthModeSpec {
+            mode: ChannelAuthMode::ApiKey,
+            description: "Provide your mailbox's IMAP/SMTP server settings and an app password.",
+            fields: vec![
+                FieldRequirement {
+                    key: "imap_host",
+                    label: "IMAP Host",
+                    field_type: "string",
+                    required: true,
+                    placeholder: "imap.fastmail.com",
+                },
+                FieldRequirement {
+                    key: "imap_port",
+                    label: "IMAP Port",
+                    field_type: "string",
+                    required: false,
+                    placeholder: "993 (TLS)",
+                },
+                FieldRequirement {
+                    key: "username",
+                    label: "Email Address",
+                    field_type: "string",
+                    required: true,
+                    placeholder: "you@example.com",
+                },
+                FieldRequirement {
+                    key: "password",
+                    label: "Password / App Password",
+                    field_type: "secret",
+                    required: true,
+                    placeholder: "App-specific password (recommended)",
+                },
+                FieldRequirement {
+                    key: "smtp_host",
+                    label: "SMTP Host",
+                    field_type: "string",
+                    required: true,
+                    placeholder: "smtp.fastmail.com",
+                },
+                FieldRequirement {
+                    key: "smtp_port",
+                    label: "SMTP Port",
+                    field_type: "string",
+                    required: false,
+                    placeholder: "465 (TLS)",
+                },
+                FieldRequirement {
+                    key: "smtp_tls",
+                    label: "Use TLS for SMTP",
+                    field_type: "boolean",
+                    required: false,
+                    placeholder: "On = TLS (recommended)",
+                },
+                FieldRequirement {
+                    key: "from_address",
+                    label: "From Address",
+                    field_type: "string",
+                    required: false,
+                    placeholder: "Optional — defaults to the email address above",
+                },
+                FieldRequirement {
+                    key: "imap_folder",
+                    label: "IMAP Folder",
+                    field_type: "string",
+                    required: false,
+                    placeholder: "Optional — defaults to INBOX",
+                },
+                FieldRequirement {
+                    key: "allowed_senders",
+                    label: "Allowed Senders",
+                    field_type: "string",
+                    required: false,
+                    placeholder: "Comma-separated addresses or @domain; * to allow any",
+                },
+            ],
+            auth_action: None,
+        }],
+        capabilities: vec![
+            ChannelCapability::SendText,
+            ChannelCapability::ReceiveText,
+            ChannelCapability::FileAttachments,
+        ],
     }
 }
 

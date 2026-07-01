@@ -366,3 +366,79 @@ fn auth_mode_serializes_to_expected_wire_values() {
         ChannelAuthMode::ManagedDm
     );
 }
+
+#[test]
+fn email_definition_is_registered() {
+    let def = find_channel_definition("email").expect("email channel not registered");
+    assert_eq!(def.display_name, "Email (IMAP/SMTP)");
+    assert!(def.capabilities.contains(&ChannelCapability::SendText));
+    assert!(def.capabilities.contains(&ChannelCapability::ReceiveText));
+}
+
+#[test]
+fn email_definition_field_shape_matches_email_config() {
+    let def = find_channel_definition("email").expect("email not found");
+    let spec = def
+        .auth_mode_spec(ChannelAuthMode::ApiKey)
+        .expect("email must expose an api_key auth mode");
+
+    // Required fields — these gate a usable IMAP/SMTP connection.
+    for key in ["imap_host", "username", "password", "smtp_host"] {
+        let field = spec
+            .fields
+            .iter()
+            .find(|f| f.key == key)
+            .unwrap_or_else(|| panic!("email spec missing required field: {key}"));
+        assert!(field.required, "email field {key} must be required");
+    }
+    // Password must be secret-typed so the UI masks it.
+    let password = spec.fields.iter().find(|f| f.key == "password").unwrap();
+    assert_eq!(password.field_type, "secret");
+
+    // Optional fields — keys map 1:1 to `EmailConfig` in
+    // `src/openhuman/channels/providers/email_channel.rs`. A rename there must
+    // fail this assertion before the UI silently stops persisting the field.
+    for key in [
+        "imap_port",
+        "smtp_port",
+        "smtp_tls",
+        "from_address",
+        "imap_folder",
+        "allowed_senders",
+    ] {
+        let field = spec
+            .fields
+            .iter()
+            .find(|f| f.key == key)
+            .unwrap_or_else(|| panic!("email spec missing optional field: {key}"));
+        assert!(
+            !field.required,
+            "email optional field {key} must not be required"
+        );
+    }
+    let smtp_tls = spec.fields.iter().find(|f| f.key == "smtp_tls").unwrap();
+    assert_eq!(smtp_tls.field_type, "boolean");
+}
+
+#[test]
+fn email_validate_credentials_rejects_missing_password() {
+    let def = find_channel_definition("email").expect("email not found");
+    let mut creds = serde_json::Map::new();
+    creds.insert(
+        "imap_host".into(),
+        serde_json::Value::String("imap.x.com".into()),
+    );
+    creds.insert(
+        "username".into(),
+        serde_json::Value::String("u@x.com".into()),
+    );
+    creds.insert(
+        "smtp_host".into(),
+        serde_json::Value::String("smtp.x.com".into()),
+    );
+    // password intentionally omitted.
+    let err = def
+        .validate_credentials(ChannelAuthMode::ApiKey, &creds)
+        .expect_err("must reject when password missing");
+    assert!(err.contains("password"), "{err}");
+}
