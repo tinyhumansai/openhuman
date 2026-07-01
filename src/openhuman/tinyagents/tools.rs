@@ -72,7 +72,7 @@ impl Tool<()> for UnknownToolAdapter {
             )
         } else {
             format!(
-                "Unknown tool: '{requested}'. It is not available; do not call it again. \
+                "Unknown tool: {requested}. It is not available; do not call it again. \
                  Use one of the advertised tools, or answer directly."
             )
         };
