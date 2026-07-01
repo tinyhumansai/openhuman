@@ -246,7 +246,7 @@ async fn execute_openhuman_tool(
             TaToolResult {
                 call_id: call.id,
                 name: call.name.clone(),
-                content: format!("Error executing '{}': {e}", call.name),
+                content: format!("Error executing {}: {e}", call.name),
                 raw: None,
                 error: Some(e.to_string()),
                 elapsed_ms: 0,
