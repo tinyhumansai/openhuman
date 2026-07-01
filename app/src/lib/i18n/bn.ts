@@ -6107,6 +6107,7 @@ const messages: TranslationMap = {
   // Onboarding: Custom > Activity
   'onboarding.custom.stepperActivity': 'কার্যকলাপ',
   'onboarding.custom.stepperVault': 'ভল্ট',
+  'onboarding.custom.stepperReadiness': 'প্রস্তুতি',
   'onboarding.custom.activity.title': 'এজেন্টের কার্যকলাপ',
   'onboarding.custom.activity.subtitle':
     'আপনার এজেন্ট পটভূমিতে কতটা সক্রিয়ভাবে পর্যবেক্ষণ ও কাজ করে।',
@@ -6124,6 +6125,23 @@ const messages: TranslationMap = {
   'onboarding.custom.vault.localDisabledReason':
     'পরিচালিত সেটআপের জন্য OpenHuman সাইন-ইন প্রয়োজন এবং লোকাল মোডে উপলব্ধ নয়।',
   'onboarding.custom.vault.exitError': 'অনবোর্ডিং শেষ করা যায়নি। আবার চেষ্টা করুন।',
+  'onboarding.custom.readiness.title': 'চূড়ান্ত প্রস্তুতি যাচাই',
+  'onboarding.custom.readiness.subtitle':
+    'সেটআপ শেষ করার আগে চলুন নিশ্চিত করি আপনার সহকারী কাজ করার জন্য প্রস্তুত।',
+  'onboarding.custom.readiness.gateHint':
+    'শেষ করতে একটি কার্যকর মডেল সংযোগ যাচাই করুন — অথবা নিচে আপাতত এড়িয়ে যাওয়া বেছে নিন।',
+  'onboarding.custom.readiness.skipLabel': 'আপাতত এড়িয়ে যান — আমার সহকারী এখনও কাজ নাও করতে পারে',
+  'onboarding.custom.readiness.finishError': 'অনবোর্ডিং শেষ করা যায়নি। আবার চেষ্টা করুন।',
+  'readiness.runAll': 'আবার যাচাই চালান',
+  'readiness.retry': 'পুনরায় চেষ্টা করুন',
+  'readiness.checking': 'যাচাই চলছে…',
+  'readiness.loadError':
+    'প্রস্তুতি যাচাই চালানো যায়নি। নিশ্চিত করুন অ্যাপ কোর চলছে এবং আবার চেষ্টা করুন।',
+  'readiness.allGood': 'সবকিছু প্রস্তুত বলে মনে হচ্ছে।',
+  'readiness.statusOk': 'প্রস্তুত',
+  'readiness.statusWarn': 'মনোযোগ প্রয়োজন',
+  'readiness.statusFail': 'পদক্ষেপ প্রয়োজন',
+  'readiness.statusSkipped': 'প্রযোজ্য নয়',
   'vaultHealth.title': 'ভল্ট স্বাস্থ্য চেকলিস্ট',
   'vaultHealth.setupTitle': 'ভল্ট সেটআপ স্বাস্থ্য',
   'vaultHealth.workspaceVault': 'ওয়ার্কস্পেস ভল্ট:',

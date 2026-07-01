@@ -6044,6 +6044,7 @@ const messages: TranslationMap = {
   // Onboarding: Custom > Activity
   'onboarding.custom.stepperActivity': '활동',
   'onboarding.custom.stepperVault': '볼트',
+  'onboarding.custom.stepperReadiness': '준비 상태',
   'onboarding.custom.activity.title': '에이전트 활동',
   'onboarding.custom.activity.subtitle':
     '에이전트가 백그라운드에서 얼마나 능동적으로 모니터링하고 행동하는지.',
@@ -6060,6 +6061,24 @@ const messages: TranslationMap = {
   'onboarding.custom.vault.localDisabledReason':
     '관리형 설정은 OpenHuman 로그인이 필요하며 로컬 모드에서는 사용할 수 없습니다.',
   'onboarding.custom.vault.exitError': '온보딩을 완료할 수 없습니다. 다시 시도해 주세요.',
+  'onboarding.custom.readiness.title': '최종 준비 상태 확인',
+  'onboarding.custom.readiness.subtitle':
+    '설정을 마치기 전에 어시스턴트가 작동할 준비가 되었는지 확인하겠습니다.',
+  'onboarding.custom.readiness.gateHint':
+    '완료하려면 작동하는 모델 연결을 확인하세요 — 또는 아래에서 지금은 건너뛰기를 선택하세요.',
+  'onboarding.custom.readiness.skipLabel':
+    '지금은 건너뛰기 — 어시스턴트가 아직 작동하지 않을 수 있습니다',
+  'onboarding.custom.readiness.finishError': '온보딩을 완료할 수 없습니다. 다시 시도해 주세요.',
+  'readiness.runAll': '검사 다시 실행',
+  'readiness.retry': '다시 시도',
+  'readiness.checking': '검사 실행 중…',
+  'readiness.loadError':
+    '준비 상태 검사를 실행할 수 없습니다. 앱 코어가 실행 중인지 확인하고 다시 시도하세요.',
+  'readiness.allGood': '모든 준비가 된 것 같습니다.',
+  'readiness.statusOk': '준비됨',
+  'readiness.statusWarn': '주의',
+  'readiness.statusFail': '조치 필요',
+  'readiness.statusSkipped': '해당 없음',
   'vaultHealth.title': '볼트 상태 체크리스트',
   'vaultHealth.setupTitle': '볼트 설정 상태',
   'vaultHealth.workspaceVault': '워크스페이스 볼트:',

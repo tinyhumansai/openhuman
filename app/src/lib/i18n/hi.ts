@@ -6108,6 +6108,7 @@ const messages: TranslationMap = {
   // Onboarding: Custom > Activity
   'onboarding.custom.stepperActivity': 'गतिविधि',
   'onboarding.custom.stepperVault': 'वॉल्ट',
+  'onboarding.custom.stepperReadiness': 'तैयारी',
   'onboarding.custom.activity.title': 'एजेंट गतिविधि',
   'onboarding.custom.activity.subtitle':
     'आपका एजेंट पृष्ठभूमि में कितनी सक्रियता से निगरानी और कार्य करता है।',
@@ -6124,6 +6125,24 @@ const messages: TranslationMap = {
   'onboarding.custom.vault.localDisabledReason':
     'प्रबंधित सेटअप के लिए OpenHuman साइन-इन आवश्यक है और लोकल मोड में उपलब्ध नहीं है।',
   'onboarding.custom.vault.exitError': 'ऑनबोर्डिंग पूरी नहीं हो सकी। कृपया पुनः प्रयास करें।',
+  'onboarding.custom.readiness.title': 'अंतिम तैयारी जाँच',
+  'onboarding.custom.readiness.subtitle':
+    'सेटअप पूरा करने से पहले पुष्टि करें कि आपका सहायक काम करने के लिए तैयार है।',
+  'onboarding.custom.readiness.gateHint':
+    'समाप्त करने के लिए एक कार्यशील मॉडल कनेक्शन सत्यापित करें — या नीचे अभी के लिए छोड़ना चुनें।',
+  'onboarding.custom.readiness.skipLabel':
+    'अभी के लिए छोड़ें — हो सकता है मेरा सहायक अभी काम न करे',
+  'onboarding.custom.readiness.finishError': 'ऑनबोर्डिंग पूरी नहीं हो सकी। कृपया पुनः प्रयास करें।',
+  'readiness.runAll': 'जाँच फिर से चलाएँ',
+  'readiness.retry': 'पुनः प्रयास करें',
+  'readiness.checking': 'जाँच चल रही है…',
+  'readiness.loadError':
+    'तैयारी जाँच नहीं चलाई जा सकी। सुनिश्चित करें कि ऐप कोर चल रहा है और पुनः प्रयास करें।',
+  'readiness.allGood': 'सब कुछ तैयार लग रहा है।',
+  'readiness.statusOk': 'तैयार',
+  'readiness.statusWarn': 'ध्यान दें',
+  'readiness.statusFail': 'कार्रवाई आवश्यक',
+  'readiness.statusSkipped': 'लागू नहीं',
   'vaultHealth.title': 'वॉल्ट स्वास्थ्य चेकलिस्ट',
   'vaultHealth.setupTitle': 'वॉल्ट सेटअप स्वास्थ्य',
   'vaultHealth.workspaceVault': 'वर्कस्पेस वॉल्ट:',

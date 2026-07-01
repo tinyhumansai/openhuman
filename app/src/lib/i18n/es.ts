@@ -6224,6 +6224,7 @@ const messages: TranslationMap = {
   // Onboarding: Custom > Activity
   'onboarding.custom.stepperActivity': 'Actividad',
   'onboarding.custom.stepperVault': 'Bóveda',
+  'onboarding.custom.stepperReadiness': 'Preparación',
   'onboarding.custom.activity.title': 'Actividad del agente',
   'onboarding.custom.activity.subtitle':
     'Qué tan proactivamente monitorea y actúa tu agente en segundo plano.',
@@ -6244,6 +6245,25 @@ const messages: TranslationMap = {
     'La configuración administrada requiere inicio de sesión en OpenHuman y no está disponible en modo local.',
   'onboarding.custom.vault.exitError':
     'No se pudo completar el proceso de incorporación. Por favor, inténtalo de nuevo.',
+  'onboarding.custom.readiness.title': 'Comprobación final de preparación',
+  'onboarding.custom.readiness.subtitle':
+    'Confirmemos que tu asistente está listo para trabajar antes de finalizar la configuración.',
+  'onboarding.custom.readiness.gateHint':
+    'Valida una conexión de modelo funcional para finalizar — o elige omitir por ahora más abajo.',
+  'onboarding.custom.readiness.skipLabel':
+    'Omitir por ahora — puede que mi asistente aún no funcione',
+  'onboarding.custom.readiness.finishError':
+    'No se pudo completar el proceso de incorporación. Por favor, inténtalo de nuevo.',
+  'readiness.runAll': 'Ejecutar comprobaciones de nuevo',
+  'readiness.retry': 'Reintentar',
+  'readiness.checking': 'Ejecutando comprobaciones…',
+  'readiness.loadError':
+    'No se pudieron ejecutar las comprobaciones de preparación. Asegúrate de que el núcleo de la app esté en ejecución e inténtalo de nuevo.',
+  'readiness.allGood': 'Todo parece estar listo.',
+  'readiness.statusOk': 'Listo',
+  'readiness.statusWarn': 'Atención',
+  'readiness.statusFail': 'Acción necesaria',
+  'readiness.statusSkipped': 'No aplicable',
 
   // Vault Health
   'vaultHealth.title': 'Lista de verificación de salud de la bóveda',

@@ -1168,6 +1168,7 @@ const en: TranslationMap = {
   'onboarding.custom.stepperActivity': 'Activity',
   'onboarding.custom.stepperVault': 'Vault',
   'onboarding.custom.stepperMemory': 'Memory',
+  'onboarding.custom.stepperReadiness': 'Readiness',
   'onboarding.custom.stepCounter': 'Step {n} of {total}',
   'onboarding.custom.defaultTitle': 'Default',
   'onboarding.custom.defaultSubtitle': 'Let OpenHuman manage it for you.',
@@ -1244,6 +1245,27 @@ const en: TranslationMap = {
   'onboarding.custom.vault.localDisabledReason':
     'Managed setup requires OpenHuman sign-in and is unavailable in local mode.',
   'onboarding.custom.vault.exitError': 'Could not finish onboarding. Please try again.',
+
+  // Onboarding: Custom > Readiness (final readiness checks, issue #4252)
+  'onboarding.custom.readiness.title': 'Final readiness check',
+  'onboarding.custom.readiness.subtitle':
+    "Let's confirm your assistant is ready to work before you finish setup.",
+  'onboarding.custom.readiness.gateHint':
+    'Validate a working model connection to finish — or choose to skip for now below.',
+  'onboarding.custom.readiness.skipLabel': 'Skip for now — my assistant may not work yet',
+  'onboarding.custom.readiness.finishError': 'Could not finish onboarding. Please try again.',
+
+  // Readiness panel (onboarding + Settings diagnostics, issue #4252)
+  'readiness.runAll': 'Run checks again',
+  'readiness.retry': 'Retry',
+  'readiness.checking': 'Running checks…',
+  'readiness.loadError':
+    'Could not run readiness checks. Make sure the app core is running and try again.',
+  'readiness.allGood': 'Everything looks ready.',
+  'readiness.statusOk': 'Ready',
+  'readiness.statusWarn': 'Attention',
+  'readiness.statusFail': 'Action needed',
+  'readiness.statusSkipped': 'Not applicable',
 
   // Onboarding: Custom > Memory
   'onboarding.custom.memory.title': 'Memory',

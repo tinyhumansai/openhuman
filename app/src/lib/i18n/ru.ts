@@ -6165,6 +6165,7 @@ const messages: TranslationMap = {
   // Onboarding: Custom > Activity
   'onboarding.custom.stepperActivity': 'Активность',
   'onboarding.custom.stepperVault': 'Хранилище',
+  'onboarding.custom.stepperReadiness': 'Готовность',
   'onboarding.custom.activity.title': 'Активность агента',
   'onboarding.custom.activity.subtitle':
     'Насколько проактивно агент отслеживает события и действует в фоне.',
@@ -6183,6 +6184,24 @@ const messages: TranslationMap = {
     'Управляемая настройка требует входа в OpenHuman и недоступна в локальном режиме.',
   'onboarding.custom.vault.exitError':
     'Не удалось завершить настройку. Пожалуйста, попробуйте ещё раз.',
+  'onboarding.custom.readiness.title': 'Финальная проверка готовности',
+  'onboarding.custom.readiness.subtitle':
+    'Давайте убедимся, что ваш ассистент готов к работе, прежде чем вы завершите настройку.',
+  'onboarding.custom.readiness.gateHint':
+    'Проверьте рабочее подключение к модели, чтобы завершить, — или выберите пропустить пока ниже.',
+  'onboarding.custom.readiness.skipLabel': 'Пропустить пока — мой ассистент может ещё не работать',
+  'onboarding.custom.readiness.finishError':
+    'Не удалось завершить настройку. Пожалуйста, попробуйте ещё раз.',
+  'readiness.runAll': 'Запустить проверки снова',
+  'readiness.retry': 'Повторить',
+  'readiness.checking': 'Выполняются проверки…',
+  'readiness.loadError':
+    'Не удалось выполнить проверки готовности. Убедитесь, что ядро приложения запущено, и попробуйте снова.',
+  'readiness.allGood': 'Кажется, всё готово.',
+  'readiness.statusOk': 'Готово',
+  'readiness.statusWarn': 'Внимание',
+  'readiness.statusFail': 'Требуется действие',
+  'readiness.statusSkipped': 'Неприменимо',
   'vaultHealth.title': 'Контрольный список состояния хранилища',
   'vaultHealth.setupTitle': 'Состояние настройки хранилища',
   'vaultHealth.workspaceVault': 'Хранилище рабочего пространства:',

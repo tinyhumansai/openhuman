@@ -5792,6 +5792,7 @@ const messages: TranslationMap = {
   // Onboarding: Custom > Activity
   'onboarding.custom.stepperActivity': '活动',
   'onboarding.custom.stepperVault': '保险库',
+  'onboarding.custom.stepperReadiness': '就绪',
   'onboarding.custom.activity.title': '智能体活动',
   'onboarding.custom.activity.subtitle': '您的智能体在后台监控和行动的主动程度。',
   'onboarding.custom.activity.defaultDesc': '适中活动——每小时同步，每日摘要。',
@@ -5807,6 +5808,20 @@ const messages: TranslationMap = {
   'onboarding.custom.vault.configureDesc': '立即查看保险库所有权、运行健康检查并调整记忆控制。',
   'onboarding.custom.vault.localDisabledReason': '托管设置需要登录 OpenHuman，在本地模式下不可用。',
   'onboarding.custom.vault.exitError': '无法完成引导流程，请重试。',
+  'onboarding.custom.readiness.title': '最终就绪检查',
+  'onboarding.custom.readiness.subtitle': '在完成设置之前，让我们确认您的助手已准备好工作。',
+  'onboarding.custom.readiness.gateHint': '验证可用的模型连接以完成 — 或在下方选择暂时跳过。',
+  'onboarding.custom.readiness.skipLabel': '暂时跳过 — 我的助手可能尚无法工作',
+  'onboarding.custom.readiness.finishError': '无法完成引导流程，请重试。',
+  'readiness.runAll': '重新运行检查',
+  'readiness.retry': '重试',
+  'readiness.checking': '正在运行检查…',
+  'readiness.loadError': '无法运行就绪检查。请确认应用核心正在运行，然后重试。',
+  'readiness.allGood': '一切看起来都已就绪。',
+  'readiness.statusOk': '就绪',
+  'readiness.statusWarn': '注意',
+  'readiness.statusFail': '需要处理',
+  'readiness.statusSkipped': '不适用',
 
   // Vault Health
   'vaultHealth.title': '保险库健康检查清单',

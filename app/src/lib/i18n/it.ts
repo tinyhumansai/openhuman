@@ -6213,6 +6213,7 @@ const messages: TranslationMap = {
   // Onboarding: Custom > Activity
   'onboarding.custom.stepperActivity': 'Attività',
   'onboarding.custom.stepperVault': 'Vault',
+  'onboarding.custom.stepperReadiness': 'Prontezza',
   'onboarding.custom.activity.title': "Attività dell'agente",
   'onboarding.custom.activity.subtitle':
     'Quanto proattivamente il tuo agente monitora e agisce in background.',
@@ -6232,6 +6233,24 @@ const messages: TranslationMap = {
   'onboarding.custom.vault.localDisabledReason':
     'La configurazione gestita richiede il login a OpenHuman e non è disponibile in modalità locale.',
   'onboarding.custom.vault.exitError': "Impossibile completare l'onboarding. Riprova.",
+  'onboarding.custom.readiness.title': 'Controllo finale di prontezza',
+  'onboarding.custom.readiness.subtitle':
+    'Confermiamo che il tuo assistente è pronto a lavorare prima di completare la configurazione.',
+  'onboarding.custom.readiness.gateHint':
+    'Convalida una connessione al modello funzionante per completare — oppure scegli di saltare per ora qui sotto.',
+  'onboarding.custom.readiness.skipLabel':
+    'Salta per ora — il mio assistente potrebbe non funzionare ancora',
+  'onboarding.custom.readiness.finishError': "Impossibile completare l'onboarding. Riprova.",
+  'readiness.runAll': 'Esegui di nuovo i controlli',
+  'readiness.retry': 'Riprova',
+  'readiness.checking': 'Esecuzione dei controlli…',
+  'readiness.loadError':
+    "Impossibile eseguire i controlli di prontezza. Assicurati che il core dell'app sia in esecuzione e riprova.",
+  'readiness.allGood': 'Sembra tutto pronto.',
+  'readiness.statusOk': 'Pronto',
+  'readiness.statusWarn': 'Attenzione',
+  'readiness.statusFail': 'Azione necessaria',
+  'readiness.statusSkipped': 'Non applicabile',
 
   // Vault Health
   'vaultHealth.title': 'Checklist integrità vault',

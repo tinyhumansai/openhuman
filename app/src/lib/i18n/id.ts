@@ -6127,6 +6127,7 @@ const messages: TranslationMap = {
   // Onboarding: Custom > Activity
   'onboarding.custom.stepperActivity': 'Aktivitas',
   'onboarding.custom.stepperVault': 'Vault',
+  'onboarding.custom.stepperReadiness': 'Kesiapan',
   'onboarding.custom.activity.title': 'Aktivitas agen',
   'onboarding.custom.activity.subtitle':
     'Seberapa proaktif agen Anda memantau dan bertindak di latar belakang.',
@@ -6144,6 +6145,25 @@ const messages: TranslationMap = {
   'onboarding.custom.vault.localDisabledReason':
     'Pengaturan terkelola memerlukan masuk OpenHuman dan tidak tersedia dalam mode lokal.',
   'onboarding.custom.vault.exitError': 'Tidak dapat menyelesaikan orientasi. Silakan coba lagi.',
+  'onboarding.custom.readiness.title': 'Pemeriksaan kesiapan akhir',
+  'onboarding.custom.readiness.subtitle':
+    'Mari pastikan asisten Anda siap bekerja sebelum Anda menyelesaikan pengaturan.',
+  'onboarding.custom.readiness.gateHint':
+    'Validasi koneksi model yang berfungsi untuk menyelesaikan — atau pilih lewati untuk saat ini di bawah.',
+  'onboarding.custom.readiness.skipLabel':
+    'Lewati untuk saat ini — asisten saya mungkin belum berfungsi',
+  'onboarding.custom.readiness.finishError':
+    'Tidak dapat menyelesaikan orientasi. Silakan coba lagi.',
+  'readiness.runAll': 'Jalankan pemeriksaan lagi',
+  'readiness.retry': 'Coba lagi',
+  'readiness.checking': 'Menjalankan pemeriksaan…',
+  'readiness.loadError':
+    'Tidak dapat menjalankan pemeriksaan kesiapan. Pastikan inti aplikasi berjalan dan coba lagi.',
+  'readiness.allGood': 'Semuanya tampak siap.',
+  'readiness.statusOk': 'Siap',
+  'readiness.statusWarn': 'Perhatian',
+  'readiness.statusFail': 'Tindakan diperlukan',
+  'readiness.statusSkipped': 'Tidak berlaku',
   'vaultHealth.title': 'Daftar Periksa Kesehatan Vault',
   'vaultHealth.setupTitle': 'Kesehatan pengaturan vault',
   'vaultHealth.workspaceVault': 'Vault ruang kerja:',

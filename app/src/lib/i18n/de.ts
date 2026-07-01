@@ -6273,6 +6273,7 @@ const messages: TranslationMap = {
 
   // Onboarding: Custom > Vault
   'onboarding.custom.stepperVault': 'Vault',
+  'onboarding.custom.stepperReadiness': 'Bereitschaft',
   'onboarding.custom.vault.title': 'Speicher & Vault-Einrichtung',
   'onboarding.custom.vault.subtitle':
     'Bestätigen Sie, wohin Speichernotizen geschrieben werden, wie Quelldaten gelesen werden und ob Ihre Vault-Pipeline fehlerfrei ist.',
@@ -6284,6 +6285,25 @@ const messages: TranslationMap = {
     'Die verwaltete Einrichtung erfordert eine OpenHuman-Anmeldung und ist im lokalen Modus nicht verfügbar.',
   'onboarding.custom.vault.exitError':
     'Onboarding konnte nicht abgeschlossen werden. Bitte versuchen Sie es erneut.',
+  'onboarding.custom.readiness.title': 'Abschließende Bereitschaftsprüfung',
+  'onboarding.custom.readiness.subtitle':
+    'Bestätigen wir, dass Ihr Assistent einsatzbereit ist, bevor Sie die Einrichtung abschließen.',
+  'onboarding.custom.readiness.gateHint':
+    'Bestätigen Sie eine funktionierende Modellverbindung zum Abschließen — oder wählen Sie unten, vorerst zu überspringen.',
+  'onboarding.custom.readiness.skipLabel':
+    'Vorerst überspringen — mein Assistent funktioniert möglicherweise noch nicht',
+  'onboarding.custom.readiness.finishError':
+    'Onboarding konnte nicht abgeschlossen werden. Bitte versuchen Sie es erneut.',
+  'readiness.runAll': 'Prüfungen erneut ausführen',
+  'readiness.retry': 'Erneut versuchen',
+  'readiness.checking': 'Prüfungen werden ausgeführt…',
+  'readiness.loadError':
+    'Bereitschaftsprüfungen konnten nicht ausgeführt werden. Stellen Sie sicher, dass der App-Core läuft, und versuchen Sie es erneut.',
+  'readiness.allGood': 'Alles scheint bereit zu sein.',
+  'readiness.statusOk': 'Bereit',
+  'readiness.statusWarn': 'Achtung',
+  'readiness.statusFail': 'Aktion erforderlich',
+  'readiness.statusSkipped': 'Nicht zutreffend',
 
   // Vault Health
   'vaultHealth.title': 'Vault-Integritätsprüfliste',

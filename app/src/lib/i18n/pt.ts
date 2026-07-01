@@ -6214,6 +6214,7 @@ const messages: TranslationMap = {
 
   // Onboarding: Custom > Vault
   'onboarding.custom.stepperVault': 'Vault',
+  'onboarding.custom.stepperReadiness': 'Prontidão',
   'onboarding.custom.vault.title': 'Configuração de Memória e Vault',
   'onboarding.custom.vault.subtitle':
     'Confirme onde as notas de memória são gravadas, como os dados de origem são lidos e se o pipeline do vault está saudável.',
@@ -6225,6 +6226,25 @@ const messages: TranslationMap = {
     'A configuração gerenciada requer login no OpenHuman e não está disponível no modo local.',
   'onboarding.custom.vault.exitError':
     'Não foi possível concluir o processo de integração. Por favor, tente novamente.',
+  'onboarding.custom.readiness.title': 'Verificação final de prontidão',
+  'onboarding.custom.readiness.subtitle':
+    'Vamos confirmar que seu assistente está pronto para trabalhar antes de concluir a configuração.',
+  'onboarding.custom.readiness.gateHint':
+    'Valide uma conexão de modelo funcional para concluir — ou escolha pular por enquanto abaixo.',
+  'onboarding.custom.readiness.skipLabel':
+    'Pular por enquanto — meu assistente pode ainda não funcionar',
+  'onboarding.custom.readiness.finishError':
+    'Não foi possível concluir o processo de integração. Por favor, tente novamente.',
+  'readiness.runAll': 'Executar verificações novamente',
+  'readiness.retry': 'Tentar novamente',
+  'readiness.checking': 'Executando verificações…',
+  'readiness.loadError':
+    'Não foi possível executar as verificações de prontidão. Verifique se o núcleo do app está em execução e tente novamente.',
+  'readiness.allGood': 'Tudo parece pronto.',
+  'readiness.statusOk': 'Pronto',
+  'readiness.statusWarn': 'Atenção',
+  'readiness.statusFail': 'Ação necessária',
+  'readiness.statusSkipped': 'Não aplicável',
 
   // Vault Health
   'vaultHealth.title': 'Checklist de integridade do vault',

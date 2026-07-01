@@ -6246,6 +6246,7 @@ const messages: TranslationMap = {
   // Onboarding: Custom > Activity
   'onboarding.custom.stepperActivity': 'Activité',
   'onboarding.custom.stepperVault': 'Coffre',
+  'onboarding.custom.stepperReadiness': 'Préparation',
   'onboarding.custom.activity.title': "Activité de l'agent",
   'onboarding.custom.activity.subtitle':
     'À quel point votre agent surveille et agit en arrière-plan.',
@@ -6265,6 +6266,25 @@ const messages: TranslationMap = {
   'onboarding.custom.vault.localDisabledReason':
     "La configuration gérée nécessite une connexion à OpenHuman et n'est pas disponible en mode local.",
   'onboarding.custom.vault.exitError': "Impossible de terminer l'intégration. Veuillez réessayer.",
+  'onboarding.custom.readiness.title': 'Vérification finale de préparation',
+  'onboarding.custom.readiness.subtitle':
+    'Confirmons que votre assistant est prêt à fonctionner avant de terminer la configuration.',
+  'onboarding.custom.readiness.gateHint':
+    'Validez une connexion de modèle fonctionnelle pour terminer — ou choisissez de passer pour le moment ci-dessous.',
+  'onboarding.custom.readiness.skipLabel':
+    'Passer pour le moment — mon assistant ne fonctionne peut-être pas encore',
+  'onboarding.custom.readiness.finishError':
+    "Impossible de terminer l'intégration. Veuillez réessayer.",
+  'readiness.runAll': 'Relancer les vérifications',
+  'readiness.retry': 'Réessayer',
+  'readiness.checking': 'Vérifications en cours…',
+  'readiness.loadError':
+    "Impossible d'exécuter les vérifications de préparation. Assurez-vous que le cœur de l'application est en cours d'exécution et réessayez.",
+  'readiness.allGood': 'Tout semble prêt.',
+  'readiness.statusOk': 'Prêt',
+  'readiness.statusWarn': 'Attention requise',
+  'readiness.statusFail': 'Action requise',
+  'readiness.statusSkipped': 'Non applicable',
 
   // Vault Health
   'vaultHealth.title': 'Liste de contrôle de santé du coffre',

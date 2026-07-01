@@ -6195,6 +6195,7 @@ const messages: TranslationMap = {
   // Onboarding: Custom > Activity
   'onboarding.custom.stepperActivity': 'Aktywność',
   'onboarding.custom.stepperVault': 'Skarbiec',
+  'onboarding.custom.stepperReadiness': 'Gotowość',
   'onboarding.custom.activity.title': 'Aktywność agenta',
   'onboarding.custom.activity.subtitle': 'Jak proaktywnie Twój agent monitoruje i działa w tle.',
   'onboarding.custom.activity.defaultDesc':
@@ -6211,6 +6212,23 @@ const messages: TranslationMap = {
   'onboarding.custom.vault.localDisabledReason':
     'Konfiguracja zarządzana wymaga logowania do OpenHuman i jest niedostępna w trybie lokalnym.',
   'onboarding.custom.vault.exitError': 'Nie udało się zakończyć wdrożenia. Spróbuj ponownie.',
+  'onboarding.custom.readiness.title': 'Końcowe sprawdzenie gotowości',
+  'onboarding.custom.readiness.subtitle':
+    'Potwierdźmy, że Twój asystent jest gotowy do pracy, zanim zakończysz konfigurację.',
+  'onboarding.custom.readiness.gateHint':
+    'Zweryfikuj działające połączenie z modelem, aby zakończyć — lub wybierz pominięcie na razie poniżej.',
+  'onboarding.custom.readiness.skipLabel': 'Pomiń na razie — mój asystent może jeszcze nie działać',
+  'onboarding.custom.readiness.finishError': 'Nie udało się zakończyć wdrożenia. Spróbuj ponownie.',
+  'readiness.runAll': 'Uruchom sprawdzenia ponownie',
+  'readiness.retry': 'Spróbuj ponownie',
+  'readiness.checking': 'Trwają sprawdzenia…',
+  'readiness.loadError':
+    'Nie udało się uruchomić sprawdzeń gotowości. Upewnij się, że rdzeń aplikacji działa, i spróbuj ponownie.',
+  'readiness.allGood': 'Wszystko wygląda na gotowe.',
+  'readiness.statusOk': 'Gotowe',
+  'readiness.statusWarn': 'Uwaga',
+  'readiness.statusFail': 'Wymagane działanie',
+  'readiness.statusSkipped': 'Nie dotyczy',
   'vaultHealth.title': 'Lista kontrolna stanu skarbca',
   'vaultHealth.setupTitle': 'Stan konfiguracji skarbca',
   'vaultHealth.workspaceVault': 'Skarbiec obszaru roboczego:',
