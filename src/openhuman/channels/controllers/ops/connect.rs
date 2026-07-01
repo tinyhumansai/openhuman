@@ -2,7 +2,9 @@
 
 use serde_json::{json, Value};
 
+use crate::openhuman::channels::email_channel::{EmailChannel, EmailConfig};
 use crate::openhuman::channels::providers::yuanbao::YuanbaoConfig;
+use crate::openhuman::channels::traits::Channel;
 use crate::openhuman::config::{Config, DiscordConfig, IMessageConfig, TelegramConfig};
 use crate::openhuman::credentials;
 use crate::openhuman::memory_store::chunks::store as memory_tree_store;
@@ -134,6 +136,129 @@ pub(super) fn parse_optional_bool(value: Option<&Value>) -> Option<bool> {
     }
 }
 
+/// Read a required non-empty string credential field.
+fn require_cred_str(creds: &serde_json::Map<String, Value>, key: &str) -> Result<String, String> {
+    creds
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| format!("missing required field: {key}"))
+}
+
+/// Read an optional non-empty string credential field.
+fn optional_cred_str(creds: &serde_json::Map<String, Value>, key: &str) -> Option<String> {
+    creds
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+/// Parse a `u16` port from a string/number credential field, falling back to
+/// `default` when the field is absent or blank. Non-numeric values are a hard
+/// error so a typo surfaces at connect time rather than silently reverting.
+fn parse_port_field(
+    creds: &serde_json::Map<String, Value>,
+    key: &str,
+    default: u16,
+) -> Result<u16, String> {
+    match creds.get(key) {
+        Some(Value::Number(n)) => n
+            .as_u64()
+            .filter(|v| *v <= u64::from(u16::MAX))
+            .map(|v| v as u16)
+            .ok_or_else(|| format!("invalid {key}: must be a port number 0-65535")),
+        Some(Value::String(s)) => {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                Ok(default)
+            } else {
+                trimmed
+                    .parse::<u16>()
+                    .map_err(|_| format!("invalid {key}: '{trimmed}' is not a valid port number"))
+            }
+        }
+        None | Some(Value::Null) => Ok(default),
+        _ => Err(format!("invalid {key}: must be a port number")),
+    }
+}
+
+/// Parse the email `allowed_senders` allowlist from a comma/newline-separated
+/// credential field. Unlike [`parse_allowed_users`], this preserves a leading
+/// `@` (the domain-match syntax `@example.com` the email channel relies on) and
+/// does not force lowercase beyond what the channel already does at match time.
+/// An absent field defaults to `["*"]` (allow any) so a freshly-connected
+/// mailbox actually receives — the channel treats an *empty* list as deny-all.
+fn parse_email_senders(value: Option<&Value>) -> Vec<String> {
+    let raw = match value {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect::<Vec<_>>()
+            .join(","),
+        _ => return vec!["*".to_string()],
+    };
+
+    let mut out: Vec<String> = Vec::new();
+    for part in raw.split([',', '\n', '\r']) {
+        let trimmed = part.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if !out.iter().any(|e| e.eq_ignore_ascii_case(trimmed)) {
+            out.push(trimmed.to_string());
+        }
+    }
+    if out.is_empty() {
+        out.push("*".to_string());
+    }
+    out
+}
+
+/// Build an [`EmailConfig`] from the connect form's credential map, filling
+/// sensible defaults (ports 993/465, TLS on, folder INBOX, `from_address` =
+/// username, allowlist = `*`). Field keys map 1:1 to the `email` channel
+/// definition. Reuses `existing` only for the IDLE timeout so an advanced
+/// hand-set value survives a UI reconnect.
+fn build_email_config(
+    creds: &serde_json::Map<String, Value>,
+    existing: Option<&EmailConfig>,
+) -> Result<EmailConfig, String> {
+    let username = require_cred_str(creds, "username")?;
+    let from_address = optional_cred_str(creds, "from_address").unwrap_or_else(|| username.clone());
+    Ok(EmailConfig {
+        imap_host: require_cred_str(creds, "imap_host")?,
+        imap_port: parse_port_field(creds, "imap_port", 993)?,
+        imap_folder: optional_cred_str(creds, "imap_folder").unwrap_or_else(|| "INBOX".to_string()),
+        smtp_host: require_cred_str(creds, "smtp_host")?,
+        smtp_port: parse_port_field(creds, "smtp_port", 465)?,
+        smtp_tls: parse_optional_bool(creds.get("smtp_tls")).unwrap_or(true),
+        username,
+        password: require_cred_str(creds, "password")?,
+        from_address,
+        idle_timeout_secs: existing.map_or(1740, |c| c.idle_timeout_secs),
+        allowed_senders: parse_email_senders(creds.get("allowed_senders")),
+    })
+}
+
+/// Live-verify IMAP credentials by attempting a login. Runs before persistence
+/// so a wrong host/password fails fast in the UI instead of silently wedging
+/// the listener on the next core restart.
+async fn verify_email_credentials(cfg: &EmailConfig) -> Result<(), String> {
+    if EmailChannel::new(cfg.clone()).health_check().await {
+        Ok(())
+    } else {
+        Err(
+            "IMAP connection failed — check the host, port, email address, and app password"
+                .to_string(),
+        )
+    }
+}
+
 fn clear_channel_memory(config: &Config, channel_id: &str) -> anyhow::Result<usize> {
     let exact = memory_tree_store::delete_chunks_by_source(config, SourceKind::Chat, channel_id)?;
     let prefixed = memory_tree_store::delete_chunks_by_source_prefix(
@@ -209,6 +334,17 @@ pub async fn connect_channel(
         let effective = build_effective_yuanbao_config(base, creds_map, app_key);
         verify_yuanbao_credentials(&effective, &app_secret).await?;
         prebuilt_yuanbao_config = Some(effective);
+    }
+
+    // Email (IMAP/SMTP): build the effective config and live-verify the IMAP
+    // login BEFORE storing anything, so bad server settings surface in the UI
+    // rather than persisting and wedging the listener on the next restart.
+    // Reused below for persistence so verify and runtime can never diverge.
+    let mut prebuilt_email_config: Option<EmailConfig> = None;
+    if channel_id == "email" && auth_mode == ChannelAuthMode::ApiKey {
+        let email_cfg = build_email_config(creds_map, config.channels_config.email.as_ref())?;
+        verify_email_credentials(&email_cfg).await?;
+        prebuilt_email_config = Some(email_cfg);
     }
 
     // iMessage is local-only (no credentials): persist channels_config + return connected.
@@ -424,6 +560,30 @@ pub async fn connect_channel(
             target: "openhuman::channels",
             "[yuanbao] connect_channel: wrote channels_config.yuanbao (secret stored in credentials); restart core for WS listener"
         );
+    } else if channel_id == "email" && auth_mode == ChannelAuthMode::ApiKey {
+        // Reuse the config already built + IMAP-verified above so persistence
+        // and verification can never diverge.
+        let email_cfg = prebuilt_email_config.take().ok_or_else(|| {
+            "internal error: email config not built before persistence".to_string()
+        })?;
+
+        let allowed_senders_count = email_cfg.allowed_senders.len();
+        let smtp_tls = email_cfg.smtp_tls;
+
+        let mut persisted = config.clone();
+        persisted.channels_config.email = Some(email_cfg);
+
+        persisted
+            .save()
+            .await
+            .map_err(|e| format!("failed to persist email config.toml: {e}"))?;
+
+        tracing::info!(
+            target: "openhuman::channels",
+            allowed_senders_count,
+            smtp_tls,
+            "[email] connect_channel: wrote channels_config.email; restart core for IMAP/SMTP listener"
+        );
     }
 
     Ok(RpcOutcome::single_log(
@@ -505,6 +665,18 @@ pub async fn disconnect_channel(
             tracing::info!(
                 target: "openhuman::channels",
                 "[yuanbao] disconnect_channel: cleared channels_config.yuanbao"
+            );
+        }
+    } else if channel_id == "email" && auth_mode == ChannelAuthMode::ApiKey {
+        let mut persisted = config.clone();
+        if persisted.channels_config.email.take().is_some() {
+            persisted
+                .save()
+                .await
+                .map_err(|e| format!("failed to clear email config.toml: {e}"))?;
+            tracing::info!(
+                target: "openhuman::channels",
+                "[email] disconnect_channel: cleared channels_config.email"
             );
         }
     }
@@ -739,8 +911,22 @@ pub async fn test_channel(
     // Validate fields first.
     def.validate_credentials(auth_mode, creds_map)?;
 
-    // For now, field validation is the test. A future version can instantiate
-    // the channel provider and call health_check().
+    // Email supports a real connection test: build the effective config and
+    // attempt an IMAP login without persisting anything.
+    if channel_id == "email" && auth_mode == ChannelAuthMode::ApiKey {
+        let email_cfg = build_email_config(creds_map, None)?;
+        verify_email_credentials(&email_cfg).await?;
+        return Ok(RpcOutcome::new(
+            ChannelTestResult {
+                success: true,
+                message: "IMAP login succeeded.".to_string(),
+            },
+            vec![],
+        ));
+    }
+
+    // For other channels, field validation is the test. A future version can
+    // instantiate the channel provider and call health_check().
     Ok(RpcOutcome::new(
         ChannelTestResult {
             success: true,
@@ -751,4 +937,116 @@ pub async fn test_channel(
         },
         vec![],
     ))
+}
+
+#[cfg(test)]
+mod email_config_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn creds(v: Value) -> serde_json::Map<String, Value> {
+        v.as_object().cloned().unwrap()
+    }
+
+    #[test]
+    fn build_email_config_applies_defaults() {
+        let c = creds(json!({
+            "imap_host": "imap.fastmail.com",
+            "smtp_host": "smtp.fastmail.com",
+            "username": "alice@example.com",
+            "password": "app-pass",
+        }));
+        let cfg = build_email_config(&c, None).expect("should build");
+        assert_eq!(cfg.imap_port, 993);
+        assert_eq!(cfg.smtp_port, 465);
+        assert!(cfg.smtp_tls);
+        assert_eq!(cfg.imap_folder, "INBOX");
+        // from_address defaults to the username when omitted.
+        assert_eq!(cfg.from_address, "alice@example.com");
+        // Absent allowlist defaults to allow-any so a fresh mailbox receives.
+        assert_eq!(cfg.allowed_senders, vec!["*".to_string()]);
+        assert_eq!(cfg.idle_timeout_secs, 1740);
+    }
+
+    #[test]
+    fn build_email_config_honors_explicit_values() {
+        let c = creds(json!({
+            "imap_host": "mail.self.host",
+            "imap_port": "1993",
+            "imap_folder": "Archive",
+            "smtp_host": "mail.self.host",
+            "smtp_port": "2465",
+            "smtp_tls": "false",
+            "username": "bob@self.host",
+            "password": "secret",
+            "from_address": "Bob <bob@self.host>",
+            "allowed_senders": "@team.com, boss@corp.com , @team.com",
+        }));
+        let cfg = build_email_config(&c, None).expect("should build");
+        assert_eq!(cfg.imap_port, 1993);
+        assert_eq!(cfg.smtp_port, 2465);
+        assert!(!cfg.smtp_tls);
+        assert_eq!(cfg.imap_folder, "Archive");
+        assert_eq!(cfg.from_address, "Bob <bob@self.host>");
+        // '@'-domain syntax preserved; duplicate collapsed case-insensitively.
+        assert_eq!(
+            cfg.allowed_senders,
+            vec!["@team.com".to_string(), "boss@corp.com".to_string()]
+        );
+    }
+
+    #[test]
+    fn build_email_config_rejects_missing_required() {
+        for missing in ["imap_host", "smtp_host", "username", "password"] {
+            let mut obj = json!({
+                "imap_host": "h",
+                "smtp_host": "h",
+                "username": "u",
+                "password": "p",
+            });
+            obj.as_object_mut().unwrap().remove(missing);
+            let err = build_email_config(&creds(obj), None)
+                .expect_err("must reject missing required field");
+            assert!(err.contains(missing), "error should name {missing}: {err}");
+        }
+    }
+
+    #[test]
+    fn build_email_config_preserves_existing_idle_timeout() {
+        let existing = EmailConfig {
+            idle_timeout_secs: 600,
+            ..EmailConfig::default()
+        };
+        let c = creds(json!({
+            "imap_host": "h", "smtp_host": "h", "username": "u", "password": "p",
+        }));
+        let cfg = build_email_config(&c, Some(&existing)).expect("should build");
+        assert_eq!(cfg.idle_timeout_secs, 600);
+    }
+
+    #[test]
+    fn parse_port_field_variants() {
+        let c = creds(json!({ "p_str": "8143", "p_blank": "  ", "p_num": 143, "p_bad": "abc" }));
+        assert_eq!(parse_port_field(&c, "p_str", 993).unwrap(), 8143);
+        assert_eq!(parse_port_field(&c, "p_blank", 993).unwrap(), 993);
+        assert_eq!(parse_port_field(&c, "p_num", 993).unwrap(), 143);
+        assert_eq!(parse_port_field(&c, "absent", 465).unwrap(), 465);
+        assert!(parse_port_field(&c, "p_bad", 993).is_err());
+    }
+
+    #[test]
+    fn parse_email_senders_defaults_and_dedup() {
+        // Absent → allow any.
+        assert_eq!(parse_email_senders(None), vec!["*".to_string()]);
+        // Blank string → allow any (never accidental deny-all).
+        assert_eq!(
+            parse_email_senders(Some(&json!("  "))),
+            vec!["*".to_string()]
+        );
+        // Array form joins, preserves '@', dedups.
+        assert_eq!(
+            parse_email_senders(Some(&json!(["@x.com", "a@y.com", "@X.COM"]))),
+            vec!["@x.com".to_string(), "a@y.com".to_string()]
+        );
+    }
 }
