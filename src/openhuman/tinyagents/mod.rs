@@ -472,6 +472,13 @@ pub async fn run_turn_via_tinyagents_shared(
         tool_sets.clone(),
     )));
 
+    // CLI/RPC-only scope gate — a tool restricted to explicit CLI/RPC invocation
+    // must not run from the model loop. Intrinsic to the tool, so installed on
+    // every path (channel/session/sub-agent).
+    harness.push_tool_middleware(Arc::new(middleware::CliRpcOnlyMiddleware::new(
+        tool_sets.clone(),
+    )));
+
     // Builder-configured tool policy (`.tool_policy()`), enforced at the tool
     // boundary. The in-house engine ran this in `agent_tool_exec`; the tinyagents
     // path bypassed it, so a deny/require-approval silently no-opped (security
