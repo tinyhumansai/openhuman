@@ -79,9 +79,14 @@ impl Tool<()> for UnknownToolAdapter {
         Ok(TaToolResult {
             call_id: call.id,
             name: call.name,
+            // Surface the recovery result as an error too: an unknown-tool call IS
+            // a failure, so the repeated-failure breaker counts it and halts the
+            // run with a root cause when the model keeps re-issuing the same
+            // unavailable tool (instead of looping to the iteration cap). The
+            // model-visible content is unchanged.
+            error: Some(content.clone()),
             content,
             raw: None,
-            error: None,
             elapsed_ms: 0,
         })
     }

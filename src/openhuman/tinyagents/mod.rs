@@ -706,8 +706,23 @@ pub async fn run_turn_via_tinyagents_shared(
     // cap hit. An early-exit is a clean pause and takes precedence; under
     // `pause_at_cap` the only other `Pause` source is the cap pauser, so this is
     // unambiguous. (`run_queue` steering injects messages, never pauses.)
+    // The repeated-failure breaker halts the run with a root-cause summary instead
+    // of a final model turn; surface it as the turn's text so the no-progress cause
+    // reaches the caller/user rather than an empty reply.
+    let breaker_halt = halt_summary.lock().ok().and_then(|mut s| s.take());
+
+    // Cap detection: the harness sets `final_response` only when the loop
+    // finishes naturally (the model stopped requesting tools). When the cap
+    // pauser stops the loop mid-work, `final_response` stays `None` — that's the
+    // cap hit. An early-exit is a clean pause and takes precedence; under
+    // `pause_at_cap` the only other `Pause` source is the cap pauser, so this is
+    // unambiguous. (`run_queue` steering injects messages, never pauses.) A
+    // breaker halt is *not* a cap hit: it already carries a root-cause summary, so
+    // treating it as a cap would let the caller (sub-agent runner) overwrite that
+    // summary with a generic checkpoint digest.
     let hit_cap = pause_at_cap
         && early_exit.is_none()
+        && breaker_halt.is_none()
         && run.model_calls >= max_iterations
         && run.final_response.is_none();
 
@@ -716,10 +731,7 @@ pub async fn run_turn_via_tinyagents_shared(
         None => (None, run.text().unwrap_or_default()),
     };
 
-    // The repeated-failure breaker halts the run with a root-cause summary instead
-    // of a final model turn; surface it as the turn's text so the no-progress cause
-    // reaches the caller/user rather than an empty reply.
-    if let Some(summary) = halt_summary.lock().ok().and_then(|mut s| s.take()) {
+    if let Some(summary) = breaker_halt {
         text = summary;
     }
 

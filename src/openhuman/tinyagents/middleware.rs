@@ -1081,7 +1081,15 @@ impl Middleware<()> for RepeatedToolFailureMiddleware {
         // payload tail must not dominate the identical-repeat comparison).
         let err_line = err.lines().next().unwrap_or(err);
         let sig = format!("{}\u{1f}{err_line}", result.name);
-        state.consecutive += 1;
+        // The unknown-tool recovery is a failure the model can correct (it got the
+        // "unknown tool" feedback), so it must NOT feed the generic *any*-failure
+        // no-progress counter — else a turn that recovers from one bad tool name
+        // and then legitimately exhausts its iteration budget would trip the
+        // backstop instead of hitting the cap. It still feeds the *identical*-repeat
+        // counter, so re-issuing the SAME unavailable tool halts with a root cause.
+        if result.name != UNKNOWN_TOOL_SENTINEL {
+            state.consecutive += 1;
+        }
         let same_count = match &state.last_sig {
             Some(prev) if *prev == sig => {
                 state.same_count += 1;

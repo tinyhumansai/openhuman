@@ -95,11 +95,14 @@ pub(super) async fn run_subagent_via_graph(
         history.clone()
     };
 
-    // Child-progress attribution: when the parent carries an `on_progress` sink,
-    // mirror this sub-agent's iterations / tool calls / text + thinking deltas as
-    // `Subagent*` events scoped to (`agent_id`, `task_id`) so the parent thread
-    // can nest them under the live subagent row.
-    let subagent_scope = on_progress.as_ref().map(|_| SubagentScope {
+    // Child-progress attribution: mirror this sub-agent's iterations / tool calls
+    // / text + thinking deltas as `Subagent*` events scoped to (`agent_id`,
+    // `task_id`) so the parent thread can nest them under the live subagent row.
+    // Always set (not gated on `on_progress`): the scope also tells the shared
+    // seam this is a sub-agent turn, so the unknown-tool recovery uses the
+    // sub-agent wording. With no progress sink the scoped events simply have
+    // nowhere to go, which is harmless.
+    let subagent_scope = Some(SubagentScope {
         agent_id: agent_id.to_string(),
         task_id: task_id.to_string(),
         extended_policy,
