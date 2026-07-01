@@ -75,6 +75,20 @@ pub struct TurnContextMiddleware {
     /// non-chat path) skips it. Only the chat turn sets this — and only when its
     /// gate (`should_run_super_context`) passes.
     pub super_context: Option<SuperContextConfig>,
+    /// Progressive-disclosure handoff: when set (integrations_agent with a
+    /// resolved toolkit), oversized tool results are stashed in the shared
+    /// [`ResultHandoffCache`] and replaced with an `extract_from_result` drill-in
+    /// placeholder. `None` everywhere else.
+    pub handoff: Option<HandoffConfig>,
+}
+
+/// Config for the [`HandoffMiddleware`]: the per-spawn cache (shared with the
+/// `extract_from_result` tool) plus the ids used in handoff log lines.
+#[derive(Clone)]
+pub struct HandoffConfig {
+    pub cache: Arc<crate::openhuman::agent::harness::subagent_runner::ResultHandoffCache>,
+    pub agent_id: String,
+    pub task_id: String,
 }
 
 /// Inputs the [`SuperContextMiddleware`] node needs to run its first-turn
@@ -97,6 +111,7 @@ impl TurnContextMiddleware {
             microcompact_keep_recent: 0,
             autocompact_enabled: true,
             super_context: None,
+            handoff: None,
         }
     }
 
@@ -133,6 +148,16 @@ impl TurnContextMiddleware {
                 keep_recent: self.microcompact_keep_recent,
             }));
         }
+        // Handoff runs BEFORE the tool-output budget so an oversized payload is
+        // stashed + replaced with a short placeholder first; the byte cap would
+        // otherwise shrink it below the handoff threshold and defeat the drill-in.
+        if let Some(handoff) = self.handoff {
+            harness.push_middleware(Arc::new(HandoffMiddleware {
+                cache: handoff.cache,
+                agent_id: handoff.agent_id,
+                task_id: handoff.task_id,
+            }));
+        }
         if self.tool_result_budget_bytes > 0 || self.payload_summarizer.is_some() {
             harness.push_middleware(Arc::new(ToolOutputMiddleware {
                 budget_bytes: self.tool_result_budget_bytes,
@@ -140,6 +165,42 @@ impl TurnContextMiddleware {
                 tool_sets: tool_sets.to_vec(),
             }));
         }
+    }
+}
+
+/// `after_tool`: progressive-disclosure handoff (issue #4249 1b). An oversized
+/// sub-agent tool result is stashed in the shared [`ResultHandoffCache`] and its
+/// content replaced with a short placeholder naming a `result_id` the model can
+/// drill into via `extract_from_result`. Restores the seam the legacy
+/// `SubagentToolSource` ran on every tool result (via `apply_handoff`), which the
+/// agent_graph rewrite dropped. Errors and `extract_from_result`'s own output
+/// pass through unchanged (handled inside `apply_handoff`).
+pub struct HandoffMiddleware {
+    cache: Arc<crate::openhuman::agent::harness::subagent_runner::ResultHandoffCache>,
+    agent_id: String,
+    task_id: String,
+}
+
+#[async_trait]
+impl Middleware<()> for HandoffMiddleware {
+    fn name(&self) -> &str {
+        "result_handoff"
+    }
+
+    async fn after_tool(
+        &self,
+        _ctx: &mut RunContext<()>,
+        _state: &(),
+        result: &mut TaToolResult,
+    ) -> TaResult<()> {
+        result.content = crate::openhuman::agent::harness::subagent_runner::apply_handoff(
+            &self.cache,
+            &result.name,
+            &self.task_id,
+            &self.agent_id,
+            std::mem::take(&mut result.content),
+        );
+        Ok(())
     }
 }
 

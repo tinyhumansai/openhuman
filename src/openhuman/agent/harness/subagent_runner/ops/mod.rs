@@ -22,6 +22,7 @@
 mod checkpoint;
 mod graph;
 mod handoff_helper;
+pub(crate) use handoff_helper::apply_handoff;
 mod prompt;
 mod provider;
 mod runner;

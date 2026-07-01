@@ -911,6 +911,9 @@ impl Agent {
                     user_message: user_message.to_string(),
                 }
             }),
+            // Progressive-disclosure handoff is a sub-agent (integrations_agent)
+            // concern; the top-level chat turn never sets it.
+            handoff: None,
         };
 
         // Gather any sub-agent spend delegated during this turn (synchronous

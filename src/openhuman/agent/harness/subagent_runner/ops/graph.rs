@@ -68,6 +68,12 @@ pub(super) async fn run_subagent_via_graph(
     // `SubagentObserver::persist_transcript`.
     transcript_stem: &str,
     provider_label: &str,
+    // Progressive-disclosure handoff cache (integrations_agent with a resolved
+    // toolkit); `Some` installs the `HandoffMiddleware` that stashes oversized
+    // tool results and shares the cache with the `extract_from_result` tool.
+    handoff_cache: Option<
+        std::sync::Arc<crate::openhuman::agent::harness::subagent_runner::ResultHandoffCache>,
+    >,
 ) -> Result<(String, usize, AggregatedUsage, Option<String>, bool), SubagentRunError> {
     tracing::info!(
         model,
@@ -156,8 +162,19 @@ pub(super) async fn run_subagent_via_graph(
         // Bound the sub-agent's per-call output at its configured budget.
         Some(max_output_tokens),
         // Context middlewares: cache-align + default tool-result byte cap so a
-        // sub-agent's (often large) tool outputs stay bounded in its transcript.
-        crate::openhuman::tinyagents::TurnContextMiddleware::defaults(),
+        // sub-agent's (often large) tool outputs stay bounded in its transcript,
+        // plus the progressive-disclosure handoff when a cache is attached.
+        {
+            let mut mw = crate::openhuman::tinyagents::TurnContextMiddleware::defaults();
+            if let Some(cache) = handoff_cache {
+                mw.handoff = Some(crate::openhuman::tinyagents::HandoffConfig {
+                    cache,
+                    agent_id: agent_id.to_string(),
+                    task_id: task_id.to_string(),
+                });
+            }
+            mw
+        },
         // Sub-agents gate via their own SubagentToolSource policy path, not the
         // session `.tool_policy()`; no enforcement threaded here.
         None,
@@ -542,6 +559,7 @@ mod tests {
             false,
             "root-session__child",
             "mock-channel",
+            None,
         )
         .await
         .expect("graph subagent runs");
@@ -628,6 +646,7 @@ mod tests {
             false,
             "root-session__child",
             "mock-channel",
+            None,
         )
         .await
         .expect("child-delta subagent runs");
@@ -772,6 +791,7 @@ mod tests {
             false,
             "root-session__child",
             "mock-channel",
+            None,
         )
         .await
         .expect("ask-clarification subagent runs");
@@ -876,6 +896,7 @@ mod tests {
             false,
             "root-session__child",
             "mock-channel",
+            None,
         )
         .await
         .expect("cap-hit subagent runs");

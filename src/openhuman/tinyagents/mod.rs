@@ -46,7 +46,7 @@ use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::inference::provider::{ChatMessage, ConversationMessage, Provider};
 
 pub use checkpoint::SqlRunLedgerCheckpointer;
-pub use middleware::{SuperContextConfig, TurnContextMiddleware};
+pub use middleware::{HandoffConfig, SuperContextConfig, TurnContextMiddleware};
 pub use model::{ProviderModel, ThinkingForwarder};
 pub use observability::{CapPauser, IterationCursor, OpenhumanEventBridge, SubagentScope};
 pub use tools::{
@@ -590,7 +590,10 @@ pub async fn run_turn_via_tinyagents_shared(
     // `TurnCompleted` after the run (the harness event stream the bridge mirrors
     // has no run-completed event). Parent turns only — a sub-agent turn reports
     // via its `Subagent*` events, not a top-level `TurnCompleted`.
-    let turn_completed_sink = subagent_scope.is_none().then(|| on_progress.clone()).flatten();
+    let turn_completed_sink = subagent_scope
+        .is_none()
+        .then(|| on_progress.clone())
+        .flatten();
     // A sink is needed to mirror progress (bridge) or to observe model-call
     // completions for the cap pauser.
     let events = (on_progress.is_some() || pause_at_cap).then(EventSink::new);

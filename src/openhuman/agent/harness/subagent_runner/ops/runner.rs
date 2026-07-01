@@ -834,7 +834,9 @@ async fn run_typed_mode(
     // `handoff_cache` — the integrations-agent progressive-disclosure seams — are
     // not yet re-expressed on the tinyagents path; they need a tool-result
     // interception middleware and are tracked as a follow-up (issue #4249, 1b).
-    let _ = (&lazy_resolver, &handoff_cache);
+    // `handoff_cache` is now threaded into the graph route below (progressive
+    // disclosure). `lazy_resolver` remains a follow-up (#4249 1b).
+    let _ = &lazy_resolver;
     // Per-agent turn graph (issue #4249): `Default` runs the shared sub-agent
     // graph; `Custom` hands the assembled turn to this agent's own graph runner
     // (declared in its `graph.rs::graph()`). Every built-in agent selects
@@ -909,6 +911,9 @@ async fn run_typed_mode(
                 // provenance), distinguishing delegated spend from the parent's
                 // own channel in per-thread usage reads.
                 "subagent",
+                // Progressive-disclosure handoff cache (shared with the
+                // extract_from_result tool registered above).
+                handoff_cache.clone(),
             )
             .await?
         }
