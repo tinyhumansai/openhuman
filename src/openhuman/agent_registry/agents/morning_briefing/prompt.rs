@@ -133,8 +133,8 @@ mod tests {
             "prompt must instruct the agent to address the user by name (#3806)"
         );
         assert!(
-            ARCHETYPE.contains("Frame the window"),
-            "prompt must instruct the agent to state the covered time window (#3806)"
+            ARCHETYPE.contains("Frame the scope"),
+            "prompt must instruct the agent to frame the period the briefing covers (#3806)"
         );
         for bucket in [
             "**Highlights**",
