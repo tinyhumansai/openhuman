@@ -816,6 +816,45 @@ async fn run_typed_mode(
     use crate::openhuman::agent::harness::agent_graph::{
         AgentGraph, AgentTurnRequest, AgentTurnUsage,
     };
+    // Resolve the child transcript stem once — `{parent_chain}__{child_session_key}`
+    // — so the sub-agent's raw transcript lands in `session_raw` under a filename
+    // that chains the parent session (parity with the removed observer stem).
+    let child_session_key = {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let unix_ts = now.as_secs();
+        let nanos = now.subsec_nanos();
+        let sanitized: String = definition
+            .id
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let task_suffix: String = task_id
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+            .take(12)
+            .collect();
+        if task_suffix.is_empty() {
+            format!("{unix_ts}_{nanos:09}_{sanitized}")
+        } else {
+            format!("{unix_ts}_{nanos:09}_{sanitized}_{task_suffix}")
+        }
+    };
+    let transcript_stem = {
+        let parent_chain = match parent.session_parent_prefix.as_deref() {
+            Some(prefix) => format!("{}__{}", prefix, parent.session_key),
+            None => parent.session_key.clone(),
+        };
+        format!("{parent_chain}__{child_session_key}")
+    };
+
     let (output, iterations, agg_usage, early_exit_tool, hit_cap) = match &definition.graph {
         AgentGraph::Default => {
             super::graph::run_subagent_via_graph(
@@ -837,6 +876,12 @@ async fn run_typed_mode(
                 parent.workspace_dir.clone(),
                 max_output_tokens,
                 model_vision,
+                &transcript_stem,
+                // Sub-agent turns record their provider label as the literal
+                // "subagent" (parity with the legacy observer's TurnObserver
+                // provenance), distinguishing delegated spend from the parent's
+                // own channel in per-thread usage reads.
+                "subagent",
             )
             .await?
         }
