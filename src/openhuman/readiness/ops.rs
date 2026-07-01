@@ -358,19 +358,16 @@ pub async fn ollama_models() -> Result<RpcOutcome<OllamaProbe>, String> {
 }
 
 fn probe_core_health() -> (bool, String) {
-    let snapshot: Value = match crate::openhuman::health::rpc::health_snapshot()
-        .value
-        .as_object()
-        .cloned()
-    {
-        Some(map) => Value::Object(map),
+    core_health_from_snapshot(&crate::openhuman::health::rpc::health_snapshot().value)
+}
+
+/// Pure derivation of core health from a `health.snapshot` payload. Extracted
+/// so the healthy / degraded / starting-up branches are unit-testable.
+pub(crate) fn core_health_from_snapshot(snapshot: &Value) -> (bool, String) {
+    let components = match snapshot.get("components").and_then(Value::as_object) {
+        Some(map) => map,
         None => return (false, "Core health snapshot unavailable.".to_string()),
     };
-    let components = snapshot
-        .get("components")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
     if components.is_empty() {
         // No components registered yet — core is still coming up. Treat as
         // not-yet-verified rather than healthy.
@@ -379,7 +376,7 @@ fn probe_core_health() -> (bool, String) {
     let total = components.len();
     let mut ok = 0usize;
     let mut errored: Vec<String> = Vec::new();
-    for (name, comp) in &components {
+    for (name, comp) in components {
         let status = comp
             .get("status")
             .and_then(Value::as_str)
@@ -520,36 +517,42 @@ pub(crate) fn parse_ollama_tags(body: &Value) -> Vec<String> {
 }
 
 async fn probe_model_connection(config: &Config) -> ModelConnProbe {
-    use crate::openhuman::doctor::ModelProbeOutcome as O;
     match crate::openhuman::doctor::rpc::doctor_models(config, true).await {
-        Ok(outcome) => {
-            let report = outcome.value;
-            let ok = report.summary.ok >= 1;
-            // Label with the first provider that validated (or the first probed
-            // target) — more meaningful to the user than the raw config string.
-            let provider_id = report
-                .entries
-                .iter()
-                .find(|e| matches!(e.outcome, O::Ok))
-                .or_else(|| report.entries.first())
-                .map(|e| e.provider.clone())
-                .unwrap_or_default();
-            let error = if ok {
-                String::new()
-            } else {
-                first_probe_error(&report)
-            };
-            ModelConnProbe {
-                ok,
-                provider_id,
-                error,
-            }
-        }
+        Ok(outcome) => model_conn_from_report(&outcome.value),
         Err(e) => ModelConnProbe {
             ok: false,
             provider_id: String::new(),
             error: e,
         },
+    }
+}
+
+/// Pure derivation of the model-connection gate from a doctor model-probe
+/// report. Extracted so the validated / failed / no-provider branches are
+/// unit-testable.
+pub(crate) fn model_conn_from_report(
+    report: &crate::openhuman::doctor::ModelProbeReport,
+) -> ModelConnProbe {
+    use crate::openhuman::doctor::ModelProbeOutcome as O;
+    let ok = report.summary.ok >= 1;
+    // Label with the first provider that validated (or the first probed
+    // target) — more meaningful to the user than the raw config string.
+    let provider_id = report
+        .entries
+        .iter()
+        .find(|e| matches!(e.outcome, O::Ok))
+        .or_else(|| report.entries.first())
+        .map(|e| e.provider.clone())
+        .unwrap_or_default();
+    let error = if ok {
+        String::new()
+    } else {
+        first_probe_error(report)
+    };
+    ModelConnProbe {
+        ok,
+        provider_id,
+        error,
     }
 }
 
@@ -819,5 +822,132 @@ mod tests {
     fn parse_ollama_tags_handles_missing_key() {
         assert!(parse_ollama_tags(&serde_json::json!({})).is_empty());
         assert!(parse_ollama_tags(&serde_json::json!({"models": "nope"})).is_empty());
+    }
+
+    #[test]
+    fn core_health_all_ok() {
+        let snap = serde_json::json!({
+            "components": { "core": {"status": "ok"}, "memory_tree_db": {"status": "ok"} }
+        });
+        let (healthy, detail) = core_health_from_snapshot(&snap);
+        assert!(healthy);
+        assert!(detail.contains("2/2"));
+    }
+
+    #[test]
+    fn core_health_reports_errored_component() {
+        let snap = serde_json::json!({
+            "components": { "core": {"status": "ok"}, "memory_tree_db": {"status": "error"} }
+        });
+        let (healthy, detail) = core_health_from_snapshot(&snap);
+        assert!(!healthy);
+        assert!(detail.contains("memory_tree_db"));
+    }
+
+    #[test]
+    fn core_health_empty_components_is_starting_up() {
+        let snap = serde_json::json!({ "components": {} });
+        let (healthy, detail) = core_health_from_snapshot(&snap);
+        assert!(!healthy);
+        assert!(detail.contains("starting up"));
+    }
+
+    #[test]
+    fn core_health_missing_components_key_unavailable() {
+        let (healthy, detail) = core_health_from_snapshot(&serde_json::json!({}));
+        assert!(!healthy);
+        assert!(detail.contains("unavailable"));
+    }
+
+    fn probe_entry(
+        provider: &str,
+        outcome: crate::openhuman::doctor::ModelProbeOutcome,
+        message: Option<&str>,
+    ) -> crate::openhuman::doctor::ModelProbeEntry {
+        crate::openhuman::doctor::ModelProbeEntry {
+            provider: provider.into(),
+            outcome,
+            message: message.map(str::to_string),
+        }
+    }
+
+    fn probe_report(
+        entries: Vec<crate::openhuman::doctor::ModelProbeEntry>,
+        ok: usize,
+    ) -> crate::openhuman::doctor::ModelProbeReport {
+        crate::openhuman::doctor::ModelProbeReport {
+            entries,
+            summary: crate::openhuman::doctor::ModelProbeSummary {
+                ok,
+                skipped: 0,
+                auth_or_access: 0,
+                errors: 0,
+            },
+        }
+    }
+
+    #[test]
+    fn model_conn_ok_labels_validated_provider() {
+        use crate::openhuman::doctor::ModelProbeOutcome as O;
+        let report = probe_report(
+            vec![
+                probe_entry("openai", O::Error, Some("boom")),
+                probe_entry("anthropic", O::Ok, None),
+            ],
+            1,
+        );
+        let probe = model_conn_from_report(&report);
+        assert!(probe.ok);
+        assert_eq!(probe.provider_id, "anthropic");
+        assert!(probe.error.is_empty());
+    }
+
+    #[test]
+    fn model_conn_fail_surfaces_first_error_message() {
+        use crate::openhuman::doctor::ModelProbeOutcome as O;
+        let report = probe_report(
+            vec![probe_entry(
+                "anthropic",
+                O::AuthOrAccess,
+                Some("401 unauthorized"),
+            )],
+            0,
+        );
+        let probe = model_conn_from_report(&report);
+        assert!(!probe.ok);
+        assert_eq!(probe.provider_id, "anthropic");
+        assert_eq!(probe.error, "401 unauthorized");
+    }
+
+    #[test]
+    fn model_conn_no_entries_is_empty_provider() {
+        let report = probe_report(vec![], 0);
+        let probe = model_conn_from_report(&report);
+        assert!(!probe.ok);
+        assert!(probe.provider_id.is_empty());
+        assert_eq!(probe.error, "no reachable model provider");
+    }
+
+    #[test]
+    fn map_perm_covers_all_states() {
+        use crate::openhuman::accessibility::PermissionState as S;
+        assert_eq!(map_perm(S::Granted), PermState::Granted);
+        assert_eq!(map_perm(S::Denied), PermState::Denied);
+        assert_eq!(map_perm(S::Unknown), PermState::Unknown);
+        assert_eq!(map_perm(S::Unsupported), PermState::Unsupported);
+    }
+
+    #[test]
+    fn probe_dir_writable_true_for_writable_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(probe_dir_writable(dir.path()));
+    }
+
+    #[test]
+    fn probe_dir_writable_creates_missing_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("nested/child");
+        assert!(probe_dir_writable(&nested));
+        assert!(nested.is_dir());
     }
 }
