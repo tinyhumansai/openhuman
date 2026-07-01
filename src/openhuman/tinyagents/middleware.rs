@@ -972,32 +972,70 @@ impl Middleware<()> for CostBudgetMiddleware {
     }
 }
 
-/// `after_tool`: stop the run when a tool returns the **same** error result
-/// repeatedly (issue #4249). The legacy tool loop's progress guard halted on a
-/// repeated deterministic failure — a security/approval denial, or a terminal
-/// tool error the model keeps reissuing — so the run surfaced the root cause
-/// instead of burning the whole iteration budget and then a generic cap failure.
-/// The tinyagents path kept only the generic model/tool call caps, so this
-/// reinstates the breaker as a graph middleware: after `threshold` consecutive
-/// identical error signatures (`tool name` + error text), it pauses the run via
-/// the shared steering handle (the same mechanism as the stop-hook / cap pausers).
-/// Any successful tool result resets the counter — progress was made.
+/// Consecutive **any**-failure no-progress backstop: different commands all
+/// failing means the goal is unreachable here. Matches the legacy
+/// `NO_PROGRESS_FAILURE_THRESHOLD`.
+const NO_PROGRESS_FAILURE_THRESHOLD: usize = 6;
+/// Consecutive **identical** hard-policy-rejection repeats before halting — a
+/// blocked call re-issued unchanged can never succeed. Legacy
+/// `HARD_REJECT_REPEAT_THRESHOLD`.
+const HARD_REJECT_REPEAT_THRESHOLD: usize = 2;
+
+/// `after_tool`: stop the run when tool calls keep failing with no progress
+/// (issue #4249). The legacy tool loop's progress guard surfaced a root-cause
+/// halt summary — a security/approval denial re-issued unchanged, an identical
+/// error retried, or *different* commands all failing — instead of burning the
+/// whole iteration budget and ending on a generic cap error. The tinyagents path
+/// kept only the model/tool call caps, so this reinstates the guard as a graph
+/// middleware. Three halt conditions, checked per failure (any success resets
+/// every counter — progress was made):
+///
+/// 1. **Hard policy rejection** (`[policy-blocked]`) repeated `HARD_REJECT_REPEAT_THRESHOLD`
+///    times with an identical signature — "blocked by the security policy … re-issued".
+/// 2. **Identical** error signature repeated `identical_threshold` times —
+///    "retried N times with identical arguments".
+/// 3. **Any** failure `NO_PROGRESS_FAILURE_THRESHOLD` times in a row (even with
+///    varied errors) — "N tool calls in a row failed".
+///
+/// On trip it records a root-cause summary into the shared [`HaltSummarySlot`]
+/// (the turn overrides its final text with it) and pauses the run via the shared
+/// steering handle (same mechanism as the stop-hook / cap pausers).
 pub struct RepeatedToolFailureMiddleware {
     handle: SteeringHandle,
-    threshold: usize,
-    last: std::sync::Mutex<Option<(String, usize)>>,
+    identical_threshold: usize,
+    halt_summary: super::HaltSummarySlot,
+    state: std::sync::Mutex<FailureState>,
+}
+
+#[derive(Default)]
+struct FailureState {
+    last_sig: Option<String>,
+    same_count: usize,
+    consecutive: usize,
 }
 
 impl RepeatedToolFailureMiddleware {
-    /// Build the breaker. `threshold` is clamped to at least 2 (a single failure
-    /// is never a loop).
-    pub fn new(handle: SteeringHandle, threshold: usize) -> Self {
+    /// Build the breaker. `identical_threshold` (the identical-signature retry
+    /// ceiling) is clamped to at least 2 — a single failure is never a loop.
+    pub fn new(
+        handle: SteeringHandle,
+        identical_threshold: usize,
+        halt_summary: super::HaltSummarySlot,
+    ) -> Self {
         Self {
             handle,
-            threshold: threshold.max(2),
-            last: std::sync::Mutex::new(None),
+            identical_threshold: identical_threshold.max(2),
+            halt_summary,
+            state: std::sync::Mutex::new(FailureState::default()),
         }
     }
+}
+
+/// Trim a tool error for inclusion in a halt summary (keep it bounded but retain
+/// the deterministic leading detail the model/user needs).
+fn truncate_for_halt(text: &str) -> String {
+    const MAX: usize = 600;
+    crate::openhuman::util::truncate_with_ellipsis(text, MAX)
 }
 
 #[async_trait]
@@ -1012,37 +1050,82 @@ impl Middleware<()> for RepeatedToolFailureMiddleware {
         _state: &(),
         result: &mut TaToolResult,
     ) -> TaResult<()> {
-        let mut guard = self.last.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
         let Some(err) = result.error.as_deref() else {
-            // Success → progress was made; reset the breaker.
-            *guard = None;
+            // Success → progress was made; reset every counter.
+            *state = FailureState::default();
             return Ok(());
         };
-        // Signature: tool name + error text. Truncate the error so a huge payload
-        // doesn't dominate the comparison (the first line is the deterministic part).
-        let sig = format!("{}\u{1f}{}", result.name, err.lines().next().unwrap_or(err));
-        let count = match guard.as_mut() {
-            Some((prev, c)) if *prev == sig => {
-                *c += 1;
-                *c
+
+        // Signature: tool name + first error line (the deterministic part; a huge
+        // payload tail must not dominate the identical-repeat comparison).
+        let err_line = err.lines().next().unwrap_or(err);
+        let sig = format!("{}\u{1f}{err_line}", result.name);
+        state.consecutive += 1;
+        let same_count = match &state.last_sig {
+            Some(prev) if *prev == sig => {
+                state.same_count += 1;
+                state.same_count
             }
             _ => {
-                *guard = Some((sig, 1));
+                state.last_sig = Some(sig);
+                state.same_count = 1;
                 1
             }
         };
-        if count >= self.threshold {
+
+        // A hard policy rejection is marked in the tool output; it can never
+        // succeed when re-issued unchanged, so it trips faster.
+        let is_hard_reject = result
+            .content
+            .contains(crate::openhuman::security::POLICY_BLOCKED_MARKER)
+            || err.contains(crate::openhuman::security::POLICY_BLOCKED_MARKER);
+
+        let summary = if is_hard_reject && same_count >= HARD_REJECT_REPEAT_THRESHOLD {
+            Some(format!(
+                "Stopping: the `{}` call is blocked by the security policy and was re-issued with \
+                 identical arguments — it can never succeed this way. Reason:\n{}\n\nDo not repeat \
+                 this call; use an allowed alternative or report that it can't be done here.",
+                result.name,
+                truncate_for_halt(err),
+            ))
+        } else if same_count >= self.identical_threshold {
+            Some(format!(
+                "Stopping: the `{}` call was retried {same_count} times with identical arguments \
+                 and kept failing — repeating it will not help. Last error:\n{}\n\nThis looks \
+                 unrecoverable in the current environment. Report this back instead of retrying.",
+                result.name,
+                truncate_for_halt(err),
+            ))
+        } else if state.consecutive >= NO_PROGRESS_FAILURE_THRESHOLD {
+            Some(format!(
+                "Stopping: {} tool calls in a row failed with no progress. Last error (from \
+                 `{}`):\n{}\n\nDifferent commands are all failing — the goal looks unreachable in \
+                 this environment. Report this back instead of retrying.",
+                state.consecutive,
+                result.name,
+                truncate_for_halt(err),
+            ))
+        } else {
+            None
+        };
+
+        if let Some(summary) = summary {
             tracing::warn!(
                 tool = %result.name,
-                count,
-                threshold = self.threshold,
-                "[tinyagents::mw] repeated identical tool failure — pausing run so the root cause surfaces"
+                consecutive = state.consecutive,
+                same_count,
+                is_hard_reject,
+                "[tinyagents::mw] repeated tool failure — halting run so the root cause surfaces"
             );
+            if let Ok(mut slot) = self.halt_summary.lock() {
+                *slot = Some(summary);
+            }
             // Pause at the top of the next iteration (before the next model call),
             // matching the stop-hook / cap pause path. Reset so a resumed run does
-            // not immediately re-pause on the same latched signature.
+            // not immediately re-pause on the same latched state.
             self.handle.send(SteeringCommand::Pause);
-            *guard = None;
+            *state = FailureState::default();
         }
         Ok(())
     }
@@ -1388,7 +1471,7 @@ mod tests {
     #[tokio::test]
     async fn repeated_tool_failure_pauses_only_after_the_threshold() {
         let handle = SteeringHandle::allow_all();
-        let mw = RepeatedToolFailureMiddleware::new(handle.clone(), 3);
+        let mw = RepeatedToolFailureMiddleware::new(handle.clone(), 3, std::sync::Arc::new(std::sync::Mutex::new(None)));
         // Two identical failures: below the threshold, no pause.
         for _ in 0..2 {
             let mut r = failing_result("flaky", "boom");
@@ -1407,7 +1490,7 @@ mod tests {
     #[tokio::test]
     async fn repeated_tool_failure_resets_on_a_success() {
         let handle = SteeringHandle::allow_all();
-        let mw = RepeatedToolFailureMiddleware::new(handle.clone(), 3);
+        let mw = RepeatedToolFailureMiddleware::new(handle.clone(), 3, std::sync::Arc::new(std::sync::Mutex::new(None)));
         // Two failures, then a success clears the counter.
         for _ in 0..2 {
             let mut r = failing_result("t", "boom");
@@ -1426,7 +1509,7 @@ mod tests {
     #[tokio::test]
     async fn repeated_tool_failure_ignores_distinct_errors() {
         let handle = SteeringHandle::allow_all();
-        let mw = RepeatedToolFailureMiddleware::new(handle.clone(), 3);
+        let mw = RepeatedToolFailureMiddleware::new(handle.clone(), 3, std::sync::Arc::new(std::sync::Mutex::new(None)));
         // Three *different* errors never trip the breaker — only an identical,
         // deterministic failure loop does.
         for err in ["e1", "e2", "e3"] {

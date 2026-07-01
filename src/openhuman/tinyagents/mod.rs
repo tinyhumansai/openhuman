@@ -200,6 +200,12 @@ pub struct ToolCallOutcome {
 /// appends each tool call's outcome to, drained into the turn outcome.
 pub type ToolOutcomeSink = std::sync::Arc<std::sync::Mutex<Vec<ToolCallOutcome>>>;
 
+/// Shared slot the repeated-failure breaker writes a root-cause halt summary into
+/// when it trips. The turn overrides its final text with this summary so the
+/// no-progress halt surfaces the cause instead of an empty/last-model reply
+/// (legacy `RepeatFailureGuard` parity).
+pub type HaltSummarySlot = std::sync::Arc<std::sync::Mutex<Option<String>>>;
+
 /// Drive an agent turn through the `tinyagents` agent-loop harness.
 ///
 /// Registers `provider` as the default model and every entry in `resolved_tools`
@@ -448,10 +454,12 @@ pub async fn run_turn_via_tinyagents_shared(
     // error `REPEATED_TOOL_FAILURE_THRESHOLD` times in a row, so a deterministic
     // security/approval denial or terminal tool error surfaces its root cause
     // instead of burning the whole iteration budget (legacy ProgressGuard parity).
+    let halt_summary: HaltSummarySlot = std::sync::Arc::new(std::sync::Mutex::new(None));
     if let Some(handle) = &handle {
         harness.push_middleware(Arc::new(middleware::RepeatedToolFailureMiddleware::new(
             handle.clone(),
             REPEATED_TOOL_FAILURE_THRESHOLD,
+            halt_summary.clone(),
         )));
     }
 
@@ -703,10 +711,17 @@ pub async fn run_turn_via_tinyagents_shared(
         && run.model_calls >= max_iterations
         && run.final_response.is_none();
 
-    let (early_exit_tool, text) = match early_exit {
+    let (early_exit_tool, mut text) = match early_exit {
         Some(exit) => (Some(exit.tool), exit.question),
         None => (None, run.text().unwrap_or_default()),
     };
+
+    // The repeated-failure breaker halts the run with a root-cause summary instead
+    // of a final model turn; surface it as the turn's text so the no-progress cause
+    // reaches the caller/user rather than an empty reply.
+    if let Some(summary) = halt_summary.lock().ok().and_then(|mut s| s.take()) {
+        text = summary;
+    }
 
     let tool_outcomes = tool_outcome_sink
         .lock()
