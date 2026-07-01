@@ -4,7 +4,6 @@ use super::parse::{
     extract_json_values, parse_arguments_value, parse_glm_style_tool_calls, parse_tool_call_value,
     parse_tool_calls, parse_tool_calls_from_json_value, tools_to_openai_format,
 };
-use super::tool_loop::{run_tool_call_loop, DEFAULT_MAX_TOOL_ITERATIONS};
 use crate::openhuman::inference::provider::traits::ProviderCapabilities;
 use crate::openhuman::inference::provider::{ChatMessage, ChatRequest, ChatResponse, Provider};
 use crate::openhuman::tools::{self, Tool};
@@ -98,130 +97,6 @@ impl Provider for VisionProvider {
             reasoning_content: None,
         })
     }
-}
-
-#[tokio::test]
-async fn run_tool_call_loop_returns_structured_error_for_non_vision_provider() {
-    let calls = Arc::new(AtomicUsize::new(0));
-    let provider = NonVisionProvider {
-        calls: Arc::clone(&calls),
-    };
-
-    let mut history = vec![ChatMessage::user(
-        "please inspect [IMAGE:data:image/png;base64,iVBORw0KGgo=]".to_string(),
-    )];
-    let tools_registry: Vec<Box<dyn Tool>> = Vec::new();
-
-    let err = run_tool_call_loop(
-        &provider,
-        &mut history,
-        &tools_registry,
-        "mock-provider",
-        "mock-model",
-        0.0,
-        true,
-        "cli",
-        &crate::openhuman::config::MultimodalConfig::default(),
-        &crate::openhuman::config::MultimodalFileConfig::default(),
-        3,
-        None,
-        None,
-        &[],
-        None,
-        None,
-        &crate::openhuman::tools::policy::DefaultToolPolicy,
-    )
-    .await
-    .expect_err("provider without vision support should fail");
-
-    assert!(err.to_string().contains("provider_capability_error"));
-    assert!(err.to_string().contains("capability=vision"));
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
-}
-
-#[tokio::test]
-async fn run_tool_call_loop_rejects_oversized_image_payload() {
-    let calls = Arc::new(AtomicUsize::new(0));
-    let provider = VisionProvider {
-        calls: Arc::clone(&calls),
-    };
-
-    let oversized_payload = STANDARD.encode(vec![0_u8; (1024 * 1024) + 1]);
-    let mut history = vec![ChatMessage::user(format!(
-        "[IMAGE:data:image/png;base64,{oversized_payload}]"
-    ))];
-
-    let tools_registry: Vec<Box<dyn Tool>> = Vec::new();
-    let multimodal = crate::openhuman::config::MultimodalConfig {
-        max_images: 4,
-        max_image_size_mb: 1,
-        allow_remote_fetch: false,
-    };
-
-    let err = run_tool_call_loop(
-        &provider,
-        &mut history,
-        &tools_registry,
-        "mock-provider",
-        "mock-model",
-        0.0,
-        true,
-        "cli",
-        &multimodal,
-        &crate::openhuman::config::MultimodalFileConfig::default(),
-        3,
-        None,
-        None,
-        &[],
-        None,
-        None,
-        &crate::openhuman::tools::policy::DefaultToolPolicy,
-    )
-    .await
-    .expect_err("oversized payload must fail");
-
-    assert!(err
-        .to_string()
-        .contains("multimodal image size limit exceeded"));
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
-}
-
-#[tokio::test]
-async fn run_tool_call_loop_accepts_valid_multimodal_request_flow() {
-    let calls = Arc::new(AtomicUsize::new(0));
-    let provider = VisionProvider {
-        calls: Arc::clone(&calls),
-    };
-
-    let mut history = vec![ChatMessage::user(
-        "Analyze this [IMAGE:data:image/png;base64,iVBORw0KGgo=]".to_string(),
-    )];
-    let tools_registry: Vec<Box<dyn Tool>> = Vec::new();
-
-    let result = run_tool_call_loop(
-        &provider,
-        &mut history,
-        &tools_registry,
-        "mock-provider",
-        "mock-model",
-        0.0,
-        true,
-        "cli",
-        &crate::openhuman::config::MultimodalConfig::default(),
-        &crate::openhuman::config::MultimodalFileConfig::default(),
-        3,
-        None,
-        None,
-        &[],
-        None,
-        None,
-        &crate::openhuman::tools::policy::DefaultToolPolicy,
-    )
-    .await
-    .expect("valid multimodal payload should pass");
-
-    assert_eq!(result, "vision-ok");
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
 #[test]
@@ -679,20 +554,6 @@ fn extract_json_values_handles_arrays() {
     let input = r#"[1, 2, 3]{"key": "value"}"#;
     let result = extract_json_values(input);
     assert_eq!(result.len(), 2);
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// Recovery Tests - Constants Validation
-// ═══════════════════════════════════════════════════════════════════════
-
-const _: () = {
-    assert!(DEFAULT_MAX_TOOL_ITERATIONS > 0);
-    assert!(DEFAULT_MAX_TOOL_ITERATIONS <= 100);
-};
-
-#[test]
-fn constants_bounds_are_compile_time_checked() {
-    // Bounds are enforced by the const assertions above.
 }
 
 // ═══════════════════════════════════════════════════════════════════════

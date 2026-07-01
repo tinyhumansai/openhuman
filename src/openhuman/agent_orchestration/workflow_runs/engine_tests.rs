@@ -1,6 +1,6 @@
 //! Engine unit tests (#3375 PR2).
 //!
-//! These exercise the phase scheduler ([`super::drive_phases`]) directly with a
+//! These exercise the phase scheduler ([`super::super::graph::drive_phases`]) directly with a
 //! mock `Provider` so child agents resolve deterministically and never touch the
 //! network. The full [`super::start_workflow_run`] entry point (which builds a
 //! real `Agent` from config) is covered by the JSON-RPC e2e test over the live
@@ -21,6 +21,9 @@ use serde_json::{json, Value};
 use tokio::time::{sleep, Duration};
 
 use super::*;
+// The phase scheduler moved to the tinyagents-backed `graph` submodule in #4249;
+// its signature is unchanged (`drive_phases(config, run_id, definition, cancel)`).
+use super::super::graph::drive_phases;
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::harness::fork_context::{with_parent_context, ParentExecutionContext};
 use crate::openhuman::config::{AgentConfig, Config};

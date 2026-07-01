@@ -633,14 +633,6 @@ impl Config {
                 self.learning.stm_recall_enabled = enabled;
             }
         }
-        if let Some(flag) = env.get("OPENHUMAN_LEARNING_UNIFIED_COMPACTION_ENABLED") {
-            if let Some(enabled) = parse_env_bool(
-                "OPENHUMAN_LEARNING_UNIFIED_COMPACTION_ENABLED",
-                flag.as_str(),
-            ) {
-                self.learning.unified_compaction_enabled = enabled;
-            }
-        }
     }
 
     fn apply_memory_tree_env<E: super::env::EnvLookup + ?Sized>(&mut self, env: &E) {

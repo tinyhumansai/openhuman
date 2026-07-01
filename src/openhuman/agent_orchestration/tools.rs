@@ -8,6 +8,8 @@ mod awaiting_user;
 mod close_subagent;
 #[path = "tools/continue_subagent.rs"]
 mod continue_subagent;
+#[path = "tools/delegate_graph.rs"]
+mod delegate_graph;
 #[path = "tools/dispatch.rs"]
 mod dispatch;
 #[path = "tools/list_subagents.rs"]
@@ -42,6 +44,7 @@ pub use agent_prepare_context::{
 pub use archetype_delegation::ArchetypeDelegationTool;
 pub use close_subagent::CloseSubagentTool;
 pub use continue_subagent::ContinueSubagentTool;
+pub use delegate_graph::DelegateGraphTool;
 pub use list_subagents::ListSubagentsTool;
 pub use skill_delegation::{SkillDelegationTool, INTEGRATIONS_DELEGATE_TOOL_NAME};
 pub use spawn_async_subagent::SpawnAsyncSubagentTool;

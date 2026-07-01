@@ -158,6 +158,7 @@ mod tests {
             delegate_name: None,
             agent_tier: AgentTier::Worker,
             source: DefinitionSource::Builtin,
+            graph: Default::default(),
         }
     }
 

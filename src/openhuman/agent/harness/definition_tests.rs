@@ -31,6 +31,7 @@ fn make_def(id: &str) -> AgentDefinition {
         delegate_name: None,
         agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
         source: DefinitionSource::Builtin,
+        graph: Default::default(),
     }
 }
 
@@ -237,7 +238,7 @@ fn extended_policy_raises_cap_to_at_least_extended_constant() {
     def.iteration_policy = IterationPolicy::Extended;
     assert_eq!(
         def.effective_max_iterations(),
-        super::super::tool_loop::EXTENDED_MAX_TOOL_ITERATIONS
+        super::EXTENDED_MAX_TOOL_ITERATIONS
     );
     assert!(def.effective_max_iterations() > def.max_iterations);
 }
@@ -268,7 +269,7 @@ iteration_policy = "extended"
     assert_eq!(def.iteration_policy, IterationPolicy::Extended);
     assert_eq!(
         def.effective_max_iterations(),
-        super::super::tool_loop::EXTENDED_MAX_TOOL_ITERATIONS
+        super::EXTENDED_MAX_TOOL_ITERATIONS
     );
 }
 

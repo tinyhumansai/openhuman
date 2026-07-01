@@ -33,9 +33,6 @@ use crate::openhuman::file_state::with_file_state_agent_id;
 use crate::openhuman::inference::provider::AGENT_TURN_MAX_OUTPUT_TOKENS;
 use crate::openhuman::tools::{Tool, ToolCategory, ToolSpec};
 
-use crate::openhuman::agent::harness::engine::TurnStop;
-
-use super::loop_::run_inner_loop;
 use super::prompt::{append_subagent_role_contract, dedup_tool_specs_by_name};
 use super::provider::{
     resolve_subagent_provider, user_is_signed_in_to_composio, LazyToolkitResolver,
@@ -800,29 +797,92 @@ async fn run_typed_mode(
         model_vision,
         "[subagent_runner] resolved sub-agent model vision capability"
     );
-    let (output, iterations, agg_usage, early_exit_tool, stop) = Box::pin(run_inner_loop(
-        subagent_provider.as_ref(),
-        &mut history,
-        &parent.all_tools,
-        dynamic_tools,
-        &filtered_specs,
-        allowed_names,
-        lazy_resolver,
-        &model,
-        model_vision,
-        temperature,
-        definition.effective_max_iterations(),
-        max_output_tokens,
-        task_id,
-        &definition.id,
-        options.worker_thread_id.clone(),
-        handoff_cache.as_deref(),
-        parent,
-        definition.iteration_policy == IterationPolicy::Extended,
-        definition.effective_tokenjuice_compression(),
-        options.run_queue.clone(),
-    ))
-    .await?;
+    // Sub-agent turns run through the tinyagents harness (issue #4249): the graph
+    // route reuses the same provider + tools and mirrors every legacy seam (child
+    // progress, steering, cap checkpoint, ask_user_clarification pause,
+    // worker-thread mirror). The legacy `run_inner_loop` has been removed.
+    //
+    // `model_vision` and `max_output_tokens` are now forwarded into the graph
+    // route (image rehydration + per-call output cap). `lazy_resolver` /
+    // `handoff_cache` — the integrations-agent progressive-disclosure seams — are
+    // not yet re-expressed on the tinyagents path; they need a tool-result
+    // interception middleware and are tracked as a follow-up (issue #4249, 1b).
+    let _ = (&lazy_resolver, &handoff_cache);
+    // Per-agent turn graph (issue #4249): `Default` runs the shared sub-agent
+    // graph; `Custom` hands the assembled turn to this agent's own graph runner
+    // (declared in its `graph.rs::graph()`). Every built-in agent selects
+    // `Default` today — the branch is the extension point.
+    use super::usage::AggregatedUsage;
+    use crate::openhuman::agent::harness::agent_graph::{
+        AgentGraph, AgentTurnRequest, AgentTurnUsage,
+    };
+    let (output, iterations, agg_usage, early_exit_tool, hit_cap) = match &definition.graph {
+        AgentGraph::Default => {
+            super::graph::run_subagent_via_graph(
+                subagent_provider.clone(),
+                &model,
+                temperature,
+                &mut history,
+                parent.all_tools.clone(),
+                dynamic_tools,
+                filtered_specs.clone(),
+                allowed_names,
+                definition.effective_max_iterations(),
+                options.run_queue.clone(),
+                parent.on_progress.clone(),
+                &definition.id,
+                task_id,
+                definition.iteration_policy == IterationPolicy::Extended,
+                options.worker_thread_id.clone(),
+                parent.workspace_dir.clone(),
+                max_output_tokens,
+                model_vision,
+            )
+            .await?
+        }
+        AgentGraph::Custom(run) => {
+            let req = AgentTurnRequest {
+                provider: subagent_provider.clone(),
+                model: model.clone(),
+                temperature,
+                history: std::mem::take(&mut history),
+                parent_tools: parent.all_tools.clone(),
+                dynamic_tools,
+                specs: filtered_specs.clone(),
+                allowed_names,
+                max_iterations: definition.effective_max_iterations(),
+                run_queue: options.run_queue.clone(),
+                on_progress: parent.on_progress.clone(),
+                agent_id: definition.id.clone(),
+                task_id: task_id.to_string(),
+                extended_policy: definition.iteration_policy == IterationPolicy::Extended,
+                worker_thread_id: options.worker_thread_id.clone(),
+                workspace_dir: parent.workspace_dir.clone(),
+                max_output_tokens,
+                model_vision,
+            };
+            let res = run(req).await?;
+            history = res.history;
+            let AgentTurnUsage {
+                input_tokens,
+                output_tokens,
+                cached_input_tokens,
+                charged_amount_usd,
+            } = res.usage;
+            (
+                res.output,
+                res.iterations,
+                AggregatedUsage {
+                    input_tokens,
+                    output_tokens,
+                    cached_input_tokens,
+                    charged_amount_usd,
+                },
+                res.early_exit_tool,
+                res.hit_cap,
+            )
+        }
+    };
 
     // Determine status: if the turn engine exited early because of
     // ask_user_clarification, checkpoint the history and return
@@ -888,27 +948,20 @@ async fn run_typed_mode(
             question,
             options: options_vec,
         }
-    } else {
-        use crate::openhuman::agent::harness::subagent_runner::types::SubagentRunStatus;
-        match stop {
-            // A circuit-breaker halt (stuck) or the iteration cap means the
-            // sub-agent stopped WITHOUT reaching its goal. Surface it as
-            // Incomplete so the delegating agent relays the partial result +
-            // blocker instead of treating the summary as a finished answer or
-            // re-spinning the identical delegation (#4096).
-            TurnStop::Halted => SubagentRunStatus::Incomplete {
-                reason:
-                    "got stuck and stopped making progress (a no-progress circuit breaker tripped)"
-                        .into(),
-            },
-            TurnStop::Cap => SubagentRunStatus::Incomplete {
-                reason: "reached its tool-call limit before finishing".into(),
-            },
-            // A clean final response. (An `ask_user_clarification` early-exit is
-            // already handled by the branch above, so EarlyExit here — which
-            // sub-agents only reach via that tool — folds into Completed.)
-            TurnStop::Final | TurnStop::EarlyExit => SubagentRunStatus::Completed,
+    } else if hit_cap {
+        // The tinyagents run stopped at the model-call cap with work still
+        // pending (graph summarized a resumable checkpoint into `output`).
+        // Surface it as Incomplete so the delegating agent relays the partial
+        // result + blocker instead of treating the summary as a finished answer
+        // or re-spinning the identical delegation (#4096).
+        crate::openhuman::agent::harness::subagent_runner::types::SubagentRunStatus::Incomplete {
+            reason: "reached its tool-call limit before finishing".into(),
         }
+    } else {
+        // A clean final response. (An `ask_user_clarification` early-exit is
+        // handled by the branch above.) The legacy circuit-breaker `Halted`
+        // distinction folds into the tinyagents stop-hook / cap handling.
+        crate::openhuman::agent::harness::subagent_runner::types::SubagentRunStatus::Completed
     };
 
     // Surface this run's token/cost totals so the parent turn can roll them

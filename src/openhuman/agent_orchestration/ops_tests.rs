@@ -13,7 +13,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
-use tokio::time::{sleep, Duration};
+use tokio::time::Duration;
 
 #[derive(Default)]
 struct NoopMemory;
@@ -170,12 +170,33 @@ impl Provider for CodingQuestionProvider {
     }
 }
 
-#[derive(Default)]
+/// Number of parallel sub-agents the parallel-coding test spawns. The provider's
+/// synchronization barrier is sized to this so the peak-concurrency assertion is
+/// deterministic regardless of scheduler/load.
+const PARALLEL_CHILDREN: usize = 3;
+
 struct ParallelState {
     calls: AtomicUsize,
     active: AtomicUsize,
     max_active: AtomicUsize,
     prompts: Mutex<Vec<String>>,
+    /// Rendezvous point: every child parks here (yielding its worker thread)
+    /// until all `PARALLEL_CHILDREN` are concurrently inside `chat`, so
+    /// `max_active` deterministically reaches the peak instead of depending on
+    /// whether the brief provider calls happen to overlap in wall-clock time.
+    gate: tokio::sync::Barrier,
+}
+
+impl Default for ParallelState {
+    fn default() -> Self {
+        Self {
+            calls: AtomicUsize::new(0),
+            active: AtomicUsize::new(0),
+            max_active: AtomicUsize::new(0),
+            prompts: Mutex::new(Vec::new()),
+            gate: tokio::sync::Barrier::new(PARALLEL_CHILDREN),
+        }
+    }
 }
 
 #[derive(Clone, Default)]
@@ -240,7 +261,11 @@ impl Provider for ParallelCodingProvider {
         self.state.calls.fetch_add(1, Ordering::SeqCst);
         let current = self.state.active.fetch_add(1, Ordering::SeqCst) + 1;
         self.record_peak(current);
-        sleep(Duration::from_millis(35)).await;
+        // Park until all children have entered `chat` (or a generous timeout, so
+        // an unexpected missing child fails the assertion fast rather than
+        // hanging). Once released, every child was concurrently active, so the
+        // recorded peak equals `PARALLEL_CHILDREN`.
+        let _ = tokio::time::timeout(Duration::from_secs(10), self.state.gate.wait()).await;
 
         let flattened = request
             .messages
@@ -303,10 +328,15 @@ async fn e2e_orchestrator_answers_coding_agent_question_and_resumes_child() {
     .await
     .expect("spawn coding agent");
 
+    // These waits spawn a *real* builtin (`code_executor`) sub-agent on the
+    // detached executor, which builds the full agent (prompt assembly, tool
+    // resolution, registry) before the mock provider returns — ~2.7s per child.
+    // The wait budget must clear that with CI headroom; a tight 2s expires first
+    // and reports the child as `Running`.
     let first_wait = session
         .wait_agents(WaitAgentOptions {
             orchestration_ids: vec![first.orchestration_id.clone()],
-            timeout_ms: Some(2_000),
+            timeout_ms: Some(15_000),
         })
         .await
         .expect("wait first child");
@@ -347,7 +377,7 @@ async fn e2e_orchestrator_answers_coding_agent_question_and_resumes_child() {
     let final_wait = session
         .wait_agents(WaitAgentOptions {
             orchestration_ids: vec![follow_up.orchestration_id.clone()],
-            timeout_ms: Some(2_000),
+            timeout_ms: Some(15_000),
         })
         .await
         .expect("wait follow-up");
@@ -369,7 +399,13 @@ async fn e2e_orchestrator_answers_coding_agent_question_and_resumes_child() {
     assert!(prompts[1].contains("ORCH_ANSWER_USE_RPC"));
 }
 
-#[tokio::test]
+// Multi-thread runtime: this test asserts the three detached sub-agents run
+// *concurrently* (`max_active >= 2`). Each child does a CPU-bound builtin-agent
+// build before its (mock) provider call; on a single-threaded runtime those
+// builds serialize, so the brief provider calls never overlap and the peak-
+// concurrency assertion flakes under load. Real worker threads let the builds —
+// and therefore the provider calls — actually overlap.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn e2e_orchestrator_waits_for_multiple_parallel_coding_subagents() {
     AgentDefinitionRegistry::init_global_builtins().unwrap();
     let provider = ParallelCodingProvider::default();
@@ -413,7 +449,7 @@ async fn e2e_orchestrator_waits_for_multiple_parallel_coding_subagents() {
     let waited = session
         .wait_agents(WaitAgentOptions {
             orchestration_ids: spawned,
-            timeout_ms: Some(2_000),
+            timeout_ms: Some(15_000),
         })
         .await
         .expect("wait parallel children");

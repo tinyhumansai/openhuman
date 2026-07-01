@@ -127,6 +127,7 @@ mod scoping_tests {
             delegate_name: None,
             agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
             source: DefinitionSource::Builtin,
+            graph: Default::default(),
         }
     }
 

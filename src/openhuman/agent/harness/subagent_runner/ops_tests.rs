@@ -70,6 +70,7 @@ fn make_def_named_tools(names: &[&str]) -> AgentDefinition {
         delegate_name: None,
         agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
         source: crate::openhuman::agent::harness::definition::DefinitionSource::Builtin,
+        graph: Default::default(),
     }
 }
 
@@ -515,37 +516,43 @@ async fn typed_mode_returns_text_through_runner() {
 }
 
 #[tokio::test]
-async fn stuck_subagent_returns_incomplete_status() {
+async fn capped_no_progress_subagent_returns_incomplete_status() {
     use crate::openhuman::agent::harness::subagent_runner::SubagentRunStatus;
-    // A sub-agent that re-issues the identical (succeeding) tool call makes no
-    // progress. The repeat-call breaker halts it, and the runner reports
-    // `Incomplete` (NOT `Completed`) so the orchestrator gets a structured
+    // A sub-agent that keeps issuing tool calls without ever producing a final
+    // answer makes no progress and is halted at its model-call cap. The runner
+    // summarizes the run-so-far into a resumable checkpoint and reports
+    // `Incomplete` (NOT `Completed`) so the orchestrator relays the partial
     // handback instead of mistaking the no-progress summary for a result (#4096).
+    //
+    // The legacy repeat-identical-call circuit-breaker `Halted` distinction
+    // folded into this cap handling during the tinyagents migration (#4249) —
+    // see `run_subagent`'s status mapping. With `max_iterations = 2` the two
+    // scripted tool calls exhaust the budget; the checkpoint summary call then
+    // draws the deterministic "reached my tool-call limit" digest.
     let provider = ScriptedProvider::new(vec![
-        tool_response("file_read", "{\"path\":\"a\"}"),
-        tool_response("file_read", "{\"path\":\"a\"}"),
         tool_response("file_read", "{\"path\":\"a\"}"),
         tool_response("file_read", "{\"path\":\"a\"}"),
     ]);
     let parent = make_parent(provider.clone(), vec![stub("file_read")]);
-    let def = make_def_named_tools(&["file_read"]);
+    let mut def = make_def_named_tools(&["file_read"]);
+    def.max_iterations = 2;
 
     let outcome = with_parent_context(parent, async {
         run_subagent(&def, "read the file", SubagentRunOptions::default()).await
     })
     .await
-    .expect("a stuck halt is still Ok (not Err)");
+    .expect("a cap halt is still Ok (not Err)");
 
     match outcome.status {
         SubagentRunStatus::Incomplete { reason } => assert!(
-            reason.contains("stuck") || reason.contains("progress"),
-            "incomplete reason should describe the stuck stop: {reason}"
+            reason.contains("limit") || reason.contains("tool-call"),
+            "incomplete reason should describe the cap stop: {reason}"
         ),
         other => panic!("expected Incomplete, got {other:?}"),
     }
     assert!(
-        outcome.output.contains("same tool call"),
-        "the partial output should carry the repeat-call no-progress summary: {}",
+        outcome.output.contains("tool-call limit"),
+        "the partial output should carry the cap-hit checkpoint summary: {}",
         outcome.output
     );
 }

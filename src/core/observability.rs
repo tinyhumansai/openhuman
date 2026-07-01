@@ -3743,26 +3743,6 @@ mod tests {
     }
 
     #[test]
-    fn context_prefix_too_large_error_display_classifies_as_expected() {
-        // S3.5.d coupling test: the pre-dispatch actionable error's Display
-        // string MUST classify as the suppressed ContextWindowExceeded bucket,
-        // so a wording drift in the user-facing message (which is what gets
-        // re-raised and re-reported up the stack) fails CI instead of silently
-        // leaking the event to Sentry.
-        let err = crate::openhuman::agent::harness::token_budget::ContextPrefixTooLargeError {
-            prefix_tokens: 10_978,
-            context_window: 8_192,
-            max_input_tokens: 7_372,
-        };
-        assert_eq!(
-            expected_error_kind(&err.to_string()),
-            Some(ExpectedErrorKind::ContextWindowExceeded),
-            "ContextPrefixTooLargeError Display must stay coupled to the \
-             context-window-exceeded classifier (drift would leak Sentry events)"
-        );
-    }
-
-    #[test]
     fn does_not_classify_unrelated_messages_as_context_window_exceeded() {
         // Anchors are context-overflow specific. A generic "window" or
         // "context" mention, or an unrelated rate-limit "exceeded", must

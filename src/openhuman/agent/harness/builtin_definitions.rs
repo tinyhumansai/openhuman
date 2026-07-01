@@ -83,6 +83,7 @@ pub(crate) fn test_main_def() -> AgentDefinition {
         delegate_name: None,
         agent_tier: AgentTier::Chat,
         source: DefinitionSource::Builtin,
+        graph: Default::default(),
     }
 }
 
@@ -126,6 +127,7 @@ pub(crate) fn test_inherit_echo_def() -> AgentDefinition {
         delegate_name: None,
         agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
         source: DefinitionSource::Builtin,
+        graph: Default::default(),
     }
 }
 
@@ -165,6 +167,7 @@ pub(crate) fn test_inherit_parallel_worker_def() -> AgentDefinition {
         delegate_name: None,
         agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
         source: DefinitionSource::Builtin,
+        graph: Default::default(),
     }
 }
 

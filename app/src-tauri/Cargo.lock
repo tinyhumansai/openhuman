@@ -5518,6 +5518,7 @@ dependencies = [
  "tar",
  "tempfile",
  "thiserror 2.0.18",
+ "tinyagents",
  "tinyplace",
  "tokio",
  "tokio-rustls",
@@ -8926,6 +8927,22 @@ dependencies = [
  "arrayref",
  "bytemuck",
  "strict-num",
+]
+
+[[package]]
+name = "tinyagents"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ca5080fa45dc248b4c3fcee368891a240ea4f8103243ca581202ab17bb881c7"
+dependencies = [
+ "async-trait",
+ "futures",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]

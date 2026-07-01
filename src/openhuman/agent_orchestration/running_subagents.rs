@@ -17,6 +17,18 @@
 //! and swept on `register` only once the table passes a soft cap, so it can't
 //! grow unbounded if a parent never waits (the Codex "spawn-slot leak" failure
 //! mode — openai/codex#18335).
+//!
+//! ## Typed lifecycle ledger (issue #4249)
+//!
+//! Alongside the executor plumbing (abort handle + steering queue + watch
+//! status), every detached sub-agent is also recorded in a process-wide
+//! [`tinyagents` orchestration `TaskStore`](crate::openhuman::tinyagents::orchestration)
+//! as an `OrchestrationTaskKind::SubAgent` task. `register` inserts it
+//! (`Pending` → `Running`) and spawns a watcher that mirrors the child's
+//! terminal status into the store (`Completed`/`Failed`/`Awaiting`); the cancel
+//! paths record `Cancelled`. This gives a typed, queryable lifecycle
+//! (`task_records`) without disturbing the watch/abort/steer machinery the store
+//! does not cover.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -27,6 +39,73 @@ use tokio::sync::watch;
 use tokio::task::AbortHandle;
 
 use crate::openhuman::agent::harness::run_queue::{QueueMode, QueuedMessage, RunQueue};
+use crate::openhuman::tinyagents::orchestration::{
+    InMemoryTaskStore, OrchestrationTaskFilter, OrchestrationTaskKind, OrchestrationTaskRecord,
+    OrchestrationTaskResult, OrchestrationTaskSpec, TaskStore,
+};
+use tinyagents::harness::ids::TaskId;
+
+/// Process-wide typed lifecycle ledger for detached sub-agents (issue #4249).
+fn task_store() -> &'static InMemoryTaskStore {
+    static STORE: OnceLock<InMemoryTaskStore> = OnceLock::new();
+    STORE.get_or_init(InMemoryTaskStore::new)
+}
+
+/// Record a freshly-spawned sub-agent in the store (`Pending` → `Running`).
+/// Insert errors (e.g. a re-used task id across tests) are intentionally ignored.
+fn record_spawned(task_id: &str, agent_id: &str, parent_session: &str) {
+    let store = task_store();
+    let spec = OrchestrationTaskSpec::new(
+        task_id.to_string(),
+        OrchestrationTaskKind::SubAgent {
+            agent: agent_id.to_string(),
+        },
+    )
+    .with_metadata("parentSession", parent_session.to_string());
+    let _ = store.insert(spec);
+    let _ = store.mark_running(&TaskId::new(task_id));
+}
+
+/// Mirror a child's published [`SubagentStatus`] into the typed store. Transition
+/// errors (already terminal / cancelled) are ignored — first writer wins.
+fn record_status(task_id: &str, status: &SubagentStatus) {
+    let store = task_store();
+    let id = TaskId::new(task_id);
+    match status {
+        SubagentStatus::Completed { output, .. } => {
+            let _ = store.complete(&id, OrchestrationTaskResult::text(output.clone()));
+        }
+        SubagentStatus::Failed { error } => {
+            let _ = store.fail(&id, error.clone());
+        }
+        SubagentStatus::AwaitingUser { .. } => {
+            let _ = store.mark_awaiting(&id);
+        }
+        SubagentStatus::Running => {}
+    }
+}
+
+/// Record a cancellation (`CancelRequested` → `Cancelled`) for `task_id`.
+fn record_cancelled(task_id: &str) {
+    let store = task_store();
+    let id = TaskId::new(task_id);
+    let _ = store.request_cancel(&id);
+    let _ = store.mark_cancelled(&id);
+}
+
+/// Snapshot the typed lifecycle records, optionally scoped to a `parent_session`.
+/// Backs typed status surfaces without touching the live registry's executor
+/// plumbing.
+pub fn task_records(parent_session: Option<&str>) -> Vec<OrchestrationTaskRecord> {
+    let all = task_store().list(OrchestrationTaskFilter::default());
+    match parent_session {
+        Some(ps) => all
+            .into_iter()
+            .filter(|r| r.spec.metadata.get("parentSession").map(String::as_str) == Some(ps))
+            .collect(),
+        None => all,
+    }
+}
 
 /// Terminal/transient state of a running async sub-agent, published by the
 /// spawner's background task and observed by `wait_subagent`.
@@ -110,6 +189,12 @@ pub fn register(
     abort: AbortHandle,
     status: watch::Receiver<SubagentStatus>,
 ) {
+    // Typed lifecycle ledger: record the spawn and mirror the child's terminal
+    // status into the store via a lightweight watcher (issue #4249). Done before
+    // the entry is moved into the map so the metadata is still in scope.
+    record_spawned(&task_id, &agent_id, &parent_session);
+    spawn_status_watcher(task_id.clone(), status.clone());
+
     let entry = RunningSubagentEntry {
         agent_id,
         parent_session,
@@ -133,6 +218,30 @@ pub fn register(
         task_id,
         map.len()
     );
+}
+
+/// Watch a child's status channel and mirror the first terminal status into the
+/// typed lifecycle store. A dropped sender (aborted/panicked task) without a
+/// terminal status is recorded as a failure, matching [`wait`].
+fn spawn_status_watcher(task_id: String, mut status: watch::Receiver<SubagentStatus>) {
+    tokio::spawn(async move {
+        loop {
+            let snapshot = status.borrow_and_update().clone();
+            if snapshot.is_terminal() {
+                record_status(&task_id, &snapshot);
+                break;
+            }
+            if status.changed().await.is_err() {
+                record_status(
+                    &task_id,
+                    &SubagentStatus::Failed {
+                        error: "sub-agent task ended without reporting a result".to_string(),
+                    },
+                );
+                break;
+            }
+        }
+    });
 }
 
 /// Resolve a durable `subagent_session_id` to the currently-running transient
@@ -357,6 +466,7 @@ pub fn cancel_by_task(task_id: &str) -> Option<CancelledSubagent> {
     let mut map = registry().lock().expect("running_subagents mutex poisoned");
     let entry = map.remove(task_id)?;
     entry.abort.abort();
+    record_cancelled(task_id);
     log::debug!(
         "[running_subagents] cancel_by_task task_id={} agent_id={} parent_thread_id={:?} live_entries={}",
         task_id,
@@ -389,6 +499,7 @@ pub fn close(task_id: &str, parent_session: &str) -> bool {
         Some(entry) if entry.parent_session == parent_session => {
             entry.abort.abort();
             map.remove(task_id);
+            record_cancelled(task_id);
             true
         }
         _ => false,
@@ -409,6 +520,7 @@ pub fn cancel_for_thread(thread_id: &str) -> usize {
     for id in &to_cancel {
         if let Some(entry) = map.remove(id) {
             entry.abort.abort();
+            record_cancelled(id);
         }
     }
     let count = to_cancel.len();
@@ -432,8 +544,9 @@ pub fn cancel_all() -> Vec<String> {
     let count = map.len();
     let mut thread_ids: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
-    for (_, entry) in map.drain() {
+    for (task_id, entry) in map.drain() {
         entry.abort.abort();
+        record_cancelled(&task_id);
         if let Some(thread_id) = entry.parent_thread_id {
             if seen.insert(thread_id.clone()) {
                 thread_ids.push(thread_id);
@@ -465,6 +578,7 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::tinyagents::orchestration::OrchestrationTaskStatus;
     use std::sync::MutexGuard;
 
     /// Serializes every test that touches the global [`REGISTRY`]. We reuse the
@@ -514,6 +628,55 @@ mod tests {
             rx,
         );
         tx
+    }
+
+    #[tokio::test]
+    async fn task_store_records_spawn_complete_and_cancel() {
+        let _guard = test_guard();
+        // Spawn → the ledger sees a running SubAgent task scoped to the parent.
+        let tx = register_test("task-ledger-1", "ledger-parent", RunQueue::new());
+        let running = task_records(Some("ledger-parent"));
+        assert!(
+            running
+                .iter()
+                .any(|r| r.spec.task_id.as_str() == "task-ledger-1"
+                    && r.status == OrchestrationTaskStatus::Running),
+            "spawned sub-agent is recorded Running: {running:?}"
+        );
+
+        // Publish a terminal status → the watcher mirrors Completed into the store.
+        tx.send(SubagentStatus::Completed {
+            output: "done".into(),
+            iterations: 2,
+        })
+        .unwrap();
+        // Let the watcher task observe the change.
+        for _ in 0..50 {
+            tokio::task::yield_now().await;
+            if task_records(None)
+                .iter()
+                .any(|r| r.spec.task_id.as_str() == "task-ledger-1" && r.is_terminal())
+            {
+                break;
+            }
+        }
+        let after = task_records(None);
+        let rec = after
+            .iter()
+            .find(|r| r.spec.task_id.as_str() == "task-ledger-1")
+            .expect("ledger record present");
+        assert_eq!(rec.status, OrchestrationTaskStatus::Completed);
+
+        // A second sub-agent that gets cancelled is recorded Cancelled.
+        let _tx2 = register_test("task-ledger-2", "ledger-parent", RunQueue::new());
+        assert!(cancel_by_task("task-ledger-2").is_some());
+        let cancelled = task_records(None)
+            .into_iter()
+            .find(|r| r.spec.task_id.as_str() == "task-ledger-2")
+            .expect("cancelled record present");
+        assert_eq!(cancelled.status, OrchestrationTaskStatus::Cancelled);
+
+        prune("task-ledger-1");
     }
 
     #[tokio::test]

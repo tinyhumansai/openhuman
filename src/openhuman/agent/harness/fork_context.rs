@@ -155,7 +155,13 @@ tokio::task_local! {
     /// Context-preparation sources that already ran for this parent turn.
     /// Tools such as `agent_prepare_context` use this to avoid spawning a
     /// second context scout after the harness has already prepared context.
-    pub static AGENT_CONTEXT_PREPARED_SOURCES: Arc<Vec<AgentContextPreparedSource>>;
+    ///
+    /// Behind an `Arc<Mutex<…>>` (not a plain `Arc<Vec<…>>`) so a source can be
+    /// **appended live** mid-turn — the graph's `SuperContextMiddleware` runs its
+    /// scout during the harness run (after the initial list is scoped) and
+    /// registers its source via [`push_agent_context_prepared_source`] so a later
+    /// `agent_prepare_context` call in the same turn still self-suppresses.
+    pub static AGENT_CONTEXT_PREPARED_SOURCES: Arc<std::sync::Mutex<Vec<AgentContextPreparedSource>>>;
 }
 
 /// Returns a clone of the current parent execution context, if one is set.
@@ -175,15 +181,30 @@ where
 }
 
 /// Returns the one-shot context-preparation sources that have already run for
-/// the current parent turn.
+/// the current parent turn (a snapshot of the live list).
 pub fn current_agent_context_prepared_sources() -> Vec<AgentContextPreparedSource> {
     AGENT_CONTEXT_PREPARED_SOURCES
-        .try_with(|sources| sources.as_ref().clone())
+        .try_with(|sources| sources.lock().map(|s| s.clone()).unwrap_or_default())
         .unwrap_or_default()
 }
 
+/// Append a source to the current turn's prepared-context list, live.
+///
+/// Used by the graph's `SuperContextMiddleware`, which prepares context *during*
+/// the harness run (after [`with_agent_context_prepared_sources`] scoped the
+/// initial list) so a later `agent_prepare_context` tool call in the same turn
+/// observes it and self-suppresses. No-op outside an agent turn.
+pub fn push_agent_context_prepared_source(source: AgentContextPreparedSource) {
+    let _ = AGENT_CONTEXT_PREPARED_SOURCES.try_with(|sources| {
+        if let Ok(mut guard) = sources.lock() {
+            guard.push(source);
+        }
+    });
+}
+
 /// Run `future` with the current turn's already-prepared context sources
-/// installed.
+/// installed. The list is appendable mid-turn via
+/// [`push_agent_context_prepared_source`].
 pub async fn with_agent_context_prepared_sources<F, R>(
     sources: Vec<AgentContextPreparedSource>,
     future: F,
@@ -192,6 +213,6 @@ where
     F: std::future::Future<Output = R>,
 {
     AGENT_CONTEXT_PREPARED_SOURCES
-        .scope(Arc::new(sources), future)
+        .scope(Arc::new(std::sync::Mutex::new(sources)), future)
         .await
 }

@@ -40,6 +40,19 @@ crate-type = ["rlib"]
 [dependencies]
 # tiny.place A2A social network SDK — published on crates.io (tinyhumansai/tiny.place)
 tinyplace = "1.0.1"
+# TinyAgents — Rust LLM orchestration framework (LangGraph/LangChain-style):
+# durable state graphs, agent-loop harness, model/tool registries, REPL +
+# `.rag` workflow language. openhuman's agent engine + orchestration run on this
+# crate's primitives via the adapter seam in `src/openhuman/tinyagents/` (issue
+# #4249): every turn drives through the harness; the workflow phase DAG, team
+# member runtime, parallel fan-out, and multi-stage delegation run on graphs.
+# Default (offline) features only — we wire openhuman's own Provider/Tool, not
+# the bundled openai client. We deliberately do NOT enable the `sqlite` feature:
+# its `rusqlite 0.40` (libsqlite3-sys 0.38) conflicts with openhuman's own
+# `rusqlite 0.37` over the `links = "sqlite3"` native lib. Durable graph
+# checkpoints are instead provided by `SqlRunLedgerCheckpointer`, a custom
+# `Checkpointer` over openhuman's SQLite (see `src/openhuman/tinyagents/checkpoint.rs`).
+tinyagents = "1.2"
 # TokenJuice code compressor — AST-aware signature extraction. Optional (C build)
 # behind the default `tokenjuice-treesitter` feature; disabling it falls back to
 # the language-agnostic brace-depth heuristic. See src/openhuman/tokenjuice/compressors/code.rs.

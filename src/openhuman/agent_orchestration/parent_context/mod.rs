@@ -7,4 +7,4 @@
 
 mod builder;
 
-pub(crate) use builder::with_root_parent;
+pub(crate) use builder::{build_root_parent, with_root_parent};
