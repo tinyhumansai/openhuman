@@ -463,7 +463,10 @@ async fn turn_emits_checkpoint_at_max_iterations() {
         responses.push(tool_response(vec![ToolCall {
             id: format!("tc{i}"),
             name: "echo".into(),
-            arguments: r#"{"message": "loop"}"#.into(),
+            // Vary the args each turn so the repeat-CALL breaker (which halts
+            // identical (tool,args) loops) doesn't fire before the iteration
+            // cap — this test exercises the max-iterations checkpoint path.
+            arguments: format!(r#"{{"message": "loop {i}"}}"#),
             extra_content: None,
         }]));
     }
@@ -833,9 +836,15 @@ async fn turn_preserves_text_alongside_tool_calls() {
         "Expected non-empty final response after mixed text+tool"
     );
 
-    // The intermediate text should be in history
+    // The intermediate text should be preserved in history — either as a
+    // standalone assistant `Chat` or carried on the `AssistantToolCalls` turn
+    // that accompanied the tool call (the unified tinyagents representation
+    // keeps the preface text on the tool-call turn).
     let has_intermediate = agent.history().iter().any(|msg| match msg {
         ConversationMessage::Chat(c) => c.role == "assistant" && c.content.contains("Let me check"),
+        ConversationMessage::AssistantToolCalls { text, .. } => {
+            text.as_deref().is_some_and(|t| t.contains("Let me check"))
+        }
         _ => false,
     });
     assert!(has_intermediate, "Intermediate text should be in history");

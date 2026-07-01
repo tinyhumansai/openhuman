@@ -390,6 +390,44 @@ pub async fn run_context_scout_with_catalog(
                      recommended_tool_calls:\n[/context_bundle]"
                 )))
             }
+            SubagentRunStatus::Incomplete { reason } => {
+                // The scout stopped short (stuck halt / iteration cap) without a
+                // well-formed bundle. Don't inject partial context — return a
+                // has_enough_context:false bundle and close the lifecycle.
+                tracing::warn!(
+                    target: "agent_prepare_context",
+                    task_id = %outcome.task_id,
+                    reason = %reason,
+                    "[agent_prepare_context] scout stopped incomplete — returning empty bundle"
+                );
+                publish_global(DomainEvent::SubagentCompleted {
+                    parent_session: parent_session.clone(),
+                    task_id: outcome.task_id.clone(),
+                    agent_id: outcome.agent_id.clone(),
+                    elapsed_ms: outcome.elapsed.as_millis() as u64,
+                    output_chars: 0,
+                    iterations: outcome.iterations,
+                });
+                if let Some(ref tx) = progress_sink {
+                    let _ = tx
+                        .send(AgentProgress::SubagentCompleted {
+                            agent_id: outcome.agent_id.clone(),
+                            task_id: outcome.task_id.clone(),
+                            elapsed_ms: outcome.elapsed.as_millis() as u64,
+                            iterations: outcome.iterations as u32,
+                            output_chars: 0,
+                            worktree_path: None,
+                            changed_files: Vec::new(),
+                            dirty_status: None,
+                        })
+                        .await;
+                }
+                Ok(ToolResult::success(format!(
+                    "[context_bundle]\nhas_enough_context: false\n\
+                     summary: The context scout stopped before finishing ({reason}).\n\
+                     recommended_tool_calls:\n[/context_bundle]"
+                )))
+            }
         },
         Err(err) => {
             let message = err.to_string();

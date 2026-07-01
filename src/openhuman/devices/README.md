@@ -23,8 +23,8 @@ Mobile-device pairing domain. Brokers a secure, end-to-end-encrypted tunnel betw
 | `src/openhuman/devices/schemas.rs` | Controller schemas, `all_controller_schemas`/`all_registered_controllers`, and `handle_*` bridges delegating to `rpc.rs`. Mirrors `cron/schemas.rs`. |
 | `src/openhuman/devices/store.rs` | SQLite persistence (`paired_devices` table) via the per-call `with_connection` pattern. |
 | `src/openhuman/devices/crypto.rs` | `DeviceKeypair` (X25519 keygen, DH, byte round-trip), `TunnelCipher` (XChaCha20-Poly1305 seal/open with a `WINDOW_SIZE`=128 replay window), and base64url helpers. |
-| `src/openhuman/devices/tunnel_client.rs` | Emits/parses `tunnel:*` events over the shared `SocketManager`; wire types; the one-shot ack registry (`PENDING_REGISTER`) that resolves `tunnel:register`. Frame cap 64 KB. |
-| `src/openhuman/devices/bus.rs` | `DeviceTunnelSubscriber` event handler — drives handshake completion, persistence, peer-status updates, and register-ack resolution. |
+| `src/openhuman/devices/tunnel_client.rs` | Emits/parses `tunnel:*` events over the shared `SocketManager`; wire types; `tunnel:register` uses Socket.IO ACK via `SocketManager::emit_with_ack`. Frame cap 64 KB. |
+| `src/openhuman/devices/bus.rs` | `DeviceTunnelSubscriber` event handler — drives handshake completion, persistence, and peer-status updates. |
 
 ## Public surface
 
@@ -33,7 +33,7 @@ Re-exported from `mod.rs`:
 - `all_devices_controller_schemas` / `all_devices_registered_controllers` (alias for `schemas::all_controller_schemas` / `all_registered_controllers`).
 - Types: `CreatePairingResponse`, `ListDevicesResponse`, `PairedDevice`, `PairingSession`, `RevokeDeviceResponse`.
 
-Other notable public items (used across the crate but not re-exported at the domain root): `bus::register_device_tunnel_subscriber`, `crypto::{DeviceKeypair, TunnelCipher, base64url_encode, base64url_decode}`, `tunnel_client::{emit_register, emit_connect, emit_frame, resolve_register_ack, TunnelPeerStatus, TunnelFrame, TunnelRegisterResponse}`.
+Other notable public items (used across the crate but not re-exported at the domain root): `bus::register_device_tunnel_subscriber`, `crypto::{DeviceKeypair, TunnelCipher, base64url_encode, base64url_decode}`, `tunnel_client::{emit_register, emit_connect, emit_frame, TunnelPeerStatus, TunnelFrame, TunnelRegisterResponse}`.
 
 ## RPC / controllers
 
@@ -41,7 +41,7 @@ Namespace `devices` (invoked as `openhuman.devices_<function>`):
 
 | Method | Inputs | Output | Behavior |
 | --- | --- | --- | --- |
-| `devices_create_pairing` | `label?: string` | `CreatePairingResponse` | Registers a channel, generates+persists keypair, emits `tunnel:connect`, returns QR fields. Pairing token expires in 10 min (backend enforces real TTL). |
+| `devices_create_pairing` | `label?: string` | `CreatePairingResponse` | Registers a channel via Socket.IO ACK, generates+persists keypair, emits tokenless core `tunnel:connect`, returns QR fields using the backend-provided pairing expiry. |
 | `devices_list` | — | `ListDevicesResponse` | Lists non-revoked devices, overlaying live `peer_online` from `PEER_STATUS`. |
 | `devices_revoke` | `channel_id: string` | `RevokeDeviceResponse` | Soft-deletes the device, clears all in-memory state for the channel, publishes `DeviceRevoked`. |
 
@@ -57,14 +57,13 @@ Subscriber registered at startup from `src/core/jsonrpc.rs` via `register_device
 
 - `DevicePeerOnline` / `DevicePeerOffline` → update `PEER_STATUS`.
 - `DeviceTunnelFrame` → complete handshake + persist `PairedDevice`.
-- `DeviceTunnelRegistered` → resolve the pending `tunnel:register` ack in `tunnel_client`.
 
 **Publishes**:
 
 - `DevicePaired` (after successful handshake + persistence).
 - `DeviceRevoked` (from `devices_revoke`).
 
-Note: the `DevicePeerOnline/Offline`, `DeviceTunnelFrame`, and `DeviceTunnelRegistered` events are *originated* by `src/openhuman/socket/event_handlers.rs` (which parses the raw `tunnel:peer-status` / `tunnel:frame` / `tunnel:registered` / `tunnel:evicted` Socket.IO events and re-publishes them as `DomainEvent`s). This domain consumes them; it does not re-publish peer-status itself.
+Note: the `DevicePeerOnline/Offline` and `DeviceTunnelFrame` events are *originated* by `src/openhuman/socket/event_handlers.rs` (which parses the raw `tunnel:peer-status` / `tunnel:frame` / `tunnel:evicted` Socket.IO events and re-publishes them as `DomainEvent`s). This domain consumes them; it does not re-publish peer-status itself.
 
 ## Persistence
 
@@ -75,7 +74,7 @@ SQLite DB at `{workspace_dir}/devices/devices.db`, table `paired_devices`:
 | `channel_id` | PK; 128-bit base32 channel id. |
 | `label` | Human-readable label. |
 | `device_pubkey` | Base64url X25519 device public key. |
-| `core_session_token_hash` | SHA-256 of the core session token. |
+| `core_session_token_hash` | Legacy column name; currently stores a SHA-256 hash of the pairing credential because the backend no longer mints a core session token. |
 | `shared_secret_encrypted` | BLOB, currently always written `NULL`. |
 | `created_at` / `last_seen_at` | ISO 8601; `last_seen_at` set by `touch_device`. |
 | `revoked` | Soft-delete flag; `list_devices` filters `revoked = 0`. |
@@ -107,6 +106,6 @@ Separately, encrypted X25519 private keys are persisted as `enc2:` strings (via 
 - The `label` persisted on pairing currently falls back to the `channel_id` (the pending session stores no real label field; `PairingSession.channel_id` is used as the label source).
 - `devices_revoke` only tears down local + in-memory state. There is **no backend revoke endpoint yet** (TODO referencing PR #709 follow-up); the backend channel is left to expire via the pairing-token TTL.
 - `rpc_url` LAN detection uses the UDP "connect to 8.8.8.8" trick to read the local IPv4; port comes from `OPENHUMAN_CORE_RPC_PORT` env (default `7788`). Non-fatal if it fails.
-- `tunnel:register` has no native Socket.IO ack support, so `tunnel_client` uses a global one-shot (`PENDING_REGISTER`) resolved by the bus on `tunnel:registered`, with a 10-second timeout.
+- `tunnel:register` uses `SocketManager::emit_with_ack` and expects backend ACK shape `{channelId, pairingToken, pairingExpiresAt}` with a 10-second timeout.
 - `PairingSession` and the keypair maps are in-memory only (TTL/cleanup deferred to backend semantics); they are cleared on revoke.
 - Outbound `tunnel:frame` payloads are capped at 64 KB; callers are expected to stay ≤ 100 frames/s.

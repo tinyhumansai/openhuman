@@ -272,7 +272,7 @@ impl ArchivistHook {
             tracing::debug!(
                 "[archivist] rolling_segment_recap: only heuristic bookend stub \
                  available (no real LLM recap) session={session_id} segment={} — \
-                 returning None so compaction falls back to ProviderSummarizer",
+                 returning None",
                 open_segment.segment_id
             );
             return None;

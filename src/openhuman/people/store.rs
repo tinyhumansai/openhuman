@@ -29,6 +29,33 @@ pub async fn init(store: Arc<PeopleStore>) -> Result<(), &'static str> {
         .map_err(|_| "people store already initialised")
 }
 
+/// Seed the process-global store from a workspace directory, opening the
+/// on-disk db at `<workspace>/people/people.db` (schema migrations run on
+/// open). Idempotent: a second call — or a concurrent boot path — is a no-op
+/// that returns the already-seeded store rather than erroring.
+///
+/// Wired into core boot (`src/core/jsonrpc.rs`) alongside `memory::global` and
+/// `whatsapp_data::global`. Without this seed the global stays empty and every
+/// people controller / `people_*` tool fails with "people store not
+/// initialised" (Sentry TAURI-RUST-8NM).
+pub async fn init_from_workspace(
+    workspace_dir: &std::path::Path,
+) -> Result<Arc<PeopleStore>, String> {
+    if let Some(existing) = GLOBAL.get() {
+        log::debug!("[people:store] already initialised");
+        return Ok(existing.clone());
+    }
+    let db_path = workspace_dir.join("people").join("people.db");
+    let store = Arc::new(
+        PeopleStore::open_at(&db_path).map_err(|e| format!("people store open failed: {e}"))?,
+    );
+    // Race-resolve: another caller may have seeded while we were opening.
+    match GLOBAL.set(store.clone()) {
+        Ok(()) => Ok(store),
+        Err(_) => Ok(GLOBAL.get().cloned().unwrap_or(store)),
+    }
+}
+
 pub fn get() -> Result<Arc<PeopleStore>, &'static str> {
     GLOBAL
         .get()

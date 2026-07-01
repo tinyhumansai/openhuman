@@ -3,6 +3,10 @@ import type { TranslationMap } from './types';
 // Hindi (हिन्दी) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Cross-host vault (#4278)
+  'crossHostVault.title': 'वॉल्ट कोर होस्ट पर है।',
+  'crossHostVault.message':
+    'यह मेमोरी वॉल्ट openhuman-core होस्ट ({os}) पर संग्रहीत है। इसे केवल उसी मशीन पर खोला या दिखाया जा सकता है, इस डिवाइस से नहीं।',
   'conversations.backgroundTasks.title': 'Background tasks',
   'nav.feedback': 'फ़ीडबैक साझा करें',
   'feedback.board': 'फ़ीडबैक बोर्ड',
@@ -1372,6 +1376,7 @@ const messages: TranslationMap = {
   'mcp.catalog.loadMore': 'और अधिक लोड करें',
   'mcp.configAssistant.title': 'कॉन्फ़िगरेशन सहायक',
   'mcp.configAssistant.empty': 'कॉन्फ़िगरेशन, आवश्यक एनवी वर्र्स या सेटअप चरणों के बारे में पूछें।',
+  'mcp.configAssistant.autoPromptCta': 'चरण-दर-चरण सेटअप सहायता प्राप्त करें',
   'mcp.configAssistant.suggestedValues': 'सुझाए गए मान:',
   'mcp.configAssistant.valueHidden': '(मूल्य छिपा हुआ)',
   'mcp.configAssistant.applySuggested': 'सुझाए गए मान लागू करें',
@@ -1517,13 +1522,15 @@ const messages: TranslationMap = {
   'mcp.tab.filter.registry': 'रजिस्ट्री',
   'mcp.tab.column.name': 'नाम',
   'mcp.tab.column.description': 'विवरण',
-  'mcp.tab.column.source': 'स्रोत',
+  'mcp.tab.column.type': 'प्रकार',
   'mcp.tab.column.author': 'लेखक',
   'mcp.tab.column.action': 'क्रिया',
-  'mcp.tab.source.official': 'आधिकारिक',
-  'mcp.tab.source.smithery': 'Smithery',
   'mcp.tab.transport.hosted': 'होस्टेड',
-  'mcp.tab.transport.local': 'लोकल',
+  'mcp.tab.transport.local': 'Stdio',
+  'mcp.tab.transportFilter.label': 'प्रकार',
+  'mcp.tab.transportFilter.aria': 'ट्रांसपोर्ट के अनुसार सर्वर फ़िल्टर करें',
+  'mcp.tab.link.website': 'वेबसाइट',
+  'mcp.tab.link.repo': 'रिपॉज़िटरी',
   'mcp.tab.transport.hostedHint':
     'दूरस्थ सर्वर पर चलता है — इंस्टॉल करते समय साइन-इन या टोकन सेट किया जाता है',
   'mcp.tab.transport.localHint':
@@ -1551,11 +1558,7 @@ const messages: TranslationMap = {
   'mcp.install.button': 'स्थापित करें',
   'mcp.install.installing': 'स्थापित किया जा रहा है...',
   'mcp.install.by': 'द्वारा',
-  'mcp.install.transportLocal': 'स्थानीय रूप से चलता है',
-  'mcp.install.transportRemote': 'क्लाउड होस्टेड',
   'mcp.install.useCount': '{count} इंस्टॉलेशन',
-  'mcp.install.deployed': 'तैनात',
-  'mcp.install.requiresConfig': 'कॉन्फ़िगरेशन आवश्यक',
   'mcp.install.connections': 'उपलब्ध कनेक्शन',
   'mcp.install.published': 'प्रकाशित',
   'mcp.install.configureAndInstall': 'कॉन्फ़िगर करें और इंस्टॉल करें',
@@ -3152,6 +3155,8 @@ const messages: TranslationMap = {
   'composio.triggers.heading': 'ट्रिगर',
   'composio.triggers.listenFrom': 'से इवेंट्स सुनें',
   'composio.triggers.loadError': 'ट्रिगर्स लोड नहीं हो सके',
+  'composio.triggers.sessionExpired':
+    'आपका OpenHuman सत्र समाप्त हो गया है। ट्रिगर्स लोड करने के लिए फिर से साइन इन करें।',
   'composio.triggers.needsConfiguration': 'कॉन्फिगरेशन ज़रूरी है',
   'composio.triggers.noneAvailable': 'वर्तमान में कोई ट्रिगर उपलब्ध नहीं है',
   'conversations.taskKanban.moveLeft': 'बाएं ले जाएं',

@@ -378,6 +378,32 @@ pub fn context_window(model: &str) -> Option<u32> {
     lookup(model).map(|p| p.context_window)
 }
 
+/// Estimate the USD cost of a single model call from catalogued per-MTok rates.
+///
+/// Prices the standard (cache-miss) input tokens, the cached-prefix input
+/// tokens, and the output tokens separately. `cached_input_tokens` are billed at
+/// the (usually cheaper) cached rate and are assumed to be a subset of
+/// `input_tokens`, so the standard-rate portion is `input − cached`. Returns
+/// `0.0` when the model is not catalogued (caller should treat as "unknown, not
+/// free" — this is a best-effort estimate used when the provider does not report
+/// a charged amount).
+pub fn estimate_cost_usd(
+    model: &str,
+    input_tokens: u64,
+    output_tokens: u64,
+    cached_input_tokens: u64,
+) -> f64 {
+    let Some(p) = lookup(model) else {
+        return 0.0;
+    };
+    let cached = cached_input_tokens.min(input_tokens);
+    let standard_input = input_tokens.saturating_sub(cached);
+    let per_tok = |mtok_rate: f64| mtok_rate / 1_000_000.0;
+    (standard_input as f64) * per_tok(p.input_per_mtok_usd)
+        + (cached as f64) * per_tok(p.cached_input_per_mtok_usd)
+        + (output_tokens as f64) * per_tok(p.output_per_mtok_usd)
+}
+
 /// Build a default registry, one [`ModelRegistryEntry`] per catalogued model
 /// with prices and context window pre-filled. Used to seed an empty
 /// `config.model_registry`.
@@ -550,5 +576,63 @@ mod tests {
                 p.model_id
             );
         }
+    }
+
+    // ── estimate_cost_usd (issue #4249, Phase 5 — the $0-cost turn fix) ──────
+
+    fn approx(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9, "expected {b}, got {a}");
+    }
+
+    #[test]
+    fn estimate_prices_standard_input_and_output() {
+        // opus-4-8: $5/$25 per MTok in/out. 1M in + 1M out, no cache.
+        approx(
+            estimate_cost_usd("claude-opus-4-8", 1_000_000, 1_000_000, 0),
+            30.00,
+        );
+    }
+
+    #[test]
+    fn estimate_bills_cached_prefix_at_the_cheaper_rate() {
+        // Fully cached input (cached == input) → cached rate only ($0.50/MTok).
+        approx(
+            estimate_cost_usd("claude-opus-4-8", 1_000_000, 0, 1_000_000),
+            0.50,
+        );
+        // Half cached: 0.5M standard @ $5 + 0.5M cached @ $0.50 = 2.50 + 0.25.
+        approx(
+            estimate_cost_usd("claude-opus-4-8", 1_000_000, 0, 500_000),
+            2.75,
+        );
+    }
+
+    #[test]
+    fn estimate_clamps_cached_to_input() {
+        // cached_input_tokens > input_tokens must not underflow or overcharge:
+        // it is clamped to input, so this is billed as fully cached.
+        approx(
+            estimate_cost_usd("claude-opus-4-8", 1_000_000, 0, 5_000_000),
+            0.50,
+        );
+    }
+
+    #[test]
+    fn estimate_returns_zero_for_uncatalogued_models() {
+        // "unknown, not free" — the caller treats 0.0 as no estimate available.
+        assert_eq!(
+            estimate_cost_usd("totally-made-up-model", 1_000_000, 1_000_000, 0),
+            0.0
+        );
+    }
+
+    #[test]
+    fn estimate_resolves_decorated_model_ids() {
+        // The catalog lookup normalizes tags/suffixes, so a decorated id
+        // (e.g. the runtime "[1m]" window tag) still prices correctly.
+        approx(
+            estimate_cost_usd("claude-opus-4-8[1m]", 1_000_000, 0, 0),
+            5.00,
+        );
     }
 }

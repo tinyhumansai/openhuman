@@ -23,6 +23,7 @@ pub async fn obsidian_vault_status_rpc(
             registered: reg.registered,
             config_found: reg.config_found,
             content_root_abs: content_root.to_string_lossy().to_string(),
+            host_os: std::env::consts::OS.to_string(),
         }
     })
     .await
@@ -84,6 +85,7 @@ pub async fn vault_health_check_rpc(
         obsidian_registered,
         pipeline_healthy,
         last_sync_ms,
+        host_os: std::env::consts::OS.to_string(),
     };
 
     let log = format!(

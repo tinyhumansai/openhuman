@@ -69,10 +69,10 @@ pub struct SubagentRunOptions {
     pub worktree_action_dir: Option<PathBuf>,
 
     /// Steering channel for a running (typically async) sub-agent. When set,
-    /// the inner `run_turn_engine` drains steer/collect messages from this
-    /// queue at iteration boundaries — exactly like the main agent loop — so
-    /// the parent can `steer_subagent` mid-flight. `None` keeps today's
-    /// non-steerable behaviour.
+    /// the tinyagents harness drains steer/collect messages from this queue at
+    /// iteration boundaries — exactly like the main agent loop — so the parent
+    /// can `steer_subagent` mid-flight. `None` keeps today's non-steerable
+    /// behaviour.
     pub run_queue: Option<std::sync::Arc<crate::openhuman::agent::harness::run_queue::RunQueue>>,
 }
 
@@ -88,6 +88,17 @@ pub enum SubagentRunStatus {
     AwaitingUser {
         question: String,
         options: Option<Vec<String>>,
+    },
+    /// The sub-agent stopped WITHOUT reaching its goal — a circuit breaker
+    /// halted it (stuck: repeated identical call / repeated output / repeated
+    /// failure) or it hit the iteration cap. The run's `output` carries whatever
+    /// partial progress / checkpoint summary it produced; `reason` is a short,
+    /// machine-set explanation of why it stopped. The delegating agent must NOT
+    /// treat this as a completed result, and must not re-run the identical
+    /// delegation unchanged.
+    Incomplete {
+        /// Short, machine-set reason the run stopped short (stuck vs. cap).
+        reason: String,
     },
 }
 

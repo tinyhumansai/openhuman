@@ -182,9 +182,7 @@ pub(super) async fn run_agent_tool_call(
                     };
                     let policy = tool.timeout_policy(&call.arguments);
                     let (tool_deadline, timeout_secs) =
-                        crate::openhuman::agent::harness::engine::tools::resolve_tool_deadline(
-                            policy,
-                        );
+                        crate::openhuman::tool_timeout::resolve_tool_deadline(policy);
                     match policy {
                         crate::openhuman::tools::traits::ToolTimeout::Secs(req) => {
                             tracing::debug!(

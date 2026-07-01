@@ -106,25 +106,6 @@ pub struct LearningConfig {
     #[serde(default = "default_true")]
     pub stm_recall_enabled: bool,
 
-    /// Use the rolling segment recap as the compaction text for evicted turns
-    /// (Phase 1.5 — unified compaction).
-    ///
-    /// When `true`, the [`ContextManager`]'s autocompaction summarizer is
-    /// wrapped with a `SegmentRecapSummarizer` that first tries to obtain the
-    /// current open segment's rolling recap from the `ArchivistHook` and uses
-    /// it as the replacement text for the evicted head. If the rolling recap
-    /// is unavailable (no archivist, no open segment, LLM failure, flag off)
-    /// the inner `ProviderSummarizer` runs as before — the live prompt is
-    /// NEVER left over-budget regardless of the recap path's health.
-    ///
-    /// Default: `true`. Set to `false` to revert to the standalone
-    /// `ProviderSummarizer` path (today's behaviour, Phase 1.5 completely
-    /// absent from the hot path).
-    ///
-    /// Override via `OPENHUMAN_LEARNING_UNIFIED_COMPACTION_ENABLED=0|1`.
-    #[serde(default = "default_true")]
-    pub unified_compaction_enabled: bool,
-
     /// How often the periodic rebuild loop runs in seconds. Default: 1800 (30 minutes).
     #[serde(default = "default_rebuild_interval_secs")]
     pub rebuild_interval_secs: u64,
@@ -186,7 +167,6 @@ impl Default for LearningConfig {
             rebuild_interval_secs: default_rebuild_interval_secs(),
             episodic_capture_enabled: default_true(),
             stm_recall_enabled: default_true(),
-            unified_compaction_enabled: default_true(),
             explicit_preferences_enabled: default_true(),
             goals_enrichment_enabled: default_true(),
         }

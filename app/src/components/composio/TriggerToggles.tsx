@@ -9,6 +9,9 @@ import {
 import { formatTriggerLabel } from '../../lib/composio/formatters';
 import type { ComposioActiveTrigger, ComposioAvailableTrigger } from '../../lib/composio/types';
 import { useT } from '../../lib/i18n/I18nContext';
+import { useCoreState } from '../../providers/CoreStateProvider';
+import { CoreRpcError } from '../../services/coreRpcClient';
+import Button from '../ui/Button';
 
 /**
  * Stable signature for matching an `AvailableTrigger` to an
@@ -49,11 +52,17 @@ export default function TriggerToggles({
   connectionId,
 }: TriggerTogglesProps) {
   const { t } = useT();
+  const { clearSession } = useCoreState();
   const [available, setAvailable] = useState<ComposioAvailableTrigger[] | null>(null);
   const [activeBySignature, setActiveBySignature] = useState<Map<string, ComposioActiveTrigger>>(
     new Map()
   );
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Set when the load failure is a confirmed OpenHuman session expiry (the
+  // backend rejected the app-session JWT with a 401 → `SESSION_EXPIRED`).
+  // Distinct from a generic load error so we surface an actionable re-auth
+  // CTA instead of the raw `SESSION_EXPIRED: …` blob (#4281).
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [pendingSignature, setPendingSignature] = useState<string | null>(null);
   const [rowError, setRowError] = useState<string | null>(null);
 
@@ -63,6 +72,7 @@ export default function TriggerToggles({
     setAvailable(null);
     setActiveBySignature(new Map());
     setLoadError(null);
+    setSessionExpired(false);
     void (async () => {
       try {
         const [avail, active] = await Promise.all([
@@ -80,6 +90,11 @@ export default function TriggerToggles({
       } catch (err) {
         if (cancelled) return;
         const msg = err instanceof Error ? err.message : String(err);
+        // `auth_expired` is the typed classification of an OpenHuman
+        // session-JWT 401 (`SESSION_EXPIRED`). It deliberately excludes
+        // downstream provider 401s (`provider_auth`) so a Composio-side
+        // auth failure never shows the "sign in again" CTA (#4281, AC#4).
+        setSessionExpired(err instanceof CoreRpcError && err.kind === 'auth_expired');
         setLoadError(`${t('composio.triggers.loadError')}: ${msg}`);
       }
     })();
@@ -143,6 +158,34 @@ export default function TriggerToggles({
   );
 
   if (loadError) {
+    // Session expired → swap the raw `SESSION_EXPIRED: …` blob for an
+    // actionable banner whose CTA re-runs the sign-in flow. `clearSession`
+    // tears down the stale JWT and flips `isAuthenticated` false, which
+    // routes the user to the Welcome / sign-in screen (mirrors the
+    // EmbeddingsPanel managed-session pattern). #4281, AC#3.
+    if (sessionExpired) {
+      return (
+        <div
+          className="border-t border-line-subtle pt-3 mt-1"
+          data-testid="trigger-session-expired">
+          <div className="rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-900/10 p-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <p className="text-xs text-amber-800 dark:text-amber-200 leading-relaxed">
+                {t('composio.triggers.sessionExpired')}
+              </p>
+              <Button
+                type="button"
+                variant="secondary"
+                size="xs"
+                className="shrink-0"
+                onClick={() => void clearSession()}>
+                {t('settings.embeddings.signInAgain')}
+              </Button>
+            </div>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="border-t border-line-subtle pt-3 mt-1">
         <p className="text-[11px] text-coral-600">{loadError}</p>

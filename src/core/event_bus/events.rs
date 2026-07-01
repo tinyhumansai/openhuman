@@ -812,13 +812,6 @@ pub enum DomainEvent {
         channel_id: String,
         payload_b64: String,
     },
-    /// The backend acknowledged `tunnel:register` with channel credentials.
-    DeviceTunnelRegistered {
-        channel_id: String,
-        pairing_token: String,
-        session_token: String,
-    },
-
     // ── Memory tree ─────────────────────────────────────────────────────
     /// A document (chat batch, email thread, or standalone document) was
     /// fully canonicalised and its chunks written to the memory tree.
@@ -1282,8 +1275,7 @@ impl DomainEvent {
             | Self::DeviceRevoked { .. }
             | Self::DevicePeerOnline { .. }
             | Self::DevicePeerOffline { .. }
-            | Self::DeviceTunnelFrame { .. }
-            | Self::DeviceTunnelRegistered { .. } => "device",
+            | Self::DeviceTunnelFrame { .. } => "device",
 
             Self::CompanionSessionStarted { .. }
             | Self::CompanionStateChanged { .. }
@@ -1429,7 +1421,6 @@ impl DomainEvent {
             Self::DevicePeerOnline { .. } => "DevicePeerOnline",
             Self::DevicePeerOffline { .. } => "DevicePeerOffline",
             Self::DeviceTunnelFrame { .. } => "DeviceTunnelFrame",
-            Self::DeviceTunnelRegistered { .. } => "DeviceTunnelRegistered",
             Self::CompanionSessionStarted { .. } => "CompanionSessionStarted",
             Self::CompanionStateChanged { .. } => "CompanionStateChanged",
             Self::CompanionSessionEnded { .. } => "CompanionSessionEnded",

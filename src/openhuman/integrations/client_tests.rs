@@ -554,6 +554,109 @@ async fn non_401_4xx_does_not_classify_as_session_expired() {
     );
 }
 
+// ── Composio "soft" auth path (#4281) ─────────────────────────────
+
+/// The trigger-catalog reads are the only routes treated as "soft" (sentinel
+/// surfaced for an in-place CTA, no global sign-out). Every other backend route
+/// stays authoritative — a 401 there drives the full re-login.
+#[test]
+fn composio_soft_auth_path_covers_only_trigger_reads() {
+    use super::is_composio_soft_auth_path;
+    // Soft: GET available catalog (with and without query), GET active-triggers list.
+    assert!(is_composio_soft_auth_path(
+        "GET",
+        "/agent-integrations/composio/triggers/available"
+    ));
+    assert!(is_composio_soft_auth_path(
+        "GET",
+        "/agent-integrations/composio/triggers/available?toolkit=gmail&connectionId=ca_x"
+    ));
+    assert!(is_composio_soft_auth_path(
+        "GET",
+        "/agent-integrations/composio/triggers"
+    ));
+    // GET active-triggers list with a `toolkit` query (the `?` boundary).
+    assert!(is_composio_soft_auth_path(
+        "GET",
+        "/agent-integrations/composio/triggers?toolkit=gmail"
+    ));
+    // Path-boundary guard: a bare prefix must NOT match an unrelated route
+    // that merely begins with "triggers" (CodeRabbit catch).
+    assert!(!is_composio_soft_auth_path(
+        "GET",
+        "/agent-integrations/composio/triggersXYZ"
+    ));
+    // Authoritative — a 401 here must still log the user out:
+    // trigger WRITES (enable/disable/create POST to the same path)…
+    assert!(!is_composio_soft_auth_path(
+        "POST",
+        "/agent-integrations/composio/triggers"
+    ));
+    // …and every non-trigger backend route.
+    assert!(!is_composio_soft_auth_path(
+        "GET",
+        "/agent-integrations/composio/connections"
+    ));
+    assert!(!is_composio_soft_auth_path(
+        "GET",
+        "/agent-integrations/composio/toolkits"
+    ));
+    assert!(!is_composio_soft_auth_path(
+        "POST",
+        "/agent-integrations/composio/execute"
+    ));
+    assert!(!is_composio_soft_auth_path(
+        "POST",
+        "/agent-integrations/parallel/search"
+    ));
+}
+
+/// A 401 on the trigger-catalog read still carries the `SESSION_EXPIRED`
+/// sentinel — the trigger panel classifies it (`CoreRpcError.kind ===
+/// 'auth_expired'`) and renders the in-place "Sign in again" CTA. The
+/// difference from the authoritative arm (no global `SessionExpired` publish)
+/// is asserted via the path gate above; here we lock the wire contract the UI
+/// depends on so a future refactor can't silently drop the sentinel and leave
+/// the panel with no actionable error (#4281).
+#[tokio::test]
+async fn get_401_composio_triggers_keeps_sentinel_for_in_place_cta() {
+    use crate::core::observability::{
+        expected_error_kind, is_session_expired_message, ExpectedErrorKind,
+    };
+
+    let app = Router::new().route(
+        "/agent-integrations/composio/triggers/available",
+        get(|| async {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({ "success": false, "error": "Invalid token" })),
+            )
+                .into_response()
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = client_for(base);
+    let err = client
+        .get::<serde_json::Value>("/agent-integrations/composio/triggers/available?toolkit=gmail")
+        .await
+        .expect_err("401 must surface as Err");
+    let msg = format!("{err:#}");
+
+    assert!(
+        msg.contains("SESSION_EXPIRED"),
+        "triggers 401 must still carry the sentinel so the panel shows the CTA; got: {msg}"
+    );
+    assert_eq!(
+        expected_error_kind(&msg),
+        Some(ExpectedErrorKind::SessionExpired),
+        "triggers 401 must still classify as SessionExpired (stays demoted from Sentry); got: {msg}"
+    );
+    assert!(
+        is_session_expired_message(&msg),
+        "triggers 401 must stay recognisable as session expiry for the frontend classifier; got: {msg}"
+    );
+}
+
 // ── Unit: `sanitize_backend_url` (issue #2075) ────────────────────
 
 #[test]

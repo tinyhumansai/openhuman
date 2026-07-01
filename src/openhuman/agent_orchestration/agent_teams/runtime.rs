@@ -237,90 +237,150 @@ async fn drive_member(
     let prompt = build_member_prompt(task, &delivered);
 
     let session = AgentOrchestrationSession::new(format!("team-{team_id}-{member_id}"));
-    let resp = session
-        .spawn_agent(SpawnAgentRequest {
-            agent_id: agent_id.to_string(),
-            prompt,
-            model: model_override,
-            metadata: [
-                ("teamId".to_string(), team_id.to_string()),
-                ("memberId".to_string(), member_id.to_string()),
-                ("taskId".to_string(), task.id.clone()),
-                ("teamRunId".to_string(), run_id.to_string()),
-            ]
-            .into_iter()
-            .collect(),
-            ..Default::default()
-        })
-        .await
-        .map_err(|e| anyhow!("spawn teammate worker failed: {e}"))?;
 
-    let wait = session
-        .wait_agents(WaitAgentOptions {
-            orchestration_ids: vec![resp.orchestration_id.clone()],
-            timeout_ms: None,
-        })
-        .await
-        .map_err(|e| anyhow!("wait teammate worker failed: {e}"))?;
+    // ── Worker node effect: spawn the teammate sub-agent, wait for it, and
+    // classify the terminal outcome. Returns `Err` only for engine-internal
+    // spawn/wait failures (the caller releases + idles).
+    let run_worker = {
+        let session = session.clone();
+        let agent_id = agent_id.to_string();
+        let team_id = team_id.to_string();
+        let member_id = member_id.to_string();
+        let task_id = task.id.clone();
+        let run_id = run_id.to_string();
+        move || {
+            let session = session.clone();
+            let agent_id = agent_id.clone();
+            let prompt = prompt.clone();
+            let model = model_override.clone();
+            let team_id = team_id.clone();
+            let member_id = member_id.clone();
+            let task_id = task_id.clone();
+            let run_id = run_id.clone();
+            async move {
+                let resp = session
+                    .spawn_agent(SpawnAgentRequest {
+                        agent_id,
+                        prompt,
+                        model,
+                        metadata: [
+                            ("teamId".to_string(), team_id),
+                            ("memberId".to_string(), member_id),
+                            ("taskId".to_string(), task_id),
+                            ("teamRunId".to_string(), run_id),
+                        ]
+                        .into_iter()
+                        .collect(),
+                        ..Default::default()
+                    })
+                    .await
+                    .map_err(|e| anyhow!("spawn teammate worker failed: {e}"))?;
 
-    let snapshot = wait
-        .agents
-        .into_iter()
-        .find(|a| a.orchestration_id == resp.orchestration_id)
-        .ok_or_else(|| anyhow!("worker snapshot missing after wait"))?;
+                let wait = session
+                    .wait_agents(WaitAgentOptions {
+                        orchestration_ids: vec![resp.orchestration_id.clone()],
+                        timeout_ms: None,
+                    })
+                    .await
+                    .map_err(|e| anyhow!("wait teammate worker failed: {e}"))?;
 
-    match snapshot.status {
-        AgentStatus::Completed => {
-            let output = snapshot.result_summary.unwrap_or_default();
-            let evidence = if output.trim().is_empty() {
-                Vec::new()
-            } else {
-                vec![format!(
-                    "run:{run_id} — {}",
-                    truncate_chars(output.trim(), EVIDENCE_MAX_CHARS)
-                )]
-            };
-            // The teammate's own output is the completion evidence, so the gate
-            // does not additionally require evidence; it still enforces the
-            // dependency / claimant invariants.
-            let outcome = run_ledger::complete_agent_team_task(
-                config, team_id, &task.id, member_id, &evidence, false,
-            )?;
-            log::debug!(
-                target: LOG_TARGET,
-                "[agent_team_runtime] drive.completed team={team_id} member={member_id} task={} outcome={outcome:?}",
-                task.id
-            );
-            run_ledger::mark_agent_team_member_idle(config, team_id, member_id)?;
-            Ok(())
+                let snapshot = wait
+                    .agents
+                    .into_iter()
+                    .find(|a| a.orchestration_id == resp.orchestration_id)
+                    .ok_or_else(|| anyhow!("worker snapshot missing after wait"))?;
+
+                Ok(match snapshot.status {
+                    AgentStatus::Completed => super::graph::MemberOutcome::Completed {
+                        output: snapshot.result_summary.unwrap_or_default(),
+                    },
+                    AgentStatus::Failed | AgentStatus::Cancelled | AgentStatus::Closed => {
+                        super::graph::MemberOutcome::Failed {
+                            reason: snapshot
+                                .error
+                                .unwrap_or_else(|| "worker ended without completing".to_string()),
+                        }
+                    }
+                    // `wait_agents` with no timeout only returns on terminal
+                    // status, so this is purely defensive — treat as a failure.
+                    other => super::graph::MemberOutcome::Failed {
+                        reason: format!("worker returned non-terminal status {other:?}"),
+                    },
+                })
+            }
         }
-        AgentStatus::Failed | AgentStatus::Cancelled | AgentStatus::Closed => {
-            let reason = snapshot
-                .error
-                .unwrap_or_else(|| "worker ended without completing".to_string());
-            log::warn!(
-                target: LOG_TARGET,
-                "[agent_team_runtime] drive.worker_failed team={team_id} member={member_id} task={} reason={reason}",
-                task.id
-            );
-            run_ledger::release_agent_team_task(config, team_id, &task.id)?;
-            run_ledger::mark_agent_team_member_idle(config, team_id, member_id)?;
-            record_failure_event(config, team_id, member_id, &task.id, &reason);
-            Ok(())
+    };
+
+    // ── Complete node effect: the teammate's own output is the completion
+    // evidence (the gate enforces dependency / claimant invariants but not
+    // additional evidence), then idle the member.
+    let on_complete = {
+        let config = config.clone();
+        let team_id = team_id.to_string();
+        let member_id = member_id.to_string();
+        let task_id = task.id.clone();
+        let run_id = run_id.to_string();
+        move |output: String| {
+            let config = config.clone();
+            let team_id = team_id.clone();
+            let member_id = member_id.clone();
+            let task_id = task_id.clone();
+            let run_id = run_id.clone();
+            async move {
+                let evidence = if output.trim().is_empty() {
+                    Vec::new()
+                } else {
+                    vec![format!(
+                        "run:{run_id} — {}",
+                        truncate_chars(output.trim(), EVIDENCE_MAX_CHARS)
+                    )]
+                };
+                let outcome = run_ledger::complete_agent_team_task(
+                    &config, &team_id, &task_id, &member_id, &evidence, false,
+                )?;
+                log::debug!(
+                    target: LOG_TARGET,
+                    "[agent_team_runtime] drive.completed team={team_id} member={member_id} task={task_id} outcome={outcome:?}"
+                );
+                run_ledger::mark_agent_team_member_idle(&config, &team_id, &member_id)?;
+                Ok(())
+            }
         }
-        other => {
-            // `wait_agents` with no timeout only returns on terminal status, so
-            // this is purely defensive.
-            log::warn!(
-                target: LOG_TARGET,
-                "[agent_team_runtime] drive.non_terminal team={team_id} member={member_id} task={} status={other:?}",
-                task.id
-            );
-            run_ledger::release_agent_team_task(config, team_id, &task.id)?;
-            run_ledger::mark_agent_team_member_idle(config, team_id, member_id)?;
-            Ok(())
+    };
+
+    // ── Fail node effect: release the task (so it is reclaimable), idle the
+    // member, and record a failure event. Returns `Ok` (a ran-but-failed worker
+    // is a normal terminal outcome, not an engine error).
+    let on_failed = {
+        let config = config.clone();
+        let team_id = team_id.to_string();
+        let member_id = member_id.to_string();
+        let task_id = task.id.clone();
+        move |reason: String| {
+            let config = config.clone();
+            let team_id = team_id.clone();
+            let member_id = member_id.clone();
+            let task_id = task_id.clone();
+            async move {
+                log::warn!(
+                    target: LOG_TARGET,
+                    "[agent_team_runtime] drive.worker_failed team={team_id} member={member_id} task={task_id} reason={reason}"
+                );
+                run_ledger::release_agent_team_task(&config, &team_id, &task_id)?;
+                run_ledger::mark_agent_team_member_idle(&config, &team_id, &member_id)?;
+                record_failure_event(&config, &team_id, &member_id, &task_id, &reason);
+                Ok(())
+            }
         }
-    }
+    };
+
+    super::graph::run_member_execution_graph(
+        &format!("team:{team_id}:{member_id}"),
+        run_worker,
+        on_complete,
+        on_failed,
+    )
+    .await
 }
 
 /// Pick the member's next claimable task: the first (by order) task that is

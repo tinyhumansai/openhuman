@@ -9,6 +9,7 @@ pub mod agent_teams;
 pub mod background_completions;
 pub mod background_delivery;
 pub mod command_center;
+pub mod delegation;
 mod ops;
 pub(crate) mod parent_context;
 pub mod run_ledger_finalize;

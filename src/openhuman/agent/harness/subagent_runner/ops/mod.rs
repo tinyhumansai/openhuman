@@ -1,10 +1,11 @@
-//! Sub-agent execution entry points and the inner tool-call loop.
+//! Sub-agent execution entry points.
 //!
 //! The public runner lives in [`run_subagent`]. It dispatches to
 //! [`runner::run_typed_mode`] (narrow prompt + filtered tools) which builds a
 //! brand-new system prompt and a filtered tool list for the requested
-//! archetype, then drives provider calls and tool execution until the model
-//! returns without further tool calls (or the iteration budget is exhausted).
+//! archetype, then drives the turn through the tinyagents harness
+//! ([`graph::run_subagent_via_graph`]) until the model returns without
+//! further tool calls (or the iteration budget is exhausted).
 //!
 //! ## Layout
 //!
@@ -13,20 +14,18 @@
 //! | `provider.rs`       | `resolve_subagent_provider`, `user_is_signed_in_to_composio`, `LazyToolkitResolver` |
 //! | `prompt.rs`         | Role-contract suffix, `append_subagent_role_contract`, `dedup_tool_specs_by_name` |
 //! | `runner.rs`         | `run_subagent`, `run_typed_mode`                               |
-//! | `loop_.rs`          | `run_inner_loop`, `AggregatedUsage`                            |
-//! | `tool_source.rs`    | `SubagentToolSource`                                           |
+//! | `graph.rs`          | `run_subagent_via_graph` — the sub-agent turn graph + tools    |
+//! | `usage.rs`          | `AggregatedUsage` (cumulative usage stats)                     |
 //! | `handoff_helper.rs` | `apply_handoff`                                                |
-//! | `observer.rs`       | `SubagentObserver`                                             |
 //! | `checkpoint.rs`     | `SubagentCheckpoint`, `parse_tool_arguments`                   |
 
 mod checkpoint;
+mod graph;
 mod handoff_helper;
-mod loop_;
-mod observer;
 mod prompt;
 mod provider;
 mod runner;
-mod tool_source;
+mod usage;
 
 // Public entry point — the primary API surface consumed by the parent module.
 pub use runner::run_subagent;

@@ -32,20 +32,3 @@ pub(crate) trait CheckpointStrategy: Send + Sync {
     /// `tool → outcome` summary of the run so far.
     async fn on_max_iter(&self, digest: &str, max_iterations: usize) -> Result<CheckpointOutcome>;
 }
-
-/// Surface the cap as the typed [`AgentError::MaxIterationsExceeded`], boxed
-/// through `anyhow::Error`, so downstream wrappers — notably
-/// `Agent::run_single` — can downcast and suppress Sentry emission for this
-/// deterministic agent-state outcome (OPENHUMAN-TAURI-99 / -98).
-pub(crate) struct ErrorCheckpoint;
-
-#[async_trait]
-impl CheckpointStrategy for ErrorCheckpoint {
-    async fn on_max_iter(&self, _digest: &str, max_iterations: usize) -> Result<CheckpointOutcome> {
-        Err(anyhow::Error::new(
-            crate::openhuman::agent::error::AgentError::MaxIterationsExceeded {
-                max: max_iterations,
-            },
-        ))
-    }
-}

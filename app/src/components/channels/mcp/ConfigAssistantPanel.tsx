@@ -34,8 +34,10 @@ export function clearConfigChat(qualifiedName: string): void {
 interface ConfigAssistantPanelProps {
   qualifiedName: string;
   onApplySuggestedEnv?: (env: Record<string, string>) => void;
-  /** A fixed, server-specific prompt auto-sent once on mount (so the user gets
-   * guidance with a single click instead of having to know what to ask). */
+  /** A fixed, server-specific prompt offered as a one-click action in the empty
+   * state. It is NOT auto-sent: firing the LLM research call on open made the
+   * help panel block for seconds before showing anything (#4272). The user taps
+   * the suggestion when they actually want guidance. */
   autoPrompt?: string;
 }
 
@@ -111,16 +113,6 @@ const ConfigAssistantPanel = ({
     chatCache.set(qualifiedName, messages);
   }, [qualifiedName, messages]);
 
-  // Auto-run the fixed prompt once — but only for a fresh chat. If we restored
-  // an existing conversation from the cache, don't re-ask.
-  const autoSent = useRef(false);
-  useEffect(() => {
-    if (autoPrompt && !autoSent.current && messages.length === 0) {
-      autoSent.current = true;
-      void send(autoPrompt);
-    }
-  }, [autoPrompt, send, messages.length]);
-
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if (e.key === 'Enter' && !e.shiftKey) {
@@ -136,9 +128,18 @@ const ConfigAssistantPanel = ({
       {/* Message list */}
       <div className="flex-1 overflow-y-auto space-y-2 min-h-0 rounded-lg border border-line-subtle p-2">
         {messages.length === 0 && (
-          <p className="text-xs text-content-faint py-2 text-center">
-            {t('mcp.configAssistant.empty')}
-          </p>
+          <div className="py-2 text-center space-y-2">
+            <p className="text-xs text-content-faint">{t('mcp.configAssistant.empty')}</p>
+            {autoPrompt && (
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={sending}
+                onClick={() => void send(autoPrompt)}>
+                {t('mcp.configAssistant.autoPromptCta')}
+              </Button>
+            )}
+          </div>
         )}
         {messages.map((msg, idx) => (
           <div

@@ -107,6 +107,8 @@ export const mcpClientsApi = {
   /** Search the Smithery registry. Returns paged results. */
   registrySearch: async (params: {
     query?: string;
+    /** Transport filter: 'stdio' | 'hosted' | 'all' (omit for all). */
+    transport?: string;
     page?: number;
     page_size?: number;
   }): Promise<RegistrySearchResult> => {

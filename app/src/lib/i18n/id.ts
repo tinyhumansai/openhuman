@@ -3,6 +3,10 @@ import type { TranslationMap } from './types';
 // Indonesian (Bahasa Indonesia) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Cross-host vault (#4278)
+  'crossHostVault.title': 'Vault berada di host core.',
+  'crossHostVault.message':
+    'Vault memori ini disimpan di host openhuman-core ({os}). Hanya dapat dibuka atau ditampilkan di mesin tersebut, bukan dari perangkat ini.',
   'conversations.backgroundTasks.title': 'Background tasks',
   'nav.feedback': 'Bagikan masukan',
   'feedback.board': 'Papan masukan',
@@ -1384,6 +1388,7 @@ const messages: TranslationMap = {
   'mcp.configAssistant.title': 'Asisten konfigurasi',
   'mcp.configAssistant.empty':
     'Tanyakan tentang konfigurasi, env vars yang diperlukan, atau langkah setup.',
+  'mcp.configAssistant.autoPromptCta': 'Dapatkan bantuan penyiapan langkah demi langkah',
   'mcp.configAssistant.suggestedValues': 'Nilai yang disarankan:',
   'mcp.configAssistant.valueHidden': '(nilai tersembunyi)',
   'mcp.configAssistant.applySuggested': 'Terapkan nilai yang disarankan',
@@ -1528,13 +1533,15 @@ const messages: TranslationMap = {
   'mcp.tab.filter.registry': 'Registri',
   'mcp.tab.column.name': 'Nama',
   'mcp.tab.column.description': 'Deskripsi',
-  'mcp.tab.column.source': 'Sumber',
+  'mcp.tab.column.type': 'Tipe',
   'mcp.tab.column.author': 'Penulis',
   'mcp.tab.column.action': 'Aksi',
-  'mcp.tab.source.official': 'Resmi',
-  'mcp.tab.source.smithery': 'Smithery',
   'mcp.tab.transport.hosted': 'Terhosting',
-  'mcp.tab.transport.local': 'Lokal',
+  'mcp.tab.transport.local': 'Stdio',
+  'mcp.tab.transportFilter.label': 'Tipe',
+  'mcp.tab.transportFilter.aria': 'Filter server berdasarkan transport',
+  'mcp.tab.link.website': 'Situs web',
+  'mcp.tab.link.repo': 'Repositori',
   'mcp.tab.transport.hostedHint':
     'Berjalan di server jarak jauh — masuk atau token diatur saat memasang',
   'mcp.tab.transport.localHint': 'Berjalan di perangkat Anda — mungkin perlu token saat memasang',
@@ -1561,11 +1568,7 @@ const messages: TranslationMap = {
   'mcp.install.button': 'Penginstalan',
   'mcp.install.installing': 'Penginstalan...',
   'mcp.install.by': 'oleh',
-  'mcp.install.transportLocal': 'Berjalan secara lokal',
-  'mcp.install.transportRemote': 'Di-host di cloud',
   'mcp.install.useCount': '{count} instalasi',
-  'mcp.install.deployed': 'Diterapkan',
-  'mcp.install.requiresConfig': 'Memerlukan konfigurasi',
   'mcp.install.connections': 'Koneksi tersedia',
   'mcp.install.published': 'diterbitkan',
   'mcp.install.configureAndInstall': 'Konfigurasi & instal',
@@ -3158,6 +3161,8 @@ const messages: TranslationMap = {
   'composio.triggers.heading': 'Pemicu',
   'composio.triggers.listenFrom': 'Dengarkan event dari',
   'composio.triggers.loadError': 'Tidak bisa memuat trigger',
+  'composio.triggers.sessionExpired':
+    'Sesi OpenHuman Anda telah berakhir. Masuk lagi untuk memuat trigger.',
   'composio.triggers.needsConfiguration': 'Perlu konfigurasi',
   'composio.triggers.noneAvailable': 'Tidak ada trigger yang tersedia saat ini untuk',
   'conversations.taskKanban.moveLeft': 'Pindah ke kiri',

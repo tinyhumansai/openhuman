@@ -446,18 +446,11 @@ impl Agent {
         // baseline behaviour is identical to the legacy
         // `create_intelligent_routing_provider` path.
         //
-        // What we deliberately lose for now: the ReliableProvider retry
-        // wrapper, model_routes translation, and intelligent local/cloud
-        // task hinting that the legacy router added on top of the raw
-        // backend. Those are valuable but orthogonal — they can be layered
-        // back on top of the factory's output in a follow-up without
-        // re-introducing the routing bypass.
-        let _ = provider::ProviderRuntimeOptions {
-            auth_profile_override: None,
-            openhuman_dir: config.config_path.parent().map(std::path::PathBuf::from),
-            secrets_encrypt: config.secrets.encrypt,
-            reasoning_enabled: config.runtime.reasoning_enabled,
-        };
+        // The ReliableProvider retry/backoff + model-fallback wrapper is
+        // re-layered on top of the factory's resolved backend below (issue
+        // #4249, 1c). `model_routes` translation and intelligent local/cloud
+        // task hinting now live in the unified routing layer (router.rs) rather
+        // than a per-session wrapper, so they are not re-wrapped here.
         // Explicit `hint:<role>` and known-tier model strings route to the
         // matching workload (so a subagent declaring `hint:reasoning` still
         // gets the user's `reasoning_provider`). Everything else — including
@@ -476,8 +469,23 @@ impl Agent {
         // `chat_provider` selection. Subagents still set their own role
         // through `ModelSpec::Hint(...)` in the subagent runner.
         let provider_role = provider_role_for(agent_id, config.default_model.as_deref());
-        let (provider, mut model_name): (Box<dyn Provider>, String) =
+        let (raw_provider, mut model_name): (Box<dyn Provider>, String) =
             crate::openhuman::inference::provider::create_chat_provider(provider_role, config)?;
+        // Re-layer the ReliableProvider retry/backoff + model-fallback wrapper on
+        // top of the factory's resolved backend (issue #4249, 1c). The migration to
+        // `create_chat_provider` dropped this; restore it so rate-limit/5xx retries
+        // and the user's `model_fallbacks` apply to the main chat turn exactly as
+        // the legacy `create_intelligent_routing_provider` path did. Capability
+        // probes (`supports_native_tools` / `supports_vision`) forward to the inner
+        // backend, so downstream dispatcher/vision selection is unchanged.
+        let provider: Box<dyn Provider> = Box::new(
+            crate::openhuman::inference::provider::reliable::ReliableProvider::new(
+                vec![(provider_role.to_string(), raw_provider)],
+                config.reliability.provider_retries,
+                config.reliability.provider_backoff_ms,
+            )
+            .with_model_fallbacks(config.reliability.model_fallbacks.clone()),
+        );
         log::info!(
             "[session-builder] agent_id={} provider_role={} resolved_model={} supports_native_tools={}",
             agent_id,
@@ -1210,7 +1218,6 @@ impl Agent {
             builder = builder.payload_summarizer(ps);
         }
         builder = builder.archivist_hook(archivist_hook_arc);
-        builder = builder.unified_compaction_enabled(config.learning.unified_compaction_enabled);
         let mut agent = builder.build()?;
         let connected_integrations_initialized = prewarmed_integrations.is_some();
         agent.connected_integrations = prewarmed_integrations.unwrap_or_default();

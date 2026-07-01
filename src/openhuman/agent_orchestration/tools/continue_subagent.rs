@@ -312,6 +312,61 @@ impl Tool for ContinueSubagentTool {
                         }
                         Ok(ToolResult::success(outcome.output))
                     }
+                    SubagentRunStatus::Incomplete { reason } => {
+                        // The continued sub-agent stopped short again (stuck halt
+                        // / iteration cap). Hand back the partial progress framed
+                        // as incomplete rather than a clean success (#4096).
+                        // The run is no longer awaiting input, so the checkpoint
+                        // written for the prior AwaitingUser pause is stale —
+                        // clean it up best-effort, mirroring the Completed arm.
+                        if let Err(e) = std::fs::remove_file(&checkpoint_path) {
+                            tracing::debug!(
+                                task_id = %task_id,
+                                error = %e,
+                                "[continue_subagent] failed to remove checkpoint after incomplete (best-effort)"
+                            );
+                        }
+                        tracing::info!(
+                            agent_id = %outcome.agent_id,
+                            task_id = %outcome.task_id,
+                            reason = %reason,
+                            "[continue_subagent] sub-agent stopped incomplete after continue"
+                        );
+                        publish_global(DomainEvent::SubagentCompleted {
+                            parent_session,
+                            task_id: outcome.task_id.clone(),
+                            agent_id: outcome.agent_id.clone(),
+                            elapsed_ms: outcome.elapsed.as_millis() as u64,
+                            output_chars: outcome.output.chars().count(),
+                            iterations: outcome.iterations,
+                        });
+                        if let Some(ref tx) = progress_sink {
+                            let _ = tx
+                                .send(AgentProgress::SubagentCompleted {
+                                    agent_id: outcome.agent_id.clone(),
+                                    task_id: outcome.task_id.clone(),
+                                    elapsed_ms: outcome.elapsed.as_millis() as u64,
+                                    iterations: outcome.iterations as u32,
+                                    output_chars: outcome.output.chars().count(),
+                                    worktree_path: None,
+                                    changed_files: Vec::new(),
+                                    dirty_status: None,
+                                })
+                                .await;
+                        }
+                        Ok(ToolResult::success(format!(
+                            "[SUBAGENT_INCOMPLETE]\n\
+                             task_id: {}\n\
+                             agent_id: {}\n\
+                             reason: the sub-agent {reason}\n\
+                             progress:\n{}\n\
+                             [/SUBAGENT_INCOMPLETE]\n\n\
+                             The sub-agent did NOT finish. Above is its partial progress. Do NOT \
+                             report this as done; relay the partial result and the blocker to the \
+                             user, or take a different approach.",
+                            outcome.task_id, outcome.agent_id, outcome.output,
+                        )))
+                    }
                 }
             }
             Err(err) => {

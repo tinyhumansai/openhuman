@@ -3,6 +3,7 @@
 
 mod context;
 mod core;
+mod graph;
 mod session_io;
 mod tools;
 

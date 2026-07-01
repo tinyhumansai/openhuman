@@ -80,10 +80,9 @@ pub struct SummarizedPayload {
 /// agent history. Implementations decide the threshold, the dispatch
 /// mechanism, and the failure policy.
 ///
-/// Wired into the tool-execution sites in
-/// [`super::tool_loop::run_tool_call_loop`] and
+/// Wired into the tool-execution site in
 /// [`crate::openhuman::agent::harness::session::Agent::execute_tool_call`]
-/// via an `Option<&dyn PayloadSummarizer>` parameter so legacy callers
+/// via an `Option<&dyn PayloadSummarizer>` parameter so callers
 /// (CLI, REPL, tests, non-orchestrator sub-agents) can pass `None` and
 /// keep the existing pass-through behaviour.
 #[async_trait]
@@ -371,6 +370,7 @@ mod tests {
             delegate_name: None,
             agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
             source: DefinitionSource::Builtin,
+            graph: Default::default(),
         }
     }
 

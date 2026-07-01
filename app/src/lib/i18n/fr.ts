@@ -3,6 +3,10 @@ import type { TranslationMap } from './types';
 // French (Français) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Cross-host vault (#4278)
+  'crossHostVault.title': "Le coffre se trouve sur l'hôte du cœur.",
+  'crossHostVault.message':
+    "Ce coffre de mémoire est stocké sur l'hôte openhuman-core ({os}). Il ne peut être ouvert ou affiché que sur cette machine, pas depuis cet appareil.",
   'conversations.backgroundTasks.title': 'Background tasks',
   'nav.feedback': 'Donner mon avis',
   'feedback.board': 'Tableau des suggestions',
@@ -1413,6 +1417,7 @@ const messages: TranslationMap = {
   'mcp.configAssistant.title': 'Assistant de configuration',
   'mcp.configAssistant.empty':
     "Demandez à propos de la configuration, des variables d'environnement requises ou des étapes de configuration.",
+  'mcp.configAssistant.autoPromptCta': 'Obtenir une aide à la configuration étape par étape',
   'mcp.configAssistant.suggestedValues': 'Valeurs suggérées :',
   'mcp.configAssistant.valueHidden': '(valeur masquée)',
   'mcp.configAssistant.applySuggested': 'Appliquer les valeurs suggérées',
@@ -1562,13 +1567,15 @@ const messages: TranslationMap = {
   'mcp.tab.filter.registry': 'Registre',
   'mcp.tab.column.name': 'Nom',
   'mcp.tab.column.description': 'Description',
-  'mcp.tab.column.source': 'Source',
+  'mcp.tab.column.type': 'Type',
   'mcp.tab.column.author': 'Auteur',
   'mcp.tab.column.action': 'Action',
-  'mcp.tab.source.official': 'Officiel',
-  'mcp.tab.source.smithery': 'Smithery',
   'mcp.tab.transport.hosted': 'Hébergé',
-  'mcp.tab.transport.local': 'Local',
+  'mcp.tab.transport.local': 'Stdio',
+  'mcp.tab.transportFilter.label': 'Type',
+  'mcp.tab.transportFilter.aria': 'Filtrer les serveurs par transport',
+  'mcp.tab.link.website': 'Site web',
+  'mcp.tab.link.repo': 'Dépôt',
   'mcp.tab.transport.hostedHint':
     "S'exécute sur un serveur distant — la connexion ou le jeton est configuré lors de l'installation",
   'mcp.tab.transport.localHint':
@@ -1596,11 +1603,7 @@ const messages: TranslationMap = {
   'mcp.install.button': 'Installation',
   'mcp.install.installing': 'Installation...',
   'mcp.install.by': 'par',
-  'mcp.install.transportLocal': 'Exécution locale',
-  'mcp.install.transportRemote': 'Hébergé dans le cloud',
   'mcp.install.useCount': '{count} installations',
-  'mcp.install.deployed': 'Déployé',
-  'mcp.install.requiresConfig': 'Configuration requise',
   'mcp.install.connections': 'Connexions disponibles',
   'mcp.install.published': 'publié',
   'mcp.install.configureAndInstall': 'Configurer et installer',
@@ -3220,6 +3223,8 @@ const messages: TranslationMap = {
   'composio.triggers.heading': 'Déclencheurs',
   'composio.triggers.listenFrom': 'Écouter les événements de',
   'composio.triggers.loadError': 'Impossible de charger les déclencheurs',
+  'composio.triggers.sessionExpired':
+    'Votre session OpenHuman a expiré. Reconnectez-vous pour charger les déclencheurs.',
   'composio.triggers.needsConfiguration': 'Configuration requise',
   'composio.triggers.noneAvailable': "Aucun déclencheur n'est actuellement disponible pour",
   'conversations.taskKanban.moveLeft': 'Déplacer à gauche',

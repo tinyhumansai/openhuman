@@ -27,7 +27,6 @@ mod runtime;
 pub(crate) mod transcript;
 mod turn;
 mod turn_checkpoint;
-mod turn_engine_adapter;
 mod types;
 
 pub use migration::{migrate_session_layout_if_needed, MigrationOutcome};

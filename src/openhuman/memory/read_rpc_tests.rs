@@ -913,6 +913,24 @@ async fn vault_health_check_reports_missing_content_root_for_fresh_workspace() {
     assert_eq!(outcome.value.last_sync_ms, 0);
 }
 
+/// #4278: both vault RPCs stamp the core host's OS so a frontend attached
+/// from a different OS can tell `content_root_abs` is a foreign-host path and
+/// must not open/reveal it locally.
+#[tokio::test]
+async fn vault_rpcs_report_core_host_os() {
+    let (_tmp, cfg) = test_config();
+
+    let status = obsidian_vault_status_rpc(&cfg, None).await.unwrap();
+    assert_eq!(status.value.host_os, std::env::consts::OS);
+
+    let health = vault_health_check_rpc(&cfg, None).await.unwrap();
+    assert_eq!(health.value.host_os, std::env::consts::OS);
+    assert!(
+        !health.value.host_os.is_empty(),
+        "host_os must be populated"
+    );
+}
+
 #[tokio::test]
 async fn vault_health_check_reports_writable_and_obsidian_registered_when_ready() {
     let (_tmp, cfg) = test_config();

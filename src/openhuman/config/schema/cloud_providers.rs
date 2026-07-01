@@ -259,6 +259,34 @@ pub(crate) fn endpoint_host(endpoint: &str) -> Option<String> {
     (!host.is_empty()).then_some(host)
 }
 
+/// Whether `host` is the authority host of any built-in cloud **inference**
+/// provider (e.g. `openrouter.ai`, `api.openai.com`, `api.groq.com`).
+///
+/// Derived entirely from [`BUILTIN_CLOUD_PROVIDERS`] so the set stays in sync
+/// with the provider registry. `host` is compared case-insensitively against
+/// each preset's [`endpoint_host`].
+///
+/// # Why this exists
+///
+/// `config.api_url` is overloaded: it is the chat/inference endpoint, but
+/// [`crate::api::config::effective_backend_api_url`] also reuses it as the
+/// OpenHuman **backend** base for team/billing/auth calls. A BYO user who
+/// points `api_url` at a provider's canonical base (`https://openrouter.ai/api/v1`)
+/// would otherwise have every backend domain call routed to the inference host
+/// → 400/404 (TAURI-RUST-HW1: 4932 `GET /teams/me/usage` 400s from `openrouter.ai`).
+/// The backend-URL resolver uses this to treat such hosts as non-backend and
+/// fall back to the default backend chain — the cloud analogue of the local-AI
+/// guard that fixed the Ollama case (OPENHUMAN-TAURI-51/-80/-7Z).
+pub fn host_is_builtin_cloud_provider(host: &str) -> bool {
+    let host = host.trim().to_ascii_lowercase();
+    if host.is_empty() {
+        return false;
+    }
+    BUILTIN_CLOUD_PROVIDERS
+        .iter()
+        .any(|p| endpoint_host(p.endpoint).as_deref() == Some(host.as_str()))
+}
+
 /// Whether an endpoint **host** is a known cloud host that does NOT serve the
 /// OpenAI Responses API (`/v1/responses`) — i.e. it is chat-completions-only,
 /// regardless of which user slug points at it.
@@ -564,8 +592,9 @@ impl CloudProviderType {
 mod tests {
     use super::{
         builtin_cloud_supports_responses_api, endpoint_host,
-        endpoint_host_is_chat_completions_only, is_builtin_cloud_slug, is_slug_reserved,
-        migrate_legacy_fields, AuthStyle, CloudProviderCreds, BUILTIN_CLOUD_PROVIDERS,
+        endpoint_host_is_chat_completions_only, host_is_builtin_cloud_provider,
+        is_builtin_cloud_slug, is_slug_reserved, migrate_legacy_fields, AuthStyle,
+        CloudProviderCreds, BUILTIN_CLOUD_PROVIDERS,
     };
 
     #[test]
@@ -717,6 +746,46 @@ mod tests {
             Some("::1")
         );
         assert_eq!(endpoint_host("   ").as_deref(), None);
+    }
+
+    /// TAURI-RUST-HW1: the backend-URL resolver uses this to reroute backend
+    /// domain calls away from a BYO inference host. Every built-in provider host
+    /// must be recognised; OpenHuman backend hosts and unknown proxies must not.
+    #[test]
+    fn host_is_builtin_cloud_provider_recognises_inference_hosts() {
+        for host in [
+            "openrouter.ai",
+            "api.openai.com",
+            "api.anthropic.com",
+            "api.groq.com",
+            "generativelanguage.googleapis.com",
+            "API.OPENAI.COM", // case-insensitive
+        ] {
+            assert!(
+                host_is_builtin_cloud_provider(host),
+                "{host} is a built-in cloud inference host"
+            );
+        }
+        for host in [
+            "api.tinyhumans.ai",
+            "staging-api.tinyhumans.ai",
+            "my-backend.example",
+            "",
+        ] {
+            assert!(
+                !host_is_builtin_cloud_provider(host),
+                "{host:?} is not a built-in cloud inference host"
+            );
+        }
+        // Every registry endpoint's own host must classify as builtin.
+        for provider in BUILTIN_CLOUD_PROVIDERS {
+            let host = endpoint_host(provider.endpoint).expect("preset endpoint has a host");
+            assert!(
+                host_is_builtin_cloud_provider(&host),
+                "{} ({host}) must be recognised",
+                provider.slug
+            );
+        }
     }
 
     /// TAURI-RUST-5A1: a *custom* slug pointed at a known chat-only host (NVIDIA)

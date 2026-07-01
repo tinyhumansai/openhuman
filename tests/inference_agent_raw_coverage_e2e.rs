@@ -42,8 +42,7 @@ use openhuman_core::openhuman::agent::harness::subagent_runner::{
     SubagentRunOptions, SubagentRunOutcome, SubagentRunStatus, SubagentUsage,
 };
 use openhuman_core::openhuman::agent::harness::{
-    check_interrupt, current_sandbox_mode, with_current_sandbox_mode, InterruptFence,
-    InterruptedError, SandboxMode,
+    current_sandbox_mode, with_current_sandbox_mode, SandboxMode,
 };
 use openhuman_core::openhuman::agent::harness::{
     AgentDefinition, AgentDefinitionRegistry, DefinitionSource, ModelSpec, PromptSource, ToolScope,
@@ -4245,17 +4244,8 @@ async fn agent_error_hooks_interrupt_and_stop_hooks_cover_public_paths() {
         AgentError::MaxIterationsExceeded { max: 3 }
     ));
 
-    let fence = InterruptFence::new();
-    assert!(check_interrupt(&fence).is_ok());
-    let shared = fence.flag_handle();
-    shared.store(true, std::sync::atomic::Ordering::Relaxed);
-    assert!(fence.is_interrupted());
-    assert!(matches!(check_interrupt(&fence), Err(InterruptedError)));
-    fence.reset();
-    assert!(!fence.is_interrupted());
-    let cloned = fence.clone();
-    cloned.trigger();
-    assert!(fence.is_interrupted());
+    // The legacy InterruptFence / check_interrupt surface was removed in #4249
+    // (cancellation is now the tinyagents steering/cancellation channel).
 
     assert_eq!(current_sandbox_mode(), None);
     with_current_sandbox_mode(SandboxMode::ReadOnly, async {

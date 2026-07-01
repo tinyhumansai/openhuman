@@ -1,5 +1,7 @@
 //! Cross-file integration tests for the people domain.
 
+use std::sync::Arc;
+
 use chrono::Utc;
 
 use crate::openhuman::people::address_book;
@@ -55,6 +57,31 @@ fn schema_exposes_four_controllers() {
         "missing refresh_address_book: {names:?}"
     );
     assert_eq!(names.len(), 4);
+}
+
+/// Regression for Sentry TAURI-RUST-8NM: the process-global people store was
+/// never seeded at boot, so `store::get()` (and every `people_*` tool /
+/// controller) always failed with "people store not initialised". Boot now
+/// calls `init_from_workspace`; verify it seeds the global, creates the on-disk
+/// db, and is idempotent.
+#[tokio::test]
+async fn init_from_workspace_seeds_global_store() {
+    use crate::openhuman::people::store;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let store = store::init_from_workspace(tmp.path()).await.unwrap();
+    assert!(
+        tmp.path().join("people").join("people.db").exists(),
+        "boot seed must create <workspace>/people/people.db"
+    );
+
+    // The previously-dead global is now reachable — this is the fix.
+    let via_global = store::get().expect("people store reachable after boot seed");
+    assert!(Arc::ptr_eq(&store, &via_global));
+
+    // Idempotent: a second seed returns the same instance, never errors.
+    let again = store::init_from_workspace(tmp.path()).await.unwrap();
+    assert!(Arc::ptr_eq(&store, &again));
 }
 
 #[test]

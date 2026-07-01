@@ -7,6 +7,57 @@ icon: layer-group
 
 # Agent Harness
 
+> **Status (issue #4249 — tinyagents migration):** the agent turn no longer runs
+> on the in-tree `run_turn_engine` loop. **All three entry points (`Agent::turn`,
+> the channel/CLI bus path, and `run_subagent`) now drive every turn through the
+> published [`tinyagents`](https://crates.io/crates/tinyagents) 1.1 agent-loop
+> harness** via the adapter seam in [`src/openhuman/tinyagents/`](../../../src/openhuman/tinyagents/)
+> (`run_turn_via_tinyagents_shared`). The legacy `run_turn_engine`, the three
+> hand-rolled loops, `turn_engine_adapter`, and the custom `agent_graph/` engine
+> described later in this page have been **removed**; the surviving shared seams
+> (`CheckpointStrategy`, `TurnProgress`) live in `agent/harness/engine/`. The dead
+> `token_budget.rs` (context trimming is now `MessageTrimMiddleware`) and the
+> vestigial `interrupt.rs` fence (cancellation is the tinyagents steering channel)
+> are gone; policy **stop hooks** (budget / thread-goal / iteration caps) now fire
+> through a `StopHookMiddleware` ([`tinyagents/stop_hooks.rs`](../../../src/openhuman/tinyagents/stop_hooks.rs))
+> that pauses the run on the first stop vote, and the channel route forwards live
+> `AgentProgress` like the chat route.
+>
+> Multi-agent **orchestration** is expressed on tinyagents' **graph layer** via the
+> shared helpers in [`tinyagents/orchestration.rs`](../../../src/openhuman/tinyagents/orchestration.rs)
+> (`run_parallel_fanout` — a `dispatch → parallel workers → collect` `CompiledGraph`
+> map step — plus the re-exported `graph::orchestration` `TaskStore` lifecycle
+> primitives):
+>
+> - the model-council member fan-out runs on a real `StateGraph`
+>   ([`model_council/graph.rs`](../../../src/openhuman/model_council/graph.rs));
+> - [`tinyagents/delegation.rs`](../../../src/openhuman/tinyagents/delegation.rs)
+>   is a `plan → execute ⇄ review → finalize` `CompiledGraph` (conditional routing,
+>   `RecursionPolicy`, durable `FileCheckpointer`, `CancellationToken`, `GraphTracingSink`);
+> - the **workflow phase engine** fans each phase's agents out on the graph
+>   (`with_max_concurrency`), keeping the durable `WorkflowRun` ledger as the resume
+>   source of truth;
+> - `spawn_parallel_agents` runs its fan-out through `run_parallel_fanout`;
+> - the **agent-teams** member runtime is a conditional-routing graph
+>   (`execute → complete | fail → done`, [`agent_teams/graph.rs`](../../../src/openhuman/agent_orchestration/agent_teams/graph.rs));
+> - the **detached-sub-agent** registry is backed by a typed `TaskStore` lifecycle
+>   ledger (Pending → Running → Completed/Failed/Cancelled).
+>
+> The sections below describing a bespoke `agent_graph/` module + per-agent
+> `GraphBlueprint`s are **historical** (the pre-migration design) and are retained
+> only for context.
+
+## TinyAgents crate: features & compatibility
+
+OpenHuman pins `tinyagents = "1.1"` with **default features only** (see [`Cargo.toml`](../../../Cargo.toml)). The rationale, so future upgrades don't silently regress it:
+
+- **Default (offline) features only.** We do **not** enable the crate's `openai` feature. OpenHuman owns provider transport, credentials, OAuth, and billing classification, so the live model is always OpenHuman's `Provider` wrapped as [`ProviderModel`](../../../src/openhuman/tinyagents/model.rs) — never the crate's bundled OpenAI client. The `ChatModel` adapter is the seam that replaces the feature-gated SDK provider.
+- **`sqlite` feature deliberately disabled.** The crate's `SqliteCheckpointer` pulls `rusqlite 0.40` (`libsqlite3-sys 0.38`), which conflicts with OpenHuman's own `rusqlite 0.37` over the `links = "sqlite3"` native lib — enabling it breaks the build. Durable graph checkpoints are instead provided by [`SqlRunLedgerCheckpointer`](../../../src/openhuman/tinyagents/checkpoint.rs), a custom `Checkpointer<State>` over OpenHuman's session DB. This holds until the upstream native-link conflict is resolved.
+- **`repl` / expressive-language features unused.** OpenHuman drives graphs from Rust (`GraphBuilder`), not the crate's `.rag` REPL language.
+- **Adapter map (feature-gated SDK piece → OpenHuman replacement):** OpenAI provider → `ProviderModel`; bundled SQLite checkpointer → `SqlRunLedgerCheckpointer`; in-memory-only durable task storage → OpenHuman SQL/JSON run ledgers (`running_subagents`, `workflow_runs`, `agent_teams`, `command_center`). The generic harness/graph/middleware/event primitives are used as-is.
+
+Migration backlog and per-phase tasks live in [`docs/tinyagents-migration-spec.md`](../../../docs/tinyagents-migration-spec.md).
+
 The agent harness is the runtime that turns a user message (or a webhook fire, or a cron tick) into a complete, tool-using LLM interaction. It owns the tool-call loop, sub-agent dispatch, the trigger-triage pipeline, and the hook surface around them. It does **not** own provider HTTP transport, tool implementations, prompt-section assembly, or memory storage - those are separate domains the harness composes.
 
 This page walks through what happens in one turn, then zooms in on each of the moving parts.
@@ -329,6 +380,80 @@ The harness lives entirely under `src/openhuman/agent/`. The README in that dire
 | `cost.rs`                     | Per-turn USD/token accounting.                                    |
 | `progress.rs`                 | Real-time progress events to the UI.                              |
 | `memory_loader.rs`            | Memory-Tree context injection per user message.                   |
+
+## Agent state graphs (`agent_graph`) — HISTORICAL (removed)
+
+> **⚠️ This section describes a design that was never shipped and has been removed.**
+> The bespoke `src/openhuman/agent_graph/` engine, `GraphBlueprint`, and the
+> `SqliteCheckpointer` described below **do not exist**. The live system runs on
+> the published **tinyagents** crate — see the status banner at the top of this
+> page and "Agent engine + orchestration on tinyagents (live)" below. Graphs are
+> built with `tinyagents::graph::GraphBuilder` (`model_council/graph.rs`,
+> `agent_orchestration/*/graph.rs`, `tinyagents/delegation.rs`), durable
+> checkpoints use `SqlRunLedgerCheckpointer`, and per-agent graph selection is
+> `AgentGraph` (`agent/harness/agent_graph.rs`) with each agent's
+> `agent_registry/agents/<id>/graph.rs`. The text below is retained only as
+> pre-migration design history.
+
+Alongside the linear tool-call loop, the harness ships a **LangGraph-style state-machine engine** under [`src/openhuman/agent_graph/`](../../../src/openhuman/agent_graph/) (issue #4249). Where the loop is an implicit "prompt → tool → result → next prompt" cycle, a graph models agent execution as an explicit directed graph of **nodes** (states) and **edges** (transitions), with typed working state that survives across transitions, parallel branches, and checkpoints.
+
+```
+StateGraph::new(name)
+  .add_node(id, node)            // a unit of work: async fn(State) -> (State, Command)
+  .add_edge(from, to)            // static transition
+  .add_conditional_edges(...)    // route by inspecting state
+  .add_fork(from, [a, b])        // fan out in parallel; merge via State::merge
+  .set_entry_point(id) / .set_finish_point(id)
+  .compile()? -> CompiledGraph   // validated; .invoke(state) / .resume_with(...)
+```
+
+| Subfolder         | Role                                                                                              |
+| ----------------- | ------------------------------------------------------------------------------------------------- |
+| `graph/`          | The engine: `GraphState` (merge reducer), `Node` trait, builder + `compile()` validation, Pregel super-step `executor` with cycle / cancel / step-cap guards, `invoke`/`resume`. |
+| `checkpoint/`     | `Checkpointer` trait (type-erased JSON state) → `InMemoryCheckpointer` (tests) + `SqliteCheckpointer` at `{workspace}/.openhuman/agent_graph/checkpoints.db`. Durable pause/resume. |
+| `hitl/`           | Human-in-the-loop: `approval`/`clarification` interrupt builders + `ApplyResume` (folds the human's answer into state on resume). A node returns `Command::Interrupt` to pause. |
+| `observability/`  | `EventBusSink` (a `ProgressSink`) emits `tracing` spans + publishes the `GraphRun*`/`GraphNode*` `DomainEvent` family (new `agent_graph` event domain). |
+| `summarization/`  | Node-boundary wrapper over `context::summarize_chat_history`.                                      |
+| `memory/`         | Pre-node wrapper over `DefaultMemoryLoader::load_context`.                                         |
+| `definitions/`    | Built-in graphs over a shared `ProductState`: `canonical_turn` (the agent turn as a `dispatch → parse → stop_check → tools → compact → loop / finalize` graph) and `plan_execute_review` (composes the `planner` + `code_executor` archetypes around a HITL review gate), plus a deterministic `demo_review` twin for tests. A registry (`list_definitions`/`build_definition`) + `runner` (`run_graph`/`resume_graph`) persist runs to the checkpointer and emit bus events. |
+| `blueprint/`      | The per-agent chain type. Every built-in agent declares its LangGraph-compatible chain in a `graph.rs` next to `prompt.rs` (`pub fn graph() -> GraphBlueprint`), wired into `BuiltinAgent.graph_fn`. `GraphBlueprint` is serializable (typed `NodeKind`/`EdgeSpec`), structurally validated, and `compile()`s to a real `CompiledGraph`. Reusable shapes: `canonical_turn` (most agents), `single_shot`, `orchestrator`, `plan_execute_review`. Inspect via `openhuman.agent_graph_{agent_list,agent_graph}`. |
+
+### Per-agent graphs (`graph.rs`)
+
+Each agent folder under `src/openhuman/agent_registry/agents/<name>/` (and the four agents that live in their own domains) now contains, alongside `agent.toml` + `prompt.rs`:
+
+- **`graph.rs`** — `pub fn graph() -> GraphBlueprint`. `prompt.rs` defines what the agent *says*; `graph.rs` defines how it *runs* — its node/edge chain. A loader test asserts **every** built-in agent's chain validates and compiles, so a malformed chain fails CI.
+
+Most agents reuse `blueprint::canonical_turn(id)` (the standard tool-calling loop); one-pass agents use `single_shot`, the orchestrator uses the delegation chain, and the planner uses `plan_execute_review`.
+
+**RPC surface** (`schemas.rs` + `ops.rs`, registered in `src/core/all.rs`): `openhuman.agent_graph_definition_list`, `_run`, `_run_list`, `_run_get`, `_checkpoint_list`, `_resume`.
+
+> **Status (issue #4249 — superseded by the published `tinyagents` crate):** the in-house `agent_graph` engine described in this section **no longer exists**. openhuman's agent engine + orchestration now run on the published [`tinyagents`](https://crates.io/crates/tinyagents) **1.1** crate (the same LangGraph-style harness + durable graph runtime), via the adapter seam in `src/openhuman/tinyagents/`. The sections above are retained as design history; the subsection below describes the live architecture.
+
+## Agent engine + orchestration on tinyagents (live)
+
+Every agent turn — chat (`session/turn/core.rs`), channel/CLI (`harness/channel_route.rs`), and sub-agent (`harness/subagent_runner/ops/graph_route.rs`) — drives through `crate::openhuman::tinyagents::run_turn_via_tinyagents_shared`, which runs the crate's `AgentHarness`. There is no in-house turn engine, tool loop, or routing gate left; dispatch is unconditional. The seam:
+
+| File (`src/openhuman/tinyagents/`) | Role |
+| --- | --- |
+| `mod.rs` | The runner (`run_turn_via_tinyagents_shared`): registers openhuman's `Provider`/`Tool` on an `AgentHarness`, runs one turn, caps output via `ProviderModel::with_max_tokens`, mirrors progress, forwards steering, and pauses gracefully at the model-call cap. |
+| `model.rs` / `tools.rs` / `convert.rs` | `ChatModel` / `Tool` / message adapters (incl. out-of-band reasoning forwarding and unknown-tool recovery). |
+| `observability.rs` | Harness `AgentEvent` → `AgentProgress` + cost; `GraphTracingSink` for graph events. |
+| `orchestration.rs` | `run_parallel_fanout` (the shared `dispatch → workers → collect` graph) + re-exported `graph::orchestration` task-store types. |
+| `checkpoint.rs` | `SqlRunLedgerCheckpointer` — a `Checkpointer` over openhuman's SQLite (`graph_checkpoints` table), since the crate's `SqliteCheckpointer` is dependency-blocked and it has no durable `TaskStore`. |
+| `delegation.rs` | The durable `plan → execute ⇄ review → finalize` delegation graph (production worker wired in `agent_orchestration::delegation`). |
+
+**Orchestration on graphs** (`src/openhuman/agent_orchestration/`):
+
+- **Workflow phase DAG** (`workflow_runs/engine.rs`) runs on a `dispatch ⇄ run_phase → done` conditional-routing graph; each phase fans its agents out via `run_parallel_fanout`. The durable `workflow_runs` row stays the source of truth (controllers + resume read it).
+- **Team member runtime** (`agent_teams/member_graph.rs`) is a conditional-routing graph (`execute → complete|fail → done`).
+- **Multi-stage delegation** (`agent_orchestration::delegation` + the `delegate` tool) runs `delegation.rs`, checkpointed to the session DB.
+- **Detached sub-agents** (`running_subagents.rs`) track lifecycle on the crate's `InMemoryTaskStore`; the executor (abort/steer/await) stays bespoke because the store can't inject messages, block-await, or hard-abort a task.
+
+**Deliberately kept off the crate's primitives** (documented engineering decisions, not gaps):
+
+- **Sub-agent build pipeline** (`subagent_runner/`) — definition resolution, archetype tool filtering, provider resolution, narrow prompt building, memory context, worker-thread mirror, handoff cache, checkpoint/resume — stays openhuman-owned. Sub-agents already *execute* on the harness; the crate's generic `SubAgentTool` would discard this pipeline for marginal crate-native depth tracking (openhuman's `spawn_depth_context` already bounds recursion).
+- **Durable run ledgers** (`workflow_runs`, `agent_teams`, `command_center`, `subagent_sessions`) stay on openhuman SQLite/JSON: the crate's only `TaskStore` is in-memory, so moving them would lose durability and diverge from the controllers that read them. The `agent_teams` race-safe SQL compare-and-swap task claim has no crate equivalent.
 
 ## See also
 

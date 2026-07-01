@@ -153,6 +153,21 @@ pub struct BackendMeetSpeakRequest {
     pub correlation_id: Option<String>,
 }
 
+/// Inputs to `openhuman.agent_meetings_generate_summary`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GenerateSummaryRequest {
+    /// Meeting/call id. For backend Meet calls this is the request_id used by
+    /// the recent-calls detail store.
+    pub meeting_id: String,
+}
+
+/// Outputs from `openhuman.agent_meetings_generate_summary`.
+#[derive(Debug, Clone, Serialize)]
+pub struct GenerateSummaryResponse {
+    pub ok: bool,
+    pub thread_id: String,
+}
+
 // ---------------------------------------------------------------------------
 // meet_list_upcoming RPC types
 // ---------------------------------------------------------------------------

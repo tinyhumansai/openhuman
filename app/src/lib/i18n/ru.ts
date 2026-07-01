@@ -3,6 +3,10 @@ import type { TranslationMap } from './types';
 // Russian (Русский) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Cross-host vault (#4278)
+  'crossHostVault.title': 'Хранилище находится на хосте ядра.',
+  'crossHostVault.message':
+    'Это хранилище памяти размещено на хосте openhuman-core ({os}). Его можно открыть или показать только на той машине, но не с этого устройства.',
   'conversations.backgroundTasks.title': 'Background tasks',
   'nav.feedback': 'Поделиться отзывом',
   'feedback.board': 'Доска отзывов',
@@ -1392,6 +1396,7 @@ const messages: TranslationMap = {
   'mcp.configAssistant.title': 'Помощник по настройке',
   'mcp.configAssistant.empty':
     'Спросите о конфигурации, необходимых переменных окружения или этапах настройки.',
+  'mcp.configAssistant.autoPromptCta': 'Пошаговая помощь по настройке',
   'mcp.configAssistant.suggestedValues': 'Рекомендуемые значения:',
   'mcp.configAssistant.valueHidden': '(значение скрыто)',
   'mcp.configAssistant.applySuggested': 'Примените предложенные значения.',
@@ -1537,13 +1542,15 @@ const messages: TranslationMap = {
   'mcp.tab.filter.registry': 'Реестр',
   'mcp.tab.column.name': 'Название',
   'mcp.tab.column.description': 'Описание',
-  'mcp.tab.column.source': 'Источник',
+  'mcp.tab.column.type': 'Тип',
   'mcp.tab.column.author': 'Автор',
   'mcp.tab.column.action': 'Действие',
-  'mcp.tab.source.official': 'Официальный',
-  'mcp.tab.source.smithery': 'Smithery',
   'mcp.tab.transport.hosted': 'Размещённый',
-  'mcp.tab.transport.local': 'Локальный',
+  'mcp.tab.transport.local': 'Stdio',
+  'mcp.tab.transportFilter.label': 'Тип',
+  'mcp.tab.transportFilter.aria': 'Фильтр серверов по транспорту',
+  'mcp.tab.link.website': 'Сайт',
+  'mcp.tab.link.repo': 'Репозиторий',
   'mcp.tab.transport.hostedHint':
     'Работает на удалённом сервере — вход или токен настраивается при установке',
   'mcp.tab.transport.localHint':
@@ -1571,11 +1578,7 @@ const messages: TranslationMap = {
   'mcp.install.button': 'Установить',
   'mcp.install.installing': 'Установка...',
   'mcp.install.by': 'от',
-  'mcp.install.transportLocal': 'Локальный запуск',
-  'mcp.install.transportRemote': 'Облачный хостинг',
   'mcp.install.useCount': '{count} установок',
-  'mcp.install.deployed': 'Развёрнуто',
-  'mcp.install.requiresConfig': 'Требуется настройка',
   'mcp.install.connections': 'Доступные подключения',
   'mcp.install.published': 'опубликовано',
   'mcp.install.configureAndInstall': 'Настроить и установить',
@@ -3175,6 +3178,8 @@ const messages: TranslationMap = {
   'composio.triggers.heading': 'Триггеры',
   'composio.triggers.listenFrom': 'Слушать события от',
   'composio.triggers.loadError': 'Не удалось загрузить триггеры',
+  'composio.triggers.sessionExpired':
+    'Срок действия сессии OpenHuman истёк. Войдите снова, чтобы загрузить триггеры.',
   'composio.triggers.needsConfiguration': 'Требуется настройка',
   'composio.triggers.noneAvailable': 'Сейчас нет доступных триггеров для',
   'conversations.taskKanban.moveLeft': 'Переместить влево',

@@ -3,6 +3,10 @@ import type { TranslationMap } from './types';
 // German (Deutsch) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Cross-host vault (#4278)
+  'crossHostVault.title': 'Der Vault liegt auf dem Core-Host.',
+  'crossHostVault.message':
+    'Dieser Memory-Vault wird auf dem openhuman-core-Host ({os}) gespeichert. Er kann nur auf diesem Rechner geöffnet oder angezeigt werden, nicht von diesem Gerät.',
   'conversations.backgroundTasks.title': 'Background tasks',
   'nav.feedback': 'Feedback geben',
   'feedback.board': 'Feedback-Board',
@@ -1412,6 +1416,7 @@ const messages: TranslationMap = {
   'mcp.configAssistant.title': 'Konfigurationsassistent',
   'mcp.configAssistant.empty':
     'Fragen Sie nach Konfiguration, erforderlichen Umgebungsvariablen oder Einrichtungsschritten.',
+  'mcp.configAssistant.autoPromptCta': 'Schritt-für-Schritt-Einrichtungshilfe',
   'mcp.configAssistant.suggestedValues': 'Vorgeschlagene Werte:',
   'mcp.configAssistant.valueHidden': '(Wert ausgeblendet)',
   'mcp.configAssistant.applySuggested': 'Vorgeschlagene Werte anwenden',
@@ -1561,13 +1566,15 @@ const messages: TranslationMap = {
   'mcp.tab.filter.registry': 'Registrierung',
   'mcp.tab.column.name': 'Name',
   'mcp.tab.column.description': 'Beschreibung',
-  'mcp.tab.column.source': 'Quelle',
+  'mcp.tab.column.type': 'Typ',
   'mcp.tab.column.author': 'Autor',
   'mcp.tab.column.action': 'Aktion',
-  'mcp.tab.source.official': 'Offiziell',
-  'mcp.tab.source.smithery': 'Smithery',
   'mcp.tab.transport.hosted': 'Gehostet',
-  'mcp.tab.transport.local': 'Lokal',
+  'mcp.tab.transport.local': 'Stdio',
+  'mcp.tab.transportFilter.label': 'Typ',
+  'mcp.tab.transportFilter.aria': 'Server nach Transport filtern',
+  'mcp.tab.link.website': 'Website',
+  'mcp.tab.link.repo': 'Repository',
   'mcp.tab.transport.hostedHint':
     'Läuft auf einem entfernten Server – Anmeldung oder Token wird bei der Installation eingerichtet',
   'mcp.tab.transport.localHint':
@@ -1595,11 +1602,7 @@ const messages: TranslationMap = {
   'mcp.install.button': 'Installation',
   'mcp.install.installing': 'Installation...',
   'mcp.install.by': 'von',
-  'mcp.install.transportLocal': 'Lokal ausgeführt',
-  'mcp.install.transportRemote': 'Cloud-gehostet',
   'mcp.install.useCount': '{count} Installationen',
-  'mcp.install.deployed': 'Bereitgestellt',
-  'mcp.install.requiresConfig': 'Konfiguration erforderlich',
   'mcp.install.connections': 'Verfügbare Verbindungen',
   'mcp.install.published': 'veröffentlicht',
   'mcp.install.configureAndInstall': 'Konfigurieren & installieren',
@@ -3226,6 +3229,8 @@ const messages: TranslationMap = {
   'composio.triggers.heading': 'Auslöser',
   'composio.triggers.listenFrom': 'Auf Ereignisse hören von',
   'composio.triggers.loadError': 'Trigger konnten nicht geladen werden',
+  'composio.triggers.sessionExpired':
+    'Deine OpenHuman-Sitzung ist abgelaufen. Melde dich erneut an, um Trigger zu laden.',
   'composio.triggers.needsConfiguration': 'Muss konfiguriert werden',
   'composio.triggers.noneAvailable': 'Derzeit sind keine Auslöser verfügbar für',
   'conversations.taskKanban.moveLeft': 'Bewege dich nach links',
