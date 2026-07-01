@@ -837,6 +837,46 @@ impl Middleware<()> for UnknownToolRewriteMiddleware {
     }
 }
 
+/// `after_tool`: capture each tool call's execution outcome (success + content)
+/// into a shared sink before the harness folds the result into a `Message::tool`
+/// that drops the `error` flag (issue #4249). Without this, a post-turn
+/// `ToolCallRecord` could only report every call as an optimistic success — the
+/// in-house engine tracked real per-call success. Runs last in the `after_tool`
+/// chain so it records the final (summarized/capped) content the transcript keeps.
+pub struct ToolOutcomeCaptureMiddleware {
+    sink: super::ToolOutcomeSink,
+}
+
+impl ToolOutcomeCaptureMiddleware {
+    pub fn new(sink: super::ToolOutcomeSink) -> Self {
+        Self { sink }
+    }
+}
+
+#[async_trait]
+impl Middleware<()> for ToolOutcomeCaptureMiddleware {
+    fn name(&self) -> &str {
+        "tool_outcome_capture"
+    }
+
+    async fn after_tool(
+        &self,
+        _ctx: &mut RunContext<()>,
+        _state: &(),
+        result: &mut TaToolResult,
+    ) -> TaResult<()> {
+        if let Ok(mut sink) = self.sink.lock() {
+            sink.push(super::ToolCallOutcome {
+                call_id: result.call_id.clone(),
+                name: result.name.clone(),
+                success: result.error.is_none(),
+                content: result.content.clone(),
+            });
+        }
+        Ok(())
+    }
+}
+
 /// `before_tool`: coerce a tool call's arguments to an empty object when they
 /// are not a JSON object (issue #4249). A model can emit malformed native
 /// arguments (invalid JSON, or a bare scalar/array); the model adapter parses

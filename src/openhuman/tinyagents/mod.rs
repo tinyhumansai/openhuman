@@ -161,7 +161,29 @@ pub struct TinyagentsTurnOutcome {
     /// should summarize a resumable checkpoint rather than treat `text` as a
     /// final answer — the tinyagents analogue of `CheckpointStrategy::on_max_iter`.
     pub hit_cap: bool,
+    /// Per-tool-call execution outcomes (success + raw result content), keyed by
+    /// provider call id, captured at the tool boundary. The harness folds a tool
+    /// result into a `Message::tool` that drops its `error` flag, so this is the
+    /// only place the caller can recover whether each call actually failed — used
+    /// to build honest `ToolCallRecord`s for post-turn hooks + the cap checkpoint.
+    pub tool_outcomes: Vec<ToolCallOutcome>,
 }
+
+/// One tool call's execution outcome, captured at the tool boundary before the
+/// harness discards the failure flag. `success` mirrors the absence of a
+/// `TaToolResult::error`; `content` is the (possibly summarized/capped) result
+/// text used to derive a sanitized post-turn summary.
+#[derive(Debug, Clone)]
+pub struct ToolCallOutcome {
+    pub call_id: String,
+    pub name: String,
+    pub success: bool,
+    pub content: String,
+}
+
+/// Shared sink the [`ToolOutcomeCaptureMiddleware`](middleware::ToolOutcomeCaptureMiddleware)
+/// appends each tool call's outcome to, drained into the turn outcome.
+pub type ToolOutcomeSink = std::sync::Arc<std::sync::Mutex<Vec<ToolCallOutcome>>>;
 
 /// Drive an agent turn through the `tinyagents` agent-loop harness.
 ///
@@ -239,6 +261,8 @@ pub async fn run_turn_via_tinyagents(
         ),
         early_exit_tool: None,
         hit_cap: false,
+        // This thin variant carries no per-call outcome capture middleware.
+        tool_outcomes: Vec::new(),
     })
 }
 
@@ -479,6 +503,14 @@ pub async fn run_turn_via_tinyagents_shared(
         tool_sets.clone(),
     )));
 
+    // Capture each tool call's real success + content before the harness folds the
+    // result into a `Message::tool` that drops the failure flag, so the turn can
+    // build honest per-call `ToolCallRecord`s (post-turn hooks + cap checkpoint).
+    let tool_outcome_sink: ToolOutcomeSink = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    harness.push_middleware(Arc::new(middleware::ToolOutcomeCaptureMiddleware::new(
+        tool_outcome_sink.clone(),
+    )));
+
     // Builder-configured tool policy (`.tool_policy()`), enforced at the tool
     // boundary. The in-house engine ran this in `agent_tool_exec`; the tinyagents
     // path bypassed it, so a deny/require-approval silently no-opped (security
@@ -659,6 +691,11 @@ pub async fn run_turn_via_tinyagents_shared(
         None => (None, run.text().unwrap_or_default()),
     };
 
+    let tool_outcomes = tool_outcome_sink
+        .lock()
+        .map(|guard| guard.clone())
+        .unwrap_or_default();
+
     Ok(TinyagentsTurnOutcome {
         text,
         history: convert::messages_to_history(&run.messages),
@@ -673,6 +710,7 @@ pub async fn run_turn_via_tinyagents_shared(
         charged_amount_usd,
         early_exit_tool,
         hit_cap,
+        tool_outcomes,
     })
 }
 
