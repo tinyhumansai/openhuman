@@ -38,6 +38,7 @@ import PersonalityPanel from './panels/PersonalityPanel';
 import PrivacyPanel from './panels/PrivacyPanel';
 import ProfileEditorPage from './panels/ProfileEditorPage';
 import ProfilesPanel from './panels/ProfilesPanel';
+import ReadinessPanel from './panels/ReadinessPanel';
 import RecoveryPhrasePanel from './panels/RecoveryPhrasePanel';
 import SandboxSettingsPanel from './panels/SandboxSettingsPanel';
 import ScreenAwarenessDebugPanel from './panels/ScreenAwarenessDebugPanel';
@@ -136,6 +137,7 @@ export function settingsRouteElements(): ReactNode {
       <Route path="profiles/edit/:id" element={wrapSettingsPage(<ProfileEditorPage />)} />
       <Route path="agent-access" element={wrapSettingsPage(<AgentAccessPanel />)} />
       <Route path="activity-level" element={wrapSettingsPage(<AgentActivityPanel />)} />
+      <Route path="readiness" element={wrapSettingsPage(<ReadinessPanel />)} />
       <Route path="sandbox-settings" element={wrapSettingsPage(<SandboxSettingsPanel />)} />
       <Route path="approval-history" element={wrapSettingsPage(<ApprovalHistoryPanel />)} />
 
