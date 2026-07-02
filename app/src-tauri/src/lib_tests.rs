@@ -458,6 +458,22 @@ fn platform_cef_gpu_workarounds_disable_windows_gpu_when_requested() {
 
     assert_eq!(
         args,
+        vec![
+            ("--disable-gpu", None),
+            ("--disable-gpu-compositing", None),
+            ("--disable-gpu-sandbox", None),
+            ("--use-gl", Some("disabled")),
+        ]
+    );
+}
+
+#[test]
+fn platform_cef_gpu_workarounds_disable_non_windows_gpu_without_windows_flags() {
+    let mut args = Vec::new();
+    append_platform_cef_gpu_workarounds(&mut args, "macos", "aarch64", None, Some("1"));
+
+    assert_eq!(
+        args,
         vec![("--disable-gpu", None), ("--disable-gpu-compositing", None)]
     );
 }
@@ -469,6 +485,14 @@ fn platform_cef_gpu_workarounds_disable_gpu_wins_over_linux_force_gpu() {
 
     assert!(args.contains(&("--disable-gpu", None)));
     assert!(args.contains(&("--disable-gpu-compositing", None)));
+    assert!(
+        !args.contains(&("--disable-gpu-sandbox", None)),
+        "OPENHUMAN_DISABLE_GPU=1 must not disable the GPU sandbox outside Windows, got: {args:?}"
+    );
+    assert!(
+        !args.contains(&("--use-gl", Some("disabled"))),
+        "OPENHUMAN_DISABLE_GPU=1 must not force use-gl=disabled outside Windows, got: {args:?}"
+    );
     assert!(
         !args.contains(&("--use-angle", Some("swiftshader"))),
         "OPENHUMAN_DISABLE_GPU=1 must not also force SwiftShader, got: {args:?}"

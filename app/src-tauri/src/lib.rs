@@ -2022,16 +2022,25 @@ fn append_platform_cef_gpu_workarounds(
 ) {
     let disable_gpu = cef_disable_gpu_enabled(disable_gpu_override);
 
-    // Issue #4294: on some Windows CEF/GPU stacks, cef::initialize can fail
-    // before the app renders any UI, and user-supplied process argv switches
-    // do not reach the vendored CEF runtime. Provide a narrow, release-safe
-    // env escape hatch instead of forwarding arbitrary Chromium flags.
+    // Issues #4294/#4385: on some Windows CEF/GPU stacks, cef::initialize can
+    // fail before the app renders any UI, and user-supplied process argv
+    // switches do not reach the vendored CEF runtime. Provide a narrow,
+    // release-safe env escape hatch instead of forwarding arbitrary Chromium
+    // flags.
     if disable_gpu {
         args.push(("--disable-gpu", None));
         args.push(("--disable-gpu-compositing", None));
-        log::info!(
-            "[cef-startup] OPENHUMAN_DISABLE_GPU set: adding --disable-gpu and --disable-gpu-compositing for CEF startup compatibility (issue #4294)"
-        );
+        if os == "windows" {
+            args.push(("--disable-gpu-sandbox", None));
+            args.push(("--use-gl", Some("disabled")));
+            log::info!(
+                "[cef-startup] OPENHUMAN_DISABLE_GPU set: adding --disable-gpu, --disable-gpu-compositing, --disable-gpu-sandbox, and --use-gl=disabled for Windows CEF startup compatibility (issues #4294/#4385)"
+            );
+        } else {
+            log::info!(
+                "[cef-startup] OPENHUMAN_DISABLE_GPU set: adding --disable-gpu and --disable-gpu-compositing for CEF startup compatibility (issue #4294)"
+            );
+        }
     }
 
     // Issue #1697: on Arch/Manjaro-family Linux systems, the AppImage can

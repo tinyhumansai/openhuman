@@ -121,8 +121,11 @@ an OS/runtime compatibility regression in CEF startup.
 If the logs point to a GPU-process startup failure rather than a stale CEF
 profile lock, set `OPENHUMAN_DISABLE_GPU=1` before launching OpenHuman. This
 passes `--disable-gpu` and `--disable-gpu-compositing` to the embedded CEF
-runtime without forwarding arbitrary Chromium flags. Leave it unset for normal
-use because disabling the GPU path can break WebGL-heavy surfaces.
+runtime without forwarding arbitrary Chromium flags. On Windows, the same
+opt-in path also passes `--disable-gpu-sandbox` and `--use-gl=disabled` for
+stricter driver/runtime fallback when the basic GPU-disable path is still not
+enough. Leave it unset for normal use because disabling the GPU path can break
+WebGL-heavy surfaces.
 
 ## Linux shell fallback for CEF startup crashes
 
