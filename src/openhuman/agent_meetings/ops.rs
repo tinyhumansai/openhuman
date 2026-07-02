@@ -1005,6 +1005,13 @@ pub async fn handle_speak(params: Map<String, Value>) -> Result<Value, String> {
         if let Some(cid) = &req.correlation_id {
             map.insert("correlationId".to_string(), json!(cid));
         }
+
+        // The RPC-driven `agent_meetings_speak` delivers the agent's spoken
+        // reply, so tag it terminal (`kind="reply"`) to match the in-call reply
+        // path (`in_call::emit_bot_speak`) — both `bot:speak` emitters now carry
+        // the same `kind` field so the backend mascot can settle to idle after a
+        // real reply. Additive; older backends ignore it.
+        map.insert("kind".to_string(), json!("reply"));
     }
 
     mgr.emit("bot:speak", speak_payload)

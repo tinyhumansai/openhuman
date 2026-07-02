@@ -34,13 +34,11 @@ pub mod manager;
 pub mod microcompact;
 pub mod pipeline;
 pub mod prompt;
-pub mod segment_recap_summarizer;
 pub mod session_memory;
-pub mod summarizer;
 pub mod tool_result_budget;
 
 pub use guard::{ContextCheckResult, ContextGuard};
-pub use manager::{ContextManager, ContextStats, ReductionOutcome};
+pub use manager::{ContextManager, ContextStats};
 pub use microcompact::{
     microcompact, MicrocompactStats, CLEARED_PLACEHOLDER, DEFAULT_KEEP_RECENT_TOOL_RESULTS,
 };
@@ -50,14 +48,9 @@ pub use prompt::{
     PromptSection, PromptTool, RuntimeSection, SafetySection, SystemPromptBuilder, ToolsSection,
     WorkspaceSection,
 };
-pub use segment_recap_summarizer::SegmentRecapSummarizer;
 pub use session_memory::{
     SessionMemoryConfig, SessionMemoryState, ARCHIVIST_EXTRACTION_PROMPT, DEFAULT_MIN_TOKEN_GROWTH,
     DEFAULT_MIN_TOOL_CALLS, DEFAULT_MIN_TURNS_BETWEEN,
-};
-pub use summarizer::{
-    summarize_chat_history, EngineAutocompact, ProviderSummarizer, Summarizer, SummaryStats,
-    DEFAULT_KEEP_RECENT, DEFAULT_SUMMARIZER_TEMPERATURE,
 };
 pub use tool_result_budget::{
     apply_tool_result_budget, BudgetOutcome, DEFAULT_TOOL_RESULT_BUDGET_BYTES,

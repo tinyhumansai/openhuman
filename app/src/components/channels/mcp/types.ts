@@ -23,6 +23,18 @@ export type SmitheryServer = {
    * hidden. Stamped by the Rust dispatcher; never trusted from the wire.
    */
   official?: boolean;
+  /**
+   * Vendor/site URL declared by the server, when present. The strict catalog
+   * filter requires it, so every listed row carries one; rendered as a
+   * clickable external link.
+   */
+  website_url?: string;
+  /**
+   * Declared auth method from registry metadata. `'api_key'` means the server
+   * declares a named static secret (header/env). The strict filter only lists
+   * `'api_key'` servers, so connecting never depends on a probe guess.
+   */
+  auth_kind?: 'api_key' | string;
 };
 
 export type SmitheryConnection = {

@@ -291,6 +291,67 @@ async fn drive_member_completes_task_with_worker_output_as_evidence() {
     assert_eq!(member.current_task_id, None);
 }
 
+/// Covers `run_member_loop` — the `with_root_parent` wrapper around
+/// `drive_member`. With a mock parent already installed, `with_root_parent`
+/// reuses it (rather than building a real root), so the member drives to
+/// completion under the canned provider. Same setup as the `drive_member`
+/// happy-path test, but through the wrapper the live runtime spawns.
+#[tokio::test]
+async fn run_member_loop_drives_member_under_ambient_parent() {
+    AgentDefinitionRegistry::init_global_builtins().unwrap();
+    let (_dir, config) = test_config();
+    seed_team(&config, "team-1");
+    seed_member(&config, "team-1", "m1", Some("code_executor"));
+    seed_task(
+        &config,
+        "team-1",
+        "task-a",
+        AgentTeamTaskStatus::Todo,
+        None,
+        vec![],
+    );
+    run_ledger::claim_agent_team_task(&config, "team-1", "task-a", "m1", "teamrun-y").unwrap();
+    run_ledger::mark_agent_team_member_running(
+        &config,
+        "team-1",
+        "m1",
+        "task-a",
+        "teamrun-y",
+        "teamrun-y",
+    )
+    .unwrap();
+    let task = run_ledger::get_agent_team_task(&config, "task-a")
+        .unwrap()
+        .unwrap();
+
+    let provider = Arc::new(CannedProvider {
+        output: "did the thing".into(),
+        fail: false,
+    });
+    with_parent_context(mock_parent(provider), async {
+        run_member_loop(
+            &config,
+            "team-1",
+            "m1",
+            "code_executor",
+            task,
+            "teamrun-y",
+            Some("test-model".into()),
+        )
+        .await
+    })
+    .await;
+
+    let done = run_ledger::get_agent_team_task(&config, "task-a")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        done.status,
+        AgentTeamTaskStatus::Done,
+        "run_member_loop drove the member to completion through with_root_parent"
+    );
+}
+
 #[tokio::test]
 async fn drive_member_releases_task_when_worker_fails() {
     AgentDefinitionRegistry::init_global_builtins().unwrap();

@@ -346,6 +346,9 @@ fn build_internal_only_controllers() -> Vec<RegisteredController> {
     // tiny.place A2A social-network integration: renderer-callable via core_rpc_relay
     // but NOT advertised to agents in tool listings or schema discovery.
     controllers.extend(crate::openhuman::tinyplace::all_tinyplace_registered_controllers());
+    // User-consented tiny.place pairing for wrapped agent sessions: UI-callable
+    // via core_rpc_relay, but excluded from agent tool listings/schema discovery.
+    controllers.extend(crate::openhuman::agent_orchestration::all_pairing_registered_controllers());
     controllers
 }
 
@@ -578,6 +581,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         ),
         "agent_team" => Some(
             "Durable agent-team coordination: teams, members, dependency-aware task claiming, and teammate messaging.",
+        ),
+        "orchestration_pairing" => Some(
+            "User-consented tiny.place contact pairing for wrapped agent sessions.",
         ),
         "billing" => Some("Subscription plan, payment links, and credit top-up via the backend."),
         "announcements" => {

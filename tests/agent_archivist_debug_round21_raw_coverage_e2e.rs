@@ -262,6 +262,7 @@ fn definition(max_iterations: usize) -> AgentDefinition {
         delegate_name: None,
         agent_tier: Default::default(),
         source: DefinitionSource::Builtin,
+        graph: Default::default(),
     }
 }
 

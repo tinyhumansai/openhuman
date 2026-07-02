@@ -17,7 +17,7 @@ import { useT } from '../../../lib/i18n/I18nContext';
 import { mcpClientsApi } from '../../../services/api/mcpClientsApi';
 import Button from '../../ui/Button';
 import { deriveAuthor } from './McpServerCard';
-import type { InstalledServer, SmitheryConnection, SmitheryServerDetail } from './types';
+import type { InstalledServer, SmitheryServerDetail } from './types';
 
 const log = debug('mcp-clients:install');
 
@@ -28,13 +28,6 @@ interface InstallDialogProps {
   prefillEnv?: Record<string, string>;
   onSuccess: (server: InstalledServer) => void;
   onCancel: () => void;
-}
-
-function pickTransportLabel(connections: SmitheryConnection[]): string | null {
-  const types = new Set(connections.map(c => c.type));
-  if (types.has('stdio')) return 'stdio';
-  if (types.has('http')) return 'http';
-  return connections[0]?.type ?? null;
 }
 
 function formatUseCount(count: number): string {
@@ -198,7 +191,10 @@ const InstallDialog = ({ qualifiedName, prefillEnv, onSuccess, onCancel }: Insta
   if (!detail) return null;
 
   const author = deriveAuthor(qualifiedName);
-  const transport = pickTransportLabel(detail.connections);
+  // The detail DTO doesn't carry `is_deployed`, so derive transport from the
+  // connection types instead (an `http` connection ⇒ hosted, else stdio) —
+  // otherwise hosted-only servers are always mislabeled "Stdio".
+  const isHosted = (detail.connections ?? []).some(c => c.type === 'http');
 
   // ── Step 1: Detail overview ──────────────────────────────────────────────
 
@@ -236,28 +232,17 @@ const InstallDialog = ({ qualifiedName, prefillEnv, onSuccess, onCancel }: Insta
           </div>
         </div>
 
-        {/* Stats badges */}
+        {/* Stats badges — same Hosted/Stdio vocabulary as the catalog list (no
+            separate "Cloud hosted"/"Requires configuration" pills: the
+            transport badge and the "Required environment variables" section
+            below already convey both). */}
         <div className="flex flex-wrap gap-2">
-          {transport && (
-            <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium bg-surface-subtle text-content-secondary">
-              {transport === 'stdio'
-                ? t('mcp.install.transportLocal')
-                : t('mcp.install.transportRemote')}
-            </span>
-          )}
+          <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium bg-surface-subtle text-content-secondary">
+            {isHosted ? t('mcp.tab.transport.hosted') : t('mcp.tab.transport.local')}
+          </span>
           {detail.use_count != null && detail.use_count > 0 && (
             <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium bg-surface-subtle text-content-secondary">
               {t('mcp.install.useCount').replace('{count}', formatUseCount(detail.use_count))}
-            </span>
-          )}
-          {detail.is_deployed && (
-            <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium bg-sage-100 dark:bg-sage-500/20 text-sage-700 dark:text-sage-300">
-              {t('mcp.install.deployed')}
-            </span>
-          )}
-          {hasEnvKeys && (
-            <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300">
-              {t('mcp.install.requiresConfig')}
             </span>
           )}
         </div>

@@ -433,7 +433,6 @@ async fn builder_dedupes_visible_native_tools_and_seed_resume_bounds_history() -
             ..AgentConfig::default()
         })
         .explicit_preferences_enabled(false)
-        .unified_compaction_enabled(false)
         .build()?;
 
     let original_key = agent.session_key().to_string();

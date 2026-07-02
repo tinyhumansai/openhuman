@@ -218,6 +218,11 @@ impl Tool for CallMemoryAgentTool {
                             "\n\n⚠️ The memory agent needs clarification: {question}"
                         ));
                     }
+                    SubagentRunStatus::Incomplete { reason } => {
+                        result.push_str(&format!(
+                            "\n\n⚠️ The memory agent stopped before finishing ({reason})."
+                        ));
+                    }
                 }
 
                 result.push_str(&format!(

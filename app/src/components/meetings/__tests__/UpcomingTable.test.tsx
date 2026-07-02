@@ -183,12 +183,41 @@ describe('UpcomingTable', () => {
 
     await waitFor(() => expect(joinMock).toHaveBeenCalledOnce());
     expect(joinMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        meetUrl: 'https://meet.google.com/abc-def-ghi',
-        listenOnly: true,
-        correlationId: 'evt-1',
-      })
+      expect.objectContaining({ meetUrl: 'https://meet.google.com/abc-def-ghi', listenOnly: true })
     );
+    // The correlation id MUST be a freshly-minted unique id, NOT the
+    // deterministic calendar_event_id — reusing the event id collapsed
+    // re-joins onto one request_id (#4338).
+    const { correlationId } = joinMock.mock.calls[0][0] as { correlationId: string };
+    expect(correlationId).toBeTruthy();
+    expect(correlationId).not.toBe('evt-1');
+  });
+
+  it('mints a unique correlationId per join so re-joining the same event does not collide (#4338)', async () => {
+    joinMock.mockResolvedValue({
+      meetUrl: 'https://meet.google.com/abc-def-ghi',
+      platform: 'gmeet',
+    });
+    // Same meeting (same calendar_event_id) returned across reloads.
+    listMock.mockResolvedValue([makeMeeting()]);
+    renderWithProviders(<UpcomingTable />);
+
+    const joinBtn = await screen.findByRole('button', { name: /^join$/i });
+    fireEvent.click(joinBtn);
+    await waitFor(() => expect(joinMock).toHaveBeenCalledOnce());
+    // handleJoin disables the row via `joiningId` until its `finally` runs;
+    // wait for the button to re-enable before the second click so it isn't
+    // swallowed by the disabled state (timing-dependent otherwise).
+    await waitFor(() => expect((joinBtn as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(joinBtn);
+    await waitFor(() => expect(joinMock).toHaveBeenCalledTimes(2));
+
+    const first = (joinMock.mock.calls[0][0] as { correlationId: string }).correlationId;
+    const second = (joinMock.mock.calls[1][0] as { correlationId: string }).correlationId;
+    expect(first).not.toBe('evt-1');
+    expect(second).not.toBe('evt-1');
+    // Two joins of the same calendar event must yield distinct correlation ids.
+    expect(first).not.toBe(second);
   });
 
   it('does not show a join button for meetings without a conferencing URL', async () => {

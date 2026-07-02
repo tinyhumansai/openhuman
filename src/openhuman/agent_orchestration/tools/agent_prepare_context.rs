@@ -125,16 +125,25 @@ pub async fn run_context_scout(question: &str, focus: Option<&str>) -> anyhow::R
 }
 
 /// Same as [`run_context_scout`] but with an **explicitly-supplied** tool
-/// catalogue, so it can run *outside* an agent turn — e.g. from the
-/// subconscious engine's structured tick, where `current_parent()` is unset
-/// and the parent's visible tool set can't be auto-derived.
+/// catalogue — for callers *outside* an agent turn that can't auto-derive the
+/// parent's visible tool set from `current_parent()` (e.g. the subconscious
+/// engine's structured tick).
 ///
 /// The caller passes the catalogue of tools the eventual decision agent can
 /// actually call (one `- name: description` per line), so the bundle's
-/// `recommended_tool_calls` stay grounded in callable tools. Progress /
-/// subagent-lifecycle events stay best-effort: with no parent context the
-/// `parent_session` falls back to `standalone` and the progress sink is absent,
-/// so those sends simply no-op.
+/// `recommended_tool_calls` stay grounded in callable tools.
+///
+/// **A parent execution context is still required.** Like [`run_context_scout`]
+/// this spawns `context_scout` via `run_subagent`, which resolves its provider /
+/// tools / model from the `PARENT_CONTEXT` task-local and returns
+/// `NoParentContext` when it is unset. A background surface with no enclosing
+/// turn MUST establish a root parent first — call this *inside*
+/// [`with_root_parent`](crate::openhuman::agent_orchestration::parent_context::with_root_parent).
+/// Skipping that is exactly the TAURI-RUST-HMW failure (#4337): every spawn
+/// died with `NoParentContext` and the tick ran un-grounded. Only the
+/// progress / subagent-lifecycle telemetry degrades gracefully without a
+/// parent — `parent_session` falls back to `standalone` and the absent progress
+/// sink no-ops — but the spawn itself does not.
 pub async fn run_context_scout_with_catalog(
     question: &str,
     focus: Option<&str>,
@@ -387,6 +396,44 @@ pub async fn run_context_scout_with_catalog(
                 Ok(ToolResult::success(format!(
                     "[context_bundle]\nhas_enough_context: false\n\
                      summary: The context scout could not complete without clarification: {question}\n\
+                     recommended_tool_calls:\n[/context_bundle]"
+                )))
+            }
+            SubagentRunStatus::Incomplete { reason } => {
+                // The scout stopped short (stuck halt / iteration cap) without a
+                // well-formed bundle. Don't inject partial context — return a
+                // has_enough_context:false bundle and close the lifecycle.
+                tracing::warn!(
+                    target: "agent_prepare_context",
+                    task_id = %outcome.task_id,
+                    reason = %reason,
+                    "[agent_prepare_context] scout stopped incomplete — returning empty bundle"
+                );
+                publish_global(DomainEvent::SubagentCompleted {
+                    parent_session: parent_session.clone(),
+                    task_id: outcome.task_id.clone(),
+                    agent_id: outcome.agent_id.clone(),
+                    elapsed_ms: outcome.elapsed.as_millis() as u64,
+                    output_chars: 0,
+                    iterations: outcome.iterations,
+                });
+                if let Some(ref tx) = progress_sink {
+                    let _ = tx
+                        .send(AgentProgress::SubagentCompleted {
+                            agent_id: outcome.agent_id.clone(),
+                            task_id: outcome.task_id.clone(),
+                            elapsed_ms: outcome.elapsed.as_millis() as u64,
+                            iterations: outcome.iterations as u32,
+                            output_chars: 0,
+                            worktree_path: None,
+                            changed_files: Vec::new(),
+                            dirty_status: None,
+                        })
+                        .await;
+                }
+                Ok(ToolResult::success(format!(
+                    "[context_bundle]\nhas_enough_context: false\n\
+                     summary: The context scout stopped before finishing ({reason}).\n\
                      recommended_tool_calls:\n[/context_bundle]"
                 )))
             }

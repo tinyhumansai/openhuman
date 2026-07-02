@@ -27,7 +27,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use parking_lot::Mutex;
 
-use crate::openhuman::agent::harness::run_tool_call_loop;
+use crate::openhuman::agent::harness::run_channel_turn_via_graph;
 use crate::openhuman::agent::tools::RunWorkflowTool;
 use crate::openhuman::config::{Config, MultimodalConfig, MultimodalFileConfig};
 use crate::openhuman::inference::provider::traits::{ChatMessage, ProviderCapabilities};
@@ -171,15 +171,15 @@ async fn mock_llm_orchestrator_lists_and_runs_workflows_through_the_loop() {
     let config = Arc::new(config);
 
     // The two tools the orchestrator now carries for workflows.
-    let tools: Vec<Box<dyn Tool>> = vec![
+    let tools: Arc<Vec<Box<dyn Tool>>> = Arc::new(vec![
         Box::new(crate::openhuman::workflows::tools::WorkflowListTool::new(
             config.clone(),
         )),
         Box::new(RunWorkflowTool::new()),
-    ];
+    ]);
 
     // Scripted: discover → attempt to run an unknown workflow → wrap up.
-    let provider = ScriptedProvider {
+    let provider: Arc<dyn Provider> = Arc::new(ScriptedProvider {
         responses: Mutex::new(vec![
             Ok(tool_call("c1", "list_workflows", serde_json::json!({}))),
             Ok(tool_call(
@@ -191,27 +191,21 @@ async fn mock_llm_orchestrator_lists_and_runs_workflows_through_the_loop() {
             )),
             Ok(final_text("done")),
         ]),
-    };
+    });
 
     let mut history = vec![ChatMessage::user("Triage my inbox using a workflow.")];
-    let result = run_tool_call_loop(
-        &provider,
+    let result = run_channel_turn_via_graph(
+        provider,
         &mut history,
-        &tools,
-        "test-provider",
+        tools,
+        vec![],
+        None,
         "model",
         0.0,
-        true,
-        "channel",
-        &MultimodalConfig::default(),
-        &MultimodalFileConfig::default(),
         5,
+        MultimodalConfig::default(),
+        MultimodalFileConfig::default(),
         None,
-        None,
-        &[],
-        None,
-        None,
-        &DefaultToolPolicy,
     )
     .await
     .expect("tool loop should run to completion");

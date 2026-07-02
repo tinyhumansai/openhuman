@@ -14,7 +14,7 @@ use crate::openhuman::agent::harness::subagent_runner::handoff::{
 /// extractor tool, stash the raw payload and substitute a short placeholder the
 /// sub-agent can drill into with `extract_from_result`. Errors and
 /// already-extracted output pass through unchanged.
-pub(super) fn apply_handoff(
+pub(crate) fn apply_handoff(
     cache: &ResultHandoffCache,
     tool_name: &str,
     task_id: &str,

@@ -548,6 +548,65 @@ impl Tool for SpawnAsyncSubagentTool {
                                 .await;
                         }
                     }
+                    SubagentRunStatus::Incomplete { ref reason } => {
+                        // Async sub-agent stopped short (stuck halt / iteration
+                        // cap). Mark the session finished and deliver the PARTIAL
+                        // progress back to the parent, framed so it is not
+                        // mistaken for a completed result (#4096).
+                        if let Err(err) = subagent_sessions::mark_finished(
+                            &background_store,
+                            &background_subagent_session_id,
+                            &outcome.task_id,
+                            &outcome.status,
+                            outcome.final_history.clone(),
+                        ) {
+                            log::warn!(
+                                "[subagent_reuse] mark_incomplete failed subagent_session_id={} task_id={} agent_id={} error={}",
+                                background_subagent_session_id,
+                                outcome.task_id,
+                                outcome.agent_id,
+                                err
+                            );
+                        }
+                        let framed = format!(
+                            "[SUBAGENT_INCOMPLETE] the sub-agent {reason} and did not finish. \
+                             Partial progress:\n{}",
+                            outcome.output
+                        );
+                        let _ = status_tx.send(SubagentStatus::Completed {
+                            output: framed.clone(),
+                            iterations: outcome.iterations,
+                        });
+                        crate::openhuman::agent_orchestration::background_completions::record_completion(
+                            background_parent_session.clone(),
+                            outcome.task_id.clone(),
+                            outcome.agent_id.clone(),
+                            framed,
+                            background_parent_thread_id.clone(),
+                        );
+                        publish_global(DomainEvent::SubagentCompleted {
+                            parent_session: background_parent_session,
+                            task_id: outcome.task_id.clone(),
+                            agent_id: outcome.agent_id.clone(),
+                            elapsed_ms: outcome.elapsed.as_millis() as u64,
+                            output_chars: outcome.output.chars().count(),
+                            iterations: outcome.iterations,
+                        });
+                        if let Some(ref tx) = background_progress {
+                            let _ = tx
+                                .send(AgentProgress::SubagentCompleted {
+                                    agent_id: outcome.agent_id,
+                                    task_id: outcome.task_id,
+                                    elapsed_ms: outcome.elapsed.as_millis() as u64,
+                                    iterations: outcome.iterations as u32,
+                                    output_chars: outcome.output.chars().count(),
+                                    worktree_path: None,
+                                    changed_files: Vec::new(),
+                                    dirty_status: None,
+                                })
+                                .await;
+                        }
+                    }
                     SubagentRunStatus::AwaitingUser { ref question, .. } => {
                         if let Err(err) = subagent_sessions::mark_finished(
                             &background_store,

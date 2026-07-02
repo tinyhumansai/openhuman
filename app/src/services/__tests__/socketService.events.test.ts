@@ -324,6 +324,49 @@ describe('socketService — agent_meetings event handlers (lines 428-480)', () =
     );
   });
 
+  it('dispatches appendBackendMeetTranscriptDelta on agent_meetings:transcript_delta', async () => {
+    const { handlers, mockSocket } = buildMockSocket();
+    vi.doMock('socket.io-client', () => ({ io: vi.fn(() => mockSocket) }));
+    getCoreRpcUrlMock.mockResolvedValue('http://127.0.0.1:7788/rpc');
+
+    const { socketService } = await import('../socketService');
+    socketService.connect('jwt-test-meet-delta');
+
+    await pollUntil(() => expect(handlers['agent_meetings:transcript_delta']).toBeDefined());
+    handlers['agent_meetings:transcript_delta']!({
+      turn: { role: 'user', content: 'hello' },
+      index: 2,
+      is_partial: true,
+      correlation_id: 'corr-1',
+    });
+
+    expect(storeMock.dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: {
+          turn: { role: 'user', content: 'hello' },
+          index: 2,
+          is_partial: true,
+          correlationId: 'corr-1',
+        },
+      })
+    );
+  });
+
+  it('drops a transcript_delta with a missing/invalid turn', async () => {
+    const { handlers, mockSocket } = buildMockSocket();
+    vi.doMock('socket.io-client', () => ({ io: vi.fn(() => mockSocket) }));
+    getCoreRpcUrlMock.mockResolvedValue('http://127.0.0.1:7788/rpc');
+
+    const { socketService } = await import('../socketService');
+    socketService.connect('jwt-test-meet-delta-bad');
+
+    await pollUntil(() => expect(handlers['agent_meetings:transcript_delta']).toBeDefined());
+    storeMock.dispatch.mockClear();
+    handlers['agent_meetings:transcript_delta']!({ index: 0, is_partial: false });
+
+    expect(storeMock.dispatch).not.toHaveBeenCalled();
+  });
+
   it('dispatches setBackendMeetError on agent_meetings:error', async () => {
     const { handlers, mockSocket } = buildMockSocket();
     vi.doMock('socket.io-client', () => ({ io: vi.fn(() => mockSocket) }));

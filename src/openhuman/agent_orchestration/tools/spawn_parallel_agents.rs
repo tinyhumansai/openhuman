@@ -8,7 +8,6 @@ use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::file_state;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
-use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -51,7 +50,7 @@ struct ParallelAgentTask {
     base_ref: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ParallelAgentResult {
     task_id: String,
@@ -460,25 +459,38 @@ impl Tool for SpawnParallelAgentsTool {
             "[spawn_parallel_agents] prepared_tasks"
         );
 
-        let futures =
-            prepared
-                .into_iter()
-                .map(|(definition, prompt, task, task_id, worktree_path)| {
-                    let repo_root = action_root.clone();
-                    async move {
-                        run_one_parallel_task(
-                            definition,
-                            prompt,
-                            task,
-                            task_id,
-                            worktree_path,
-                            repo_root,
-                        )
-                        .await
-                    }
-                });
+        // Fan the prepared workers out on the tinyagents graph (dispatch ->
+        // parallel worker nodes -> collect barrier) instead of a hand-rolled
+        // `join_all`. Results come back in prepared order, then we append them
+        // after the immediate (pre-flight failed) ones — the same ordering as
+        // before. `max_concurrency` = worker count preserves the prior
+        // all-at-once behaviour.
+        let max_concurrency = prepared.len().max(1);
+        let action_root_for_workers = action_root.clone();
+        let fanned = crate::openhuman::tinyagents::orchestration::run_parallel_fanout(
+            "spawn_parallel_agents",
+            prepared,
+            max_concurrency,
+            move |_i, (definition, prompt, task, task_id, worktree_path)| {
+                let repo_root = action_root_for_workers.clone();
+                async move {
+                    run_one_parallel_task(
+                        definition,
+                        prompt,
+                        task,
+                        task_id,
+                        worktree_path,
+                        repo_root,
+                    )
+                    .await
+                }
+            },
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
+
         let mut results = immediate_results;
-        for result in join_all(futures).await {
+        for result in fanned {
             match &result {
                 ParallelAgentResult {
                     success: true,

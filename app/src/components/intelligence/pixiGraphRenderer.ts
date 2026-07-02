@@ -14,6 +14,7 @@
  * interacting) we redraw each frame; once it cools the loop idles.
  */
 import { Application, Container, type FederatedPointerEvent, Graphics } from 'pixi.js';
+import 'pixi.js/unsafe-eval';
 
 import {
   createSimulation,
