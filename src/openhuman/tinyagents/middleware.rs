@@ -75,6 +75,20 @@ pub struct TurnContextMiddleware {
     /// non-chat path) skips it. Only the chat turn sets this — and only when its
     /// gate (`should_run_super_context`) passes.
     pub super_context: Option<SuperContextConfig>,
+    /// Progressive-disclosure handoff: when set (integrations_agent with a
+    /// resolved toolkit), oversized tool results are stashed in the shared
+    /// [`ResultHandoffCache`] and replaced with an `extract_from_result` drill-in
+    /// placeholder. `None` everywhere else.
+    pub handoff: Option<HandoffConfig>,
+}
+
+/// Config for the [`HandoffMiddleware`]: the per-spawn cache (shared with the
+/// `extract_from_result` tool) plus the ids used in handoff log lines.
+#[derive(Clone)]
+pub struct HandoffConfig {
+    pub cache: Arc<crate::openhuman::agent::harness::subagent_runner::ResultHandoffCache>,
+    pub agent_id: String,
+    pub task_id: String,
 }
 
 /// Inputs the [`SuperContextMiddleware`] node needs to run its first-turn
@@ -97,6 +111,7 @@ impl TurnContextMiddleware {
             microcompact_keep_recent: 0,
             autocompact_enabled: true,
             super_context: None,
+            handoff: None,
         }
     }
 
@@ -133,6 +148,16 @@ impl TurnContextMiddleware {
                 keep_recent: self.microcompact_keep_recent,
             }));
         }
+        // Handoff runs BEFORE the tool-output budget so an oversized payload is
+        // stashed + replaced with a short placeholder first; the byte cap would
+        // otherwise shrink it below the handoff threshold and defeat the drill-in.
+        if let Some(handoff) = self.handoff {
+            harness.push_middleware(Arc::new(HandoffMiddleware {
+                cache: handoff.cache,
+                agent_id: handoff.agent_id,
+                task_id: handoff.task_id,
+            }));
+        }
         if self.tool_result_budget_bytes > 0 || self.payload_summarizer.is_some() {
             harness.push_middleware(Arc::new(ToolOutputMiddleware {
                 budget_bytes: self.tool_result_budget_bytes,
@@ -140,6 +165,42 @@ impl TurnContextMiddleware {
                 tool_sets: tool_sets.to_vec(),
             }));
         }
+    }
+}
+
+/// `after_tool`: progressive-disclosure handoff (issue #4249 1b). An oversized
+/// sub-agent tool result is stashed in the shared [`ResultHandoffCache`] and its
+/// content replaced with a short placeholder naming a `result_id` the model can
+/// drill into via `extract_from_result`. Restores the seam the legacy
+/// `SubagentToolSource` ran on every tool result (via `apply_handoff`), which the
+/// agent_graph rewrite dropped. Errors and `extract_from_result`'s own output
+/// pass through unchanged (handled inside `apply_handoff`).
+pub struct HandoffMiddleware {
+    cache: Arc<crate::openhuman::agent::harness::subagent_runner::ResultHandoffCache>,
+    agent_id: String,
+    task_id: String,
+}
+
+#[async_trait]
+impl Middleware<()> for HandoffMiddleware {
+    fn name(&self) -> &str {
+        "result_handoff"
+    }
+
+    async fn after_tool(
+        &self,
+        _ctx: &mut RunContext<()>,
+        _state: &(),
+        result: &mut TaToolResult,
+    ) -> TaResult<()> {
+        result.content = crate::openhuman::agent::harness::subagent_runner::apply_handoff(
+            &self.cache,
+            &result.name,
+            &self.task_id,
+            &self.agent_id,
+            std::mem::take(&mut result.content),
+        );
+        Ok(())
     }
 }
 
@@ -354,16 +415,13 @@ struct ToolOutputMiddleware {
 }
 
 impl ToolOutputMiddleware {
-    /// Effective byte cap for `name`: the tool's own `max_result_size_chars`
-    /// when it declares one (treated as bytes — a conservative approximation),
-    /// else the shared fallback `budget_bytes`.
-    fn effective_budget(&self, name: &str) -> usize {
+    /// The tool's own declared character cap, if any.
+    fn tool_char_cap(&self, name: &str) -> Option<usize> {
         self.tool_sets
             .iter()
             .flat_map(|set| set.iter())
             .find(|t| t.name() == name)
             .and_then(|t| t.max_result_size_chars())
-            .unwrap_or(self.budget_bytes)
     }
 }
 
@@ -397,12 +455,35 @@ impl Middleware<()> for ToolOutputMiddleware {
             }
         }
 
-        // 2. Hard byte cap backstop — truncate at a UTF-8 boundary with a marker.
-        //    Honor the tool's own declared cap first, else the shared fallback.
-        let budget = self.effective_budget(&result.name);
-        if budget > 0 {
+        // 2. Per-tool **char** cap — a tool that declares `max_result_size_chars`
+        //    caps its own output in characters, with the tool-cap marker the model
+        //    was taught to read (legacy engine parity). Distinct from the generic
+        //    byte budget below: the tool cap is the tool's own contract.
+        let tool_cap = self.tool_char_cap(&result.name);
+        if let Some(cap) = tool_cap {
+            let char_count = result.content.chars().count();
+            if char_count > cap {
+                let truncated: String = result.content.chars().take(cap).collect();
+                let dropped = char_count - cap;
+                tracing::debug!(
+                    tool = %result.name,
+                    cap,
+                    char_count,
+                    dropped,
+                    "[tinyagents::mw] per-tool char cap applied"
+                );
+                result.content = format!(
+                    "{truncated}\n\n[truncated by tool cap: {dropped} more chars not shown]"
+                );
+            }
+        }
+
+        // 3. Shared byte-cap backstop — truncate at a UTF-8 boundary with a marker.
+        //    Only for tools with no cap of their own (a capped tool already bounded
+        //    itself above; stacking the two markers would double-truncate).
+        if tool_cap.is_none() && self.budget_bytes > 0 {
             let (capped, outcome) =
-                apply_tool_result_budget(std::mem::take(&mut result.content), budget);
+                apply_tool_result_budget(std::mem::take(&mut result.content), self.budget_bytes);
             if outcome.truncated {
                 tracing::debug!(
                     tool = %result.name,
@@ -515,6 +596,278 @@ impl ToolMiddleware<()> for ApprovalSecurityMiddleware {
     }
 }
 
+/// `wrap_tool`: refuse a tool whose scope is
+/// [`ToolScope::CliRpcOnly`](crate::openhuman::tools::ToolScope) inside the
+/// autonomous agent loop (issue #4249). The in-house engine ran this gate in
+/// `engine::tools`; the tinyagents path dropped it, so a CLI/RPC-only tool
+/// (e.g. phone calls) would execute from the model loop. Applies on every path
+/// (channel, session, sub-agent) since the restriction is intrinsic to the tool,
+/// not the session — installed unconditionally.
+pub struct CliRpcOnlyMiddleware {
+    tool_sets: Vec<Arc<Vec<Box<dyn Tool>>>>,
+}
+
+impl CliRpcOnlyMiddleware {
+    pub fn new(tool_sets: Vec<Arc<Vec<Box<dyn Tool>>>>) -> Self {
+        Self { tool_sets }
+    }
+
+    fn is_cli_rpc_only(&self, name: &str) -> bool {
+        self.tool_sets
+            .iter()
+            .flat_map(|set| set.iter())
+            .find(|t| t.name() == name)
+            .map(|t| t.scope() == crate::openhuman::tools::ToolScope::CliRpcOnly)
+            .unwrap_or(false)
+    }
+}
+
+#[async_trait]
+impl ToolMiddleware<()> for CliRpcOnlyMiddleware {
+    fn name(&self) -> &str {
+        "cli_rpc_only"
+    }
+
+    async fn wrap_tool(
+        &self,
+        ctx: &mut RunContext<()>,
+        state: &(),
+        call: TaToolCall,
+        next: ToolHandler<'_, (), ()>,
+    ) -> TaResult<MiddlewareToolOutcome> {
+        if self.is_cli_rpc_only(&call.name) {
+            tracing::warn!(
+                tool = call.name.as_str(),
+                "[tinyagents::mw] tool scope is CliRpcOnly — denied in agent loop"
+            );
+            let content = format!(
+                "Tool '{}' is only available via explicit CLI/RPC invocation, not in the autonomous agent loop.",
+                call.name
+            );
+            return Ok(MiddlewareToolOutcome::Result(TaToolResult {
+                call_id: call.id,
+                name: call.name,
+                content: content.clone(),
+                raw: None,
+                error: Some(content),
+                elapsed_ms: 0,
+            }));
+        }
+        next.run(ctx, state, call).await
+    }
+}
+
+/// `wrap_tool`: enforce the agent's builder-configured [`ToolPolicy`] at the tool
+/// boundary (issue #4249). The in-house engine ran this check in
+/// `agent_tool_exec` (`ctx.tool_policy.check(...)`); the tinyagents path bypassed
+/// it, so a `.tool_policy()` deny/require-approval silently no-opped and the tool
+/// executed anyway — a security regression. This middleware restores it: a
+/// blocking decision short-circuits with a model-consumable result carrying the
+/// same `"Tool '<name>' <denied|requires approval> by policy '<policy>': <reason>"`
+/// wording the engine produced.
+pub struct ToolPolicyMiddleware {
+    policy: Arc<dyn crate::openhuman::agent::tool_policy::ToolPolicy>,
+    /// The session's channel-permission snapshot — enforces the per-channel deny
+    /// + per-call permission-level ceiling the engine ran in `agent_tool_exec`.
+    session: crate::openhuman::agent_tool_policy::ToolPolicySession,
+    /// Shared tool sets (same `Arc`s the runner registers) so a call's OpenHuman
+    /// `Tool` can be resolved for its generated-tool runtime context and its
+    /// per-call permission level.
+    tool_sets: Vec<Arc<Vec<Box<dyn Tool>>>>,
+    /// The advertised (visible) tool-name whitelist. Non-empty = restricted; a
+    /// call outside it is "not available to this agent" (the engine's first gate).
+    /// A non-visible tool is never registered, so it reaches here rewritten onto
+    /// the recovery sentinel — its original name rides `requested_tool`.
+    visible_tool_names: HashSet<String>,
+    session_id: String,
+    channel: String,
+    agent_definition_id: String,
+}
+
+impl ToolPolicyMiddleware {
+    pub fn new(
+        policy: Arc<dyn crate::openhuman::agent::tool_policy::ToolPolicy>,
+        session: crate::openhuman::agent_tool_policy::ToolPolicySession,
+        tool_sets: Vec<Arc<Vec<Box<dyn Tool>>>>,
+        visible_tool_names: HashSet<String>,
+        session_id: String,
+        channel: String,
+        agent_definition_id: String,
+    ) -> Self {
+        Self {
+            policy,
+            session,
+            tool_sets,
+            visible_tool_names,
+            session_id,
+            channel,
+            agent_definition_id,
+        }
+    }
+
+    fn resolve_tool(&self, name: &str) -> Option<&Box<dyn Tool>> {
+        self.tool_sets
+            .iter()
+            .flat_map(|set| set.iter())
+            .find(|t| t.name() == name)
+    }
+
+    /// The channel-permission gate the engine ran before the builder policy: a
+    /// session-level deny, then a per-call permission-level ceiling check. Returns
+    /// the blocking message when the call must not execute.
+    fn channel_permission_block(&self, call: &TaToolCall) -> Option<String> {
+        let decision = self.session.decision_for(&call.name);
+        if decision.is_denied() {
+            let required = decision
+                .required_permission
+                .map(|permission| permission.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            return Some(format!(
+                "Tool '{}' blocked by tool policy: requires {}, channel '{}' allows {}",
+                call.name, required, self.channel, decision.allowed_permission
+            ));
+        }
+        let tool = self.resolve_tool(&call.name)?;
+        let call_required = tool.permission_level_with_args(&call.arguments);
+        if call_required > decision.allowed_permission {
+            return Some(format!(
+                "Tool '{}' action requires {} permission, channel '{}' allows {}",
+                call.name, call_required, self.channel, decision.allowed_permission
+            ));
+        }
+        None
+    }
+
+    fn generated_context(
+        &self,
+        name: &str,
+        args: &serde_json::Value,
+    ) -> Option<crate::openhuman::agent::tool_policy::GeneratedToolRuntimeContext> {
+        self.tool_sets
+            .iter()
+            .flat_map(|set| set.iter())
+            .find(|t| t.name() == name)
+            .and_then(|t| t.generated_runtime_context(args))
+    }
+}
+
+#[async_trait]
+impl ToolMiddleware<()> for ToolPolicyMiddleware {
+    fn name(&self) -> &str {
+        "tool_policy"
+    }
+
+    async fn wrap_tool(
+        &self,
+        ctx: &mut RunContext<()>,
+        state: &(),
+        call: TaToolCall,
+        next: ToolHandler<'_, (), ()>,
+    ) -> TaResult<MiddlewareToolOutcome> {
+        use crate::openhuman::agent::tool_policy::{
+            ToolCallContext, ToolPolicyDecision, ToolPolicyRequest,
+        };
+
+        // A call the model made to a tool outside the visible set was registered
+        // nowhere, so it arrives rewritten onto the recovery sentinel with the
+        // original name on `requested_tool`. When the session restricts visibility
+        // (non-empty set) and that original tool isn't visible, the engine's first
+        // gate produced "not available to this agent" — reproduce it here (takes
+        // precedence over the generic "Unknown tool" sentinel wording). A genuinely
+        // unknown call with no visibility restriction still falls through to the
+        // sentinel's "Unknown tool" result.
+        if call.name == UNKNOWN_TOOL_SENTINEL {
+            if !self.visible_tool_names.is_empty() {
+                let requested = call
+                    .arguments
+                    .get("requested_tool")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                if !requested.is_empty() && !self.visible_tool_names.contains(requested) {
+                    let content = format!("Tool '{requested}' is not available to this agent");
+                    return Ok(MiddlewareToolOutcome::Result(TaToolResult {
+                        call_id: call.id,
+                        name: call.name,
+                        content: content.clone(),
+                        raw: None,
+                        error: Some(content),
+                        elapsed_ms: 0,
+                    }));
+                }
+            }
+            return next.run(ctx, state, call).await;
+        }
+
+        // Channel-permission ceiling first (session deny + per-call permission
+        // level), mirroring the engine order in `agent_tool_exec`.
+        if let Some(message) = self.channel_permission_block(&call) {
+            tracing::debug!(
+                tool = call.name.as_str(),
+                channel = self.channel.as_str(),
+                "[tinyagents::mw] tool blocked by channel permission ceiling"
+            );
+            return Ok(MiddlewareToolOutcome::Result(TaToolResult {
+                call_id: call.id,
+                name: call.name,
+                content: message.clone(),
+                raw: None,
+                error: Some(message),
+                elapsed_ms: 0,
+            }));
+        }
+
+        let context = ToolCallContext::session(
+            self.session_id.clone(),
+            self.channel.clone(),
+            self.agent_definition_id.clone(),
+            call.id.clone(),
+            1,
+        );
+        let mut request =
+            ToolPolicyRequest::new(call.name.clone(), call.arguments.clone(), context);
+        if let Some(generated) = self.generated_context(&call.name, &call.arguments) {
+            request = request.with_generated_tool_context(generated);
+        }
+
+        let decision = self.policy.check(&request).await;
+        if let Some(reason) = decision.blocking_reason() {
+            let blocked_action = match &decision {
+                ToolPolicyDecision::RequireApproval { .. } => "requires approval",
+                ToolPolicyDecision::Deny { .. } => "denied",
+                ToolPolicyDecision::Allow => "allowed",
+            };
+            crate::openhuman::tool_registry::denials::record(
+                call.name.as_str(),
+                self.policy.name(),
+                blocked_action,
+                reason,
+            );
+            tracing::debug!(
+                tool = call.name.as_str(),
+                policy = self.policy.name(),
+                action = blocked_action,
+                reason = %reason,
+                "[tinyagents::mw] tool blocked by policy"
+            );
+            let content = format!(
+                "Tool '{}' {blocked_action} by policy '{}': {reason}",
+                call.name,
+                self.policy.name()
+            );
+            return Ok(MiddlewareToolOutcome::Result(TaToolResult {
+                call_id: call.id,
+                name: call.name,
+                content: content.clone(),
+                raw: None,
+                error: Some(content),
+                elapsed_ms: 0,
+            }));
+        }
+
+        next.run(ctx, state, call).await
+    }
+}
+
 /// `before_tool`: rewrite a call to an **unadvertised** tool onto the recovery
 /// sentinel (issue #4249, Phase 1 Task B) so a hallucinated tool name is a
 /// recoverable [`UnknownToolAdapter`](super::tools::UnknownToolAdapter) result
@@ -559,6 +912,79 @@ impl Middleware<()> for UnknownToolRewriteMiddleware {
             );
             call.arguments = serde_json::json!({ "requested_tool": requested });
             call.name = UNKNOWN_TOOL_SENTINEL.to_string();
+        }
+        Ok(())
+    }
+}
+
+/// `after_tool`: capture each tool call's execution outcome (success + content)
+/// into a shared sink before the harness folds the result into a `Message::tool`
+/// that drops the `error` flag (issue #4249). Without this, a post-turn
+/// `ToolCallRecord` could only report every call as an optimistic success — the
+/// in-house engine tracked real per-call success. Runs last in the `after_tool`
+/// chain so it records the final (summarized/capped) content the transcript keeps.
+pub struct ToolOutcomeCaptureMiddleware {
+    sink: super::ToolOutcomeSink,
+}
+
+impl ToolOutcomeCaptureMiddleware {
+    pub fn new(sink: super::ToolOutcomeSink) -> Self {
+        Self { sink }
+    }
+}
+
+#[async_trait]
+impl Middleware<()> for ToolOutcomeCaptureMiddleware {
+    fn name(&self) -> &str {
+        "tool_outcome_capture"
+    }
+
+    async fn after_tool(
+        &self,
+        _ctx: &mut RunContext<()>,
+        _state: &(),
+        result: &mut TaToolResult,
+    ) -> TaResult<()> {
+        if let Ok(mut sink) = self.sink.lock() {
+            sink.push(super::ToolCallOutcome {
+                call_id: result.call_id.clone(),
+                name: result.name.clone(),
+                success: result.error.is_none(),
+                content: result.content.clone(),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// `before_tool`: coerce a tool call's arguments to an empty object when they
+/// are not a JSON object (issue #4249). A model can emit malformed native
+/// arguments (invalid JSON, or a bare scalar/array); the model adapter parses
+/// those to `Value::Null`, which the harness then rejects against an object
+/// schema and aborts the whole turn. The in-house engine recovered such a call by
+/// running the tool with `{}`; restore that so a single bad tool call is
+/// recoverable rather than fatal. The recovery sentinel's own
+/// `{ "requested_tool": … }` payload is already an object, so it is untouched.
+pub struct ArgRecoveryMiddleware;
+
+#[async_trait]
+impl Middleware<()> for ArgRecoveryMiddleware {
+    fn name(&self) -> &str {
+        "arg_recovery"
+    }
+
+    async fn before_tool(
+        &self,
+        _ctx: &mut RunContext<()>,
+        _state: &(),
+        call: &mut TaToolCall,
+    ) -> TaResult<()> {
+        if !call.arguments.is_object() {
+            tracing::debug!(
+                tool = call.name.as_str(),
+                "[tinyagents::mw] recovering non-object tool arguments to {{}}"
+            );
+            call.arguments = serde_json::json!({});
         }
         Ok(())
     }
@@ -626,32 +1052,86 @@ impl Middleware<()> for CostBudgetMiddleware {
     }
 }
 
-/// `after_tool`: stop the run when a tool returns the **same** error result
-/// repeatedly (issue #4249). The legacy tool loop's progress guard halted on a
-/// repeated deterministic failure — a security/approval denial, or a terminal
-/// tool error the model keeps reissuing — so the run surfaced the root cause
-/// instead of burning the whole iteration budget and then a generic cap failure.
-/// The tinyagents path kept only the generic model/tool call caps, so this
-/// reinstates the breaker as a graph middleware: after `threshold` consecutive
-/// identical error signatures (`tool name` + error text), it pauses the run via
-/// the shared steering handle (the same mechanism as the stop-hook / cap pausers).
-/// Any successful tool result resets the counter — progress was made.
+/// Consecutive **any**-failure no-progress backstop: different commands all
+/// failing means the goal is unreachable here. Matches the legacy
+/// `NO_PROGRESS_FAILURE_THRESHOLD`.
+const NO_PROGRESS_FAILURE_THRESHOLD: usize = 6;
+/// Consecutive **identical** hard-policy-rejection repeats before halting — a
+/// blocked call re-issued unchanged can never succeed. Legacy
+/// `HARD_REJECT_REPEAT_THRESHOLD`.
+const HARD_REJECT_REPEAT_THRESHOLD: usize = 2;
+
+/// `after_tool`: stop the run when tool calls keep failing with no progress
+/// (issue #4249). The legacy tool loop's progress guard surfaced a root-cause
+/// halt summary — a security/approval denial re-issued unchanged, an identical
+/// error retried, or *different* commands all failing — instead of burning the
+/// whole iteration budget and ending on a generic cap error. The tinyagents path
+/// kept only the model/tool call caps, so this reinstates the guard as a graph
+/// middleware. Three halt conditions, checked per failure (any success resets
+/// every counter — progress was made):
+///
+/// 1. **Hard policy rejection** (`[policy-blocked]`) repeated `HARD_REJECT_REPEAT_THRESHOLD`
+///    times with an identical signature — "blocked by the security policy … re-issued".
+/// 2. **Identical** error signature repeated `identical_threshold` times —
+///    "retried N times with identical arguments".
+/// 3. **Any** failure `NO_PROGRESS_FAILURE_THRESHOLD` times in a row (even with
+///    varied errors) — "N tool calls in a row failed".
+///
+/// On trip it records a root-cause summary into the shared [`HaltSummarySlot`]
+/// (the turn overrides its final text with it) and pauses the run via the shared
+/// steering handle (same mechanism as the stop-hook / cap pausers).
 pub struct RepeatedToolFailureMiddleware {
     handle: SteeringHandle,
-    threshold: usize,
-    last: std::sync::Mutex<Option<(String, usize)>>,
+    identical_threshold: usize,
+    halt_summary: super::HaltSummarySlot,
+    state: std::sync::Mutex<FailureState>,
+    /// call_id → argument fingerprint, captured in `before_tool` (the tool result
+    /// carries no arguments). Folded into the identical-repeat signature so the
+    /// "identical arguments" halt only trips on the *same* args — two different
+    /// argument sets that happen to share a first error line don't count as a
+    /// repeat and can't pre-empt the generic no-progress backstop.
+    arg_sigs: std::sync::Mutex<std::collections::HashMap<String, String>>,
+}
+
+#[derive(Default)]
+struct FailureState {
+    last_sig: Option<String>,
+    same_count: usize,
+    consecutive: usize,
 }
 
 impl RepeatedToolFailureMiddleware {
-    /// Build the breaker. `threshold` is clamped to at least 2 (a single failure
-    /// is never a loop).
-    pub fn new(handle: SteeringHandle, threshold: usize) -> Self {
+    /// Build the breaker. `identical_threshold` (the identical-signature retry
+    /// ceiling) is clamped to at least 2 — a single failure is never a loop.
+    pub fn new(
+        handle: SteeringHandle,
+        identical_threshold: usize,
+        halt_summary: super::HaltSummarySlot,
+    ) -> Self {
         Self {
             handle,
-            threshold: threshold.max(2),
-            last: std::sync::Mutex::new(None),
+            identical_threshold: identical_threshold.max(2),
+            halt_summary,
+            state: std::sync::Mutex::new(FailureState::default()),
+            arg_sigs: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
+}
+
+/// A stable, bounded fingerprint of a tool call's arguments for the identical-
+/// repeat signature (hashed so a huge payload doesn't bloat the map/comparison).
+fn args_fingerprint(arguments: &serde_json::Value) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    arguments.to_string().hash(&mut hasher);
+    format!("{:x}", hasher.finish())
+}
+
+/// Trim a tool error for inclusion in a halt summary (keep it bounded but retain
+/// the deterministic leading detail the model/user needs).
+fn truncate_for_halt(text: &str) -> String {
+    const MAX: usize = 600;
+    crate::openhuman::util::truncate_with_ellipsis(text, MAX)
 }
 
 #[async_trait]
@@ -660,43 +1140,118 @@ impl Middleware<()> for RepeatedToolFailureMiddleware {
         "repeated_tool_failure"
     }
 
+    async fn before_tool(
+        &self,
+        _ctx: &mut RunContext<()>,
+        _state: &(),
+        call: &mut TaToolCall,
+    ) -> TaResult<()> {
+        // The tool result carries no arguments, so capture a fingerprint here and
+        // correlate it by call_id in `after_tool`.
+        if let Ok(mut sigs) = self.arg_sigs.lock() {
+            sigs.insert(call.id.clone(), args_fingerprint(&call.arguments));
+        }
+        Ok(())
+    }
+
     async fn after_tool(
         &self,
         _ctx: &mut RunContext<()>,
         _state: &(),
         result: &mut TaToolResult,
     ) -> TaResult<()> {
-        let mut guard = self.last.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
+        let arg_fp = self
+            .arg_sigs
+            .lock()
+            .ok()
+            .and_then(|mut sigs| sigs.remove(&result.call_id))
+            .unwrap_or_default();
         let Some(err) = result.error.as_deref() else {
-            // Success → progress was made; reset the breaker.
-            *guard = None;
+            // Success → progress was made; reset every counter.
+            *state = FailureState::default();
             return Ok(());
         };
-        // Signature: tool name + error text. Truncate the error so a huge payload
-        // doesn't dominate the comparison (the first line is the deterministic part).
-        let sig = format!("{}\u{1f}{}", result.name, err.lines().next().unwrap_or(err));
-        let count = match guard.as_mut() {
-            Some((prev, c)) if *prev == sig => {
-                *c += 1;
-                *c
+
+        // Signature: tool name + argument fingerprint + first error line (the
+        // deterministic parts; a huge payload tail must not dominate the
+        // identical-repeat comparison). Including the args means the "identical
+        // arguments" halt only fires when the args truly repeat.
+        let err_line = err.lines().next().unwrap_or(err);
+        let sig = format!("{}\u{1f}{arg_fp}\u{1f}{err_line}", result.name);
+        // The unknown-tool recovery is a failure the model can correct (it got the
+        // "unknown tool" feedback), so it must NOT feed the generic *any*-failure
+        // no-progress counter — else a turn that recovers from one bad tool name
+        // and then legitimately exhausts its iteration budget would trip the
+        // backstop instead of hitting the cap. It still feeds the *identical*-repeat
+        // counter, so re-issuing the SAME unavailable tool halts with a root cause.
+        if result.name != UNKNOWN_TOOL_SENTINEL {
+            state.consecutive += 1;
+        }
+        let same_count = match &state.last_sig {
+            Some(prev) if *prev == sig => {
+                state.same_count += 1;
+                state.same_count
             }
             _ => {
-                *guard = Some((sig, 1));
+                state.last_sig = Some(sig);
+                state.same_count = 1;
                 1
             }
         };
-        if count >= self.threshold {
+
+        // A hard policy rejection is marked in the tool output; it can never
+        // succeed when re-issued unchanged, so it trips faster.
+        let is_hard_reject = result
+            .content
+            .contains(crate::openhuman::security::POLICY_BLOCKED_MARKER)
+            || err.contains(crate::openhuman::security::POLICY_BLOCKED_MARKER);
+
+        let summary = if is_hard_reject && same_count >= HARD_REJECT_REPEAT_THRESHOLD {
+            Some(format!(
+                "Stopping: the `{}` call is blocked by the security policy and was re-issued with \
+                 identical arguments — it can never succeed this way. Reason:\n{}\n\nDo not repeat \
+                 this call; use an allowed alternative or report that it can't be done here.",
+                result.name,
+                truncate_for_halt(err),
+            ))
+        } else if same_count >= self.identical_threshold {
+            Some(format!(
+                "Stopping: the `{}` call was retried {same_count} times with identical arguments \
+                 and kept failing — repeating it will not help. Last error:\n{}\n\nThis looks \
+                 unrecoverable in the current environment. Report this back instead of retrying.",
+                result.name,
+                truncate_for_halt(err),
+            ))
+        } else if state.consecutive >= NO_PROGRESS_FAILURE_THRESHOLD {
+            Some(format!(
+                "Stopping: {} tool calls in a row failed with no progress. Last error (from \
+                 `{}`):\n{}\n\nDifferent commands are all failing — the goal looks unreachable in \
+                 this environment. Report this back instead of retrying.",
+                state.consecutive,
+                result.name,
+                truncate_for_halt(err),
+            ))
+        } else {
+            None
+        };
+
+        if let Some(summary) = summary {
             tracing::warn!(
                 tool = %result.name,
-                count,
-                threshold = self.threshold,
-                "[tinyagents::mw] repeated identical tool failure — pausing run so the root cause surfaces"
+                consecutive = state.consecutive,
+                same_count,
+                is_hard_reject,
+                "[tinyagents::mw] repeated tool failure — halting run so the root cause surfaces"
             );
+            if let Ok(mut slot) = self.halt_summary.lock() {
+                *slot = Some(summary);
+            }
             // Pause at the top of the next iteration (before the next model call),
             // matching the stop-hook / cap pause path. Reset so a resumed run does
-            // not immediately re-pause on the same latched signature.
+            // not immediately re-pause on the same latched state.
             self.handle.send(SteeringCommand::Pause);
-            *guard = None;
+            *state = FailureState::default();
         }
         Ok(())
     }
@@ -939,7 +1494,7 @@ mod tests {
     }
 
     #[test]
-    fn effective_budget_prefers_the_tools_own_cap() {
+    fn tool_char_cap_reads_the_tools_own_declared_cap() {
         let tools: Arc<Vec<Box<dyn Tool>>> = Arc::new(vec![Box::new(FakeTool {
             name: "big",
             cap: Some(10),
@@ -950,10 +1505,10 @@ mod tests {
             payload_summarizer: None,
             tool_sets: vec![tools],
         };
-        // Tool declares its own cap → used instead of the flat fallback.
-        assert_eq!(mw.effective_budget("big"), 10);
-        // Unknown tool → the flat fallback.
-        assert_eq!(mw.effective_budget("other"), 1_000);
+        // Tool declares its own char cap → surfaced for the per-tool truncation.
+        assert_eq!(mw.tool_char_cap("big"), Some(10));
+        // Unknown tool → no per-tool cap (the flat byte budget applies instead).
+        assert_eq!(mw.tool_char_cap("other"), None);
     }
 
     #[tokio::test]
@@ -971,8 +1526,10 @@ mod tests {
         let mut result = tool_result("capped", &"y".repeat(500));
         mw.after_tool(&mut ctx(), &(), &mut result).await.unwrap();
         assert!(
-            result.content.contains("truncated by tool_result_budget"),
-            "the tool's own 20-byte cap should truncate: {}",
+            result
+                .content
+                .contains("truncated by tool cap: 480 more chars not shown"),
+            "the tool's own 20-char cap should truncate with the tool-cap marker: {}",
             result.content
         );
     }
@@ -1042,7 +1599,11 @@ mod tests {
     #[tokio::test]
     async fn repeated_tool_failure_pauses_only_after_the_threshold() {
         let handle = SteeringHandle::allow_all();
-        let mw = RepeatedToolFailureMiddleware::new(handle.clone(), 3);
+        let mw = RepeatedToolFailureMiddleware::new(
+            handle.clone(),
+            3,
+            std::sync::Arc::new(std::sync::Mutex::new(None)),
+        );
         // Two identical failures: below the threshold, no pause.
         for _ in 0..2 {
             let mut r = failing_result("flaky", "boom");
@@ -1061,7 +1622,11 @@ mod tests {
     #[tokio::test]
     async fn repeated_tool_failure_resets_on_a_success() {
         let handle = SteeringHandle::allow_all();
-        let mw = RepeatedToolFailureMiddleware::new(handle.clone(), 3);
+        let mw = RepeatedToolFailureMiddleware::new(
+            handle.clone(),
+            3,
+            std::sync::Arc::new(std::sync::Mutex::new(None)),
+        );
         // Two failures, then a success clears the counter.
         for _ in 0..2 {
             let mut r = failing_result("t", "boom");
@@ -1080,7 +1645,11 @@ mod tests {
     #[tokio::test]
     async fn repeated_tool_failure_ignores_distinct_errors() {
         let handle = SteeringHandle::allow_all();
-        let mw = RepeatedToolFailureMiddleware::new(handle.clone(), 3);
+        let mw = RepeatedToolFailureMiddleware::new(
+            handle.clone(),
+            3,
+            std::sync::Arc::new(std::sync::Mutex::new(None)),
+        );
         // Three *different* errors never trip the breaker — only an identical,
         // deterministic failure loop does.
         for err in ["e1", "e2", "e3"] {

@@ -4940,6 +4940,8 @@ const messages: TranslationMap = {
   'skills.meetingBots.liveStatusListening': '正在收听（已静音）',
   'skills.meetingBots.liveStatusEnded': '会议已结束',
   'skills.meetingBots.liveStatusError': '加入失败',
+  'skills.meetingBots.liveTranscriptHeading': '实时转录',
+  'skills.meetingBots.liveTranscriptEmpty': '等待语音…',
   'skills.meetingBots.leaveButton': '离开',
   'skills.meetingBots.leavingButton': '正在离开…',
   'skills.meetingBots.respondToParticipant': '您在此会议中的姓名',

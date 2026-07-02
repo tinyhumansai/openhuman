@@ -5150,6 +5150,8 @@ const messages: TranslationMap = {
   'skills.meetingBots.liveStatusListening': '듣는 중 (음소거)',
   'skills.meetingBots.liveStatusEnded': '회의 종료',
   'skills.meetingBots.liveStatusError': '참가 실패',
+  'skills.meetingBots.liveTranscriptHeading': '실시간 자막',
+  'skills.meetingBots.liveTranscriptEmpty': '음성 대기 중…',
   'skills.meetingBots.leaveButton': '나가기',
   'skills.meetingBots.leavingButton': '나가는 중…',
   'skills.meetingBots.respondToParticipant': '이 회의에서 내 이름',

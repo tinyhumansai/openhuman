@@ -5285,6 +5285,8 @@ const messages: TranslationMap = {
   'skills.meetingBots.liveStatusListening': 'In ascolto (muto)',
   'skills.meetingBots.liveStatusEnded': 'Riunione terminata',
   'skills.meetingBots.liveStatusError': 'Partecipazione fallita',
+  'skills.meetingBots.liveTranscriptHeading': 'Trascrizione dal vivo',
+  'skills.meetingBots.liveTranscriptEmpty': 'In attesa di parlato…',
   'skills.meetingBots.leaveButton': 'Esci',
   'skills.meetingBots.leavingButton': 'Uscita in corso…',
   'skills.meetingBots.respondToParticipant': 'Il tuo nome in questa riunione',

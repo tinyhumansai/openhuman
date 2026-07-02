@@ -341,6 +341,32 @@ pub(super) fn handle_sio_event(
                 correlation_id,
             });
         }
+        "bot:transcript_delta" => {
+            // Incremental mid-call transcript turn (issue #4304). Relayed live
+            // to the renderer; the terminal `bot:transcript` stays authoritative
+            // for thread creation / summary (handled by MeetingEventSubscriber).
+            match parse_transcript_delta(&data) {
+                Some((turn, index, is_partial, correlation_id)) => {
+                    log::info!(
+                        "[socket] bot:transcript_delta index={} is_partial={} role={}",
+                        index,
+                        is_partial,
+                        turn.role
+                    );
+                    publish_global(DomainEvent::BackendMeetTranscriptDelta {
+                        turn,
+                        index,
+                        is_partial,
+                        correlation_id,
+                    });
+                }
+                None => {
+                    log::warn!(
+                        "[socket] bot:transcript_delta dropped: missing/invalid 'turn' field"
+                    );
+                }
+            }
+        }
         "bot:in_call_request" => {
             let correlation_id = data
                 .get("correlationId")
@@ -469,6 +495,30 @@ fn base64_encode(input: &str) -> String {
     base64::engine::general_purpose::STANDARD.encode(input.as_bytes())
 }
 
+/// Parse a `bot:transcript_delta` payload (issue #4304) into its event fields.
+///
+/// Expected shape: `{ turn: { role, content }, index, isPartial, correlationId }`.
+/// Returns `None` when the required `turn` object is missing or malformed so the
+/// caller can drop the event rather than publish a degenerate turn. `index`
+/// defaults to 0 and `isPartial` to `false` (final) when absent.
+fn parse_transcript_delta(
+    data: &serde_json::Value,
+) -> Option<(BackendMeetTurn, u64, bool, Option<String>)> {
+    let turn: BackendMeetTurn = data
+        .get("turn")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())?;
+    let index = data.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
+    let is_partial = data
+        .get("isPartial")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let correlation_id = data
+        .get("correlationId")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    Some((turn, index, is_partial, correlation_id))
+}
+
 /// Send a Socket.IO event through the emit channel.
 ///
 /// Format: `42["eventName", data]`
@@ -577,6 +627,41 @@ mod tests {
     #[test]
     fn parse_sio_event_returns_none_when_json_invalid() {
         assert!(parse_sio_event(r#"[invalid json"#).is_none());
+    }
+
+    // ── parse_transcript_delta (bot:transcript_delta, #4304) ────────
+
+    #[test]
+    fn parse_transcript_delta_extracts_all_fields() {
+        let data = json!({
+            "turn": { "role": "user", "content": "hello there" },
+            "index": 3,
+            "isPartial": true,
+            "correlationId": "corr-123"
+        });
+        let (turn, index, is_partial, correlation_id) = parse_transcript_delta(&data).unwrap();
+        assert_eq!(turn.role, "user");
+        assert_eq!(turn.content, "hello there");
+        assert_eq!(index, 3);
+        assert!(is_partial);
+        assert_eq!(correlation_id.as_deref(), Some("corr-123"));
+    }
+
+    #[test]
+    fn parse_transcript_delta_defaults_index_partial_and_correlation() {
+        let data = json!({ "turn": { "role": "assistant", "content": "hi" } });
+        let (turn, index, is_partial, correlation_id) = parse_transcript_delta(&data).unwrap();
+        assert_eq!(turn.role, "assistant");
+        assert_eq!(index, 0);
+        assert!(!is_partial);
+        assert!(correlation_id.is_none());
+    }
+
+    #[test]
+    fn parse_transcript_delta_returns_none_without_turn() {
+        assert!(parse_transcript_delta(&json!({ "index": 1, "isPartial": false })).is_none());
+        // Malformed turn (missing required fields) is also dropped.
+        assert!(parse_transcript_delta(&json!({ "turn": { "role": "user" } })).is_none());
     }
 
     // ── handle_sio_event dispatch ───────────────────────────────────

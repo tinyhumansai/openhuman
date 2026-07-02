@@ -46,7 +46,7 @@ use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::inference::provider::{ChatMessage, ConversationMessage, Provider};
 
 pub use checkpoint::SqlRunLedgerCheckpointer;
-pub use middleware::{SuperContextConfig, TurnContextMiddleware};
+pub use middleware::{HandoffConfig, SuperContextConfig, TurnContextMiddleware};
 pub use model::{ProviderModel, ThinkingForwarder};
 pub use observability::{CapPauser, IterationCursor, OpenhumanEventBridge, SubagentScope};
 pub use tools::{
@@ -55,7 +55,24 @@ pub use tools::{
 };
 
 use std::collections::HashSet;
+use std::sync::Arc as StdArc;
 use tokio::sync::mpsc::Sender;
+
+/// The builder-configured [`ToolPolicy`](crate::openhuman::agent::tool_policy::ToolPolicy)
+/// plus the session context a policy check needs, handed to the shared turn seam
+/// so it can install the [`ToolPolicyMiddleware`](middleware::ToolPolicyMiddleware).
+/// `None` means "no policy enforcement on this turn" (the channel/CLI + sub-agent
+/// paths, which carry their own gating).
+pub struct ToolPolicyEnforcement {
+    pub policy: StdArc<dyn crate::openhuman::agent::tool_policy::ToolPolicy>,
+    /// The session's channel-permission snapshot — enforces the per-channel
+    /// permission ceiling (deny + per-call permission-level gate) the in-house
+    /// engine ran in `agent_tool_exec`.
+    pub session: crate::openhuman::agent_tool_policy::ToolPolicySession,
+    pub session_id: String,
+    pub channel: String,
+    pub agent_definition_id: String,
+}
 
 /// Drain the run queue's pending steer messages and forward them to the
 /// tinyagents [`SteeringHandle`] as injected user turns (the harness applies
@@ -65,6 +82,21 @@ async fn forward_steers(queue: &RunQueue, handle: &SteeringHandle) {
     for msg in queue.drain_steers().await {
         handle.send(SteeringCommand::InjectMessage(TaMessage::user(format!(
             "[User steering message]: {}",
+            msg.text
+        ))));
+    }
+}
+
+/// Forward any queued **collect** messages (orchestrator/monitor lines enqueued
+/// via `QueueMode::Collect`) into the run as injected user turns so they reach the
+/// next LLM call as additional context. The in-house loop drained these each
+/// iteration (`drain_collects`); the tinyagents rewrite wired only `forward_steers`
+/// (issue #4249), so monitor lines never reached the model. Mirrors the legacy
+/// `[Additional context from user]:` framing the model was taught to read.
+async fn forward_collects(queue: &RunQueue, handle: &SteeringHandle) {
+    for msg in queue.drain_collects().await {
+        handle.send(SteeringCommand::InjectMessage(TaMessage::user(format!(
+            "[Additional context from user]: {}",
             msg.text
         ))));
     }
@@ -144,7 +176,35 @@ pub struct TinyagentsTurnOutcome {
     /// should summarize a resumable checkpoint rather than treat `text` as a
     /// final answer — the tinyagents analogue of `CheckpointStrategy::on_max_iter`.
     pub hit_cap: bool,
+    /// Per-tool-call execution outcomes (success + raw result content), keyed by
+    /// provider call id, captured at the tool boundary. The harness folds a tool
+    /// result into a `Message::tool` that drops its `error` flag, so this is the
+    /// only place the caller can recover whether each call actually failed — used
+    /// to build honest `ToolCallRecord`s for post-turn hooks + the cap checkpoint.
+    pub tool_outcomes: Vec<ToolCallOutcome>,
 }
+
+/// One tool call's execution outcome, captured at the tool boundary before the
+/// harness discards the failure flag. `success` mirrors the absence of a
+/// `TaToolResult::error`; `content` is the (possibly summarized/capped) result
+/// text used to derive a sanitized post-turn summary.
+#[derive(Debug, Clone)]
+pub struct ToolCallOutcome {
+    pub call_id: String,
+    pub name: String,
+    pub success: bool,
+    pub content: String,
+}
+
+/// Shared sink the [`ToolOutcomeCaptureMiddleware`](middleware::ToolOutcomeCaptureMiddleware)
+/// appends each tool call's outcome to, drained into the turn outcome.
+pub type ToolOutcomeSink = std::sync::Arc<std::sync::Mutex<Vec<ToolCallOutcome>>>;
+
+/// Shared slot the repeated-failure breaker writes a root-cause halt summary into
+/// when it trips. The turn overrides its final text with this summary so the
+/// no-progress halt surfaces the cause instead of an empty/last-model reply
+/// (legacy `RepeatFailureGuard` parity).
+pub type HaltSummarySlot = std::sync::Arc<std::sync::Mutex<Option<String>>>;
 
 /// Drive an agent turn through the `tinyagents` agent-loop harness.
 ///
@@ -222,6 +282,8 @@ pub async fn run_turn_via_tinyagents(
         ),
         early_exit_tool: None,
         hit_cap: false,
+        // This thin variant carries no per-call outcome capture middleware.
+        tool_outcomes: Vec::new(),
     })
 }
 
@@ -268,6 +330,7 @@ pub async fn run_turn_via_tinyagents_shared(
     pause_at_cap: bool,
     max_output_tokens: Option<u32>,
     context_mw: TurnContextMiddleware,
+    tool_policy: Option<ToolPolicyEnforcement>,
 ) -> Result<TinyagentsTurnOutcome> {
     // `0` means "unset" → the legacy default (a native-bus / test convention);
     // otherwise the harness model-call cap would be zero and abort the run before
@@ -391,10 +454,12 @@ pub async fn run_turn_via_tinyagents_shared(
     // error `REPEATED_TOOL_FAILURE_THRESHOLD` times in a row, so a deterministic
     // security/approval denial or terminal tool error surfaces its root cause
     // instead of burning the whole iteration budget (legacy ProgressGuard parity).
+    let halt_summary: HaltSummarySlot = std::sync::Arc::new(std::sync::Mutex::new(None));
     if let Some(handle) = &handle {
         harness.push_middleware(Arc::new(middleware::RepeatedToolFailureMiddleware::new(
             handle.clone(),
             REPEATED_TOOL_FAILURE_THRESHOLD,
+            halt_summary.clone(),
         )));
     }
 
@@ -454,6 +519,38 @@ pub async fn run_turn_via_tinyagents_shared(
         tool_sets.clone(),
     )));
 
+    // CLI/RPC-only scope gate — a tool restricted to explicit CLI/RPC invocation
+    // must not run from the model loop. Intrinsic to the tool, so installed on
+    // every path (channel/session/sub-agent).
+    harness.push_tool_middleware(Arc::new(middleware::CliRpcOnlyMiddleware::new(
+        tool_sets.clone(),
+    )));
+
+    // Capture each tool call's real success + content before the harness folds the
+    // result into a `Message::tool` that drops the failure flag, so the turn can
+    // build honest per-call `ToolCallRecord`s (post-turn hooks + cap checkpoint).
+    let tool_outcome_sink: ToolOutcomeSink = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    harness.push_middleware(Arc::new(middleware::ToolOutcomeCaptureMiddleware::new(
+        tool_outcome_sink.clone(),
+    )));
+
+    // Builder-configured tool policy (`.tool_policy()`), enforced at the tool
+    // boundary. The in-house engine ran this in `agent_tool_exec`; the tinyagents
+    // path bypassed it, so a deny/require-approval silently no-opped (security
+    // regression). Installed only when the caller threads an enforcement context
+    // (the session chat path); channel/CLI + sub-agent paths pass `None`.
+    if let Some(enforcement) = tool_policy {
+        harness.push_tool_middleware(Arc::new(middleware::ToolPolicyMiddleware::new(
+            enforcement.policy,
+            enforcement.session,
+            tool_sets.clone(),
+            allowed.clone(),
+            enforcement.session_id,
+            enforcement.channel,
+            enforcement.agent_definition_id,
+        )));
+    }
+
     // Unknown-tool recovery as a `before_tool` middleware (issue #4249, Phase 1
     // Task B): a call to an unadvertised tool is rewritten onto the recovery
     // sentinel before the harness resolves it, so a hallucinated tool name is a
@@ -462,6 +559,12 @@ pub async fn run_turn_via_tinyagents_shared(
     harness.push_middleware(Arc::new(middleware::UnknownToolRewriteMiddleware::new(
         valid_tools,
     )));
+
+    // Malformed-argument recovery (`before_tool`): coerce a call's non-object
+    // arguments (invalid JSON parses to Null) to `{}` so a single bad tool call is
+    // recoverable — the harness would otherwise reject it against an object schema
+    // and abort the whole turn. Engine parity.
+    harness.push_middleware(Arc::new(middleware::ArgRecoveryMiddleware));
 
     let config = RunConfig::new("agent_turn")
         .with_max_model_calls(max_iterations)
@@ -483,6 +586,14 @@ pub async fn run_turn_via_tinyagents_shared(
     let mut ctx = RunContext::new(config, ());
 
     let streaming = on_progress.is_some();
+    // Retain a clone of the progress sink so the turn can emit a terminal
+    // `TurnCompleted` after the run (the harness event stream the bridge mirrors
+    // has no run-completed event). Parent turns only — a sub-agent turn reports
+    // via its `Subagent*` events, not a top-level `TurnCompleted`.
+    let turn_completed_sink = subagent_scope
+        .is_none()
+        .then(|| on_progress.clone())
+        .flatten();
     // A sink is needed to mirror progress (bridge) or to observe model-call
     // completions for the cap pauser.
     let events = (on_progress.is_some() || pause_at_cap).then(EventSink::new);
@@ -521,6 +632,7 @@ pub async fn run_turn_via_tinyagents_shared(
     let steering_forwarder = if let Some(handle) = handle {
         if let Some(queue) = run_queue.clone() {
             forward_steers(&queue, &handle).await;
+            forward_collects(&queue, &handle).await;
         }
         ctx = ctx.with_steering(handle.clone());
         run_queue.map(|queue| {
@@ -528,6 +640,7 @@ pub async fn run_turn_via_tinyagents_shared(
                 loop {
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                     forward_steers(&queue, &handle).await;
+                    forward_collects(&queue, &handle).await;
                 }
             })
         })
@@ -573,6 +686,15 @@ pub async fn run_turn_via_tinyagents_shared(
             return Err(anyhow::anyhow!("tinyagents harness run failed: {e}"));
         }
     };
+    // Terminal turn event (parity with the legacy engine's `progress::emit`): the
+    // harness stream has no run-completed event, so emit `TurnCompleted` here with
+    // the model-call count as the iteration total. Parent turns only; best-effort.
+    if let Some(sink) = &turn_completed_sink {
+        let _ = sink.try_send(AgentProgress::TurnCompleted {
+            iterations: run.model_calls as u32,
+        });
+    }
+
     let bridge_totals = bridge.map(|bridge| bridge.totals_with_cost());
 
     // Prefer the bridge's accumulated usage (per-call, authoritative — including
@@ -601,15 +723,39 @@ pub async fn run_turn_via_tinyagents_shared(
     // cap hit. An early-exit is a clean pause and takes precedence; under
     // `pause_at_cap` the only other `Pause` source is the cap pauser, so this is
     // unambiguous. (`run_queue` steering injects messages, never pauses.)
+    // The repeated-failure breaker halts the run with a root-cause summary instead
+    // of a final model turn; surface it as the turn's text so the no-progress cause
+    // reaches the caller/user rather than an empty reply.
+    let breaker_halt = halt_summary.lock().ok().and_then(|mut s| s.take());
+
+    // Cap detection: the harness sets `final_response` only when the loop
+    // finishes naturally (the model stopped requesting tools). When the cap
+    // pauser stops the loop mid-work, `final_response` stays `None` — that's the
+    // cap hit. An early-exit is a clean pause and takes precedence; under
+    // `pause_at_cap` the only other `Pause` source is the cap pauser, so this is
+    // unambiguous. (`run_queue` steering injects messages, never pauses.) A
+    // breaker halt is *not* a cap hit: it already carries a root-cause summary, so
+    // treating it as a cap would let the caller (sub-agent runner) overwrite that
+    // summary with a generic checkpoint digest.
     let hit_cap = pause_at_cap
         && early_exit.is_none()
+        && breaker_halt.is_none()
         && run.model_calls >= max_iterations
         && run.final_response.is_none();
 
-    let (early_exit_tool, text) = match early_exit {
+    let (early_exit_tool, mut text) = match early_exit {
         Some(exit) => (Some(exit.tool), exit.question),
         None => (None, run.text().unwrap_or_default()),
     };
+
+    if let Some(summary) = breaker_halt {
+        text = summary;
+    }
+
+    let tool_outcomes = tool_outcome_sink
+        .lock()
+        .map(|guard| guard.clone())
+        .unwrap_or_default();
 
     Ok(TinyagentsTurnOutcome {
         text,
@@ -625,6 +771,7 @@ pub async fn run_turn_via_tinyagents_shared(
         charged_amount_usd,
         early_exit_tool,
         hit_cap,
+        tool_outcomes,
     })
 }
 

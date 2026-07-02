@@ -444,7 +444,6 @@ async fn max_iteration_checkpoint_uses_deterministic_fallback_and_hooks() {
         })
         .context_config(ContextConfig::default())
         .explicit_preferences_enabled(false)
-        .unified_compaction_enabled(false)
         .build()
         .unwrap();
     let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel(16);
@@ -518,7 +517,6 @@ async fn builder_validation_and_system_prompt_cover_defaults_and_learning() {
         .explicit_preferences_enabled(true)
         .omit_profile(false)
         .omit_memory_md(false)
-        .unified_compaction_enabled(true)
         .build()
         .unwrap();
 

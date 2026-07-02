@@ -23,6 +23,45 @@ use tinyagents::harness::tool::{ToolCall as TaToolCall, ToolSchema};
 use crate::openhuman::inference::provider::{ChatMessage, ConversationMessage, ToolResultMessage};
 use crate::openhuman::tools::ToolSpec;
 
+/// Key under which a thinking model's `reasoning_content` is stashed on an
+/// assistant [`Message`]'s content blocks (as a [`ContentBlock::ProviderExtension`])
+/// and echoed back through openhuman [`ChatMessage::extra_metadata`]. tinyagents'
+/// `AssistantMessage` has no reasoning channel of its own, so we carry it here so
+/// it survives the round-trip and can be replayed verbatim on the next turn
+/// (thinking-mode providers reject a multi-turn request that drops it).
+pub(super) const REASONING_EXT_KEY: &str = "reasoning_content";
+
+/// Build the [`ContentBlock`] that stashes a response's `reasoning_content` on an
+/// assistant message, if any.
+pub(super) fn reasoning_content_block(reasoning: Option<&str>) -> Option<ContentBlock> {
+    let reasoning = reasoning?;
+    // Store verbatim (only gate on non-empty after a trim): thinking-mode
+    // providers validate the prior reasoning block byte-for-byte on a resumed
+    // multi-turn request, so trimming boundary whitespace could break replay.
+    (!reasoning.trim().is_empty()).then(|| {
+        ContentBlock::ProviderExtension(serde_json::json!({ REASONING_EXT_KEY: reasoning }))
+    })
+}
+
+/// Recover the stashed `reasoning_content` from an assistant message's content
+/// blocks (see [`reasoning_content_block`]).
+fn reasoning_from_content(content: &[ContentBlock]) -> Option<String> {
+    content.iter().find_map(|block| match block {
+        ContentBlock::ProviderExtension(value) => value
+            .get(REASONING_EXT_KEY)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+        _ => None,
+    })
+}
+
+/// The `extra_metadata` an assistant [`ChatMessage`] should carry so a stashed
+/// `reasoning_content` replays on the next provider request.
+fn reasoning_extra_metadata(content: &[ContentBlock]) -> Option<serde_json::Value> {
+    reasoning_from_content(content)
+        .map(|reasoning| serde_json::json!({ REASONING_EXT_KEY: reasoning }))
+}
+
 /// Convert one openhuman [`ChatMessage`] into a harness [`Message`].
 ///
 /// Role strings map onto the typed arms. A seeded **native** tool round is
@@ -42,17 +81,29 @@ pub(super) fn chat_message_to_message(msg: &ChatMessage) -> Message {
             content: vec![ContentBlock::Text(text)],
         }),
         "assistant" => {
+            // Restore any `reasoning_content` stashed on the persisted message so a
+            // multi-turn thinking-mode conversation replays it verbatim (see
+            // [`reasoning_content_block`]).
+            let reasoning = msg
+                .extra_metadata
+                .as_ref()
+                .and_then(|meta| meta.get(REASONING_EXT_KEY))
+                .and_then(serde_json::Value::as_str);
             if let Some((inner, tool_calls)) = parse_native_assistant_envelope(&text) {
+                let mut content = vec![ContentBlock::Text(inner)];
+                content.extend(reasoning_content_block(reasoning));
                 Message::Assistant(AssistantMessage {
                     id: msg.id.clone(),
-                    content: vec![ContentBlock::Text(inner)],
+                    content,
                     tool_calls,
                     usage: None,
                 })
             } else {
+                let mut content = vec![ContentBlock::Text(text)];
+                content.extend(reasoning_content_block(reasoning));
                 Message::Assistant(AssistantMessage {
                     id: msg.id.clone(),
-                    content: vec![ContentBlock::Text(text)],
+                    content,
                     tool_calls: Vec::new(),
                     usage: None,
                 })
@@ -140,7 +191,11 @@ pub(super) fn message_to_chat_message(msg: &Message) -> ChatMessage {
     match msg {
         Message::System(_) => ChatMessage::system(msg.text()),
         Message::User(_) => ChatMessage::user(msg.text()),
-        Message::Assistant(_) => ChatMessage::assistant(msg.text()),
+        Message::Assistant(a) => {
+            let mut cm = ChatMessage::assistant(msg.text());
+            cm.extra_metadata = reasoning_extra_metadata(&a.content);
+            cm
+        }
         Message::Tool(t) => {
             let mut cm = ChatMessage::tool(msg.text());
             cm.id = Some(t.tool_call_id.clone());
@@ -173,9 +228,15 @@ pub(super) fn message_to_native_chat_message(msg: &Message) -> ChatMessage {
                 "content": msg.text(),
                 "tool_calls": tool_calls,
             });
-            ChatMessage::assistant(payload.to_string())
+            let mut cm = ChatMessage::assistant(payload.to_string());
+            cm.extra_metadata = reasoning_extra_metadata(&a.content);
+            cm
         }
-        Message::Assistant(_) => ChatMessage::assistant(msg.text()),
+        Message::Assistant(a) => {
+            let mut cm = ChatMessage::assistant(msg.text());
+            cm.extra_metadata = reasoning_extra_metadata(&a.content);
+            cm
+        }
         Message::Tool(t) => {
             let payload = serde_json::json!({
                 "tool_call_id": t.tool_call_id,
@@ -225,16 +286,16 @@ pub(super) fn messages_to_conversation(messages: &[Message]) -> Vec<Conversation
             Message::Assistant(a) => {
                 flush(&mut out, &mut pending);
                 if a.tool_calls.is_empty() {
-                    out.push(ConversationMessage::Chat(ChatMessage::assistant(
-                        msg.text(),
-                    )));
+                    let mut chat = ChatMessage::assistant(msg.text());
+                    chat.extra_metadata = reasoning_extra_metadata(&a.content);
+                    out.push(ConversationMessage::Chat(chat));
                 } else {
                     let text = msg.text();
                     out.push(ConversationMessage::AssistantToolCalls {
                         text: (!text.is_empty()).then_some(text),
                         tool_calls: a.tool_calls.iter().map(ta_call_to_oh_call).collect(),
-                        reasoning_content: None,
-                        extra_metadata: None,
+                        reasoning_content: reasoning_from_content(&a.content),
+                        extra_metadata: reasoning_extra_metadata(&a.content),
                     });
                 }
             }

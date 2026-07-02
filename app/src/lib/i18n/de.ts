@@ -5332,6 +5332,8 @@ const messages: TranslationMap = {
   'skills.meetingBots.liveStatusListening': 'Zuhören (stumm)',
   'skills.meetingBots.liveStatusEnded': 'Meeting beendet',
   'skills.meetingBots.liveStatusError': 'Beitritt fehlgeschlagen',
+  'skills.meetingBots.liveTranscriptHeading': 'Live-Transkript',
+  'skills.meetingBots.liveTranscriptEmpty': 'Warte auf Sprache…',
   'skills.meetingBots.leaveButton': 'Verlassen',
   'skills.meetingBots.leavingButton': 'Wird verlassen…',
   'skills.meetingBots.respondToParticipant': 'Ihr Name in diesem Meeting',

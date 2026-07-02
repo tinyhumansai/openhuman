@@ -5218,6 +5218,8 @@ const messages: TranslationMap = {
   'skills.meetingBots.liveStatusListening': 'Mendengarkan (dibisukan)',
   'skills.meetingBots.liveStatusEnded': 'Rapat selesai',
   'skills.meetingBots.liveStatusError': 'Gagal bergabung',
+  'skills.meetingBots.liveTranscriptHeading': 'Transkrip langsung',
+  'skills.meetingBots.liveTranscriptEmpty': 'Menunggu ucapan…',
   'skills.meetingBots.leaveButton': 'Keluar',
   'skills.meetingBots.leavingButton': 'Keluar\u2026',
   'skills.meetingBots.respondToParticipant': 'Nama Anda di Rapat Ini',

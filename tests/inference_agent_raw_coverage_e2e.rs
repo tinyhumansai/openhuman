@@ -1608,6 +1608,7 @@ named = ["todo", "plan_exit"]
         delegate_name: None,
         agent_tier: AgentTier::Worker,
         source: DefinitionSource::Builtin,
+        graph: Default::default(),
     };
     assert_eq!(fallback_name.display_name(), "fallback_id");
 

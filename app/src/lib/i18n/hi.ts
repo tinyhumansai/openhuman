@@ -5204,6 +5204,8 @@ const messages: TranslationMap = {
   'skills.meetingBots.liveStatusListening': 'सुन रहा है (म्यूट)',
   'skills.meetingBots.liveStatusEnded': 'मीटिंग समाप्त',
   'skills.meetingBots.liveStatusError': 'शामिल होने में विफल',
+  'skills.meetingBots.liveTranscriptHeading': 'लाइव ट्रांसक्रिप्ट',
+  'skills.meetingBots.liveTranscriptEmpty': 'भाषण की प्रतीक्षा…',
   'skills.meetingBots.leaveButton': 'छोड़ें',
   'skills.meetingBots.leavingButton': 'छोड़ रहे हैं…',
   'skills.meetingBots.respondToParticipant': 'इस मीटिंग में आपका नाम',

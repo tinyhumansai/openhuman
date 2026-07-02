@@ -5245,6 +5245,8 @@ const messages: TranslationMap = {
   'skills.meetingBots.liveStatusListening': 'Прослушивание (без звука)',
   'skills.meetingBots.liveStatusEnded': 'Встреча завершена',
   'skills.meetingBots.liveStatusError': 'Ошибка подключения',
+  'skills.meetingBots.liveTranscriptHeading': 'Транскрипция в реальном времени',
+  'skills.meetingBots.liveTranscriptEmpty': 'Ожидание речи…',
   'skills.meetingBots.leaveButton': 'Выйти',
   'skills.meetingBots.leavingButton': 'Выход…',
   'skills.meetingBots.respondToParticipant': 'Ваше имя на этой встрече',
