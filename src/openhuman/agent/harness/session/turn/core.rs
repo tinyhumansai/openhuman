@@ -47,16 +47,95 @@ use std::hash::{Hash, Hasher};
 ///   persisted `content`, so `seed_resume_from_messages` can't drop it) — that
 ///   is still a brand-new conversation and should get super context; AND
 /// - `enabled` — the `context.super_context_enabled` config flag is on.
+/// - `user_message` — the request is not an obvious context-free greeting or
+///   simple local action. Super context is useful when prior memory, profile,
+///   integrations, or web facts can change the answer; it is counterproductive
+///   for "hi"/"ciao" and straightforward local filesystem commands, where an
+///   auto-run scout only adds tool noise before the orchestrator sees intent.
 ///
 /// Pulled out as a pure function so the gate (in particular the resume and
 /// orchestrator guards) is unit-testable without a full agent turn harness.
+fn super_context_skip_reason(user_message: &str) -> Option<&'static str> {
+    let normalized = user_message
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim_matches(|c: char| c.is_ascii_punctuation())
+        .to_ascii_lowercase();
+
+    if normalized.is_empty() {
+        return Some("empty_message");
+    }
+
+    if matches!(
+        normalized.as_str(),
+        "hi" | "hello"
+            | "hey"
+            | "yo"
+            | "ciao"
+            | "hola"
+            | "bonjour"
+            | "thanks"
+            | "thank you"
+            | "ok"
+            | "okay"
+            | "good morning"
+            | "good afternoon"
+            | "good evening"
+            | "good night"
+    ) {
+        return Some("context_free_greeting");
+    }
+
+    let starts_like_local_folder_action = [
+        "create a folder ",
+        "create folder ",
+        "make a folder ",
+        "make folder ",
+        "create a directory ",
+        "create directory ",
+        "make a directory ",
+        "make directory ",
+        "mkdir ",
+    ]
+    .iter()
+    .any(|prefix| normalized.starts_with(prefix));
+
+    if starts_like_local_folder_action {
+        let context_hints = [
+            "discussed",
+            "mentioned",
+            "previous",
+            "earlier",
+            "last time",
+            "email",
+            "gmail",
+            "calendar",
+            "slack",
+            "notion",
+            "github",
+            "drive",
+        ];
+        if !context_hints.iter().any(|hint| normalized.contains(hint)) {
+            return Some("simple_local_filesystem_action");
+        }
+    }
+
+    None
+}
+
 fn should_run_super_context(
     is_orchestrator: bool,
     first_turn: bool,
     has_prior_conversation: bool,
     enabled: bool,
+    user_message: &str,
 ) -> bool {
-    is_orchestrator && first_turn && !has_prior_conversation && enabled
+    is_orchestrator
+        && first_turn
+        && !has_prior_conversation
+        && enabled
+        && super_context_skip_reason(user_message).is_none()
 }
 
 fn parse_context_bundle_has_enough_context(bundle: &str) -> Option<bool> {
@@ -588,11 +667,24 @@ impl Agent {
             .cached_transcript_messages
             .as_ref()
             .is_some_and(|msgs| msgs.iter().any(|m| m.role == "assistant"));
+        let super_context_skip_reason = super_context_skip_reason(user_message);
+        let super_context_base_gate = self.agent_definition_id == "orchestrator"
+            && first_turn
+            && !has_prior_conversation
+            && self.context.super_context_enabled();
+        if super_context_base_gate {
+            if let Some(reason) = super_context_skip_reason {
+                log::info!(
+                    "[agent_loop] super_context skipped for context-free first turn reason={reason}"
+                );
+            }
+        }
         let enriched = if should_run_super_context(
             self.agent_definition_id == "orchestrator",
             first_turn,
             has_prior_conversation,
             self.context.super_context_enabled(),
+            user_message,
         ) {
             log::info!(
                 "[agent_loop] super_context enabled — running harness-driven context collection (new thread, first turn)"
@@ -1230,18 +1322,36 @@ mod super_context_gate_tests {
     #[test]
     fn runs_only_on_first_turn_of_a_new_orchestrator_thread_when_enabled() {
         // Orchestrator, new thread, first turn, flag on → run.
-        assert!(should_run_super_context(true, true, false, true));
+        assert!(should_run_super_context(
+            true,
+            true,
+            false,
+            true,
+            "find the project we discussed yesterday"
+        ));
     }
 
     #[test]
     fn skips_when_flag_disabled() {
-        assert!(!should_run_super_context(true, true, false, false));
+        assert!(!should_run_super_context(
+            true,
+            true,
+            false,
+            false,
+            "find the project we discussed yesterday"
+        ));
     }
 
     #[test]
     fn skips_on_later_turns() {
         // history non-empty → not the first turn.
-        assert!(!should_run_super_context(true, false, false, true));
+        assert!(!should_run_super_context(
+            true,
+            false,
+            false,
+            true,
+            "find the project we discussed yesterday"
+        ));
     }
 
     #[test]
@@ -1250,7 +1360,13 @@ mod super_context_gate_tests {
         // `first_turn` is true) but a seeded prefix that includes a prior
         // assistant reply. Super context must NOT re-fire on these existing
         // conversations.
-        assert!(!should_run_super_context(true, true, true, true));
+        assert!(!should_run_super_context(
+            true,
+            true,
+            true,
+            true,
+            "find the project we discussed yesterday"
+        ));
     }
 
     #[test]
@@ -1259,7 +1375,13 @@ mod super_context_gate_tests {
         // persisted *user* row (no assistant reply), so `has_prior_conversation`
         // is false. That is still a brand-new conversation — super context
         // should run.
-        assert!(should_run_super_context(true, true, false, true));
+        assert!(should_run_super_context(
+            true,
+            true,
+            false,
+            true,
+            "[IMAGE: screenshot.png]\nwhat is this?"
+        ));
     }
 
     #[test]
@@ -1268,7 +1390,41 @@ mod super_context_gate_tests {
         // `run_single()` flows (goals enrichment, cron/task agents,
         // specialist sub-agents). Even on a fresh first turn with the flag on,
         // super context must only run for the user-facing orchestrator.
-        assert!(!should_run_super_context(false, true, false, true));
+        assert!(!should_run_super_context(
+            false,
+            true,
+            false,
+            true,
+            "find the project we discussed yesterday"
+        ));
+    }
+
+    #[test]
+    fn skips_context_free_greeting() {
+        assert!(!should_run_super_context(true, true, false, true, "Ciao"));
+        assert!(!should_run_super_context(true, true, false, true, "hello!"));
+    }
+
+    #[test]
+    fn skips_simple_local_folder_creation() {
+        assert!(!should_run_super_context(
+            true,
+            true,
+            false,
+            true,
+            "Create a folder on Desktop named PROVA"
+        ));
+    }
+
+    #[test]
+    fn keeps_super_context_for_local_action_with_context_hint() {
+        assert!(should_run_super_context(
+            true,
+            true,
+            false,
+            true,
+            "Create a folder for the project we discussed yesterday"
+        ));
     }
 
     #[test]
