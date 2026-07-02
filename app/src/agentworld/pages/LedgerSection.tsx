@@ -9,26 +9,27 @@
  * Pattern mirrors FeedSection: useState + useEffect fetch, PanelScaffold
  * wrapper, StatusBlock for loading/error/empty states.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useState } from 'react';
 
-import PanelScaffold from "../../components/layout/PanelScaffold";
-import { type GqlLedgerTransaction } from "../../lib/agentworld/invokeApiClient";
-import { apiClient } from "../AgentWorldShell";
-import { decimalsForAsset, resolveAssetSymbol } from "../assets";
-import { formatUnits, friendlyNetwork } from "../components/X402ConfirmDialog";
-import { explorerTxUrl } from "../hooks/useX402Buy";
-import { relativeTime } from "../utils/relativeTime";
+import PanelScaffold from '../../components/layout/PanelScaffold';
+import { type GqlLedgerTransaction } from '../../lib/agentworld/invokeApiClient';
+import { apiClient } from '../AgentWorldShell';
+import { decimalsForAsset, resolveAssetSymbol } from '../assets';
+import { formatUnits, friendlyNetwork } from '../components/X402ConfirmDialog';
+import { explorerTxUrl } from '../hooks/useX402Buy';
+import { relativeTime } from '../utils/relativeTime';
+
 // ── State types ───────────────────────────────────────────────────────────────
 
 type LedgerState =
-  | { status: "loading" }
-  | { status: "error"; message: string }
-  | { status: "ok"; transactions: GqlLedgerTransaction[] };
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ok'; transactions: GqlLedgerTransaction[] };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 export function abbreviateAddress(addr: string | undefined): string {
-  if (!addr) return "—";
+  if (!addr) return '—';
   if (addr.length <= 12) return addr;
   return `${addr.slice(0, 4)}…${addr.slice(-4)}`;
 }
@@ -39,12 +40,12 @@ export function abbreviateAddress(addr: string | undefined): string {
  * "1000000" becomes "1,000,000"). Non-numeric strings pass through unchanged.
  */
 export function formatAmount(amount: string | undefined): string {
-  if (!amount) return "—";
+  if (!amount) return '—';
   if (!Number.isFinite(Number(amount))) return amount;
-  const negative = amount.startsWith("-");
+  const negative = amount.startsWith('-');
   const body = negative ? amount.slice(1) : amount;
-  const [intPart, fracPart] = body.split(".");
-  const grouped = Number(intPart).toLocaleString("en-US");
+  const [intPart, fracPart] = body.split('.');
+  const grouped = Number(intPart).toLocaleString('en-US');
   const out = fracPart != null ? `${grouped}.${fracPart}` : grouped;
   return negative ? `-${out}` : out;
 }
@@ -55,10 +56,7 @@ export function formatAmount(amount: string | undefined): string {
  * otherwise every value reads ~1,000,000× too large. `asset` may be a symbol or
  * a mint address; {@link decimalsForAsset} resolves either.
  */
-export function formatLedgerAmount(
-  amount: string | undefined,
-  asset: string | undefined,
-): string {
+export function formatLedgerAmount(amount: string | undefined, asset: string | undefined): string {
   if (!amount) return formatAmount(amount);
   // `formatUnits` assumes an integer base-unit string; if the amount is already
   // decimal/non-integer, pass it straight to grouping instead of mis-scaling it.
@@ -69,15 +67,7 @@ export function formatLedgerAmount(
 }
 
 /** Centered status message for loading / error / info states. */
-function StatusBlock({
-  tone,
-  title,
-  body,
-}: {
-  tone: string;
-  title: string;
-  body?: string;
-}) {
+function StatusBlock({ tone, title, body }: { tone: string; title: string; body?: string }) {
   return (
     <div className="flex h-64 flex-col items-center justify-center gap-2 text-center">
       <p className={`text-base font-medium ${tone}`}>{title}</p>
@@ -90,17 +80,15 @@ function StatusBlock({
 
 export function StatusBadge({ status }: { status: string }) {
   const color =
-    status === "SETTLED"
-      ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
-      : status === "PENDING"
-        ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
-        : status === "FAILED"
-          ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
-          : "bg-surface-subtle text-content-secondary";
+    status === 'SETTLED'
+      ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+      : status === 'PENDING'
+        ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+        : status === 'FAILED'
+          ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+          : 'bg-surface-subtle text-content-secondary';
   return (
-    <span
-      className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${color}`}
-    >
+    <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${color}`}>
       {status}
     </span>
   );
@@ -110,17 +98,16 @@ export function StatusBadge({ status }: { status: string }) {
 
 function TypeBadge({ type }: { type: string }) {
   const color =
-    type === "REGISTRATION"
-      ? "bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400"
-      : type === "SALE"
-        ? "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400"
-        : type === "FEE"
-          ? "bg-surface-subtle text-content-secondary"
-          : "bg-surface-subtle text-content-secondary";
+    type === 'REGISTRATION'
+      ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
+      : type === 'SALE'
+        ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
+        : type === 'FEE'
+          ? 'bg-surface-subtle text-content-secondary'
+          : 'bg-surface-subtle text-content-secondary';
   return (
     <span
-      className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${color}`}
-    >
+      className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${color}`}>
       {type}
     </span>
   );
@@ -130,22 +117,16 @@ function TypeBadge({ type }: { type: string }) {
 
 function TypeIcon({ type }: { type: string }) {
   const color =
-    type === "REGISTRATION"
-      ? "bg-primary-50 text-primary-600 dark:bg-primary-900/30 dark:text-primary-400"
-      : type === "SALE"
-        ? "bg-purple-50 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400"
-        : "bg-surface-subtle text-content-muted";
+    type === 'REGISTRATION'
+      ? 'bg-primary-50 text-primary-600 dark:bg-primary-900/30 dark:text-primary-400'
+      : type === 'SALE'
+        ? 'bg-purple-50 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400'
+        : 'bg-surface-subtle text-content-muted';
   return (
     <div
       className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${color}`}
-      aria-hidden="true"
-    >
-      <svg
-        className="h-4 w-4"
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
+      aria-hidden="true">
+      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path
           strokeLinecap="round"
           strokeLinejoin="round"
@@ -174,8 +155,7 @@ function TransactionRow({
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-muted dark:hover:bg-surface-muted/50"
-      >
+        className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-muted dark:hover:bg-surface-muted/50">
         <TypeIcon type={tx.type} />
 
         {/* Content */}
@@ -184,7 +164,7 @@ function TransactionRow({
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold text-content">
               {formatLedgerAmount(tx.amount, tx.asset)}
-              {tx.asset ? ` ${resolveAssetSymbol(tx.asset)}` : ""}
+              {tx.asset ? ` ${resolveAssetSymbol(tx.asset)}` : ''}
             </span>
             <TypeBadge type={tx.type} />
             <StatusBadge status={tx.status} />
@@ -197,8 +177,7 @@ function TransactionRow({
               className="h-3 w-3 shrink-0 text-content-faint"
               fill="none"
               stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
+              viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -224,17 +203,15 @@ function TransactionRow({
                 target="_blank"
                 rel="noopener noreferrer"
                 className="whitespace-nowrap text-xs font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
-                onClick={(e) => e.stopPropagation()}
-              >
+                onClick={e => e.stopPropagation()}>
                 View on chain
               </a>
             )}
             <svg
-              className={`h-4 w-4 shrink-0 text-content-faint transition-transform ${expanded ? "rotate-180" : ""}`}
+              className={`h-4 w-4 shrink-0 text-content-faint transition-transform ${expanded ? 'rotate-180' : ''}`}
               fill="none"
               stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
+              viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -260,13 +237,11 @@ function TransactionRow({
 
             {/* Full From */}
             <dt className="font-medium text-content-muted">From</dt>
-            <dd className="break-all font-mono text-content">
-              {tx.from ?? "-"}
-            </dd>
+            <dd className="break-all font-mono text-content">{tx.from ?? '-'}</dd>
 
             {/* Full To */}
             <dt className="font-medium text-content-muted">To</dt>
-            <dd className="break-all font-mono text-content">{tx.to ?? "-"}</dd>
+            <dd className="break-all font-mono text-content">{tx.to ?? '-'}</dd>
 
             {/* Reference */}
             {tx.reference && (
@@ -277,19 +252,13 @@ function TransactionRow({
                 {tx.reference.id && (
                   <>
                     <dt className="font-medium text-content-muted">Ref ID</dt>
-                    <dd className="break-all font-mono text-content">
-                      {tx.reference.id}
-                    </dd>
+                    <dd className="break-all font-mono text-content">{tx.reference.id}</dd>
                   </>
                 )}
                 {tx.reference.parentTxId && (
                   <>
-                    <dt className="font-medium text-content-muted">
-                      Parent Tx
-                    </dt>
-                    <dd className="break-all font-mono text-content">
-                      {tx.reference.parentTxId}
-                    </dd>
+                    <dt className="font-medium text-content-muted">Parent Tx</dt>
+                    <dd className="break-all font-mono text-content">{tx.reference.parentTxId}</dd>
                   </>
                 )}
                 {tx.reference.rate && (
@@ -305,20 +274,15 @@ function TransactionRow({
           {/* Metadata key-value table */}
           {tx.metadata && Object.keys(tx.metadata).length > 0 && (
             <div className="mt-2">
-              <p className="mb-1 text-xs font-medium text-content-muted">
-                Metadata
-              </p>
+              <p className="mb-1 text-xs font-medium text-content-muted">Metadata</p>
               <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
                 {Object.entries(tx.metadata).map(([key, val]) => (
                   <>
-                    <dt
-                      key={`k-${key}`}
-                      className="font-medium text-content-muted"
-                    >
+                    <dt key={`k-${key}`} className="font-medium text-content-muted">
                       {key}
                     </dt>
                     <dd key={`v-${key}`} className="break-all text-content">
-                      {typeof val === "string" ? val : JSON.stringify(val)}
+                      {typeof val === 'string' ? val : JSON.stringify(val)}
                     </dd>
                   </>
                 ))}
@@ -334,29 +298,25 @@ function TransactionRow({
 // ── LedgerSection (main export) ───────────────────────────────────────────────
 
 export default function LedgerSection() {
-  const [ledgerState, setLedgerState] = useState<LedgerState>({
-    status: "loading",
-  });
+  const [ledgerState, setLedgerState] = useState<LedgerState>({ status: 'loading' });
   const [expandedTxId, setExpandedTxId] = useState<string | null>(null);
 
   // ── Fetch ledger transactions ──────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
-    setLedgerState({ status: "loading" });
+    setLedgerState({ status: 'loading' });
 
     // TODO(phase-2-follow-up): implement pagination with offset or cursor.
     void apiClient.graphql
       .ledgerTransactions({ limit: 50 })
-      .then((result) => {
+      .then(result => {
         if (cancelled) return;
-        const transactions = Array.isArray(result?.transactions)
-          ? result.transactions
-          : [];
-        setLedgerState({ status: "ok", transactions });
+        const transactions = Array.isArray(result?.transactions) ? result.transactions : [];
+        setLedgerState({ status: 'ok', transactions });
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setLedgerState({ status: "error", message: String(err) });
+        setLedgerState({ status: 'error', message: String(err) });
       });
 
     return () => {
@@ -368,13 +328,13 @@ export default function LedgerSection() {
 
   let body: React.ReactNode;
 
-  if (ledgerState.status === "loading") {
+  if (ledgerState.status === 'loading') {
     body = (
       <div className="flex h-64 items-center justify-center text-content-faint">
         <span className="animate-pulse text-sm">Loading ledger…</span>
       </div>
     );
-  } else if (ledgerState.status === "error") {
+  } else if (ledgerState.status === 'error') {
     body = (
       <StatusBlock
         tone="text-red-600 dark:text-red-400"
@@ -393,14 +353,12 @@ export default function LedgerSection() {
   } else {
     body = (
       <div className="rounded-lg border border-line bg-surface">
-        {ledgerState.transactions.map((tx) => (
+        {ledgerState.transactions.map(tx => (
           <TransactionRow
             key={tx.txId}
             tx={tx}
             expanded={expandedTxId === tx.txId}
-            onToggle={() =>
-              setExpandedTxId((prev) => (prev === tx.txId ? null : tx.txId))
-            }
+            onToggle={() => setExpandedTxId(prev => (prev === tx.txId ? null : tx.txId))}
           />
         ))}
       </div>
