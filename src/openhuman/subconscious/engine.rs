@@ -69,6 +69,12 @@ const SUBCONSCIOUS_TOOL_CATALOG: &str = "\
 /// tells the user how to recover. See TAURI-RUST-ADC.
 const TOOL_UNSUPPORTED_REASON: &str = "The selected chat model has no tool-use endpoint, so Subconscious can't run. Pick a tool-capable model in Settings > AI.";
 
+/// Surfaced in [`SubconsciousStatus`] when the circuit breaker has halted ticks
+/// because the configured Subconscious model keeps rejecting requests with a
+/// permanent per-minute token cap (413/TPM). Actionable: the fix is the user's
+/// to make (a bigger model/tier), so the message points there.
+const RATE_CAP_HALT_REASON: &str = "Subconscious is paused: the selected model rejected the request because it exceeds your provider's per-minute token limit. Pick a higher-tier model or provider for Subconscious in Settings > AI > Advanced.";
+
 /// Pick the `TrustedAutomationSource` variant for a subconscious tick.
 ///
 /// Extracted from the engine's `run_agent` body so the origin-escalation
@@ -105,6 +111,64 @@ struct EngineState {
     total_ticks: u64,
     consecutive_failures: u64,
     provider_unavailable_reason: Option<String>,
+    /// Signature of the subconscious provider routing (see
+    /// [`subconscious_provider_signature`]) that is permanently rejecting ticks
+    /// with a per-minute token-cap `413`/TPM. While set and still matching the
+    /// live config, ticks skip the agent run entirely instead of re-firing the
+    /// doomed request every interval (TAURI-RUST-HXF — a permanent provider
+    /// rejection re-reported per tick is the cron-billing-flood family, #3913).
+    /// Cleared automatically when the config's signature changes (the user
+    /// switched the Subconscious model/provider/tier). In-memory only: a restart
+    /// re-probes once, then re-halts on the first rejection — one event per
+    /// launch, not a flood.
+    rate_cap_halt_signature: Option<String>,
+}
+
+impl EngineState {
+    /// Pre-tick gate: consult the rate-cap halt against the live provider
+    /// signature. Returns `true` when the tick must skip the agent run because a
+    /// halt is active for the still-current config. A halt whose signature no
+    /// longer matches (the user switched Subconscious model/provider/tier) is
+    /// cleared here and the tick proceeds. Counts a skipped tick so status stays
+    /// accurate. TAURI-RUST-HXF.
+    fn should_skip_for_rate_cap_halt(&mut self, signature: &str) -> bool {
+        match evaluate_rate_cap_halt(self.rate_cap_halt_signature.as_deref(), signature) {
+            RateCapHaltDecision::Skip => {
+                info!(
+                    "[subconscious] halted — the Subconscious provider keeps hitting a permanent \
+                     per-minute token cap (413/TPM); skipping tick until the model/tier changes \
+                     (TAURI-RUST-HXF)"
+                );
+                self.total_ticks += 1;
+                true
+            }
+            RateCapHaltDecision::Resume => {
+                info!(
+                    "[subconscious] Subconscious provider config changed — clearing rate-cap halt \
+                     and resuming ticks"
+                );
+                self.rate_cap_halt_signature = None;
+                if self.provider_unavailable_reason.as_deref() == Some(RATE_CAP_HALT_REASON) {
+                    self.provider_unavailable_reason = None;
+                }
+                false
+            }
+            RateCapHaltDecision::Proceed => false,
+        }
+    }
+
+    /// Arm the rate-cap halt after a tick failed with a permanent per-minute
+    /// token-cap rejection, so subsequent ticks skip until the provider
+    /// signature changes. Surfaces an actionable reason in
+    /// [`SubconsciousStatus`]. TAURI-RUST-HXF.
+    fn arm_rate_cap_halt(&mut self, signature: &str) {
+        info!(
+            "[subconscious] provider rejected the tick with a permanent per-minute token cap \
+             (413/TPM) — halting until the Subconscious model/tier changes (TAURI-RUST-HXF)"
+        );
+        self.rate_cap_halt_signature = Some(signature.to_string());
+        self.provider_unavailable_reason = Some(RATE_CAP_HALT_REASON.to_string());
+    }
 }
 
 impl SubconsciousEngine {
@@ -142,6 +206,7 @@ impl SubconsciousEngine {
                 total_ticks: 0,
                 consecutive_failures: 0,
                 provider_unavailable_reason: None,
+                rate_cap_halt_signature: None,
             }),
             tick_generation: AtomicU64::new(0),
             tick_lock: Mutex::new(()),
@@ -232,6 +297,20 @@ impl SubconsciousEngine {
                 });
             }
         };
+
+        let provider_signature = subconscious_provider_signature(&config);
+        if self
+            .state
+            .lock()
+            .await
+            .should_skip_for_rate_cap_halt(&provider_signature)
+        {
+            return Ok(TickResult {
+                tick_at,
+                duration_ms: started.elapsed().as_millis() as u64,
+                response_chars: 0,
+            });
+        }
 
         if let Some(reason) = subconscious_provider_unavailable_reason(&config) {
             info!("[subconscious] provider unavailable, skipping tick: {reason}");
@@ -362,6 +441,8 @@ impl SubconsciousEngine {
                         "[subconscious] configured chat model has no tool-use endpoint — Subconscious can't run until the model changes (TAURI-RUST-ADC)"
                     );
                     state.provider_unavailable_reason = Some(TOOL_UNSUPPORTED_REASON.to_string());
+                } else if is_permanent_rate_cap_error(e) {
+                    state.arm_rate_cap_halt(&provider_signature);
                 }
             }
         } else {
@@ -685,6 +766,51 @@ fn resolve_subconscious_route(config: &Config) -> SubconsciousProviderRoute {
     } else {
         SubconsciousProviderRoute::Other(raw.to_string())
     }
+}
+
+/// Stable identity of the Subconscious provider routing — the exact knobs a
+/// user changes in Settings > AI > Advanced to switch the tick model/provider.
+/// The rate-cap circuit breaker keys its halt on this so a permanent per-minute
+/// token-cap rejection stops re-firing while the SAME config is set, and
+/// auto-clears the moment the user picks a different model/provider/tier.
+fn subconscious_provider_signature(config: &Config) -> String {
+    match resolve_subconscious_route(config) {
+        SubconsciousProviderRoute::LocalOllama { model } => format!("local:{model}"),
+        SubconsciousProviderRoute::OpenHumanCloud => "cloud".to_string(),
+        SubconsciousProviderRoute::Other(raw) => format!("other:{raw}"),
+    }
+}
+
+/// Outcome of comparing an active rate-cap halt against the live provider
+/// signature at the start of a tick. Pure so it is unit-testable without
+/// spinning an engine/agent.
+#[derive(Debug, PartialEq, Eq)]
+enum RateCapHaltDecision {
+    /// A halt is set for the same signature still in config — skip the run.
+    Skip,
+    /// A halt is set but the signature changed — clear it and resume ticking.
+    Resume,
+    /// No halt in effect — run the tick normally.
+    Proceed,
+}
+
+/// Decide whether a tick should skip, resume, or proceed given the stored
+/// rate-cap halt signature (if any) and the live provider signature.
+fn evaluate_rate_cap_halt(halt_signature: Option<&str>, current: &str) -> RateCapHaltDecision {
+    match halt_signature {
+        Some(sig) if sig == current => RateCapHaltDecision::Skip,
+        Some(_) => RateCapHaltDecision::Resume,
+        None => RateCapHaltDecision::Proceed,
+    }
+}
+
+/// True when an agent-run error is a permanent per-minute token-cap rejection
+/// (413/TPM) — the request is larger than the provider account's per-minute
+/// budget, so retrying the same tick can never succeed. Delegates to the shared
+/// provider matcher (single source of truth with the Sentry classifier in
+/// `core::observability`) so the wording can't drift. TAURI-RUST-HXF.
+fn is_permanent_rate_cap_error(msg: &str) -> bool {
+    crate::openhuman::inference::provider::is_provider_rate_cap_exceeded_message(msg)
 }
 
 /// True when an agent-run error means the configured chat model can't do tool

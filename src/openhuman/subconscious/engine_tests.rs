@@ -152,3 +152,92 @@ fn render_world_diff_caps_items_and_falls_back_to_item_id() {
     assert!(rendered.contains("[added] item_0"), "uses item_id fallback");
     assert!(rendered.contains("…and 3 more"), "caps the per-source list");
 }
+
+// ── Rate-cap circuit breaker (TAURI-RUST-HXF) ───────────────────────────
+
+#[test]
+fn evaluate_rate_cap_halt_skip_resume_proceed() {
+    // No halt in effect → run normally.
+    assert_eq!(
+        evaluate_rate_cap_halt(None, "other:groq"),
+        RateCapHaltDecision::Proceed
+    );
+    // Halt set for the same signature still in config → skip the doomed run.
+    assert_eq!(
+        evaluate_rate_cap_halt(Some("other:groq"), "other:groq"),
+        RateCapHaltDecision::Skip
+    );
+    // Halt set but the user switched provider/model → clear it and resume.
+    assert_eq!(
+        evaluate_rate_cap_halt(Some("other:groq"), "cloud"),
+        RateCapHaltDecision::Resume
+    );
+}
+
+#[test]
+fn permanent_rate_cap_error_matches_wrapped_groq_agent_error_only() {
+    // The verbatim wrapped agent-run error the tick surfaces (413/TPM) →
+    // permanent, so the breaker halts.
+    assert!(is_permanent_rate_cap_error(
+        r#"agent run: groq API error (413 Payload Too Large): {"error":{"message":"Request too large for model `openai/gpt-oss-120b` in organization `org_x` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 42084."}}"#
+    ));
+    // A transient 429 burst ("try again in Ns") must NOT halt — it stays
+    // retryable, so the two permanent-error arms never overlap.
+    assert!(!is_permanent_rate_cap_error(
+        "agent run: groq API error (429 Too Many Requests): Rate limit reached. Please try again in 2.5s."
+    ));
+    // A tool-capability error is a different permanent condition handled by its
+    // own arm, not the rate-cap breaker.
+    assert!(!is_permanent_rate_cap_error(
+        "agent run: No endpoints found that support tool use"
+    ));
+}
+
+#[test]
+fn subconscious_provider_signature_tracks_config_changes() {
+    // Default config routes to OpenHuman cloud.
+    let mut cfg = Config::default();
+    assert_eq!(subconscious_provider_signature(&cfg), "cloud");
+
+    // A BYO provider override yields a distinct, stable signature.
+    cfg.subconscious_provider = Some("groq".to_string());
+    let groq_sig = subconscious_provider_signature(&cfg);
+    assert_eq!(groq_sig, "other:groq");
+
+    // Switching the provider changes the signature — the breaker's cue to
+    // clear a halt and resume ticking.
+    cfg.subconscious_provider = Some("openai".to_string());
+    assert_ne!(subconscious_provider_signature(&cfg), groq_sig);
+}
+
+#[test]
+fn rate_cap_halt_state_transitions() {
+    let mut state = EngineState {
+        last_tick_at: 0.0,
+        total_ticks: 0,
+        consecutive_failures: 0,
+        provider_unavailable_reason: None,
+        rate_cap_halt_signature: None,
+    };
+
+    // No halt armed → the tick proceeds (does not skip).
+    assert!(!state.should_skip_for_rate_cap_halt("other:groq"));
+
+    // A permanent rate-cap failure arms the halt + actionable reason.
+    state.arm_rate_cap_halt("other:groq");
+    assert_eq!(state.rate_cap_halt_signature.as_deref(), Some("other:groq"));
+    assert_eq!(
+        state.provider_unavailable_reason.as_deref(),
+        Some(RATE_CAP_HALT_REASON)
+    );
+
+    // Same config still set → skip the doomed run, and count the skipped tick.
+    let before = state.total_ticks;
+    assert!(state.should_skip_for_rate_cap_halt("other:groq"));
+    assert_eq!(state.total_ticks, before + 1);
+
+    // User switched provider (signature changed) → clear halt + reason, resume.
+    assert!(!state.should_skip_for_rate_cap_halt("cloud"));
+    assert!(state.rate_cap_halt_signature.is_none());
+    assert!(state.provider_unavailable_reason.is_none());
+}
