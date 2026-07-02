@@ -121,6 +121,15 @@ fn super_context_skip_reason(user_message: &str) -> Option<&'static str> {
     None
 }
 
+fn super_context_base_gate(
+    is_orchestrator: bool,
+    first_turn: bool,
+    has_prior_conversation: bool,
+    enabled: bool,
+) -> bool {
+    is_orchestrator && first_turn && !has_prior_conversation && enabled
+}
+
 fn should_run_super_context(
     is_orchestrator: bool,
     first_turn: bool,
@@ -128,10 +137,7 @@ fn should_run_super_context(
     enabled: bool,
     user_message: &str,
 ) -> bool {
-    is_orchestrator
-        && first_turn
-        && !has_prior_conversation
-        && enabled
+    super_context_base_gate(is_orchestrator, first_turn, has_prior_conversation, enabled)
         && super_context_skip_reason(user_message).is_none()
 }
 
@@ -685,13 +691,15 @@ impl Agent {
             .cached_transcript_messages
             .as_ref()
             .is_some_and(|msgs| msgs.iter().any(|m| m.role == "assistant"));
-        let super_context_skip_reason = super_context_skip_reason(user_message);
-        let super_context_base_gate = self.agent_definition_id == "orchestrator"
-            && first_turn
-            && !has_prior_conversation
-            && self.context.super_context_enabled();
-        if super_context_base_gate {
-            if let Some(reason) = super_context_skip_reason {
+        let skip_reason_for_logging = super_context_skip_reason(user_message);
+        let base_gate = super_context_base_gate(
+            self.agent_definition_id == "orchestrator",
+            first_turn,
+            has_prior_conversation,
+            self.context.super_context_enabled(),
+        );
+        if base_gate {
+            if let Some(reason) = skip_reason_for_logging {
                 log::info!(
                     "[agent_loop] super_context skipped for context-free first turn reason={reason}"
                 );
