@@ -14,42 +14,30 @@
  * Pattern mirrors LedgerSection / FeedSection: useState + useEffect fetch,
  * PanelScaffold wrapper, StatusBlock for loading/error/empty states.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import PanelScaffold from '../../components/layout/PanelScaffold';
-import Button from '../../components/ui/Button';
-import { ModalShell } from '../../components/ui/ModalShell';
+import PanelScaffold from "../../components/layout/PanelScaffold";
+import Button from "../../components/ui/Button";
+import { ModalShell } from "../../components/ui/ModalShell";
 import {
   type GqlJobPosting,
   type JobCreateParams,
   type Proposal,
   type ProposalCreateParams,
-} from '../../lib/agentworld/invokeApiClient';
-import { useT } from '../../lib/i18n/I18nContext';
-import { fetchWalletStatus } from '../../services/walletApi';
-import { apiClient } from '../AgentWorldShell';
-import { explorerTxUrl } from '../hooks/useX402Buy';
-
+} from "../../lib/agentworld/invokeApiClient";
+import { useT } from "../../lib/i18n/I18nContext";
+import { fetchWalletStatus } from "../../services/walletApi";
+import { apiClient } from "../AgentWorldShell";
+import { explorerTxUrl } from "../hooks/useX402Buy";
+import { relativeTime } from "../utils/relativeTime";
 // ── State types ───────────────────────────────────────────────────────────────
 
 type JobsState =
-  | { status: 'loading' }
-  | { status: 'error'; message: string }
-  | { status: 'ok'; jobs: GqlJobPosting[] };
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "ok"; jobs: GqlJobPosting[] };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-// TODO: extract shared relativeTime helper once Feed/Ledger/Jobs all use it.
-function relativeTime(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(ms / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
-}
 
 /**
  * Group the integer part of a numeric amount with thousands separators while
@@ -58,10 +46,10 @@ function relativeTime(iso: string): string {
  */
 function formatAmount(amount: string): string {
   if (!Number.isFinite(Number(amount))) return amount;
-  const negative = amount.startsWith('-');
+  const negative = amount.startsWith("-");
   const body = negative ? amount.slice(1) : amount;
-  const [intPart, fracPart] = body.split('.');
-  const grouped = Number(intPart).toLocaleString('en-US');
+  const [intPart, fracPart] = body.split(".");
+  const grouped = Number(intPart).toLocaleString("en-US");
   const out = fracPart != null ? `${grouped}.${fracPart}` : grouped;
   return negative ? `-${out}` : out;
 }
@@ -81,7 +69,8 @@ function VerifiedBadge() {
       className="h-3.5 w-3.5 shrink-0 text-primary-500"
       viewBox="0 0 20 20"
       fill="currentColor"
-      aria-label="Verified">
+      aria-label="Verified"
+    >
       <path
         fillRule="evenodd"
         d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
@@ -92,7 +81,15 @@ function VerifiedBadge() {
 }
 
 /** Centered status message for loading / error / info states. */
-function StatusBlock({ tone, title, body }: { tone: string; title: string; body?: string }) {
+function StatusBlock({
+  tone,
+  title,
+  body,
+}: {
+  tone: string;
+  title: string;
+  body?: string;
+}) {
   return (
     <div className="flex h-64 flex-col items-center justify-center gap-2 text-center">
       <p className={`text-base font-medium ${tone}`}>{title}</p>
@@ -107,8 +104,10 @@ function useMyAgentId(): string | null {
   const [agentId, setAgentId] = useState<string | null>(null);
   useEffect(() => {
     void fetchWalletStatus()
-      .then(status => {
-        const solana = (status.accounts ?? []).find(a => a.chain === 'solana');
+      .then((status) => {
+        const solana = (status.accounts ?? []).find(
+          (a) => a.chain === "solana",
+        );
         if (solana?.address) setAgentId(solana.address);
       })
       .catch(() => {});
@@ -122,19 +121,21 @@ function useMyAgentId(): string | null {
 
 export function JobStatusBadge({ status }: { status: string }) {
   const color =
-    status === 'OPEN'
-      ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-      : status === 'IN_PROGRESS'
-        ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
-        : status === 'COMPLETED'
-          ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
-          : status === 'DISPUTED'
-            ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-            : status === 'CANCELLED'
-              ? 'bg-surface-subtle text-content-secondary'
-              : 'bg-surface-subtle text-content-secondary';
+    status === "OPEN"
+      ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+      : status === "IN_PROGRESS"
+        ? "bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400"
+        : status === "COMPLETED"
+          ? "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400"
+          : status === "DISPUTED"
+            ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+            : status === "CANCELLED"
+              ? "bg-surface-subtle text-content-secondary"
+              : "bg-surface-subtle text-content-secondary";
   return (
-    <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${color}`}>
+    <span
+      className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${color}`}
+    >
       {status}
     </span>
   );
@@ -152,12 +153,18 @@ function SkillChip({ skill }: { skill: string }) {
 
 // ── ClientAvatar ──────────────────────────────────────────────────────────────
 
-function ClientAvatar({ avatarUrl, displayName }: { avatarUrl?: string; displayName: string }) {
+function ClientAvatar({
+  avatarUrl,
+  displayName,
+}: {
+  avatarUrl?: string;
+  displayName: string;
+}) {
   const initials = displayName
-    .split(' ')
-    .map(w => w[0] ?? '')
+    .split(" ")
+    .map((w) => w[0] ?? "")
     .slice(0, 2)
-    .join('')
+    .join("")
     .toUpperCase();
 
   if (avatarUrl) {
@@ -166,12 +173,12 @@ function ClientAvatar({ avatarUrl, displayName }: { avatarUrl?: string; displayN
         src={avatarUrl}
         alt={displayName}
         className="h-7 w-7 shrink-0 rounded-full object-cover"
-        onError={e => {
+        onError={(e) => {
           // Swap to initials circle on load failure
           const target = e.currentTarget as HTMLImageElement;
-          target.style.display = 'none';
+          target.style.display = "none";
           if (target.nextElementSibling) {
-            (target.nextElementSibling as HTMLElement).style.display = 'flex';
+            (target.nextElementSibling as HTMLElement).style.display = "flex";
           }
         }}
       />
@@ -180,22 +187,28 @@ function ClientAvatar({ avatarUrl, displayName }: { avatarUrl?: string; displayN
 
   return (
     <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary-100 text-xs font-medium text-primary-700 dark:bg-primary-900/30 dark:text-primary-400">
-      {initials || '?'}
+      {initials || "?"}
     </div>
   );
 }
 
 // ── PostJobModal ──────────────────────────────────────────────────────────────
 
-function PostJobModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+function PostJobModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: () => void;
+}) {
   const { t } = useT();
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [category, setCategory] = useState('');
-  const [skillsCsv, setSkillsCsv] = useState('');
-  const [budgetAmount, setBudgetAmount] = useState('');
-  const [budgetAsset, setBudgetAsset] = useState('USDC');
-  const [proposalDeadline, setProposalDeadline] = useState('');
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [category, setCategory] = useState("");
+  const [skillsCsv, setSkillsCsv] = useState("");
+  const [budgetAmount, setBudgetAmount] = useState("");
+  const [budgetAsset, setBudgetAsset] = useState("USDC");
+  const [proposalDeadline, setProposalDeadline] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -213,9 +226,14 @@ function PostJobModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
     // until midnight UTC.
     if (deadlineDate) {
       const now = new Date();
-      const todayLocal = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const todayLocal = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
       if (deadlineDate <= todayLocal) {
-        setError(t('agentWorld.jobs.deadlineFuture', 'Proposal deadline must be in the future'));
+        setError(
+          t(
+            "agentWorld.jobs.deadlineFuture",
+            "Proposal deadline must be in the future",
+          ),
+        );
         setSubmitting(false);
         return;
       }
@@ -226,12 +244,12 @@ function PostJobModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
       category: category.trim() || undefined,
       skills: skillsCsv.trim()
         ? skillsCsv
-            .split(',')
-            .map(s => s.trim())
+            .split(",")
+            .map((s) => s.trim())
             .filter(Boolean)
         : undefined,
       budgetAmount: budgetAmount.trim(),
-      budgetAsset: budgetAsset.trim() || 'USDC',
+      budgetAsset: budgetAsset.trim() || "USDC",
       proposalDeadline: deadlineIso,
     };
     try {
@@ -250,19 +268,23 @@ function PostJobModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
       onClose={onClose}
       title="Post a Job"
       titleId="post-job-modal-title"
-      maxWidthClassName="max-w-lg">
+      maxWidthClassName="max-w-lg"
+    >
       <form
-        onSubmit={e => {
+        onSubmit={(e) => {
           void handleSubmit(e);
         }}
-        className="space-y-3">
+        className="space-y-3"
+      >
         <div>
-          <label className="mb-1 block text-xs font-medium text-content-secondary">Title *</label>
+          <label className="mb-1 block text-xs font-medium text-content-secondary">
+            Title *
+          </label>
           <input
             type="text"
             required
             value={title}
-            onChange={e => setTitle(e.target.value)}
+            onChange={(e) => setTitle(e.target.value)}
             className="w-full rounded border border-line-strong bg-surface px-2.5 py-1.5 text-sm text-content"
             placeholder="e.g. Build a Solana integration"
           />
@@ -274,27 +296,31 @@ function PostJobModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
           <textarea
             rows={3}
             value={description}
-            onChange={e => setDescription(e.target.value)}
+            onChange={(e) => setDescription(e.target.value)}
             className="w-full rounded border border-line-strong bg-surface px-2.5 py-1.5 text-sm text-content"
             placeholder="Describe the work, requirements, and deliverables"
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs font-medium text-content-secondary">Category</label>
+          <label className="mb-1 block text-xs font-medium text-content-secondary">
+            Category
+          </label>
           <input
             type="text"
             value={category}
-            onChange={e => setCategory(e.target.value)}
+            onChange={(e) => setCategory(e.target.value)}
             className="w-full rounded border border-line-strong bg-surface px-2.5 py-1.5 text-sm text-content"
             placeholder="e.g. development, design, research"
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs font-medium text-content-secondary">Skills</label>
+          <label className="mb-1 block text-xs font-medium text-content-secondary">
+            Skills
+          </label>
           <input
             type="text"
             value={skillsCsv}
-            onChange={e => setSkillsCsv(e.target.value)}
+            onChange={(e) => setSkillsCsv(e.target.value)}
             className="w-full rounded border border-line-strong bg-surface px-2.5 py-1.5 text-sm text-content"
             placeholder="e.g. React, TypeScript"
           />
@@ -308,17 +334,19 @@ function PostJobModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
               type="text"
               required
               value={budgetAmount}
-              onChange={e => setBudgetAmount(e.target.value)}
+              onChange={(e) => setBudgetAmount(e.target.value)}
               className="w-full rounded border border-line-strong bg-surface px-2.5 py-1.5 text-sm text-content"
               placeholder="500"
             />
           </div>
           <div className="w-28">
-            <label className="mb-1 block text-xs font-medium text-content-secondary">Asset</label>
+            <label className="mb-1 block text-xs font-medium text-content-secondary">
+              Asset
+            </label>
             <input
               type="text"
               value={budgetAsset}
-              onChange={e => setBudgetAsset(e.target.value)}
+              onChange={(e) => setBudgetAsset(e.target.value)}
               className="w-full rounded border border-line-strong bg-surface px-2.5 py-1.5 text-sm text-content"
               placeholder="USDC"
             />
@@ -331,17 +359,19 @@ function PostJobModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
           <input
             type="date"
             value={proposalDeadline}
-            onChange={e => setProposalDeadline(e.target.value)}
+            onChange={(e) => setProposalDeadline(e.target.value)}
             className="w-full rounded border border-line-strong bg-surface px-2.5 py-1.5 text-sm text-content"
           />
         </div>
-        {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+        {error && (
+          <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
+        )}
         <div className="flex justify-end gap-2 pt-1">
           <Button type="button" onClick={onClose}>
             Cancel
           </Button>
           <Button type="submit" disabled={submitting}>
-            {submitting ? 'Posting…' : 'Post Job'}
+            {submitting ? "Posting…" : "Post Job"}
           </Button>
         </div>
       </form>
@@ -361,9 +391,9 @@ function ApplyModal({
   onApplied: () => void;
 }) {
   const { t } = useT();
-  const [coverLetter, setCoverLetter] = useState('');
-  const [bidAmount, setBidAmount] = useState('');
-  const [estimatedDelivery, setEstimatedDelivery] = useState('');
+  const [coverLetter, setCoverLetter] = useState("");
+  const [bidAmount, setBidAmount] = useState("");
+  const [estimatedDelivery, setEstimatedDelivery] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [succeeded, setSucceeded] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -405,61 +435,66 @@ function ApplyModal({
   return (
     <ModalShell
       onClose={onClose}
-      title={t('agentworld.jobs.applyModal.title')}
+      title={t("agentworld.jobs.applyModal.title")}
       titleId="apply-modal-title"
-      maxWidthClassName="max-w-lg">
+      maxWidthClassName="max-w-lg"
+    >
       {succeeded ? (
         <div
           role="status"
           aria-live="polite"
-          className="flex flex-col items-center gap-3 py-6 text-center">
+          className="flex flex-col items-center gap-3 py-6 text-center"
+        >
           <p className="text-sm font-medium text-green-700 dark:text-green-400">
-            {t('agentworld.jobs.applyModal.successHeading')}
+            {t("agentworld.jobs.applyModal.successHeading")}
           </p>
           <p className="text-xs text-content-muted">
-            {t('agentworld.jobs.applyModal.successBody')}
+            {t("agentworld.jobs.applyModal.successBody")}
           </p>
         </div>
       ) : (
         <form
-          onSubmit={e => {
+          onSubmit={(e) => {
             void handleSubmit(e);
           }}
-          className="space-y-3">
+          className="space-y-3"
+        >
           <div>
             <label className="mb-1 block text-xs font-medium text-content-secondary">
-              {t('agentworld.jobs.applyModal.coverLetterLabel')}
+              {t("agentworld.jobs.applyModal.coverLetterLabel")}
             </label>
             <textarea
               rows={4}
               value={coverLetter}
-              onChange={e => setCoverLetter(e.target.value)}
+              onChange={(e) => setCoverLetter(e.target.value)}
               className="w-full rounded border border-line-strong bg-surface px-2.5 py-1.5 text-sm text-content"
-              placeholder={t('agentworld.jobs.applyModal.coverLetterPlaceholder')}
+              placeholder={t(
+                "agentworld.jobs.applyModal.coverLetterPlaceholder",
+              )}
             />
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-content-secondary">
-              {t('agentworld.jobs.applyModal.bidAmountLabel')}
+              {t("agentworld.jobs.applyModal.bidAmountLabel")}
             </label>
             <input
               type="text"
               value={bidAmount}
-              onChange={e => setBidAmount(e.target.value)}
+              onChange={(e) => setBidAmount(e.target.value)}
               className="w-full rounded border border-line-strong bg-surface px-2.5 py-1.5 text-sm text-content"
-              placeholder={t('agentworld.jobs.applyModal.bidAmountPlaceholder')}
+              placeholder={t("agentworld.jobs.applyModal.bidAmountPlaceholder")}
             />
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-content-secondary">
-              {t('agentworld.jobs.applyModal.deliveryLabel')}
+              {t("agentworld.jobs.applyModal.deliveryLabel")}
             </label>
             <input
               type="text"
               value={estimatedDelivery}
-              onChange={e => setEstimatedDelivery(e.target.value)}
+              onChange={(e) => setEstimatedDelivery(e.target.value)}
               className="w-full rounded border border-line-strong bg-surface px-2.5 py-1.5 text-sm text-content"
-              placeholder={t('agentworld.jobs.applyModal.deliveryPlaceholder')}
+              placeholder={t("agentworld.jobs.applyModal.deliveryPlaceholder")}
             />
           </div>
           {error && (
@@ -469,12 +504,12 @@ function ApplyModal({
           )}
           <div className="flex justify-end gap-2 pt-1">
             <Button type="button" onClick={onClose} disabled={submitting}>
-              {t('agentworld.jobs.applyModal.cancel')}
+              {t("agentworld.jobs.applyModal.cancel")}
             </Button>
             <Button type="submit" disabled={submitting}>
               {submitting
-                ? t('agentworld.jobs.applyModal.submitting')
-                : t('agentworld.jobs.applyModal.submit')}
+                ? t("agentworld.jobs.applyModal.submitting")
+                : t("agentworld.jobs.applyModal.submit")}
             </Button>
           </div>
         </form>
@@ -494,7 +529,7 @@ function DisputeModal({
   onClose: () => void;
   onDisputed: () => void;
 }) {
-  const [reason, setReason] = useState('');
+  const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -519,30 +554,36 @@ function DisputeModal({
       onClose={onClose}
       title="Open Dispute"
       titleId="dispute-modal-title"
-      maxWidthClassName="max-w-md">
+      maxWidthClassName="max-w-md"
+    >
       <form
-        onSubmit={e => {
+        onSubmit={(e) => {
           void handleSubmit(e);
         }}
-        className="space-y-3">
+        className="space-y-3"
+      >
         <div>
-          <label className="mb-1 block text-xs font-medium text-content-secondary">Reason *</label>
+          <label className="mb-1 block text-xs font-medium text-content-secondary">
+            Reason *
+          </label>
           <textarea
             rows={4}
             required
             value={reason}
-            onChange={e => setReason(e.target.value)}
+            onChange={(e) => setReason(e.target.value)}
             className="w-full rounded border border-line-strong bg-surface px-2.5 py-1.5 text-sm text-content"
             placeholder="Describe the issue that requires dispute resolution"
           />
         </div>
-        {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+        {error && (
+          <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
+        )}
         <div className="flex justify-end gap-2 pt-1">
           <Button type="button" onClick={onClose}>
             Cancel
           </Button>
           <Button type="submit" disabled={submitting}>
-            {submitting ? 'Opening…' : 'Open Dispute'}
+            {submitting ? "Opening…" : "Open Dispute"}
           </Button>
         </div>
       </form>
@@ -594,7 +635,7 @@ function JobRow({
 
   const isClient = myAgentId === job.client;
   const showingProposals = proposalsForJobId === job.jobId;
-  const proposalLabel = `${job.proposalCount} proposal${job.proposalCount !== 1 ? 's' : ''}`;
+  const proposalLabel = `${job.proposalCount} proposal${job.proposalCount !== 1 ? "s" : ""}`;
 
   return (
     <div className="border-b border-line-subtle last:border-0">
@@ -602,7 +643,8 @@ function JobRow({
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-muted dark:hover:bg-surface-muted/50">
+        className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-muted dark:hover:bg-surface-muted/50"
+      >
         <ClientAvatar
           avatarUrl={job.clientProfile.avatarUrl ?? undefined}
           displayName={job.clientProfile.displayName}
@@ -612,7 +654,9 @@ function JobRow({
         <div className="min-w-0 flex-1">
           {/* Line 1: title + status */}
           <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-semibold text-content">{job.title}</span>
+            <span className="truncate text-sm font-semibold text-content">
+              {job.title}
+            </span>
             <span className="shrink-0">
               <JobStatusBadge status={job.status} />
             </span>
@@ -620,7 +664,9 @@ function JobRow({
 
           {/* Line 2: client · budget */}
           <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-content-muted">
-            <span className="truncate">{displayClientName(job.clientProfile.displayName)}</span>
+            <span className="truncate">
+              {displayClientName(job.clientProfile.displayName)}
+            </span>
             {job.clientProfile.verified && <VerifiedBadge />}
             <span className="text-content-faint dark:text-neutral-600">·</span>
             <span className="whitespace-nowrap font-medium text-content-secondary">
@@ -630,14 +676,16 @@ function JobRow({
 
           {/* Line 3: skills + proposal count */}
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-            {visibleSkills.map(skill => (
+            {visibleSkills.map((skill) => (
               <SkillChip key={skill} skill={skill} />
             ))}
             {overflowCount > 0 && (
-              <span className="text-xs text-content-faint">+{overflowCount}</span>
+              <span className="text-xs text-content-faint">
+                +{overflowCount}
+              </span>
             )}
             <span className="text-xs text-content-faint">
-              {skills.length > 0 ? '· ' : ''}
+              {skills.length > 0 ? "· " : ""}
               {proposalLabel}
             </span>
           </div>
@@ -649,11 +697,17 @@ function JobRow({
             {relativeTime(job.createdAt)}
           </span>
           <svg
-            className={`h-4 w-4 shrink-0 text-content-faint transition-transform ${expanded ? 'rotate-180' : ''}`}
+            className={`h-4 w-4 shrink-0 text-content-faint transition-transform ${expanded ? "rotate-180" : ""}`}
             fill="none"
             stroke="currentColor"
-            viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M19 9l-7 7-7-7"
+            />
           </svg>
         </div>
       </button>
@@ -684,7 +738,7 @@ function JobRow({
               <>
                 <dt className="font-medium text-content-muted">Skills</dt>
                 <dd className="flex flex-wrap gap-1">
-                  {skills.map(skill => (
+                  {skills.map((skill) => (
                     <SkillChip key={skill} skill={skill} />
                   ))}
                 </dd>
@@ -702,7 +756,9 @@ function JobRow({
             {/* Proposal deadline */}
             {job.proposalDeadline && (
               <>
-                <dt className="font-medium text-content-muted">Proposal Deadline</dt>
+                <dt className="font-medium text-content-muted">
+                  Proposal Deadline
+                </dt>
                 <dd className="text-content">{job.proposalDeadline}</dd>
               </>
             )}
@@ -711,15 +767,21 @@ function JobRow({
             {job.contractEscrowId && (
               <>
                 <dt className="font-medium text-content-muted">Escrow ID</dt>
-                <dd className="break-all font-mono text-content">{job.contractEscrowId}</dd>
+                <dd className="break-all font-mono text-content">
+                  {job.contractEscrowId}
+                </dd>
               </>
             )}
 
             {/* Selected candidate */}
             {job.selectedCandidate && (
               <>
-                <dt className="font-medium text-content-muted">Selected Candidate</dt>
-                <dd className="break-all font-mono text-content">{job.selectedCandidate}</dd>
+                <dt className="font-medium text-content-muted">
+                  Selected Candidate
+                </dt>
+                <dd className="break-all font-mono text-content">
+                  {job.selectedCandidate}
+                </dd>
               </>
             )}
 
@@ -727,7 +789,9 @@ function JobRow({
             {job.groupId && (
               <>
                 <dt className="font-medium text-content-muted">Group ID</dt>
-                <dd className="break-all font-mono text-content">{job.groupId}</dd>
+                <dd className="break-all font-mono text-content">
+                  {job.groupId}
+                </dd>
               </>
             )}
 
@@ -742,13 +806,17 @@ function JobRow({
           {/* Dispute section */}
           {job.dispute && (
             <div className="mt-3">
-              <p className="mb-1 text-xs font-semibold text-red-600 dark:text-red-400">Dispute</p>
+              <p className="mb-1 text-xs font-semibold text-red-600 dark:text-red-400">
+                Dispute
+              </p>
               <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
                 <dt className="font-medium text-content-muted">Reason</dt>
                 <dd className="text-content">{job.dispute.reason}</dd>
 
                 <dt className="font-medium text-content-muted">Opened By</dt>
-                <dd className="break-all font-mono text-content">{job.dispute.openedBy}</dd>
+                <dd className="break-all font-mono text-content">
+                  {job.dispute.openedBy}
+                </dd>
 
                 <dt className="font-medium text-content-muted">Opened At</dt>
                 <dd className="text-content">{job.dispute.openedAt}</dd>
@@ -765,14 +833,18 @@ function JobRow({
 
                 {job.dispute.splitBps != null && (
                   <>
-                    <dt className="font-medium text-content-muted">Split bps</dt>
+                    <dt className="font-medium text-content-muted">
+                      Split bps
+                    </dt>
                     <dd className="text-content">{job.dispute.splitBps}</dd>
                   </>
                 )}
 
                 {job.dispute.judgeModel && (
                   <>
-                    <dt className="font-medium text-content-muted">Judge Model</dt>
+                    <dt className="font-medium text-content-muted">
+                      Judge Model
+                    </dt>
                     <dd className="text-content">{job.dispute.judgeModel}</dd>
                   </>
                 )}
@@ -780,20 +852,26 @@ function JobRow({
                 {job.dispute.presided != null && (
                   <>
                     <dt className="font-medium text-content-muted">Presided</dt>
-                    <dd className="text-content">{job.dispute.presided ? 'Yes' : 'No'}</dd>
+                    <dd className="text-content">
+                      {job.dispute.presided ? "Yes" : "No"}
+                    </dd>
                   </>
                 )}
 
                 {job.dispute.reasoning && (
                   <>
-                    <dt className="font-medium text-content-muted">Reasoning</dt>
+                    <dt className="font-medium text-content-muted">
+                      Reasoning
+                    </dt>
                     <dd className="text-content">{job.dispute.reasoning}</dd>
                   </>
                 )}
 
                 {job.dispute.resolvedAt && (
                   <>
-                    <dt className="font-medium text-content-muted">Resolved At</dt>
+                    <dt className="font-medium text-content-muted">
+                      Resolved At
+                    </dt>
                     <dd className="text-content">{job.dispute.resolvedAt}</dd>
                   </>
                 )}
@@ -802,13 +880,19 @@ function JobRow({
               {/* Jury votes table */}
               {job.dispute.jury && job.dispute.jury.length > 0 && (
                 <div className="mt-2">
-                  <p className="mb-1 text-xs font-medium text-content-muted">Jury Votes</p>
+                  <p className="mb-1 text-xs font-medium text-content-muted">
+                    Jury Votes
+                  </p>
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">
                       <thead>
                         <tr className="border-b border-line">
-                          <th className="pb-1 text-left font-medium text-content-muted">Model</th>
-                          <th className="pb-1 text-left font-medium text-content-muted">Outcome</th>
+                          <th className="pb-1 text-left font-medium text-content-muted">
+                            Model
+                          </th>
+                          <th className="pb-1 text-left font-medium text-content-muted">
+                            Outcome
+                          </th>
                           <th className="pb-1 text-left font-medium text-content-muted">
                             Split bps
                           </th>
@@ -819,11 +903,22 @@ function JobRow({
                       </thead>
                       <tbody>
                         {job.dispute.jury.map((vote, i) => (
-                          <tr key={i} className="border-b border-line-subtle last:border-0">
-                            <td className="py-0.5 font-mono text-content">{vote.model}</td>
-                            <td className="py-0.5 text-content">{vote.outcome}</td>
-                            <td className="py-0.5 text-content">{vote.splitBps}</td>
-                            <td className="py-0.5 text-content">{vote.reasoning ?? '-'}</td>
+                          <tr
+                            key={i}
+                            className="border-b border-line-subtle last:border-0"
+                          >
+                            <td className="py-0.5 font-mono text-content">
+                              {vote.model}
+                            </td>
+                            <td className="py-0.5 text-content">
+                              {vote.outcome}
+                            </td>
+                            <td className="py-0.5 text-content">
+                              {vote.splitBps}
+                            </td>
+                            <td className="py-0.5 text-content">
+                              {vote.reasoning ?? "-"}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -837,31 +932,45 @@ function JobRow({
           {/* On-chain section */}
           {job.onChain && (
             <div className="mt-3">
-              <p className="mb-1 text-xs font-semibold text-content-muted">On-chain</p>
+              <p className="mb-1 text-xs font-semibold text-content-muted">
+                On-chain
+              </p>
               <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
                 {job.onChain.vault && (
                   <>
                     <dt className="font-medium text-content-muted">Vault</dt>
-                    <dd className="break-all font-mono text-content">{job.onChain.vault}</dd>
+                    <dd className="break-all font-mono text-content">
+                      {job.onChain.vault}
+                    </dd>
                   </>
                 )}
 
                 {job.onChain.jobPdaCommit && (
                   <>
-                    <dt className="font-medium text-content-muted">Job PDA Commit</dt>
-                    <dd className="break-all font-mono text-content">{job.onChain.jobPdaCommit}</dd>
+                    <dt className="font-medium text-content-muted">
+                      Job PDA Commit
+                    </dt>
+                    <dd className="break-all font-mono text-content">
+                      {job.onChain.jobPdaCommit}
+                    </dd>
                   </>
                 )}
 
                 {job.onChain.fundingTxSig && (
                   <>
-                    <dt className="font-medium text-content-muted">Funding Tx</dt>
+                    <dt className="font-medium text-content-muted">
+                      Funding Tx
+                    </dt>
                     <dd className="break-all font-mono text-content">
                       <a
-                        href={explorerTxUrl(job.onChain.fundingTxSig, 'solana-devnet')}
+                        href={explorerTxUrl(
+                          job.onChain.fundingTxSig,
+                          "solana-devnet",
+                        )}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300">
+                        className="text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
+                      >
                         {job.onChain.fundingTxSig}
                       </a>
                     </dd>
@@ -875,8 +984,12 @@ function JobRow({
           {myAgentId ? (
             <div className="mt-4 flex flex-wrap gap-2">
               {/* Candidate actions: Apply (non-client, OPEN jobs) */}
-              {!isClient && job.status === 'OPEN' && (
-                <Button type="button" onClick={() => onApply(job.jobId)} disabled={mutating}>
+              {!isClient && job.status === "OPEN" && (
+                <Button
+                  type="button"
+                  onClick={() => onApply(job.jobId)}
+                  disabled={mutating}
+                >
                   Apply
                 </Button>
               )}
@@ -884,32 +997,39 @@ function JobRow({
               {/* Client actions */}
               {isClient && (
                 <>
-                  {job.status === 'OPEN' && (
-                    <Button type="button" onClick={() => onCancel(job.jobId)} disabled={mutating}>
+                  {job.status === "OPEN" && (
+                    <Button
+                      type="button"
+                      onClick={() => onCancel(job.jobId)}
+                      disabled={mutating}
+                    >
                       Cancel Job
                     </Button>
                   )}
-                  {(job.status === 'OPEN' || job.status === 'IN_PROGRESS') && (
+                  {(job.status === "OPEN" || job.status === "IN_PROGRESS") && (
                     <Button
                       type="button"
                       onClick={() => onViewProposals(job.jobId)}
-                      disabled={mutating}>
+                      disabled={mutating}
+                    >
                       View Proposals
                     </Button>
                   )}
-                  {job.status === 'IN_PROGRESS' && !job.dispute && (
+                  {job.status === "IN_PROGRESS" && !job.dispute && (
                     <Button
                       type="button"
                       onClick={() => onOpenDispute(job.jobId)}
-                      disabled={mutating}>
+                      disabled={mutating}
+                    >
                       Open Dispute
                     </Button>
                   )}
-                  {job.status === 'DISPUTED' && (
+                  {job.status === "DISPUTED" && (
                     <Button
                       type="button"
                       onClick={() => onAdjudicate(job.jobId)}
-                      disabled={mutating}>
+                      disabled={mutating}
+                    >
                       Adjudicate
                     </Button>
                   )}
@@ -925,17 +1045,22 @@ function JobRow({
           {/* Inline proposals panel */}
           {showingProposals && (
             <div className="mt-4">
-              <p className="mb-2 text-xs font-semibold text-content-secondary">Proposals</p>
+              <p className="mb-2 text-xs font-semibold text-content-secondary">
+                Proposals
+              </p>
               {proposalsLoading ? (
-                <p className="text-xs text-content-faint animate-pulse">Loading proposals…</p>
+                <p className="text-xs text-content-faint animate-pulse">
+                  Loading proposals…
+                </p>
               ) : proposals.length === 0 ? (
                 <p className="text-xs text-content-faint">No proposals yet.</p>
               ) : (
                 <div className="space-y-2">
-                  {proposals.map(p => (
+                  {proposals.map((p) => (
                     <div
                       key={p.proposalId}
-                      className="rounded border border-line bg-surface p-2 text-xs">
+                      className="rounded border border-line bg-surface p-2 text-xs"
+                    >
                       <div className="mb-1 flex items-center gap-2">
                         <span className="font-mono text-content-secondary">
                           {p.candidate.slice(0, 8)}…
@@ -944,29 +1069,36 @@ function JobRow({
                           {p.status}
                         </span>
                         {p.bidAmount && (
-                          <span className="font-medium text-content">{p.bidAmount}</span>
+                          <span className="font-medium text-content">
+                            {p.bidAmount}
+                          </span>
                         )}
                       </div>
                       {p.coverLetter && (
-                        <p className="mb-1 text-content-secondary line-clamp-2">{p.coverLetter}</p>
+                        <p className="mb-1 text-content-secondary line-clamp-2">
+                          {p.coverLetter}
+                        </p>
                       )}
                       <div className="flex gap-1">
                         <Button
                           type="button"
                           onClick={() => onShortlist(job.jobId, p.proposalId)}
-                          disabled={mutating}>
+                          disabled={mutating}
+                        >
                           Shortlist
                         </Button>
                         <Button
                           type="button"
                           onClick={() => onSelect(job.jobId, p.proposalId)}
-                          disabled={mutating}>
+                          disabled={mutating}
+                        >
                           Select
                         </Button>
                         <Button
                           type="button"
                           onClick={() => onWithdraw(job.jobId, p.proposalId)}
-                          disabled={mutating}>
+                          disabled={mutating}
+                        >
                           Withdraw
                         </Button>
                       </div>
@@ -985,12 +1117,14 @@ function JobRow({
 // ── JobsSection (main export) ─────────────────────────────────────────────────
 
 export default function JobsSection() {
-  const [jobsState, setJobsState] = useState<JobsState>({ status: 'loading' });
+  const [jobsState, setJobsState] = useState<JobsState>({ status: "loading" });
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
   const [showPostJob, setShowPostJob] = useState(false);
   const [applyingJobId, setApplyingJobId] = useState<string | null>(null);
   const [disputeJobId, setDisputeJobId] = useState<string | null>(null);
-  const [proposalsForJobId, setProposalsForJobId] = useState<string | null>(null);
+  const [proposalsForJobId, setProposalsForJobId] = useState<string | null>(
+    null,
+  );
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [proposalsLoading, setProposalsLoading] = useState(false);
   const [mutating, setMutating] = useState(false);
@@ -999,32 +1133,32 @@ export default function JobsSection() {
 
   // ── Fetch jobs ─────────────────────────────────────────────────────────────
   const refetchJobs = useCallback(() => {
-    setJobsState({ status: 'loading' });
+    setJobsState({ status: "loading" });
     void apiClient.graphql
       .jobs({ limit: 50 })
-      .then(result => {
+      .then((result) => {
         const jobs = Array.isArray(result?.jobs) ? result.jobs : [];
-        setJobsState({ status: 'ok', jobs });
+        setJobsState({ status: "ok", jobs });
       })
       .catch((err: unknown) => {
-        setJobsState({ status: 'error', message: String(err) });
+        setJobsState({ status: "error", message: String(err) });
       });
   }, []);
 
   useEffect(() => {
     let cancelled = false;
-    setJobsState({ status: 'loading' });
+    setJobsState({ status: "loading" });
 
     void apiClient.graphql
       .jobs({ limit: 50 })
-      .then(result => {
+      .then((result) => {
         if (cancelled) return;
         const jobs = Array.isArray(result?.jobs) ? result.jobs : [];
-        setJobsState({ status: 'ok', jobs });
+        setJobsState({ status: "ok", jobs });
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setJobsState({ status: 'error', message: String(err) });
+        setJobsState({ status: "error", message: String(err) });
       });
 
     return () => {
@@ -1041,12 +1175,12 @@ export default function JobsSection() {
         await apiClient.jobsWrite.cancel(jobId);
         refetchJobs();
       } catch (err) {
-        console.error('[JobsSection] cancel failed:', err);
+        console.error("[JobsSection] cancel failed:", err);
       } finally {
         setMutating(false);
       }
     },
-    [refetchJobs]
+    [refetchJobs],
   );
 
   const handleViewProposals = useCallback(async (jobId: string) => {
@@ -1056,7 +1190,7 @@ export default function JobsSection() {
       const result = await apiClient.jobsWrite.listProposals(jobId);
       setProposals(Array.isArray(result?.proposals) ? result.proposals : []);
     } catch (err) {
-      console.error('[JobsSection] listProposals failed:', err);
+      console.error("[JobsSection] listProposals failed:", err);
       setProposals([]);
     } finally {
       setProposalsLoading(false);
@@ -1070,29 +1204,32 @@ export default function JobsSection() {
         await apiClient.jobsWrite.shortlistProposal(jobId, proposalId);
         await handleViewProposals(jobId);
       } catch (err) {
-        console.error('[JobsSection] shortlist failed:', err);
+        console.error("[JobsSection] shortlist failed:", err);
       } finally {
         setMutating(false);
       }
     },
-    [handleViewProposals]
+    [handleViewProposals],
   );
 
   const handleSelect = useCallback(
     async (jobId: string, proposalId: string) => {
-      if (!window.confirm('Select this candidate and initiate escrow?')) return;
+      if (!window.confirm("Select this candidate and initiate escrow?")) return;
       setMutating(true);
       try {
         const result = await apiClient.jobsWrite.select(jobId, proposalId);
-        console.debug('[JobsSection] selected candidate, escrow:', result.contractEscrowId);
+        console.debug(
+          "[JobsSection] selected candidate, escrow:",
+          result.contractEscrowId,
+        );
         refetchJobs();
       } catch (err) {
-        console.error('[JobsSection] select failed:', err);
+        console.error("[JobsSection] select failed:", err);
       } finally {
         setMutating(false);
       }
     },
-    [refetchJobs]
+    [refetchJobs],
   );
 
   const handleWithdraw = useCallback(
@@ -1104,12 +1241,12 @@ export default function JobsSection() {
           await handleViewProposals(jobId);
         }
       } catch (err) {
-        console.error('[JobsSection] withdraw failed:', err);
+        console.error("[JobsSection] withdraw failed:", err);
       } finally {
         setMutating(false);
       }
     },
-    [proposalsForJobId, handleViewProposals]
+    [proposalsForJobId, handleViewProposals],
   );
 
   const handleAdjudicate = useCallback(
@@ -1119,25 +1256,25 @@ export default function JobsSection() {
         await apiClient.jobsWrite.adjudicateDispute(jobId);
         refetchJobs();
       } catch (err) {
-        console.error('[JobsSection] adjudicate failed:', err);
+        console.error("[JobsSection] adjudicate failed:", err);
       } finally {
         setMutating(false);
       }
     },
-    [refetchJobs]
+    [refetchJobs],
   );
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
   let body: React.ReactNode;
 
-  if (jobsState.status === 'loading') {
+  if (jobsState.status === "loading") {
     body = (
       <div className="flex h-64 items-center justify-center text-content-faint">
         <span className="animate-pulse text-sm">Loading jobs...</span>
       </div>
     );
-  } else if (jobsState.status === 'error') {
+  } else if (jobsState.status === "error") {
     body = (
       <StatusBlock
         tone="text-red-600 dark:text-red-400"
@@ -1156,22 +1293,26 @@ export default function JobsSection() {
   } else {
     body = (
       <div className="rounded-lg border border-line bg-surface">
-        {jobsState.jobs.map(job => (
+        {jobsState.jobs.map((job) => (
           <JobRow
             key={job.jobId}
             job={job}
             expanded={expandedJobId === job.jobId}
-            onToggle={() => setExpandedJobId(prev => (prev === job.jobId ? null : job.jobId))}
+            onToggle={() =>
+              setExpandedJobId((prev) =>
+                prev === job.jobId ? null : job.jobId,
+              )
+            }
             myAgentId={myAgentId}
-            onApply={jobId => setApplyingJobId(jobId)}
-            onCancel={jobId => {
+            onApply={(jobId) => setApplyingJobId(jobId)}
+            onCancel={(jobId) => {
               void handleCancel(jobId);
             }}
-            onViewProposals={jobId => {
+            onViewProposals={(jobId) => {
               void handleViewProposals(jobId);
             }}
-            onOpenDispute={jobId => setDisputeJobId(jobId)}
-            onAdjudicate={jobId => {
+            onOpenDispute={(jobId) => setDisputeJobId(jobId)}
+            onAdjudicate={(jobId) => {
               void handleAdjudicate(jobId);
             }}
             proposalsForJobId={proposalsForJobId}
@@ -1206,7 +1347,10 @@ export default function JobsSection() {
 
       {/* Modals */}
       {showPostJob && (
-        <PostJobModal onClose={() => setShowPostJob(false)} onCreated={refetchJobs} />
+        <PostJobModal
+          onClose={() => setShowPostJob(false)}
+          onCreated={refetchJobs}
+        />
       )}
       {applyingJobId && (
         <ApplyModal

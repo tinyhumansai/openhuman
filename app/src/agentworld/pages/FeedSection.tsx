@@ -17,32 +17,32 @@
  * Pattern mirrors ExploreSection / MarketplaceSection: useState + useEffect
  * fetch, PanelScaffold wrapper, StatusBlock for loading/error/empty states.
  */
-import debug from 'debug';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import debug from "debug";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import PanelScaffold from '../../components/layout/PanelScaffold';
-import Button from '../../components/ui/Button';
+import PanelScaffold from "../../components/layout/PanelScaffold";
+import Button from "../../components/ui/Button";
 import {
   type GqlComment,
   type GqlHomeFeedItem,
   type GqlPost,
   type LikeResult,
   PaymentRequiredError,
-} from '../../lib/agentworld/invokeApiClient';
-import { fetchWalletStatus } from '../../services/walletApi';
-import { apiClient } from '../AgentWorldShell';
-import ConfirmDialog from '../components/ConfirmDialog';
-
-const log = debug('agentworld:feed');
+} from "../../lib/agentworld/invokeApiClient";
+import { fetchWalletStatus } from "../../services/walletApi";
+import { apiClient } from "../AgentWorldShell";
+import ConfirmDialog from "../components/ConfirmDialog";
+import { relativeTime } from "../utils/relativeTime";
+const log = debug("agentworld:feed");
 
 // ── State types ───────────────────────────────────────────────────────────────
 
 type FeedState =
-  | { status: 'loading' }
-  | { status: 'wallet_unconfigured' }
-  | { status: 'payment_required'; challenge: unknown }
-  | { status: 'error'; message: string }
-  | { status: 'ok'; items: GqlHomeFeedItem[] };
+  | { status: "loading" }
+  | { status: "wallet_unconfigured" }
+  | { status: "payment_required"; challenge: unknown }
+  | { status: "error"; message: string }
+  | { status: "ok"; items: GqlHomeFeedItem[] };
 
 /**
  * Result of resolving the local wallet on mount.
@@ -60,27 +60,19 @@ type FeedState =
  *
  * `agentId` is the resolved Solana address when one exists, else `null`.
  */
-type WalletConfigured = 'resolving' | 'no' | 'yes' | 'unknown';
-type WalletResolution = { agentId: string | null; configured: WalletConfigured };
+type WalletConfigured = "resolving" | "no" | "yes" | "unknown";
+type WalletResolution = {
+  agentId: string | null;
+  configured: WalletConfigured;
+};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function relativeTime(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(ms / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
-}
-
 function isWalletLocked(message: string): boolean {
   return (
-    message.includes('wallet is not configured') ||
-    message.includes('wallet secret material is missing') ||
-    message.includes('no signer configured')
+    message.includes("wallet is not configured") ||
+    message.includes("wallet secret material is missing") ||
+    message.includes("no signer configured")
   );
 }
 
@@ -89,14 +81,21 @@ function postCreatedAtMillis(item: GqlHomeFeedItem): number {
   return Number.isFinite(millis) ? millis : 0;
 }
 
-function sortedHomeFeedItems(result: { items?: GqlHomeFeedItem[] } | null | undefined) {
+function sortedHomeFeedItems(
+  result: { items?: GqlHomeFeedItem[] } | null | undefined,
+) {
   const items = Array.isArray(result?.items) ? [...result.items] : [];
-  const originalOrder = items.map(item => item.post.postId).join('\0');
+  const originalOrder = items.map((item) => item.post.postId).join("\0");
 
-  items.sort((left, right) => postCreatedAtMillis(right) - postCreatedAtMillis(left));
+  items.sort(
+    (left, right) => postCreatedAtMillis(right) - postCreatedAtMillis(left),
+  );
 
-  if (items.length > 1 && originalOrder !== items.map(item => item.post.postId).join('\0')) {
-    log('sorted home feed newest-first', {
+  if (
+    items.length > 1 &&
+    originalOrder !== items.map((item) => item.post.postId).join("\0")
+  ) {
+    log("sorted home feed newest-first", {
       count: items.length,
       newestCreatedAt: items[0]?.post.createdAt,
       oldestCreatedAt: items.at(-1)?.post.createdAt,
@@ -107,7 +106,15 @@ function sortedHomeFeedItems(result: { items?: GqlHomeFeedItem[] } | null | unde
 }
 
 /** Centered status message for loading / error / info states. */
-function StatusBlock({ tone, title, body }: { tone: string; title: string; body?: string }) {
+function StatusBlock({
+  tone,
+  title,
+  body,
+}: {
+  tone: string;
+  title: string;
+  body?: string;
+}) {
   return (
     <div className="flex h-64 flex-col items-center justify-center gap-2 text-center">
       <p className={`text-base font-medium ${tone}`}>{title}</p>
@@ -118,7 +125,7 @@ function StatusBlock({ tone, title, body }: { tone: string; title: string; body?
 
 /** Initial letter avatar circle for when no avatarUrl is available. */
 function InitialAvatar({ name }: { name: string }) {
-  const initial = (name[0] ?? '?').toUpperCase();
+  const initial = (name[0] ?? "?").toUpperCase();
   return (
     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-500 text-xs font-semibold text-content-inverted">
       {initial}
@@ -145,16 +152,21 @@ function InitialAvatar({ name }: { name: string }) {
 function useWalletResolution(): WalletResolution {
   const [resolution, setResolution] = useState<WalletResolution>({
     agentId: null,
-    configured: 'resolving',
+    configured: "resolving",
   });
   useEffect(() => {
     let cancelled = false;
     void fetchWalletStatus()
-      .then(status => {
+      .then((status) => {
         if (cancelled) return;
-        const solana = (status.accounts ?? []).find(a => a.chain === 'solana');
+        const solana = (status.accounts ?? []).find(
+          (a) => a.chain === "solana",
+        );
         const address = solana?.address ?? null;
-        setResolution({ agentId: address, configured: address !== null ? 'yes' : 'no' });
+        setResolution({
+          agentId: address,
+          configured: address !== null ? "yes" : "no",
+        });
       })
       .catch(() => {
         // Transport/RPC failure: we can't prove the wallet is absent, so mark
@@ -162,7 +174,7 @@ function useWalletResolution(): WalletResolution {
         // handles any wallet-locked error rather than us showing a false
         // "not configured" state for a wallet that may well exist.
         if (cancelled) return;
-        setResolution({ agentId: null, configured: 'unknown' });
+        setResolution({ agentId: null, configured: "unknown" });
       });
     return () => {
       cancelled = true;
@@ -182,7 +194,7 @@ function CommentComposer({
   postId: string;
   onCommentAdded: () => void;
 }) {
-  const [body, setBody] = useState('');
+  const [body, setBody] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async () => {
@@ -190,10 +202,10 @@ function CommentComposer({
     setSubmitting(true);
     try {
       await apiClient.feeds.addComment(handle, postId, body.trim());
-      setBody('');
+      setBody("");
       onCommentAdded();
     } catch (err) {
-      console.error('[FeedSection] add comment failed:', err);
+      console.error("[FeedSection] add comment failed:", err);
     } finally {
       setSubmitting(false);
     }
@@ -204,9 +216,9 @@ function CommentComposer({
       <input
         type="text"
         value={body}
-        onChange={e => setBody(e.target.value)}
-        onKeyDown={e => {
-          if (e.key === 'Enter') void handleSubmit();
+        onChange={(e) => setBody(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") void handleSubmit();
         }}
         placeholder="Write a comment..."
         disabled={submitting}
@@ -219,8 +231,9 @@ function CommentComposer({
         variant="primary"
         size="md"
         onClick={() => void handleSubmit()}
-        disabled={!body.trim() || submitting}>
-        {submitting ? 'Posting...' : 'Comment'}
+        disabled={!body.trim() || submitting}
+      >
+        {submitting ? "Posting..." : "Comment"}
       </Button>
     </div>
   );
@@ -242,7 +255,7 @@ interface FeedComposerProps {
 }
 
 function FeedComposer({ myAgentId, onPostCreated }: FeedComposerProps) {
-  const [draft, setDraft] = useState('');
+  const [draft, setDraft] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -253,7 +266,7 @@ function FeedComposer({ myAgentId, onPostCreated }: FeedComposerProps) {
   // Auto-grow the textarea with its content (capped), so the composer expands
   // naturally instead of scrolling inside two fixed rows.
   const autoSize = (el: HTMLTextAreaElement) => {
-    el.style.height = 'auto';
+    el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   };
 
@@ -264,9 +277,9 @@ function FeedComposer({ myAgentId, onPostCreated }: FeedComposerProps) {
     setError(null);
     try {
       await apiClient.feeds.createPost(body);
-      setDraft('');
+      setDraft("");
       if (textareaRef.current) {
-        textareaRef.current.style.height = 'auto';
+        textareaRef.current.style.height = "auto";
       }
       onPostCreated();
     } catch (err) {
@@ -283,13 +296,13 @@ function FeedComposer({ myAgentId, onPostCreated }: FeedComposerProps) {
         <textarea
           ref={textareaRef}
           value={draft}
-          onChange={e => {
+          onChange={(e) => {
             setDraft(e.target.value);
             autoSize(e.target);
           }}
-          onKeyDown={e => {
+          onKeyDown={(e) => {
             // ⌘/Ctrl+Enter posts without reaching for the mouse.
-            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+            if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
               e.preventDefault();
               void submit();
             }
@@ -302,18 +315,26 @@ function FeedComposer({ myAgentId, onPostCreated }: FeedComposerProps) {
           className="min-h-[2.25rem] w-full resize-none border-0 bg-transparent p-0 pt-1.5 text-sm leading-relaxed text-content shadow-none outline-none ring-0 placeholder:text-stone-400 focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none disabled:opacity-50 dark:placeholder:text-neutral-500"
         />
       </div>
-      {error && <p className="mt-1 pl-[2.625rem] text-xs text-coral-500">{error}</p>}
+      {error && (
+        <p className="mt-1 pl-[2.625rem] text-xs text-coral-500">{error}</p>
+      )}
       <div className="mt-2 flex items-center justify-between gap-3 border-t border-line-subtle pl-[2.625rem] pt-2">
         <span className="hidden text-[11px] text-content-faint sm:inline">
           <kbd className="rounded border border-line px-1 font-sans">⌘</kbd>
-          <kbd className="ml-0.5 rounded border border-line px-1 font-sans">↵</kbd> to post
+          <kbd className="ml-0.5 rounded border border-line px-1 font-sans">
+            ↵
+          </kbd>{" "}
+          to post
         </span>
         <div className="ml-auto flex items-center gap-3">
           {(nearLimit || draft.length > 0) && (
             <span
               className={`text-[11px] tabular-nums ${
-                remaining <= 20 ? 'font-medium text-coral-500' : 'text-content-faint'
-              }`}>
+                remaining <= 20
+                  ? "font-medium text-coral-500"
+                  : "text-content-faint"
+              }`}
+            >
               {remaining}
             </span>
           )}
@@ -322,8 +343,9 @@ function FeedComposer({ myAgentId, onPostCreated }: FeedComposerProps) {
             size="sm"
             onClick={() => void submit()}
             disabled={!canPost}
-            className="rounded-full">
-            {submitting ? 'Posting…' : 'Post'}
+            className="rounded-full"
+          >
+            {submitting ? "Posting…" : "Post"}
           </Button>
         </div>
       </div>
@@ -338,7 +360,13 @@ function FeedComposer({ myAgentId, onPostCreated }: FeedComposerProps) {
  * opened. Mirrors the tiny.place website's in-card `CommentList` (replaces the
  * old full-page drill-down).
  */
-function InlineComments({ post, myAgentId }: { post: GqlPost; myAgentId: string | null }) {
+function InlineComments({
+  post,
+  myAgentId,
+}: {
+  post: GqlPost;
+  myAgentId: string | null;
+}) {
   const handle = post.author.handle;
   const [comments, setComments] = useState<GqlComment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -352,11 +380,11 @@ function InlineComments({ post, myAgentId }: { post: GqlPost; myAgentId: string 
         likerLimit: 0,
         viewer: myAgentId ?? undefined,
       })
-      .then(detail => {
+      .then((detail) => {
         setComments(detail?.comments ?? []);
-        setError(detail ? null : 'Post not found.');
+        setError(detail ? null : "Post not found.");
       })
-      .catch(err => setError(String(err)))
+      .catch((err) => setError(String(err)))
       .finally(() => setLoading(false));
   }, [handle, post.postId, myAgentId]);
 
@@ -367,14 +395,16 @@ function InlineComments({ post, myAgentId }: { post: GqlPost; myAgentId: string 
   return (
     <div className="mt-3 border-t border-line-subtle pt-2">
       {loading && (
-        <p className="animate-pulse py-2 text-xs text-content-faint">Loading comments…</p>
+        <p className="animate-pulse py-2 text-xs text-content-faint">
+          Loading comments…
+        </p>
       )}
       {error && <p className="py-2 text-xs text-red-500">{error}</p>}
       {!loading && !error && comments.length === 0 && (
         <p className="py-2 text-xs text-content-faint">No comments yet.</p>
       )}
       <div className="divide-y divide-line-subtle dark:divide-neutral-800">
-        {comments.map(c => (
+        {comments.map((c) => (
           <CommentRow
             key={c.commentId}
             comment={c}
@@ -385,7 +415,13 @@ function InlineComments({ post, myAgentId }: { post: GqlPost; myAgentId: string 
           />
         ))}
       </div>
-      {myAgentId && <CommentComposer handle={handle} postId={post.postId} onCommentAdded={load} />}
+      {myAgentId && (
+        <CommentComposer
+          handle={handle}
+          postId={post.postId}
+          onCommentAdded={load}
+        />
+      )}
     </div>
   );
 }
@@ -434,7 +470,8 @@ function PostCard({
               <svg
                 className="h-3.5 w-3.5 shrink-0 text-primary-500"
                 fill="currentColor"
-                viewBox="0 0 20 20">
+                viewBox="0 0 20 20"
+              >
                 <path
                   fillRule="evenodd"
                   d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
@@ -443,7 +480,9 @@ function PostCard({
               </svg>
             )}
           </div>
-          <span className="text-xs text-content-faint">@{post.author.handle}</span>
+          <span className="text-xs text-content-faint">
+            @{post.author.handle}
+          </span>
         </div>
         {myAgentId && post.author.cryptoId !== myAgentId && (
           <button
@@ -452,10 +491,11 @@ function PostCard({
             onClick={() => onToggleFollow(post.author.cryptoId)}
             className={`ml-auto shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${
               followState[post.author.cryptoId]
-                ? 'border-line-strong text-content-secondary hover:bg-surface-hover'
-                : 'border-primary-600 bg-primary-600 text-content-inverted hover:bg-primary-700 dark:border-primary-500 dark:bg-primary-500'
-            }`}>
-            {followState[post.author.cryptoId] ? 'Following' : 'Follow'}
+                ? "border-line-strong text-content-secondary hover:bg-surface-hover"
+                : "border-primary-600 bg-primary-600 text-content-inverted hover:bg-primary-700 dark:border-primary-500 dark:bg-primary-500"
+            }`}
+          >
+            {followState[post.author.cryptoId] ? "Following" : "Follow"}
           </button>
         )}
         {myAgentId && post.author.cryptoId === myAgentId && (
@@ -463,28 +503,32 @@ function PostCard({
             type="button"
             onClick={() => onDeletePost(post)}
             className="ml-auto text-xs text-content-faint hover:text-red-500
-                       dark:hover:text-red-400">
+                       dark:hover:text-red-400"
+          >
             Delete
           </button>
         )}
       </div>
 
       {/* Post body */}
-      <p className="mb-3 whitespace-pre-wrap text-sm leading-relaxed text-content">{post.body}</p>
+      <p className="mb-3 whitespace-pre-wrap text-sm leading-relaxed text-content">
+        {post.body}
+      </p>
 
       {/* Metadata row */}
       <div className="flex items-center gap-4 text-xs text-content-faint">
         <span>{relativeTime(post.createdAt)}</span>
-        {item.reason === 'recommended' && (
+        {item.reason === "recommended" && (
           <span className="rounded-full bg-primary-50 px-1.5 py-0.5 text-[10px] font-medium text-primary-600 dark:bg-primary-900/30 dark:text-primary-300">
             Recommended
           </span>
         )}
         <button
           type="button"
-          onClick={() => setShowComments(open => !open)}
-          className="hover:text-content-secondary">
-          {post.commentCount} {post.commentCount === 1 ? 'comment' : 'comments'}
+          onClick={() => setShowComments((open) => !open)}
+          className="hover:text-content-secondary"
+        >
+          {post.commentCount} {post.commentCount === 1 ? "comment" : "comments"}
         </button>
         {myAgentId ? (
           <button
@@ -492,10 +536,15 @@ function PostCard({
             onClick={() => onToggleLike(post)}
             className={`flex items-center gap-1 ${
               (likeState[post.postId]?.liked ?? post.viewerHasLiked)
-                ? 'text-red-500'
-                : 'text-content-faint hover:text-red-400'
-            }`}>
-            <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 20 20">
+                ? "text-red-500"
+                : "text-content-faint hover:text-red-400"
+            }`}
+          >
+            <svg
+              className="h-3.5 w-3.5"
+              fill="currentColor"
+              viewBox="0 0 20 20"
+            >
               <path
                 fillRule="evenodd"
                 d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z"
@@ -506,7 +555,7 @@ function PostCard({
           </button>
         ) : (
           <span>
-            {post.likeCount} {post.likeCount === 1 ? 'like' : 'likes'}
+            {post.likeCount} {post.likeCount === 1 ? "like" : "likes"}
           </span>
         )}
       </div>
@@ -540,10 +589,13 @@ function CommentRow({
     void apiClient.feeds
       .deleteComment(handle, postId, comment.commentId)
       .then(({ ok }) => {
-        if (!ok) throw new Error('Comment deletion was not accepted by the backend');
+        if (!ok)
+          throw new Error("Comment deletion was not accepted by the backend");
         onCommentDeleted();
       })
-      .catch(err => console.error('[FeedSection] delete comment failed:', err))
+      .catch((err) =>
+        console.error("[FeedSection] delete comment failed:", err),
+      )
       .finally(() => {
         setDeleting(false);
         setConfirmingDelete(false);
@@ -559,20 +611,25 @@ function CommentRow({
           className="h-7 w-7 shrink-0 rounded-full object-cover"
         />
       ) : (
-        <InitialAvatar name={comment.author.displayName || comment.author.handle} />
+        <InitialAvatar
+          name={comment.author.displayName || comment.author.handle}
+        />
       )}
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
           <span className="text-sm font-medium text-content">
             {comment.author.displayName || comment.author.handle}
           </span>
-          <span className="text-xs text-content-faint">{relativeTime(comment.createdAt)}</span>
+          <span className="text-xs text-content-faint">
+            {relativeTime(comment.createdAt)}
+          </span>
           {myAgentId && comment.author.cryptoId === myAgentId && (
             <button
               type="button"
               onClick={() => setConfirmingDelete(true)}
               className="text-xs text-content-faint hover:text-red-500
-                         dark:hover:text-red-400">
+                         dark:hover:text-red-400"
+            >
               Delete
             </button>
           )}
@@ -598,16 +655,23 @@ function CommentRow({
 // ── FeedSection (main export) ─────────────────────────────────────────────────
 
 export default function FeedSection() {
-  const [feedState, setFeedState] = useState<FeedState>({ status: 'loading' });
+  const [feedState, setFeedState] = useState<FeedState>({ status: "loading" });
   const [followState, setFollowState] = useState<Record<string, boolean>>({});
-  const [followLoading, setFollowLoading] = useState<Record<string, boolean>>({});
-  const [likeState, setLikeState] = useState<Record<string, { liked: boolean; count: number }>>({});
+  const [followLoading, setFollowLoading] = useState<Record<string, boolean>>(
+    {},
+  );
+  const [likeState, setLikeState] = useState<
+    Record<string, { liked: boolean; count: number }>
+  >({});
   // Post pending deletion — drives the in-app confirm modal (#4197). `null` = no
   // dialog open; `deletingPost` disables the buttons while the RPC is in flight.
-  const [postPendingDelete, setPostPendingDelete] = useState<GqlPost | null>(null);
+  const [postPendingDelete, setPostPendingDelete] = useState<GqlPost | null>(
+    null,
+  );
   const [deletingPost, setDeletingPost] = useState(false);
 
-  const { agentId: myAgentId, configured: walletConfigured } = useWalletResolution();
+  const { agentId: myAgentId, configured: walletConfigured } =
+    useWalletResolution();
 
   // ── Hydrate follow state from the server ───────────────────────────────────
   // The home feed doesn't carry "am I following this author?", so seed the
@@ -618,14 +682,14 @@ export default function FeedSection() {
     let cancelled = false;
     void apiClient.follows
       .following(myAgentId)
-      .then(res => {
+      .then((res) => {
         if (cancelled) return;
         const followed: Record<string, boolean> = {};
         for (const f of res.following ?? []) {
           if (f.followee) followed[f.followee] = true;
         }
         // Merge so any optimistic toggles made before this resolves are kept.
-        setFollowState(prev => ({ ...followed, ...prev }));
+        setFollowState((prev) => ({ ...followed, ...prev }));
       })
       .catch(() => {});
     return () => {
@@ -643,21 +707,21 @@ export default function FeedSection() {
   // ('yes') — or an inconclusive wallet_status fetch ('unknown') — fires the
   // feed fetch as before.
   useEffect(() => {
-    if (walletConfigured === 'resolving') {
+    if (walletConfigured === "resolving") {
       // Still resolving — stay on the initial loading state, fire nothing yet.
       return;
     }
-    if (walletConfigured === 'no') {
+    if (walletConfigured === "no") {
       // Positive "no wallet" signal — skip the wallet-gated RPC entirely.
-      log('skipping homeFeed: no wallet configured');
-      setFeedState({ status: 'wallet_unconfigured' });
+      log("skipping homeFeed: no wallet configured");
+      setFeedState({ status: "wallet_unconfigured" });
       return;
     }
     // 'yes' or 'unknown' → fire the feed fetch ('unknown' falls through so the
     // backend classifier can handle a wallet-locked error as before).
 
     let cancelled = false;
-    setFeedState({ status: 'loading' });
+    setFeedState({ status: "loading" });
 
     // `includeSelf: true` — the personalized home feed otherwise returns only
     // scored posts from *followed* agents, so the viewer's own posts (including
@@ -666,17 +730,20 @@ export default function FeedSection() {
     // show it (#4059).
     void apiClient.graphql
       .homeFeed({ limit: 50, includeSelf: true })
-      .then(result => {
+      .then((result) => {
         if (cancelled) return;
         const items = sortedHomeFeedItems(result);
-        setFeedState({ status: 'ok', items });
+        setFeedState({ status: "ok", items });
       })
       .catch((err: unknown) => {
         if (cancelled) return;
         if (err instanceof PaymentRequiredError) {
-          setFeedState({ status: 'payment_required', challenge: err.challenge });
+          setFeedState({
+            status: "payment_required",
+            challenge: err.challenge,
+          });
         } else {
-          setFeedState({ status: 'error', message: String(err) });
+          setFeedState({ status: "error", message: String(err) });
         }
       });
 
@@ -689,8 +756,8 @@ export default function FeedSection() {
 
   const handleToggleFollow = async (cryptoId: string) => {
     const isFollowing = followState[cryptoId] ?? false;
-    setFollowState(prev => ({ ...prev, [cryptoId]: !isFollowing }));
-    setFollowLoading(prev => ({ ...prev, [cryptoId]: true }));
+    setFollowState((prev) => ({ ...prev, [cryptoId]: !isFollowing }));
+    setFollowLoading((prev) => ({ ...prev, [cryptoId]: true }));
     try {
       if (isFollowing) {
         await apiClient.follows.unfollow(cryptoId);
@@ -698,23 +765,29 @@ export default function FeedSection() {
         await apiClient.follows.follow(cryptoId);
       }
     } catch (err) {
-      setFollowState(prev => ({ ...prev, [cryptoId]: isFollowing }));
-      console.error('[FeedSection] follow/unfollow failed:', err);
+      setFollowState((prev) => ({ ...prev, [cryptoId]: isFollowing }));
+      console.error("[FeedSection] follow/unfollow failed:", err);
     } finally {
-      setFollowLoading(prev => ({ ...prev, [cryptoId]: false }));
+      setFollowLoading((prev) => ({ ...prev, [cryptoId]: false }));
     }
   };
 
   // ── Like / Unlike ──────────────────────────────────────────────────────────
 
   const handleToggleLike = async (post: GqlPost) => {
-    const current = likeState[post.postId] ?? { liked: post.viewerHasLiked, count: post.likeCount };
+    const current = likeState[post.postId] ?? {
+      liked: post.viewerHasLiked,
+      count: post.likeCount,
+    };
     const willLike = !current.liked;
 
     // Optimistic update
-    setLikeState(prev => ({
+    setLikeState((prev) => ({
       ...prev,
-      [post.postId]: { liked: willLike, count: current.count + (willLike ? 1 : -1) },
+      [post.postId]: {
+        liked: willLike,
+        count: current.count + (willLike ? 1 : -1),
+      },
     }));
 
     try {
@@ -723,14 +796,14 @@ export default function FeedSection() {
         : await apiClient.feeds.unlikePost(post.author.handle, post.postId);
 
       // Reconcile with authoritative server state
-      setLikeState(prev => ({
+      setLikeState((prev) => ({
         ...prev,
         [post.postId]: { liked: result.liked, count: result.likeCount },
       }));
     } catch (err) {
       // Rollback to pre-mutation state
-      setLikeState(prev => ({ ...prev, [post.postId]: current }));
-      console.error('[FeedSection] like/unlike failed:', err);
+      setLikeState((prev) => ({ ...prev, [post.postId]: current }));
+      console.error("[FeedSection] like/unlike failed:", err);
     }
   };
 
@@ -749,15 +822,18 @@ export default function FeedSection() {
     void apiClient.feeds
       .deletePost(post.postId)
       .then(({ ok }) => {
-        if (!ok) throw new Error('Post deletion was not accepted by the backend');
+        if (!ok)
+          throw new Error("Post deletion was not accepted by the backend");
         // Return the refresh promise so its rejection reaches `.catch` (rather
         // than resolving the delete as "done" before the feed is reloaded).
-        return apiClient.graphql.homeFeed({ limit: 50, includeSelf: true }).then(result => {
-          const items = sortedHomeFeedItems(result);
-          setFeedState({ status: 'ok', items });
-        });
+        return apiClient.graphql
+          .homeFeed({ limit: 50, includeSelf: true })
+          .then((result) => {
+            const items = sortedHomeFeedItems(result);
+            setFeedState({ status: "ok", items });
+          });
       })
-      .catch(err => console.error('[FeedSection] delete post failed:', err))
+      .catch((err) => console.error("[FeedSection] delete post failed:", err))
       .finally(() => {
         setDeletingPost(false);
         setPostPendingDelete(null);
@@ -767,23 +843,25 @@ export default function FeedSection() {
   // ── Refetch feed ───────────────────────────────────────────────────────────
 
   const refetchFeed = () => {
-    void apiClient.graphql.homeFeed({ limit: 50, includeSelf: true }).then(result => {
-      const items = sortedHomeFeedItems(result);
-      setFeedState({ status: 'ok', items });
-    });
+    void apiClient.graphql
+      .homeFeed({ limit: 50, includeSelf: true })
+      .then((result) => {
+        const items = sortedHomeFeedItems(result);
+        setFeedState({ status: "ok", items });
+      });
   };
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
   let body: React.ReactNode;
 
-  if (feedState.status === 'loading') {
+  if (feedState.status === "loading") {
     body = (
       <div className="flex h-64 items-center justify-center text-content-faint">
         <span className="animate-pulse text-sm">Loading feed…</span>
       </div>
     );
-  } else if (feedState.status === 'wallet_unconfigured') {
+  } else if (feedState.status === "wallet_unconfigured") {
     body = (
       <StatusBlock
         tone="text-content-secondary"
@@ -791,7 +869,7 @@ export default function FeedSection() {
         body="Your personalized feed uses your wallet identity. Set up or import a wallet in Settings to continue."
       />
     );
-  } else if (feedState.status === 'payment_required') {
+  } else if (feedState.status === "payment_required") {
     body = (
       <StatusBlock
         tone="text-amber-600 dark:text-amber-400"
@@ -799,7 +877,7 @@ export default function FeedSection() {
         body="Your wallet will be used to fulfill the x402 payment challenge."
       />
     );
-  } else if (feedState.status === 'error') {
+  } else if (feedState.status === "error") {
     body = isWalletLocked(feedState.message) ? (
       <StatusBlock
         tone="text-content-secondary"
@@ -824,18 +902,18 @@ export default function FeedSection() {
   } else {
     body = (
       <div className="space-y-3">
-        {feedState.items.map(item => (
+        {feedState.items.map((item) => (
           <PostCard
             key={item.post.postId}
             item={item}
             myAgentId={myAgentId}
             followState={followState}
             followLoading={followLoading}
-            onToggleFollow={cryptoId => {
+            onToggleFollow={(cryptoId) => {
               void handleToggleFollow(cryptoId);
             }}
             likeState={likeState}
-            onToggleLike={post => {
+            onToggleLike={(post) => {
               void handleToggleLike(post);
             }}
             onDeletePost={handleDeletePost}
@@ -847,7 +925,7 @@ export default function FeedSection() {
 
   return (
     <PanelScaffold description="Social feed">
-      {myAgentId && feedState.status === 'ok' && (
+      {myAgentId && feedState.status === "ok" && (
         <FeedComposer myAgentId={myAgentId} onPostCreated={refetchFeed} />
       )}
       {body}
