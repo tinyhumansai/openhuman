@@ -359,6 +359,56 @@ async fn authed_json_surfaces_message_not_found_on_404() {
 }
 
 #[tokio::test]
+async fn authed_json_surfaces_announcement_not_found_on_404() {
+    // TAURI-RUST-HW0 / TAURI-RUST-KHX: 404 on `/announcements/latest` must
+    // surface a typed `BackendApiError::AnnouncementNotFound` (so the caller
+    // can degrade to `null`) instead of a generic non-2xx error.
+    let app = Router::new().route(
+        "/announcements/latest",
+        get(|| async { (axum::http::StatusCode::NOT_FOUND, "Not Found") }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base_url = format!("http://{addr}");
+    let client = BackendOAuthClient::new(&base_url).unwrap();
+
+    let err = client
+        .authed_json("mock-jwt", Method::GET, "/announcements/latest", None)
+        .await
+        .unwrap_err();
+    let typed = err.downcast_ref::<BackendApiError>().unwrap();
+    assert!(matches!(typed, BackendApiError::AnnouncementNotFound));
+}
+
+#[tokio::test]
+async fn authed_json_only_classifies_get_announcements_latest_as_not_found() {
+    // Defense-in-depth: a 404 on a *different* path must not be misclassified
+    // as AnnouncementNotFound just because it shares a prefix/suffix.
+    let app = Router::new().route(
+        "/announcements/latest/extra",
+        get(|| async { (axum::http::StatusCode::NOT_FOUND, "Not Found") }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base_url = format!("http://{addr}");
+    let client = BackendOAuthClient::new(&base_url).unwrap();
+
+    let err = client
+        .authed_json("mock-jwt", Method::GET, "/announcements/latest/extra", None)
+        .await
+        .unwrap_err();
+    assert!(err.downcast_ref::<BackendApiError>().is_none());
+}
+
+#[tokio::test]
 async fn authed_json_surfaces_unauthorized_on_401() {
     // OPENHUMAN-TAURI-4K8: 401 on any authed backend endpoint must surface a
     // typed `BackendApiError::Unauthorized` and NOT funnel into `report_error`.
@@ -578,6 +628,23 @@ fn flatten_authed_error_does_not_swallow_message_not_found() {
     assert!(!flat.contains("SESSION_EXPIRED"), "must not map: {flat}");
     assert!(
         flat.contains("message not found"),
+        "display preserved: {flat}"
+    );
+}
+
+#[test]
+fn flatten_authed_error_does_not_swallow_announcement_not_found() {
+    // `announcements::ops::get_latest_announcement` intercepts
+    // `AnnouncementNotFound` before it ever reaches `flatten_authed_error`, but
+    // this is defense-in-depth: if a future caller skips that interception,
+    // `flatten_authed_error` must still preserve the typed state's Display
+    // text rather than collapsing it into the session-expiry sentinel.
+    let err = anyhow::Error::new(BackendApiError::AnnouncementNotFound);
+    let flat = flatten_authed_error(err);
+
+    assert!(!flat.contains("SESSION_EXPIRED"), "must not map: {flat}");
+    assert!(
+        flat.contains("no announcement available"),
         "display preserved: {flat}"
     );
 }
