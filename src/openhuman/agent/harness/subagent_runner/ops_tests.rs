@@ -235,6 +235,171 @@ async fn save_gmail_scope_for_test(
         .expect("gmail scope pref should persist for isolated test");
 }
 
+#[derive(Clone)]
+struct ComposioFixture {
+    toolkits: Vec<String>,
+    connections: Vec<serde_json::Value>,
+    tools: Vec<serde_json::Value>,
+}
+
+impl ComposioFixture {
+    fn realistic() -> Self {
+        Self {
+            toolkits: vec![
+                "gmail".to_string(),
+                "notion".to_string(),
+                "github".to_string(),
+                "slack".to_string(),
+            ],
+            connections: vec![
+                serde_json::json!({
+                    "id": "conn_gmail_1",
+                    "toolkit": "gmail",
+                    "status": "ACTIVE",
+                    "createdAt": "2026-04-01T12:00:00Z",
+                }),
+                serde_json::json!({
+                    "id": "conn_notion_1",
+                    "toolkit": "notion",
+                    "status": "ACTIVE",
+                    "createdAt": "2026-04-02T08:00:00Z",
+                }),
+                serde_json::json!({
+                    "id": "conn_github_1",
+                    "toolkit": "github",
+                    "status": "ACTIVE",
+                    "createdAt": "2026-04-03T15:30:00Z",
+                }),
+            ],
+            tools: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct FakeComposioState {
+    fixture: Arc<Mutex<ComposioFixture>>,
+    requests: Arc<Mutex<Vec<(String, String, serde_json::Value)>>>,
+}
+
+struct FakeComposioBackend {
+    base_url: String,
+    state: FakeComposioState,
+}
+
+impl FakeComposioBackend {
+    fn requests(&self) -> Vec<(String, String, serde_json::Value)> {
+        self.state.requests.lock().clone()
+    }
+
+    async fn config_persisted(
+        &self,
+    ) -> (Arc<crate::openhuman::config::Config>, std::path::PathBuf) {
+        use crate::openhuman::credentials::{
+            AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
+        };
+
+        let tmp = tempfile::tempdir().expect("tempdir for fake Composio config");
+        let workspace_root = tmp.path().to_path_buf();
+        let mut config = crate::openhuman::config::Config::default();
+        config.workspace_dir = workspace_root.join("workspace");
+        config.config_path = workspace_root.join("config.toml");
+        config.api_url = Some(self.base_url.clone());
+        config.composio.mode = crate::openhuman::config::schema::COMPOSIO_MODE_BACKEND.to_string();
+        config.secrets.encrypt = false;
+        AuthService::from_config(&config)
+            .store_provider_token(
+                APP_SESSION_PROVIDER,
+                DEFAULT_AUTH_PROFILE_NAME,
+                "test-token",
+                std::collections::HashMap::new(),
+                true,
+            )
+            .expect("store fake app-session token");
+        config.save().await.expect("persist fake Composio config");
+        std::mem::forget(tmp);
+        (Arc::new(config), workspace_root)
+    }
+}
+
+async fn record_request(
+    requests: &Arc<Mutex<Vec<(String, String, serde_json::Value)>>>,
+    method: &str,
+    path: &str,
+    body: serde_json::Value,
+) {
+    requests
+        .lock()
+        .push((method.to_string(), path.to_string(), body));
+}
+
+async fn spawn_fake_composio_backend(fixture: ComposioFixture) -> FakeComposioBackend {
+    use axum::{routing::get, Json, Router};
+
+    let state = FakeComposioState {
+        fixture: Arc::new(Mutex::new(fixture)),
+        requests: Arc::new(Mutex::new(Vec::new())),
+    };
+
+    let app = Router::new()
+        .route(
+            "/agent-integrations/composio/toolkits",
+            get({
+                let st = state.clone();
+                move || async move {
+                    record_request(&st.requests, "GET", "/toolkits", serde_json::Value::Null).await;
+                    let toolkits = st.fixture.lock().toolkits.clone();
+                    Json(serde_json::json!({
+                        "success": true,
+                        "data": { "toolkits": toolkits }
+                    }))
+                }
+            }),
+        )
+        .route(
+            "/agent-integrations/composio/connections",
+            get({
+                let st = state.clone();
+                move || async move {
+                    record_request(&st.requests, "GET", "/connections", serde_json::Value::Null)
+                        .await;
+                    let connections = st.fixture.lock().connections.clone();
+                    Json(serde_json::json!({
+                        "success": true,
+                        "data": { "connections": connections }
+                    }))
+                }
+            }),
+        )
+        .route(
+            "/agent-integrations/composio/tools",
+            get({
+                let st = state.clone();
+                move || async move {
+                    record_request(&st.requests, "GET", "/tools", serde_json::Value::Null).await;
+                    let tools = st.fixture.lock().tools.clone();
+                    Json(serde_json::json!({
+                        "success": true,
+                        "data": { "tools": tools }
+                    }))
+                }
+            }),
+        );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind fake Composio backend");
+    let addr = listener.local_addr().expect("fake Composio backend addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    FakeComposioBackend {
+        base_url: format!("http://127.0.0.1:{}", addr.port()),
+        state,
+    }
+}
+
 /// Mock provider whose response queue can be inspected by the test
 /// to verify the bytes that arrive at the model.
 #[derive(Clone)]
@@ -785,7 +950,7 @@ async fn integrations_agent_reuses_cached_toolkit_actions_without_refetching_lis
     let _cache_guard = crate::openhuman::composio::composio_cache_test_lock();
     crate::openhuman::composio::invalidate_connected_integrations_cache();
 
-    let mut fixture = crate::openhuman::agent::harness::test_support::ComposioFixture::realistic();
+    let mut fixture = ComposioFixture::realistic();
     fixture.tools = vec![serde_json::json!({
         "type": "function",
         "function": {
@@ -802,8 +967,7 @@ async fn integrations_agent_reuses_cached_toolkit_actions_without_refetching_lis
             }
         }
     })];
-    let backend =
-        crate::openhuman::agent::harness::test_support::spawn_fake_composio_backend(fixture).await;
+    let backend = spawn_fake_composio_backend(fixture).await;
     let (config, workspace_root) = backend.config_persisted().await;
     let _workspace = WorkspaceEnvGuard::set(&workspace_root);
     let memory = crate::openhuman::memory::global::init(config.workspace_dir.clone())
@@ -876,7 +1040,7 @@ async fn integrations_agent_refilters_cached_actions_with_current_user_scope() {
     let _cache_guard = crate::openhuman::composio::composio_cache_test_lock();
     crate::openhuman::composio::invalidate_connected_integrations_cache();
 
-    let mut fixture = crate::openhuman::agent::harness::test_support::ComposioFixture::realistic();
+    let mut fixture = ComposioFixture::realistic();
     fixture.tools = vec![
         serde_json::json!({
             "type": "function",
@@ -908,8 +1072,7 @@ async fn integrations_agent_refilters_cached_actions_with_current_user_scope() {
             }
         }),
     ];
-    let backend =
-        crate::openhuman::agent::harness::test_support::spawn_fake_composio_backend(fixture).await;
+    let backend = spawn_fake_composio_backend(fixture).await;
     let (config, workspace_root) = backend.config_persisted().await;
     let _workspace = WorkspaceEnvGuard::set(&workspace_root);
     let memory = crate::openhuman::memory::global::init(config.workspace_dir.clone())
