@@ -1,5 +1,7 @@
 export function relativeTime(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
+  const date = new Date(iso);
+  if (isNaN(date.getTime())) return 'just now';
+  const ms = Date.now() - date.getTime();
   const mins = Math.floor(ms / 60000);
   if (mins < 1) return 'just now';
   if (mins < 60) return `${mins}m ago`;

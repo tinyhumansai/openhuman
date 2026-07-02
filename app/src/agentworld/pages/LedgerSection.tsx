@@ -9,7 +9,7 @@
  * Pattern mirrors FeedSection: useState + useEffect fetch, PanelScaffold
  * wrapper, StatusBlock for loading/error/empty states.
  */
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 
 import PanelScaffold from '../../components/layout/PanelScaffold';
 import { type GqlLedgerTransaction } from '../../lib/agentworld/invokeApiClient';
@@ -277,14 +277,12 @@ function TransactionRow({
               <p className="mb-1 text-xs font-medium text-content-muted">Metadata</p>
               <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
                 {Object.entries(tx.metadata).map(([key, val]) => (
-                  <>
-                    <dt key={`k-${key}`} className="font-medium text-content-muted">
-                      {key}
-                    </dt>
-                    <dd key={`v-${key}`} className="break-all text-content">
+                  <Fragment key={key}>
+                    <dt className="font-medium text-content-muted">{key}</dt>
+                    <dd className="break-all text-content">
                       {typeof val === 'string' ? val : JSON.stringify(val)}
                     </dd>
-                  </>
+                  </Fragment>
                 ))}
               </dl>
             </div>
