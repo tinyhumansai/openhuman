@@ -667,6 +667,42 @@ pub fn log_context_window_exceeded(
     );
 }
 
+/// Whether a provider error body is a **permanent per-request rate-cap
+/// rejection**: the provider refused because a *single* request's token count
+/// exceeds the account's tokens-per-minute (TPM) budget, so no amount of
+/// retrying or spacing can ever let it through on the current tier.
+///
+/// Distinct from a *transient* TPM `429` ("rate limit reached … try again in
+/// 2s" — a burst that [`is_context_window_exceeded_message`] and the `reliable`
+/// retry classifier deliberately keep retryable), from a monthly-plan quota
+/// ([`body_indicates_quota_exhausted`]), and from context-window overflow
+/// ([`is_context_window_exceeded_message`], a model-size limit not a rate cap).
+/// Here the request is larger than the per-minute limit outright, so it is
+/// permanently non-viable until the user picks a higher-tier model/provider —
+/// OpenHuman has no lever to raise a third-party account's TPM tier.
+///
+/// Canonical wire shape (groq `on_demand` free tier, Sentry TAURI-RUST-HXF):
+/// `groq API error (413 Payload Too Large): {"error":{"message":"Request too
+/// large for model `openai/gpt-oss-120b` in organization `org_…` service tier
+/// `on_demand` on tokens per minute (TPM): Limit 8000, Requested 42084 …"}}`.
+///
+/// Anchored on BOTH the permanence marker `"request too large"` (a single
+/// request over the cap, not a burst) AND a per-minute-tokens marker
+/// (`"tokens per minute"` / `"(tpm)"`), so a transient "rate limit reached,
+/// retry in Ns" burst — which lacks "request too large" — is NOT swallowed and
+/// stays retryable + Sentry-visible. Status-agnostic (groq uses `413`; a
+/// gateway could wrap it) and covered by a verbatim-body test so a provider
+/// wording drift fails CI. Single source of truth shared by
+/// [`crate::core::observability::is_provider_user_state_message`] (Sentry
+/// demotion of the `domain=agent` re-report) and the subconscious tick loop's
+/// permanent-rejection circuit breaker
+/// (`crate::openhuman::subconscious::engine`).
+pub fn is_provider_rate_cap_exceeded_message(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    lower.contains("request too large")
+        && (lower.contains("tokens per minute") || lower.contains("(tpm)"))
+}
+
 /// Whether a provider non-2xx response is the OpenHuman **backend** rejecting
 /// the app session JWT (`401`/`403`). This is expected user-session state
 /// (token expired / revoked / rotated server-side), not a product bug — the
@@ -1223,6 +1259,33 @@ mod tests {
         // the transport status is 500, not 402.
         assert!(is_provider_quota_exhausted(C9A_BODY));
         assert!(body_indicates_quota_exhausted(C9A_BODY));
+    }
+
+    #[test]
+    fn rate_cap_exceeded_matches_verbatim_hxf_body_but_not_transient_or_context() {
+        // TAURI-RUST-HXF: verbatim groq `on_demand` free-tier 413 — a single
+        // request over the per-minute token cap. Status-agnostic; anchored on
+        // BOTH "request too large" (single-request permanence) and a
+        // tokens-per-minute marker.
+        assert!(is_provider_rate_cap_exceeded_message(
+            "groq API error (413 Payload Too Large): {\"error\":{\"message\":\"Request too large \
+             for model `openai/gpt-oss-120b` in organization `org_x` service tier `on_demand` on \
+             tokens per minute (TPM): Limit 8000, Requested 42084.\",\"code\":\"rate_limit_exceeded\"}}"
+        ));
+        // Transient burst ("try again in Ns") lacks "request too large" → stays
+        // retryable + Sentry-visible.
+        assert!(!is_provider_rate_cap_exceeded_message(
+            "groq API error (429 Too Many Requests): Rate limit reached. Please try again in 2.5s."
+        ));
+        // Context-window overflow is a different bucket (model size, not a rate
+        // cap) — no tokens-per-minute marker.
+        assert!(!is_provider_rate_cap_exceeded_message(
+            "openai API error (400): This model's maximum context length is 8192 tokens"
+        ));
+        // A bare 413 with no TPM marker must not match.
+        assert!(!is_provider_rate_cap_exceeded_message(
+            "openai API error (413 Payload Too Large): request entity too large"
+        ));
     }
 
     #[test]
