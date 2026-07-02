@@ -427,6 +427,41 @@ fn is_api_key_unset_failure(
     crate::core::observability::is_api_key_unset_message(signal)
 }
 
+/// TAURI-RUST-12K — a cron **agent** job pinned to a **local** LLM provider
+/// (LM Studio / Ollama / llama.cpp on `localhost:<port>`) fails at the TCP
+/// layer with "connection refused" because the user's local server isn't
+/// running. This is a genuinely unpreventable user-environment state: the app
+/// has no lever to start a user's local model server, and retrying across the
+/// backoff loop cannot bring the port up within one cron cycle.
+///
+/// The provider / agent emit sites already demote this via
+/// `report_error_or_expected` (the `expected_error_kind` classifier routes it
+/// to `LoopbackUnavailable`), so it never reaches Sentry there. But the bare
+/// cron `report_error` below bypasses that demotion and re-emitted the
+/// `failure=retries_exhausted` capture on every cron cycle — 2802 events / 29
+/// users. So we halt on the first occurrence and skip the report, mirroring
+/// the source demotion and the sibling billing / api-key guards
+/// (TAURI-RUST-514 / -BMW / -HCK).
+///
+/// Delegates to the single-source matcher
+/// [`crate::core::observability::is_local_provider_unreachable_message`] so
+/// the wording cannot drift from the classifier emit site. Narrow by design:
+/// only **loopback** connection-refused matches, so a transient *remote*
+/// provider / backend network error still retries and still reports. Routes on
+/// `last_agent_error` first (the raw anyhow chain carrying the wire message),
+/// falling back to `last_output`. Restricted to `JobType::Agent`.
+fn is_local_provider_unreachable_failure(
+    job_type: &JobType,
+    last_agent_error: Option<&str>,
+    last_output: &str,
+) -> bool {
+    if !matches!(job_type, JobType::Agent) {
+        return false;
+    }
+    let signal = last_agent_error.unwrap_or(last_output);
+    crate::core::observability::is_local_provider_unreachable_message(signal)
+}
+
 async fn execute_job_with_retry(
     config: &Config,
     security: &SecurityPolicy,
@@ -440,6 +475,7 @@ async fn execute_job_with_retry(
     let mut credits_exhausted = false;
     let mut budget_exhausted = false;
     let mut key_unset = false;
+    let mut local_unreachable = false;
 
     for attempt in 0..=retries {
         let (success, output, agent_error) = match job.job_type {
@@ -544,6 +580,30 @@ async fn execute_job_with_retry(
             break;
         }
 
+        if is_local_provider_unreachable_failure(
+            &job.job_type,
+            last_agent_error.as_deref(),
+            last_output.as_str(),
+        ) {
+            // Halt on the first occurrence — a local LLM provider refusing the
+            // loopback connection (LM Studio / Ollama not running) cannot
+            // recover across the backoff loop, and the provider/agent emit
+            // sites already demoted it from Sentry (`LoopbackUnavailable`).
+            // The bare cron `report_error` below bypasses that demotion, so
+            // suppressing here keeps the residual off Sentry at source
+            // (TAURI-RUST-12K). The failure stays visible via the run history
+            // + cron alert. See `is_local_provider_unreachable_failure`.
+            // Metadata-only log (no raw provider body — see CLAUDE.md).
+            log::debug!(
+                "[cron] action=halt_on_local_provider_unreachable job_id={} attempt={} retries={}",
+                job.id.as_str(),
+                attempt,
+                retries
+            );
+            local_unreachable = true;
+            break;
+        }
+
         if attempt < retries {
             let jitter_ms = u64::from(Utc::now().timestamp_subsec_millis() % 250);
             time::sleep(Duration::from_millis(backoff_ms + jitter_ms)).await;
@@ -555,9 +615,18 @@ async fn execute_job_with_retry(
     // loop and skip the retries-exhausted report, independent of the tag-gated
     // before_send filters that the cron re-report does not match. Covers BYO
     // 402 out-of-credit + managed-backend 400 out-of-budget (TAURI-RUST-514 /
-    // -BMW) and a configured provider with no API key (TAURI-RUST-HCK).
+    // -BMW) and a configured provider with no API key (TAURI-RUST-HCK). The
+    // `session_expired` (TAURI-RUST-N) and `local_unreachable` (a local LLM
+    // server refusing the loopback connection, TAURI-RUST-12K) halts are the
+    // same shape — suppress the bypassing bare report — but carry no
+    // user-config remediation surface, so they gate the report directly rather
+    // than routing through `permanent_config_halt`'s UserErrorCenter swap.
     let permanent_config_halt = credits_exhausted || budget_exhausted || key_unset;
-    if matches!(job.job_type, JobType::Agent) && !session_expired && !permanent_config_halt {
+    if matches!(job.job_type, JobType::Agent)
+        && !session_expired
+        && !local_unreachable
+        && !permanent_config_halt
+    {
         let report_message = last_agent_error
             .as_deref()
             .unwrap_or_else(|| last_output.as_str());
