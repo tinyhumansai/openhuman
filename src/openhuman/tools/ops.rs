@@ -183,6 +183,11 @@ pub fn all_tools_with_runtime(
         Box::new(ContinueSubagentTool::new()),
         Box::new(SpawnParallelAgentsTool::new()),
         Box::new(DelegateToPersonalityTool::new()),
+        // Multi-stage durable delegation (issue #4249, Phase 3): runs the chosen
+        // sub-agent through the tinyagents plan→execute→review→finalize graph,
+        // checkpointed to the session DB. Heavier than spawn_subagent; for
+        // sub-tasks that benefit from a self-review/revision loop.
+        Box::new(DelegateGraphTool::new()),
         // Coding-harness control flow (issue #1205): a process-global
         // todo registry the agent can rewrite end-to-end, plus the
         // `plan_exit` marker that hands a plan-mode pass off to a

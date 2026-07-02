@@ -49,6 +49,12 @@ pub use types::{
 // renderer. The other `tool_prep` helpers are used only inside this module.
 pub(crate) use tool_prep::build_text_mode_tool_instructions;
 
+// Progressive-disclosure handoff: the tinyagents `HandoffMiddleware` intercepts
+// oversized sub-agent tool results via `apply_handoff`, sharing the per-spawn
+// `ResultHandoffCache` with the `extract_from_result` tool.
+pub(crate) use handoff::ResultHandoffCache;
+pub(crate) use ops::apply_handoff;
+
 // `user_is_signed_in_to_composio` is the mode-aware "can the user call
 // composio at all?" probe added in Wave 2 (#1710). Re-exported here so
 // non-composio probe sites (registration gates, heartbeat telemetry)

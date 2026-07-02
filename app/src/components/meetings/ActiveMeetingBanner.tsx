@@ -19,12 +19,15 @@ import {
   selectBackendMeetLastHarness,
   selectBackendMeetLastReply,
   selectBackendMeetListenOnly,
+  selectBackendMeetLivePartialIndex,
+  selectBackendMeetLiveTranscript,
   selectBackendMeetStatus,
   selectBackendMeetUrl,
 } from '../../store/backendMeetSlice';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import Button from '../ui/Button';
 import { Spinner } from '../ui/icons';
+import { LiveTranscriptPanel } from './LiveTranscriptPanel';
 
 type Toast = { type: 'success' | 'error' | 'info'; title: string; message?: string };
 
@@ -70,6 +73,8 @@ export function ActiveMeetingBanner({ onToast }: ActiveMeetingBannerProps) {
   const listenOnly = useAppSelector(selectBackendMeetListenOnly);
   const lastReply = useAppSelector(selectBackendMeetLastReply);
   const lastHarness = useAppSelector(selectBackendMeetLastHarness);
+  const liveTranscript = useAppSelector(selectBackendMeetLiveTranscript);
+  const livePartialIndex = useAppSelector(selectBackendMeetLivePartialIndex);
   // selectBackendMeetError imported for parity; not used visually here — errors
   // surface in the composer's inline alert during the error state.
   const face = faceFromMeetState(status, lastReply, lastHarness);
@@ -183,6 +188,11 @@ export function ActiveMeetingBanner({ onToast }: ActiveMeetingBannerProps) {
           )}
         </div>
       </div>
+      {/* Live transcript during an in-progress call (issue #4304). Hidden once
+          the call ends — the final transcript is shown elsewhere in history. */}
+      {(status === 'active' || status === 'joining') && (
+        <LiveTranscriptPanel turns={liveTranscript} partialIndex={livePartialIndex} />
+      )}
     </div>
   );
 }

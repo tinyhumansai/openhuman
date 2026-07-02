@@ -1,31 +1,14 @@
-//! Unified agent turn engine.
+//! Shared agent-turn seams reused by the tinyagents harness route.
 //!
-//! Historically the harness carried THREE near-identical agentic loops — one
-//! per entry point (`Agent::turn` for web/desktop chat, `run_tool_call_loop`
-//! for non-web channels + triage, and the subagent `run_inner_loop`). They each
-//! re-implemented the same shape (call the LLM → parse tool calls → execute
-//! tools → append results → repeat until final text or the iteration cap) and
-//! had drifted in subtle ways.
-//!
-//! This module is the single home for the pieces those loops share, so they
-//! can't drift again. The extraction is incremental (see the unify-agent-turn
-//! plan): the first piece to land is [`tools::run_one_tool`] — the per-call
-//! tool executor (policy gate → scope guard → approval gate → execute with
-//! timeout → scrub/tokenjuice/cap/summarize → audit), which was previously
-//! duplicated verbatim across all three loops.
+//! The harness historically carried three near-identical agentic loops
+//! (`Agent::turn`, `run_tool_call_loop`, the sub-agent `run_inner_loop`), all
+//! retired in favour of the tinyagents harness (issue #4249). What survives here
+//! are the cross-cutting pieces the tinyagents route still reuses: the
+//! max-iteration [`CheckpointStrategy`] seam and the [`ProgressReporter`] /
+//! [`TurnProgress`] sink that mirrors a turn's events onto `AgentProgress`.
 
 pub(crate) mod checkpoint;
-pub(crate) mod core;
-pub(crate) mod parser;
 pub(crate) mod progress;
-pub(crate) mod state;
-pub(crate) mod tool_source;
-pub(crate) mod tools;
 
-pub(crate) use checkpoint::{CheckpointOutcome, CheckpointStrategy, ErrorCheckpoint};
-pub(crate) use core::{run_turn_engine, TurnStop};
-pub(crate) use parser::{DefaultParser, DispatcherParser};
-pub(crate) use progress::{ProgressReporter, SubagentProgress, TurnProgress};
-pub(crate) use state::{NullObserver, TurnObserver};
-pub(crate) use tool_source::{RegistryToolSource, ToolSource};
-pub(crate) use tools::{run_one_tool, ToolRunResult};
+pub(crate) use checkpoint::{CheckpointOutcome, CheckpointStrategy};
+pub(crate) use progress::{ProgressReporter, TurnProgress};

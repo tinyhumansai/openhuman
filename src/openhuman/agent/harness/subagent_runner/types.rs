@@ -69,10 +69,10 @@ pub struct SubagentRunOptions {
     pub worktree_action_dir: Option<PathBuf>,
 
     /// Steering channel for a running (typically async) sub-agent. When set,
-    /// the inner `run_turn_engine` drains steer/collect messages from this
-    /// queue at iteration boundaries — exactly like the main agent loop — so
-    /// the parent can `steer_subagent` mid-flight. `None` keeps today's
-    /// non-steerable behaviour.
+    /// the tinyagents harness drains steer/collect messages from this queue at
+    /// iteration boundaries — exactly like the main agent loop — so the parent
+    /// can `steer_subagent` mid-flight. `None` keeps today's non-steerable
+    /// behaviour.
     pub run_queue: Option<std::sync::Arc<crate::openhuman::agent::harness::run_queue::RunQueue>>,
 }
 

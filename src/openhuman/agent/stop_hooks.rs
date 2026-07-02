@@ -1,29 +1,24 @@
 //! Mid-turn stop hooks — policy-driven halt of an in-flight agent
 //! turn.
 //!
-//! Distinct from [`super::harness::interrupt::InterruptFence`], which
-//! handles user-driven cancellation (Ctrl+C / `/stop`). Stop hooks are
-//! the policy lever: budget caps, rate limits, custom kill switches.
-//! They run between iterations of the tool-call loop so a runaway
-//! turn can be cut short before the next provider call rather than
-//! after the fact.
+//! Stop hooks are the policy lever: budget caps, rate limits, custom kill
+//! switches. They run between iterations of the agent loop so a runaway turn can
+//! be cut short before the next provider call rather than after the fact.
+//! (User-driven cancellation — Ctrl+C / `/stop` — is handled separately by the
+//! `tinyagents` steering/cancellation channel.)
 //!
 //! ## Wiring
 //!
-//! Hooks ride on a task-local rather than a parameter on
-//! [`crate::openhuman::agent::harness::tool_loop::run_tool_call_loop`]
-//! — that signature already takes 16 args and the function is invoked
-//! from a dozen+ call sites. The task-local mirrors how
-//! [`super::harness::fork_context::PARENT_CONTEXT`] and
-//! [`super::harness::sandbox_context::CURRENT_AGENT_SANDBOX_MODE`] are
-//! threaded.
+//! Hooks ride on a task-local rather than a parameter threaded through the turn,
+//! mirroring how [`super::harness::fork_context::PARENT_CONTEXT`] and
+//! [`super::harness::sandbox_context::CURRENT_AGENT_SANDBOX_MODE`] are threaded.
 //!
-//! Callers register hooks via [`with_stop_hooks`] around their
-//! [`Agent::run_single`] / `run_interactive` invocation; the loop
-//! reads them via [`current_stop_hooks`] and fires them at the top of
-//! each iteration. A hook returning [`StopDecision::Stop`] aborts the
-//! loop with a [`StoppedByHookError`]-shaped `anyhow` error so the
-//! caller can surface the reason to the user.
+//! Callers register hooks via [`with_stop_hooks`] around their turn invocation.
+//! The `tinyagents` adapter snapshots them via [`current_stop_hooks`] and
+//! installs a `StopHookMiddleware`
+//! ([`crate::openhuman::tinyagents::stop_hooks`]) that fires each hook after
+//! every model call; a hook returning [`StopDecision::Stop`] pauses the run
+//! gracefully (via the steering handle) before the next provider call.
 //!
 //! ## Built-in hooks
 //!

@@ -286,6 +286,7 @@ mod tests {
             delegate_name: delegate_name.map(String::from),
             agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
             source: DefinitionSource::Builtin,
+            graph: Default::default(),
         }
     }
 

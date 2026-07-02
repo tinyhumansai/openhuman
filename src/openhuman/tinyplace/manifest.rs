@@ -19,6 +19,7 @@
 //! 5. Serialises the result with `serde_json::to_value`.
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -50,6 +51,48 @@ fn get_opt_str<'a>(params: &'a Map<String, Value>, key: &str) -> Option<&'a str>
 
 fn req_str<'a>(params: &'a Map<String, Value>, key: &str) -> Result<&'a str, String> {
     get_opt_str(params, key).ok_or_else(|| format!("missing required param '{key}'"))
+}
+
+fn req_nonblank_str(params: &Map<String, Value>, key: &str) -> Result<String, String> {
+    let value = req_str(params, key)?.trim();
+    if value.is_empty() {
+        Err(format!("missing required param '{key}'"))
+    } else {
+        Ok(value.to_string())
+    }
+}
+
+fn encode_path_segment(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for byte in raw.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            out.push(byte as char);
+        } else {
+            write!(&mut out, "%{byte:02X}").expect("writing to String cannot fail");
+        }
+    }
+    out
+}
+
+fn contact_path(agent_id: &str, suffix: Option<&str>) -> String {
+    match suffix {
+        Some(suffix) => format!("/contacts/{}/{}", encode_path_segment(agent_id), suffix),
+        None => format!("/contacts/{}", encode_path_segment(agent_id)),
+    }
+}
+
+fn contact_query(params: &Map<String, Value>) -> Vec<(String, String)> {
+    let source = params
+        .get("params")
+        .and_then(Value::as_object)
+        .unwrap_or(params);
+    let mut query = Vec::new();
+    for key in ["limit", "offset"] {
+        if let Some(value) = source.get(key).and_then(Value::as_i64) {
+            query.push((key.to_string(), value.to_string()));
+        }
+    }
+    query
 }
 
 // ── Handler implementations ───────────────────────────────────────────────────
@@ -3419,6 +3462,133 @@ pub(crate) fn handle_tinyplace_messages_acknowledge(
     })
 }
 
+// ── Contacts: signed social graph for encrypted direct messages ─────────────
+
+pub(crate) fn handle_tinyplace_contacts_request(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let agent_id = req_nonblank_str(&params, "agentId")?;
+        log::debug!("{LOG_PREFIX} contacts_request agent_id={agent_id}");
+        let client = global_state().client().await?;
+        let result: Value = client
+            .http()
+            .post_agent_auth::<Value, ()>(&contact_path(&agent_id, None), None)
+            .await
+            .map_err(map_err)?;
+        to_value(result)
+    })
+}
+
+pub(crate) fn handle_tinyplace_contacts_accept(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let agent_id = req_nonblank_str(&params, "agentId")?;
+        log::debug!("{LOG_PREFIX} contacts_accept agent_id={agent_id}");
+        let client = global_state().client().await?;
+        let result: Value = client
+            .http()
+            .post_agent_auth::<Value, ()>(&contact_path(&agent_id, Some("accept")), None)
+            .await
+            .map_err(map_err)?;
+        to_value(result)
+    })
+}
+
+pub(crate) fn handle_tinyplace_contacts_remove(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let agent_id = req_nonblank_str(&params, "agentId")?;
+        log::debug!("{LOG_PREFIX} contacts_remove agent_id={agent_id}");
+        let client = global_state().client().await?;
+        let result: Value = client
+            .http()
+            .delete_agent_auth::<Value, ()>(&contact_path(&agent_id, None), None)
+            .await
+            .map_err(map_err)?;
+        to_value(result)
+    })
+}
+
+pub(crate) fn handle_tinyplace_contacts_block(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let agent_id = req_nonblank_str(&params, "agentId")?;
+        log::debug!("{LOG_PREFIX} contacts_block agent_id={agent_id}");
+        let client = global_state().client().await?;
+        let result: Value = client
+            .http()
+            .post_agent_auth::<Value, ()>(&contact_path(&agent_id, Some("block")), None)
+            .await
+            .map_err(map_err)?;
+        to_value(result)
+    })
+}
+
+pub(crate) fn handle_tinyplace_contacts_unblock(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let agent_id = req_nonblank_str(&params, "agentId")?;
+        log::debug!("{LOG_PREFIX} contacts_unblock agent_id={agent_id}");
+        let client = global_state().client().await?;
+        let result: Value = client
+            .http()
+            .post_agent_auth::<Value, ()>(&contact_path(&agent_id, Some("unblock")), None)
+            .await
+            .map_err(map_err)?;
+        to_value(result)
+    })
+}
+
+pub(crate) fn handle_tinyplace_contacts_list(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let query = contact_query(&params);
+        log::debug!("{LOG_PREFIX} contacts_list query={query:?}");
+        let client = global_state().client().await?;
+        let result: Value = client
+            .http()
+            .get_agent_auth("/contacts", &query)
+            .await
+            .map_err(map_err)?;
+        to_value(result)
+    })
+}
+
+pub(crate) fn handle_tinyplace_contacts_requests(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let query = contact_query(&params);
+        log::debug!("{LOG_PREFIX} contacts_requests query={query:?}");
+        let client = global_state().client().await?;
+        let result: Value = client
+            .http()
+            .get_agent_auth("/contacts/requests", &query)
+            .await
+            .map_err(map_err)?;
+        to_value(result)
+    })
+}
+
+pub(crate) fn handle_tinyplace_contacts_status(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let agent_id = req_nonblank_str(&params, "agentId")?;
+        log::debug!("{LOG_PREFIX} contacts_status agent_id={agent_id}");
+        let client = global_state().client().await?;
+        let result: Value = client
+            .http()
+            .get_agent_auth(&contact_path(&agent_id, Some("status")), &[])
+            .await
+            .map_err(map_err)?;
+        to_value(result)
+    })
+}
+
+pub(crate) fn handle_tinyplace_contacts_stats(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        log::debug!("{LOG_PREFIX} contacts_stats");
+        let client = global_state().client().await?;
+        let result: Value = client
+            .http()
+            .get_agent_auth("/contacts/stats", &[])
+            .await
+            .map_err(map_err)?;
+        to_value(result)
+    })
+}
+
 // ── Signal: encryption key registration (0D) ────────────────────────────────
 
 /// Publish the user's X25519 identity public key on their directory card as
@@ -5295,6 +5465,59 @@ mod tests {
             let err = block_on(handler(Map::new())).unwrap_err();
             assert!(err.contains("agentId"), "got: {err}");
         }
+    }
+
+    /// Contact write/status handlers reject a missing or blank peer id before
+    /// wallet/client initialization.
+    #[test]
+    fn contacts_handlers_require_agent_id() {
+        for handler in [
+            handle_tinyplace_contacts_request as fn(Map<String, Value>) -> ControllerFuture,
+            handle_tinyplace_contacts_accept,
+            handle_tinyplace_contacts_remove,
+            handle_tinyplace_contacts_block,
+            handle_tinyplace_contacts_unblock,
+            handle_tinyplace_contacts_status,
+        ] {
+            let err = block_on(handler(Map::new())).unwrap_err();
+            assert!(err.contains("agentId"), "got: {err}");
+
+            let mut params = Map::new();
+            params.insert("agentId".to_string(), Value::String("   ".to_string()));
+            let err = block_on(handler(params)).unwrap_err();
+            assert!(err.contains("agentId"), "got: {err}");
+        }
+    }
+
+    #[test]
+    fn contacts_path_segments_are_encoded() {
+        assert_eq!(
+            contact_path("agent/with space", Some("status")),
+            "/contacts/agent%2Fwith%20space/status"
+        );
+    }
+
+    #[test]
+    fn contacts_query_accepts_nested_or_top_level_pagination() {
+        let mut nested = Map::new();
+        nested.insert(
+            "params".to_string(),
+            serde_json::json!({ "limit": 20, "offset": 40 }),
+        );
+        assert_eq!(
+            contact_query(&nested),
+            vec![
+                ("limit".to_string(), "20".to_string()),
+                ("offset".to_string(), "40".to_string())
+            ]
+        );
+
+        let mut top_level = Map::new();
+        top_level.insert("limit".to_string(), Value::Number(10.into()));
+        assert_eq!(
+            contact_query(&top_level),
+            vec![("limit".to_string(), "10".to_string())]
+        );
     }
 
     /// registry_export rejects a missing `name` before any client work.

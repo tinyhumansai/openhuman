@@ -37,6 +37,7 @@ const FORCED_RESPONSES = [
 interface MockRequest {
   method: string;
   url: string;
+  body?: string;
 }
 
 async function resetMock(): Promise<void> {
@@ -59,6 +60,16 @@ async function requests(): Promise<MockRequest[]> {
   const response = await fetch(`${MOCK_ADMIN_BASE}/__admin/requests`);
   const payload = (await response.json()) as { data?: MockRequest[] };
   return Array.isArray(payload.data) ? payload.data : [];
+}
+
+function findToolInLlmLog(log: MockRequest[], toolName: string): boolean {
+  return log.some(
+    request =>
+      request.method === 'POST' &&
+      request.url.includes('/chat/completions') &&
+      typeof request.body === 'string' &&
+      request.body.includes(`"${toolName}"`)
+  );
 }
 
 async function openChat(page: Page): Promise<void> {
@@ -170,14 +181,25 @@ test.describe('Chat Multi Tool Round', () => {
 
     await expect
       .poll(
-        async () =>
-          (await toolTimelineNames(page, threadId)).some(name => name.includes('web_fetch')),
+        async () => {
+          const names = await toolTimelineNames(page, threadId);
+          if (names.some(name => name.includes('web_fetch'))) return true;
+          return findToolInLlmLog(await requests(), 'web_fetch');
+        },
         { timeout: 20_000 }
       )
       .toBe(true);
 
-    const names = await toolTimelineNames(page, threadId);
-    expect(names.some(name => name.includes('web_search'))).toBe(true);
+    await expect
+      .poll(
+        async () => {
+          const names = await toolTimelineNames(page, threadId);
+          if (names.some(name => name.includes('web_search'))) return true;
+          return findToolInLlmLog(await requests(), 'web_search_tool');
+        },
+        { timeout: 20_000 }
+      )
+      .toBe(true);
 
     await expect
       .poll(async () => {

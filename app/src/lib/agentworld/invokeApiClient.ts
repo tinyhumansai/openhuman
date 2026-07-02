@@ -843,6 +843,67 @@ export interface InboxQueryParams {
   [key: string]: unknown;
 }
 
+// ── Contacts types ─────────────────────────────────────────────────────────
+
+export type ContactStatus = 'pending' | 'accepted' | 'blocked';
+export interface Contact {
+  requester: string;
+  addressee: string;
+  status: ContactStatus;
+  blockedBy?: string;
+  createdAt: string;
+  updatedAt: string;
+  [key: string]: unknown;
+}
+export interface ContactView {
+  agentId: string;
+  status: ContactStatus;
+  direction?: 'incoming' | 'outgoing';
+  contact: Contact;
+  [key: string]: unknown;
+}
+export interface ContactListParams {
+  limit?: number;
+  offset?: number;
+}
+export interface ContactsResponse {
+  contacts: ContactView[];
+}
+export interface ContactRequestsResponse {
+  incoming: ContactView[];
+  outgoing: ContactView[];
+}
+export interface ContactStatusResponse {
+  agentId: string;
+  status: ContactStatus | 'none';
+  direction?: 'incoming' | 'outgoing';
+}
+export interface ContactStats {
+  agentId: string;
+  contactCount: number;
+  pendingIncoming: number;
+  pendingOutgoing: number;
+}
+export type PairingStatus = 'pending' | 'linked' | 'blocked';
+export type PairingSource = 'user_link' | 'approved_request';
+export interface PairingRecord {
+  agentId: string;
+  label?: string;
+  status: PairingStatus;
+  linkedAt: string;
+  source: PairingSource;
+}
+export interface PairingSnapshot {
+  records: PairingRecord[];
+  contacts: ContactsResponse;
+  requests: ContactRequestsResponse;
+  stats: ContactStats | null;
+}
+export interface PairingActionResult {
+  record?: PairingRecord | null;
+  remote: unknown;
+}
+
 // ── Follows types ───────────────────────────────────────────────────────────
 
 export interface AgentFollow {
@@ -1891,6 +1952,43 @@ export function createInvokeApiClient() {
         call<void>('openhuman.tinyplace_inbox_unarchive', { itemId, owner: owner ?? null }),
       remove: (itemId: string, owner?: string) =>
         call<void>('openhuman.tinyplace_inbox_remove', { itemId, owner: owner ?? null }),
+    },
+    // ── Contacts section ─────────────────────────────────────────────────────
+    contacts: {
+      request: (agentId: string) =>
+        call<ContactView>('openhuman.tinyplace_contacts_request', { agentId }),
+      accept: (agentId: string) =>
+        call<ContactView>('openhuman.tinyplace_contacts_accept', { agentId }),
+      remove: (agentId: string) =>
+        call<{ ok?: boolean }>('openhuman.tinyplace_contacts_remove', { agentId }),
+      block: (agentId: string) =>
+        call<ContactView>('openhuman.tinyplace_contacts_block', { agentId }),
+      unblock: (agentId: string) =>
+        call<{ ok?: boolean }>('openhuman.tinyplace_contacts_unblock', { agentId }),
+      list: (params?: ContactListParams) =>
+        call<ContactsResponse>('openhuman.tinyplace_contacts_list', { params: params ?? null }),
+      requests: (params?: ContactListParams) =>
+        call<ContactRequestsResponse>('openhuman.tinyplace_contacts_requests', {
+          params: params ?? null,
+        }),
+      status: (agentId: string) =>
+        call<ContactStatusResponse>('openhuman.tinyplace_contacts_status', { agentId }),
+      stats: () => call<ContactStats>('openhuman.tinyplace_contacts_stats', {}),
+    },
+    // ── Orchestration pairing policy ─────────────────────────────────────────
+    orchestrationPairing: {
+      list: () => call<PairingSnapshot>('openhuman.orchestration_pairing_list', {}),
+      linkSession: (agentId: string, label?: string) =>
+        call<PairingActionResult>('openhuman.orchestration_pairing_link_session', {
+          agentId,
+          label: label ?? null,
+        }),
+      acceptRequest: (agentId: string) =>
+        call<PairingActionResult>('openhuman.orchestration_pairing_accept_request', { agentId }),
+      declineRequest: (agentId: string) =>
+        call<PairingActionResult>('openhuman.orchestration_pairing_decline_request', { agentId }),
+      blockRequest: (agentId: string) =>
+        call<PairingActionResult>('openhuman.orchestration_pairing_block_request', { agentId }),
     },
     // ── Follows section ───────────────────────────────────────────────────────
     follows: {

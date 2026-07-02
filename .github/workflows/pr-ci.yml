@@ -403,6 +403,9 @@ jobs:
         run: bash scripts/ci-cancel-aware.sh cargo llvm-cov --no-fail-fast -p openhuman --lcov --output-path lcov-core.info
         env:
           CARGO_BUILD_JOBS: "1"
+          # The tinyagents harness is the agent engine on every build now
+          # (issue #4249); the suite exercises it by default. The legacy engine
+          # is being removed.
 
       - name: Prune coverage test executables before cache save
         if: always()

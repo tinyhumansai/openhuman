@@ -397,7 +397,6 @@ async fn native_turn_dedups_duplicate_tool_specs_and_recovers_invalid_arguments(
             ..ContextConfig::default()
         })
         .explicit_preferences_enabled(false)
-        .unified_compaction_enabled(false)
         .build()
         .unwrap();
 
@@ -457,7 +456,6 @@ async fn xml_turn_persists_tool_cycle_and_fires_failure_hook_context() {
             ..ContextConfig::default()
         })
         .explicit_preferences_enabled(false)
-        .unified_compaction_enabled(true)
         .build()
         .unwrap();
 
@@ -541,7 +539,6 @@ async fn session_memory_threshold_path_runs_only_after_successful_turn() {
             ..ContextConfig::default()
         })
         .explicit_preferences_enabled(false)
-        .unified_compaction_enabled(true)
         .build()
         .unwrap();
 
@@ -566,7 +563,6 @@ async fn session_memory_threshold_path_runs_only_after_successful_turn() {
         .event_context("round20-empty-session", "round20-empty-channel")
         .agent_definition_name("round20/empty")
         .explicit_preferences_enabled(false)
-        .unified_compaction_enabled(false)
         .build()
         .unwrap();
     let err = failed_agent.run_single("return blank").await.unwrap_err();

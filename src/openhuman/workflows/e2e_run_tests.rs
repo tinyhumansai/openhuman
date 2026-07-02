@@ -28,7 +28,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 
-use crate::openhuman::agent::harness::run_tool_call_loop;
+use crate::openhuman::agent::harness::run_channel_turn_via_graph;
 use crate::openhuman::agent::task_board::{TaskBoardCard, TaskCardStatus};
 use crate::openhuman::agent::task_dispatcher::{dispatch_card, DispatchOutcome};
 use crate::openhuman::agent::tools::RunWorkflowTool;
@@ -233,30 +233,24 @@ async fn orchestrator_runs_workflow_tool_and_gets_inner_result() {
         workflow_id: Some("triage-inbox".into()),
     }));
 
-    let provider = MockLlm {
+    let provider: Arc<dyn crate::openhuman::inference::provider::Provider> = Arc::new(MockLlm {
         workflow_id: Some("triage-inbox".into()),
-    };
-    let tools: Vec<Box<dyn Tool>> = vec![Box::new(RunWorkflowTool::new())];
+    });
+    let tools: Arc<Vec<Box<dyn Tool>>> = Arc::new(vec![Box::new(RunWorkflowTool::new())]);
     let mut history = vec![ChatMessage::user("Triage my inbox.")];
 
-    let result = run_tool_call_loop(
-        &provider,
+    let result = run_channel_turn_via_graph(
+        provider,
         &mut history,
-        &tools,
-        "test-provider",
+        tools,
+        vec![],
+        None,
         "model",
         0.0,
-        true,
-        "channel",
-        &MultimodalConfig::default(),
-        &MultimodalFileConfig::default(),
         5,
+        MultimodalConfig::default(),
+        MultimodalFileConfig::default(),
         None,
-        None,
-        &[],
-        None,
-        None,
-        &DefaultToolPolicy,
     )
     .await
     .expect("orchestrator loop should complete");

@@ -220,7 +220,7 @@ pub async fn handle_in_call_request(
     let ack_task = tokio::spawn(async move {
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(ACK_AFTER_SECS)) => {
-                if let Err(e) = emit_bot_speak(ACK_PHRASE, ack_cid.as_deref()).await {
+                if let Err(e) = emit_bot_filler(ACK_PHRASE, ack_cid.as_deref()).await {
                     tracing::debug!("[agent_meetings::in_call] ack emit failed: {e}");
                 }
             }
@@ -281,7 +281,7 @@ pub async fn handle_in_call_request(
 
 /// Route a spoken yes/no to a parked in-call approval. Returns `true`
 /// when the command was consumed as an approval decision (the caller
-/// must not dispatch it as a fresh turn).
+/// must not dispatch it as a fresh turn)
 async fn try_voice_approval_decision(correlation_id: Option<&str>, command: &str) -> bool {
     let Some(gate) = ApprovalGate::try_global() else {
         return false;
@@ -362,7 +362,9 @@ pub(super) async fn speak_approval_prompt(action_summary: &str, correlation_id: 
         "I'd like to {action_summary}. Say — Hey Tiny, approve — to confirm, \
          or — Hey Tiny, deny — to cancel."
     );
-    if let Err(e) = emit_bot_speak(&prompt, correlation_id).await {
+    // Filler, not a terminal reply: the bot is now waiting for a spoken
+    // decision, so the mascot should stay in its thinking cue.
+    if let Err(e) = emit_bot_filler(&prompt, correlation_id).await {
         tracing::warn!("{LOG_PREFIX} approval prompt emit failed: {e}");
     }
 }
@@ -534,7 +536,7 @@ async fn speak_stream_chunk(
         *spoke = true;
         ack_cancel.notify_one(); // first real audio — no need for the filler ack
     }
-    if let Err(e) = emit_bot_speak_inner(text, correlation_id, Some(*seq)).await {
+    if let Err(e) = emit_bot_speak_inner(text, correlation_id, Some(*seq), "reply").await {
         tracing::debug!("{LOG_PREFIX} streamed chunk emit failed: {e}");
     }
     *seq += 1;
@@ -797,16 +799,26 @@ async fn get_or_create_meeting_thread(
 /// The backend's SpeakOrchestrator handles streaming TTS + the audio
 /// politeness gate from there.
 async fn emit_bot_speak(text: &str, correlation_id: Option<&str>) -> Result<(), String> {
-    emit_bot_speak_inner(text, correlation_id, None).await
+    emit_bot_speak_inner(text, correlation_id, None, "reply").await
+}
+
+/// Emit a non-terminal *filler* utterance (the speculative "On it" ack, an
+/// approval prompt): tagged `kind="ack"` so the backend mascot returns to its
+/// thinking cue afterwards instead of settling to idle — the real reply is
+/// still on the way.
+async fn emit_bot_filler(text: &str, correlation_id: Option<&str>) -> Result<(), String> {
+    emit_bot_speak_inner(text, correlation_id, None, "ack").await
 }
 
 /// As [`emit_bot_speak`], plus an optional `seq` so the backend can order
-/// the per-sentence chunks of a streamed reply (additive; older backends
-/// ignore it).
+/// the per-sentence chunks of a streamed reply, and a `kind` ("ack" filler vs
+/// terminal "reply") so the backend can drive the mascot's post-speech pose
+/// (both additive; older backends ignore them).
 async fn emit_bot_speak_inner(
     text: &str,
     correlation_id: Option<&str>,
     seq: Option<u32>,
+    kind: &str,
 ) -> Result<(), String> {
     let mgr = global_socket_manager()
         .ok_or_else(|| format!("{LOG_PREFIX} socket manager not initialized"))?;
@@ -822,6 +834,7 @@ async fn emit_bot_speak_inner(
         if let Some(s) = seq {
             map.insert("seq".to_string(), json!(s));
         }
+        map.insert("kind".to_string(), json!(kind));
     }
 
     tracing::info!(
