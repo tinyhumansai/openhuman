@@ -84,6 +84,7 @@ fn super_context_skip_reason(user_message: &str) -> Option<&'static str> {
         return Some("context_free_greeting");
     }
 
+    let local_action_candidate = strip_local_folder_action_lead_in(&normalized);
     let starts_like_local_folder_action = [
         "create a folder ",
         "create folder ",
@@ -96,7 +97,7 @@ fn super_context_skip_reason(user_message: &str) -> Option<&'static str> {
         "mkdir ",
     ]
     .iter()
-    .any(|prefix| normalized.starts_with(prefix));
+    .any(|prefix| local_action_candidate.starts_with(prefix));
 
     if starts_like_local_folder_action {
         let context_hints = [
@@ -119,6 +120,33 @@ fn super_context_skip_reason(user_message: &str) -> Option<&'static str> {
     }
 
     None
+}
+
+fn strip_local_folder_action_lead_in(message: &str) -> &str {
+    let mut candidate = message;
+    for _ in 0..3 {
+        let trimmed = candidate.trim_start();
+        let next = [
+            "can you please ",
+            "could you please ",
+            "would you please ",
+            "can you ",
+            "could you ",
+            "would you ",
+            "please ",
+            "hey ",
+            "hello ",
+            "hi ",
+        ]
+        .iter()
+        .find_map(|lead_in| trimmed.strip_prefix(lead_in));
+
+        match next {
+            Some(rest) => candidate = rest,
+            None => return trimmed,
+        }
+    }
+    candidate.trim_start()
 }
 
 fn super_context_base_gate(
@@ -1478,6 +1506,20 @@ mod super_context_gate_tests {
     }
 
     #[test]
+    fn skips_simple_local_folder_creation_with_polite_lead_in() {
+        for message in [
+            "Please create a folder on Desktop named PROVA",
+            "Can you make a directory named invoices",
+            "Hey please create folder screenshots",
+        ] {
+            assert!(
+                !should_run_super_context(true, true, false, true, message),
+                "expected super context to skip for {message:?}"
+            );
+        }
+    }
+
+    #[test]
     fn keeps_super_context_for_local_action_with_context_hint() {
         assert!(should_run_super_context(
             true,
@@ -1485,6 +1527,13 @@ mod super_context_gate_tests {
             false,
             true,
             "Create a folder for the project we discussed yesterday"
+        ));
+        assert!(should_run_super_context(
+            true,
+            true,
+            false,
+            true,
+            "Please create a folder for the project we discussed yesterday"
         ));
     }
 
