@@ -273,8 +273,7 @@ pub fn classify_embed_error_str(msg: &str) -> PipelineFailure {
     // of surfacing the existing AuthMissing → "log in to OpenHuman"
     // remediation. Fixes #4359.
     if lower.contains("no backend session") {
-        return PipelineFailure::new(FailureCode::AuthMissing)
-            .with_detail(truncate_detail(msg));
+        return PipelineFailure::new(FailureCode::AuthMissing).with_detail(truncate_detail(msg));
     }
 
     // Parse the HTTP status out of the `Embedding API error (<status>): ...`
