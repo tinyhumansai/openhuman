@@ -103,6 +103,16 @@ fn parse_message_path(path: &str) -> Option<(&str, &str)> {
     None
 }
 
+/// `true` when `path` is `/announcements/latest`, tolerant of an arbitrary
+/// base-path prefix (e.g. `/api/v1/announcements/latest`) — same
+/// prefix-tolerant reasoning as [`parse_message_path`] (OPENHUMAN-TAURI-R7):
+/// a `BACKEND_URL` override with a path prefix must not cause this route's
+/// 404 to silently fall through to the generic `report_error` path.
+fn is_announcements_latest_path(path: &str) -> bool {
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    matches!(segments.as_slice(), [.., "announcements", "latest"])
+}
+
 const CLIENT_VERSION_HEADER_MAX_LEN: usize = 64;
 
 /// Max bytes of the `body_shape` key-name list echoed into the `authed_json`
@@ -718,7 +728,7 @@ impl BackendOAuthClient {
                 // (`announcements::ops::get_latest_announcement`) can degrade to
                 // `null` instead of propagating an error, without funneling the
                 // 404 into `report_error`. Targets `TAURI-RUST-HW0` / `TAURI-RUST-KHX`.
-                if method == Method::GET && url.path() == "/announcements/latest" {
+                if method == Method::GET && is_announcements_latest_path(url.path()) {
                     tracing::info!(
                         domain = "backend_api",
                         operation = "authed_json",
