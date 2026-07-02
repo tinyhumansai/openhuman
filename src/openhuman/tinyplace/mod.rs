@@ -28,7 +28,7 @@
 pub(crate) mod agent;
 mod agent_tools;
 mod manifest;
-mod ops;
+pub(crate) mod ops;
 mod payment;
 mod schemas;
 pub(crate) mod signal_store;

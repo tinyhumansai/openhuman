@@ -294,7 +294,6 @@ fn build_agent(
         .omit_profile(true)
         .omit_memory_md(true)
         .explicit_preferences_enabled(false)
-        .unified_compaction_enabled(false)
         .build()
         .unwrap();
     agent.set_connected_integrations(Vec::new());

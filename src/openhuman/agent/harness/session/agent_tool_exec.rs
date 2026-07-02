@@ -12,9 +12,6 @@ use std::collections::HashSet;
 
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::{ParsedToolCall, ToolExecutionResult};
-use crate::openhuman::agent::harness::engine::tools::{
-    format_available_tools_hint, format_unknown_tool_message, sorted_tool_names,
-};
 use crate::openhuman::agent::harness::engine::ProgressReporter;
 use crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer;
 use crate::openhuman::agent::harness::tool_result_artifacts::{
@@ -47,6 +44,28 @@ pub(super) struct AgentToolExecCtx<'a> {
     /// Agent-level TokenJuice profile for this session's tool results.
     pub tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression,
     pub artifact_store: Option<&'a ToolResultArtifactStore>,
+}
+
+fn sorted_tool_names<'a>(names: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let mut names = names.into_iter().map(str::to_string).collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn format_available_tools_hint(available_tool_names: &[String]) -> String {
+    if available_tool_names.is_empty() {
+        "No tools are currently available.".to_string()
+    } else {
+        format!("Available tools: {}", available_tool_names.join(", "))
+    }
+}
+
+fn format_unknown_tool_message(tool_name: &str, available_tool_names: &[String]) -> String {
+    format!(
+        "Unknown tool: {tool_name}. {}",
+        format_available_tools_hint(available_tool_names)
+    )
 }
 
 fn available_tool_names_for_ctx(ctx: &AgentToolExecCtx<'_>) -> Vec<String> {
@@ -217,9 +236,7 @@ pub(super) async fn run_agent_tool_call(
                     };
                     let policy = tool.timeout_policy(&call.arguments);
                     let (tool_deadline, timeout_secs) =
-                        crate::openhuman::agent::harness::engine::tools::resolve_tool_deadline(
-                            policy,
-                        );
+                        crate::openhuman::tool_timeout::resolve_tool_deadline(policy);
                     match policy {
                         crate::openhuman::tools::traits::ToolTimeout::Secs(req) => {
                             tracing::debug!(

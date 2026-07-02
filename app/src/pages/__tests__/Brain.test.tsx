@@ -95,6 +95,12 @@ vi.mock('../../components/settings/layout/SettingsLayoutContext', async () => {
       React.createElement(React.Fragment, null, children),
   };
 });
+vi.mock('../../components/intelligence/TinyPlaceOrchestrationTab', async () => {
+  const React = await import('react');
+  return {
+    default: () => React.createElement('div', { 'data-testid': 'brain-tinyplace-orchestration' }),
+  };
+});
 
 const makeGraph = (n: number) => ({
   nodes: Array.from({ length: n }, (_, i) => ({ id: `n${i}`, kind: 'summary', label: `N${i}` })),
@@ -176,6 +182,7 @@ describe('Brain page', () => {
     ['analysis-views', 'brain-analysis-views'],
     ['sources', 'brain-sources'],
     ['sync', 'brain-sync'],
+    ['tinyplace-orchestration', 'brain-tinyplace-orchestration'],
     ['subconscious', 'brain-subconscious'],
   ])('renders the %s tab', async (tab, testId) => {
     graphExportMock.mockResolvedValue(makeGraph(0));

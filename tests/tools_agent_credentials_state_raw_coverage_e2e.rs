@@ -415,6 +415,7 @@ fn agent_definition(id: &str, max_result_chars: Option<usize>) -> AgentDefinitio
         delegate_name: None,
         agent_tier: Default::default(),
         source: Default::default(),
+        graph: Default::default(),
     }
 }
 

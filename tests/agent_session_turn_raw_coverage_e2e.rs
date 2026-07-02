@@ -548,7 +548,6 @@ fn agent_with(
         .context_config(context_config)
         .auto_save(true)
         .explicit_preferences_enabled(false)
-        .unified_compaction_enabled(false)
         .build()
         .unwrap()
 }
@@ -786,7 +785,6 @@ async fn turn_xml_failures_checkpoint_policy_visibility_and_hooks_are_publicly_e
         })])
         .tool_policy(Arc::new(DenyNamedPolicy("round17_ok")))
         .explicit_preferences_enabled(false)
-        .unified_compaction_enabled(false)
         .build()
         .unwrap();
     let mut visible = HashSet::new();
@@ -845,7 +843,9 @@ async fn turn_xml_failures_checkpoint_policy_visibility_and_hooks_are_publicly_e
         .map(|message| message.content)
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(joined.contains("<tool_result name=\"hidden_tool\" status=\"error\">"));
+    assert!(joined.contains("<tool_result id=\"call_0\">"));
+    assert!(joined.contains("Tool 'hidden_tool' is not available to this agent"));
+    assert!(joined.contains("Available tools: cli_only, round17_boom, round17_error, round17_ok"));
     let allowed_tool_lines = joined
         .lines()
         .filter(|line| line.starts_with("- Allowed tools:"))
@@ -1057,5 +1057,6 @@ fn definition(
         delegate_name: None,
         agent_tier: AgentTier::Worker,
         source: DefinitionSource::Builtin,
+        graph: Default::default(),
     }
 }

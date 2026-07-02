@@ -119,6 +119,7 @@ pub mod test_support;
 pub mod text_input;
 pub mod thread_goals;
 pub mod threads;
+pub mod tinyagents;
 pub mod tinyplace;
 pub mod tls;
 pub mod todos;

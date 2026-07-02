@@ -1129,6 +1129,25 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
                     );
                     let _ = io_agent_meetings.emit("agent_meetings:transcript", &payload);
                 }
+                crate::core::event_bus::DomainEvent::BackendMeetTranscriptDelta {
+                    turn,
+                    index,
+                    is_partial,
+                    correlation_id,
+                } => {
+                    let payload = serde_json::json!({
+                        "turn": turn,
+                        "index": index,
+                        "is_partial": is_partial,
+                        "correlation_id": correlation_id,
+                    });
+                    log::debug!(
+                        "[socketio] broadcast agent_meetings:transcript_delta index={} is_partial={}",
+                        index,
+                        is_partial
+                    );
+                    let _ = io_agent_meetings.emit("agent_meetings:transcript_delta", &payload);
+                }
                 crate::core::event_bus::DomainEvent::BackendMeetError {
                     error,
                     correlation_id,

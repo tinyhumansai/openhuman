@@ -328,6 +328,7 @@ fn coverage_definition() -> AgentDefinition {
         delegate_name: None,
         agent_tier: Default::default(),
         source: Default::default(),
+        graph: Default::default(),
     }
 }
 

@@ -27,6 +27,13 @@ use std::path::PathBuf;
 
 use crate::openhuman::tokenjuice::AgentTokenjuiceCompression;
 
+/// Iteration ceiling for an [`IterationPolicy::Extended`] agent — the higher
+/// bound a long-running agent (orchestrator, deep research) is allowed to reach
+/// before the harness stops it. Lives here, the sole consumer, since the legacy
+/// `tool_loop` that originally defined it was removed in the tinyagents
+/// migration (issue #4249).
+pub const EXTENDED_MAX_TOOL_ITERATIONS: usize = 50;
+
 /// Iteration-cap policy for a sub-agent.
 ///
 /// Controls how the harness enforces [`AgentDefinition::max_iterations`]:
@@ -36,7 +43,7 @@ use crate::openhuman::tokenjuice::AgentTokenjuiceCompression;
 ///   the cap signals a likely loop.
 /// * **Extended** — the per-agent `max_iterations` is replaced at runtime
 ///   by a higher harness-wide constant
-///   ([`EXTENDED_MAX_TOOL_ITERATIONS`](super::tool_loop::EXTENDED_MAX_TOOL_ITERATIONS))
+///   ([`EXTENDED_MAX_TOOL_ITERATIONS`])
 ///   so the agent can complete realistic multi-tool workflows. The
 ///   repeated-failure circuit breaker and cost budget still apply. The
 ///   UI omits the denominator ("step N" instead of "turn N/M") to avoid
@@ -276,6 +283,15 @@ pub struct AgentDefinition {
     /// Tracks where the definition was loaded from (Builtin vs. File).
     #[serde(skip)]
     pub source: DefinitionSource,
+
+    // ── turn graph ──────────────────────────────────────────────────────
+    /// How this agent's turn is driven (issue #4249). Injected post-load from
+    /// the agent folder's `graph.rs::graph()` (mirrors how
+    /// [`PromptSource::Dynamic`] is injected from `prompt.rs::build`); TOML-
+    /// authored agents cannot set it, so it is `#[serde(skip)]` and defaults to
+    /// [`AgentGraph::Default`] (the shared default turn graph).
+    #[serde(skip, default)]
+    pub graph: super::agent_graph::AgentGraph,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -457,13 +473,11 @@ impl AgentDefinition {
     ///
     /// * `Strict` → `self.max_iterations` unchanged.
     /// * `Extended` → the higher of `self.max_iterations` and the
-    ///   harness-wide [`EXTENDED_MAX_TOOL_ITERATIONS`](super::tool_loop::EXTENDED_MAX_TOOL_ITERATIONS).
+    ///   harness-wide [`EXTENDED_MAX_TOOL_ITERATIONS`].
     pub fn effective_max_iterations(&self) -> usize {
         match self.iteration_policy {
             IterationPolicy::Strict => self.max_iterations,
-            IterationPolicy::Extended => self
-                .max_iterations
-                .max(super::tool_loop::EXTENDED_MAX_TOOL_ITERATIONS),
+            IterationPolicy::Extended => self.max_iterations.max(EXTENDED_MAX_TOOL_ITERATIONS),
         }
     }
 

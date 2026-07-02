@@ -21,6 +21,7 @@
 //! handles SKILL.md / WORKFLOW.md bundle discovery.
 
 mod engine;
+mod graph;
 mod ops;
 mod schemas;
 pub mod types;

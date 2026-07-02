@@ -321,19 +321,33 @@ async fn glm_style_tool_call_executes_then_final_streams_in_chunks_and_progress(
     assert!(response
         .text
         .starts_with("This is a deliberately long final response"));
-    let mut deltas = Vec::new();
+    // The raw `on_delta` Sender<String> path is retired (superseded by
+    // `on_progress` text deltas — see `agent/bus.rs`), so its channel stays empty;
+    // streaming is observed on `on_progress` below.
+    let mut on_delta_chunks = Vec::new();
     while let Ok(delta) = delta_rx.try_recv() {
-        deltas.push(delta);
+        on_delta_chunks.push(delta);
     }
     assert!(
-        deltas.len() >= 2,
-        "long final response should stream in at least two chunks, got {deltas:?}"
+        on_delta_chunks.is_empty(),
+        "retired on_delta channel must stay empty, got {on_delta_chunks:?}"
     );
 
     let mut progress = Vec::new();
     while let Ok(event) = progress_rx.try_recv() {
         progress.push(event);
     }
+    // Streaming surfaces as `AgentProgress::TextDelta` on `on_progress`: each
+    // streamed model call forwards the provider's delta, so a two-iteration turn
+    // (tool round + final) emits at least two text deltas.
+    let text_deltas = progress
+        .iter()
+        .filter(|event| matches!(event, AgentProgress::TextDelta { .. }))
+        .count();
+    assert!(
+        text_deltas >= 2,
+        "streaming should emit at least two on_progress text deltas, got {text_deltas}"
+    );
     assert!(progress
         .iter()
         .any(|event| matches!(event, AgentProgress::TextDelta { delta, iteration: 1 } if delta == "draft from provider")));

@@ -346,7 +346,20 @@ export function UpcomingTable({
   const handleJoin = async (meeting: UpcomingMeeting) => {
     if (!meeting.meet_url) return;
     const platform = meeting.platform ?? inferPlatformFromUrl(meeting.meet_url) ?? undefined;
-    log('[upcoming] joining %s platform=%s', meeting.calendar_event_id, platform);
+    // Mint a fresh correlation id per join. It becomes the call record's
+    // `request_id` (recent-calls list key + per-call detail filename), so it
+    // MUST be unique per join — reusing the deterministic `calendar_event_id`
+    // collapsed re-joins of the same event onto one request_id, overwriting the
+    // earlier call's transcript and double-highlighting the history row (#4338).
+    // `calendar_event_id` stays the dedup/policy key only (handleJoinPolicyChange,
+    // setJoiningId), mirroring the background auto-join in calendar.rs.
+    const correlationId = crypto.randomUUID();
+    log(
+      '[upcoming] joining %s platform=%s correlationId=%s',
+      meeting.calendar_event_id,
+      platform,
+      correlationId
+    );
     setJoiningId(meeting.calendar_event_id);
     try {
       await joinMeetViaBackendBot({
@@ -356,7 +369,7 @@ export function UpcomingTable({
         systemPrompt: personaDescription || undefined,
         mascotId: mascotId || undefined,
         listenOnly: true,
-        correlationId: meeting.calendar_event_id,
+        correlationId,
         riveColors,
       });
     } catch (err) {

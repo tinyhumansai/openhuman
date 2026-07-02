@@ -1,0 +1,128 @@
+//! Per-agent turn-graph selection (issue #4249).
+//!
+//! Each built-in agent folder ships a `graph.rs` exporting
+//! `pub fn graph() -> AgentGraph`, mirroring the per-agent `prompt.rs::build`
+//! hook. The registry loader injects the returned value onto the agent's
+//! [`AgentDefinition`] (post-deserialize, exactly like `PromptSource::Dynamic`),
+//! and the sub-agent turn chokepoint (`run_typed_mode`) consults it:
+//!
+//! - [`AgentGraph::Default`] runs the shared default sub-agent turn graph
+//!   (`subagent_runner::ops::graph::run_subagent_via_graph`).
+//! - [`AgentGraph::Custom`] hands the assembled turn to the agent's own graph
+//!   runner — a bespoke tinyagents graph, thin over
+//!   `run_turn_via_tinyagents_shared`.
+//!
+//! Today every built-in agent selects `Default`. The hook is the extension
+//! point that lets a specialized agent (orchestrator, researcher, …) define a
+//! bespoke graph without branching the shared runner.
+
+use std::collections::HashSet;
+use std::future::Future;
+use std::path::PathBuf;
+use std::pin::Pin;
+use std::sync::Arc;
+
+use tokio::sync::mpsc::Sender;
+
+use crate::openhuman::agent::harness::run_queue::RunQueue;
+use crate::openhuman::agent::harness::subagent_runner::SubagentRunError;
+use crate::openhuman::agent::progress::AgentProgress;
+use crate::openhuman::inference::provider::{ChatMessage, Provider};
+use crate::openhuman::tools::{Tool, ToolSpec};
+
+/// The assembled inputs for one sub-agent turn, handed to a custom
+/// [`AgentGraph::Custom`] runner.
+///
+/// Owned (history + tools by value) so the runner can be a boxed `'static`
+/// future without borrowing the caller's stack — mirrors the positional
+/// arguments the default `run_subagent_via_graph` takes.
+pub struct AgentTurnRequest {
+    pub provider: Arc<dyn Provider>,
+    pub model: String,
+    pub temperature: f64,
+    /// Full working transcript for the turn (system + prior + this user turn).
+    pub history: Vec<ChatMessage>,
+    pub parent_tools: Arc<Vec<Box<dyn Tool>>>,
+    pub dynamic_tools: Vec<Box<dyn Tool>>,
+    pub specs: Vec<ToolSpec>,
+    pub allowed_names: HashSet<String>,
+    pub max_iterations: usize,
+    pub run_queue: Option<Arc<RunQueue>>,
+    pub on_progress: Option<Sender<AgentProgress>>,
+    pub agent_id: String,
+    pub task_id: String,
+    pub extended_policy: bool,
+    pub worker_thread_id: Option<String>,
+    pub workspace_dir: PathBuf,
+    pub max_output_tokens: u32,
+    pub model_vision: bool,
+}
+
+/// Token/cost totals a custom runner reports back. Mirrors the runner's internal
+/// `AggregatedUsage` without coupling to its (private) type.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AgentTurnUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cached_input_tokens: u64,
+    pub charged_amount_usd: f64,
+}
+
+/// The result of a custom turn graph. `history` is the full updated transcript
+/// (the runner persists it back and mirrors it to any worker thread).
+pub struct AgentTurnResult {
+    pub history: Vec<ChatMessage>,
+    pub output: String,
+    pub iterations: usize,
+    pub usage: AgentTurnUsage,
+    /// Set when an early-exit tool (e.g. `ask_user_clarification`) paused the run.
+    pub early_exit_tool: Option<String>,
+    /// `true` when the run stopped at the model-call cap with work still pending.
+    pub hit_cap: bool,
+}
+
+/// A per-agent custom turn-graph runner: given the assembled [`AgentTurnRequest`],
+/// drive a bespoke tinyagents graph and return the [`AgentTurnResult`].
+pub type AgentGraphRunner =
+    fn(
+        AgentTurnRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<AgentTurnResult, SubagentRunError>> + Send>>;
+
+/// How an agent's turn is driven. Selected per-agent via each folder's
+/// `graph.rs::graph()` and injected onto [`AgentDefinition`][super::definition::AgentDefinition].
+#[derive(Clone)]
+pub enum AgentGraph {
+    /// Run the shared default sub-agent turn graph (`run_subagent_via_graph`).
+    Default,
+    /// Run this agent's bespoke graph.
+    Custom(AgentGraphRunner),
+}
+
+impl Default for AgentGraph {
+    fn default() -> Self {
+        AgentGraph::Default
+    }
+}
+
+impl AgentGraph {
+    /// Build a custom graph selection from a runner fn. Sugar for
+    /// [`AgentGraph::Custom`] so a folder's `graph.rs` reads
+    /// `AgentGraph::custom(run)`.
+    pub fn custom(run: AgentGraphRunner) -> Self {
+        AgentGraph::Custom(run)
+    }
+
+    /// `true` when this agent uses the shared default graph.
+    pub fn is_default(&self) -> bool {
+        matches!(self, AgentGraph::Default)
+    }
+}
+
+impl std::fmt::Debug for AgentGraph {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AgentGraph::Default => f.write_str("Default"),
+            AgentGraph::Custom(_) => f.write_str("Custom(<fn>)"),
+        }
+    }
+}

@@ -56,7 +56,7 @@ pub(super) const HANDOFF_MAX_ENTRIES: usize = 8;
 /// the top of `run_typed_mode` and shared (via `Arc`) with both the inner
 /// tool-call loop (writes) and the `extract_from_result` tool (reads).
 #[derive(Default)]
-pub(super) struct ResultHandoffCache {
+pub(crate) struct ResultHandoffCache {
     inner: StdMutex<HandoffInner>,
 }
 

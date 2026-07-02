@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use openhuman_core::openhuman::agent::harness::{
-    check_interrupt, current_parent, with_parent_context, InterruptFence, ParentExecutionContext,
+    current_parent, with_parent_context, ParentExecutionContext,
 };
 use openhuman_core::openhuman::agent::hooks::{
     fire_hooks, sanitize_tool_output, PostTurnHook, ToolCallRecord, TurnContext,
@@ -12,7 +12,6 @@ use openhuman_core::openhuman::inference::provider::{
 };
 use openhuman_core::openhuman::memory::{Memory, MemoryCategory, MemoryEntry};
 use parking_lot::Mutex;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::Notify;
 
@@ -177,31 +176,9 @@ impl PostTurnHook for RecordingHook {
     }
 }
 
-#[test]
-fn interrupt_fence_shares_and_resets_state() {
-    let fence = InterruptFence::default();
-    assert!(!fence.is_interrupted());
-    assert!(check_interrupt(&fence).is_ok());
-
-    let clone = fence.clone();
-    let raw = fence.flag_handle();
-    fence.trigger();
-    assert!(clone.is_interrupted());
-    assert!(raw.load(Ordering::Relaxed));
-    assert!(check_interrupt(&fence).is_err());
-
-    raw.store(false, Ordering::Relaxed);
-    fence.reset();
-    assert!(!fence.is_interrupted());
-}
-
-#[tokio::test]
-async fn interrupt_signal_handler_is_installable() {
-    let fence = InterruptFence::new();
-    fence.install_signal_handler();
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    assert!(!fence.is_interrupted());
-}
+// The legacy `InterruptFence` / `check_interrupt` surface was removed in #4249
+// (user-driven cancellation is now the tinyagents steering/cancellation channel),
+// so the public-API tests that exercised it are gone with it.
 
 #[tokio::test]
 async fn parent_context_is_visible_only_within_scope() {
