@@ -61,6 +61,19 @@ pub(super) async fn run_subagent_via_graph(
     workspace_dir: std::path::PathBuf,
     max_output_tokens: u32,
     model_vision: bool,
+    // Transcript-persistence provenance: the resolved child transcript stem
+    // (`{parent_chain}__{child_session_key}`) and the provider label (the parent
+    // turn's event channel) so the child's raw transcript lands in `session_raw`
+    // with the right stem + provider/model meta — parity with the removed
+    // `SubagentObserver::persist_transcript`.
+    transcript_stem: &str,
+    provider_label: &str,
+    // Progressive-disclosure handoff cache (integrations_agent with a resolved
+    // toolkit); `Some` installs the `HandoffMiddleware` that stashes oversized
+    // tool results and shares the cache with the `extract_from_result` tool.
+    handoff_cache: Option<
+        std::sync::Arc<crate::openhuman::agent::harness::subagent_runner::ResultHandoffCache>,
+    >,
 ) -> Result<(String, usize, AggregatedUsage, Option<String>, bool), SubagentRunError> {
     tracing::info!(
         model,
@@ -88,11 +101,14 @@ pub(super) async fn run_subagent_via_graph(
         history.clone()
     };
 
-    // Child-progress attribution: when the parent carries an `on_progress` sink,
-    // mirror this sub-agent's iterations / tool calls / text + thinking deltas as
-    // `Subagent*` events scoped to (`agent_id`, `task_id`) so the parent thread
-    // can nest them under the live subagent row.
-    let subagent_scope = on_progress.as_ref().map(|_| SubagentScope {
+    // Child-progress attribution: mirror this sub-agent's iterations / tool calls
+    // / text + thinking deltas as `Subagent*` events scoped to (`agent_id`,
+    // `task_id`) so the parent thread can nest them under the live subagent row.
+    // Always set (not gated on `on_progress`): the scope also tells the shared
+    // seam this is a sub-agent turn, so the unknown-tool recovery uses the
+    // sub-agent wording. With no progress sink the scoped events simply have
+    // nowhere to go, which is harmless.
+    let subagent_scope = Some(SubagentScope {
         agent_id: agent_id.to_string(),
         task_id: task_id.to_string(),
         extended_policy,
@@ -146,8 +162,22 @@ pub(super) async fn run_subagent_via_graph(
         // Bound the sub-agent's per-call output at its configured budget.
         Some(max_output_tokens),
         // Context middlewares: cache-align + default tool-result byte cap so a
-        // sub-agent's (often large) tool outputs stay bounded in its transcript.
-        crate::openhuman::tinyagents::TurnContextMiddleware::defaults(),
+        // sub-agent's (often large) tool outputs stay bounded in its transcript,
+        // plus the progressive-disclosure handoff when a cache is attached.
+        {
+            let mut mw = crate::openhuman::tinyagents::TurnContextMiddleware::defaults();
+            if let Some(cache) = handoff_cache {
+                mw.handoff = Some(crate::openhuman::tinyagents::HandoffConfig {
+                    cache,
+                    agent_id: agent_id.to_string(),
+                    task_id: task_id.to_string(),
+                });
+            }
+            mw
+        },
+        // Sub-agents gate via their own SubagentToolSource policy path, not the
+        // session `.tool_policy()`; no enforcement threaded here.
+        None,
     ))
     .await
     .map_err(SubagentRunError::Provider)?;
@@ -208,6 +238,45 @@ pub(super) async fn run_subagent_via_graph(
         }
     }
 
+    // Persist the sub-agent's raw transcript to `session_raw` (parity with the
+    // removed `SubagentObserver::persist_transcript`). The graph runner replaced
+    // the observer but only mirrored to the worker thread, so per-child
+    // transcripts stopped being written — breaking downstream learning ingestion
+    // (`learning/transcript_ingest`, which reads `session_raw/*.jsonl`).
+    // On a cap-hit / early-exit, `outcome.text` is the checkpoint (or clarifying
+    // question) that stands in for a final assistant turn — append it so the
+    // persisted transcript reflects the actual final state, not the pre-checkpoint
+    // history. `history` already carries this turn's typed suffix.
+    let transcript_history;
+    let history_for_transcript: &[ChatMessage] = if (outcome.hit_cap
+        || outcome.early_exit_tool.is_some())
+        && !outcome.text.trim().is_empty()
+    {
+        transcript_history = {
+            let mut messages = history.clone();
+            messages.push(ChatMessage::assistant(outcome.text.clone()));
+            messages
+        };
+        &transcript_history
+    } else {
+        history.as_slice()
+    };
+    persist_subagent_transcript(
+        &workspace_dir,
+        transcript_stem,
+        agent_id,
+        task_id,
+        provider_label,
+        model,
+        history_for_transcript,
+        &usage,
+        context_window.unwrap_or(0),
+        // Match the dispatcher the history was actually serialized with (text-mode
+        // integrations turns write XML), and the real iteration count.
+        if native_tools { "native" } else { "xml" },
+        outcome.model_calls as u32,
+    );
+
     // Mirror this turn's conversation to the spawn's worker thread (when one is
     // attached), matching the legacy `SubagentObserver`: assistant intents +
     // final answer as `agent` messages, tool results as `user` messages. The
@@ -239,6 +308,79 @@ pub(super) async fn run_subagent_via_graph(
         outcome.early_exit_tool,
         outcome.hit_cap,
     ))
+}
+
+/// Persist a sub-agent turn's raw transcript to `session_raw`, mirroring the
+/// removed `SubagentObserver::persist_transcript`: `agent_type:"subagent"`, the
+/// `task_id`, and the provider/model + usage carried on the last assistant
+/// message so per-thread usage reads price the sub-agent at its own model.
+#[allow(clippy::too_many_arguments)]
+fn persist_subagent_transcript(
+    workspace_dir: &std::path::Path,
+    transcript_stem: &str,
+    agent_id: &str,
+    task_id: &str,
+    provider_label: &str,
+    model: &str,
+    history: &[ChatMessage],
+    usage: &AggregatedUsage,
+    context_window: u64,
+    dispatcher: &str,
+    iteration: u32,
+) {
+    use crate::openhuman::agent::harness::session::transcript;
+
+    let path = match transcript::resolve_keyed_transcript_path(workspace_dir, transcript_stem) {
+        Ok(p) => p,
+        Err(err) => {
+            tracing::debug!(
+                agent_id,
+                error = %err,
+                "[subagent_runner:graph] failed to resolve child transcript path"
+            );
+            return;
+        }
+    };
+    let now = chrono::Utc::now().to_rfc3339();
+    let turn_usage = transcript::TurnUsage {
+        provider: provider_label.to_string(),
+        model: model.to_string(),
+        usage: transcript::MessageUsage {
+            input: usage.input_tokens,
+            output: usage.output_tokens,
+            cached_input: usage.cached_input_tokens,
+            context_window,
+            cost_usd: usage.charged_amount_usd,
+        },
+        ts: now.clone(),
+        reasoning_content: None,
+        tool_calls: Vec::new(),
+        iteration,
+    };
+    let meta = transcript::TranscriptMeta {
+        agent_name: agent_id.to_string(),
+        agent_id: Some(agent_id.to_string()),
+        agent_type: Some("subagent".to_string()),
+        dispatcher: dispatcher.into(),
+        provider: Some(turn_usage.provider.clone()),
+        model: Some(turn_usage.model.clone()),
+        created: now.clone(),
+        updated: now,
+        turn_count: 1,
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        cached_input_tokens: usage.cached_input_tokens,
+        charged_amount_usd: usage.charged_amount_usd,
+        thread_id: crate::openhuman::inference::provider::thread_context::current_thread_id(),
+        task_id: Some(task_id.to_string()),
+    };
+    if let Err(err) = transcript::write_transcript(&path, history, &meta, Some(&turn_usage)) {
+        tracing::debug!(
+            agent_id,
+            error = %err,
+            "[subagent_runner:graph] failed to write child transcript"
+        );
+    }
 }
 
 /// Mirror a sub-agent turn's structured conversation to its worker thread,
@@ -439,6 +581,9 @@ mod tests {
             std::env::temp_dir(),
             1024,
             false,
+            "root-session__real_tools",
+            "mock-channel",
+            None,
         )
         .await
         .expect("graph subagent runs");
@@ -523,6 +668,9 @@ mod tests {
             std::env::temp_dir(),
             1024,
             false,
+            "root-session__scoped_deltas",
+            "mock-channel",
+            None,
         )
         .await
         .expect("child-delta subagent runs");
@@ -665,6 +813,9 @@ mod tests {
             std::env::temp_dir(),
             1024,
             false,
+            "root-session__clarification",
+            "mock-channel",
+            None,
         )
         .await
         .expect("ask-clarification subagent runs");
@@ -767,6 +918,9 @@ mod tests {
             std::env::temp_dir(),
             1024,
             false,
+            "root-session__cap_hit",
+            "mock-channel",
+            None,
         )
         .await
         .expect("cap-hit subagent runs");

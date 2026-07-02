@@ -28,6 +28,8 @@ const joiningState = {
     lastReply: null,
     lastHarness: null,
     transcript: null,
+    liveTranscript: [],
+    livePartialIndex: null,
     error: null,
   },
 };
@@ -41,6 +43,8 @@ const activeState = {
     lastReply: null,
     lastHarness: null,
     transcript: null,
+    liveTranscript: [],
+    livePartialIndex: null,
     error: null,
   },
 };
@@ -54,7 +58,8 @@ describe('ActiveMeetingBanner', () => {
   it('renders joining state with LIVE badge', () => {
     renderWithProviders(<ActiveMeetingBanner />, { preloadedState: joiningState });
 
-    expect(screen.getByText(/live/i)).toBeInTheDocument();
+    // Exact match: the "Live" badge, not the "Live transcript" panel heading.
+    expect(screen.getByText('Live')).toBeInTheDocument();
     expect(screen.getByText(/joining/i)).toBeInTheDocument();
   });
 
@@ -203,6 +208,8 @@ describe('ActiveMeetingBanner', () => {
         lastReply: null,
         lastHarness: null,
         transcript: null,
+        liveTranscript: [],
+        livePartialIndex: null,
         error: null,
       },
     };

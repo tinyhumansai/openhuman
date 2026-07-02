@@ -548,7 +548,6 @@ fn agent_with(
         .context_config(context_config)
         .auto_save(true)
         .explicit_preferences_enabled(false)
-        .unified_compaction_enabled(false)
         .build()
         .unwrap()
 }
@@ -786,7 +785,6 @@ async fn turn_xml_failures_checkpoint_policy_visibility_and_hooks_are_publicly_e
         })])
         .tool_policy(Arc::new(DenyNamedPolicy("round17_ok")))
         .explicit_preferences_enabled(false)
-        .unified_compaction_enabled(false)
         .build()
         .unwrap();
     let mut visible = HashSet::new();
@@ -1027,5 +1025,6 @@ fn definition(
         delegate_name: None,
         agent_tier: AgentTier::Worker,
         source: DefinitionSource::Builtin,
+        graph: Default::default(),
     }
 }

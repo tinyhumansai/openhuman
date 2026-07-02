@@ -129,6 +129,14 @@ pub enum DomainEvent {
         orchestration_id: String,
         reason: Option<String>,
     },
+    /// A tiny.place contact edge changed for a wrapped orchestration session.
+    /// Payload is intentionally metadata only; contact graph details stay behind
+    /// the signed tiny.place API.
+    OrchestrationPairingChanged {
+        agent_id: String,
+        status: String,
+        source: String,
+    },
 
     // ── Subconscious orchestrator ───────────────────────────────────────
     /// A subconscious trigger finished gate evaluation (promote or drop).
@@ -1103,6 +1111,18 @@ pub enum DomainEvent {
         duration_ms: u64,
         correlation_id: Option<String>,
     },
+    /// Backend gmeet bot emitted an incremental transcript turn mid-call
+    /// (`bot:transcript_delta`, issue #4304). Relayed live to the renderer so
+    /// the active-call UI can render turns as they're spoken. `is_partial`
+    /// marks a not-yet-finalized line at `index`; a later delta (partial or
+    /// final) at the same `index` supersedes it. The terminal
+    /// `BackendMeetTranscript` stays authoritative for thread/summary.
+    BackendMeetTranscriptDelta {
+        turn: BackendMeetTurn,
+        index: u64,
+        is_partial: bool,
+        correlation_id: Option<String>,
+    },
     /// Backend gmeet bot emitted an error.
     BackendMeetError {
         error: String,
@@ -1205,6 +1225,7 @@ impl DomainEvent {
             | Self::AgentOrchestrationCompleted { .. }
             | Self::AgentOrchestrationFailed { .. }
             | Self::AgentOrchestrationClosed { .. }
+            | Self::OrchestrationPairingChanged { .. }
             | Self::RunQueueMessageQueued { .. }
             | Self::RunQueueMessageDelivered { .. }
             | Self::RunQueueFollowupDispatched { .. }
@@ -1331,6 +1352,7 @@ impl DomainEvent {
             | Self::BackendMeetReply { .. }
             | Self::BackendMeetHarness { .. }
             | Self::BackendMeetTranscript { .. }
+            | Self::BackendMeetTranscriptDelta { .. }
             | Self::BackendMeetError { .. }
             | Self::BackendMeetInCallRequest { .. }
             | Self::BackendMeetSpeak { .. }
@@ -1360,6 +1382,7 @@ impl DomainEvent {
             Self::AgentOrchestrationCompleted { .. } => "AgentOrchestrationCompleted",
             Self::AgentOrchestrationFailed { .. } => "AgentOrchestrationFailed",
             Self::AgentOrchestrationClosed { .. } => "AgentOrchestrationClosed",
+            Self::OrchestrationPairingChanged { .. } => "OrchestrationPairingChanged",
             Self::SubconsciousTriggerProcessed { .. } => "SubconsciousTriggerProcessed",
             Self::RunQueueMessageQueued { .. } => "RunQueueMessageQueued",
             Self::RunQueueMessageDelivered { .. } => "RunQueueMessageDelivered",
@@ -1466,6 +1489,7 @@ impl DomainEvent {
             Self::BackendMeetReply { .. } => "BackendMeetReply",
             Self::BackendMeetHarness { .. } => "BackendMeetHarness",
             Self::BackendMeetTranscript { .. } => "BackendMeetTranscript",
+            Self::BackendMeetTranscriptDelta { .. } => "BackendMeetTranscriptDelta",
             Self::BackendMeetError { .. } => "BackendMeetError",
             Self::BackendMeetInCallRequest { .. } => "BackendMeetInCallRequest",
             Self::BackendMeetSpeak { .. } => "BackendMeetSpeak",

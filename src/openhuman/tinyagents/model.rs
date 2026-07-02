@@ -141,9 +141,14 @@ fn build_chat_inputs(
     } else {
         super::convert::messages_to_text_mode_chat(&request.messages)
     };
+    // The unknown-tool sentinel is a recovery adapter, never a real capability —
+    // its contract (see `tools::UNKNOWN_TOOL_SENTINEL`) is that it is never
+    // advertised to the model. Filter it out of the advertised specs so it never
+    // leaks into the provider's tool list.
     let specs = request
         .tools
         .iter()
+        .filter(|s| s.name != super::tools::UNKNOWN_TOOL_SENTINEL)
         .map(|s| ToolSpec {
             name: s.name.clone(),
             description: s.description.clone(),
@@ -201,6 +206,16 @@ fn response_to_model_response(response: &ChatResponse) -> ModelResponse {
     let mut content = Vec::new();
     if !visible_text.is_empty() {
         content.push(ContentBlock::Text(visible_text));
+    }
+    // Thinking models return `reasoning_content` separately from the visible
+    // reply; tinyagents' `AssistantMessage` has no reasoning channel, so stash it
+    // on a provider-extension content block. It stays out of `Message::text()`
+    // (which only concatenates `Text` blocks) but survives into persistence and
+    // the next turn's request — where thinking-mode providers require it back.
+    if let Some(block) =
+        super::convert::reasoning_content_block(response.reasoning_content.as_deref())
+    {
+        content.push(block);
     }
     let usage = response.usage.as_ref().map(|u| {
         // Carry the provider's cached-prefix input count through the crate

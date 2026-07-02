@@ -72,16 +72,21 @@ impl Tool<()> for UnknownToolAdapter {
             )
         } else {
             format!(
-                "Unknown tool: '{requested}'. It is not available; do not call it again. \
+                "Unknown tool: {requested}. It is not available; do not call it again. \
                  Use one of the advertised tools, or answer directly."
             )
         };
         Ok(TaToolResult {
             call_id: call.id,
             name: call.name,
+            // Surface the recovery result as an error too: an unknown-tool call IS
+            // a failure, so the repeated-failure breaker counts it and halts the
+            // run with a root cause when the model keeps re-issuing the same
+            // unavailable tool (instead of looping to the iteration cap). The
+            // model-visible content is unchanged.
+            error: Some(content.clone()),
             content,
             raw: None,
-            error: None,
             elapsed_ms: 0,
         })
     }
@@ -246,7 +251,7 @@ async fn execute_openhuman_tool(
             TaToolResult {
                 call_id: call.id,
                 name: call.name.clone(),
-                content: format!("Error executing '{}': {e}", call.name),
+                content: format!("Error executing {}: {e}", call.name),
                 raw: None,
                 error: Some(e.to_string()),
                 elapsed_ms: 0,

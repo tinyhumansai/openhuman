@@ -370,6 +370,7 @@ fn definition(max_result_chars: Option<usize>) -> AgentDefinition {
         delegate_name: None,
         agent_tier: AgentTier::Worker,
         source: DefinitionSource::Builtin,
+        graph: Default::default(),
     }
 }
 
