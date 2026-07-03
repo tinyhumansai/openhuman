@@ -264,11 +264,14 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     // (config.update_autonomy_settings) are reflected by `live_policy::current()`
     // and picked up by the next session.
     let security = crate::openhuman::security::live_policy::install(
-        Arc::new(SecurityPolicy::from_config(
-            &config.autonomy,
-            &config.workspace_dir,
-            &config.action_dir,
-        )),
+        Arc::new(
+            SecurityPolicy::from_config(
+                &config.autonomy,
+                &config.workspace_dir,
+                &config.action_dir,
+            )
+            .with_privacy_mode(config.privacy.mode),
+        ),
         config.workspace_dir.clone(),
         config.action_dir.clone(),
     );

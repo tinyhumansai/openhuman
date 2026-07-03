@@ -2521,11 +2521,14 @@ pub async fn bootstrap_core_runtime(host_kind: crate::core::types::HostKind) {
     // policy.
     let action_dir = cfg.action_dir.clone();
     crate::openhuman::security::live_policy::install(
-        std::sync::Arc::new(crate::openhuman::security::SecurityPolicy::from_config(
-            &cfg.autonomy,
-            &workspace_dir,
-            &action_dir,
-        )),
+        std::sync::Arc::new(
+            crate::openhuman::security::SecurityPolicy::from_config(
+                &cfg.autonomy,
+                &workspace_dir,
+                &action_dir,
+            )
+            .with_privacy_mode(cfg.privacy.mode),
+        ),
         workspace_dir.clone(),
         action_dir,
     );
