@@ -27,10 +27,8 @@ pub struct ContextConfig {
     #[serde(default = "default_true")]
     pub microcompact_enabled: bool,
 
-    /// Enable stage 4 (autocompact) — dispatch the summarizer when
-    /// microcompact cannot free enough tokens. Disabling this makes the
-    /// pipeline return `PipelineOutcome::NoOp` at the soft threshold and
-    /// trust the caller to surface the situation via the guard.
+    /// Enable stage 4 (autocompact) — install the TinyAgents summarization
+    /// middleware when the transcript approaches the model context window.
     #[serde(default = "default_true")]
     pub autocompact_enabled: bool,
 
@@ -40,7 +38,7 @@ pub struct ContextConfig {
     pub microcompact_keep_recent: usize,
 
     /// Maximum byte length of a single tool-result body before the
-    /// context pipeline's tool-result budget stage truncates it.
+    /// TinyAgents tool-output middleware budget stage truncates it.
     /// `0` disables the cap. Applied inline at tool-execution time
     /// before the result enters history, so it is cache-safe.
     ///
@@ -83,7 +81,7 @@ pub struct ContextConfig {
     )]
     pub summarizer_max_payload_tokens: usize,
 
-    /// Session-memory extraction thresholds (stage 5 of the pipeline).
+    /// Session-memory extraction thresholds.
     #[serde(default)]
     pub session_memory: SessionMemoryConfig,
 

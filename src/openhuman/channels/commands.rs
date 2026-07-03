@@ -8,8 +8,6 @@ use super::irc;
 use super::irc::IrcChannel;
 use super::lark::LarkChannel;
 use super::linq::LinqChannel;
-#[cfg(feature = "channel-matrix")]
-use super::matrix::MatrixChannel;
 use super::qq::QQChannel;
 use super::signal::SignalChannel;
 use super::slack::SlackChannel;
@@ -95,25 +93,9 @@ pub async fn doctor_channels(config: Config) -> Result<()> {
         ));
     }
 
-    #[cfg(feature = "channel-matrix")]
-    if let Some(ref mx) = config.channels_config.matrix {
-        channels.push((
-            "Matrix",
-            Arc::new(MatrixChannel::new_with_session_hint(
-                mx.homeserver.clone(),
-                mx.access_token.clone(),
-                mx.room_id.clone(),
-                mx.allowed_users.clone(),
-                mx.user_id.clone(),
-                mx.device_id.clone(),
-            )),
-        ));
-    }
-
-    #[cfg(not(feature = "channel-matrix"))]
     if config.channels_config.matrix.is_some() {
         tracing::warn!(
-            "Matrix channel is configured but this build was compiled without `channel-matrix`; skipping Matrix health check."
+            "Matrix channel is configured but Matrix support was removed from this build; skipping Matrix health check."
         );
     }
 

@@ -27,6 +27,7 @@
 
 use super::store;
 use super::types::{SubconsciousStatus, TickResult};
+use crate::openhuman::agent_orchestration::parent_context::with_root_parent;
 use crate::openhuman::config::schema::SubconsciousMode;
 use crate::openhuman::config::Config;
 use crate::openhuman::credentials::{AuthService, APP_SESSION_PROVIDER};
@@ -250,6 +251,26 @@ impl SubconsciousEngine {
             state.provider_unavailable_reason = None;
         }
 
+        // ── Stage: orchestration_review — steer the reasoning core (stage 6) ──
+        // Offline reflection over the orchestration layer's compressed history +
+        // cumulative world diff, emitting a steering directive for later reasoning
+        // cycles. Runs before the memory_diff stage and independently of it (it is
+        // driven by orchestration activity, not source syncs). Self-gating: a
+        // clean no-op when orchestration is disabled or there is nothing new to
+        // review. Its only output is the directive (+ the local Subconscious
+        // window) — no channels, no external effects.
+        let review_tick_id = format!("subconscious:orchestration_review:{tick_at}");
+        match crate::openhuman::orchestration::ops::run_orchestration_review(
+            &config,
+            &review_tick_id,
+        )
+        .await
+        {
+            Ok(true) => info!("[subconscious] orchestration_review emitted a steering directive"),
+            Ok(false) => {}
+            Err(e) => warn!("[subconscious] orchestration_review failed: {e}"),
+        }
+
         // ── Stage 1: memory_diff — how did the agent's world change? ──────────
         let baseline =
             store::with_connection(&self.workspace_dir, store::get_baseline_checkpoint_id)
@@ -309,7 +330,7 @@ impl SubconsciousEngine {
         let has_external_content = true;
 
         // ── Stage 2: prepare_context — ground the diff before deciding ───────
-        let prepared_context = self.prepare_context(&world_diff).await;
+        let prepared_context = self.prepare_context(&config, &world_diff).await;
 
         // ── Stage 3: decide — slim agent acts on diff + prepared context ─────
         let mut agent_prompt =
@@ -379,20 +400,35 @@ impl SubconsciousEngine {
     /// Stage 2: run the read-only `context_scout` over the world diff to gather
     /// grounding context. Best-effort — on any error the decision agent simply
     /// runs without a prepared-context section.
-    async fn prepare_context(&self, world_diff: &str) -> String {
+    ///
+    /// The tick is a controller-spawned background surface with **no enclosing
+    /// agent turn**, so the `context_scout` spawn has no ambient
+    /// `current_parent()`. We establish a root parent for the spawn via the
+    /// shared [`with_root_parent`] helper — the same construction the
+    /// workflow-run engine and agent-team runtime use. Without it every tick's
+    /// scout died with `NoParentContext` and the decision ran un-grounded
+    /// (Sentry TAURI-RUST-HMW; #4337). The build runs only on ticks that have
+    /// world changes (the sole caller is past the `has_changes` gate), so quiet
+    /// ticks pay nothing.
+    async fn prepare_context(&self, config: &Config, world_diff: &str) -> String {
         let question = format!(
             "Background awareness check. Here is what changed in the user's connected sources \
              since the last check:\n\n{world_diff}\n\nSurface what the user should be aware of or \
              act on, and the context that grounds a good decision.",
         );
 
-        match crate::openhuman::agent_orchestration::tools::run_context_scout_with_catalog(
-            &question,
-            None,
-            SUBCONSCIOUS_TOOL_CATALOG,
-        )
+        // Flatten: outer Err = root-parent build failure, inner = scout result.
+        let scout = with_root_parent(config, "subconscious", "subconscious", "subconscious", {
+            crate::openhuman::agent_orchestration::tools::run_context_scout_with_catalog(
+                &question,
+                None,
+                SUBCONSCIOUS_TOOL_CATALOG,
+            )
+        })
         .await
-        {
+        .and_then(|inner| inner);
+
+        match scout {
             Ok(result) if !result.is_error => {
                 debug!(
                     "[subconscious] prepared context bundle ({} chars)",

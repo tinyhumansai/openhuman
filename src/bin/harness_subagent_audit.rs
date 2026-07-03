@@ -21,12 +21,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use openhuman_core::openhuman::agent::harness::run_queue::QueueMode;
 use openhuman_core::openhuman::agent::progress::AgentProgress;
 use openhuman_core::openhuman::agent::Agent;
-use openhuman_core::openhuman::agent_orchestration::{
-    running_subagents,
-    subagent_sessions::{DurableSubagentSession, DurableSubagentStatus, SubagentSessionStore},
+use openhuman_core::openhuman::agent_orchestration::harness_audit::{
+    self, AuditSteerError, AuditSubagentSessionStore, DurableSubagentSession, DurableSubagentStatus,
 };
 use openhuman_core::openhuman::config::Config;
 use serde::Serialize;
@@ -144,7 +142,7 @@ struct SteerAttemptEvent {
 
 #[derive(Clone)]
 struct SteerAuditConfig {
-    store: SubagentSessionStore,
+    store: AuditSubagentSessionStore,
     task_key: String,
     message: String,
     delay: Duration,
@@ -249,7 +247,7 @@ async fn run() -> Result<()> {
     let config = Config::load_or_init()
         .await
         .context("loading user config (Config::load_or_init)")?;
-    let store = SubagentSessionStore::new(config.workspace_dir.clone());
+    let store = AuditSubagentSessionStore::new(config.workspace_dir.clone());
     eprintln!(
         "[harness_subagent_audit] workspace_dir={} session_store={}",
         config.workspace_dir.display(),
@@ -655,11 +653,10 @@ async fn steer_after_spawn(
         let attempt_error;
         match find_session_for_task(&config.store, &config.task_key, &spawned.task_id) {
             Ok(Some(session)) => {
-                match running_subagents::steer(
+                match harness_audit::steer_running_subagent(
                     &spawned.task_id,
                     &session.parent_session,
                     config.message.clone(),
-                    QueueMode::Steer,
                 )
                 .await
                 {
@@ -678,7 +675,7 @@ async fn steer_after_spawn(
                     }
                     Err(err) => {
                         attempt_error = Some(format!("{err:?}"));
-                        if !matches!(err, running_subagents::SteerError::Unknown) {
+                        if !matches!(err, AuditSteerError::Unknown) {
                             return failed_steer_attempt(
                                 spawned,
                                 attempt_error,
@@ -732,7 +729,7 @@ fn failed_steer_attempt(
 }
 
 fn find_session_for_task(
-    store: &SubagentSessionStore,
+    store: &AuditSubagentSessionStore,
     task_key: &str,
     task_id: &str,
 ) -> Result<Option<SessionSummary>> {
@@ -779,7 +776,7 @@ fn default_steer_message(task_key: &str) -> String {
 }
 
 async fn poll_matching_sessions(
-    store: &SubagentSessionStore,
+    store: &AuditSubagentSessionStore,
     task_key: &str,
     wait_for: Duration,
     require_completion: bool,
@@ -801,7 +798,7 @@ async fn poll_matching_sessions(
 }
 
 fn load_matching_sessions(
-    store: &SubagentSessionStore,
+    store: &AuditSubagentSessionStore,
     task_key: &str,
 ) -> Result<Vec<SessionSummary>> {
     let sessions = store.load().map_err(anyhow::Error::msg).with_context(|| {

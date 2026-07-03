@@ -529,16 +529,19 @@ async fn turn_handles_unknown_tool_gracefully() {
         "Expected non-empty response after unknown tool recovery"
     );
 
-    // Verify the tool result mentioned "Unknown tool"
+    // Verify the tool result named the unrecognized tool. Unknown-tool
+    // recovery now flows through the tinyagents `UnknownToolPolicy::ReturnToolError`
+    // path (issue #4249), which injects a `unknown tool `<name>` (arguments: …);
+    // valid tools: [...]` result and continues so the model can self-correct.
     let has_tool_result = agent.history().iter().any(|msg| match msg {
-        ConversationMessage::ToolResults(results) => {
-            results.iter().any(|r| r.content.contains("Unknown tool"))
-        }
+        ConversationMessage::ToolResults(results) => results
+            .iter()
+            .any(|r| r.content.contains("unknown tool") && r.content.contains("nonexistent_tool")),
         _ => false,
     });
     assert!(
         has_tool_result,
-        "Expected tool result with 'Unknown tool' message"
+        "Expected tool result naming the unknown tool"
     );
 }
 

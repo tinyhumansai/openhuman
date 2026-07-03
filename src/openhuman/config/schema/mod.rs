@@ -34,6 +34,7 @@ mod local_ai;
 mod meet;
 mod node;
 mod observability;
+mod orchestration;
 mod proxy;
 mod routes;
 mod runtime;
@@ -66,9 +67,10 @@ pub use heartbeat_cron::{CronConfig, HeartbeatConfig, SubconsciousMode};
 pub use identity_cost::{CostConfig, ModelPricing};
 pub use learning::{LearningConfig, ReflectionSource};
 pub use local_ai::{LocalAiConfig, LocalAiUsage};
-pub use meet::{AutoJoinPolicy, AutoSummarizePolicy, MeetConfig};
+pub use meet::{AutoJoinPolicy, AutoSummarizePolicy, CalendarProvider, MeetConfig};
 pub use node::NodeConfig;
 pub use observability::{AgentTracingBackend, AgentTracingConfig, ObservabilityConfig};
+pub use orchestration::OrchestrationConfig;
 pub use proxy::{
     apply_runtime_proxy_to_builder, build_runtime_proxy_client,
     build_runtime_proxy_client_with_timeouts, runtime_proxy_config, set_runtime_proxy_config,

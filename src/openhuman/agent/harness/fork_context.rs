@@ -19,6 +19,7 @@ use crate::openhuman::workflows::Workflow;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tinyagents::harness::workspace::WorkspaceDescriptor;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Parent execution context
@@ -70,6 +71,13 @@ pub struct ParentExecutionContext {
 
     /// Working directory of the parent agent.
     pub workspace_dir: PathBuf,
+
+    /// TinyAgents workspace descriptor currently active for this parent turn.
+    /// Tool-boundary spawns pass descriptors explicitly through
+    /// `SubagentRunOptions`; this ambient field is only a fallback for
+    /// internal/background fanout paths that already inherit the parent runtime
+    /// through this task-local.
+    pub workspace_descriptor: Option<WorkspaceDescriptor>,
 
     /// Parent's memory backing store. Sub-agents share it for read access
     /// but skip the per-turn context injection to save tokens — the

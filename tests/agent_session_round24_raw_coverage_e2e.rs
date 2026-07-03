@@ -2,8 +2,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use openhuman_core::openhuman::agent::dispatcher::XmlToolDispatcher;
 use openhuman_core::openhuman::agent::hooks::{PostTurnHook, TurnContext};
-use openhuman_core::openhuman::agent::memory_loader::MemoryLoader;
 use openhuman_core::openhuman::agent::Agent;
+use openhuman_core::openhuman::agent_memory::memory_loader::MemoryLoader;
 use openhuman_core::openhuman::config::{AgentConfig, ContextConfig};
 use openhuman_core::openhuman::context::prompt::{
     ConnectedIntegration, LearnedContextData, PersonalityRosterEntry, PersonalityRosterSection,
@@ -339,6 +339,8 @@ fn xml_tool_response(value: &str) -> ChatResponse {
             output_tokens: 12,
             context_window: 16_000,
             cached_input_tokens: 8,
+            cache_creation_tokens: 0,
+            reasoning_tokens: 0,
             charged_amount_usd: 0.0002,
         }),
         reasoning_content: None,
@@ -444,7 +446,6 @@ async fn max_iteration_checkpoint_uses_deterministic_fallback_and_hooks() {
         })
         .context_config(ContextConfig::default())
         .explicit_preferences_enabled(false)
-        .unified_compaction_enabled(false)
         .build()
         .unwrap();
     let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel(16);
@@ -518,7 +519,6 @@ async fn builder_validation_and_system_prompt_cover_defaults_and_learning() {
         .explicit_preferences_enabled(true)
         .omit_profile(false)
         .omit_memory_md(false)
-        .unified_compaction_enabled(true)
         .build()
         .unwrap();
 

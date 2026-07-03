@@ -47,6 +47,22 @@ impl Default for AutoSummarizePolicy {
     }
 }
 
+/// Which calendar data source feeds Google Meet detection and auto-join.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CalendarProvider {
+    /// Composio-based Google Calendar sync (default; broad OAuth scopes).
+    Composio,
+    /// Recall.ai Calendar V1 OAuth (less-invasive: read-only events + email).
+    Recall,
+}
+
+impl Default for CalendarProvider {
+    fn default() -> Self {
+        Self::Composio
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct MeetConfig {
@@ -102,6 +118,21 @@ pub struct MeetConfig {
     /// Off by default.
     #[serde(default)]
     pub watch_calendar: bool,
+
+    /// Which calendar source drives Google Meet detection and auto-join.
+    /// `Composio` (default) uses Composio Google Calendar; `Recall` uses
+    /// Recall.ai Calendar V1 (less-invasive scopes). Flipped to `Recall`
+    /// automatically when the user connects their calendar via Recall.
+    #[serde(default)]
+    pub calendar_provider: CalendarProvider,
+
+    /// The user's display name as it appears in meetings (e.g. their Google
+    /// Meet caption label). Set once from the Meetings page and reused as the
+    /// bot's reply anchor (`respondToParticipant`) on every join — auto-join and
+    /// manual. Empty = no saved anchor (bot falls back to the calendar `self`
+    /// attendee / account identity, and stays listen-only if none resolves).
+    #[serde(default)]
+    pub reply_display_name: String,
 }
 
 fn default_auto_orchestrator_handoff() -> bool {
@@ -136,6 +167,8 @@ impl Default for MeetConfig {
             in_call_streaming: true,
             platform_auto_join_policies: HashMap::new(),
             watch_calendar: false,
+            calendar_provider: CalendarProvider::default(),
+            reply_display_name: String::new(),
         }
     }
 }
@@ -144,6 +177,17 @@ impl Default for MeetConfig {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn calendar_provider_defaults_and_parses() {
+        assert_eq!(
+            MeetConfig::default().calendar_provider,
+            CalendarProvider::Composio
+        );
+        let cfg: MeetConfig =
+            serde_json::from_value(json!({ "calendar_provider": "recall" })).unwrap();
+        assert_eq!(cfg.calendar_provider, CalendarProvider::Recall);
+    }
 
     #[test]
     fn default_disables_handoff() {
@@ -226,6 +270,8 @@ mod tests {
             in_call_streaming: false,
             platform_auto_join_policies: HashMap::new(),
             watch_calendar: true,
+            calendar_provider: CalendarProvider::Recall,
+            reply_display_name: "Alex Kim".to_string(),
         };
         let s = serde_json::to_string(&original).unwrap();
         let back: MeetConfig = serde_json::from_str(&s).unwrap();
@@ -236,6 +282,8 @@ mod tests {
         assert!(!back.listen_only_default);
         assert!(back.enable_in_call_agency);
         assert!(back.watch_calendar);
+        assert_eq!(back.calendar_provider, CalendarProvider::Recall);
+        assert_eq!(back.reply_display_name, "Alex Kim");
     }
 
     #[test]

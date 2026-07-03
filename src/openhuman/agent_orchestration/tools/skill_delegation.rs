@@ -20,7 +20,10 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::openhuman::tools::orchestrator_tools::sanitise_slug;
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCategory, ToolResult};
+use crate::openhuman::tools::traits::{
+    PermissionLevel, Tool, ToolCallOptions, ToolCategory, ToolResult,
+};
+use tinyagents::harness::tool::ToolExecutionContext;
 
 /// Canonical tool name surfaced to the orchestrator LLM.
 pub const INTEGRATIONS_DELEGATE_TOOL_NAME: &str = "delegate_to_integrations_agent";
@@ -132,7 +135,7 @@ fn resolve_connected_toolkits(
     slug: &str,
     live_connected: Option<&[String]>,
 ) -> (bool, Vec<String>) {
-    let mut allowed: Vec<String> = snapshot.iter().map(|(slug, _)| slug.clone()).collect();
+    let allowed: Vec<String> = snapshot.iter().map(|(slug, _)| slug.clone()).collect();
     if snapshot.iter().any(|(known_slug, _)| known_slug == slug) {
         return (true, allowed);
     }
@@ -191,6 +194,16 @@ impl Tool for SkillDelegationTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: ToolCallOptions,
+        tool_context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
         let raw_toolkit = args
             .get("toolkit")
             .and_then(|v| v.as_str())
@@ -286,6 +299,7 @@ impl Tool for SkillDelegationTool {
             &prompt,
             Some(&slug),
             model_override,
+            tool_context.and_then(|ctx| ctx.workspace.clone()),
         )
         .await
     }

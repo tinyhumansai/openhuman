@@ -33,6 +33,48 @@ use super::types::UpcomingMeeting;
 pub(crate) const DEFAULT_LOOKAHEAD_MINUTES: u32 = 480; // 8 hours
 pub(crate) const DEFAULT_LIMIT: u32 = 20;
 
+/// Fetch upcoming meetings from Recall.ai Calendar V1 (backend-proxied) and map
+/// them through the shared `extract_upcoming_meetings` parser so the RPC
+/// response shape matches the Composio path exactly. Degrades to an empty list
+/// when the calendar is not connected — same contract as the Composio branch.
+async fn fetch_recall_upcoming(
+    config: &Config,
+    now: DateTime<Utc>,
+    end_window: DateTime<Utc>,
+    limit: u32,
+    join_policy: &str,
+) -> Result<Vec<UpcomingMeeting>, String> {
+    let meetings = match crate::openhuman::recall_calendar::ops::fetch_recall_meetings(config).await
+    {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::info!(error = %e, "[meet:upcoming] recall calendar unavailable — skipping");
+            return Ok(Vec::new());
+        }
+    };
+    let out = build_recall_upcoming(&meetings, now, end_window, limit, join_policy);
+    tracing::info!(total = out.len(), "[meet:upcoming] recall fetch complete");
+    Ok(out)
+}
+
+/// Pure transform: Recall meetings → `UpcomingMeeting`s via the shared parser,
+/// then soonest-first + limit. Split out so it is unit-testable without a
+/// backend session.
+fn build_recall_upcoming(
+    meetings: &[crate::openhuman::recall_calendar::types::RecallMeeting],
+    now: DateTime<Utc>,
+    end_window: DateTime<Utc>,
+    limit: u32,
+    join_policy: &str,
+) -> Vec<UpcomingMeeting> {
+    let data = crate::openhuman::recall_calendar::ops::meetings_to_gcal_json(meetings);
+    let mut seen_ids = HashSet::new();
+    let mut out = extract_upcoming_meetings(&data, now, end_window, join_policy, &mut seen_ids);
+    out.sort_by_key(|m| m.start_time_ms);
+    out.truncate(limit as usize);
+    out
+}
+
 // URL/host/platform helpers (`is_meeting_url`, `extract_url_from_text`,
 // `infer_platform_from_url`) are the canonical strict versions in `super::ops`
 // — see finding #9 consolidation. This module no longer carries its own copies.
@@ -61,6 +103,23 @@ pub(crate) async fn fetch_upcoming_meetings(
         end_window = %end_window,
         "[meet:upcoming] fetch start"
     );
+
+    // Recall.ai Calendar V1 as the (less-invasive) meeting source when
+    // selected. Also auto-detect a connected Recall calendar so the meetings
+    // page does not depend on the Skills-page settings card being mounted long
+    // enough to sync `meet.calendar_provider`.
+    let recall_selected = matches!(
+        config.meet.calendar_provider,
+        crate::openhuman::config::schema::CalendarProvider::Recall
+    );
+    let recall_connected = if recall_selected {
+        true
+    } else {
+        crate::openhuman::recall_calendar::ops::is_connected_cached(config).await
+    };
+    if recall_connected {
+        return fetch_recall_upcoming(config, now, end_window, limit, join_policy).await;
+    }
 
     // Build the mode-aware Composio client. Fails gracefully when the user
     // is not signed in or has no Composio config — same pattern as the
@@ -509,6 +568,51 @@ mod tests {
     use super::*;
     use crate::openhuman::agent_meetings::ops::infer_platform_from_url;
     use serde_json::json;
+
+    fn recall_meeting(
+        id: &str,
+        url: &str,
+        mins: i64,
+    ) -> crate::openhuman::recall_calendar::types::RecallMeeting {
+        crate::openhuman::recall_calendar::types::RecallMeeting {
+            id: id.to_string(),
+            title: Some("Recall sync".to_string()),
+            meeting_url: Some(url.to_string()),
+            start_time: Some((Utc::now() + chrono::Duration::minutes(mins)).to_rfc3339()),
+            end_time: None,
+            platform: Some("google_meet".to_string()),
+            bot_id: None,
+        }
+    }
+
+    #[test]
+    fn build_recall_upcoming_maps_and_orders() {
+        let now = Utc::now();
+        let end = now + chrono::Duration::hours(3);
+        let meetings = vec![
+            recall_meeting("r-2", "https://meet.google.com/bbb-bbbb-bbb", 90),
+            recall_meeting("r-1", "https://meet.google.com/aaa-aaaa-aaa", 30),
+        ];
+        let out = build_recall_upcoming(&meetings, now, end, 10, "auto");
+        assert_eq!(out.len(), 2);
+        // Soonest-first ordering preserved.
+        assert_eq!(
+            out[0].meet_url.as_deref(),
+            Some("https://meet.google.com/aaa-aaaa-aaa")
+        );
+        assert_eq!(out[0].join_policy, "auto");
+    }
+
+    #[tokio::test]
+    async fn fetch_upcoming_routes_to_recall_and_degrades_empty() {
+        let mut config = crate::openhuman::config::Config::default();
+        config.meet.calendar_provider = crate::openhuman::config::schema::CalendarProvider::Recall;
+        // No backend session in tests → recall fetch fails → empty (not an error).
+        let out = fetch_upcoming_meetings(&config, 60, 10, "ask")
+            .await
+            .unwrap();
+        assert!(out.is_empty());
+    }
 
     fn window() -> (DateTime<Utc>, DateTime<Utc>) {
         let now = Utc::now();

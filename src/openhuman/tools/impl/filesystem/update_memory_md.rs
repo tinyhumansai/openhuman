@@ -1,9 +1,10 @@
 //! Tool: update_memory_md — append or update sections in MEMORY.md or SKILL.md.
 
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::path::PathBuf;
+use tinyagents::harness::tool::ToolExecutionContext;
 
 /// Allowed workspace markdown files this tool may modify.
 const ALLOWED_FILES: &[&str] = &["MEMORY.md", "SKILL.md"];
@@ -21,6 +22,18 @@ pub struct UpdateMemoryMdTool {
 impl UpdateMemoryMdTool {
     pub fn new(workspace_dir: PathBuf) -> Self {
         Self { workspace_dir }
+    }
+
+    fn workspace_dir_for_context(&self, context: Option<&ToolExecutionContext>) -> PathBuf {
+        if let Some(workspace) = context.and_then(|ctx| ctx.workspace.as_ref()) {
+            tracing::debug!(
+                workspace_root = %workspace.root.display(),
+                policy_id = %workspace.policy_id,
+                "[update_memory_md] using TinyAgents workspace descriptor as workspace dir"
+            );
+            return workspace.root.clone();
+        }
+        self.workspace_dir.clone()
     }
 }
 
@@ -69,6 +82,17 @@ impl Tool for UpdateMemoryMdTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: ToolCallOptions,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let workspace_dir = self.workspace_dir_for_context(context);
         let file = args
             .get("file")
             .and_then(|v| v.as_str())
@@ -91,15 +115,15 @@ impl Tool for UpdateMemoryMdTool {
             )));
         }
 
-        let target_path = self.workspace_dir.join(file);
+        let target_path = workspace_dir.join(file);
 
         // Prevent symlink-based workspace escape.
         let workspace_canon = self
-            .workspace_dir
+            .workspace_dir_for_context(context)
             .canonicalize()
             .map_err(|e| anyhow::anyhow!("Failed to canonicalize workspace: {e}"))?;
         // Check parent dir exists and canonicalize to detect symlinks.
-        let parent = target_path.parent().unwrap_or(&self.workspace_dir);
+        let parent = target_path.parent().unwrap_or(&workspace_dir);
         let parent_canon = parent
             .canonicalize()
             .unwrap_or_else(|_| parent.to_path_buf());

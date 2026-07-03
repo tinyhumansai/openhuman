@@ -44,7 +44,8 @@ use crate::openhuman::workflows::run_log;
 
 // ── Mock LLM ─────────────────────────────────────────────────────────────
 // Minimal scripted provider: pops queued ChatResponses in order. Mirrors the
-// one in `agent/harness/tool_loop_tests.rs` (kept local so this file is
+// scripted providers in other harness test files (e.g.
+// `agent/harness/subagent_runner/ops_tests.rs`; kept local so this file is
 // self-contained).
 struct ScriptedProvider {
     responses: Mutex<Vec<anyhow::Result<ChatResponse>>>,

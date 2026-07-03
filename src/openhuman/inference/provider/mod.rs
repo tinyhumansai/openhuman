@@ -14,6 +14,7 @@ pub mod compatible_parse;
 pub mod compatible_stream;
 pub mod compatible_types;
 pub mod config_rejection;
+pub mod error_classify;
 pub mod error_code;
 pub mod factory;
 mod openai_codex;

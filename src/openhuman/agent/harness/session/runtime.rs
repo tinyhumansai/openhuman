@@ -343,14 +343,14 @@ impl Agent {
     /// Drain and return memory citations collected for the latest completed turn.
     pub fn take_last_turn_citations(
         &mut self,
-    ) -> Vec<crate::openhuman::agent::memory_loader::MemoryCitation> {
+    ) -> Vec<crate::openhuman::agent_memory::memory_loader::MemoryCitation> {
         std::mem::take(&mut self.last_turn_citations)
     }
 
     /// Drain and return the holistic token/cost/context totals for the latest
     /// completed turn (parent + sub-agents). `None` until a turn has run.
     /// Consumed by web-channel delivery to populate the `chat_done` usage fields.
-    pub fn take_last_turn_usage_totals(
+    pub(crate) fn take_last_turn_usage_totals(
         &mut self,
     ) -> Option<crate::openhuman::agent::harness::turn_subagent_usage::LastTurnUsage> {
         self.last_turn_usage_totals.take()
@@ -416,6 +416,7 @@ impl Agent {
             Some(AgentError::EmptyProviderResponse { .. }) => Some("empty_provider_response"),
             Some(AgentError::CompactionFailed { .. }) => Some("compaction_failed"),
             Some(AgentError::PermissionDenied { .. }) => Some("permission_denied"),
+            Some(AgentError::RegistryValidationFailed { .. }) => Some("registry_validation_failed"),
             Some(AgentError::Other(_)) | None => None,
         };
 

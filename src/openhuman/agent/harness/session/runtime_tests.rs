@@ -44,6 +44,62 @@ impl Provider for StaticProvider {
     }
 }
 
+/// Provider that fails on EVERY call with a freshly-built typed [`AgentError`].
+///
+/// The default turn model (`chat-v1`) now carries a same-family cross-route
+/// fallback chain (`chat-v1 → burst-v1`, issue #4249 Workstream 02.2). A mock
+/// that errors only once (via `StaticProvider`'s `take()`) would fail the primary
+/// route and then succeed on the fallback route, masking the terminal error. To
+/// exercise `run_single`'s error-surfacing path we need a provider that fails on
+/// every route so the harness exhausts the chain and surfaces the typed error
+/// (recovered from the primary route's error slot).
+struct PersistentErrProvider {
+    kind: PersistentErrKind,
+}
+
+#[derive(Clone, Copy)]
+enum PersistentErrKind {
+    MaxIterations { max: usize },
+    PermissionDenied,
+}
+
+impl PersistentErrProvider {
+    fn build_error(&self) -> anyhow::Error {
+        match self.kind {
+            PersistentErrKind::MaxIterations { max } => {
+                anyhow!(AgentError::MaxIterationsExceeded { max })
+            }
+            PersistentErrKind::PermissionDenied => anyhow!(AgentError::PermissionDenied {
+                tool_name: "shell".into(),
+                required_level: "Execute".into(),
+                channel_max_level: "ReadOnly".into(),
+            }),
+        }
+    }
+}
+
+#[async_trait]
+impl Provider for PersistentErrProvider {
+    async fn chat_with_system(
+        &self,
+        _system_prompt: Option<&str>,
+        _message: &str,
+        _model: &str,
+        _temperature: f64,
+    ) -> Result<String> {
+        Err(self.build_error())
+    }
+
+    async fn chat(
+        &self,
+        _request: ChatRequest<'_>,
+        _model: &str,
+        _temperature: f64,
+    ) -> Result<ChatResponse> {
+        Err(self.build_error())
+    }
+}
+
 fn make_agent(provider: Arc<dyn Provider>) -> Agent {
     let workspace = tempfile::TempDir::new().expect("temp workspace");
     let workspace_path = workspace.path().to_path_buf();
@@ -161,10 +217,8 @@ async fn run_single_preserves_typed_max_iterations_error_for_sentry_skip() {
     // exact noise this fix removes.
     let _ = init_global(64);
 
-    let err_provider: Arc<dyn Provider> = Arc::new(StaticProvider {
-        response: Mutex::new(Some(Err(anyhow!(AgentError::MaxIterationsExceeded {
-            max: 8
-        })))),
+    let err_provider: Arc<dyn Provider> = Arc::new(PersistentErrProvider {
+        kind: PersistentErrKind::MaxIterations { max: 8 },
     });
     let mut agent = make_agent(err_provider);
     let err = agent
@@ -225,12 +279,8 @@ async fn run_single_publishes_completed_and_error_events() {
     let response = ok_agent.run_single("hello").await.expect("run_single ok");
     assert_eq!(response, "ok");
 
-    let err_provider: Arc<dyn Provider> = Arc::new(StaticProvider {
-        response: Mutex::new(Some(Err(anyhow!(AgentError::PermissionDenied {
-            tool_name: "shell".into(),
-            required_level: "Execute".into(),
-            channel_max_level: "ReadOnly".into(),
-        })))),
+    let err_provider: Arc<dyn Provider> = Arc::new(PersistentErrProvider {
+        kind: PersistentErrKind::PermissionDenied,
     });
     let mut err_agent = make_agent(err_provider);
     let err = err_agent

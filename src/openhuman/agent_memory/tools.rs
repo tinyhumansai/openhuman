@@ -14,9 +14,12 @@ use crate::openhuman::agent::harness::fork_context::current_parent;
 use crate::openhuman::agent::harness::subagent_runner::{
     run_subagent, SubagentRunOptions, SubagentRunStatus,
 };
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCategory, ToolResult, ToolScope};
+use crate::openhuman::tools::traits::{
+    PermissionLevel, Tool, ToolCallOptions, ToolCategory, ToolResult, ToolScope,
+};
 use async_trait::async_trait;
 use serde_json::json;
+use tinyagents::harness::tool::ToolExecutionContext;
 
 const AGENT_ID: &str = "agent_memory";
 
@@ -93,6 +96,16 @@ impl Tool for CallMemoryAgentTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: ToolCallOptions,
+        tool_context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
         let query = args
             .get("query")
             .and_then(|v| v.as_str())
@@ -165,8 +178,23 @@ impl Tool for CallMemoryAgentTool {
             task_id
         );
 
+        let workspace_descriptor = tool_context.and_then(|ctx| ctx.workspace.clone());
+        let worktree_action_dir = workspace_descriptor
+            .as_ref()
+            .map(|descriptor| descriptor.root.clone());
+        if let Some(descriptor) = workspace_descriptor.as_ref() {
+            log::debug!(
+                "[call_memory_agent] using ToolExecutionContext workspace root task_id={} workspace_root={} policy_id={}",
+                task_id,
+                descriptor.root.display(),
+                descriptor.policy_id
+            );
+        }
+
         let options = SubagentRunOptions {
             task_id: Some(task_id.clone()),
+            worktree_action_dir,
+            workspace_descriptor,
             ..Default::default()
         };
 

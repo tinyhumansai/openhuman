@@ -13,10 +13,11 @@
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent_orchestration::delegation::run_subagent_delegation;
 use crate::openhuman::config::Config;
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
+use tinyagents::harness::tool::ToolExecutionContext;
 
 /// Default reviewer-requested revision budget when the caller omits it.
 const DEFAULT_MAX_REVISIONS: usize = 2;
@@ -99,6 +100,16 @@ impl Tool for DelegateGraphTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: ToolCallOptions,
+        tool_context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
         let agent_id = match args.get("agent_id").and_then(|v| v.as_str()) {
             Some(s) if !s.trim().is_empty() => s.trim().to_string(),
             _ => return Ok(ToolResult::error("delegate: `agent_id` is required.")),
@@ -139,7 +150,15 @@ impl Tool for DelegateGraphTool {
             }
         };
 
-        match run_subagent_delegation(config, definition, task, max_revisions).await {
+        match run_subagent_delegation(
+            config,
+            definition,
+            task,
+            max_revisions,
+            tool_context.and_then(|ctx| ctx.workspace.clone()),
+        )
+        .await
+        {
             Ok(state) => {
                 let final_output = state
                     .final_output

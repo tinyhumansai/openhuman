@@ -66,6 +66,8 @@ const INTENTIONAL_ENGLISH = new Set([
   "memorySources.globPatternPlaceholder",
   "modelCouncil.editCouncilAria",
   "modelCouncil.jurorLabel",
+  "rewards.community.discordDetails", // "Discord" — brand/product name, same in every locale
+  "rewards.community.rewardTokens", // "+{tokens} tokens" — "tokens" is the technical unit, kept in every locale (the recurring "/mo" variant IS translated)
   "nav.agentWorld",
   "memorySources.searchQueryPlaceholder",
   "migration.vendor.hermes",

@@ -44,6 +44,10 @@ use serde::Serialize;
 
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::config::schema::{AgentTracingBackend, AgentTracingConfig};
+use crate::openhuman::config::Config;
+
+/// Langfuse ingestion exporter (remote push to the co-hosted staging server).
+pub(crate) mod langfuse;
 
 /// Trace-level correlation context, stamped onto the root span.
 #[derive(Debug, Clone)]
@@ -129,6 +133,7 @@ pub struct TraceSpan {
 
 impl TraceSpan {
     /// Duration in milliseconds, or `None` while the span is still open.
+    #[cfg(test)]
     pub fn duration_ms(&self) -> Option<u64> {
         self.end_unix_ms
             .map(|end| end.saturating_sub(self.start_unix_ms))
@@ -194,6 +199,7 @@ impl SpanCollector {
     }
 
     /// Consume the collector and return its spans.
+    #[cfg(test)]
     pub fn into_spans(self) -> Vec<TraceSpan> {
         self.spans
     }
@@ -655,7 +661,7 @@ fn json_f64(n: f64) -> serde_json::Value {
 /// wraps each line with a `{"type":"span-create", ...}` observation envelope
 /// so it can be POSTed to the Langfuse ingestion API, while OTel emits the
 /// bare span. Returns an empty string for an empty slice.
-pub fn spans_to_ndjson(backend: AgentTracingBackend, spans: &[TraceSpan]) -> String {
+pub(crate) fn spans_to_ndjson(backend: AgentTracingBackend, spans: &[TraceSpan]) -> String {
     let mut out = String::new();
     for span in spans {
         let line = match backend {
@@ -677,7 +683,7 @@ pub fn spans_to_ndjson(backend: AgentTracingBackend, spans: &[TraceSpan]) -> Str
 /// configured file, or emit to the application log when no path is set.
 /// Best-effort — a failed write is logged and swallowed so tracing never
 /// breaks an agent run. A no-op when tracing is disabled or there are no spans.
-pub fn export_spans(config: &AgentTracingConfig, spans: &[TraceSpan]) {
+pub(crate) fn export_spans(config: &AgentTracingConfig, spans: &[TraceSpan]) {
     if !config.enabled || spans.is_empty() {
         return;
     }
@@ -713,6 +719,38 @@ pub fn export_spans(config: &AgentTracingConfig, spans: &[TraceSpan]) {
                 payload.trim_end()
             );
         }
+    }
+}
+
+/// Hand a completed run's spans to the configured tracing sink(s).
+///
+/// Two independent paths, both best-effort and never fatal to a turn:
+///
+/// 1. **Usage-data sharing** (`observability.share_usage_data`, on by default):
+///    push the run's spans to the backend Langfuse proxy — endpoint derived from
+///    the current backend host, authed with the session bearer (see
+///    [`langfuse::push_spans`]). A failure (no live session, network, rejected
+///    batch) just logs; there is no local fallback, since sharing and local
+///    export are distinct opt-ins.
+/// 2. **Local exporter** (`observability.agent_tracing.enabled`, opt-in): append
+///    OTel/Langfuse-format NDJSON to the configured file or the app log via
+///    [`export_spans`].
+///
+/// A no-op when there are no spans or both paths are off.
+pub(crate) async fn export_run_trace(config: &Config, spans: &[TraceSpan]) {
+    if spans.is_empty() {
+        return;
+    }
+    let observability = &config.observability;
+
+    if observability.share_usage_data {
+        if let Err(err) = langfuse::push_spans(config, spans).await {
+            log::warn!("[agent-tracing] Langfuse usage-data push failed ({err})");
+        }
+    }
+
+    if observability.agent_tracing.enabled {
+        export_spans(&observability.agent_tracing, spans);
     }
 }
 

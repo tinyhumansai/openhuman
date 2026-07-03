@@ -28,7 +28,10 @@
 pub(crate) mod agent;
 mod agent_tools;
 mod manifest;
-mod ops;
+pub(crate) use manifest::{
+    acknowledge_message, decrypt_envelope, handle_tinyplace_signal_send_message,
+};
+pub(crate) mod ops;
 mod payment;
 mod schemas;
 pub(crate) mod signal_store;

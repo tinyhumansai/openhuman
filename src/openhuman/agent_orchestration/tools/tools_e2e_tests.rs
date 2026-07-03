@@ -182,6 +182,7 @@ fn parent_context(
     connected_integrations: Vec<ConnectedIntegration>,
 ) -> ParentExecutionContext {
     ParentExecutionContext {
+        workspace_descriptor: None,
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: ["researcher".to_string(), "integrations_agent".to_string()]
             .into_iter()

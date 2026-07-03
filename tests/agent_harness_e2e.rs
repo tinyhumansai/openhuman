@@ -2313,8 +2313,8 @@ async fn multi_hop_delegation_chain_inner() {
 mod streaming_support {
     use async_trait::async_trait;
     use openhuman_core::openhuman::agent::dispatcher::NativeToolDispatcher;
-    use openhuman_core::openhuman::agent::memory_loader::MemoryLoader;
     use openhuman_core::openhuman::agent::Agent;
+    use openhuman_core::openhuman::agent_memory::memory_loader::MemoryLoader;
     use openhuman_core::openhuman::config::{AgentConfig, ContextConfig, MemoryConfig};
     use openhuman_core::openhuman::inference::provider::{
         ChatRequest, ChatResponse, Provider, ProviderDelta, ToolCall, UsageInfo,
@@ -2394,6 +2394,8 @@ mod streaming_support {
                 output_tokens: 5,
                 context_window: 16_000,
                 cached_input_tokens: 2,
+                cache_creation_tokens: 0,
+                reasoning_tokens: 0,
                 charged_amount_usd: 0.0002,
             }),
             reasoning_content: None,
@@ -2414,6 +2416,8 @@ mod streaming_support {
                 output_tokens: 4,
                 context_window: 16_000,
                 cached_input_tokens: 3,
+                cache_creation_tokens: 0,
+                reasoning_tokens: 0,
                 charged_amount_usd: 0.0003,
             }),
             reasoning_content: None,
@@ -2485,7 +2489,6 @@ mod streaming_support {
             })
             .auto_save(true)
             .explicit_preferences_enabled(false)
-            .unified_compaction_enabled(false)
             .build()
             .unwrap()
     }

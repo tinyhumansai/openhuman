@@ -247,6 +247,10 @@ pub fn all_tools_with_runtime(
         )),
         Box::new(DetectToolsTool::new()),
         Box::new(InstallToolTool::new(security.clone())),
+        // Orchestration front-end decision tools (stage 4) — the two-pass wake
+        // graph's front-end agent routes by calling exactly one of these.
+        Box::new(crate::openhuman::orchestration::tools::DeferToOrchestratorTool),
+        Box::new(crate::openhuman::orchestration::tools::ReplyToChannelTool),
         Box::new(CronAddTool::new(config.clone(), security.clone())),
         Box::new(CronListTool::new(config.clone())),
         Box::new(CronRemoveTool::new(config.clone())),

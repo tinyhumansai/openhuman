@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use serde_json::json;
 
+use crate::openhuman::config::schema::CalendarProvider;
 use crate::openhuman::config::{AutoJoinPolicy, AutoSummarizePolicy, Config};
 use crate::openhuman::screen_intelligence;
 use crate::rpc::RpcOutcome;
@@ -53,6 +54,11 @@ pub struct MeetSettingsPatch {
     /// Master switch for calendar-driven meeting actions (auto-join / ask-to-join).
     /// Decoupled from `heartbeat.notify_meetings` (plain reminder cards).
     pub watch_calendar: Option<bool>,
+    /// Calendar detection source: `Composio` (default) or `Recall`. Flipped to
+    /// `Recall` when the user connects a calendar via Recall.ai.
+    pub calendar_provider: Option<CalendarProvider>,
+    /// User's meeting display name, reused as the bot's reply anchor on join.
+    pub reply_display_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -267,6 +273,12 @@ pub async fn apply_meet_settings(
     }
     if let Some(watch_calendar) = update.watch_calendar {
         config.meet.watch_calendar = watch_calendar;
+    }
+    if let Some(provider) = update.calendar_provider {
+        config.meet.calendar_provider = provider;
+    }
+    if let Some(name) = update.reply_display_name {
+        config.meet.reply_display_name = name.trim().to_string();
     }
     config.save().await.map_err(|e| e.to_string())?;
     let snapshot = snapshot_config_json(config)?;

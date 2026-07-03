@@ -4,10 +4,12 @@
 //!
 //! Every spawn path (`spawn_subagent`, `spawn_async_subagent`,
 //! `spawn_parallel_agents`, `continue_subagent`, `dispatch`) creates an
-//! `agent_runs` row at `status = "running"` and, on completion, fires **both**:
-//!   * `publish_global(DomainEvent::SubagentCompleted/Failed)` — the global bus,
-//!   * `progress_sink.send(AgentProgress::SubagentCompleted/Failed)` — the
-//!     *spawning turn's* progress channel.
+//! `agent_runs` row at `status = "running"` and, on completion or user-input
+//! pause, fires **both**:
+//!   * `publish_global(DomainEvent::SubagentCompleted/Failed/AwaitingUser)` —
+//!     the global bus,
+//!   * `progress_sink.send(AgentProgress::SubagentCompleted/Failed/AwaitingUser)`
+//!     — the *spawning turn's* progress channel.
 //!
 //! The run-ledger's terminal transition used to live **only** in the per-turn
 //! [`progress_bridge`](crate::openhuman::channels::providers::web::progress_bridge),
@@ -18,10 +20,10 @@
 //! silently. The ledger row stays `running` forever, and every thread reopen
 //! re-renders it as a perpetual "Tinyplace Agent" timeline row.
 //!
-//! This subscriber closes that gap by finalizing the ledger from the **global
+//! This subscriber closes that gap by settling the ledger from the **global
 //! bus**, which always fires from the detached task regardless of the parent
 //! turn's lifecycle. It is idempotent with the progress-bridge path: a run that
-//! was already settled there is simply re-stamped to the same terminal status.
+//! was already settled there is simply re-stamped to the same lifecycle status.
 
 use std::sync::Arc;
 
@@ -33,8 +35,8 @@ use crate::openhuman::session_db::run_ledger::{transition_agent_run_status, Agen
 
 const LOG_PREFIX: &str = "[run_ledger][finalize]";
 
-/// Subscribes to terminal subagent [`DomainEvent`]s and transitions the
-/// matching `agent_runs` row to a terminal status. Holds its own [`Config`]
+/// Subscribes to subagent lifecycle [`DomainEvent`]s and transitions the
+/// matching `agent_runs` row to the projected lifecycle status. Holds its own [`Config`]
 /// clone so it can reach the session DB from the global-bus context (handlers
 /// receive no config).
 struct RunLedgerFinalizeSubscriber {
@@ -48,12 +50,21 @@ impl EventHandler for RunLedgerFinalizeSubscriber {
     }
 
     async fn handle(&self, event: &DomainEvent) {
-        let (task_id, status, error) = match event {
-            DomainEvent::SubagentCompleted { task_id, .. } => {
-                (task_id.clone(), AgentRunStatus::Completed, None)
-            }
-            DomainEvent::SubagentFailed { task_id, error, .. } => {
-                (task_id.clone(), AgentRunStatus::Failed, Some(error.clone()))
+        let (task_id, status, error, completed_at) = match event {
+            DomainEvent::SubagentCompleted { task_id, .. } => (
+                task_id.clone(),
+                AgentRunStatus::Completed,
+                None,
+                Some(chrono::Utc::now()),
+            ),
+            DomainEvent::SubagentFailed { task_id, error, .. } => (
+                task_id.clone(),
+                AgentRunStatus::Failed,
+                Some(error.clone()),
+                Some(chrono::Utc::now()),
+            ),
+            DomainEvent::SubagentAwaitingUser { task_id, .. } => {
+                (task_id.clone(), AgentRunStatus::AwaitingUser, None, None)
             }
             _ => return,
         };
@@ -61,16 +72,9 @@ impl EventHandler for RunLedgerFinalizeSubscriber {
         // Single fast UPDATE, but keep it off the async runtime to honour the
         // EventHandler "must not block" contract.
         let config = self.config.clone();
-        let completed_at = chrono::Utc::now();
         let result = tokio::task::spawn_blocking(move || {
-            transition_agent_run_status(
-                &config,
-                &task_id,
-                status,
-                error.as_deref(),
-                Some(completed_at),
-            )
-            .map(|run| (task_id, run))
+            transition_agent_run_status(&config, &task_id, status, error.as_deref(), completed_at)
+                .map(|run| (task_id, run))
         })
         .await;
 
@@ -99,7 +103,7 @@ impl EventHandler for RunLedgerFinalizeSubscriber {
 /// Register the run-ledger finalizer on the global event bus. Leaks the
 /// subscription handle so it lives for the whole process (its `Drop` would
 /// cancel the subscriber). Called once from `register_domain_subscribers`.
-pub fn register_run_ledger_finalize_subscriber(config: &Config) {
+pub(crate) fn register_run_ledger_finalize_subscriber(config: &Config) {
     if let Some(handle) = subscribe_global(Arc::new(RunLedgerFinalizeSubscriber {
         config: config.clone(),
     })) {

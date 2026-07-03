@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use openhuman_core::core::event_bus::{DomainEvent, EventHandler};
-use openhuman_core::openhuman::agent::memory_loader::MemoryCitation;
+use openhuman_core::openhuman::agent_memory::memory_loader::MemoryCitation;
 use openhuman_core::openhuman::channels::bus::ChannelInboundSubscriber;
 use openhuman_core::openhuman::channels::providers::presentation::test_support as presentation_test_support;
 use openhuman_core::openhuman::channels::providers::web::{

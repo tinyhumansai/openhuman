@@ -13,9 +13,10 @@ use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::harness::fork_context::current_parent;
 use crate::openhuman::agent::harness::subagent_runner::{run_subagent, SubagentRunOptions};
 use crate::openhuman::memory_conversations::{self as conversations};
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
+use tinyagents::harness::tool::ToolExecutionContext;
 
 /// Spawns a sub-agent in a dedicated worker thread.
 pub struct SpawnWorkerThreadTool;
@@ -98,6 +99,16 @@ impl Tool for SpawnWorkerThreadTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: ToolCallOptions,
+        tool_context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
         let started = std::time::Instant::now();
 
         let agent_id = args
@@ -218,6 +229,19 @@ impl Tool for SpawnWorkerThreadTool {
         // sees. Instead, we return the info in the tool result.
 
         // ── Run Subagent ──────────────────────────────────────────────
+        let workspace_descriptor = tool_context.and_then(|ctx| ctx.workspace.clone());
+        let worktree_action_dir = workspace_descriptor
+            .as_ref()
+            .map(|descriptor| descriptor.root.clone());
+        if let Some(descriptor) = workspace_descriptor.as_ref() {
+            tracing::debug!(
+                agent_id = %agent_id,
+                worker_thread_id = %worker_thread_id,
+                workspace_root = %descriptor.root.display(),
+                policy_id = %descriptor.policy_id,
+                "[spawn_worker_thread] using ToolExecutionContext workspace root"
+            );
+        }
         let options = SubagentRunOptions {
             skill_filter_override: None,
             toolkit_override,
@@ -227,7 +251,8 @@ impl Tool for SpawnWorkerThreadTool {
             worker_thread_id: Some(worker_thread_id.clone()),
             initial_history: None,
             checkpoint_dir: None,
-            worktree_action_dir: None,
+            worktree_action_dir,
+            workspace_descriptor,
             run_queue: None,
         };
 
@@ -374,6 +399,7 @@ mod tests {
 
     fn test_parent_ctx(workspace_dir: PathBuf) -> ParentExecutionContext {
         ParentExecutionContext {
+            workspace_descriptor: None,
             agent_definition_id: "orchestrator".into(),
             allowed_subagent_ids: std::collections::HashSet::new(),
             session_id: "test".into(),

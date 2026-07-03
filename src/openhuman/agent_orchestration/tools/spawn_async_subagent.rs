@@ -4,7 +4,6 @@
 //! accepted. Completion/failure is reported through normal sub-agent lifecycle
 //! events and, when possible, persisted in the child worker thread.
 
-use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::harness::fork_context::{current_parent, with_parent_context};
 use crate::openhuman::agent::harness::run_queue::RunQueue;
@@ -18,9 +17,10 @@ use crate::openhuman::agent_orchestration::subagent_sessions::{
     SubagentSessionUpsert,
 };
 use crate::openhuman::inference::provider::ChatMessage;
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
+use tinyagents::harness::tool::ToolExecutionContext;
 
 pub struct SpawnAsyncSubagentTool;
 
@@ -110,6 +110,16 @@ impl Tool for SpawnAsyncSubagentTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: ToolCallOptions,
+        tool_context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
         let agent_id = args
             .get("agent_id")
             .and_then(|v| v.as_str())
@@ -210,7 +220,17 @@ impl Tool for SpawnAsyncSubagentTool {
         let parent_thread_id =
             crate::openhuman::inference::provider::thread_context::current_thread_id();
         let store = SubagentSessionStore::new(parent.workspace_dir.clone());
-        let effective_action_root = crate::openhuman::agent::harness::current_action_dir_override()
+        let workspace_descriptor = tool_context.and_then(|ctx| ctx.workspace.clone());
+        let effective_action_root = workspace_descriptor
+            .as_ref()
+            .map(|workspace| {
+                tracing::debug!(
+                    workspace_root = %workspace.root.display(),
+                    policy_id = %workspace.policy_id,
+                    "[spawn_async_subagent] using ToolExecutionContext workspace root"
+                );
+                workspace.root.clone()
+            })
             .or_else(|| {
                 crate::openhuman::security::live_policy::current()
                     .map(|policy| policy.action_dir.clone())
@@ -229,9 +249,10 @@ impl Tool for SpawnAsyncSubagentTool {
         let reusable = if force_fresh {
             match subagent_sessions::find_reusable(&store, &selector) {
                 Ok(Some(session)) => {
-                    let _ = running_subagents::cancel_by_session(
+                    let _ = running_subagents::cancel_by_session_in_workspace(
                         &session.subagent_session_id,
                         &parent_session,
+                        &parent.workspace_dir,
                     );
                     if let Err(err) = subagent_sessions::close(&store, &session.subagent_session_id)
                     {
@@ -409,13 +430,13 @@ impl Tool for SpawnAsyncSubagentTool {
             task_key
         );
 
-        publish_global(DomainEvent::SubagentSpawned {
-            parent_session: parent_session.clone(),
-            agent_id: definition.id.clone(),
-            mode: "async".to_string(),
-            task_id: task_id.clone(),
-            prompt_chars: prompt.chars().count(),
-        });
+        crate::openhuman::agent_orchestration::subagent_events::publish_subagent_spawned(
+            parent_session.clone(),
+            definition.id.clone(),
+            "async".to_string(),
+            task_id.clone(),
+            prompt.chars().count(),
+        );
         if let Some(ref tx) = progress_sink {
             let _ = tx
                 .send(AgentProgress::SubagentSpawned {
@@ -447,6 +468,10 @@ impl Tool for SpawnAsyncSubagentTool {
         let background_worker_thread_id = worker_thread_id.clone();
         let background_store = store.clone();
         let background_subagent_session_id = durable_session.subagent_session_id.clone();
+        let background_workspace_descriptor = workspace_descriptor.clone();
+        let background_worktree_action_dir = background_workspace_descriptor
+            .as_ref()
+            .map(|descriptor| descriptor.root.clone());
         let background_thread_affinity_id = background_worker_thread_id
             .clone()
             .unwrap_or_else(|| background_subagent_session_id.clone());
@@ -478,7 +503,8 @@ impl Tool for SpawnAsyncSubagentTool {
                 worker_thread_id: background_worker_thread_id.clone(),
                 initial_history: background_initial_history,
                 checkpoint_dir: None,
-                worktree_action_dir: None,
+                worktree_action_dir: background_worktree_action_dir,
+                workspace_descriptor: background_workspace_descriptor,
                 run_queue: Some(task_queue),
             };
 
@@ -525,14 +551,14 @@ impl Tool for SpawnAsyncSubagentTool {
                             outcome.output.clone(),
                             background_parent_thread_id.clone(),
                         );
-                        publish_global(DomainEvent::SubagentCompleted {
-                            parent_session: background_parent_session,
-                            task_id: outcome.task_id.clone(),
-                            agent_id: outcome.agent_id.clone(),
-                            elapsed_ms: outcome.elapsed.as_millis() as u64,
-                            output_chars: outcome.output.chars().count(),
-                            iterations: outcome.iterations,
-                        });
+                        crate::openhuman::agent_orchestration::subagent_events::publish_subagent_completed(
+                            background_parent_session,
+                            outcome.task_id.clone(),
+                            outcome.agent_id.clone(),
+                            outcome.elapsed.as_millis() as u64,
+                            outcome.output.chars().count(),
+                            outcome.iterations,
+                        );
                         if let Some(ref tx) = background_progress {
                             let _ = tx
                                 .send(AgentProgress::SubagentCompleted {
@@ -584,14 +610,14 @@ impl Tool for SpawnAsyncSubagentTool {
                             framed,
                             background_parent_thread_id.clone(),
                         );
-                        publish_global(DomainEvent::SubagentCompleted {
-                            parent_session: background_parent_session,
-                            task_id: outcome.task_id.clone(),
-                            agent_id: outcome.agent_id.clone(),
-                            elapsed_ms: outcome.elapsed.as_millis() as u64,
-                            output_chars: outcome.output.chars().count(),
-                            iterations: outcome.iterations,
-                        });
+                        crate::openhuman::agent_orchestration::subagent_events::publish_subagent_completed(
+                            background_parent_session,
+                            outcome.task_id.clone(),
+                            outcome.agent_id.clone(),
+                            outcome.elapsed.as_millis() as u64,
+                            outcome.output.chars().count(),
+                            outcome.iterations,
+                        );
                         if let Some(ref tx) = background_progress {
                             let _ = tx
                                 .send(AgentProgress::SubagentCompleted {
@@ -629,12 +655,12 @@ impl Tool for SpawnAsyncSubagentTool {
                         let error = format!(
                             "async sub-agent requested user clarification and was not continued: {question}"
                         );
-                        publish_global(DomainEvent::SubagentFailed {
-                            parent_session: background_parent_session,
-                            task_id: outcome.task_id.clone(),
-                            agent_id: outcome.agent_id.clone(),
-                            error: error.clone(),
-                        });
+                        crate::openhuman::agent_orchestration::subagent_events::publish_subagent_failed(
+                            background_parent_session,
+                            outcome.task_id.clone(),
+                            outcome.agent_id.clone(),
+                            error.clone(),
+                        );
                         if let Some(ref tx) = background_progress {
                             let _ = tx
                                 .send(AgentProgress::SubagentFailed {
@@ -665,12 +691,12 @@ impl Tool for SpawnAsyncSubagentTool {
                     let _ = status_tx.send(SubagentStatus::Failed {
                         error: error.clone(),
                     });
-                    publish_global(DomainEvent::SubagentFailed {
-                        parent_session: background_parent_session,
-                        task_id: background_task_id.clone(),
-                        agent_id: background_agent_id.clone(),
-                        error: error.clone(),
-                    });
+                    crate::openhuman::agent_orchestration::subagent_events::publish_subagent_failed(
+                        background_parent_session,
+                        background_task_id.clone(),
+                        background_agent_id.clone(),
+                        error.clone(),
+                    );
                     if let Some(ref tx) = background_progress {
                         let _ = tx
                             .send(AgentProgress::SubagentFailed {
@@ -690,6 +716,7 @@ impl Tool for SpawnAsyncSubagentTool {
             task_id.clone(),
             definition.id.clone(),
             parent_session.clone(),
+            parent.session_parent_prefix.clone(),
             Some(durable_session.subagent_session_id.clone()),
             parent.workspace_dir.clone(),
             register_parent_thread_id,
