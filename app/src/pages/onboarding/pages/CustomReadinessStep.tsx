@@ -76,13 +76,15 @@ export default function CustomReadinessStep() {
         onBack={() => navigate(CUSTOM_WIZARD_ROUTES[CUSTOM_WIZARD_STEPS[stepIndex - 1]])}
         onContinue={async () => {
           setFinishError(null);
-          trackEvent('onboarding_step_complete', {
-            step_name: 'custom_readiness',
-            model_connection_ok: modelOk,
-            skipped_model_gate: skipOverride,
-          });
           try {
             await completeAndExit();
+            // Only record completion once the exit actually succeeds — a failed
+            // attempt must not log a false completion (CR: coderabbitai).
+            trackEvent('onboarding_step_complete', {
+              step_name: 'custom_readiness',
+              model_connection_ok: modelOk,
+              skipped_model_gate: skipOverride,
+            });
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             console.error('[onboarding:custom-readiness] completeAndExit failed', err);
