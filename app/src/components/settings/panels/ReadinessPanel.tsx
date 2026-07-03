@@ -49,6 +49,9 @@ export default function ReadinessPanel({ embedded, onModelStatusChange }: Readin
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error('[readiness] check_all failed', err);
+      // Clear any prior successful report so stale "passing" rows don't render
+      // beside the failure banner and mislead the user (CR: coderabbitai).
+      setReport(null);
       setError(message);
       onModelStatusChangeRef.current?.(false);
     } finally {

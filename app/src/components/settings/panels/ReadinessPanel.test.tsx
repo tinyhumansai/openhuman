@@ -117,4 +117,21 @@ describe('ReadinessPanel', () => {
     await waitFor(() => expect(screen.getByTestId('readiness-load-error')).toBeInTheDocument());
     expect(onModelStatusChange).toHaveBeenCalledWith(false);
   });
+
+  it('clears stale passing rows when a later run fails', async () => {
+    // First mount succeeds → rows render.
+    checkAllMock.mockResolvedValueOnce(report());
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId('readiness-check-core_health')).toBeInTheDocument()
+    );
+
+    // A later run throws → the old passing rows must NOT linger beside the error.
+    checkAllMock.mockRejectedValueOnce(new Error('core offline'));
+    await userEvent.click(screen.getByTestId('readiness-run-all'));
+
+    await waitFor(() => expect(screen.getByTestId('readiness-load-error')).toBeInTheDocument());
+    expect(screen.queryByTestId('readiness-check-list')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('readiness-check-core_health')).not.toBeInTheDocument();
+  });
 });
