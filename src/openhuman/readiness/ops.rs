@@ -1048,6 +1048,11 @@ mod tests {
     /// panics.
     #[tokio::test]
     async fn gather_inputs_and_rpc_entry_points_execute() {
+        // Serialize with other tests that install a global provider override so
+        // they don't clobber each other's mock in parallel.
+        let _serial = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _provider =
             crate::openhuman::inference::provider::factory::test_provider_override::install(
                 std::sync::Arc::new(OkProvider),
@@ -1077,5 +1082,40 @@ mod tests {
         // No local Ollama in CI → unreachable, empty models; call still ok.
         let ollama = ollama_models().await.unwrap();
         assert!(ollama.value.models.is_empty() || ollama.value.reachable);
+    }
+
+    /// Provider whose ping fails — exercises the transport-error arm of the live
+    /// model probe (configured provider that can't be reached).
+    struct ErrProvider;
+    #[async_trait::async_trait]
+    impl crate::openhuman::inference::provider::traits::Provider for ErrProvider {
+        async fn chat_with_system(
+            &self,
+            _system_prompt: Option<&str>,
+            _message: &str,
+            _model: &str,
+            _temperature: f64,
+        ) -> anyhow::Result<String> {
+            anyhow::bail!("401 unauthorized")
+        }
+    }
+
+    #[tokio::test]
+    async fn model_probe_maps_ping_failure_to_transport_error() {
+        let _serial = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _provider =
+            crate::openhuman::inference::provider::factory::test_provider_override::install(
+                std::sync::Arc::new(ErrProvider),
+            );
+        let config = crate::openhuman::config::Config::default();
+
+        let probe = validate_model_connection(&config).await.unwrap().value;
+        assert!(!probe.ok);
+        // Provider resolved (build succeeded) → provider_id populated and the
+        // transport error is carried, NOT reduced to "no provider configured".
+        assert!(!probe.provider_id.is_empty());
+        assert!(probe.error.contains("401 unauthorized"));
     }
 }
