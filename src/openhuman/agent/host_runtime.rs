@@ -88,7 +88,8 @@ impl RuntimeAdapter for NativeRuntime {
             // `pip install … | tail`) surfaces as a non-zero exit instead of
             // being masked by the last stage's success. Without it the harness
             // records the call as successful and the repeated-failure circuit
-            // breaker (see tool_loop.rs) never trips, so the agent loops on a
+            // breaker (`RepeatedToolFailureMiddleware`, tinyagents/middleware.rs)
+            // never trips, so the agent loops on a
             // command that is silently failing. `/bin/sh` is dash on
             // Debian/Ubuntu and rejects `set -o pipefail`, so this is gated on
             // bash actually being present; otherwise we fall back to plain sh.

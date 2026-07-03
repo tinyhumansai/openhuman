@@ -3,13 +3,18 @@
 Status: draft migration backlog
 
 TinyAgents source reviewed: `tinyhumansai/tinyagents` `origin/main` at
-`8f226f1`, crate version `1.1.0`.
+`8f226f1`, crate version `1.1.0`. Refreshed against `tinyhumansai/tinyagents`
+`main` at `348a0e7dc71a1f9039f3d523a2a384661a7a9acd` after the SDK/docs update.
+Current OpenHuman dependency in this checkout is
+`tinyagents = { version = "1.3", features = ["sqlite"] }`.
 
-OpenHuman already depends on `tinyagents = "1.1"` and already routes the live
-agent turn through `src/openhuman/tinyagents/`. This spec is not a proposal to
-add TinyAgents. It is a todo list for moving the rest of OpenHuman's generic
-agent runtime behavior onto TinyAgents primitives while keeping OpenHuman-owned
+OpenHuman already depends on TinyAgents and already routes the live agent turn
+through `src/openhuman/tinyagents/`. This spec is not a proposal to add
+TinyAgents. It is a todo list for moving the rest of OpenHuman's generic agent
+runtime behavior onto TinyAgents primitives while keeping OpenHuman-owned
 product semantics in OpenHuman.
+
+Current inventory snapshot: [`tinyagents-harness-migration-audit.md`](tinyagents-harness-migration-audit.md).
 
 ## Goal
 
@@ -19,6 +24,8 @@ Use TinyAgents as the generic runtime for:
 - tools and tool schemas
 - middleware around model/tool calls
 - streaming, events, traces, and replayable run status
+- session transcript storage and migration targets
+- prompt/response cache layout protection
 - token usage and cost rollups
 - state graphs, fanout, reducers, checkpoints, and interrupts
 - sub-agent recursion, steering, cancellation, and reusable sessions
@@ -73,7 +80,7 @@ OpenHuman Rust core:
 
 Already done or partially done:
 
-- `Cargo.toml` pins `tinyagents = "1.1"` with default features only.
+- `Cargo.toml` pins `tinyagents = { version = "1.3", features = ["sqlite"] }`.
 - `src/openhuman/tinyagents/mod.rs` registers OpenHuman `Provider` and `Tool`
   adapters on `tinyagents::harness::runtime::AgentHarness`.
 - `ProviderModel` maps OpenHuman `ChatRequest`/`ChatResponse` into
@@ -85,10 +92,10 @@ Already done or partially done:
 - `StopHookMiddleware`, `ContextCompressionMiddleware`, and
   `MessageTrimMiddleware` are already used on the TinyAgents path.
 - `SqlRunLedgerCheckpointer` implements TinyAgents `Checkpointer` on top of the
-  OpenHuman session DB because TinyAgents' `sqlite` feature conflicts with the
-  current `rusqlite` native-link version.
-- `run_parallel_fanout` uses `GraphBuilder`, reducers, command routing, and a
-  fan-in barrier for reusable concurrent fanout.
+  OpenHuman session DB while the migration re-points checkpoint rows to the
+  crate checkpointer.
+- `spawn_parallel_graph` uses `GraphBuilder` and
+  `graph::parallel::map_reduce` for reusable concurrent fanout.
 - `model_council`, `workflow_runs`, `agent_teams`, and
   `tinyagents/delegation.rs` already use TinyAgents graphs.
 - Built-in agents already have `graph.rs` selectors, but most return
@@ -109,12 +116,14 @@ Important current gaps:
 - Sub-agent lifecycle, durable state, worker threads, and wait/abort controls
   still live in OpenHuman orchestration stores.
 
-Some todos below are local adapter work. Others require upstream TinyAgents SDK
-extensions first. In particular, the SDK has a strong tool/runtime boundary
-today (`ToolSchema`, `ToolExecutionContext`, middleware hooks), but OpenHuman's
-full tool safety metadata is richer than the current SDK schema. Durable task
-storage is another SDK gap: TinyAgents exposes an `InMemoryTaskStore`, while
-OpenHuman needs restart-safe SQL/JSON ledgers.
+Some todos below are local adapter work. Others still require upstream
+TinyAgents SDK extensions. In particular, the SDK has a strong tool/runtime
+boundary today (`ToolSchema`, `ToolExecutionContext`, middleware hooks), but
+OpenHuman's full tool safety metadata is richer than the current SDK schema.
+After the TinyAgents `main` refresh, durable session/cache/journal primitives are
+no longer the broad SDK gap they were in the original baseline; the remaining
+work is to design OpenHuman's compatibility adapter, migrate old transcripts and
+run-ledger rows, and prove restart/resume parity.
 
 ## Migration Rules
 
@@ -126,6 +135,9 @@ OpenHuman needs restart-safe SQL/JSON ledgers.
 - Preserve existing transcript and run-ledger compatibility. TinyAgents may
   become the internal runtime without changing persisted public records in the
   same PR.
+- Old OpenHuman session JSONL/Markdown data should move through a one-time,
+  idempotent migration script into TinyAgents-compatible store/journal records
+  before the old readers are deleted.
 - Every migration task needs unit coverage plus at least one JSON-RPC or
   harness-level e2e when behavior crosses controller, tool, provider, or graph
   boundaries.
@@ -137,8 +149,8 @@ OpenHuman needs restart-safe SQL/JSON ledgers.
     `Cargo.toml`.
   - TinyAgents components: crate features `default`, `openai`, `sqlite`, `repl`.
   - Acceptance: document why default features are used, why TinyAgents `sqlite`
-    is disabled, and which OpenHuman adapters replace feature-gated SDK
-    providers.
+    is enabled through the aligned `rusqlite` stack, and which OpenHuman adapters
+    still replace SDK-owned providers.
   - **Done:** added "TinyAgents crate: features & compatibility" section to
     agent-harness.md (default-only, `openai`/`sqlite`/`repl` rationale, adapter
     map) + fixed stale `council_graph.rs`/`member_graph.rs` links.
@@ -156,35 +168,29 @@ OpenHuman needs restart-safe SQL/JSON ledgers.
   - Acceptance: a TinyAgents tool call has enough metadata for middleware to
     enforce approval, security, timeout, concurrency, truncation, and display
     behavior without re-querying OpenHuman trait methods ad hoc.
-  - **SDK gap + side-lookup adapter:** crate `ToolSchema` carries only
-    name/description/parameters/format — it has **no** metadata/extension map and
-    `ToolExecutionContext` is run-scoped, so none of OpenHuman's safety/runtime
-    fields have a crate home. The adopted pattern is a shared
-    `name → Arc<dyn Tool>` lookup the runner builds from `tool_sets`; middleware
-    calls the (often args-aware) trait methods live. Landed uses of it:
-    `ApprovalSecurityMiddleware` reads `external_effect_with_args`;
-    `ToolOutputMiddleware` now honors each tool's own `max_result_size_chars()`
-    (was a flat hardcoded budget). Remaining fields (timeout, concurrency,
-    display, generated context) can ride the same lookup as their middlewares
-    land; full crate round-trip is blocked pending an SDK `ToolSchema` extension
-    map.
+  - **1.3 update:** crate `ToolPolicy`, `Tool::policy()`,
+    `ToolRegistry::policies()`, and `ToolPolicyMiddleware` now provide the
+    SDK-owned safety/runtime/access projection. `ToolSchema` still carries only
+    name/description/parameters/format — it has **no** model-visible
+    metadata/extension map — so OpenHuman should map enforcement fields into
+    `ToolPolicy` while keeping display/schema annotations as app-side metadata.
+    Existing side-lookup middleware (`ApprovalSecurityMiddleware`,
+    `ToolOutputMiddleware`) can shrink as those policy snapshots become the
+    source of truth.
 
 - [x] Move unknown-tool recovery into a reusable middleware or tool policy layer.
-  - Current shim: `UNKNOWN_TOOL_SENTINEL` in `src/openhuman/tinyagents/tools.rs`.
+  - Current path: `run_policy_for` sets
+    `UnknownToolPolicy::ReturnToolError`; no sentinel tool is registered.
   - TinyAgents components: `ToolRegistry`, `ToolMiddleware`,
     `AgentEvent::ToolStarted/ToolCompleted`, repairable tool results.
   - Acceptance: hallucinated tool names remain recoverable, sub-agent wording is
     preserved, and TinyAgents event stream records the original requested tool
     name without exposing the sentinel as a model-visible tool.
-  - **Done:** `UnknownToolRewriteMiddleware` (`before_tool`) rewrites a call to
-    an unadvertised tool onto the sentinel at the tool boundary, before the
-    harness resolves it — removing the `valid_tools` plumbing from `ProviderModel`
-    (`with_valid_tools`, the field, and the `response_to_model_response` rewrite
-    all deleted). Sub-agent vs top-level wording is preserved by the sentinel
-    handler; the sentinel is still never advertised. SDK gaps: no
-    "tool-not-found → repair" hook (the sentinel handler must stay), and no
-    dedicated unknown-tool `AgentEvent` variant (recording the original name in
-    the crate event stream would need a manual `ToolStarted` — deferred).
+  - **1.3 update:** crate `RunPolicy.unknown_tool` now has
+    `UnknownToolPolicy::{Fail, ReturnToolError, Rewrite}` and emits
+    `AgentEvent::UnknownToolCall` with the original requested name/arguments.
+    OpenHuman now uses that policy directly; `UNKNOWN_TOOL_SENTINEL` and
+    `UnknownToolRewriteMiddleware` are gone from source.
 
 - [x] Route approval and security through TinyAgents middleware.
   - Current OpenHuman files: `src/openhuman/approval/*`,
@@ -222,7 +228,7 @@ OpenHuman needs restart-safe SQL/JSON ledgers.
     `memory`, `subconscious`, etc.) can resolve to a TinyAgents model entry
     while retaining OpenHuman provider strings and config compatibility.
 
-- [ ] Translate OpenHuman provider capability data into TinyAgents model profiles.
+- [~] Translate OpenHuman provider capability data into TinyAgents model profiles.
   - OpenHuman files: `src/openhuman/inference/provider/traits.rs`,
     `src/openhuman/inference/provider/factory.rs`,
     `docs/inference-provider-catalog.md`.
@@ -231,6 +237,17 @@ OpenHuman needs restart-safe SQL/JSON ledgers.
   - Acceptance: context window, tool calling, streaming, vision, structured
     output, reasoning, local/cloud source, and provider-family metadata are
     available before dispatch.
+  - **Partial:** every `ProviderModel` registered by the shared runner now
+    carries a crate `ModelProfile` built at construction from the provider's
+    canonical capability accessors — tool calling (+parallel), vision
+    (`modalities.image_in`), streaming, local/remote source — plus the
+    runner-threaded token limits (`with_context_window` → `max_input_tokens`,
+    output cap → `max_output_tokens`). `ChatModel::profile()` returns it, so
+    the crate's pre-dispatch validation and structured-output strategy see real
+    capabilities. Remaining: structured-output/JSON-schema/reasoning flags
+    (no OpenHuman capability source yet), release/status metadata, and a
+    registry-level model *catalog* (ties into the workload-route registry item
+    above).
 
 - [ ] Move model fallback and retry policy to TinyAgents policy/middleware.
   - OpenHuman files: `src/openhuman/inference/provider/reliable.rs`,
@@ -276,10 +293,23 @@ OpenHuman needs restart-safe SQL/JSON ledgers.
   - OpenHuman files: `src/openhuman/context/*`,
     `src/openhuman/agent/harness/session/turn/core.rs`,
     `src/openhuman/tinyagents/summarize.rs`.
-  - TinyAgents components: `CachePolicy`, `CacheLayoutEvent`,
-    `ContextCompressionMiddleware`, `MessageTrimMiddleware`.
+  - TinyAgents components: `harness::cache::{CachePolicy, CacheLayoutEvent,
+    PromptCacheLayout, ResponseCache}`, `ContextCompressionMiddleware`,
+    `MessageTrimMiddleware`.
   - Acceptance: system prompt prefix remains stable across later turns; volatile
     memory, timestamps, tool results, and steering messages land in the tail.
+
+- [ ] Move OpenHuman response-cache and provider KV-cache protection onto
+  TinyAgents cache primitives.
+  - OpenHuman files: `src/openhuman/agent/harness/session/turn/core.rs`,
+    `src/openhuman/context/*`, `src/openhuman/tinyagents/middleware.rs`.
+  - TinyAgents components: `harness::cache::{ResponseCache,
+    PromptCacheLayout, CachePolicy}`, `AgentEvent::CacheHit`,
+    `AgentEvent::CacheMiss`.
+  - Acceptance: repeated deterministic model requests can be served by the
+    TinyAgents response cache where safe, prompt-prefix stability is asserted by
+    `PromptCacheLayout`, and OpenHuman cache-align warnings become TinyAgents
+    cache-layout events.
 
 ## Phase 4 - Events, Status, And Observability
 
@@ -288,10 +318,28 @@ OpenHuman needs restart-safe SQL/JSON ledgers.
     `src/core/event_bus/*`, `src/openhuman/notifications/*`,
     `src/openhuman/session_db/run_ledger/*`.
   - TinyAgents components: `HarnessEventJournal`, `HarnessStatusStore`,
-    `GraphEventJournal`, `GraphStatusStore`, `AgentEvent`, `GraphEvent`.
+    `GraphEventJournal`, `GraphStatusStore`, `harness::store::AppendStore`,
+    `harness::store::JsonlAppendStore`, `AgentEvent`, `GraphEvent`.
   - Acceptance: UIs can reconstruct a running or completed agent turn from
     persisted TinyAgents events without relying only on transient
     `AgentProgress`.
+
+- [x] Write a one-time OpenHuman session transcript migration into TinyAgents
+  store/journal records. Done: `src/openhuman/session_import/`
+  (`openhuman.session_import_run`), design + as-built notes in
+  `docs/tinyagents-session-migration-design.md`. Write-only Phase 1; read-side
+  shadow/cutover remain.
+  - OpenHuman files: `src/openhuman/agent/harness/session/transcript.rs`,
+    `src/openhuman/agent/harness/session/migration.rs`, user workspace
+    `session_raw/*.jsonl`, legacy Markdown session directories.
+  - TinyAgents components: `harness::store::{Store, AppendStore, FileStore,
+    JsonlAppendStore}`, `harness::message::Message`, harness event/status
+    records with `thread_id`, `run_id`, `root_run_id`, and stream offsets.
+  - Acceptance: old OpenHuman sessions are imported idempotently, preserving
+    timestamps, transcript stems, parent/child session links, provider/model
+    metadata, tool-call ids, native/XML/P-format history, and malformed-file
+    warnings. Existing OpenHuman readers remain as compatibility projections
+    until parity fixtures prove the migration.
 
 - [ ] Bridge TinyAgents events into `DomainEvent` as a compatibility projection.
   - OpenHuman files: `src/core/event_bus/events.rs`,
@@ -309,24 +357,26 @@ OpenHuman needs restart-safe SQL/JSON ledgers.
     list checkpoints, current node/task status, and replay offsets from one DB
     source.
 
-- [~] Export graph topology for debugging and UI inspection.
+- [x] Export graph topology for debugging and UI inspection.
   - OpenHuman files: built-in `graph.rs` files, `agent_orchestration/*/graph.rs`,
     `model_council/graph.rs`.
   - TinyAgents components: `GraphTopology`, `to_json`, `to_mermaid`,
     validation report.
   - Acceptance: every custom OpenHuman graph has a debug endpoint or test
     snapshot that exports topology and validates missing nodes/routes.
-  - **Foundation landed:** new `tinyagents/topology.rs` — `GraphTopologyReport`
-    (mermaid + JSON + validation errors/warnings), `describe()`, and
-    `all_graph_topologies()`. Pattern: each graph exposes a `build_*_graph`
-    (structure) reused by both the runner and a `*_topology()` that builds it
-    with no-op stub closures and returns `CompiledGraph::topology()`. Done for
-    `agent_teams:member`. Follow-ups (same pattern): `delegation` (injected
-    `run_stage` — clean) and `workflow_runs` scheduler (needs a small refactor —
-    its node closures capture engine locals). Fan-outs (council,
-    `run_parallel_fanout`) are the dispatch→N→collect pattern, not a fixed
-    topology. Debug endpoint = call `all_graph_topologies()` (RPC wiring is a
-    thin follow-up).
+  - **Done:** `tinyagents/topology.rs` — `GraphTopologyReport` (mermaid + JSON +
+    validation errors/warnings), `describe()`, and `all_graph_topologies()`.
+    Pattern: each graph exposes a `build_*_graph` (structure) reused by both the
+    runner and a `*_topology()` that builds it with no-op stub closures and
+    returns `CompiledGraph::topology()`. Exported graphs: `agent_teams:member`,
+    `delegation` (extracted `build_delegation_graph`),
+    `workflow_runs:scheduler` (`build_scheduler_graph` with injected
+    `select`/`run` engine effects), `subagent:pipeline`, and
+    `spawn_parallel_agents`. Generic map-reduce fan-outs such as council runs
+    are still item-count-driven dispatch→N→collect patterns, not fixed named
+    topologies, so they are intentionally not exported. Debug endpoint:
+    `agent.graph_topologies` JSON-RPC controller (`agent/schemas.rs`) returning
+    `{name, ok, errors, warnings, mermaid, topology}` per graph.
 
 ## Phase 5 - Usage, Cost, And Budgets
 
@@ -365,13 +415,29 @@ OpenHuman needs restart-safe SQL/JSON ledgers.
     `CostConfig` fields + thread-id threading into the runner) and projecting the
     *next* call's cost pre-spend (needs an input-token estimate).
 
-- [ ] Add cost rollup across sub-agents and graphs.
+- [~] Add cost rollup across sub-agents and graphs.
   - OpenHuman files: `src/openhuman/agent_orchestration/**`,
     `src/openhuman/cost/global.rs`.
   - TinyAgents components: run ids, parent/root run lineage,
     `SubAgentStarted`, `SubAgentCompleted`, graph child runs.
   - Acceptance: parent run totals include child agent/model/tool usage without
     double counting dashboard totals.
+  - **Partial (audit + real gap fixed).** Audit of the current mechanics:
+    (1) parent-turn rollup — the `turn_subagent_usage` task-local collector
+    wraps the turn future; `run_typed_mode` (the single sub-agent chokepoint)
+    records every inline child, and graph fan-outs (`spawn_parallel_graph`,
+    delegation, council) execute via `join_all` **on the same task**, so their
+    children inherit the collector too; (2) dashboard totals — the global
+    tracker is fed per model call by each run's own event bridge, and the
+    parent's fold into `LastTurnUsage`/transcript never re-records to the
+    tracker, so there is no double counting. **Gap fixed:** the tracker feed
+    lived *only* in the bridge, so an unobserved (`on_progress = None`,
+    fire-and-forget) turn's spend never reached the dashboard — the runner's
+    cost fallback now records the aggregate via `record_unobserved_turn_usage`
+    (mutually exclusive with the bridge → exactly-once). Remaining: crate
+    run-id / parent-root lineage on cost records (needs `TokenUsage` schema
+    fields), and rollup for *detached* background children beyond
+    global-tracker capture (documented behavior today).
 
 ## Phase 6 - Graph Runtime And Orchestration
 
@@ -400,7 +466,7 @@ OpenHuman needs restart-safe SQL/JSON ledgers.
   - Current behavior: validates at least two tasks, checks parent context,
     enforces `max_parallel_tools`, resolves `AgentDefinition`s, enforces the
     parent `subagents.allowlist`, optionally creates per-worker git worktrees,
-    fans workers out through `run_parallel_fanout`, collects results in input
+    fans workers out through `spawn_parallel_graph` + `map_reduce`, collects results in input
     order, emits `DomainEvent` + `AgentProgress`, detects stale parent file
     reads and cross-worker changed-file overlaps, and returns a structured
     `parallel_agents` JSON payload.
@@ -454,14 +520,19 @@ OpenHuman needs restart-safe SQL/JSON ledgers.
   - Acceptance: at least three agents get bespoke graphs where useful:
     orchestrator, researcher, and tool_maker are good first candidates.
 
-- [ ] Keep durable orchestration stores OpenHuman-owned until TinyAgents has a
-  durable `TaskStore`.
+- [~] Keep durable orchestration stores OpenHuman-owned until the OpenHuman
+  compatibility adapter is written.
   - Current OpenHuman files: `running_subagents.rs`, `workflow_runs`,
     `agent_teams`, `command_center`, `subagent_sessions`.
-  - TinyAgents limitation: `InMemoryTaskStore` is useful for lifecycle shape but
-    not sufficient for desktop restart/resume.
-  - Acceptance: do not migrate durable SQL/JSON state to TinyAgents in-memory
-    task storage. Use TinyAgents task types as an adapter only.
+  - Updated TinyAgents status: current `main` has harness stores, JSONL append
+    journals, lineage-aware harness/graph status, `SubAgentSession`, subgraph
+    nodes, and sub-agent graph nodes. This means the blocker is no longer only
+    "SDK lacks storage"; it is now the OpenHuman adapter/migration design and
+    restart/resume parity.
+  - Acceptance: migrate durable SQL/JSON state through a compatibility adapter,
+    not by dropping records into in-memory task storage. OpenHuman controllers
+    continue to read compatible projections while TinyAgents records become the
+    canonical internal state.
 
 - [ ] Add graph interrupt/resume for human review points.
   - OpenHuman files: `src/openhuman/approval/*`,
@@ -485,6 +556,21 @@ OpenHuman needs restart-safe SQL/JSON ledgers.
     accepted/rejected steering emits events, and tool/model allowlists can only
     narrow from parent policy.
 
+- [ ] Re-express the OpenHuman sub-agent pipeline as a TinyAgents subgraph.
+  - OpenHuman files: `src/openhuman/agent/harness/subagent_runner/**`,
+    `src/openhuman/agent_orchestration/tools/spawn_subagent.rs`,
+    `src/openhuman/agent_orchestration/subagent_sessions/**`.
+  - TinyAgents components: `harness::subagent::{SubAgent, SubAgentSession,
+    SubAgentTool}`, `graph::subagent_node::{SubAgentNode, SubAgentPolicy}`,
+    `graph::subgraph::{shared_subgraph_node, adapter_subgraph_node}`,
+    `CapabilityRegistry`, graph status/observability.
+  - Acceptance: definition resolution, tool filtering, prompt assembly,
+    toolkit preflight, sandbox/action-root narrowing, handoff cache,
+    checkpoint/awaiting-user handback, and worker-thread mirroring are explicit
+    graph nodes or adapters. The final child run has TinyAgents lineage, status,
+    usage/cost rollup, and transcript storage; OpenHuman keeps only product
+    policy nodes and compatibility response formatting.
+
 - [ ] Reconcile OpenHuman spawn depth with TinyAgents recursion policy.
   - OpenHuman files: `src/openhuman/agent/harness/spawn_depth_context.rs`,
     `src/openhuman/agent/harness/subagent_runner/**`.
@@ -493,14 +579,17 @@ OpenHuman needs restart-safe SQL/JSON ledgers.
   - Acceptance: there is one authoritative recursion cap and one error shape,
     with compatibility conversion for existing UI/JSON-RPC responses.
 
-- [ ] Keep OpenHuman's sub-agent build pipeline as product logic.
+- [~] Keep OpenHuman's sub-agent build pipeline as product policy, but move the
+  pipeline mechanics into TinyAgents graph/sub-agent primitives.
   - Product-owned pieces: agent definition resolution, prompt assembly, memory
     context, worker-thread mirroring, handoff cache, tool filtering, provider
     routing, sandbox scope.
   - TinyAgents components to adopt beneath it: `SubAgentSession`,
-    `ToolExecutionContext`, event lineage, cancellation, usage/cost rollup.
-  - Acceptance: use TinyAgents for execution and lineage without flattening
-    OpenHuman's agent registry semantics into generic SDK defaults.
+    `SubAgentTool`, `SubAgentNode`, `SubAgentPolicy`, `ToolExecutionContext`,
+    event lineage, graph status, cancellation, usage/cost rollup.
+  - Acceptance: use TinyAgents for execution, transcript/session tracking,
+    graph structure, and lineage without flattening OpenHuman's agent registry
+    semantics into generic SDK defaults.
 
 ## Phase 8 - Registry And Capability Catalog
 
@@ -528,11 +617,11 @@ OpenHuman needs restart-safe SQL/JSON ledgers.
   - Acceptance: model picker, router, budget estimator, and capability filter
     read one normalized catalog projection.
 
-## Phase 9 - Memory, Retrieval, Embeddings, And Context
+## Phase 9 - Memory, Retrieval, Embeddings, Context, And Cache
 
 - [ ] Adapt OpenHuman memory/retrieval to TinyAgents retriever interfaces.
   - OpenHuman files: `memory`, `memory_search`, `memory_tree`,
-    `agent/memory_loader.rs`, `context/*`.
+    `agent_memory/memory_loader.rs`, `context/*`.
   - TinyAgents components: `EmbeddingModel`, `Retriever`, `VectorStore`,
     `ScoredDoc`, context events.
   - Acceptance: the agent harness can load retrieval context through a
@@ -540,9 +629,9 @@ OpenHuman needs restart-safe SQL/JSON ledgers.
 
 - [ ] Move context compaction provenance into TinyAgents events.
   - OpenHuman files: `context/README.md`, `tinyagents/summarize.rs`,
-    `agent/harness/payload_summarizer.rs`.
-  - TinyAgents components: `SummaryRecord`, `Compressed` events, cache layout
-    events.
+    `tinyagents/payload_summarizer.rs`.
+  - TinyAgents components: `SummaryRecord`, `Compressed` events,
+    `PromptCacheLayout`, cache layout events.
   - Acceptance: every summary records source ids, before/after token estimates,
     policy version, and whether stable prompt prefix was preserved.
 
@@ -578,7 +667,7 @@ assessment, and migration coverage are complete.
   - Candidate outcome: replace dozens of boilerplate default `graph.rs` files
     with registry defaults, keeping files only for agents with custom graphs.
 
-- [~] Audit stale architecture references to removed in-house graph/loop code.
+- [x] Audit stale architecture references to removed in-house graph/loop code.
   - Current files: `gitbooks/developing/architecture/agent-harness.md`,
     `src/openhuman/context/README.md`.
   - Candidate stale names: `src/openhuman/agent_graph/`, `GraphBlueprint`,
@@ -593,21 +682,29 @@ assessment, and migration coverage are complete.
     section as HISTORICAL-removed (strong inline callout pointing at the live
     tinyagents surfaces); fixed `context/README.md` "Used by" line that still
     referenced the deleted `reduce_before_call`/`ProviderSummarizer`/
-    `SegmentRecapSummarizer`/`unified_compaction_enabled`. Remaining: a sweep of
-    code doc-comments across many `.rs` files that still name `run_turn_engine`,
-    `run_tool_call_loop`, `tool_loop.rs` (comments only — no behavior).
+    `SegmentRecapSummarizer`/`unified_compaction_enabled`. **Sweep completed:**
+    every code doc-comment that described `run_turn_engine`/`run_tool_call_loop`/
+    `tool_loop.rs` as *current* behavior (≈20 sites across 15 files: tools,
+    security, tokenjuice, triage, orchestration steering, task-local contexts,
+    cron, host_runtime, event-bus example, test-file headers) now points at the
+    live tinyagents surfaces; intentionally-historical "legacy X was removed /
+    parity with" notes were kept. Domain READMEs (tools, tokenjuice, approval)
+    fixed too — the tokenjuice one now records that `compact_tool_output` lost
+    its only production caller with the retired loop (re-wiring it as an
+    `after_tool` middleware; the stale default-Full wrapper is now deleted.
 
 - [ ] Audit `src/openhuman/context/{pipeline,guard,microcompact}.rs`.
   - Current role: context stats/session-memory bookkeeping plus older
     compaction concepts; live history reduction moved to
     `ContextCompressionMiddleware` and `MessageTrimMiddleware`.
   - TinyAgents expression: context-window middleware, `Compressed` events,
-    cache layout events, `SummaryRecord`, usage/context pressure status.
+    `PromptCacheLayout`, cache layout events, `SummaryRecord`,
+    usage/context pressure status.
   - Candidate outcome: keep only stats/session-memory state that remains
     OpenHuman-specific; move compression policy/provenance into TinyAgents
     middleware and delete unused reduction paths.
 
-- [ ] Audit `src/openhuman/agent/harness/payload_summarizer.rs`.
+- [ ] Audit `src/openhuman/tinyagents/payload_summarizer.rs`.
   - Current role: oversized tool-result compression via a `summarizer`
     sub-agent with a local circuit breaker.
   - TinyAgents expression: `ToolMiddleware::after_tool`,
@@ -646,9 +743,9 @@ assessment, and migration coverage are complete.
     checkpointing, policy, cancellation, or graph observability. Leave simple
     independent IO probes as ordinary Rust concurrency.
   - Candidate outcome: document why each fanout stays as `join_all` or move it
-    to `run_parallel_fanout` / graph `Send`.
+    to `graph::parallel::map_reduce` / graph `Send`.
 
-- [ ] Audit tool registry comments and docs that still describe retired
+- [x] Audit tool registry comments and docs that still describe retired
   direct-loop behavior.
   - Current files: `src/openhuman/tools/traits.rs`,
     `src/openhuman/tools/README.md`,
@@ -658,6 +755,9 @@ assessment, and migration coverage are complete.
   - Candidate outcome: update comments to describe the TinyAgents execution
     path and delete references to the retired serial `harness::tool_loop`
     dispatcher once no code path uses it.
+  - **Done:** `tools/traits.rs` concurrency note and `tools/README.md` "Used
+    by" now describe the tinyagents execution path (`SharedToolAdapter` /
+    `ToolPolicyMiddleware`); `session/turn/tools.rs` had no stale references.
 
 ## Phase 11 - Testing And Conformance
 
@@ -671,12 +771,22 @@ assessment, and migration coverage are complete.
     early-exit pause, model-call cap, and cost footer all have tests on the
     TinyAgents path.
 
-- [ ] Add a TinyAgents adapter inventory test.
+- [x] Add a TinyAgents adapter inventory test.
   - OpenHuman files: `src/openhuman/tinyagents/mod.rs`,
     `src/openhuman/tinyagents/tests.rs`.
   - Acceptance: one test asserts that the shared runner registers model, tools,
     middleware, event bridge, context compression, stop hooks, and unknown-tool
-    sentinel in the intended order.
+    policy in the intended order.
+  - **Done:** harness assembly extracted from `run_turn_via_tinyagents_shared`
+    into a testable `assemble_turn_harness` returning `AssembledTurnHarness`
+    (harness + cursor/error-slot/halt-summary/outcome-sink/steering/early-exit
+    seams). `adapter_inventory_registers_model_tools_and_middleware` asserts
+    model registry, callable tools + unknown-tool policy, 9 lifecycle + 2
+    around-tool middlewares, steering handle, early-exit hook;
+    `adapter_inventory_gates_context_middleware_on_window` proves the
+    compression/trim gating. SDK gap: `MiddlewareStack` exposes lengths but not
+    names, so exact ordering is documented at the registration sites and
+    guarded by counts.
 
 - [ ] Port behavior clusters to TinyAgents testkit.
   - OpenHuman files: `src/openhuman/agent/harness/*_tests.rs`,
@@ -715,10 +825,10 @@ assessment, and migration coverage are complete.
 
 ## Non-Goals For The First Migration Wave
 
-- Do not enable TinyAgents `sqlite` until the `rusqlite` native-link conflict is
-  solved.
-- Do not replace OpenHuman's durable run ledgers with TinyAgents
-  `InMemoryTaskStore`.
+- Do not replace OpenHuman's durable run ledgers with TinyAgents SQLite storage
+  until the one-time
+  transcript/session migration, TinyAgents store/status adapter, and
+  restart/resume parity tests are complete.
 - Do not expose TinyAgents' OpenAI provider directly to product code while
   OpenHuman provider config, credentials, OAuth, and billing classification are
   still the product source of truth.

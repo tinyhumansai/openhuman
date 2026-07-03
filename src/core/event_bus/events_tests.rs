@@ -67,14 +67,6 @@ fn all_variants_have_correct_domain() {
             "agent",
         ),
         (
-            DomainEvent::RunQueueMessageDelivered {
-                thread_id: "t".into(),
-                mode: "steer".into(),
-                iteration: 2,
-            },
-            "agent",
-        ),
-        (
             DomainEvent::RunQueueFollowupDispatched {
                 thread_id: "t".into(),
                 followup_count: 1,

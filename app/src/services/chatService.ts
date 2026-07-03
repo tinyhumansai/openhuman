@@ -1168,8 +1168,9 @@ export interface ChatSendParams {
   /**
    * Queue mode for concurrent messages. When a turn is already in
    * flight: `steer` injects at the next iteration boundary, `followup`
-   * queues for after the turn, `collect` adds as context. `interrupt`
-   * (default) aborts the running turn.
+   * queues for after the turn, `collect` adds as context, and `parallel`
+   * starts a forked same-thread turn. `interrupt` (default) aborts the
+   * running turn.
    */
   queueMode?: QueueMode | null;
 }

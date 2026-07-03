@@ -1,4 +1,6 @@
+#[cfg(test)]
 use crate::openhuman::inference::provider::ToolCall;
+#[cfg(test)]
 use crate::openhuman::tools::Tool;
 use regex::Regex;
 use std::sync::LazyLock;
@@ -13,10 +15,6 @@ pub(crate) struct ParsedToolCall {
     pub id: Option<String>,
 }
 
-/// Find a tool by name in the registry.
-pub(crate) fn find_tool<'a>(tools: &'a [Box<dyn Tool>], name: &str) -> Option<&'a dyn Tool> {
-    tools.iter().find(|t| t.name() == name).map(|t| t.as_ref())
-}
 pub(crate) fn parse_arguments_value(raw: Option<&serde_json::Value>) -> serde_json::Value {
     match raw {
         Some(serde_json::Value::String(s)) => serde_json::from_str::<serde_json::Value>(s)
@@ -47,6 +45,7 @@ fn first_args_by_keys(obj: &serde_json::Value) -> serde_json::Value {
     parse_arguments_value(None)
 }
 
+#[cfg(test)]
 pub(crate) fn parse_tool_call_value(value: &serde_json::Value) -> Option<ParsedToolCall> {
     // Default to the permissive (tagged) behaviour: callers that reach a
     // value through an explicit tool-call marker (`tool_calls` array,
@@ -709,6 +708,7 @@ pub(crate) fn parse_tool_calls(response: &str) -> (String, Vec<ParsedToolCall>) 
     (text_parts.join("\n"), calls)
 }
 
+#[cfg(test)]
 pub(crate) fn parse_structured_tool_calls(tool_calls: &[ToolCall]) -> Vec<ParsedToolCall> {
     tool_calls
         .iter()
@@ -730,6 +730,7 @@ pub(crate) fn parse_structured_tool_calls(tool_calls: &[ToolCall]) -> Vec<Parsed
 /// thinking mode rejects an `assistant` turn that carries `tool_calls` if its
 /// `reasoning_content` is not passed back (Sentry TAURI-RUST-4KB). Omitted from
 /// the JSON when empty, so non-reasoning models are unaffected.
+#[cfg(test)]
 pub(crate) fn build_native_assistant_history(
     text: &str,
     reasoning_content: Option<&str>,
@@ -784,6 +785,7 @@ pub(crate) fn build_native_assistant_history(
     entry.to_string()
 }
 
+#[cfg(test)]
 pub(crate) fn build_assistant_history_with_tool_calls(
     text: &str,
     tool_calls: &[ToolCall],
@@ -809,6 +811,7 @@ pub(crate) fn build_assistant_history_with_tool_calls(
 }
 
 /// Convert a tool registry to OpenAI function-calling format for native tool support.
+#[cfg(test)]
 pub(crate) fn tools_to_openai_format(tools_registry: &[Box<dyn Tool>]) -> Vec<serde_json::Value> {
     tools_registry
         .iter()

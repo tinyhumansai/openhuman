@@ -184,7 +184,7 @@ pub fn is_backend_malformed_bad_request(err: &str) -> bool {
 ///   `too_large` reject), so an over-limit request reaching the backend means
 ///   the aggregate slipped past those gates.
 /// - `CONTEXT_LENGTH_EXCEEDED`: the client manages context before send (the
-///   context pipeline's `context_window`, `src/openhuman/context/pipeline.rs`),
+///   context stats state's `context_window`, `src/openhuman/context/stats.rs`),
 ///   so a backend rejection means that fitting / trimming failed.
 ///
 /// The backend does not ops-alert either (they are 4xx, not 500), so if the FE

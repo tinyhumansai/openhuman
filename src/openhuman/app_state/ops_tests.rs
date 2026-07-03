@@ -240,6 +240,38 @@ fn runtime_snapshot_cache_miss_after_ttl() {
 }
 
 #[test]
+fn fresh_cached_runtime_snapshot_returns_entry_within_ttl() {
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _reset = SnapshotCacheResetGuard;
+
+    let dummy = build_dummy_runtime_snapshot();
+    *RUNTIME_SNAPSHOT_CACHE.lock() = Some(CachedRuntimeSnapshot {
+        snapshot: dummy.clone(),
+        fetched_at: Instant::now(),
+    });
+
+    let served = fresh_cached_runtime_snapshot(1).expect("fresh entry should be served");
+    assert_eq!(served.autocomplete.phase, dummy.autocomplete.phase);
+}
+
+#[test]
+fn fresh_cached_runtime_snapshot_misses_when_stale_or_empty() {
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _reset = SnapshotCacheResetGuard;
+
+    // Empty cache → miss (forces the single-flight rebuild path).
+    *RUNTIME_SNAPSHOT_CACHE.lock() = None;
+    assert!(fresh_cached_runtime_snapshot(2).is_none());
+
+    // Stale cache → miss, so the TTL bump can't silently keep serving old data.
+    *RUNTIME_SNAPSHOT_CACHE.lock() = Some(CachedRuntimeSnapshot {
+        snapshot: build_dummy_runtime_snapshot(),
+        fetched_at: Instant::now() - (RUNTIME_SNAPSHOT_TTL + Duration::from_millis(100)),
+    });
+    assert!(fresh_cached_runtime_snapshot(3).is_none());
+}
+
+#[test]
 fn degraded_runtime_snapshot_has_expected_degraded_fields() {
     let cfg = Config::default();
     let snapshot = degraded_runtime_snapshot(&cfg);

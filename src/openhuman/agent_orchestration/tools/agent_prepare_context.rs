@@ -21,10 +21,12 @@ use crate::openhuman::agent::harness::subagent_runner::{
 };
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::inference::provider::thread_context::current_thread_id;
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::fmt::Write as _;
+use tinyagents::harness::tool::ToolExecutionContext;
+use tinyagents::harness::workspace::WorkspaceDescriptor;
 
 /// The sub-agent archetype this tool drives.
 const SCOUT_AGENT_ID: &str = "context_scout";
@@ -125,20 +127,38 @@ pub async fn run_context_scout(question: &str, focus: Option<&str>) -> anyhow::R
 }
 
 /// Same as [`run_context_scout`] but with an **explicitly-supplied** tool
-/// catalogue, so it can run *outside* an agent turn — e.g. from the
-/// subconscious engine's structured tick, where `current_parent()` is unset
-/// and the parent's visible tool set can't be auto-derived.
+/// catalogue — for callers *outside* an agent turn that can't auto-derive the
+/// parent's visible tool set from `current_parent()` (e.g. the subconscious
+/// engine's structured tick).
 ///
 /// The caller passes the catalogue of tools the eventual decision agent can
 /// actually call (one `- name: description` per line), so the bundle's
-/// `recommended_tool_calls` stay grounded in callable tools. Progress /
-/// subagent-lifecycle events stay best-effort: with no parent context the
-/// `parent_session` falls back to `standalone` and the progress sink is absent,
-/// so those sends simply no-op.
+/// `recommended_tool_calls` stay grounded in callable tools.
+///
+/// **A parent execution context is still required.** Like [`run_context_scout`]
+/// this spawns `context_scout` via `run_subagent`, which resolves its provider /
+/// tools / model from the `PARENT_CONTEXT` task-local and returns
+/// `NoParentContext` when it is unset. A background surface with no enclosing
+/// turn MUST establish a root parent first — call this *inside*
+/// [`with_root_parent`](crate::openhuman::agent_orchestration::parent_context::with_root_parent).
+/// Skipping that is exactly the TAURI-RUST-HMW failure (#4337): every spawn
+/// died with `NoParentContext` and the tick ran un-grounded. Only the
+/// progress / subagent-lifecycle telemetry degrades gracefully without a
+/// parent — `parent_session` falls back to `standalone` and the absent progress
+/// sink no-ops — but the spawn itself does not.
 pub async fn run_context_scout_with_catalog(
     question: &str,
     focus: Option<&str>,
     tool_catalog: &str,
+) -> anyhow::Result<ToolResult> {
+    run_context_scout_with_catalog_and_workspace(question, focus, tool_catalog, None).await
+}
+
+async fn run_context_scout_with_catalog_and_workspace(
+    question: &str,
+    focus: Option<&str>,
+    tool_catalog: &str,
+    parent_workspace_descriptor: Option<WorkspaceDescriptor>,
 ) -> anyhow::Result<ToolResult> {
     let question = question.trim().to_string();
     let focus = focus.map(|s| s.to_string());
@@ -194,13 +214,13 @@ pub async fn run_context_scout_with_catalog(
     // child's own iterations/tool-calls already stream to this sink from
     // inside run_subagent; we bookend them with spawned/completed so the
     // UI opens and closes the card. Best-effort — a closed sink is fine.
-    publish_global(DomainEvent::SubagentSpawned {
-        parent_session: parent_session.clone(),
-        agent_id: definition.id.clone(),
-        mode: "typed".to_string(),
-        task_id: task_id.clone(),
-        prompt_chars: scout_prompt.chars().count(),
-    });
+    crate::openhuman::agent_orchestration::subagent_events::publish_subagent_spawned(
+        parent_session.clone(),
+        definition.id.clone(),
+        "typed".to_string(),
+        task_id.clone(),
+        scout_prompt.chars().count(),
+    );
     if let Some(ref tx) = progress_sink {
         let _ = tx
             .send(AgentProgress::SubagentSpawned {
@@ -215,8 +235,22 @@ pub async fn run_context_scout_with_catalog(
             .await;
     }
 
+    let worktree_action_dir = parent_workspace_descriptor
+        .as_ref()
+        .map(|descriptor| descriptor.root.clone());
+    if let Some(descriptor) = parent_workspace_descriptor.as_ref() {
+        tracing::debug!(
+            target: "agent_prepare_context",
+            task_id = %task_id,
+            workspace_root = %descriptor.root.display(),
+            policy_id = %descriptor.policy_id,
+            "[agent_prepare_context] using ToolExecutionContext workspace root"
+        );
+    }
     let options = SubagentRunOptions {
         task_id: Some(task_id.clone()),
+        worktree_action_dir,
+        workspace_descriptor: parent_workspace_descriptor,
         ..Default::default()
     };
 
@@ -238,14 +272,14 @@ pub async fn run_context_scout_with_catalog(
                         output_chars = outcome.output.chars().count(),
                         "[agent_prepare_context] scout returned a malformed/absent context_bundle — rejecting"
                     );
-                    publish_global(DomainEvent::SubagentCompleted {
-                        parent_session: parent_session.clone(),
-                        task_id: outcome.task_id.clone(),
-                        agent_id: outcome.agent_id.clone(),
-                        elapsed_ms: outcome.elapsed.as_millis() as u64,
-                        output_chars: 0,
-                        iterations: outcome.iterations,
-                    });
+                    crate::openhuman::agent_orchestration::subagent_events::publish_subagent_completed(
+                        parent_session.clone(),
+                        outcome.task_id.clone(),
+                        outcome.agent_id.clone(),
+                        outcome.elapsed.as_millis() as u64,
+                        0,
+                        outcome.iterations,
+                    );
                     if let Some(ref tx) = progress_sink {
                         let _ = tx
                             .send(AgentProgress::SubagentCompleted {
@@ -277,14 +311,14 @@ pub async fn run_context_scout_with_catalog(
                     raw_output_chars = outcome.output.chars().count(),
                     "[agent_prepare_context] context bundle ready"
                 );
-                publish_global(DomainEvent::SubagentCompleted {
-                    parent_session: parent_session.clone(),
-                    task_id: outcome.task_id.clone(),
-                    agent_id: outcome.agent_id.clone(),
-                    elapsed_ms: outcome.elapsed.as_millis() as u64,
-                    output_chars: bundle.chars().count(),
-                    iterations: outcome.iterations,
-                });
+                crate::openhuman::agent_orchestration::subagent_events::publish_subagent_completed(
+                    parent_session.clone(),
+                    outcome.task_id.clone(),
+                    outcome.agent_id.clone(),
+                    outcome.elapsed.as_millis() as u64,
+                    bundle.chars().count(),
+                    outcome.iterations,
+                );
                 if let Some(ref tx) = progress_sink {
                     let _ = tx
                         .send(AgentProgress::SubagentCompleted {
@@ -362,14 +396,14 @@ pub async fn run_context_scout_with_catalog(
                 // Close the domain-event lifecycle too — a SubagentSpawned
                 // was already published, so emit Completed to avoid a
                 // dangling spawned state for event-bus consumers.
-                publish_global(DomainEvent::SubagentCompleted {
-                    parent_session: parent_session.clone(),
-                    task_id: outcome.task_id.clone(),
-                    agent_id: outcome.agent_id.clone(),
-                    elapsed_ms: outcome.elapsed.as_millis() as u64,
-                    output_chars: 0,
-                    iterations: outcome.iterations,
-                });
+                crate::openhuman::agent_orchestration::subagent_events::publish_subagent_completed(
+                    parent_session.clone(),
+                    outcome.task_id.clone(),
+                    outcome.agent_id.clone(),
+                    outcome.elapsed.as_millis() as u64,
+                    0,
+                    outcome.iterations,
+                );
                 if let Some(ref tx) = progress_sink {
                     let _ = tx
                         .send(AgentProgress::SubagentCompleted {
@@ -400,14 +434,14 @@ pub async fn run_context_scout_with_catalog(
                     reason = %reason,
                     "[agent_prepare_context] scout stopped incomplete — returning empty bundle"
                 );
-                publish_global(DomainEvent::SubagentCompleted {
-                    parent_session: parent_session.clone(),
-                    task_id: outcome.task_id.clone(),
-                    agent_id: outcome.agent_id.clone(),
-                    elapsed_ms: outcome.elapsed.as_millis() as u64,
-                    output_chars: 0,
-                    iterations: outcome.iterations,
-                });
+                crate::openhuman::agent_orchestration::subagent_events::publish_subagent_completed(
+                    parent_session.clone(),
+                    outcome.task_id.clone(),
+                    outcome.agent_id.clone(),
+                    outcome.elapsed.as_millis() as u64,
+                    0,
+                    outcome.iterations,
+                );
                 if let Some(ref tx) = progress_sink {
                     let _ = tx
                         .send(AgentProgress::SubagentCompleted {
@@ -441,12 +475,12 @@ pub async fn run_context_scout_with_catalog(
                 error_kind = %error_kind,
                 "[agent_prepare_context] context_scout run failed"
             );
-            publish_global(DomainEvent::SubagentFailed {
-                parent_session: parent_session.clone(),
-                task_id: task_id.clone(),
-                agent_id: definition.id.clone(),
-                error: message.clone(),
-            });
+            crate::openhuman::agent_orchestration::subagent_events::publish_subagent_failed(
+                parent_session.clone(),
+                task_id.clone(),
+                definition.id.clone(),
+                message.clone(),
+            );
             if let Some(ref tx) = progress_sink {
                 let _ = tx
                     .send(AgentProgress::SubagentFailed {
@@ -619,6 +653,16 @@ impl Tool for AgentPrepareContextTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: ToolCallOptions,
+        tool_context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
         let prepared_sources = current_agent_context_prepared_sources();
         if !prepared_sources.is_empty() {
             tracing::info!(
@@ -633,7 +677,14 @@ impl Tool for AgentPrepareContextTool {
 
         let question = args.get("question").and_then(|v| v.as_str()).unwrap_or("");
         let focus = args.get("focus").and_then(|v| v.as_str());
-        run_context_scout(question, focus).await
+        let tool_catalog = AgentPrepareContextTool::render_parent_tool_catalog();
+        run_context_scout_with_catalog_and_workspace(
+            question,
+            focus,
+            &tool_catalog,
+            tool_context.and_then(|ctx| ctx.workspace.clone()),
+        )
+        .await
     }
 }
 

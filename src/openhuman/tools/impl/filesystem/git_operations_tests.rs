@@ -82,6 +82,40 @@ fn sanitize_git_allows_safe() {
     assert!(tool.sanitize_git_args(".").is_ok());
 }
 
+/// Parity guard for the worktree-isolation action-dir override (#3376,
+/// #4249 08.5). A worktree-isolated worker's git operation MUST resolve its CWD
+/// from the carried `WorkspaceDescriptor` (the isolated worktree), never the
+/// tool's configured `action_dir`. WITHOUT a descriptor it falls back to
+/// `action_dir` — the non-isolated path, byte-identical to before. This encodes
+/// the behaviour the deleted `worktree_context.rs` task-local used to provide.
+#[test]
+fn git_resolves_cwd_from_workspace_descriptor() {
+    use tinyagents::harness::context::{RunConfig, RunContext};
+    use tinyagents::harness::workspace::WorkspaceDescriptor;
+
+    let action_tmp = TempDir::new().unwrap();
+    let worktree_tmp = TempDir::new().unwrap();
+    let tool = test_tool(action_tmp.path());
+
+    // WITH a descriptor → the worktree root wins.
+    let ws =
+        WorkspaceDescriptor::new(worktree_tmp.path().to_path_buf()).with_policy_id("test-worktree");
+    let ctx: RunContext = RunContext::new(RunConfig::new("test-run"), ()).with_workspace(ws);
+    let tool_ctx = ToolExecutionContext::from_run_context(&ctx);
+    assert_eq!(
+        tool.effective_action_dir_for_context(Some(&tool_ctx)),
+        worktree_tmp.path().to_path_buf(),
+        "git with a WorkspaceDescriptor must resolve CWD to the worktree root"
+    );
+
+    // WITHOUT a descriptor → configured action_dir (non-isolated parity).
+    assert_eq!(
+        tool.effective_action_dir_for_context(None),
+        action_tmp.path().to_path_buf(),
+        "git with no descriptor must fall back to the configured action_dir"
+    );
+}
+
 #[test]
 fn requires_write_detection() {
     let tmp = TempDir::new().unwrap();

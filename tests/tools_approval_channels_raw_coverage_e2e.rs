@@ -308,6 +308,7 @@ fn coverage_agent_definition(
         delegate_name: delegate_name.map(str::to_string),
         agent_tier: AgentTier::Worker,
         source: DefinitionSource::Builtin,
+        graph: Default::default(),
     }
 }
 

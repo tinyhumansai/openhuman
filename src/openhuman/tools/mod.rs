@@ -34,6 +34,7 @@ pub use crate::openhuman::memory_diff::tools::*;
 pub use crate::openhuman::memory_goals::tools::*;
 pub use crate::openhuman::memory_search::*;
 pub use crate::openhuman::monitor::tools::*;
+pub use crate::openhuman::orchestration::tools::*;
 pub use crate::openhuman::people::tools::*;
 pub use crate::openhuman::referral::tools::*;
 pub use crate::openhuman::screen_intelligence::tools::*;

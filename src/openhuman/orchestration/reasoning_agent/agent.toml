@@ -1,0 +1,38 @@
+id = "reasoning_agent"
+display_name = "Orchestration Reasoning Core"
+when_to_use = "The deep-thinking reasoning core of the tiny.place orchestration wake graph. Receives macro-instructions from the front end, applies the current subconscious steering directive, and spawns execution sub-agents to do the real multi-step work."
+temperature = 0.4
+max_iterations = 20
+iteration_policy = "extended"
+sandbox_mode = "none"
+# Deep-thinking tier — it plans and delegates the real work to worker sub-agents.
+agent_tier = "reasoning"
+omit_identity = false
+omit_memory_context = true
+omit_safety_preamble = false
+omit_skills_catalog = true
+
+[model]
+# Reasoning tier (slower, deeper) — distinct from the front end's hint:chat.
+hint = "reasoning"
+
+[subagents]
+# Worker specialists it delegates execution to (never another reasoning agent —
+# the loader enforces the tier hierarchy).
+allowlist = [
+    "researcher",
+    "code_executor",
+    "tools_agent",
+]
+
+[tools]
+# Sub-agent spawning + the tiny.place read surface the orchestrator already uses.
+named = [
+    "spawn_async_subagent",
+    "wait",
+    "tinyplace_whoami",
+    "tinyplace_status",
+    "tinyplace_feed",
+    "current_time",
+    "resolve_time",
+]

@@ -2,11 +2,15 @@ use crate::openhuman::agent::host_runtime::RuntimeAdapter;
 use crate::openhuman::javascript::NodeBootstrap;
 use crate::openhuman::runtime_python::PythonBootstrap;
 use crate::openhuman::security::{AuditLogger, CommandExecutionLog, GateDecision, SecurityPolicy};
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult, ToolTimeout};
+use crate::openhuman::tools::traits::{
+    PermissionLevel, Tool, ToolCallOptions, ToolResult, ToolTimeout,
+};
 use async_trait::async_trait;
 use serde_json::json;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tinyagents::harness::tool::ToolExecutionContext;
 
 /// Maximum output size in bytes (1MB).
 const MAX_OUTPUT_BYTES: usize = 1_048_576;
@@ -141,14 +145,24 @@ impl ShellTool {
 
     /// Resolve the working directory for this shell invocation.
     ///
-    /// Returns the per-worker git-worktree override when one is installed via
-    /// [`crate::openhuman::agent::harness::with_action_dir_override`] (an
-    /// edit-capable worker running with `isolation = "worktree"`), otherwise
-    /// the shared `self.security.action_dir`. Keeping `security.action_dir` as
-    /// the fallback preserves the non-isolated behaviour exactly. See #3376.
-    fn effective_action_dir(&self) -> std::path::PathBuf {
-        crate::openhuman::agent::harness::current_action_dir_override()
-            .unwrap_or_else(|| self.security.action_dir.clone())
+    /// Returns the per-worker git-worktree checkout when the tinyagents harness
+    /// threaded a [`WorkspaceDescriptor`] into this call's
+    /// [`ToolExecutionContext`] — an edit-capable worker running with
+    /// `isolation = "worktree"`, whose isolated worktree root is carried on the
+    /// run context (`RunContext::with_workspace`) and surfaced per tool call via
+    /// `ToolExecutionContext::from_run_context`. Otherwise falls back to the
+    /// shared `self.security.action_dir`, which preserves the non-isolated
+    /// behaviour exactly. See #3376, #4249 (08.5).
+    fn effective_action_dir_for_context(&self, context: Option<&ToolExecutionContext>) -> PathBuf {
+        if let Some(workspace) = context.and_then(|ctx| ctx.workspace.as_ref()) {
+            tracing::debug!(
+                workspace_root = %workspace.root.display(),
+                policy_id = %workspace.policy_id,
+                "[shell] using TinyAgents workspace descriptor as action dir"
+            );
+            return workspace.root.clone();
+        }
+        self.security.action_dir.clone()
     }
 
     /// The explicit wall-clock budget for this invocation, or `None` to run
@@ -254,6 +268,25 @@ impl Tool for ShellTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_in_context(args, None).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: ToolCallOptions,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
+        self.execute_in_context(args, context).await
+    }
+}
+
+impl ShellTool {
+    async fn execute_in_context(
+        &self,
+        args: serde_json::Value,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
         let command = args
             .get("command")
             .and_then(|v| v.as_str())
@@ -266,7 +299,9 @@ impl Tool for ShellTool {
         let requested_timeout = args.get("timeout_secs").and_then(|v| v.as_u64());
 
         let start = Instant::now();
-        let (allowed, result) = self.run_with_security(command, requested_timeout).await;
+        let (allowed, result) = self
+            .run_with_security_in_context(command, requested_timeout, context)
+            .await;
         let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
         // `allowed` = passed the in-tool security checks. `approved` = the command
         // is Prompt-class (required human approval) and thus went through the
@@ -295,6 +330,16 @@ impl ShellTool {
         &self,
         command: &str,
         requested_timeout: Option<u64>,
+    ) -> (bool, ToolResult) {
+        self.run_with_security_in_context(command, requested_timeout, None)
+            .await
+    }
+
+    async fn run_with_security_in_context(
+        &self,
+        command: &str,
+        requested_timeout: Option<u64>,
+        context: Option<&ToolExecutionContext>,
     ) -> (bool, ToolResult) {
         // Read-only `Block` + the Option-2 structural guard. Approval for
         // Write / Network / Destructive already happened at the harness
@@ -325,16 +370,17 @@ impl ShellTool {
             crate::openhuman::agent::harness::current_sandbox_mode(),
             Some(crate::openhuman::agent::harness::definition::SandboxMode::Sandboxed)
         ) {
-            return self.run_sandboxed(command, requested_timeout).await;
+            let action_dir = self.effective_action_dir_for_context(context);
+            return self
+                .run_sandboxed(command, requested_timeout, &action_dir)
+                .await;
         }
 
         // Execute with timeout to prevent hanging commands.
         // Clear the environment to prevent leaking API keys and other secrets
         // (CWE-200), then re-add only safe, functional variables.
-        let mut cmd = match self
-            .runtime
-            .build_shell_command(command, &self.effective_action_dir())
-        {
+        let action_dir = self.effective_action_dir_for_context(context);
+        let mut cmd = match self.runtime.build_shell_command(command, &action_dir) {
             Ok(cmd) => cmd,
             Err(e) => {
                 return (
@@ -449,13 +495,14 @@ impl ShellTool {
         &self,
         command: &str,
         requested_timeout: Option<u64>,
+        action_dir: &Path,
     ) -> (bool, ToolResult) {
         use crate::openhuman::sandbox;
 
         let config = crate::openhuman::config::RuntimeConfig::default();
         let policy = sandbox::resolve_sandbox_policy(
             crate::openhuman::agent::harness::definition::SandboxMode::Sandboxed,
-            &self.effective_action_dir(),
+            action_dir,
             &config,
             false,
         );
@@ -494,14 +541,7 @@ impl ShellTool {
             "[shell] starting sandboxed command"
         );
 
-        match sandbox::execute_in_sandbox(
-            &policy,
-            command,
-            &self.security.action_dir,
-            extra_env,
-            effective,
-        )
-        .await
+        match sandbox::execute_in_sandbox(&policy, command, action_dir, extra_env, effective).await
         {
             Ok(result) => {
                 let tool_result = if result.timed_out {
@@ -898,10 +938,20 @@ mod tests {
             ("node_exec.rs", NODE_EXEC_SRC),
             ("npm_exec.rs", NPM_EXEC_SRC),
         ] {
+            // The tool CWD must resolve against `action_dir`, sourced from the
+            // tool's own `self.security`. Two accepted spellings:
+            //   * direct: `self.security.action_dir` (shell.rs / node_exec.rs)
+            //   * workspace-context-aware: `security_for_tool_context(&self.security, …)`
+            //     → `resolve_cwd(&path_policy.action_dir, …)` (npm_exec.rs, #4249)
+            // Both keep CWD rooted at `action_dir` and tied to `self.security`;
+            // neither may reach for `workspace_dir`.
+            let direct = src.contains("self.security.action_dir");
+            let context_aware = src.contains("security_for_tool_context(&self.security")
+                && src.contains("path_policy.action_dir");
             assert!(
-                src.contains("self.security.action_dir"),
-                "{name} must reference `self.security.action_dir` for tool CWD \
-                 (see #3074, #3238)"
+                direct || context_aware,
+                "{name} must route tool CWD through `action_dir` sourced from \
+                 `self.security` (see #3074, #3238, #4249)"
             );
             assert!(
                 !src.contains(&bad_call_1) && !src.contains(&bad_call_2),
@@ -909,6 +959,82 @@ mod tests {
                  acting tools spawn into `action_dir`. See #3074, #3238."
             );
         }
+    }
+
+    /// Build a `ToolExecutionContext` carrying a `WorkspaceDescriptor` rooted
+    /// at `root`, mirroring what the tinyagents harness threads into every tool
+    /// call of a worktree-isolated worker (`RunContext::with_workspace` →
+    /// `ToolExecutionContext::from_run_context`).
+    fn tool_context_with_workspace(root: &std::path::Path) -> ToolExecutionContext {
+        use tinyagents::harness::context::{RunConfig, RunContext};
+        use tinyagents::harness::workspace::WorkspaceDescriptor;
+        let ws = WorkspaceDescriptor::new(root.to_path_buf()).with_policy_id("test-worktree");
+        let ctx: RunContext = RunContext::new(RunConfig::new("test-run"), ()).with_workspace(ws);
+        ToolExecutionContext::from_run_context(&ctx)
+    }
+
+    /// Parity guard for the worktree-isolation action-dir override (#3376,
+    /// #4249 08.5). A worktree-isolated worker's shell command MUST spawn inside
+    /// the isolated worktree, sourced from the carried `WorkspaceDescriptor`, not
+    /// the shared `security.action_dir`. This encodes the exact behaviour the
+    /// deleted `worktree_context.rs` task-local used to provide.
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn shell_uses_workspace_descriptor_root_as_cwd() {
+        let action_tmp = tempfile::tempdir().expect("create action tempdir");
+        let worktree_tmp = tempfile::tempdir().expect("create worktree tempdir");
+        let security = Arc::new(SecurityPolicy {
+            autonomy: AutonomyLevel::Full,
+            workspace_dir: std::env::temp_dir(),
+            action_dir: action_tmp.path().to_path_buf(),
+            ..SecurityPolicy::default()
+        });
+        let tool = ShellTool::new(security.clone(), test_runtime(), test_audit());
+
+        // WITH a descriptor → pwd reports the worktree root, never action_dir.
+        let ctx = tool_context_with_workspace(worktree_tmp.path());
+        let result = tool
+            .execute_with_context(
+                json!({"command": "pwd"}),
+                crate::openhuman::tools::traits::ToolCallOptions {
+                    prefer_markdown: false,
+                },
+                Some(&ctx),
+            )
+            .await
+            .expect("pwd executes");
+        assert!(!result.is_error, "{}", result.output());
+        let reported = std::path::PathBuf::from(result.output().trim());
+        let reported = reported.canonicalize().unwrap_or(reported);
+        let expected_wt = worktree_tmp
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| worktree_tmp.path().to_path_buf());
+        let action_canon = action_tmp
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| action_tmp.path().to_path_buf());
+        assert_eq!(
+            reported, expected_wt,
+            "shell with a WorkspaceDescriptor must spawn in the worktree root"
+        );
+        assert_ne!(
+            reported, action_canon,
+            "shell must NOT fall back to security.action_dir when a descriptor is present"
+        );
+
+        // WITHOUT a descriptor → pwd reports action_dir (non-isolated parity).
+        let result = tool
+            .execute(json!({"command": "pwd"}))
+            .await
+            .expect("pwd executes");
+        assert!(!result.is_error, "{}", result.output());
+        let reported = std::path::PathBuf::from(result.output().trim());
+        let reported = reported.canonicalize().unwrap_or(reported);
+        assert_eq!(
+            reported, action_canon,
+            "shell with no descriptor must fall back to security.action_dir"
+        );
     }
 
     #[tokio::test]

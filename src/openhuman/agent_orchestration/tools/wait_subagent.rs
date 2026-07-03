@@ -97,17 +97,22 @@ impl Tool for WaitSubagentTool {
             .unwrap_or(DEFAULT_TIMEOUT_SECS)
             .clamp(1, MAX_TIMEOUT_SECS);
 
-        let parent_session = match current_parent() {
-            Some(parent) => parent.session_id,
+        let parent = match current_parent() {
+            Some(parent) => parent,
             None => {
                 return Ok(ToolResult::error(
                     "wait_subagent called outside of an agent turn",
                 ));
             }
         };
+        let parent_session = parent.session_id;
 
         let resolved_task_id = if task_id.is_empty() {
-            match running_subagents::task_id_for_session(&subagent_session_id, &parent_session) {
+            match running_subagents::task_id_for_session_in_workspace(
+                &subagent_session_id,
+                &parent_session,
+                &parent.workspace_dir,
+            ) {
                 Ok(id) => id,
                 Err(WaitError::Unknown) => {
                     return Ok(ToolResult::error(format!(
@@ -135,12 +140,17 @@ impl Tool for WaitSubagentTool {
             timeout_secs
         );
 
-        let resume_ref =
-            running_subagents::resume_ref_for_task(&resolved_task_id, &parent_session).ok();
-
-        match running_subagents::wait(
+        let resume_ref = running_subagents::resume_ref_for_task_in_workspace(
             &resolved_task_id,
             &parent_session,
+            &parent.workspace_dir,
+        )
+        .ok();
+
+        match running_subagents::wait_in_workspace(
+            &resolved_task_id,
+            &parent_session,
+            &parent.workspace_dir,
             Duration::from_secs(timeout_secs),
         )
         .await

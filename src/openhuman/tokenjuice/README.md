@@ -1,6 +1,6 @@
 # tokenjuice
 
-Terminal-output compaction engine. A Rust port of [vincentkoc/tokenjuice](https://github.com/vincentkoc/tokenjuice) that shrinks verbose tool/command output (git, npm, cargo, docker, kubectl, lint, test runners, …) **before** it enters an LLM context window. Given a tool invocation (tool name, argv/command, stdout/stderr, exit code), it classifies the output against a JSON-configured rule set, applies filtering / summarisation / counting transforms, and returns a compacted inline string plus reduction stats. It is a **pure library**: no JSON-RPC surface, no CLI, no persistence, no event bus. The only outside consumer is the agent tool loop, which calls `compact_tool_output` after each successful tool call.
+Terminal-output compaction engine. A Rust port of [vincentkoc/tokenjuice](https://github.com/vincentkoc/tokenjuice) that shrinks verbose tool/command output (git, npm, cargo, docker, kubectl, lint, test runners, …) **before** it enters an LLM context window. Given a tool invocation (tool name, argv/command, stdout/stderr, exit code), it classifies the output against a JSON-configured rule set, applies filtering / summarisation / counting transforms, and returns a compacted inline string plus reduction stats. It is a **pure library**: no JSON-RPC surface, no CLI, no persistence, no event bus. The live TinyAgents tool-output middleware calls the policy-aware `compact_output_with_policy` entry point after tool calls.
 
 ## Responsibilities
 
@@ -11,7 +11,7 @@ Terminal-output compaction engine. A Rust port of [vincentkoc/tokenjuice](https:
 - Failure-aware summarisation: when `exit_code != 0` and a rule has `failure.preserveOnFailure`, use the wider `failure.head`/`failure.tail` window.
 - Decide between compacted vs passthrough output (tiny outputs ≤240 chars and file-inspection commands like `cat`/`sed`/`jq` are returned verbatim) and clamp to `max_inline_chars` (default 1200) with end- or middle-truncation.
 - Load/compile rules from a three-layer overlay (builtin → user → project), precompiling all regex at load time.
-- Provide a pass-through-safe agent glue (`compact_tool_output`) that only substitutes the compacted text when it is meaningfully smaller (ratio ≤ 0.95 and below 512-byte input is skipped entirely).
+- Provide pass-through-safe agent glue (`compact_output_with_policy` / `compact_tool_output_with_policy`) that only substitutes the compacted text when it is meaningfully smaller (ratio ≤ 0.95 and below 512-byte input is skipped entirely).
 
 ## Key files
 
@@ -21,7 +21,7 @@ Terminal-output compaction engine. A Rust port of [vincentkoc/tokenjuice](https:
 | `src/openhuman/tokenjuice/types.rs` | All serde types mirroring upstream shapes: `JsonRule` + sub-types (`RuleMatch`, `RuleFilters`, `RuleTransforms`, `RuleSummarize`, `RuleCounter`, `RuleOutputMatch`, `RuleFailure`, `CounterSource`), compiled forms (`CompiledRule`, `CompiledParts`, `CompiledCounter`, `CompiledOutputMatch`, `RuleOrigin`), I/O types (`ToolExecutionInput`, `ReduceOptions`, `CompactResult`, `ReductionStats`, `ClassificationResult`, `RuleFixture`). |
 | `src/openhuman/tokenjuice/reduce.rs` | The main pipeline: `reduce_execution_with_rules`, command tokenization/normalisation, git-status and gh post-processors, JSON pretty-print, `apply_rule`, passthrough/inline selection, char clamping. Thread-local regex cache for hot per-line patterns. |
 | `src/openhuman/tokenjuice/classify.rs` | `matches_rule`, `score_rule`, `classify_execution` — rule matching + specificity scoring. |
-| `src/openhuman/tokenjuice/tool_integration.rs` | Agent glue: `compact_tool_output` + `CompactionStats`, lazily-cached builtin rule set, `extract_command_argv` for shell-shaped tool arguments. |
+| `src/openhuman/tokenjuice/tool_integration.rs` | Agent glue: `compact_output_with_policy`, `compact_tool_output_with_policy` + `CompactionStats`, lazily-cached builtin rule set, `extract_command_argv` for shell-shaped tool arguments. |
 | `src/openhuman/tokenjuice/rules/mod.rs` | Re-exports `compile_rule`, `load_builtin_rules`, `load_rules`, `LoadRuleOptions`. |
 | `src/openhuman/tokenjuice/rules/loader.rs` | Three-layer overlay loader (builtin/user/project), recursive `.json` discovery, id-keyed overlay merge, fallback-last sort. |
 | `src/openhuman/tokenjuice/rules/compiler.rs` | `compile_rule`: builds `regex::Regex` (translating JS `i`/`m` flags to inline flags); drops invalid regex non-fatally. |
@@ -41,12 +41,13 @@ Re-exported from `mod.rs`:
 
 - `reduce_execution_with_rules(input, rules, opts) -> CompactResult` — synchronous core pipeline against a pre-loaded rule set.
 - `load_builtin_rules() -> Vec<CompiledRule>` — embedded rules only (no disk I/O); `load_rules(&LoadRuleOptions)` for the full builtin/user/project overlay.
-- `compact_tool_output(tool_name, arguments, output, exit_code) -> (String, CompactionStats)` — the agent-facing, pass-through-safe entry point.
+- `compact_output_with_policy(content, tool_name, enabled, profile) -> String` — the TinyAgents middleware-facing, pass-through-safe entry point.
+- `compact_tool_output_with_policy(tool_name, arguments, output, exit_code, profile) -> (String, CompactionStats)` — the full adapter for call sites that have raw tool arguments and exit code.
 - Types: `CompactResult`, `ReduceOptions`, `ToolExecutionInput`, `CompactionStats`, `LoadRuleOptions`.
 
 ## Persistence
 
-None at runtime. Builtin rules are embedded at compile time. Optionally reads rule JSON from disk at load time (not written): user layer `~/.config/tokenjuice/rules/` and project layer `<cwd>/.tokenjuice/rules/` (both overridable / skippable via `LoadRuleOptions`). `compact_tool_output` uses only the builtin set.
+None at runtime. Builtin rules are embedded at compile time. Optionally reads rule JSON from disk at load time (not written): user layer `~/.config/tokenjuice/rules/` and project layer `<cwd>/.tokenjuice/rules/` (both overridable / skippable via `LoadRuleOptions`). The policy-aware tool adapters use the installed runtime options.
 
 ## Dependencies
 
@@ -61,13 +62,14 @@ This module is **fully self-contained within `openhuman`** — it has no `use cr
 
 ## Used by
 
-- `src/openhuman/agent/harness/tool_loop.rs` — the only consumer. Calls `crate::openhuman::tokenjuice::compact_tool_output(&call.name, Some(&call.arguments), &scrubbed, Some(0))` after a successful tool call (post credential-scrub) to compact tool output before it is fed back to the model.
+- `ToolOutputMiddleware` calls `compact_output_with_policy` after tool calls on the live TinyAgents path.
+- The legacy direct executor also calls `compact_output_with_policy` until the old path is removed.
 
 ## Notes / gotchas
 
 - **Library-only by design** (v1). No RPC/CLI/store/bus surfaces; the module docstring states they can be layered on later.
 - `generic/fallback` rule **must** be present in any rule set — `reduce_execution_with_rules` `expect`s it, and the loader always sorts it last so it never shadows a more specific rule.
-- Pass-through safety: `compact_tool_output` returns the untouched original (and `stats.applied == false`) for inputs < 512 bytes or when compaction ratio > 0.95 — callers never need to guard the call site, and data is never silently lost.
+- Pass-through safety: the policy-aware adapters return the untouched original (and `stats.applied == false` where stats are available) for inputs < 512 bytes or when compaction ratio > 0.95 — callers never need to guard the call site, and data is never silently lost.
 - `git/status` and `cloud/gh` carry **hard-coded** post-processors in `reduce.rs` keyed off `rule.id`, beyond what the JSON rules express.
 - JS→Rust regex flag translation: only `i` and `m` are honoured (as inline `(?i)`/`(?m)`); Unicode is always on in Rust's `regex` (no separate `u` flag). Invalid regex in a rule is logged and dropped, not fatal.
 - Disk-loaded rule files ending in `.schema.json` or `.fixture.json` are excluded from discovery; symlinks are skipped.

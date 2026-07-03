@@ -464,6 +464,14 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     "watch_calendar",
                     "When true, the heartbeat watches the connected calendar to drive auto-join / ask-to-join, independent of meeting reminder notifications.",
                 ),
+                optional_string(
+                    "calendar_provider",
+                    "Calendar detection source for Google Meet: composio | recall.",
+                ),
+                optional_string(
+                    "reply_display_name",
+                    "The user's meeting display name, reused as the bot's reply anchor on join.",
+                ),
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
@@ -513,6 +521,18 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     name: "watch_calendar",
                     ty: TypeSchema::Bool,
                     comment: "Whether the heartbeat watches the calendar to drive auto-join / ask.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "calendar_provider",
+                    ty: TypeSchema::String,
+                    comment: "Calendar detection source for Google Meet: composio | recall.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "reply_display_name",
+                    ty: TypeSchema::String,
+                    comment: "The user's meeting display name, reused as the bot's reply anchor on join.",
                     required: false,
                 },
             ],

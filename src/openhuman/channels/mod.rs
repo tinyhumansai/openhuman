@@ -23,8 +23,6 @@ pub use providers::imessage;
 pub use providers::irc;
 pub use providers::lark;
 pub use providers::linq;
-#[cfg(feature = "channel-matrix")]
-pub use providers::matrix;
 pub use providers::mattermost;
 pub use providers::qq;
 pub use providers::signal;
@@ -44,8 +42,6 @@ pub use imessage::IMessageChannel;
 pub use irc::IrcChannel;
 pub use lark::LarkChannel;
 pub use linq::LinqChannel;
-#[cfg(feature = "channel-matrix")]
-pub use matrix::MatrixChannel;
 pub use mattermost::MattermostChannel;
 pub use qq::QQChannel;
 pub use signal::SignalChannel;

@@ -17,8 +17,6 @@ use crate::openhuman::channels::irc;
 use crate::openhuman::channels::irc::IrcChannel;
 use crate::openhuman::channels::lark::LarkChannel;
 use crate::openhuman::channels::linq::LinqChannel;
-#[cfg(feature = "channel-matrix")]
-use crate::openhuman::channels::matrix::MatrixChannel;
 use crate::openhuman::channels::mattermost::MattermostChannel;
 use crate::openhuman::channels::qq::QQChannel;
 use crate::openhuman::channels::signal::SignalChannel;
@@ -525,22 +523,9 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         channels.push(Arc::new(IMessageChannel::new(im.allowed_contacts.clone())));
     }
 
-    #[cfg(feature = "channel-matrix")]
-    if let Some(ref mx) = config.channels_config.matrix {
-        channels.push(Arc::new(MatrixChannel::new_with_session_hint(
-            mx.homeserver.clone(),
-            mx.access_token.clone(),
-            mx.room_id.clone(),
-            mx.allowed_users.clone(),
-            mx.user_id.clone(),
-            mx.device_id.clone(),
-        )));
-    }
-
-    #[cfg(not(feature = "channel-matrix"))]
     if config.channels_config.matrix.is_some() {
         tracing::warn!(
-            "Matrix channel is configured but this build was compiled without `channel-matrix`; skipping Matrix runtime startup."
+            "Matrix channel is configured but Matrix support was removed from this build; skipping Matrix runtime startup."
         );
     }
 

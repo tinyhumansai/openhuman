@@ -2647,6 +2647,31 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     process_recovery::reap_stale_openhuman_processes();
 
+    // ── Windows pre-CEF proactive stale-process reap (issue #3605) ────────
+    // The Win32 mutex above already guaranteed we are the only *top-level*
+    // instance past that point — a concurrent secondary saw
+    // `ERROR_ALREADY_EXISTS` and exited before reaching here. So any
+    // surviving `openhuman.exe` / `openhuman-core.exe` is a *wedged prior
+    // instance* left behind by an update or hard exit, not a legitimate
+    // peer. Reap it proactively (TERM then KILL) — the cross-platform
+    // analogue of the macOS reap above.
+    //
+    // This must run BEFORE `cef_singleton_wait::wait_for_cache_release()`:
+    // a wedged prior process that never exits on its own keeps the CEF
+    // cache lock until that bounded wait times out and exits this instance
+    // (code 0) — i.e. the updated app silently refuses to start until the
+    // user manually kills the old process (the exact #3605 symptom).
+    // Actively reaping the holder lets the new version take over instead of
+    // bailing out.
+    //
+    // NOT done on Linux here: unlike Windows, the Linux
+    // `tauri-plugin-single-instance` guard registers later (in the builder),
+    // so at this preflight point a concurrent second launch has no
+    // single-instance guarantee and a bare reap could kill a legitimate
+    // peer. Linux needs the macOS-style live-lock-holder guard first.
+    #[cfg(target_os = "windows")]
+    process_recovery::reap_stale_openhuman_processes();
+
     // ── Windows pre-CEF cache-lock wait (Sentry TAURI-RUST-F) ─────────────
     // The Win32 mutex above stops a *concurrent* second launch, but on a
     // *sequential* relaunch (auto-update, fast quit+reopen, restart) the prior

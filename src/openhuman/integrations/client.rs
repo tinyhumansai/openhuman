@@ -84,8 +84,8 @@ fn managed_budget_applies_to_path(path: &str) -> bool {
 ///    `core::jsonrpc::is_session_expired_error` *if* it ever propagates up to
 ///    the RPC boundary.
 /// 2. **Publish `DomainEvent::SessionExpired` directly.** The autonomous agent
-///    loop (`agent/harness/engine/tools.rs::run_one_tool`) swallows tool errors
-///    into a `role:tool` result string fed back to the model — the `Err` never
+///    tool path converts tool errors into a `role:tool` result string fed back
+///    to the model — the `Err` never
 ///    reaches `jsonrpc::invoke_method`, so relying on propagation alone would
 ///    leave re-login un-triggered (this is the root-cause gap behind
 ///    TAURI-RUST-84E: the prior fix demoted the noise but never drove

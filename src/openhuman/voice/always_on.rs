@@ -424,12 +424,21 @@ async fn transcribe_and_deliver(config: &Config, samples_16k: Vec<f32>) {
                     deliver_command(config, cmd).await;
                 }
                 None => {
-                    // Visible at info so the user can see WHAT was heard when the
-                    // wake word didn't match (diagnoses "Hey Tiny not responding").
-                    log::info!(
-                        "{LOG_PREFIX} no wake word ({:?}) in transcript={text:?}; ignored",
-                        config.voice_server.wake_word
-                    );
+                    if wake_word_present(&text, &config.voice_server.wake_word) {
+                        // Wake word spoken with no trailing command ("Hey Tiny").
+                        // Acknowledge with an agent turn so the user gets a reply
+                        // instead of silence, then they can follow up.
+                        log::info!("{LOG_PREFIX} bare wake word → acknowledging");
+                        notch_status("Listening…", 8000);
+                        deliver_command(config, "hello".to_string()).await;
+                    } else {
+                        // Visible at info so the user can see WHAT was heard when the
+                        // wake word didn't match (diagnoses "Hey Tiny not responding").
+                        log::info!(
+                            "{LOG_PREFIX} no wake word ({:?}) in transcript={text:?}; ignored",
+                            config.voice_server.wake_word
+                        );
+                    }
                 }
             }
         }
@@ -574,18 +583,35 @@ async fn osa(script: &str) -> Result<(), String> {
 /// the agent). An empty `wake_word` disables the gate (every utterance passes).
 /// Matching is tolerant: case-insensitive, punctuation-insensitive, and the
 /// phrase may appear after leading filler ("um, hey tiny, play music").
+/// Tokenize into lowercase alphanumeric words — shared by the wake-word matcher
+/// and the bare-wake detector so both apply identical normalization.
+fn wake_tokens(s: &str) -> Vec<String> {
+    s.to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .map(String::from)
+        .collect()
+}
+
+/// True when the configured wake word appears near the start of the transcript,
+/// regardless of whether a command follows. Lets the caller acknowledge a bare
+/// wake word ("Hey Tiny" with nothing after it) instead of silently dropping it.
+pub(crate) fn wake_word_present(transcript: &str, wake_word: &str) -> bool {
+    let wake = wake_tokens(wake_word);
+    if wake.is_empty() {
+        return false;
+    }
+    let t = wake_tokens(transcript);
+    let anchor = wake.iter().max_by_key(|w| w.len()).cloned().unwrap();
+    let max_dist = if anchor.chars().count() <= 4 { 1 } else { 2 };
+    (0..t.len().min(3)).any(|i| levenshtein(&t[i], &anchor) <= max_dist)
+}
+
 pub(crate) fn extract_command(transcript: &str, wake_word: &str) -> Option<String> {
-    let tokens = |s: &str| -> Vec<String> {
-        s.to_lowercase()
-            .chars()
-            .map(|c| if c.is_alphanumeric() { c } else { ' ' })
-            .collect::<String>()
-            .split_whitespace()
-            .map(String::from)
-            .collect()
-    };
-    let wake = tokens(wake_word);
-    let t = tokens(transcript);
+    let wake = wake_tokens(wake_word);
+    let t = wake_tokens(transcript);
     if wake.is_empty() {
         // No wake word configured → deliver everything (non-empty).
         return if t.is_empty() {
@@ -1037,5 +1063,24 @@ mod tests {
             Some("just say this")
         );
         assert_eq!(extract_command("   ", ""), None);
+    }
+
+    #[test]
+    fn wake_word_present_detects_bare_and_fuzzy() {
+        // Bare wake word (no command) is still detected so the caller can ack.
+        assert!(wake_word_present("Hey Tiny", "Hey Tiny"));
+        assert!(wake_word_present("hey tiny!", "Hey Tiny"));
+        // Fuzzy anchor (STT mangles "tiny" → "tony"/"tinny").
+        assert!(wake_word_present("hey tony", "Hey Tiny"));
+        // Wake word followed by a command also counts as present.
+        assert!(wake_word_present("Hey Tiny, play music", "Hey Tiny"));
+    }
+
+    #[test]
+    fn wake_word_present_false_when_absent() {
+        assert!(!wake_word_present("play some music", "Hey Tiny"));
+        assert!(!wake_word_present("", "Hey Tiny"));
+        // No wake word configured → never a bare-wake ack.
+        assert!(!wake_word_present("anything at all", ""));
     }
 }

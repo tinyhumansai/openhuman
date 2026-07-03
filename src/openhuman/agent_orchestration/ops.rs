@@ -455,6 +455,20 @@ impl AgentOrchestrationSession {
                 .await;
         }
 
+        let parent_workspace_descriptor = parent.workspace_descriptor.clone();
+        let parent_worktree_action_dir = parent_workspace_descriptor
+            .as_ref()
+            .map(|descriptor| descriptor.root.clone());
+        if let Some(descriptor) = parent_workspace_descriptor.as_ref() {
+            tracing::debug!(
+                orchestration_id = %orchestration_id,
+                agent_id = %agent_id,
+                workspace_root = %descriptor.root.display(),
+                policy_id = %descriptor.policy_id,
+                "[agent_orchestration] inheriting parent workspace descriptor"
+            );
+        }
+
         let options = SubagentRunOptions {
             skill_filter_override: None,
             toolkit_override: request.toolkit,
@@ -464,7 +478,8 @@ impl AgentOrchestrationSession {
             worker_thread_id: None,
             initial_history: None,
             checkpoint_dir: None,
-            worktree_action_dir: None,
+            worktree_action_dir: parent_worktree_action_dir,
+            workspace_descriptor: parent_workspace_descriptor,
             run_queue: None,
         };
 

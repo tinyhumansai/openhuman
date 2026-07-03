@@ -2,11 +2,11 @@ use super::*;
 use crate::core::event_bus::{global, init_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::XmlToolDispatcher;
 use crate::openhuman::agent::hooks::{PostTurnHook, TurnContext};
-use crate::openhuman::agent::memory_loader::MemoryLoader;
 use crate::openhuman::agent::tool_policy::{
     GeneratedToolRuntimeContext, GeneratedToolRuntimeRisk, ToolPolicy, ToolPolicyDecision,
     ToolPolicyRequest,
 };
+use crate::openhuman::agent_memory::memory_loader::MemoryLoader;
 use crate::openhuman::inference::provider::{
     ChatMessage, ChatRequest, ChatResponse, ConversationMessage, Provider, ToolResultMessage,
     UsageInfo,
@@ -570,171 +570,17 @@ async fn transcript_resume_is_bounded_by_max_history_messages() {
     assert_eq!(cached[4].content, "a7");
 }
 
-#[tokio::test]
-async fn execute_tool_call_blocks_invisible_tool_and_emits_events() {
-    let _ = init_global(64);
-    let events = Arc::new(AsyncMutex::new(Vec::<DomainEvent>::new()));
-    let events_handler = Arc::clone(&events);
-    let _handle = global().unwrap().on("turn-events-test", move |event| {
-        let events = Arc::clone(&events_handler);
-        let cloned = event.clone();
-        Box::pin(async move {
-            events.lock().await.push(cloned);
-        })
-    });
-
-    let mut visible = HashSet::new();
-    visible.insert("other".to_string());
-    let agent = make_agent(Some(visible));
-    let call = ParsedToolCall {
-        name: "echo".into(),
-        arguments: serde_json::json!({}),
-        tool_call_id: Some("tc-1".into()),
-    };
-
-    let (result, record) = agent.execute_tool_call(&call, 0).await;
-    assert!(!result.success);
-    assert!(result.output.contains("not available to this agent"));
-    assert_eq!(record.name, "echo");
-    assert!(!record.success);
-
-    sleep(Duration::from_millis(20)).await;
-    let captured = events.lock().await;
-    assert!(captured.iter().any(|event| matches!(
-        event,
-        DomainEvent::ToolExecutionStarted { tool_name, session_id }
-            if tool_name == "echo" && session_id == "turn-test-session"
-    )));
-    assert!(captured.iter().any(|event| matches!(
-        event,
-        DomainEvent::ToolExecutionCompleted {
-            tool_name,
-            session_id,
-            success,
-            ..
-        } if tool_name == "echo" && session_id == "turn-test-session" && !success
-    )));
-}
-
-#[tokio::test]
-async fn execute_tool_call_reports_unknown_tool() {
-    let agent = make_agent(None);
-    let call = ParsedToolCall {
-        name: "missing".into(),
-        arguments: serde_json::json!({}),
-        tool_call_id: None,
-    };
-
-    let (result, record) = agent.execute_tool_call(&call, 0).await;
-    assert!(!result.success);
-    assert!(result.output.contains("Unknown tool: missing"));
-    assert_eq!(record.name, "missing");
-    assert!(!record.success);
-}
-
-#[tokio::test]
-async fn execute_tool_call_rewrites_legacy_run_skill_for_builtin_cron_tools() {
-    let provider: Arc<dyn Provider> = Arc::new(DummyProvider);
-    let agent = make_agent_with_builder(
-        provider,
-        vec![Box::new(CronAddProbeTool)],
-        Box::new(FixedMemoryLoader {
-            context: String::new(),
-        }),
-        vec![],
-        crate::openhuman::config::AgentConfig::default(),
-        crate::openhuman::config::ContextConfig::default(),
-    );
-    let call = ParsedToolCall {
-        name: "run_skill".into(),
-        arguments: serde_json::json!({
-            "skill_id": "cron_add",
-            "inputs": {
-              "name": "water-reminder",
-              "schedule": { "kind": "every", "every_ms": 60000 },
-              "job_type": "agent",
-              "prompt": "remind me to drink water"
-            }
-        }),
-        tool_call_id: Some("tc-run-skill-1".into()),
-    };
-
-    let (result, record) = agent.execute_tool_call(&call, 0).await;
-    assert!(result.success, "{}", result.output);
-    assert_eq!(result.name, "cron_add");
-    assert_eq!(record.name, "cron_add");
-    assert!(result.output.contains("\"every_ms\":60000"));
-}
-
-#[tokio::test]
-async fn execute_tool_call_rewrites_run_workflow_for_builtin_cron_tools() {
-    let provider: Arc<dyn Provider> = Arc::new(DummyProvider);
-    let agent = make_agent_with_builder(
-        provider,
-        vec![Box::new(CronAddProbeTool)],
-        Box::new(FixedMemoryLoader {
-            context: String::new(),
-        }),
-        vec![],
-        crate::openhuman::config::AgentConfig::default(),
-        crate::openhuman::config::ContextConfig::default(),
-    );
-    // Current form: `run_workflow({workflow_id: "<builtin>", inputs})`.
-    let call = ParsedToolCall {
-        name: "run_workflow".into(),
-        arguments: serde_json::json!({
-            "workflow_id": "cron_add",
-            "inputs": {
-              "name": "water-reminder",
-              "schedule": { "kind": "every", "every_ms": 60000 },
-              "job_type": "agent",
-              "prompt": "remind me to drink water"
-            }
-        }),
-        tool_call_id: Some("tc-run-workflow-1".into()),
-    };
-
-    let (result, record) = agent.execute_tool_call(&call, 0).await;
-    assert!(result.success, "{}", result.output);
-    assert_eq!(result.name, "cron_add");
-    assert_eq!(record.name, "cron_add");
-    assert!(result.output.contains("\"every_ms\":60000"));
-}
-
-#[tokio::test]
-async fn execute_tool_call_denies_tool_above_channel_permission() {
-    let calls = Arc::new(AtomicUsize::new(0));
-    let provider: Arc<dyn Provider> = Arc::new(DummyProvider);
-    let mut config = crate::openhuman::config::AgentConfig::default();
-    config
-        .channel_permissions
-        .insert("turn-test-channel".into(), "read_only".into());
-    let agent = make_agent_with_builder(
-        provider,
-        vec![Box::new(CountingWriteTool {
-            calls: Arc::clone(&calls),
-        })],
-        Box::new(FixedMemoryLoader {
-            context: String::new(),
-        }),
-        vec![],
-        config,
-        crate::openhuman::config::ContextConfig::default(),
-    );
-    let call = ParsedToolCall {
-        name: "write_notes".into(),
-        arguments: serde_json::json!({"text":"hello"}),
-        tool_call_id: Some("write-1".into()),
-    };
-
-    let (result, record) = agent.execute_tool_call(&call, 0).await;
-
-    assert!(!result.success);
-    assert!(result.output.contains("blocked by tool policy"));
-    assert_eq!(record.name, "write_notes");
-    assert!(!record.success);
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
-}
+// NOTE: The `execute_tool_call_*` tests that exercised the legacy per-call
+// direct tool executor (`Agent::execute_tool_call`) were removed during the
+// tinyagents migration. The direct executor and its test-only parity shim
+// (`session/agent_tool_exec.rs`) were deleted (commit 8aba23886); tool
+// execution now happens inside the tinyagents graph turn, so these tests target
+// an API that no longer exists. Removed: blocks_invisible_tool_and_emits_events,
+// reports_unknown_tool, rewrites_legacy_run_skill_for_builtin_cron_tools,
+// rewrites_run_workflow_for_builtin_cron_tools,
+// denies_tool_above_channel_permission (and, below,
+// denies_by_policy_before_tool_runs, threads_generated_tool_context_into_policy,
+// applies_inline_result_budget).
 
 #[test]
 fn system_prompt_includes_tool_policy_boundary() {
@@ -801,89 +647,9 @@ fn set_agent_definition_name_refreshes_tool_policy_identity() {
     assert!(prompt.contains("Agent: renamed_agent"));
 }
 
-#[tokio::test]
-async fn execute_tool_call_denies_by_policy_before_tool_runs() {
-    let workspace = tempfile::TempDir::new().expect("temp workspace");
-    let workspace_path = workspace.path().to_path_buf();
-    std::mem::forget(workspace);
-    let memory_cfg = crate::openhuman::config::MemoryConfig {
-        backend: "none".into(),
-        ..crate::openhuman::config::MemoryConfig::default()
-    };
-    let mem: Arc<dyn Memory> = Arc::from(
-        crate::openhuman::memory_store::create_memory(&memory_cfg, &workspace_path).unwrap(),
-    );
-    let calls = Arc::new(AtomicUsize::new(0));
-
-    let agent = Agent::builder()
-        .provider(Box::new(DummyProvider))
-        .tools(vec![Box::new(CountingTool {
-            calls: Arc::clone(&calls),
-        })])
-        .memory(mem)
-        .tool_dispatcher(Box::new(XmlToolDispatcher))
-        .workspace_dir(workspace_path)
-        .event_context("turn-test-session", "turn-test-channel")
-        .tool_policy(Arc::new(DenyCountingPolicy))
-        .build()
-        .unwrap();
-    let call = ParsedToolCall {
-        name: "counting".into(),
-        arguments: serde_json::json!({ "value": 1 }),
-        tool_call_id: Some("policy-1".into()),
-    };
-
-    let (result, record) = agent.execute_tool_call(&call, 0).await;
-    assert!(!result.success);
-    assert!(result.output.contains("denied by policy 'deny_counting'"));
-    assert!(result.output.contains("locked by test policy"));
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
-    assert_eq!(record.name, "counting");
-    assert!(!record.success);
-}
-
-#[tokio::test]
-async fn execute_tool_call_threads_generated_tool_context_into_policy() {
-    let workspace = tempfile::TempDir::new().expect("temp workspace");
-    let workspace_path = workspace.path().to_path_buf();
-    std::mem::forget(workspace);
-    let memory_cfg = crate::openhuman::config::MemoryConfig {
-        backend: "none".into(),
-        ..crate::openhuman::config::MemoryConfig::default()
-    };
-    let mem: Arc<dyn Memory> = Arc::from(
-        crate::openhuman::memory_store::create_memory(&memory_cfg, &workspace_path).unwrap(),
-    );
-    let calls = Arc::new(AtomicUsize::new(0));
-
-    let agent = Agent::builder()
-        .provider(Box::new(DummyProvider))
-        .tools(vec![Box::new(GeneratedContextTool {
-            calls: Arc::clone(&calls),
-        })])
-        .memory(mem)
-        .tool_dispatcher(Box::new(XmlToolDispatcher))
-        .workspace_dir(workspace_path)
-        .event_context("turn-test-session", "turn-test-channel")
-        .tool_policy(Arc::new(RequireGeneratedContextPolicy))
-        .build()
-        .unwrap();
-    let call = ParsedToolCall {
-        name: "generated_send".into(),
-        arguments: serde_json::json!({ "value": 1 }),
-        tool_call_id: Some("policy-generated-1".into()),
-    };
-
-    let (result, record) = agent.execute_tool_call(&call, 0).await;
-    assert!(!result.success);
-    assert!(result.output.contains("requires approval by policy"));
-    assert!(result
-        .output
-        .contains("generated context requires approval"));
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
-    assert_eq!(record.name, "generated_send");
-    assert!(!record.success);
-}
+// Removed: execute_tool_call_denies_by_policy_before_tool_runs and
+// execute_tool_call_threads_generated_tool_context_into_policy — see the note
+// above; they exercised the deleted direct tool executor.
 
 #[tokio::test]
 async fn turn_runs_full_tool_cycle_with_context_and_hooks() {
@@ -1338,33 +1104,8 @@ async fn turn_checkpoint_usage_is_folded_into_transcript_accounting() {
     assert_eq!(transcript.meta.cached_input_tokens, 2);
 }
 
-#[tokio::test]
-async fn execute_tool_call_applies_inline_result_budget() {
-    let provider: Arc<dyn Provider> = Arc::new(DummyProvider);
-    let agent = make_agent_with_builder(
-        provider,
-        vec![Box::new(LongTool)],
-        Box::new(FixedMemoryLoader {
-            context: String::new(),
-        }),
-        vec![],
-        crate::openhuman::config::AgentConfig::default(),
-        crate::openhuman::config::ContextConfig {
-            tool_result_budget_bytes: 300,
-            ..crate::openhuman::config::ContextConfig::default()
-        },
-    );
-    let call = ParsedToolCall {
-        name: "long".into(),
-        arguments: serde_json::json!({}),
-        tool_call_id: Some("long-1".into()),
-    };
-
-    let (result, record) = agent.execute_tool_call(&call, 0).await;
-    assert!(result.success);
-    assert!(result.output.contains("truncated by tool_result_budget"));
-    assert!(record.output_summary.starts_with("long: ok ("));
-}
+// Removed: execute_tool_call_applies_inline_result_budget — see the note above;
+// it exercised the deleted direct tool executor.
 
 // ── Explicit-preferences narrow path ──────────────────────────────────────────
 //

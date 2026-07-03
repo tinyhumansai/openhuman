@@ -15,8 +15,8 @@ mod store;
 pub mod types;
 
 pub use ops::{
-    get_session, import_transcript, list_sessions, record_message, record_session_end,
-    record_session_start, record_tool_call, search_sessions,
+    get_session, list_sessions, record_message, record_session_end, record_session_start,
+    record_tool_call, search_sessions,
 };
 pub use schemas::{
     all_controller_schemas as all_session_db_controller_schemas,

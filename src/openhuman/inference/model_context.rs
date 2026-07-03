@@ -106,6 +106,16 @@ pub fn context_window_for_model(model: &str) -> Option<u64> {
         return Some(window);
     }
 
+    if let Some(price) = crate::openhuman::cost::catalog::lookup(normalized) {
+        tracing::debug!(
+            model = normalized,
+            catalog_model = price.model_id,
+            context_window = price.context_window,
+            "[model_context] matched cost catalog row"
+        );
+        return Some(u64::from(price.context_window));
+    }
+
     let lower = normalized.to_ascii_lowercase();
     for (pattern, mode, window) in MODEL_CONTEXT_PATTERNS {
         if matches_pattern(&lower, pattern, *mode) {

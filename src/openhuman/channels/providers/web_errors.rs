@@ -772,7 +772,7 @@ pub(crate) fn classify_inference_error(err: &str) -> ClassifiedError {
     } else if lower.contains("does not support vision") || lower.contains("capability=vision") {
         // A multimodal turn sent image markers to a text-only model
         // (`provider_capability_error … capability=vision … does not support
-        // vision input`, raised in agent/harness/engine/core.rs). Without
+        // vision input`, raised by the tinyagents model adapter). Without
         // this arm it dead-ends on the generic catch-all. Retrying the same
         // image against the same model can't help — the user must drop the
         // attachment or pick a vision-capable model, so this is non-retryable.

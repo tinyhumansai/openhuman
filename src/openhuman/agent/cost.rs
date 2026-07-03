@@ -8,7 +8,7 @@
 //!
 //! - emit per-iteration cost telemetry via
 //!   [`crate::openhuman::agent::progress::AgentProgress::TurnCostUpdated`];
-//! - feed an upcoming budget stop-hook (mid-turn USD cap);
+//! - feed budget stop hooks (mid-turn USD cap);
 //! - log accurate end-of-turn cost lines.
 //!
 //! When `charged_amount_usd` is zero (older backend builds, providers
@@ -33,15 +33,15 @@ use crate::openhuman::inference::provider::UsageInfo;
 /// `input_tokens - cached_input_tokens` are charged at
 /// `input_per_mtok_usd`.
 #[derive(Debug, Clone, Copy)]
-pub struct ModelPricing {
+pub(crate) struct ModelPricing {
     /// Tier identifier, e.g. `"agentic-v1"`.
-    pub model: &'static str,
+    pub(crate) model: &'static str,
     /// Standard prompt rate, USD per million input tokens.
-    pub input_per_mtok_usd: f64,
+    pub(crate) input_per_mtok_usd: f64,
     /// Cached-prefix prompt rate, USD per million cached input tokens.
-    pub cached_input_per_mtok_usd: f64,
+    pub(crate) cached_input_per_mtok_usd: f64,
     /// Completion rate, USD per million output tokens.
-    pub output_per_mtok_usd: f64,
+    pub(crate) output_per_mtok_usd: f64,
 }
 
 /// Conservative fallback when nothing in the table matches. Picked so
@@ -61,7 +61,7 @@ const FALLBACK_PRICING: ModelPricing = ModelPricing {
 /// list at the time of writing for the tiers' default mappings; treat
 /// them as best-effort estimates for cases where the backend doesn't
 /// echo `charged_amount_usd`.
-pub const PRICING_TABLE: &[ModelPricing] = &[
+const PRICING_TABLE: &[ModelPricing] = &[
     // Reasoning tier — managed "Pro" model rates (estimate; the backend's
     // echoed `charged_amount_usd` is authoritative when present). Shared with
     // the coding/agentic tiers below. Update when backend pricing changes.
@@ -131,7 +131,7 @@ pub const PRICING_TABLE: &[ModelPricing] = &[
 /// 3. Coarse case-insensitive vendor-name heuristics (so an unrecognised
 ///    `"…opus…"` string still maps to the reasoning tier).
 /// 4. [`FALLBACK_PRICING`].
-pub fn lookup_pricing(model: &str) -> ModelPricing {
+pub(crate) fn lookup_pricing(model: &str) -> ModelPricing {
     if let Some(row) = PRICING_TABLE.iter().find(|row| row.model == model) {
         return *row;
     }

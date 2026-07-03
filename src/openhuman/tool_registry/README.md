@@ -38,8 +38,8 @@ Namespace `tool_registry`, registered via `all_tool_registry_registered_controll
 | Method | Inputs | Output |
 | --- | --- | --- |
 | `tool_registry.list` (`openhuman.tool_registry_list`) | none | `tools`: array of registry entries |
-| `tool_registry.get` | `tool_id` (required string) | `tool`: one registry entry |
-| `tool_registry.diagnostics` | none | `diagnostics`: redacted counts/posture/allowlists/denials/providers |
+| `tool_registry.get` (`openhuman.tool_registry_get`) | `tool_id` (required string) | `tool`: one registry entry |
+| `tool_registry.diagnostics` (`openhuman.tool_registry_diagnostics`) | none | `diagnostics`: redacted counts/posture/allowlists/denials/providers |
 
 All handlers return `RpcOutcome<T>` serialized via `into_cli_compatible_json()`.
 
@@ -60,7 +60,7 @@ No owned persistence. `diagnostics()` reads (read-only) the `mcp_writes` table v
 ## Used by
 
 - `src/core/all.rs` — registers controllers/schemas and routes the `tool_registry` namespace.
-- `src/openhuman/agent/harness/session/turn.rs` — calls `tool_registry::denials::record(...)` to log agent-tool policy denials.
+- `src/openhuman/tinyagents/middleware.rs` — calls `tool_registry::denials::record(...)` to log agent-tool policy denials.
 - `src/openhuman/about_app/catalog.rs` — capability catalog references the registry surface.
 - `src/openhuman/mcp_registry/connections.rs` — provides `all_connected_tools()` for registry integration.
 

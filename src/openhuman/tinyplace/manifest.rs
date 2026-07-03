@@ -19,6 +19,7 @@
 //! 5. Serialises the result with `serde_json::to_value`.
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -50,6 +51,48 @@ fn get_opt_str<'a>(params: &'a Map<String, Value>, key: &str) -> Option<&'a str>
 
 fn req_str<'a>(params: &'a Map<String, Value>, key: &str) -> Result<&'a str, String> {
     get_opt_str(params, key).ok_or_else(|| format!("missing required param '{key}'"))
+}
+
+fn req_nonblank_str(params: &Map<String, Value>, key: &str) -> Result<String, String> {
+    let value = req_str(params, key)?.trim();
+    if value.is_empty() {
+        Err(format!("missing required param '{key}'"))
+    } else {
+        Ok(value.to_string())
+    }
+}
+
+fn encode_path_segment(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for byte in raw.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            out.push(byte as char);
+        } else {
+            write!(&mut out, "%{byte:02X}").expect("writing to String cannot fail");
+        }
+    }
+    out
+}
+
+fn contact_path(agent_id: &str, suffix: Option<&str>) -> String {
+    match suffix {
+        Some(suffix) => format!("/contacts/{}/{}", encode_path_segment(agent_id), suffix),
+        None => format!("/contacts/{}", encode_path_segment(agent_id)),
+    }
+}
+
+fn contact_query(params: &Map<String, Value>) -> Vec<(String, String)> {
+    let source = params
+        .get("params")
+        .and_then(Value::as_object)
+        .unwrap_or(params);
+    let mut query = Vec::new();
+    for key in ["limit", "offset"] {
+        if let Some(value) = source.get(key).and_then(Value::as_i64) {
+            query.push((key.to_string(), value.to_string()));
+        }
+    }
+    query
 }
 
 // ── Handler implementations ───────────────────────────────────────────────────
@@ -3308,6 +3351,75 @@ pub(crate) fn handle_tinyplace_signal_send_message(params: Map<String, Value>) -
     })
 }
 
+/// Decrypt a single inbound Signal DM envelope to its plaintext body.
+///
+/// Shared by the `signal_decrypt_message` controller and the orchestration
+/// ingest path. NOTE: `SignalSession::decrypt` advances the double ratchet and
+/// consumes one-time pre-keys — it is NOT idempotent. Callers that may re-see
+/// the same envelope must dedupe by message id BEFORE calling this.
+pub(crate) async fn decrypt_envelope(
+    envelope: &tinyplace::types::MessageEnvelope,
+) -> Result<String, String> {
+    log::debug!(
+        "{LOG_PREFIX} decrypt_envelope from={} type={} id={}",
+        envelope.from,
+        envelope.envelope_type,
+        envelope.id
+    );
+
+    // Obtain our identity public key and an Arc-wrapped store for SignalSession.
+    let store = crate::openhuman::tinyplace::signal_store::global_signal_store_arc().await?;
+    let client = global_state().client().await?;
+    let our_identity_pub = store
+        .identity_x25519_key_pair()
+        .await
+        .map_err(|e| format!("identity key: {e}"))?
+        .public_key;
+
+    let sender = envelope.from.clone();
+
+    // Fetch sender's published key bundle to obtain their X25519 identity key.
+    // Ed25519 -> X25519 conversion via decode_identity_key — must be preserved.
+    let sender_bundle = client.keys.get_bundle(&sender).await.map_err(map_err)?;
+    let sender_x25519_identity = decode_identity_key(&sender_bundle.identity_key)?;
+
+    // Decrypt via SDK SignalSession.
+    //
+    // SignalSession::decrypt handles both PREKEY_BUNDLE and CIPHERTEXT paths
+    // internally (via process_pre_key_message), including one-time pre-key
+    // consumption, x3dh_respond, ratchet_decrypt, and store_session.
+    let signal_session = SignalSession::new(
+        Arc::clone(&store) as Arc<dyn SessionStore>,
+        our_identity_pub,
+    );
+    let plaintext_bytes = signal_session
+        .decrypt(&sender, &sender_x25519_identity, envelope)
+        .await
+        .map_err(|e| format!("decryption failed: {e}"))?;
+
+    let plaintext = String::from_utf8(plaintext_bytes)
+        .map_err(|e| format!("plaintext is not valid UTF-8: {e}"))?;
+    log::info!(
+        "{LOG_PREFIX} decrypt_envelope decrypted from={sender} id={} len={}",
+        envelope.id,
+        plaintext.len()
+    );
+    Ok(plaintext)
+}
+
+/// Acknowledge (delete) a delivered message from the relay mailbox. Shared by
+/// the `messages_acknowledge` controller and orchestration ingest.
+pub(crate) async fn acknowledge_message(message_id: &str) -> Result<(), String> {
+    let client = global_state().client().await?;
+    let signer = require_signer(client)?;
+    client
+        .messages
+        .acknowledge(message_id, &signer.agent_id())
+        .await
+        .map_err(map_err)?;
+    Ok(())
+}
+
 pub(crate) fn handle_tinyplace_signal_decrypt_message(
     params: Map<String, Value>,
 ) -> ControllerFuture {
@@ -3318,50 +3430,7 @@ pub(crate) fn handle_tinyplace_signal_decrypt_message(
         let envelope: tinyplace::types::MessageEnvelope =
             serde_json::from_value(envelope_val.clone())
                 .map_err(|e| format!("invalid envelope: {e}"))?;
-        log::debug!(
-            "{LOG_PREFIX} signal_decrypt_message from={} type={} id={}",
-            envelope.from,
-            envelope.envelope_type,
-            envelope.id
-        );
-
-        // Obtain our identity public key and an Arc-wrapped store for SignalSession.
-        let store = crate::openhuman::tinyplace::signal_store::global_signal_store_arc().await?;
-        let client = global_state().client().await?;
-        let our_identity_pub = store
-            .identity_x25519_key_pair()
-            .await
-            .map_err(|e| format!("identity key: {e}"))?
-            .public_key;
-
-        let sender = envelope.from.clone();
-
-        // Fetch sender's published key bundle to obtain their X25519 identity key.
-        // Ed25519 -> X25519 conversion via decode_identity_key — must be preserved.
-        let sender_bundle = client.keys.get_bundle(&sender).await.map_err(map_err)?;
-        let sender_x25519_identity = decode_identity_key(&sender_bundle.identity_key)?;
-
-        // Decrypt via SDK SignalSession.
-        //
-        // SignalSession::decrypt handles both PREKEY_BUNDLE and CIPHERTEXT paths
-        // internally (via process_pre_key_message), including one-time pre-key
-        // consumption, x3dh_respond, ratchet_decrypt, and store_session.
-        let signal_session = SignalSession::new(
-            Arc::clone(&store) as Arc<dyn SessionStore>,
-            our_identity_pub,
-        );
-        let plaintext_bytes = signal_session
-            .decrypt(&sender, &sender_x25519_identity, &envelope)
-            .await
-            .map_err(|e| format!("decryption failed: {e}"))?;
-
-        let plaintext = String::from_utf8(plaintext_bytes)
-            .map_err(|e| format!("plaintext is not valid UTF-8: {e}"))?;
-        log::info!(
-            "{LOG_PREFIX} signal_decrypt_message decrypted from={sender} id={} len={}",
-            envelope.id,
-            plaintext.len()
-        );
+        let plaintext = decrypt_envelope(&envelope).await?;
         to_value(serde_json::json!({
             "plaintext": plaintext,
             "from": envelope.from,
@@ -3408,14 +3477,135 @@ pub(crate) fn handle_tinyplace_messages_acknowledge(
     Box::pin(async move {
         let message_id = req_str(&params, "messageId")?.to_string();
         log::debug!("{LOG_PREFIX} messages_acknowledge id={message_id}");
+        acknowledge_message(&message_id).await?;
+        to_value(serde_json::json!({ "ok": true }))
+    })
+}
+
+// ── Contacts: signed social graph for encrypted direct messages ─────────────
+
+pub(crate) fn handle_tinyplace_contacts_request(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let agent_id = req_nonblank_str(&params, "agentId")?;
+        log::debug!("{LOG_PREFIX} contacts_request agent_id={agent_id}");
         let client = global_state().client().await?;
-        let signer = require_signer(client)?;
-        client
-            .messages
-            .acknowledge(&message_id, &signer.agent_id())
+        let result: Value = client
+            .http()
+            .post_agent_auth::<Value, ()>(&contact_path(&agent_id, None), None)
             .await
             .map_err(map_err)?;
-        to_value(serde_json::json!({ "ok": true }))
+        to_value(result)
+    })
+}
+
+pub(crate) fn handle_tinyplace_contacts_accept(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let agent_id = req_nonblank_str(&params, "agentId")?;
+        log::debug!("{LOG_PREFIX} contacts_accept agent_id={agent_id}");
+        let client = global_state().client().await?;
+        let result: Value = client
+            .http()
+            .post_agent_auth::<Value, ()>(&contact_path(&agent_id, Some("accept")), None)
+            .await
+            .map_err(map_err)?;
+        to_value(result)
+    })
+}
+
+pub(crate) fn handle_tinyplace_contacts_remove(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let agent_id = req_nonblank_str(&params, "agentId")?;
+        log::debug!("{LOG_PREFIX} contacts_remove agent_id={agent_id}");
+        let client = global_state().client().await?;
+        let result: Value = client
+            .http()
+            .delete_agent_auth::<Value, ()>(&contact_path(&agent_id, None), None)
+            .await
+            .map_err(map_err)?;
+        to_value(result)
+    })
+}
+
+pub(crate) fn handle_tinyplace_contacts_block(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let agent_id = req_nonblank_str(&params, "agentId")?;
+        log::debug!("{LOG_PREFIX} contacts_block agent_id={agent_id}");
+        let client = global_state().client().await?;
+        let result: Value = client
+            .http()
+            .post_agent_auth::<Value, ()>(&contact_path(&agent_id, Some("block")), None)
+            .await
+            .map_err(map_err)?;
+        to_value(result)
+    })
+}
+
+pub(crate) fn handle_tinyplace_contacts_unblock(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let agent_id = req_nonblank_str(&params, "agentId")?;
+        log::debug!("{LOG_PREFIX} contacts_unblock agent_id={agent_id}");
+        let client = global_state().client().await?;
+        let result: Value = client
+            .http()
+            .post_agent_auth::<Value, ()>(&contact_path(&agent_id, Some("unblock")), None)
+            .await
+            .map_err(map_err)?;
+        to_value(result)
+    })
+}
+
+pub(crate) fn handle_tinyplace_contacts_list(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let query = contact_query(&params);
+        log::debug!("{LOG_PREFIX} contacts_list query={query:?}");
+        let client = global_state().client().await?;
+        let result: Value = client
+            .http()
+            .get_agent_auth("/contacts", &query)
+            .await
+            .map_err(map_err)?;
+        to_value(result)
+    })
+}
+
+pub(crate) fn handle_tinyplace_contacts_requests(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let query = contact_query(&params);
+        log::debug!("{LOG_PREFIX} contacts_requests query={query:?}");
+        let client = global_state().client().await?;
+        let result: Value = client
+            .http()
+            .get_agent_auth("/contacts/requests", &query)
+            .await
+            .map_err(map_err)?;
+        to_value(result)
+    })
+}
+
+pub(crate) fn handle_tinyplace_contacts_status(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let agent_id = req_nonblank_str(&params, "agentId")?;
+        log::debug!("{LOG_PREFIX} contacts_status agent_id={agent_id}");
+        let client = global_state().client().await?;
+        let result: Value = client
+            .http()
+            .get_agent_auth(&contact_path(&agent_id, Some("status")), &[])
+            .await
+            .map_err(map_err)?;
+        to_value(result)
+    })
+}
+
+pub(crate) fn handle_tinyplace_contacts_stats(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        log::debug!("{LOG_PREFIX} contacts_stats");
+        let client = global_state().client().await?;
+        let result: Value = client
+            .http()
+            .get_agent_auth("/contacts/stats", &[])
+            .await
+            .map_err(map_err)?;
+        to_value(result)
     })
 }
 
@@ -5295,6 +5485,59 @@ mod tests {
             let err = block_on(handler(Map::new())).unwrap_err();
             assert!(err.contains("agentId"), "got: {err}");
         }
+    }
+
+    /// Contact write/status handlers reject a missing or blank peer id before
+    /// wallet/client initialization.
+    #[test]
+    fn contacts_handlers_require_agent_id() {
+        for handler in [
+            handle_tinyplace_contacts_request as fn(Map<String, Value>) -> ControllerFuture,
+            handle_tinyplace_contacts_accept,
+            handle_tinyplace_contacts_remove,
+            handle_tinyplace_contacts_block,
+            handle_tinyplace_contacts_unblock,
+            handle_tinyplace_contacts_status,
+        ] {
+            let err = block_on(handler(Map::new())).unwrap_err();
+            assert!(err.contains("agentId"), "got: {err}");
+
+            let mut params = Map::new();
+            params.insert("agentId".to_string(), Value::String("   ".to_string()));
+            let err = block_on(handler(params)).unwrap_err();
+            assert!(err.contains("agentId"), "got: {err}");
+        }
+    }
+
+    #[test]
+    fn contacts_path_segments_are_encoded() {
+        assert_eq!(
+            contact_path("agent/with space", Some("status")),
+            "/contacts/agent%2Fwith%20space/status"
+        );
+    }
+
+    #[test]
+    fn contacts_query_accepts_nested_or_top_level_pagination() {
+        let mut nested = Map::new();
+        nested.insert(
+            "params".to_string(),
+            serde_json::json!({ "limit": 20, "offset": 40 }),
+        );
+        assert_eq!(
+            contact_query(&nested),
+            vec![
+                ("limit".to_string(), "20".to_string()),
+                ("offset".to_string(), "40".to_string())
+            ]
+        );
+
+        let mut top_level = Map::new();
+        top_level.insert("limit".to_string(), Value::Number(10.into()));
+        assert_eq!(
+            contact_query(&top_level),
+            vec![("limit".to_string(), "10".to_string())]
+        );
     }
 
     /// registry_export rejects a missing `name` before any client work.

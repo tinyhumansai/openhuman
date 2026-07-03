@@ -9,11 +9,11 @@ use crate::openhuman::agent::harness;
 use crate::openhuman::agent::harness::definition::TriggerMemoryAgent;
 use crate::openhuman::agent::harness::fork_context::ParentExecutionContext;
 use crate::openhuman::agent::hooks::{self, TurnContext};
-use crate::openhuman::agent::memory_loader::collect_recall_citations;
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::agent_experience::{
     prepend_experience_block, render_experience_hits, AgentExperienceStore, ExperienceQuery,
 };
+use crate::openhuman::agent_memory::memory_loader::collect_recall_citations;
 use crate::openhuman::inference::provider::{ChatMessage, ConversationMessage};
 use crate::openhuman::memory::MemoryCategory;
 use crate::openhuman::util::truncate_with_ellipsis;
@@ -61,22 +61,30 @@ fn should_run_super_context(
 // that now owns the first-turn context-collection pass (#4249).
 
 /// Flatten the assistant tool calls a turn produced into [`ToolCallRecord`]s for
-/// the deterministic cap checkpoint (it lists the tools that ran). Tool success
-/// isn't tracked per call here, so each is recorded optimistically; the listing
-/// is a human-readable fallback, not authoritative accounting.
+/// post-turn hooks + the deterministic cap checkpoint. Per-call success +
+/// sanitized output summary are recovered from the turn's captured
+/// [`ToolCallOutcome`]s (correlated by provider call id), since the harness folds
+/// a tool result into a `Message::tool` that drops its failure flag — matching the
+/// engine's honest per-call accounting instead of recording every call as ok.
 fn tool_records_from_conversation(
     conversation: &[ConversationMessage],
+    tool_outcomes: &[crate::openhuman::tinyagents::ToolCallOutcome],
 ) -> Vec<hooks::ToolCallRecord> {
     let mut records = Vec::new();
     for msg in conversation {
         if let ConversationMessage::AssistantToolCalls { tool_calls, .. } = msg {
             for call in tool_calls {
+                let outcome = tool_outcomes.iter().find(|o| o.call_id == call.id);
+                let success = outcome.map(|o| o.success).unwrap_or(true);
+                let output_summary = outcome
+                    .map(|o| hooks::sanitize_tool_output(&o.content, &call.name, success))
+                    .unwrap_or_default();
                 records.push(hooks::ToolCallRecord {
                     name: call.name.clone(),
                     arguments: serde_json::from_str(&call.arguments)
                         .unwrap_or(serde_json::Value::Null),
-                    success: true,
-                    output_summary: String::new(),
+                    success,
+                    output_summary,
                     duration_ms: 0,
                 });
             }
@@ -125,7 +133,6 @@ impl Agent {
     /// 6. **Background Tasks**: Triggers episodic memory indexing and facts
     ///    extraction asynchronously.
     pub async fn turn(&mut self, user_message: &str) -> Result<String> {
-        let turn_started = std::time::Instant::now();
         // Capture before any system-prompt push mutates `history`: this is the
         // signal that gates first-turn-only work (system prompt build, and the
         // "super context" harness-driven context-collection pass below).
@@ -538,10 +545,6 @@ impl Agent {
         // model prompt, not in the Rust-side classifier. Sub-agents pick
         // their own tier via `ModelSpec::Hint(...)` in their definition.
         let effective_model = self.model_name.clone();
-        // Capture before `self` is borrowed by the turn observer below, so it can
-        // be installed as the `current_model_vision` task-local around the engine
-        // call (read by the image gate for custom/BYOK vision models).
-        let model_vision = self.model_vision;
         log::info!(
             "[agent_loop] model pinned model={} (per-turn classification disabled for KV cache stability)",
             effective_model
@@ -553,6 +556,7 @@ impl Agent {
         // model field with the post-classification effective model.
         let mut parent_context = self.build_parent_execution_context();
         parent_context.model_name = effective_model.clone();
+        let session_memory_parent_context = parent_context.clone();
 
         let mut agent_context_prepared_sources: Vec<harness::AgentContextPreparedSource> =
             Vec::new();
@@ -653,31 +657,11 @@ impl Agent {
         self.context.tick_turn();
 
         let turn_body = async {
-            // Capture everything the engine seams need as locals/clones *before*
-            // the observer takes `&mut self`, so the borrow checker is happy:
-            // the tool source + parser + checkpoint hold clones disjoint from
-            // the `Agent`, and the observer alone borrows it mutably.
-            let dispatcher = self.tool_dispatcher.clone();
-            let provider = self.provider.clone();
-            let provider_name = self.event_channel().to_string();
+            // Keep the scalar turn settings outside the pinned future arguments;
+            // the TinyAgents session path reads provider/tool/multimodal state
+            // directly from `self` when preparing the request.
             let temperature = self.temperature;
             let max_iterations = self.config.max_tool_iterations;
-            // Source multimodal limits from the session's runtime config when
-            // present so [IMAGE:…] / [FILE:…] markers in user messages are
-            // resolved with the operator-configured caps (max files, max size,
-            // max extracted text). Without this, agents fall back to the
-            // crate-default caps and `MultimodalFileConfig::default()`
-            // disables file expansion entirely.
-            let multimodal = self
-                .integration_runtime_config
-                .as_ref()
-                .map(|c| c.multimodal.clone())
-                .unwrap_or_default();
-            let multimodal_files = self
-                .integration_runtime_config
-                .as_ref()
-                .map(|c| c.multimodal_files.clone())
-                .unwrap_or_default();
             let artifact_store = Some(
                 crate::openhuman::agent::harness::tool_result_artifacts::ToolResultArtifactStore::new(
                     self.action_dir.clone(),
@@ -695,6 +679,7 @@ impl Agent {
                 temperature,
                 max_iterations,
                 run_super_context,
+                artifact_store,
             ))
             .await
         }; // end of `turn_body` async block
@@ -778,7 +763,8 @@ impl Agent {
         // later), which is the right amount of retry behaviour for a
         // librarian task that's idempotent across reruns.
         if result.is_ok() && self.context.should_extract_session_memory() {
-            self.spawn_session_memory_extraction().await;
+            self.spawn_session_memory_extraction(session_memory_parent_context)
+                .await;
             // Sibling pipeline (#1399): heuristic transcript ingestion
             // turns the just-written transcript into durable
             // conversational memory + reflections so a brand-new chat
@@ -799,7 +785,7 @@ impl Agent {
     ///
     /// Full-fidelity with the legacy `run_turn_engine`: live tool-timeline /
     /// text-delta progress and the cost/token footer are mirrored from the
-    /// harness event stream via the [`OpenhumanEventBridge`] (tinyagents 0.2.0),
+    /// harness event stream via `OpenhumanEventBridge` (tinyagents harness),
     /// `[IMAGE:…]`/`[FILE:…]` markers are expanded for the provider, and history
     /// is trimmed to the provider's context window.
     async fn run_turn_via_tinyagents_session(
@@ -812,6 +798,9 @@ impl Agent {
         // by `should_run_super_context` in `turn()`, before the user row was
         // pushed to history — so it can't be recomputed here).
         run_super_context: bool,
+        artifact_store: Option<
+            crate::openhuman::agent::harness::tool_result_artifacts::ToolResultArtifactStore,
+        >,
     ) -> Result<String> {
         let turn_started = std::time::Instant::now();
         // This turn's stamped user message is already the last entry in
@@ -889,6 +878,9 @@ impl Agent {
         let context_mw = crate::openhuman::tinyagents::TurnContextMiddleware {
             tool_result_budget_bytes: self.context.tool_result_budget_bytes(),
             payload_summarizer: self.payload_summarizer.clone(),
+            artifact_store,
+            tokenjuice_compaction_enabled: self.context.compaction_enabled(),
+            tokenjuice_compression: self.tokenjuice_compression,
             cache_align: self.context.compaction_enabled(),
             microcompact_keep_recent: self.context.microcompact_keep_recent(),
             // Honor the [context].enabled / autocompact_enabled opt-outs: when off,
@@ -903,6 +895,9 @@ impl Agent {
                     user_message: user_message.to_string(),
                 }
             }),
+            // Progressive-disclosure handoff is a sub-agent (integrations_agent)
+            // concern; the top-level chat turn never sets it.
+            handoff: None,
         };
 
         // Gather any sub-agent spend delegated during this turn (synchronous
@@ -923,6 +918,15 @@ impl Agent {
                     context_window,
                     run_queue: self.run_queue.clone(),
                     context_mw,
+                    // Enforce the builder-configured tool policy at the tool
+                    // boundary (the tinyagents path otherwise bypasses it).
+                    tool_policy: Some(crate::openhuman::tinyagents::ToolPolicyEnforcement {
+                        policy: self.tool_policy.clone(),
+                        session: self.tool_policy_session.clone(),
+                        session_id: self.event_session_id.clone(),
+                        channel: self.event_channel().to_string(),
+                        agent_definition_id: self.agent_definition_id.clone(),
+                    }),
                 }),
             )
             .await;
@@ -967,7 +971,7 @@ impl Agent {
             }
             let checkpoint = if summary.trim().is_empty() {
                 super::super::turn_checkpoint::build_deterministic_checkpoint(
-                    &tool_records_from_conversation(&outcome.conversation),
+                    &tool_records_from_conversation(&outcome.conversation, &outcome.tool_outcomes),
                     max_iterations,
                 )
             } else {
@@ -1016,13 +1020,35 @@ impl Agent {
         );
 
         let persisted = self.tool_dispatcher.to_provider_messages(&self.history);
+        // Carry the turn's provider (event channel) + effective model and usage
+        // into the persisted transcript meta. Passing `None` here dropped
+        // `provider`/`model` from every transcript (they are `TranscriptMeta`
+        // fields sourced from the turn usage) — parity with the legacy engine,
+        // which handed `self.last_turn_usage.as_ref()` to this call.
+        let turn_usage = crate::openhuman::agent::harness::session::transcript::TurnUsage {
+            provider: self.event_channel().to_string(),
+            // The model that actually ran this turn (a per-turn override can
+            // diverge from `self.model_name`); attribute usage to it.
+            model: effective_model.to_string(),
+            usage: crate::openhuman::agent::harness::session::transcript::MessageUsage {
+                input: input_tokens,
+                output: output_tokens,
+                cached_input: cached_input_tokens,
+                context_window: context_window.unwrap_or(0),
+                cost_usd: charged_amount_usd,
+            },
+            ts: chrono::Utc::now().to_rfc3339(),
+            reasoning_content: None,
+            tool_calls: Vec::new(),
+            iteration: outcome.model_calls as u32,
+        };
         self.persist_session_transcript(
             &persisted,
             input_tokens,
             output_tokens,
             cached_input_tokens,
             charged_amount_usd,
-            None,
+            Some(&turn_usage),
         );
 
         // Charge this turn's usage against the thread's active goal (parity with
@@ -1055,7 +1081,10 @@ impl Agent {
             let ctx = TurnContext {
                 user_message: user_message.to_string(),
                 assistant_response: reply.clone(),
-                tool_calls: tool_records_from_conversation(&outcome.conversation),
+                tool_calls: tool_records_from_conversation(
+                    &outcome.conversation,
+                    &outcome.tool_outcomes,
+                ),
                 turn_duration_ms: turn_started.elapsed().as_millis() as u64,
                 session_id: Some(self.event_session_id.clone())
                     .filter(|session_id| !session_id.trim().is_empty()),

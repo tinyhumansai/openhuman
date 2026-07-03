@@ -1,99 +1,29 @@
 //! Tool execution and Composio delegation refresh.
 
-use super::super::agent_tool_exec;
 use super::super::types::Agent;
 use super::newly_connected_slugs;
-use crate::openhuman::agent::dispatcher::ParsedToolCall;
 use crate::openhuman::agent::harness;
-use crate::openhuman::agent::hooks::ToolCallRecord;
 use crate::openhuman::agent::progress::AgentProgress;
 
 use std::sync::Arc;
 
 impl Agent {
     // ─────────────────────────────────────────────────────────────────
-    // Per-call tool execution
-    // ─────────────────────────────────────────────────────────────────
-
-    /// Executes a single tool call and returns the result and execution record.
-    ///
-    /// This method:
-    /// 1. Emits telemetry events for the start of execution.
-    /// 2. Handles the special `spawn_subagent` tool with `fork` context.
-    /// 3. Validates tool visibility and availability.
-    /// 4. Dispatches to the underlying tool implementation.
-    /// 5. Applies per-result byte budgets to prevent context window bloat.
-    /// 6. Sanitizes and records the outcome for post-turn hooks.
-    pub(in super::super) async fn execute_tool_call(
-        &self,
-        call: &ParsedToolCall,
-        iteration: usize,
-    ) -> (
-        crate::openhuman::agent::dispatcher::ToolExecutionResult,
-        ToolCallRecord,
-    ) {
-        let normalized_call = super::normalize_tool_call(call);
-        let call: &ParsedToolCall = &normalized_call;
-        // The per-call execution path lives in the shared
-        // [`super::agent_tool_exec::run_agent_tool_call`] so `Agent::turn`
-        // (when migrated to the turn engine, via `AgentToolSource`) and any
-        // direct caller run the identical logic. Progress is emitted through a
-        // `TurnProgress` over this agent's sink. Legacy `run_skill`-wrapped
-        // built-in cron tool calls are normalized to direct calls first.
-        let progress = super::super::super::engine::TurnProgress::new(self.on_progress.clone());
-        let artifact_store =
-            crate::openhuman::agent::harness::tool_result_artifacts::ToolResultArtifactStore::new(
-                self.action_dir.clone(),
-                self.session_key.clone(),
-            );
-        let ctx = agent_tool_exec::AgentToolExecCtx {
-            tools: &self.tools,
-            visible_tool_names: &self.visible_tool_names,
-            tool_policy_session: &self.tool_policy_session,
-            tool_policy: self.tool_policy.as_ref(),
-            payload_summarizer: self.payload_summarizer.as_deref(),
-            event_session_id: self.event_session_id(),
-            event_channel: self.event_channel(),
-            agent_definition_id: &self.agent_definition_id,
-            prefer_markdown: self.context.prefer_markdown_tool_output(),
-            budget_bytes: self.context.tool_result_budget_bytes(),
-            compaction_enabled: self.context.compaction_enabled(),
-            tokenjuice_compression: self.tokenjuice_compression,
-            artifact_store: Some(&artifact_store),
-        };
-        agent_tool_exec::run_agent_tool_call(&ctx, &progress, call, iteration).await
-    }
-
-    /// Executes multiple tool calls in sequence.
-    ///
-    /// Collects results and execution records for all requested tools in a single batch.
-    pub(in super::super) async fn execute_tools(
-        &self,
-        calls: &[ParsedToolCall],
-        iteration: usize,
-    ) -> (
-        Vec<crate::openhuman::agent::dispatcher::ToolExecutionResult>,
-        Vec<ToolCallRecord>,
-    ) {
-        let mut results = Vec::with_capacity(calls.len());
-        let mut records = Vec::with_capacity(calls.len());
-        for call in calls {
-            let (exec_result, record) = self.execute_tool_call(call, iteration).await;
-            results.push(exec_result);
-            records.push(record);
-        }
-        (results, records)
-    }
-
-    // ─────────────────────────────────────────────────────────────────
     // Sub-agent context snapshots
     // ─────────────────────────────────────────────────────────────────
 
     /// Snapshot the parent's runtime so spawned sub-agents can read
     /// it via the [`harness::PARENT_CONTEXT`] task-local.
-    pub(in super::super) fn build_parent_execution_context(
-        &self,
-    ) -> harness::ParentExecutionContext {
+    pub(super) fn build_parent_execution_context(&self) -> harness::ParentExecutionContext {
+        let workspace_descriptor =
+            harness::current_parent().and_then(|parent| parent.workspace_descriptor);
+        if let Some(descriptor) = workspace_descriptor.as_ref() {
+            tracing::debug!(
+                root = %descriptor.root.display(),
+                policy_id = %descriptor.policy_id,
+                "[agent_loop] inheriting ambient workspace descriptor for parent context snapshot"
+            );
+        }
         let allowed_subagent_ids = crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::global()
             .and_then(|registry| registry.get(&self.agent_definition_id))
             .map(|definition| {
@@ -135,6 +65,7 @@ impl Agent {
             model_name: self.model_name.clone(),
             temperature: self.temperature,
             workspace_dir: self.workspace_dir.clone(),
+            workspace_descriptor,
             memory: Arc::clone(&self.memory),
             agent_config: self.config.clone(),
             workflows: Arc::new(self.workflows.clone()),
@@ -158,7 +89,7 @@ impl Agent {
     /// progress bridge (e.g. a tool row stuck in `running` forever).
     /// A closed sink is logged and ignored; no progress subscriber is
     /// equivalent to success.
-    pub(in super::super) async fn emit_progress(&self, event: AgentProgress) {
+    pub(super) async fn emit_progress(&self, event: AgentProgress) {
         if let Some(ref tx) = self.on_progress {
             if let Err(e) = tx.send(event).await {
                 log::warn!("[agent] progress sink closed while emitting lifecycle event: {e}");
@@ -201,7 +132,7 @@ impl Agent {
 
     /// Lazily attach this session to the global event bus so it can
     /// observe `ComposioIntegrationsChanged` notifications.
-    pub(in super::super) fn ensure_composio_integrations_listener(&mut self) {
+    pub(super) fn ensure_composio_integrations_listener(&mut self) {
         if self.composio_integrations_rx.is_some() {
             return;
         }
@@ -263,7 +194,7 @@ impl Agent {
     /// [`crate::core::event_bus::DomainEvent::WorkflowsChanged`] (skill
     /// install / uninstall / create). Mirror of
     /// [`Self::ensure_composio_integrations_listener`].
-    pub(in super::super) fn ensure_skill_events_listener(&mut self) {
+    pub(super) fn ensure_skill_events_listener(&mut self) {
         if self.skill_events_rx.is_some() {
             return;
         }
@@ -319,7 +250,7 @@ impl Agent {
 
     /// Reconcile the session's delegation schema against the latest cached
     /// integrations snapshot. Returns `true` only when a refresh applied.
-    pub(in super::super) fn refresh_delegation_tools_from_cached_integrations(
+    pub(super) fn refresh_delegation_tools_from_cached_integrations(
         &mut self,
         trigger: &str,
     ) -> bool {

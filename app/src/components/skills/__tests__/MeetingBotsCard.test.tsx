@@ -238,9 +238,13 @@ const activeMeetState = {
   backendMeet: {
     status: 'active' as const,
     meetUrl: 'https://meet.google.com/abc-defg-hij',
+    meetingId: null,
+    listenOnly: false,
     lastReply: null,
     lastHarness: null,
     transcript: null,
+    liveTranscript: [],
+    livePartialIndex: null,
     error: null,
   },
 };

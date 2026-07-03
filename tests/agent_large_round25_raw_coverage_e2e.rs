@@ -254,6 +254,8 @@ fn text_response(text: &str) -> ChatResponse {
             output_tokens: 7,
             context_window: 32_000,
             cached_input_tokens: 3,
+            cache_creation_tokens: 0,
+            reasoning_tokens: 0,
             charged_amount_usd: 0.0002,
         }),
         reasoning_content: None,
@@ -302,6 +304,7 @@ fn integrations_definition() -> AgentDefinition {
         delegate_name: None,
         agent_tier: Default::default(),
         source: DefinitionSource::Builtin,
+        graph: Default::default(),
     }
 }
 
@@ -324,6 +327,7 @@ fn parent(workspace_dir: PathBuf, provider: Arc<ScriptedProvider>) -> ParentExec
         model_name: "round25-parent-model".to_string(),
         temperature: 0.0,
         workspace_dir,
+        workspace_descriptor: None,
         memory: Arc::new(StubMemory),
         agent_config: AgentConfig::default(),
         workflows: Arc::new(Vec::new()),
