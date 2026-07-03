@@ -1,6 +1,6 @@
 [package]
 name = "OpenHuman"
-version = "0.58.7"
+version = "0.58.10"
 description = "OpenHuman - AI-powered Super Assistant"
 authors = ["OpenHuman"]
 edition = "2021"
@@ -142,7 +142,7 @@ objc2 = "0.6"
 objc2-app-kit = "0.3.2"
 mac-notification-sys = "0.6"
 # iMessage scanner reads ~/Library/Messages/chat.db read-only on macOS.
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "=0.40.0", features = ["bundled"] }
 objc2-user-notifications = "0.3.2"
 block2 = "0.6.2"
 objc2-foundation = { version = "0.3.2", features = ["NSTimer", "block2"] }

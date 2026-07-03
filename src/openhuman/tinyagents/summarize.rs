@@ -14,8 +14,8 @@
 //! and a context-window-aware [`SummarizationPolicy`]. The policy only fires once
 //! the running token estimate crosses [`SUMMARIZE_THRESHOLD_FRACTION`] of the
 //! **current model's** context window — so the trigger is keyed to "whatever
-//! model we are using", exactly mirroring the existing
-//! [`ContextGuard`][crate::openhuman::context] compaction threshold (0.90).
+//! model we are using", mirroring the historical OpenHuman compaction threshold
+//! (0.90).
 //!
 //! Layering: a graph installs the compression middleware **before** the
 //! deterministic trim, so summarization is preferred and trimming remains only a
@@ -35,14 +35,14 @@ use crate::openhuman::inference::provider::Provider;
 
 /// Fraction of the model's context window at which summarization fires.
 ///
-/// Mirrors `ContextGuard::COMPACTION_TRIGGER_THRESHOLD` (0.90) so the tinyagents
-/// path compacts at the same point the legacy `ContextManager` did.
-pub const SUMMARIZE_THRESHOLD_FRACTION: f64 = 0.90;
+/// Mirrors the old OpenHuman context guard soft threshold (0.90) so the
+/// tinyagents path compacts at the same point the legacy `ContextManager` did.
+const SUMMARIZE_THRESHOLD_FRACTION: f64 = 0.90;
 
 /// Number of most-recent non-system messages kept verbatim after a compaction.
 /// The older head is folded into the summary; this tail stays untouched so the
 /// model retains the live working context.
-pub const SUMMARIZE_KEEP_LAST: usize = 8;
+const SUMMARIZE_KEEP_LAST: usize = 8;
 
 /// An LLM-backed [`Summarizer`] that condenses a slice of harness [`TaMessage`]s
 /// into a single system summary via an openhuman [`Provider`] chat call.
@@ -51,7 +51,7 @@ pub const SUMMARIZE_KEEP_LAST: usize = 8;
 /// summary is produced by the active model (a cheaper summarizer model can be
 /// threaded later if compaction on the main model proves expensive — the legacy
 /// `ContextConfig::summarizer_model` hook).
-pub struct ProviderModelSummarizer {
+pub(super) struct ProviderModelSummarizer {
     provider: Arc<dyn Provider>,
     model: String,
     temperature: f64,
@@ -59,7 +59,11 @@ pub struct ProviderModelSummarizer {
 
 impl ProviderModelSummarizer {
     /// Build a summarizer over `provider`/`model` at `temperature`.
-    pub fn new(provider: Arc<dyn Provider>, model: impl Into<String>, temperature: f64) -> Self {
+    pub(super) fn new(
+        provider: Arc<dyn Provider>,
+        model: impl Into<String>,
+        temperature: f64,
+    ) -> Self {
         Self {
             provider,
             model: model.into(),
@@ -162,7 +166,7 @@ impl Summarizer for ProviderModelSummarizer {
 /// [`SUMMARIZE_KEEP_LAST`] non-system messages (plus all system messages)
 /// verbatim. Pair it with [`ProviderModelSummarizer`] via
 /// [`ContextCompressionMiddleware::with_summarizer`][tinyagents::harness::middleware::ContextCompressionMiddleware::with_summarizer].
-pub fn summarization_policy(context_window: u64) -> SummarizationPolicy {
+pub(super) fn summarization_policy(context_window: u64) -> SummarizationPolicy {
     let mut policy = SummarizationPolicy::default()
         .with_context_window(context_window)
         .with_threshold_fraction(SUMMARIZE_THRESHOLD_FRACTION);

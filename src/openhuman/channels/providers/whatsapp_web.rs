@@ -8,9 +8,7 @@
 //! decrypted the payload but never dispatched it to user code, breaking
 //! agent dispatch for the bulk of modern WhatsApp traffic (LID is the
 //! current default). Upstream `whatsapp-rust` 0.5 fixed this in PRs #170
-//! (SKDM tracking) + #181 (LID/PN mapping) + sender-key dispatch, and also
-//! ships its own [`SqliteStore`] — so the previous custom 1,345-line
-//! `RusqliteStore` is no longer needed.
+//! (SKDM tracking) + #181 (LID/PN mapping) + sender-key dispatch.
 //!
 //! # Feature Flag
 //!
@@ -22,7 +20,7 @@
 //!
 //! ```toml
 //! [channels.whatsapp]
-//! session_path = "~/.openhuman/whatsapp-session.db"  # Required for Web mode
+//! session_path = "~/.openhuman/whatsapp-session.db"  # Reserved for durable Web mode
 //! pair_phone = "15551234567"                         # Optional: pair-code linking
 //! allowed_numbers = ["+1234567890", "*"]             # Same shape as Cloud API
 //! ```
@@ -35,14 +33,13 @@
 //!
 //! # Migration note
 //!
-//! The on-disk SQLite schema differs between the wa-rs 0.2 fork and the
-//! upstream 0.5 store. Existing paired sessions will fail to load and will
-//! prompt for a fresh QR scan on first launch after this upgrade. Pairing
-//! takes about 30 seconds; the old `whatsapp-session.db` can be deleted by
-//! the user afterwards.
+//! The upstream 0.5 `sqlite-storage` feature currently uses Diesel, whose
+//! native sqlite binding conflicts with the TinyAgents 1.3 / rusqlite 0.40
+//! baseline. Until OpenHuman owns a rusqlite-backed durable store for the
+//! WhatsApp backend traits, this channel uses wacore's in-memory backend and
+//! requires re-linking after restart.
 //!
 //! [`whatsapp-rust`]: https://docs.rs/whatsapp-rust/0.5
-//! [`SqliteStore`]: whatsapp_rust::store::SqliteStore
 
 use crate::openhuman::channels::traits::{Channel, ChannelMessage, SendMessage};
 use anyhow::{anyhow, Result};
@@ -262,7 +259,6 @@ impl Channel for WhatsAppWebChannel {
         use wacore::types::events::Event;
         use whatsapp_rust::bot::Bot;
         use whatsapp_rust::pair_code::PairCodeOptions;
-        use whatsapp_rust::store::SqliteStore;
         use whatsapp_rust::TokioRuntime;
         use whatsapp_rust_tokio_transport::TokioWebSocketTransportFactory;
         use whatsapp_rust_ureq_http_client::UreqHttpClient;
@@ -272,21 +268,17 @@ impl Channel for WhatsAppWebChannel {
             self.session_path
         );
 
-        // Upstream's SqliteStore implements all four storage traits the bot
-        // needs (Signal, AppSync, Protocol, Device). It also handles
-        // first-run schema creation, so no separate `exists`/`load` dance.
-        // If the on-disk DB is a leftover from the wa-rs 0.2 fork the schema
-        // is incompatible — surface that explicitly so the user knows to
-        // delete the old session file and re-pair.
-        let backend = Arc::new(SqliteStore::new(&self.session_path).await.map_err(|e| {
-            anyhow!(
-                "Failed to open WhatsApp session store at `{}`: {}. \
-                 If upgrading from wa-rs 0.2, delete the old DB and re-pair \
-                 (see the module-level migration note).",
-                self.session_path,
-                e
-            )
-        })?);
+        // Upstream's Diesel-backed SqliteStore pulls a separate sqlite3 native
+        // link chain that conflicts with the TinyAgents 1.3 / rusqlite 0.40
+        // baseline. Keep the feature buildable with wacore's full in-memory
+        // Backend until a rusqlite-backed durable store is added here.
+        tracing::warn!(
+            "[whatsapp_web] using in-memory WhatsApp Web session backend; \
+             session_path={} is reserved but not persisted in this build",
+            self.session_path
+        );
+        let backend: Arc<dyn wacore::store::traits::Backend> =
+            Arc::new(wacore::store::InMemoryBackend::new());
 
         let mut transport_factory = TokioWebSocketTransportFactory::new();
         if let Ok(ws_url) = std::env::var("WHATSAPP_WS_URL") {

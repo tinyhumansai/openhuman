@@ -1,6 +1,7 @@
 //! End-to-end tests for the `tinyagents` harness route: a real openhuman
 //! [`Provider`] and [`Tool`] driven through [`run_turn_via_tinyagents`].
 
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -174,6 +175,9 @@ async fn streaming_path_forwards_text_deltas_and_cost() {
         false,
         None,
         TurnContextMiddleware::defaults(),
+        None,
+        None,
+        false,
     )
     .await
     .expect("streaming turn runs");
@@ -273,6 +277,9 @@ async fn pre_queued_steer_message_is_injected_into_the_request() {
         false,
         None,
         TurnContextMiddleware::defaults(),
+        None,
+        None,
+        false,
     )
     .await
     .expect("steered turn runs");
@@ -367,6 +374,9 @@ async fn concurrent_shared_turns_each_get_a_distinct_result() {
         true,
         None,
         TurnContextMiddleware::defaults(),
+        None,
+        None,
+        false,
     );
     let two = run_turn_via_tinyagents_shared(
         provider.clone(),
@@ -384,6 +394,9 @@ async fn concurrent_shared_turns_each_get_a_distinct_result() {
         true,
         None,
         TurnContextMiddleware::defaults(),
+        None,
+        None,
+        false,
     );
 
     let (a, b) = tokio::join!(one, two);
@@ -402,4 +415,258 @@ async fn concurrent_shared_turns_each_get_a_distinct_result() {
         ["AAA_CANARY", "BBB_CANARY"],
         "each concurrent turn must receive a distinct FIFO response; got {got:?}"
     );
+}
+
+/// Adapter inventory (issue #4249, Phase 11): assert the shared runner's
+/// assembled harness registers the model, every callable tool, and the intended
+/// middleware stack. Counts are the stable proxy for registration order — the
+/// crate's `MiddlewareStack` exposes lengths but not names (SDK gap), so
+/// ordering itself is documented at the registration sites in
+/// `assemble_turn_harness`.
+#[test]
+fn adapter_inventory_registers_model_tools_and_middleware() {
+    let provider: Arc<dyn Provider> = Arc::new(EchoThenDone {
+        calls: AtomicUsize::new(0),
+    });
+    let tool_sets: Vec<Arc<Vec<Box<dyn Tool>>>> =
+        vec![Arc::new(vec![Box::new(EchoTool) as Box<dyn Tool>])];
+
+    let assembled = assemble_turn_harness(
+        provider,
+        "mock-model",
+        0.0,
+        tool_sets,
+        HashSet::new(),
+        4,
+        None,          // on_progress: fire-and-forget
+        None,          // subagent_scope: top-level turn
+        Some(200_000), // known context window → compression + trim install
+        &["ask_user_clarification"],
+        Some(1024),
+        TurnContextMiddleware::defaults(),
+        None,  // no builder tool policy on this path
+        None,  // no per-turn required capabilities
+        false, // deterministic_cacheable
+    );
+
+    // Model registry: the turn's model plus the projected workload-route set
+    // (issue #4249, Workstream 02.1). `names()` is sorted; the turn model
+    // (`mock-model`) is not a tier alias, so no route is skipped.
+    assert_eq!(
+        assembled.harness.models().names(),
+        vec![
+            "agentic-v1".to_string(),
+            "burst-v1".to_string(),
+            "chat-v1".to_string(),
+            "coding-v1".to_string(),
+            "mock-model".to_string(),
+            "reasoning-v1".to_string(),
+            "summarization-v1".to_string(),
+            "vision-v1".to_string(),
+        ]
+    );
+
+    // Tool registry: every callable tool.
+    let tools = assembled.harness.tools().names();
+    assert!(tools.contains(&"echo".to_string()), "saw {tools:?}");
+    assert_eq!(assembled.tool_count, 1);
+    assert!(
+        assembled.registry_diagnostics.is_empty(),
+        "turn capability projection should be healthy: {:?}",
+        assembled.registry_diagnostics
+    );
+    assert_eq!(
+        assembled
+            .registry_snapshot
+            .count(tinyagents::registry::ComponentKind::Model),
+        8,
+        "projected registry should include the turn model plus the workload-route set"
+    );
+    assert_eq!(
+        assembled
+            .registry_snapshot
+            .count(tinyagents::registry::ComponentKind::Tool),
+        1,
+        "projected registry should include callable tools"
+    );
+    assert!(
+        assembled
+            .registry_snapshot
+            .count(tinyagents::registry::ComponentKind::Graph)
+            >= 1,
+        "projected registry should include known graph descriptors"
+    );
+    let policies = assembled.harness.tools().policies();
+    assert!(
+        policies.get("echo").is_some_and(|policy| policy.classified),
+        "registered tools must expose classified SDK policy snapshots: {policies:?}"
+    );
+    let stable_policies: BTreeMap<_, _> = policies.into_iter().collect();
+    let serialized = serde_json::to_string(&stable_policies).unwrap();
+    assert!(serialized.contains("\"classified\":true"));
+
+    // Lifecycle middleware, in registration order: repeated-tool-failure
+    // breaker, shadow tool-exposure, prompt-cache segment + guard, cache-align +
+    // tool-output (TurnContextMiddleware::defaults), cost budget, context
+    // compression + message trim (window known + autocompact on), SDK
+    // tool-policy projection, tool-outcome capture, arg recovery.
+    let mw = assembled.harness.middleware();
+    assert_eq!(mw.len(), 12, "lifecycle middleware inventory");
+    // Around-tool wraps: approval/security + CLI/RPC-only scope gate (no
+    // builder tool policy on this call).
+    assert_eq!(mw.tool_middleware_len(), 2, "tool middleware inventory");
+    assert_eq!(mw.model_middleware_len(), 0, "no around-model wraps");
+    assert_eq!(
+        assembled.harness.policy().limits.max_depth,
+        crate::openhuman::agent::harness::MAX_SPAWN_DEPTH,
+        "TinyAgents recursion cap should mirror OpenHuman's spawn cap"
+    );
+
+    // The shared steering handle always exists; the early-exit hook exists
+    // because an early-exit tool name was supplied.
+    assert!(assembled.handle.is_some());
+    assert!(assembled.early_exit_hook.is_some());
+
+    // Capability profile (issue #4249, Phase 2): derived from the wrapped
+    // provider plus the runner-threaded token limits.
+    use tinyagents::harness::model::ChatModel;
+    let registered = assembled
+        .harness
+        .models()
+        .get("mock-model")
+        .expect("model registered");
+    let profile = registered.profile().expect("profile is populated");
+    assert_eq!(profile.model.as_deref(), Some("mock-model"));
+    assert!(profile.tool_calling, "EchoThenDone supports native tools");
+    assert!(!profile.modalities.image_in, "no vision on the mock");
+    assert_eq!(profile.max_input_tokens, Some(200_000), "context window");
+    assert_eq!(profile.max_output_tokens, Some(1024), "output cap");
+}
+
+/// The context-management middlewares gate on a known context window: without
+/// one, neither compression nor trim installs (and no early-exit hook without
+/// early-exit tools).
+#[test]
+fn adapter_inventory_gates_context_middleware_on_window() {
+    let provider: Arc<dyn Provider> = Arc::new(EchoThenDone {
+        calls: AtomicUsize::new(0),
+    });
+    let tool_sets: Vec<Arc<Vec<Box<dyn Tool>>>> =
+        vec![Arc::new(vec![Box::new(EchoTool) as Box<dyn Tool>])];
+
+    let assembled = assemble_turn_harness(
+        provider,
+        "mock-model",
+        0.0,
+        tool_sets,
+        HashSet::new(),
+        4,
+        None,
+        None,
+        None, // unknown context window
+        &[],  // no early-exit tools
+        None,
+        TurnContextMiddleware::defaults(),
+        None,
+        None,  // no per-turn required capabilities
+        false, // deterministic_cacheable
+    );
+
+    let mw = assembled.harness.middleware();
+    assert_eq!(
+        mw.len(),
+        10,
+        "compression + trim must not install without a window"
+    );
+    assert!(assembled.early_exit_hook.is_none());
+}
+
+/// Phase 5 rollup gap (issue #4249): the per-call global cost tracker feed
+/// lives in the event bridge, which only exists on observed runs. An
+/// unobserved (fire-and-forget) turn must feed its aggregate usage through
+/// `record_unobserved_turn_usage` — exactly once (the bridge and the fallback
+/// are mutually exclusive branches) — or its spend never reaches the cost
+/// dashboard.
+#[tokio::test]
+async fn unobserved_turn_reports_aggregate_usage_for_the_cost_fallback() {
+    use crate::openhuman::inference::provider::UsageInfo;
+
+    /// Answers immediately, echoing provider-reported usage.
+    struct DoneWithUsage;
+    #[async_trait]
+    impl Provider for DoneWithUsage {
+        async fn chat_with_system(
+            &self,
+            _s: Option<&str>,
+            _m: &str,
+            _model: &str,
+            _t: f64,
+        ) -> anyhow::Result<String> {
+            Ok(String::new())
+        }
+        async fn chat(
+            &self,
+            _r: ChatRequest<'_>,
+            _model: &str,
+            _t: f64,
+        ) -> anyhow::Result<ChatResponse> {
+            Ok(ChatResponse {
+                text: Some("done".to_string()),
+                usage: Some(UsageInfo {
+                    input_tokens: 111,
+                    output_tokens: 22,
+                    context_window: 0,
+                    cached_input_tokens: 7,
+                    cache_creation_tokens: 0,
+                    reasoning_tokens: 0,
+                    charged_amount_usd: 0.0,
+                }),
+                ..Default::default()
+            })
+        }
+        fn supports_native_tools(&self) -> bool {
+            true
+        }
+    }
+
+    let outcome = run_turn_via_tinyagents_shared(
+        Arc::new(DoneWithUsage),
+        "mock-model",
+        0.0,
+        vec![ChatMessage::user("hello")],
+        Vec::new(),
+        HashSet::new(),
+        3,
+        None, // on_progress: unobserved — no bridge, cost fallback branch runs
+        None,
+        None,
+        None,
+        &[],
+        false,
+        None,
+        TurnContextMiddleware::defaults(),
+        None,
+        None,
+        false,
+    )
+    .await
+    .expect("turn runs");
+
+    // The fallback branch aggregated the run's real usage (and fed the global
+    // tracker — a silent no-op when no tracker is installed in this process).
+    assert_eq!(outcome.input_tokens, 111);
+    assert_eq!(outcome.output_tokens, 22);
+    assert_eq!(outcome.cached_input_tokens, 7);
+}
+
+/// The cost-fallback recorder skips all-zero usage (providers that echo no
+/// usage must not inflate the tracker's request count) and attempts a record
+/// whenever any tokens were observed. It must never panic without a tracker.
+#[test]
+fn record_unobserved_turn_usage_gates_on_observed_tokens() {
+    assert!(!record_unobserved_turn_usage("m", 0, 0, 0, 0.0));
+    assert!(!record_unobserved_turn_usage("m", 0, 0, 5, 0.1));
+    assert!(record_unobserved_turn_usage("m", 10, 0, 0, 0.0));
+    assert!(record_unobserved_turn_usage("m", 0, 3, 0, 0.0));
+    assert!(record_unobserved_turn_usage("m", 10, 3, 2, 0.5));
 }

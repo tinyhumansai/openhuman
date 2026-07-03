@@ -76,6 +76,7 @@ impl Memory for NoopMemory {
 
 fn parent_context(provider: Arc<dyn Provider>) -> ParentExecutionContext {
     ParentExecutionContext {
+        workspace_descriptor: None,
         agent_definition_id: "orchestrator".to_string(),
         allowed_subagent_ids: ["researcher".to_string()].into_iter().collect(),
         provider,

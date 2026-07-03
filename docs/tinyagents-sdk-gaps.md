@@ -6,40 +6,51 @@ TinyAgents.
 
 Scope:
 
-- Source baseline: local TinyAgents checkout at `6f898fb`.
+- Original source baseline: local TinyAgents checkout at `6f898fb`.
+- Refresh note: TinyAgents 1.3.0 was re-verified from the published crate
+  source. Several older "missing" items are now shipped in 1.2.0-1.3.0:
+  tool policy metadata, recoverable unknown-tool calls, reasoning/tool-call
+  stream deltas, orchestration task stores, budget reservation/reconciliation,
+  ordered parallel map/reduce, sub-agent steering/task controls, workspace
+  isolation hooks, and middleware control outcomes. The backlog below keeps only
+  the residual OpenHuman migration pressure and SDK surface gaps.
 - OpenHuman evidence: `src/openhuman/tinyagents/*`,
   `src/openhuman/agent/*`, `src/openhuman/cost/*`, and
   `src/openhuman/tokenjuice/*`.
 - This is not the OpenHuman migration plan. That plan lives in
   `docs/tinyagents-migration-spec.md`.
 - Items here are upstream TinyAgents implementation candidates.
-- Tests should be implemented last, after the API and storage surfaces settle.
+- Tests should follow each migrated surface; only broad end-to-end parity suites
+  should wait for the final cutover.
 
 ## Executive Summary
 
 TinyAgents already has strong primitives for harness runs, graph execution,
 middleware, event streams, model profiles, usage/cost accounting, checkpointers,
-and sub-agent orchestration. The biggest remaining gaps are production-grade
-policy metadata, durable orchestration stores, richer streaming events,
-recoverable tool-call behavior, graph fanout ergonomics, and SDK-owned adapters
-for the lifecycle controls OpenHuman currently implements around the SDK.
+policy metadata, recoverable tool-call behavior, workspace isolation, and
+sub-agent orchestration. The biggest remaining gaps are now narrower:
+OpenHuman adapter migration, transcript/session migration, richer replay and
+redaction rules, model/provider catalog integration, registry diagnostics, and a
+few still-missing SDK fields.
 
-OpenHuman can migrate more of `src/openhuman/agent/` if TinyAgents grows these
-features:
+OpenHuman can migrate more of `src/openhuman/agent/` by adopting the newer
+TinyAgents surfaces and filling the remaining gaps:
 
-- Rich tool metadata for safety, permissions, timeouts, retries, idempotency,
-  side effects, workspace access, and approval requirements.
-- A recoverable unknown-tool policy so invalid model tool calls do not always
-  abort the run.
-- First-class reasoning and tool-call argument streaming events.
-- Durable `TaskStore` and event/status stores with replay, lineage, cursors,
-  redaction, and cancellation semantics.
-- Storage compatibility options for SQLite users that already depend on a
-  different `rusqlite` / `libsqlite3-sys` version.
-- Higher-level map/reduce and parallel-agent orchestration helpers on top of
-  graph `Send`.
-- Budget enforcement and provider/model catalog metadata that can drive
-  preflight, fallback, and reconciliation.
+- A free-form metadata map on `ToolSchema` for model-visible schema
+  annotations; SDK-owned enforcement metadata now lives in `ToolPolicy`.
+- A reasoning field on the middleware-facing `harness::model::ModelDelta`;
+  `AgentEvent::ModelDelta` already carries nested `MessageDelta.reasoning`.
+- A one-time migration path from old OpenHuman `session_raw/*.jsonl` and
+  Markdown transcripts into TinyAgents store/journal/status records.
+- Production replay rules over TinyAgents stores/status: redaction, cursors,
+  backfill, cancellation, and OpenHuman controller compatibility.
+- Storage compatibility options for SQLite users that already own a connection,
+  schema, or native sqlite patch policy.
+- A `root_run_id` field on harness `RunConfig`; lineage exists in graph and
+  observability records, but not on the harness config itself.
+- A money/USD field on `Usage`; token usage and cost totals remain separate.
+- Provider/model catalog metadata that can drive preflight, fallback, and
+  reconciliation.
 - Conformance suites for providers, tools, middleware, graph stores, and
   checkpointers.
 
@@ -47,142 +58,88 @@ features:
 
 ### 1. Rich Tool Policy Metadata
 
-Status: partially present.
+Status: shipped in 1.3.0; residual schema metadata gap remains.
 
-TinyAgents has `ToolSchema { name, description, parameters, format }` and
-`ToolExecutionContext { run_id, thread_id, depth, max_turn_output_tokens,
-events }`. That is enough for model-visible tool calls, but not enough for
-OpenHuman's approval gate, command classifier, workspace policy, sandbox
-handoff, or tool-result budgeting.
+TinyAgents now has SDK-owned `ToolPolicy`, `ToolSideEffects`, `ToolRuntime`,
+`ToolAccess`, `WorkspaceAccess`, `SandboxMode`, `Tool::policy`, registry policy
+snapshots, and `ToolPolicyMiddleware`. Strict policy can fail closed on
+unclassified tools, enforce sandbox and result-byte requirements, and keep plain
+`ToolSchema` as the model-visible projection.
 
-OpenHuman currently keeps that metadata outside TinyAgents in domain tool
-registries and adapters. That means the SDK cannot make fail-closed decisions
-about whether a tool should be exposed, approved, retried, timed out, or allowed
-to touch the filesystem/network.
+Residual:
 
-Implement:
-
-- Add SDK-owned tool metadata, probably `ToolPolicy` or `ToolSafety`.
-- Represent side effects: `read_only`, `writes_files`, `network`,
-  `installs_dependencies`, `destructive`, `external_service`, `payment`.
-- Represent runtime requirements: timeout, retry policy, idempotency,
-  cancellation behavior, sandbox mode, max result bytes, streaming support.
-- Represent access requirements: workspace root policy, trusted roots,
-  credentials needed, user approval required, background-safe vs interactive.
-- Add helper middleware for policy enforcement before model-visible exposure and
-  before execution.
-
-Acceptance criteria:
-
-- Callers can build a dynamic per-run tool set from policy metadata.
-- Unknown or under-classified tools fail closed by default.
-- Tool policy can be serialized for registry introspection and audit logs.
-- Existing plain `ToolSchema` remains supported as the model-visible projection.
+- `ToolSchema` still has no free-form metadata map for model-visible schema
+  annotations or app-specific hints. Use `ToolPolicy` for enforcement metadata
+  and keep this as the remaining SDK shape gap.
+- OpenHuman still needs to map domain tool registry metadata into
+  `Tool::policy` snapshots before deleting adapter-local policy plumbing.
 
 ### 2. Recoverable Unknown Tool Calls
 
-Status: missing.
+Status: shipped in 1.3.0.
 
-TinyAgents currently returns `TinyAgentsError::ToolNotFound` when the model calls
-an unregistered tool. OpenHuman's legacy loop treated this as a recoverable tool
-result and let the model correct itself. The TinyAgents adapter now rewrites
-unknown calls to an internal `__openhuman_unknown_tool__` sentinel so the loop can
-continue.
+TinyAgents now has `UnknownToolPolicy::{Fail, ReturnToolError, Rewrite}` and
+emits `AgentEvent::UnknownToolCall` with the original requested name and
+arguments. This distinguishes "tool not found" from "tool executed and failed"
+and lets a run keep going so the model can correct itself.
 
-Implement:
+OpenHuman follow-up:
 
-- Add `UnknownToolPolicy`.
-- Suggested variants:
-  - `Fail`: current behavior.
-  - `ReturnToolError`: inject a tool result with the original requested name.
-  - `Rewrite { tool_name }`: adapter-controlled compatibility mode.
-  - `RepairWithMiddleware`: allow a tool middleware to transform the call.
-- Preserve the original requested tool name, original arguments, and model call
-  id in events and observations.
-
-Acceptance criteria:
-
-- OpenHuman can delete `UNKNOWN_TOOL_SENTINEL`.
-- Harness events distinguish "tool not found" from "tool executed and failed".
-- The policy can vary by run, sub-agent, or tool allowlist.
+- Replace the adapter-local `__openhuman_unknown_tool__` sentinel with
+  `UnknownToolPolicy` once the surrounding compatibility surface is migrated.
 
 ### 3. Reasoning And Tool-Argument Streaming
 
-Status: partially present.
+Status: shipped in 1.3.0; residual middleware event-shape gap remains.
 
-TinyAgents has `MessageDelta { text, tool_call }`, and `ModelDelta` events carry
-that delta. OpenHuman providers also emit reasoning/thinking deltas and
-tool-call argument fragments. The current adapter uses an out-of-band
-`ThinkingForwarder` because those provider deltas do not round-trip through the
-TinyAgents stream in a UI-compatible way.
+TinyAgents `MessageDelta` now carries provider-neutral `text`, `reasoning`, and
+`tool_call` channels, and `AgentEvent::ModelDelta` carries the delta with an
+explicit `run_id` and `call_id`.
 
-Implement:
+Residual:
 
-- Extend streaming deltas with explicit channels:
-  - visible text delta
-  - reasoning/thinking delta
-  - tool call start
-  - tool call argument delta
-  - tool call completed/assembled
-  - provider metadata/raw event summary
-- Keep channel semantics provider-neutral.
-- Emit the same data through `AgentEvent`, `AgentObservation`, journals, and live
-  stream items.
-- Attribute every delta to run id, model call id, optional thread id, parent run
-  id, and root run id.
-
-Acceptance criteria:
-
-- OpenHuman can delete `ThinkingForwarder`.
-- UI consumers can render visible text, reasoning, and tool argument assembly
-  from TinyAgents events alone.
-- Non-streaming providers can still emit post-hoc reasoning as one event.
+- The middleware-facing `harness::model::ModelDelta` still has no `reasoning`
+  field, and the agent loop drops reasoning when converting stream items into
+  that middleware shape. Event consumers can read reasoning from
+  `AgentEvent::ModelDelta.delta.reasoning`.
+- OpenHuman still needs to route provider reasoning/tool-argument deltas through
+  the TinyAgents stream before deleting UI-specific forwarding shims.
 
 ### 4. Durable Orchestration Task Store
 
-Status: partially present.
+Status: shipped as SDK primitives in 1.3.0; OpenHuman migration remains.
 
-TinyAgents defines a `TaskStore` trait and an `InMemoryTaskStore`. OpenHuman
-still owns durable detached-sub-agent state, cancellation handles, wait/reuse
-semantics, tombstones, and task lifecycle persistence around that store.
+TinyAgents now has `TaskStore`, `InMemoryTaskStore`, `JsonlTaskStore`,
+`OrchestrationTaskRecord`, lifecycle transitions, cancel/kill outcomes,
+filters, graph/harness status with lineage, `graph::subagent_node`, and
+`graph::subgraph`.
 
-Implement:
+OpenHuman follow-up:
 
-- Add durable `TaskStore` implementations:
-  - JSONL append store.
-  - SQLite store behind a storage feature.
-  - Optional caller-supplied store adapter.
-- Persist task spec, status, timestamps, result, error, parent/root run ids,
-  cancellation requests, timeouts, and control decisions.
-- Add lifecycle history, not only latest state.
-- Support replay/listing by parent run, root run, thread id, task kind, status,
-  and created-at window.
-
-Acceptance criteria:
-
-- A process restart does not lose detached or awaiting orchestration tasks.
-- Supervisors can list, wait, cancel, kill, and inspect tasks through the SDK
-  store contract.
-- OpenHuman can retire most bespoke task status/tombstone persistence in
-  `running_subagents.rs`.
+- Map durable sub-agent session rows and worker-thread records into TinyAgents
+  task/status/journal records while preserving controller compatibility.
+- Retire bespoke task status/tombstone persistence in `running_subagents.rs`
+  only after restart/replay behavior is projected through the SDK records.
 
 ### 5. SQLite Storage Compatibility
 
 Status: partially present.
 
-TinyAgents has a `SqliteCheckpointer`, but enabling the `sqlite` feature pulls a
-specific `rusqlite` / `libsqlite3-sys` version. OpenHuman already depends on a
-different SQLite native-link version, so it cannot enable that feature and had
-to implement `SqlRunLedgerCheckpointer`.
+TinyAgents 1.3 has `SqliteCheckpointer`, `from_connection`, and `schema_sql`,
+and OpenHuman now enables the `sqlite` feature by aligning both Cargo worlds on
+`rusqlite 0.40` / `libsqlite3-sys 0.38`. The remaining gap is not feature
+enablement or basic schema access; it is ownership. OpenHuman still patches the
+sqlite crates locally for the current toolchain, owns existing session/checkpoint
+tables through `SqlRunLedgerCheckpointer`, and needs a clean way to adopt or
+bridge SDK checkpoint storage without surrendering dependency or schema control.
 
-Implement one or more compatibility paths:
+Implement one or more OpenHuman compatibility paths:
 
-- Make SQLite support trait-first and allow external connection adapters.
 - Provide a version-flexible storage layer, possibly via `sqlx` or a separate
   crate feature matrix.
-- Split schema helpers from dependency ownership so apps can create the tables
-  using their own SQLite connection.
 - Expose a small `CheckpointStore` persistence trait below `Checkpointer`.
+- Add an adapter/cutover path that can project OpenHuman run-ledger checkpoints
+  into SDK checkpoint storage without breaking existing resume semantics.
 
 Acceptance criteria:
 
@@ -220,29 +177,18 @@ Acceptance criteria:
 
 ### 7. Cost, Usage, And Budget Enforcement
 
-Status: partially present.
+Status: shipped in 1.3.0; residual money field gap remains.
 
-TinyAgents has `Usage`, `UsageTotals`, `CostTotals`, and accounting middleware.
-OpenHuman still owns richer budget behavior, global cost trackers, per-session
-rollups, budget stop hooks, and token/cost dashboard data.
+TinyAgents now has `Usage`, `UsageTotals`, `CostTotals`,
+`BudgetLimits.max_cached_input_tokens`, budget middleware, and
+`AgentEvent::{BudgetReserved, BudgetReconciled, BudgetWarning, BudgetExceeded}`.
+The SDK can preflight, reserve, enforce, and reconcile token budgets.
 
-Implement:
+Residual:
 
-- A budget middleware that can preflight, enforce, and reconcile costs.
-- Per-run and recursive root-run budgets for input, output, cached input,
-  reasoning tokens, total tokens, and money.
-- Distinguish provider-reported usage from estimated usage.
-- Track cached-token pricing, reasoning pricing, embeddings, image/audio usage,
-  and tool/provider fees where present.
-- Add budget events: preflight, reservation, spend, refund/reconcile, warn,
-  exceeded, blocked.
-
-Acceptance criteria:
-
-- A caller can stop a recursive harness/graph run when a root budget is
-  exhausted.
-- Budget totals roll up from child/sub-agent runs without custom side channels.
-- OpenHuman cost UI can read TinyAgents-normalized records or a thin projection.
+- `Usage` still has no USD/money field. Token usage and money remain separate
+  (`Usage`/`UsageTotals` vs. `CostTotals`), so OpenHuman cost UI still needs a
+  projection that joins token usage with pricing/cost records.
 
 ### 8. Model Catalog And Provider Resolution
 
@@ -296,113 +242,61 @@ Acceptance criteria:
 
 ### 10. Graph Fanout And Parallel Agent Ergonomics
 
-Status: partially present.
+Status: map/reduce helper shipped in 1.2.1-1.3.0; OpenHuman builder migration
+remains.
 
-TinyAgents graph has `Send`, `Command`, reducers, interrupts, parallel execution,
-and max concurrency. OpenHuman still added `run_parallel_fanout` to provide an
-ordered, bounded map/reduce helper for council runs and `spawn_parallel_agents`.
+TinyAgents now has ordered `map_reduce`, `FailurePolicy`, `ParallelOptions`,
+max concurrency, per-item timeout, total timeout, and cooperative cancellation.
+OpenHuman council runs and `spawn_parallel_agents` can use this helper directly.
 
-Implement:
+Residual:
 
-- Add a generic SDK helper for parallel map/reduce:
-  - preserve input order
-  - limit concurrency
-  - collect per-item success/failure
-  - support cancellation
-  - support reducer updates
-  - support timeout per item and total timeout
-  - expose graph lifecycle events
-- Add a higher-level parallel-agent builder:
-  - validate task specs
-  - dispatch workers through `Send`
-  - collect result envelopes
-  - merge usage/cost/events
-  - detect worker failure policy: fail-fast, collect-all, quorum, best-effort
-
-Acceptance criteria:
-
-- OpenHuman can delete most of `run_parallel_fanout` and use the SDK helper.
-- `spawn_parallel_agents` can be expressed as graph configuration plus
-  OpenHuman policy adapters.
-- Results remain deterministic in input order even when workers complete out of
-  order.
+- The higher-level parallel-agent builder remains OpenHuman-specific policy
+  glue: task validation, `Send` dispatch shape, result envelopes, usage/cost
+  merging, and ownership/worktree policy adapters.
 
 ### 11. Sub-Agent Steering, Waiting, And Reuse
 
-Status: partially present.
+Status: SDK primitives shipped in 1.3.0; OpenHuman lifecycle projection remains.
 
-TinyAgents has sub-agent and steering primitives, but OpenHuman still owns
-session reuse, wait handles, detached run tracking, user-facing cancellation,
-early-exit handling, and parent-child progress aggregation.
+TinyAgents now has sub-agent sessions/tools, steering, task stores, cancel/kill
+control outcomes, graph/harness lineage, and reusable child-run primitives.
 
-Implement:
+OpenHuman follow-up:
 
-- First-class detached sub-agent sessions.
-- `wait`, `cancel`, `kill`, `resume`, `steer`, and `close` controls backed by
-  `TaskStore`.
-- Reusable child sessions with explicit lifecycle state.
-- Parent/root event correlation for every child run.
-- Early-exit policy that can pause a run and surface a structured payload.
-
-Acceptance criteria:
-
-- Callers can spawn a detached child run, wait for it later, and survive process
-  restart if durable stores are configured.
-- Parent and child usage/cost/events roll up without bespoke registries.
-- OpenHuman can reduce `running_subagents.rs` to policy and UI projection code.
+- Project existing detached run tracking, wait handles, user-facing
+  cancellation, early-exit handling, and parent-child progress aggregation onto
+  TinyAgents task/status records before reducing `running_subagents.rs`.
 
 ### 12. Workspace Isolation And Sandbox Hooks
 
-Status: missing as an SDK-owned abstraction.
+Status: shipped in 1.3.0; OpenHuman policy integration remains.
 
-OpenHuman has workspace/action-root policy, internal workspace protection,
-trusted roots, worktree isolation, sandbox modes, and command permission tiers.
-TinyAgents should not own OpenHuman's policy, but it needs generic hooks for
-agents that run tools over real files or command executors.
+TinyAgents now has `WorkspaceDescriptor`, `WorkspaceIsolation`,
+`SharedRootWorkspace`, sandbox descriptors, `ToolExecutionContext.workspace`,
+and `WorkspaceDescriptor::enforce(path, events)` which emits
+`AgentEvent::WorkspaceViolation` and fails closed when a path leaves the allowed
+roots.
 
-Implement:
+OpenHuman follow-up:
 
-- A `WorkspaceIsolation` or `ExecutionEnvironment` interface.
-- Hooks for preparing per-agent worktrees/sandboxes and cleaning them up.
-- Tool execution context fields for workspace root, logical task root, sandbox
-  descriptor, and policy identity.
-- Events for isolation setup, violation, cleanup, and failure.
-
-Acceptance criteria:
-
-- Parallel agents can run with isolated workspaces using SDK lifecycle hooks.
-- Tools can discover their allowed root from context instead of app globals.
-- Policy engines can block unsafe paths before tool execution.
+- Implement OpenHuman's action-root, trusted-root, internal-workspace, worktree,
+  sandbox, and command-tier policy as a `WorkspaceIsolation` provider and tool
+  middleware projection.
 
 ### 13. Middleware Control Outcomes
 
-Status: partially present.
+Status: shipped in 1.3.0.
 
-TinyAgents middleware is rich enough for wrapping model and tool calls, and the
-graph layer has `Command` and `Interrupt`. Some OpenHuman behaviors still need
-direct control outcomes: pause after early-exit tools, stop on budget, reroute
-on fallback, and defer work to sub-agents.
+TinyAgents now has `MiddlewareControl::{StopWithFinal, Interrupt}`,
+`RunContext::request_control`, precedence handling via
+`MiddlewareControl::precedence()`, stable `kind()` labels, and
+`AgentEvent::ControlApplied` so control decisions are visible in journals.
 
-Implement:
+OpenHuman follow-up:
 
-- Standard control outcomes from middleware:
-  - continue
-  - replace request/response
-  - retry
-  - fallback
-  - pause/interrupt
-  - stop with final response
-  - route/goto graph node
-  - defer to task/sub-agent
-- Consistent event emission for each control outcome.
-- Clear precedence when multiple middleware layers request control changes.
-
-Acceptance criteria:
-
-- Early-exit tools and budget stop hooks do not require adapter-local steering
-  side channels.
-- Graph and harness middleware use compatible control vocabulary.
-- Control decisions are visible in journals for audit/replay.
+- Route early-exit tools and budget stop hooks through `MiddlewareControl`
+  before deleting adapter-local steering side channels.
 
 ### 15. Registry Diagnostics And Introspection
 
@@ -429,14 +323,16 @@ Acceptance criteria:
 
 ### 17. Storage And Graph Conformance
 
-Status: missing as a standardized SDK suite.
+Status: partially present.
 
-Durable graphs and task stores are hard to migrate safely without a shared
-contract test suite.
+TinyAgents 1.3 includes storage conformance coverage for built-in checkpointers
+and task stores, including SQLite under the feature. Durable OpenHuman adapters
+and fuller graph behavior are still hard to migrate safely without shared
+contract coverage.
 
 Implement:
 
-- Checkpointer conformance for memory, file, SQLite, and caller-supplied stores.
+- Checkpointer conformance for OpenHuman adapters and caller-supplied stores.
 - TaskStore conformance for lifecycle transitions, filters, cancellation,
   timeout, kill, restart/replay, and concurrent writes.
 - Graph conformance for `Send`, reducers, interrupts, resume, max concurrency,

@@ -387,4 +387,117 @@ describe('UpcomingTable', () => {
     // not a hardcoded English fallback.
     await waitFor(() => expect(screen.getByText(/^in \d+m$/)).toBeInTheDocument());
   });
+
+  // ── Live pill (backendMeet slice) + reply anchor ──────────────────────────
+
+  // Build a full backendMeet slice preloaded-state matching the slice shape.
+  function activeMeetState(
+    overrides: Partial<{ status: string; meetUrl: string | null; meetingId: string | null }> = {}
+  ) {
+    return {
+      backendMeet: {
+        status: 'active',
+        meetUrl: null,
+        meetingId: null,
+        listenOnly: false,
+        lastReply: null,
+        lastHarness: null,
+        transcript: null,
+        error: null,
+        ...overrides,
+      },
+    };
+  }
+
+  it('shows the Live pill (not a Join button) when active with a matching meet_url', async () => {
+    listMock.mockResolvedValueOnce([
+      makeMeeting({ calendar_event_id: 'evt-x', meet_url: 'https://meet.google.com/live-match' }),
+    ]);
+    renderWithProviders(<UpcomingTable />, {
+      preloadedState: activeMeetState({
+        meetingId: null,
+        meetUrl: 'https://meet.google.com/live-match',
+      }),
+    });
+    await waitFor(() => expect(screen.getByText('Weekly Sync')).toBeInTheDocument());
+    expect(screen.getByText('Live')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^join$/i })).not.toBeInTheDocument();
+  });
+
+  it('shows the Live pill when the backend status is joining (not only active)', async () => {
+    listMock.mockResolvedValueOnce([
+      makeMeeting({ calendar_event_id: 'evt-1', meet_url: 'https://meet.google.com/live-match' }),
+    ]);
+    renderWithProviders(<UpcomingTable />, {
+      preloadedState: activeMeetState({
+        status: 'joining',
+        meetUrl: 'https://meet.google.com/live-match',
+      }),
+    });
+    await waitFor(() => expect(screen.getByText('Weekly Sync')).toBeInTheDocument());
+    expect(screen.getByText('Live')).toBeInTheDocument();
+  });
+
+  it('does NOT show the Live pill when the status is active but nothing matches', async () => {
+    listMock.mockResolvedValueOnce([makeMeeting({ calendar_event_id: 'evt-1' })]);
+    renderWithProviders(<UpcomingTable />, {
+      preloadedState: activeMeetState({ meetingId: 'other-evt', meetUrl: 'https://other.example' }),
+    });
+    await waitFor(() => expect(screen.getByText('Weekly Sync')).toBeInTheDocument());
+    expect(screen.queryByText('Live')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^join$/i })).toBeInTheDocument();
+  });
+
+  it('shows Join now (not Live) for an imminent meeting when not joined', async () => {
+    listMock.mockResolvedValueOnce([makeMeeting({ start_time_ms: NOW + 2 * 60 * 1000 })]);
+    renderWithProviders(<UpcomingTable />);
+    await waitFor(() => expect(screen.getByText('Join now')).toBeInTheDocument());
+    expect(screen.queryByText('Live')).not.toBeInTheDocument();
+  });
+
+  it('joins in reply mode when replyDisplayName is set (respondToParticipant + listenOnly=false)', async () => {
+    joinMock.mockResolvedValueOnce(undefined);
+    listMock.mockResolvedValueOnce([makeMeeting()]);
+    renderWithProviders(<UpcomingTable replyDisplayName="  Alex Kim  " />);
+
+    const joinBtn = await screen.findByRole('button', { name: /^join$/i });
+    fireEvent.click(joinBtn);
+
+    await waitFor(() => expect(joinMock).toHaveBeenCalledOnce());
+    // The anchor is trimmed before being passed as respondToParticipant.
+    // correlationId is a fresh per-join UUID (never the deterministic
+    // calendar_event_id) — see the dedicated #4338 tests above.
+    expect(joinMock).toHaveBeenCalledWith(
+      expect.objectContaining({ respondToParticipant: 'Alex Kim', listenOnly: false })
+    );
+    const { correlationId, wakePhrase } = joinMock.mock.calls[0][0] as {
+      correlationId: string;
+      wakePhrase?: string;
+    };
+    expect(correlationId).toBeTruthy();
+    expect(correlationId).not.toBe('evt-1');
+    // Reply mode must gate the bot behind a wake phrase so it only reacts when
+    // addressed — otherwise every caption from the anchor becomes a command.
+    expect(wakePhrase).toMatch(/^Hey /);
+  });
+
+  it('joins listen-only when replyDisplayName is blank/whitespace (no respondToParticipant)', async () => {
+    joinMock.mockResolvedValueOnce(undefined);
+    listMock.mockResolvedValueOnce([makeMeeting()]);
+    renderWithProviders(<UpcomingTable replyDisplayName="   " />);
+
+    const joinBtn = await screen.findByRole('button', { name: /^join$/i });
+    fireEvent.click(joinBtn);
+
+    await waitFor(() => expect(joinMock).toHaveBeenCalledOnce());
+    const arg = joinMock.mock.calls[0][0] as {
+      listenOnly: boolean;
+      respondToParticipant?: string;
+      wakePhrase?: string;
+    };
+    expect(arg.listenOnly).toBe(true);
+    expect(arg.respondToParticipant).toBeUndefined();
+    // Listen-only: the bot never speaks, so no wake phrase is sent.
+    expect(arg.wakePhrase).toBeUndefined();
+  });
 });

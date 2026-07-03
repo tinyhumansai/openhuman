@@ -41,7 +41,6 @@ OpenHuman ships **18 channel provider modules** (16 built by default plus two be
 | **Slack** | Two-way | Events/socket | Your own bot token | `config.toml` |
 | **WhatsApp** | Two-way | Meta Cloud webhook | Your own access token | `config.toml` |
 | **IRC** | Two-way | Persistent socket | Your own server/nick | `config.toml` |
-| **Matrix** | Two-way | Sync loop | Your own homeserver creds (feature `channel-matrix`) | `config.toml` |
 | **Signal** | Two-way | signal-cli REST events | Your own linked signal-cli account | `config.toml` |
 | **Mattermost** | Two-way | WebSocket | Your own bot token | `config.toml` |
 | **QQ** | Two-way | WebSocket | Your own bot credentials | `config.toml` |

@@ -31,6 +31,15 @@ use crate::openhuman::tinyplace::manifest::{
     handle_tinyplace_channels_join,
     handle_tinyplace_channels_leave,
     handle_tinyplace_channels_list,
+    handle_tinyplace_contacts_accept,
+    handle_tinyplace_contacts_block,
+    handle_tinyplace_contacts_list,
+    handle_tinyplace_contacts_remove,
+    handle_tinyplace_contacts_request,
+    handle_tinyplace_contacts_requests,
+    handle_tinyplace_contacts_stats,
+    handle_tinyplace_contacts_status,
+    handle_tinyplace_contacts_unblock,
     handle_tinyplace_directory_find_by_encryption_key,
     handle_tinyplace_directory_get_agent,
     handle_tinyplace_directory_list_agents,
@@ -1884,6 +1893,120 @@ fn schema_messages_acknowledge() -> ControllerSchema {
     }
 }
 
+fn schema_contacts_request() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "tinyplace",
+        function: "contacts_request",
+        description: "Send a signed contact request to a peer agent. Contact requests carry no free text; the edge itself is the pairing signal.",
+        inputs: vec![required_string("agentId", "Target agent ID.")],
+        outputs: vec![json_output("result", "ContactView or backend contact result.")],
+    }
+}
+
+fn schema_contacts_accept() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "tinyplace",
+        function: "contacts_accept",
+        description: "Accept an incoming signed contact request from a peer agent.",
+        inputs: vec![required_string("agentId", "Requesting agent ID.")],
+        outputs: vec![json_output(
+            "result",
+            "Accepted ContactView or backend contact result.",
+        )],
+    }
+}
+
+fn schema_contacts_remove() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "tinyplace",
+        function: "contacts_remove",
+        description:
+            "Remove a contact edge or pending request. Blocked edges are not cleared by remove.",
+        inputs: vec![required_string("agentId", "Peer agent ID.")],
+        outputs: vec![json_output(
+            "result",
+            "{ ok: true } or backend contact result.",
+        )],
+    }
+}
+
+fn schema_contacts_block() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "tinyplace",
+        function: "contacts_block",
+        description: "Block a peer agent. Blocked peers must not be re-requested automatically.",
+        inputs: vec![required_string("agentId", "Peer agent ID.")],
+        outputs: vec![json_output(
+            "result",
+            "Blocked ContactView or backend contact result.",
+        )],
+    }
+}
+
+fn schema_contacts_unblock() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "tinyplace",
+        function: "contacts_unblock",
+        description:
+            "Unblock a peer agent without automatically creating or accepting a contact edge.",
+        inputs: vec![required_string("agentId", "Peer agent ID.")],
+        outputs: vec![json_output(
+            "result",
+            "{ ok: true } or backend contact result.",
+        )],
+    }
+}
+
+fn schema_contacts_list() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "tinyplace",
+        function: "contacts_list",
+        description: "List signed contact edges for the current tiny.place identity.",
+        inputs: vec![optional_object(
+            "params",
+            "Optional pagination params (limit, offset).",
+        )],
+        outputs: vec![json_output(
+            "result",
+            "ContactsResponse { contacts: ContactView[] }.",
+        )],
+    }
+}
+
+fn schema_contacts_requests() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "tinyplace",
+        function: "contacts_requests",
+        description: "List incoming and outgoing signed contact requests for the current tiny.place identity.",
+        inputs: vec![optional_object("params", "Optional pagination params (limit, offset).")],
+        outputs: vec![json_output(
+            "result",
+            "ContactRequestsResponse { incoming: ContactView[], outgoing: ContactView[] }.",
+        )],
+    }
+}
+
+fn schema_contacts_status() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "tinyplace",
+        function: "contacts_status",
+        description:
+            "Fetch the contact status between the current tiny.place identity and a peer agent.",
+        inputs: vec![required_string("agentId", "Peer agent ID.")],
+        outputs: vec![json_output("result", "ContactStatusResponse.")],
+    }
+}
+
+fn schema_contacts_stats() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "tinyplace",
+        function: "contacts_stats",
+        description: "Fetch aggregate signed contact counts for the current tiny.place identity.",
+        inputs: vec![],
+        outputs: vec![json_output("result", "ContactStats.")],
+    }
+}
+
 // ── Encryption key registration + discovery (0D) ────────────────────────────
 
 fn schema_signal_register_encryption_key() -> ControllerSchema {
@@ -2688,6 +2811,16 @@ pub fn all_tinyplace_controller_schemas() -> Vec<ControllerSchema> {
         schema_signal_decrypt_message(),
         schema_messages_list(),
         schema_messages_acknowledge(),
+        // Contacts / pairing precondition for encrypted DMs
+        schema_contacts_request(),
+        schema_contacts_accept(),
+        schema_contacts_remove(),
+        schema_contacts_block(),
+        schema_contacts_unblock(),
+        schema_contacts_list(),
+        schema_contacts_requests(),
+        schema_contacts_status(),
+        schema_contacts_stats(),
         // Encryption key registration + discovery (0D)
         schema_signal_register_encryption_key(),
         schema_directory_find_by_encryption_key(),
@@ -3155,6 +3288,43 @@ pub fn all_tinyplace_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schema_messages_acknowledge(),
             handler: handle_tinyplace_messages_acknowledge,
+        },
+        // Contacts / pairing precondition for encrypted DMs
+        RegisteredController {
+            schema: schema_contacts_request(),
+            handler: handle_tinyplace_contacts_request,
+        },
+        RegisteredController {
+            schema: schema_contacts_accept(),
+            handler: handle_tinyplace_contacts_accept,
+        },
+        RegisteredController {
+            schema: schema_contacts_remove(),
+            handler: handle_tinyplace_contacts_remove,
+        },
+        RegisteredController {
+            schema: schema_contacts_block(),
+            handler: handle_tinyplace_contacts_block,
+        },
+        RegisteredController {
+            schema: schema_contacts_unblock(),
+            handler: handle_tinyplace_contacts_unblock,
+        },
+        RegisteredController {
+            schema: schema_contacts_list(),
+            handler: handle_tinyplace_contacts_list,
+        },
+        RegisteredController {
+            schema: schema_contacts_requests(),
+            handler: handle_tinyplace_contacts_requests,
+        },
+        RegisteredController {
+            schema: schema_contacts_status(),
+            handler: handle_tinyplace_contacts_status,
+        },
+        RegisteredController {
+            schema: schema_contacts_stats(),
+            handler: handle_tinyplace_contacts_stats,
         },
         // Encryption key registration + discovery (0D)
         RegisteredController {

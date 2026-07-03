@@ -130,6 +130,10 @@ pub(super) struct MeetSettingsUpdate {
     pub(super) platform_auto_join_policies: Option<std::collections::HashMap<String, String>>,
     /// Master switch for calendar-driven auto-join / ask-to-join.
     pub(super) watch_calendar: Option<bool>,
+    /// Calendar detection source as a string: `composio` | `recall`.
+    pub(super) calendar_provider: Option<String>,
+    /// User's meeting display name, reused as the bot's reply anchor.
+    pub(super) reply_display_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

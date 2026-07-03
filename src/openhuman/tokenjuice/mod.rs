@@ -124,8 +124,8 @@ pub use detect::detect_content_kind;
 pub use reduce::reduce_execution_with_rules;
 pub use rules::{load_builtin_rules, load_rules, LoadRuleOptions};
 pub use tool_integration::{
-    compact_output, compact_output_with_policy, compact_tool_output,
-    compact_tool_output_with_policy, configure, current_options, install_config, CompactionStats,
+    compact_output, compact_output_with_policy, compact_tool_output_with_policy, configure,
+    current_options, install_config, CompactionStats,
 };
 pub use tools::TokenjuiceRetrieveTool;
 pub use types::{

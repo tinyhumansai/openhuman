@@ -288,7 +288,7 @@ fn render_delegation_guide(integrations: &[ConnectedIntegration]) -> String {
     // CROSS_CHAT_HEADER (single source of truth) — drift would silently
     // detune the rule.
     let cross_chat_header_for_prompt =
-        crate::openhuman::agent::memory_loader::CROSS_CHAT_HEADER.trim_end();
+        crate::openhuman::agent_memory::memory_loader::CROSS_CHAT_HEADER.trim_end();
     let _ = write!(
         out,
         "\n### Capability questions about connected toolkits\n\n\

@@ -94,6 +94,31 @@ async fn settles_running_run_on_subagent_failed_with_error() {
 }
 
 #[tokio::test]
+async fn settles_running_run_on_subagent_awaiting_user() {
+    let dir = TempDir::new().unwrap();
+    let config = test_config(&dir);
+    seed_running(&config, "sub-3");
+
+    let sub = RunLedgerFinalizeSubscriber {
+        config: config.clone(),
+    };
+    sub.handle(&DomainEvent::SubagentAwaitingUser {
+        parent_session: "session-1".into(),
+        task_id: "sub-3".into(),
+        agent_id: "tinyplace_agent".into(),
+        question: "Need a decision".into(),
+    })
+    .await;
+
+    let run = get_agent_run(&config, "sub-3")
+        .unwrap()
+        .expect("run present");
+    assert_eq!(run.status, AgentRunStatus::AwaitingUser);
+    assert!(run.error.is_none());
+    assert!(run.completed_at.is_none());
+}
+
+#[tokio::test]
 async fn ignores_unrelated_events_and_missing_runs() {
     let dir = TempDir::new().unwrap();
     let config = test_config(&dir);

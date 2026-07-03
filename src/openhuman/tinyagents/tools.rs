@@ -11,89 +11,17 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use tinyagents::harness::steering::{SteeringCommand, SteeringHandle};
 use tinyagents::harness::tool::{
-    Tool, ToolCall as TaToolCall, ToolResult as TaToolResult, ToolSchema,
+    SandboxMode, Tool, ToolAccess, ToolCall as TaToolCall, ToolExecutionContext, ToolPolicy,
+    ToolResult as TaToolResult, ToolRuntime, ToolSchema, ToolSideEffects, WorkspaceAccess,
 };
-
-/// Internal sentinel tool name. tinyagents fails the whole run on a call to an
-/// unregistered tool ([`TinyAgentsError::ToolNotFound`]), but the legacy loop
-/// returned an "Unknown tool" result and let the model recover. The model
-/// adapter rewrites any call to an unadvertised tool onto this sentinel (the
-/// original name carried in `requested_tool`), so the harness executes it,
-/// produces the recovery result, and the loop continues — restoring the
-/// graceful-unknown-tool behavior. The leading underscores keep it out of any
-/// real tool namespace, and it is never advertised to the model.
-pub const UNKNOWN_TOOL_SENTINEL: &str = "__openhuman_unknown_tool__";
-
-/// The sentinel tool: reports the model's requested-but-unavailable tool back as
-/// a recoverable result instead of aborting the run. See [`UNKNOWN_TOOL_SENTINEL`].
-///
-/// `subagent` selects the wording so it matches the legacy engine: a sub-agent
-/// calling a tool outside its list gets the "not available to this sub-agent"
-/// message (the `SubagentToolSource` wording), while a top-level agent gets the
-/// "Unknown tool" message (`engine::tools`). Tests and the model key off these.
-pub struct UnknownToolAdapter {
-    subagent: bool,
-}
-
-impl UnknownToolAdapter {
-    pub fn new(subagent: bool) -> Self {
-        Self { subagent }
-    }
-}
-
-#[async_trait]
-impl Tool<()> for UnknownToolAdapter {
-    fn name(&self) -> &str {
-        UNKNOWN_TOOL_SENTINEL
-    }
-
-    fn description(&self) -> &str {
-        "internal: reports an unavailable tool call"
-    }
-
-    fn schema(&self) -> ToolSchema {
-        ToolSchema::new(
-            UNKNOWN_TOOL_SENTINEL,
-            "internal",
-            serde_json::json!({"type": "object"}),
-        )
-    }
-
-    async fn call(&self, _state: &(), call: TaToolCall) -> tinyagents::Result<TaToolResult> {
-        let requested = call
-            .arguments
-            .get("requested_tool")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-        let content = if self.subagent {
-            format!(
-                "Error: tool '{requested}' is not available to this sub-agent. \
-                 Use one of your listed tools, or answer directly."
-            )
-        } else {
-            format!(
-                "Unknown tool: '{requested}'. It is not available; do not call it again. \
-                 Use one of the advertised tools, or answer directly."
-            )
-        };
-        Ok(TaToolResult {
-            call_id: call.id,
-            name: call.name,
-            content,
-            raw: None,
-            error: None,
-            elapsed_ms: 0,
-        })
-    }
-}
 
 /// A captured early-exit: a sub-agent invoked an early-exit tool (e.g.
 /// `ask_user_clarification`), so the loop should pause and surface `question`
 /// to the user. Mirrors the legacy `run_turn_engine` `early_exit_tool` seam.
 #[derive(Debug, Clone)]
-pub struct EarlyExit {
-    pub tool: String,
-    pub question: String,
+pub(crate) struct EarlyExit {
+    pub(crate) tool: String,
+    pub(crate) question: String,
 }
 
 /// Shared early-exit hook handed to the adapters for the early-exit tool names.
@@ -102,14 +30,14 @@ pub struct EarlyExit {
 /// next checkpoint (before the next model call) — the tinyagents analogue of the
 /// legacy loop's "break on early-exit tool" behavior.
 #[derive(Clone)]
-pub struct EarlyExitHook {
+pub(crate) struct EarlyExitHook {
     handle: SteeringHandle,
     slot: Arc<Mutex<Option<EarlyExit>>>,
 }
 
 impl EarlyExitHook {
     /// Build a hook that pauses `handle` and records into a fresh slot.
-    pub fn new(handle: SteeringHandle) -> Self {
+    pub(crate) fn new(handle: SteeringHandle) -> Self {
         Self {
             handle,
             slot: Arc::new(Mutex::new(None)),
@@ -117,7 +45,7 @@ impl EarlyExitHook {
     }
 
     /// The captured early-exit, if one fired during the run.
-    pub fn take(&self) -> Option<EarlyExit> {
+    pub(crate) fn take(&self) -> Option<EarlyExit> {
         self.slot.lock().unwrap().take()
     }
 
@@ -139,17 +67,20 @@ impl EarlyExitHook {
 }
 
 /// A harness tool backed by an openhuman [`Tool`].
-pub struct ToolAdapter {
+#[cfg(test)]
+pub(crate) struct ToolAdapter {
     inner: Arc<dyn crate::openhuman::tools::Tool>,
 }
 
+#[cfg(test)]
 impl ToolAdapter {
     /// Wrap a resolved openhuman tool.
-    pub fn new(inner: Arc<dyn crate::openhuman::tools::Tool>) -> Self {
+    pub(crate) fn new(inner: Arc<dyn crate::openhuman::tools::Tool>) -> Self {
         Self { inner }
     }
 }
 
+#[cfg(test)]
 #[async_trait]
 impl Tool<()> for ToolAdapter {
     fn name(&self) -> &str {
@@ -164,9 +95,74 @@ impl Tool<()> for ToolAdapter {
         super::convert::spec_to_schema(&self.inner.spec())
     }
 
-    async fn call(&self, _state: &(), call: TaToolCall) -> tinyagents::Result<TaToolResult> {
-        Ok(execute_openhuman_tool(self.inner.as_ref(), call).await)
+    fn policy(&self) -> ToolPolicy {
+        tool_policy_from_openhuman_tool(self.inner.as_ref())
     }
+
+    async fn call(&self, _state: &(), call: TaToolCall) -> tinyagents::Result<TaToolResult> {
+        Ok(execute_openhuman_tool(self.inner.as_ref(), call, None).await)
+    }
+
+    async fn call_with_context(
+        &self,
+        _state: &(),
+        call: TaToolCall,
+        context: ToolExecutionContext,
+    ) -> tinyagents::Result<TaToolResult> {
+        Ok(execute_openhuman_tool(self.inner.as_ref(), call, Some(&context)).await)
+    }
+}
+
+fn tool_policy_from_openhuman_tool(tool: &dyn crate::openhuman::tools::Tool) -> ToolPolicy {
+    use crate::openhuman::tools::traits::ToolTimeout;
+    use crate::openhuman::tools::PermissionLevel;
+
+    let permission = tool.permission_level();
+    let external_effect = tool.external_effect();
+    let read_only = matches!(
+        permission,
+        PermissionLevel::None | PermissionLevel::ReadOnly
+    ) && !external_effect;
+
+    let timeout_ms = match tool.timeout_policy(&serde_json::Value::Null) {
+        ToolTimeout::Secs(seconds) => Some(seconds.saturating_mul(1000)),
+        ToolTimeout::Inherit | ToolTimeout::Unbounded => None,
+    };
+
+    ToolPolicy::classified()
+        .with_side_effects(ToolSideEffects {
+            read_only,
+            writes_files: matches!(
+                permission,
+                PermissionLevel::Write | PermissionLevel::Execute | PermissionLevel::Dangerous
+            ),
+            network: false,
+            installs_dependencies: false,
+            destructive: matches!(permission, PermissionLevel::Dangerous),
+            external_service: external_effect,
+            payment: false,
+        })
+        .with_runtime(ToolRuntime {
+            timeout_ms,
+            max_retries: None,
+            idempotent: tool.is_concurrency_safe(&serde_json::Value::Null),
+            cancelable: true,
+            sandbox: SandboxMode::Inherit,
+            max_result_bytes: tool.max_result_size_chars(),
+            streaming: false,
+        })
+        .with_access(ToolAccess {
+            workspace: match permission {
+                PermissionLevel::None | PermissionLevel::ReadOnly => WorkspaceAccess::None,
+                PermissionLevel::Write | PermissionLevel::Execute | PermissionLevel::Dangerous => {
+                    WorkspaceAccess::Any
+                }
+            },
+            trusted_roots: Vec::new(),
+            credentials: Vec::new(),
+            approval_required: external_effect || matches!(permission, PermissionLevel::Dangerous),
+            background_safe: !external_effect && !matches!(permission, PermissionLevel::Dangerous),
+        })
 }
 
 /// Execute an openhuman [`Tool`](crate::openhuman::tools::Tool) for a harness
@@ -175,10 +171,15 @@ impl Tool<()> for ToolAdapter {
 async fn execute_openhuman_tool(
     tool: &dyn crate::openhuman::tools::Tool,
     call: TaToolCall,
+    context: Option<&ToolExecutionContext>,
 ) -> TaToolResult {
+    let workspace_root = context
+        .and_then(|ctx| ctx.workspace.as_ref())
+        .map(|workspace| workspace.root.display().to_string());
     tracing::debug!(
         tool = %call.name,
         call_id = %call.id,
+        workspace_root = workspace_root.as_deref().unwrap_or("none"),
         "[tinyagents] executing openhuman tool via harness adapter"
     );
 
@@ -187,19 +188,20 @@ async fn execute_openhuman_tool(
     // short-circuits before this executor is reached.
     //
     // Execute through the session tool semantics the live path used
-    // (`agent_tool_exec`): `execute_with_options` (so markdown-capable tools
-    // render markdown) under the tool's resolved timeout deadline. Without the
-    // deadline an inherited/long-running tool call could hang the turn
-    // indefinitely. (Per-call `ToolPolicy`/permission gating needs the session
-    // policy context, which the per-tool adapter does not carry — the advertised
-    // allow-list + `UnknownToolRewriteMiddleware` already block unadvertised
-    // tools, and approval covers external effects.)
+    // (`agent_tool_exec`): `execute_with_context` (so markdown-capable tools
+    // render markdown and context-aware tools can see TinyAgents run metadata)
+    // under the tool's resolved timeout deadline. Without the deadline an
+    // inherited/long-running tool call could hang the turn indefinitely.
+    // Per-call `ToolPolicy`/permission gating needs the session policy context,
+    // which the per-tool adapter does not carry; approval covers external
+    // effects, and `RunPolicy::unknown_tool` recovers unregistered tool names
+    // before execution reaches this adapter.
     let options = crate::openhuman::tools::ToolCallOptions {
         prefer_markdown: true,
     };
     let (deadline, timeout_secs) =
         crate::openhuman::tool_timeout::resolve_tool_deadline(tool.timeout_policy(&call.arguments));
-    let exec = tool.execute_with_options(call.arguments.clone(), options);
+    let exec = tool.execute_with_context(call.arguments.clone(), options, context);
     let outcome = match deadline {
         Some(d) => match tokio::time::timeout(d, exec).await {
             Ok(r) => r,
@@ -246,7 +248,7 @@ async fn execute_openhuman_tool(
             TaToolResult {
                 call_id: call.id,
                 name: call.name.clone(),
-                content: format!("Error executing '{}': {e}", call.name),
+                content: format!("Error executing {}: {e}", call.name),
                 raw: None,
                 error: Some(e.to_string()),
                 elapsed_ms: 0,
@@ -261,11 +263,12 @@ async fn execute_openhuman_tool(
 /// it — the tinyagents analogue of the live path's `SharedToolExecutor`, which
 /// lets a route reuse the same `Arc`-shared tools the legacy loop runs without
 /// cloning them.
-pub struct SharedToolAdapter {
+pub(crate) struct SharedToolAdapter {
     sets: Vec<Arc<Vec<Box<dyn crate::openhuman::tools::Tool>>>>,
     name: String,
     description: String,
     schema: ToolSchema,
+    policy: ToolPolicy,
     /// When set, a successful call records an [`EarlyExit`] and pauses the loop.
     early_exit: Option<EarlyExitHook>,
 }
@@ -273,27 +276,28 @@ pub struct SharedToolAdapter {
 impl SharedToolAdapter {
     /// Build an adapter for the tool named `name`, locating it across `sets` to
     /// capture its advertised spec. Returns `None` when no set contains it.
-    pub fn for_name(
+    pub(crate) fn for_name(
         sets: Vec<Arc<Vec<Box<dyn crate::openhuman::tools::Tool>>>>,
         name: &str,
     ) -> Option<Self> {
-        let spec = sets
+        let (spec, policy) = sets
             .iter()
             .flat_map(|set| set.iter())
             .find(|t| t.name() == name)
-            .map(|t| t.spec())?;
+            .map(|t| (t.spec(), tool_policy_from_openhuman_tool(t.as_ref())))?;
         Some(Self {
             sets,
             name: spec.name.clone(),
             description: spec.description.clone(),
             schema: super::convert::spec_to_schema(&spec),
+            policy,
             early_exit: None,
         })
     }
 
     /// Treat this tool as an early-exit tool: a successful call records the
     /// question and pauses the run via `hook`.
-    pub fn with_early_exit(mut self, hook: EarlyExitHook) -> Self {
+    pub(crate) fn with_early_exit(mut self, hook: EarlyExitHook) -> Self {
         self.early_exit = Some(hook);
         self
     }
@@ -313,7 +317,30 @@ impl Tool<()> for SharedToolAdapter {
         self.schema.clone()
     }
 
+    fn policy(&self) -> ToolPolicy {
+        self.policy.clone()
+    }
+
     async fn call(&self, _state: &(), call: TaToolCall) -> tinyagents::Result<TaToolResult> {
+        self.call_openhuman_tool(call, None).await
+    }
+
+    async fn call_with_context(
+        &self,
+        _state: &(),
+        call: TaToolCall,
+        context: ToolExecutionContext,
+    ) -> tinyagents::Result<TaToolResult> {
+        self.call_openhuman_tool(call, Some(&context)).await
+    }
+}
+
+impl SharedToolAdapter {
+    async fn call_openhuman_tool(
+        &self,
+        call: TaToolCall,
+        context: Option<&ToolExecutionContext>,
+    ) -> tinyagents::Result<TaToolResult> {
         let found = self
             .sets
             .iter()
@@ -321,7 +348,7 @@ impl Tool<()> for SharedToolAdapter {
             .find(|t| t.name() == self.name);
         match found {
             Some(tool) => {
-                let result = execute_openhuman_tool(tool.as_ref(), call).await;
+                let result = execute_openhuman_tool(tool.as_ref(), call, context).await;
                 // Early-exit (e.g. `ask_user_clarification`): on a successful
                 // call, record the question and pause so the runner can
                 // checkpoint and surface the prompt — matching the legacy seam.
@@ -408,7 +435,7 @@ mod tests {
     #[tokio::test]
     async fn tool_execution_respects_the_per_call_timeout() {
         let result =
-            execute_openhuman_tool(&HangingTool, call("hang", serde_json::json!({}))).await;
+            execute_openhuman_tool(&HangingTool, call("hang", serde_json::json!({})), None).await;
         assert!(
             result
                 .error
@@ -422,9 +449,12 @@ mod tests {
 
     #[tokio::test]
     async fn fast_tool_runs_to_completion() {
-        let result =
-            execute_openhuman_tool(&EchoTool, call("echo", serde_json::json!({ "msg": "hi" })))
-                .await;
+        let result = execute_openhuman_tool(
+            &EchoTool,
+            call("echo", serde_json::json!({ "msg": "hi" })),
+            None,
+        )
+        .await;
         assert!(result.error.is_none());
         assert!(result.content.contains("echoed:hi"));
     }

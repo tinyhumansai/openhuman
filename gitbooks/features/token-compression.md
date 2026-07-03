@@ -17,7 +17,8 @@ It began as a port of [vincentkoc/tokenjuice](https://github.com/vincentkoc/toke
 
 ## The pipeline, step by step
 
-Every blob that flows through `compact_tool_output(...)` takes the same path (`src/openhuman/tokenjuice/compress.rs`):
+Every blob that flows through the policy-aware TokenJuice tool-output adapters
+takes the same path (`src/openhuman/tokenjuice/compress.rs`):
 
 ```text
 raw tool result

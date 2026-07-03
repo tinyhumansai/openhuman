@@ -5,9 +5,10 @@ use crate::openhuman::agent::harness::fork_context::current_parent;
 use crate::openhuman::agent::harness::subagent_runner::{run_subagent, SubagentRunOptions};
 use crate::openhuman::profiles::AgentProfileStore;
 use crate::openhuman::profiles::PersonalityContext;
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
+use tinyagents::harness::tool::ToolExecutionContext;
 
 pub struct DelegateToPersonalityTool;
 
@@ -62,6 +63,16 @@ impl Tool for DelegateToPersonalityTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: ToolCallOptions,
+        tool_context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
         let personality_id = args
             .get("personality_id")
             .and_then(|v| v.as_str())
@@ -208,6 +219,19 @@ impl Tool for DelegateToPersonalityTool {
             }
         };
 
+        let workspace_descriptor = tool_context.and_then(|ctx| ctx.workspace.clone());
+        let worktree_action_dir = workspace_descriptor
+            .as_ref()
+            .map(|descriptor| descriptor.root.clone());
+        if let Some(descriptor) = workspace_descriptor.as_ref() {
+            tracing::debug!(
+                personality_id = %personality_id,
+                workspace_root = %descriptor.root.display(),
+                policy_id = %descriptor.policy_id,
+                "[delegate_to_personality] using ToolExecutionContext workspace root"
+            );
+        }
+
         let options = SubagentRunOptions {
             context: Some(combined_context),
             model_override: profile.model_override.clone(),
@@ -217,7 +241,8 @@ impl Tool for DelegateToPersonalityTool {
             worker_thread_id: None,
             initial_history: None,
             checkpoint_dir: None,
-            worktree_action_dir: None,
+            worktree_action_dir,
+            workspace_descriptor,
             run_queue: None,
         };
 

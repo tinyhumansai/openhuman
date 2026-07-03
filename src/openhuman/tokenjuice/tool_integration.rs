@@ -2,9 +2,9 @@
 //!
 //! Exposes the entry points the agent loop calls after a tool returns output:
 //!
-//! - [`compact_tool_output`] — full version with the tool's JSON arguments and
-//!   exit code; derives a command/argv and content hint, routes through the
-//!   content router, and returns `(text, CompactionStats)`.
+//! - [`compact_tool_output_with_policy`] — full version with the tool's JSON
+//!   arguments and exit code; derives a command/argv and content hint, routes
+//!   through the content router, and returns `(text, CompactionStats)`.
 //! - [`compact_output`] — minimal version (content + tool name + enable flag)
 //!   for call sites that only have those, returning just the text.
 //!
@@ -115,7 +115,7 @@ impl CompactionStats {
     }
 }
 
-/// Compact a tool call's output through the content router.
+/// Compact a tool call's output using an agent-level TokenJuice profile.
 ///
 /// * `tool_name` — the agent-level tool name (`shell`, `grep`, `browser_navigate`).
 /// * `arguments` — the raw JSON arguments; used to derive command/argv (for the
@@ -125,23 +125,6 @@ impl CompactionStats {
 ///
 /// Returns `(text, stats)`. When `stats.applied == false` the text is the
 /// untouched original.
-pub async fn compact_tool_output(
-    tool_name: &str,
-    arguments: Option<&Value>,
-    output: &str,
-    exit_code: Option<i32>,
-) -> (String, CompactionStats) {
-    compact_tool_output_with_policy(
-        tool_name,
-        arguments,
-        output,
-        exit_code,
-        AgentTokenjuiceCompression::Full,
-    )
-    .await
-}
-
-/// Compact a tool call's output using an agent-level TokenJuice profile.
 pub async fn compact_tool_output_with_policy(
     tool_name: &str,
     arguments: Option<&Value>,
@@ -313,7 +296,14 @@ mod tests {
 
     #[tokio::test]
     async fn skips_short_output() {
-        let (out, stats) = compact_tool_output("shell", None, "hello world", Some(0)).await;
+        let (out, stats) = compact_tool_output_with_policy(
+            "shell",
+            None,
+            "hello world",
+            Some(0),
+            AgentTokenjuiceCompression::Full,
+        )
+        .await;
         assert_eq!(out, "hello world");
         assert!(!stats.applied);
         assert_eq!(stats.original_bytes, 11);
@@ -327,7 +317,14 @@ mod tests {
         }
         let output = lines.join("\n");
         let args = json!({"command": "git status"});
-        let (compacted, stats) = compact_tool_output("shell", Some(&args), &output, Some(0)).await;
+        let (compacted, stats) = compact_tool_output_with_policy(
+            "shell",
+            Some(&args),
+            &output,
+            Some(0),
+            AgentTokenjuiceCompression::Full,
+        )
+        .await;
         assert!(stats.applied, "expected compaction, got {:?}", stats);
         assert!(compacted.len() < output.len());
     }
@@ -338,7 +335,14 @@ mod tests {
             .map(|i| format!("unique-payload-chunk-{i}-{}", "x".repeat(30)))
             .collect();
         let output = unique_lines.join("\n");
-        let (returned, stats) = compact_tool_output("unknown_tool", None, &output, Some(0)).await;
+        let (returned, stats) = compact_tool_output_with_policy(
+            "unknown_tool",
+            None,
+            &output,
+            Some(0),
+            AgentTokenjuiceCompression::Full,
+        )
+        .await;
         if !stats.applied {
             assert_eq!(returned, output);
         }

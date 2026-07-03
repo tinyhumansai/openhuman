@@ -2173,16 +2173,22 @@ async fn json_rpc_model_council_runs_with_default_sentinel_and_repeated_jury_sea
         "mock chair synthesis should be returned: {result}"
     );
 
-    let captured_models = with_chat_completion_models(|models| models.clone());
+    // The council's jury members run concurrently (08.1 map_reduce), so the
+    // order the mock records their model ids is non-deterministic — only the
+    // multiset is a stable contract: two default-sentinel seats + one critic
+    // member + one default chair call. Compare sorted so a member reorder can't
+    // flake the gate.
+    let mut captured_models = with_chat_completion_models(|models| models.clone());
+    captured_models.sort();
     assert_eq!(
         captured_models,
         vec![
-            "e2e-mock-model",
-            "e2e-mock-model",
             "critic-model",
-            "e2e-mock-model"
+            "e2e-mock-model",
+            "e2e-mock-model",
+            "e2e-mock-model",
         ],
-        "three member calls plus one default chair call should be made"
+        "three member calls (two default seats + one critic) plus one default chair call should be made"
     );
     let captured_requests = with_chat_completion_requests(|requests| requests.clone());
     assert_eq!(captured_requests.len(), 4);
@@ -9844,9 +9850,18 @@ async fn json_rpc_meet_agent_session_lifecycle() {
     // 4) Give the spawned brain turn a chance to finish, then poll for
     //    synthesized PCM. The stub TTS produces 200 ms of 440 Hz tone
     //    which encodes to ~6.4 KB of base64.
+    //
+    //    The brain turn runs the full agentic path (`run_single`) before it
+    //    can fall back to the spoken ack that gets stub-TTS'd. In this
+    //    hermetic setup BACKEND_URL is unset, so each provider attempt must
+    //    fail a real connection first; since issue #4249 the turn also tries
+    //    one same-family fallback route (Workstream 02.2), so the ack (and its
+    //    audio) can take a few seconds to materialize — well under the 20 s
+    //    agentic timeout. Poll generously (up to ~12 s) so the assertion tracks
+    //    "audio is eventually synthesized", not a fragile sub-second deadline.
     let mut got_audio = false;
-    for _ in 0..20 {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+    for _ in 0..120 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
         let r = post_json_rpc(
             &rpc_base,
             9150,

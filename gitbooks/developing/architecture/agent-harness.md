@@ -10,7 +10,7 @@ icon: layer-group
 > **Status (issue #4249 — tinyagents migration):** the agent turn no longer runs
 > on the in-tree `run_turn_engine` loop. **All three entry points (`Agent::turn`,
 > the channel/CLI bus path, and `run_subagent`) now drive every turn through the
-> published [`tinyagents`](https://crates.io/crates/tinyagents) 1.1 agent-loop
+> published [`tinyagents`](https://crates.io/crates/tinyagents) 1.3 agent-loop
 > harness** via the adapter seam in [`src/openhuman/tinyagents/`](../../../src/openhuman/tinyagents/)
 > (`run_turn_via_tinyagents_shared`). The legacy `run_turn_engine`, the three
 > hand-rolled loops, `turn_engine_adapter`, and the custom `agent_graph/` engine
@@ -23,11 +23,10 @@ icon: layer-group
 > that pauses the run on the first stop vote, and the channel route forwards live
 > `AgentProgress` like the chat route.
 >
-> Multi-agent **orchestration** is expressed on tinyagents' **graph layer** via the
-> shared helpers in [`tinyagents/orchestration.rs`](../../../src/openhuman/tinyagents/orchestration.rs)
-> (`run_parallel_fanout` — a `dispatch → parallel workers → collect` `CompiledGraph`
-> map step — plus the re-exported `graph::orchestration` `TaskStore` lifecycle
-> primitives):
+> Multi-agent **orchestration** is expressed on tinyagents' **graph layer** via
+> `graph::parallel::map_reduce`, the `spawn_parallel_graph` scaffold, and the
+> shared `graph::orchestration` `TaskStore` lifecycle primitives re-exported from
+> [`tinyagents/orchestration.rs`](../../../src/openhuman/tinyagents/orchestration.rs):
 >
 > - the model-council member fan-out runs on a real `StateGraph`
 >   ([`model_council/graph.rs`](../../../src/openhuman/model_council/graph.rs));
@@ -37,7 +36,8 @@ icon: layer-group
 > - the **workflow phase engine** fans each phase's agents out on the graph
 >   (`with_max_concurrency`), keeping the durable `WorkflowRun` ledger as the resume
 >   source of truth;
-> - `spawn_parallel_agents` runs its fan-out through `run_parallel_fanout`;
+> - `spawn_parallel_agents` runs its fan-out through `spawn_parallel_graph` +
+>   `graph::parallel::map_reduce`;
 > - the **agent-teams** member runtime is a conditional-routing graph
 >   (`execute → complete | fail → done`, [`agent_teams/graph.rs`](../../../src/openhuman/agent_orchestration/agent_teams/graph.rs));
 > - the **detached-sub-agent** registry is backed by a typed `TaskStore` lifecycle
@@ -49,14 +49,15 @@ icon: layer-group
 
 ## TinyAgents crate: features & compatibility
 
-OpenHuman pins `tinyagents = "1.1"` with **default features only** (see [`Cargo.toml`](../../../Cargo.toml)). The rationale, so future upgrades don't silently regress it:
+OpenHuman pins `tinyagents = { version = "1.3", features = ["sqlite"] }` (see [`Cargo.toml`](../../../Cargo.toml)). The rationale, so future upgrades don't silently regress it:
 
-- **Default (offline) features only.** We do **not** enable the crate's `openai` feature. OpenHuman owns provider transport, credentials, OAuth, and billing classification, so the live model is always OpenHuman's `Provider` wrapped as [`ProviderModel`](../../../src/openhuman/tinyagents/model.rs) — never the crate's bundled OpenAI client. The `ChatModel` adapter is the seam that replaces the feature-gated SDK provider.
-- **`sqlite` feature deliberately disabled.** The crate's `SqliteCheckpointer` pulls `rusqlite 0.40` (`libsqlite3-sys 0.38`), which conflicts with OpenHuman's own `rusqlite 0.37` over the `links = "sqlite3"` native lib — enabling it breaks the build. Durable graph checkpoints are instead provided by [`SqlRunLedgerCheckpointer`](../../../src/openhuman/tinyagents/checkpoint.rs), a custom `Checkpointer<State>` over OpenHuman's session DB. This holds until the upstream native-link conflict is resolved.
+- **OpenHuman-owned providers only.** We do **not** enable any bundled provider feature. OpenHuman owns provider transport, credentials, OAuth, and billing classification, so the live model is always OpenHuman's `Provider` wrapped as [`ProviderModel`](../../../src/openhuman/tinyagents/model.rs) — never an SDK-owned provider client. The `ChatModel` adapter is the seam that replaces feature-gated SDK providers.
+- **`sqlite` feature enabled with one native sqlite chain.** OpenHuman's root and Tauri Cargo worlds pin `rusqlite = "=0.40.0"` and patch `rusqlite` / `libsqlite3-sys` locally to avoid the upstream `cfg_select!` build break on the current toolchain. Both worlds resolve to a single `libsqlite3-sys v0.38.0` chain. Durable graph checkpoints still run through [`SqlRunLedgerCheckpointer`](../../../src/openhuman/tinyagents/checkpoint.rs) until the migration re-points those rows to the crate checkpointer.
+- **WhatsApp Web storage bridge.** `whatsapp-rust`'s Diesel-backed `sqlite-storage` feature links sqlite separately from rusqlite 0.40, so the optional `whatsapp-web` feature currently builds against `wacore::store::InMemoryBackend` and logs that sessions are not durable. A rusqlite-backed durable WhatsApp store is required before treating Web sessions as persistent again.
 - **`repl` / expressive-language features unused.** OpenHuman drives graphs from Rust (`GraphBuilder`), not the crate's `.rag` REPL language.
-- **Adapter map (feature-gated SDK piece → OpenHuman replacement):** OpenAI provider → `ProviderModel`; bundled SQLite checkpointer → `SqlRunLedgerCheckpointer`; in-memory-only durable task storage → OpenHuman SQL/JSON run ledgers (`running_subagents`, `workflow_runs`, `agent_teams`, `command_center`). The generic harness/graph/middleware/event primitives are used as-is.
+- **Adapter map (feature-gated SDK piece → OpenHuman replacement):** provider clients → `ProviderModel`; crate SQLite checkpointer rows not yet adopted → `SqlRunLedgerCheckpointer`; task/status stores not yet controller-canonical → OpenHuman SQL/JSON run ledgers (`running_subagents`, `workflow_runs`, `agent_teams`, `command_center`). The generic harness/graph/middleware/event primitives are used as-is.
 
-Migration backlog and per-phase tasks live in [`docs/tinyagents-migration-spec.md`](../../../docs/tinyagents-migration-spec.md).
+Migration backlog and per-phase tasks live in [`docs/tinyagents-migration-spec.md`](../../../docs/tinyagents-migration-spec.md). The current harness inventory snapshot lives in [`docs/tinyagents-harness-migration-audit.md`](../../../docs/tinyagents-harness-migration-audit.md).
 
 The agent harness is the runtime that turns a user message (or a webhook fire, or a cron tick) into a complete, tool-using LLM interaction. It owns the tool-call loop, sub-agent dispatch, the trigger-triage pipeline, and the hook surface around them. It does **not** own provider HTTP transport, tool implementations, prompt-section assembly, or memory storage - those are separate domains the harness composes.
 
@@ -126,7 +127,7 @@ The system prompt is **not** rebuilt on subsequent turns. Even cosmetic byte cha
 
 ## The tool-call loop
 
-Inside `Agent::turn`, the tool-call loop is the inner engine. It runs up to `max_tool_iterations` rounds (default 10):
+Inside `Agent::turn`, the tool-call loop is the inner engine. Since issue #4249 it is the published **tinyagents** crate's `AgentHarness` loop, assembled per turn by `run_turn_via_tinyagents_shared` ([`src/openhuman/tinyagents/mod.rs`](../../../src/openhuman/tinyagents/mod.rs)). It runs up to `max_tool_iterations` rounds (default 10):
 
 ```
 loop {
@@ -143,24 +144,26 @@ loop {
 
 Every iteration emits a real-time `AgentProgress` event so the UI can render token-by-token streaming, "calling tool X" status, and per-iteration cost updates.
 
-**One engine, three entry points.** This loop lives in one place — `engine::run_turn_engine` (`harness/engine/`) — and every caller drives it: `Agent::turn` (web/desktop chat), `run_tool_call_loop` (the `agent.run_turn` bus handler for other channels + triage), and `run_subagent` (spawned sub-agents). What varies per caller is supplied through small seams the engine calls into: a `ToolSource` (which tools are advertised + how a call executes), a `ProgressReporter` (top-level `Turn*` events with streaming vs. nested `Subagent*` events), a `TurnObserver` (context management, transcript persistence, history shape), a `CheckpointStrategy` (error vs. summarize when the iteration cap is hit), and a `ResponseParser` (the `ToolDispatcher` dialect). The per-call executor (`run_one_tool`), the repeated-failure circuit breaker, and the `ProviderDelta → AgentProgress` stream forwarder are shared across all three, so they can't drift.
+**One engine, three entry points.** The loop lives in one place — the tinyagents `AgentHarness`, entered via `run_turn_via_tinyagents_shared` (`src/openhuman/tinyagents/mod.rs`) — and every caller drives it: the chat turn (`harness/session/turn/core.rs` → `session/turn/graph.rs`), the channel/CLI bus turn (`harness/graph.rs`), and spawned sub-agents (`harness/subagent_runner/ops/graph.rs`). What varies per caller is supplied through the adapter seam: OpenHuman's provider wrapped as a `ChatModel` (`tinyagents/model.rs`), tools wrapped as tinyagents `Tool`s (`tinyagents/tools.rs`), an event bridge that projects harness `AgentEvent`s into `AgentProgress` + cost telemetry (`tinyagents/observability.rs`), `RunPolicy::unknown_tool` for hallucinated tool recovery, and a named middleware stack (`tinyagents/middleware.rs`) carrying the OpenHuman cross-cuts — approval/security gating (`ApprovalSecurityMiddleware`), tool policy and CLI/RPC-only denial (`ToolPolicyMiddleware`, `CliRpcOnlyMiddleware`), malformed-argument recovery (`ArgRecoveryMiddleware`), cost budget pre-checks (`CostBudgetMiddleware`), the repeated-tool-failure circuit breaker (`RepeatedToolFailureMiddleware`), and context trimming/compression. Policy stop hooks fire through `StopHookMiddleware` (`tinyagents/stop_hooks.rs`). The surviving OpenHuman-owned seams — `CheckpointStrategy` (error vs. summarize at the model-call cap) and `TurnProgress` — live in `harness/engine/`. Because all three entry points assemble the same harness, they can't drift.
 
 ### Tool dispatch and tool-call dialects
 
-Different LLMs speak different tool-calling dialects. The harness abstracts that with a `ToolDispatcher` trait, which has three concrete implementations:
+Live turns speak **native tool calling**: the tinyagents harness sends structured tool specs through the `ChatModel` adapter and gets structured tool calls back, for every provider (Claude, GPT, Gemini, local Ollama alike).
 
-* **Native** - providers with first-class tool-calling APIs (Anthropic, OpenAI). Tool calls come back as structured fields, not in the text body.
-* **XML** - fallback for models that aren't natively trained for tool-calling but can follow instructions. Tools are wrapped in `<tool_call>{...}</tool_call>` tags in the assistant text.
-* **P-Format** - a compact text format used by some smaller models.
+The older `ToolDispatcher` trait (`src/openhuman/agent/dispatcher.rs`) with its three dialects still exists, but as a **transcript-compatibility layer**, not a live routing choice:
 
-The dispatcher is selected per provider, which keeps the loop itself dialect-agnostic. The same loop code drives Claude, GPT, Gemini, and a local Ollama model.
+* **Native** - structured tool-call fields, the shape live turns produce today.
+* **XML** - `<tool_call>{...}</tool_call>` tags in assistant text, produced by older sessions.
+* **P-Format** - a compact text format some earlier local models used.
+
+Persisted session histories can contain suffixes in any of the three shapes, so the session shell keeps the dispatcher around to parse and replay them faithfully when a transcript is resumed.
 
 ### Context management mid-loop
 
 Long tool-calling chains can blow past the context window. Two layers handle that:
 
-* **Tool-result budget** - every tool result is checked against a per-call byte budget. Anything over is hard-truncated with an explanatory marker so the model knows it didn't see the full output.
-* **Microcompact / autocompact** - when total history is creeping toward the context window, the harness compacts older turns into summaries before the next provider call. The compacted history keeps the system prompt and the most recent turns intact (KV-cache stability) and rewrites the middle.
+* **Tool-result budget** - every tool result is checked against a per-call byte budget, enforced as tinyagents tool middleware. Anything over is hard-truncated with an explanatory marker so the model knows it didn't see the full output.
+* **Microcompact / autocompact** - when total history is creeping toward the context window, tinyagents middleware (message trimming + the compression hooks in `tinyagents/summarize.rs`) compacts older turns into summaries before the next provider call. The compacted history keeps the system prompt and the most recent turns intact (KV-cache stability) and rewrites the middle.
 
 ### Oversized tool results - the summarizer detour
 
@@ -182,9 +185,9 @@ Before a fresh tool result enters history (and ahead of the byte-budget backstop
 
 Every lossy compression offloads the original to the **CCR (Compress-Cache-Retrieve)** store behind a `⟦tj:<hash>⟧` marker, so compaction is effectively lossless: the agent calls `tokenjuice_retrieve` (token + optional byte/line range) to fetch the full original on demand. The same engine is exposed as a universal `compress_content(content, hint, opts)` for any large payload (file reads, web fetches), and as read-only `tokenjuice.*` debug RPCs. Configured via the `[tokenjuice]` block / `OPENHUMAN_TOKENJUICE_*` env. Agent definitions can override tool-result compression with `tokenjuice_compression = "auto" | "full" | "light" | "off"`; `auto` resolves coding-model agents (`[model] hint = "coding"`) to `light`, which disables CCR-backed lossy compression so coding agents keep raw build/test/diff/search text unless a reduction is truly lossless. Other agents default to `full`. The ML (Kompress) path runs as a `kompress` backend of the shared [`runtime_python_server`](../../../src/openhuman/runtime_python_server/) (torch + ModernBERT pip-installed at runtime), gated by the `ml_compression_enabled` flag and degrading gracefully to a native compressor when the Python runtime is unavailable.
 
-### Self-healing for missing commands
+### The `tool_maker` archetype
 
-When the code-executor sub-agent runs a shell command and the runtime answers "command not found", a self-healing interceptor catches the error, spawns a `ToolMaker` sub-agent to write a polyfill script for the missing command, and retries the original call. There's a per-command attempt cap so a genuinely impossible command can't loop forever.
+The `tool_maker` archetype exists for writing polyfill scripts and small helper tools when a capability is missing. It is spawned explicitly (by the orchestrator or another agent) like any other sub-agent. The old automatic "command not found → spawn ToolMaker → retry" interceptor was removed with the in-house loop; there is no implicit self-healing retry on shell failures today.
 
 ## Sub-agents - the orchestrator pattern
 
@@ -325,14 +328,13 @@ Hooks run via `tokio::spawn`, so the user gets their answer before any of them f
 
 ## Interrupts - graceful cancellation
 
-An `InterruptFence` is checked at fixed safe points in the loop - before each tool execution, before each sub-agent spawn, before each provider call. When the user hits Ctrl+C or sends `/stop`:
+Cancellation is the tinyagents **steering channel**. The old in-house `InterruptFence` (`harness/interrupt.rs`) is gone; when the user hits Ctrl+C or sends `/stop`, the runner forwards the request into the harness's steering/cancellation seam, which stops the loop at the same safe points the fence used to guard - before each tool execution, before each sub-agent spawn, before each provider call:
 
-* The fence flips.
-* Every running sub-agent sees the same flag (it's shared via `Arc`) and bails at its next checkpoint.
+* Every running sub-agent shares the cancellation scope and bails at its next checkpoint.
 * In-flight provider streams are dropped.
 * The archivist still fires with whatever partial context exists, so the conversation isn't lost.
 
-Interrupts are user-driven; stop hooks are policy-driven. They share the underlying "halt the loop cleanly" plumbing but enter from different sides.
+Interrupts are user-driven; stop hooks are policy-driven. Both enter the same harness pause/stop plumbing, but from different sides.
 
 ## Cost accounting
 
@@ -352,30 +354,31 @@ The harness uses a task-local `ParentExecutionContext` to thread parent state in
 
 A few small adaptive systems sit on top of the main loop:
 
-* **Self-healing for missing commands** - `ToolMaker` polyfills, capped retry attempts.
 * **Payload summarizer circuit-breaker** - three consecutive sub-agent failures in a session disable summarization, falling back to truncation.
 * **Triage local-vs-remote retry** - local LLM first; remote fallback on parse failure.
+* **Unknown-tool and malformed-argument recovery** - middleware rewrites an invalid model tool call into a recoverable result instead of aborting the run.
 
 None of these change the loop's shape - they just make the common failure modes recoverable without the user having to intervene.
 
 ## Where to look in the code
 
-The harness lives entirely under `src/openhuman/agent/`. The README in that directory enumerates the public surface; the most load-bearing files are:
+The harness shell lives under `src/openhuman/agent/`, with the tinyagents adapter seam in `src/openhuman/tinyagents/` and archetype definitions in `src/openhuman/agent_registry/`. The README in `src/openhuman/agent/` enumerates the public surface; the most load-bearing files (paths relative to `src/openhuman/agent/` unless prefixed) are:
 
 | File / dir                    | What lives there                                                  |
 | ----------------------------- | ----------------------------------------------------------------- |
-| `harness/session/turn.rs`     | `Agent::turn` - the lifecycle described above.                    |
-| `harness/tool_loop.rs`        | The inner tool-call loop.                                         |
-| `harness/subagent_runner/`    | `run_subagent`, history replay, fork-mode, oversized-result handoff. |
+| `harness/session/turn/core.rs` | `Agent::turn` - the lifecycle described above; routes into the tinyagents runner via `session/turn/graph.rs`. |
+| `../tinyagents/mod.rs`        | `run_turn_via_tinyagents_shared` - the shared tinyagents harness assembly (the live loop). |
+| `../tinyagents/middleware.rs` | The named OpenHuman middleware stack (approval/security, tool policy, recovery, budgets, circuit breaker). |
+| `harness/graph.rs`            | The channel/CLI bus turn route into the tinyagents runner.        |
+| `harness/subagent_runner/`    | `run_subagent`, history replay, fork-mode, oversized-result handoff; `ops/graph.rs` is its tinyagents route. |
 | `agent_orchestration/subagent_sessions/` | Durable reusable sub-agent identity, compatibility matching, persisted status/history. |
 | `harness/definition.rs`       | `AgentDefinition` - what an archetype declares.                   |
 | `harness/tool_filter.rs`      | Toolkit-action ranking for integrations sub-agents.               |
-| `harness/payload_summarizer.rs` | Oversized-tool-result detour.                                   |
-| `harness/self_healing.rs`     | Missing-command interceptor.                                      |
-| `harness/interrupt.rs`        | The cancellation fence.                                           |
-| `dispatcher.rs`               | Tool-call dialect abstraction.                                    |
+| `../tinyagents/payload_summarizer.rs` | Oversized-tool-result detour.                             |
+| `harness/engine/`             | Surviving OpenHuman seams: `CheckpointStrategy`, `TurnProgress`.  |
+| `dispatcher.rs`               | Tool-call dialect abstraction (persisted-transcript compatibility). |
 | `triage/`                     | External-trigger classification + escalation.                     |
-| `agents/`                     | Built-in archetypes - one subdirectory per agent.                 |
+| `../agent_registry/agents/`   | Built-in archetypes - one subdirectory per agent.                 |
 | `hooks.rs` / `stop_hooks.rs`  | Post-turn and mid-turn hook surfaces.                             |
 | `cost.rs`                     | Per-turn USD/token accounting.                                    |
 | `progress.rs`                 | Real-time progress events to the UI.                              |
@@ -428,32 +431,34 @@ Most agents reuse `blueprint::canonical_turn(id)` (the standard tool-calling loo
 
 **RPC surface** (`schemas.rs` + `ops.rs`, registered in `src/core/all.rs`): `openhuman.agent_graph_definition_list`, `_run`, `_run_list`, `_run_get`, `_checkpoint_list`, `_resume`.
 
-> **Status (issue #4249 — superseded by the published `tinyagents` crate):** the in-house `agent_graph` engine described in this section **no longer exists**. openhuman's agent engine + orchestration now run on the published [`tinyagents`](https://crates.io/crates/tinyagents) **1.1** crate (the same LangGraph-style harness + durable graph runtime), via the adapter seam in `src/openhuman/tinyagents/`. The sections above are retained as design history; the subsection below describes the live architecture.
+> **Status (issue #4249 — superseded by the published `tinyagents` crate):** the in-house `agent_graph` engine described in this section **no longer exists**. openhuman's agent engine + orchestration now run on the published [`tinyagents`](https://crates.io/crates/tinyagents) **1.3** crate (the same LangGraph-style harness + durable graph runtime), via the adapter seam in `src/openhuman/tinyagents/`. The sections above are retained as design history; the subsection below describes the live architecture.
 
 ## Agent engine + orchestration on tinyagents (live)
 
-Every agent turn — chat (`session/turn/core.rs`), channel/CLI (`harness/channel_route.rs`), and sub-agent (`harness/subagent_runner/ops/graph_route.rs`) — drives through `crate::openhuman::tinyagents::run_turn_via_tinyagents_shared`, which runs the crate's `AgentHarness`. There is no in-house turn engine, tool loop, or routing gate left; dispatch is unconditional. The seam:
+Every agent turn — chat (`harness/session/turn/core.rs`), channel/CLI (`harness/graph.rs`), and sub-agent (`harness/subagent_runner/ops/graph.rs`) — drives through `crate::openhuman::tinyagents::run_turn_via_tinyagents_shared`, which runs the crate's `AgentHarness`. There is no in-house turn engine, tool loop, or routing gate left; dispatch is unconditional. The seam:
 
 | File (`src/openhuman/tinyagents/`) | Role |
 | --- | --- |
 | `mod.rs` | The runner (`run_turn_via_tinyagents_shared`): registers openhuman's `Provider`/`Tool` on an `AgentHarness`, runs one turn, caps output via `ProviderModel::with_max_tokens`, mirrors progress, forwards steering, and pauses gracefully at the model-call cap. |
-| `model.rs` / `tools.rs` / `convert.rs` | `ChatModel` / `Tool` / message adapters (incl. out-of-band reasoning forwarding and unknown-tool recovery). |
+| `mod.rs` / `model.rs` / `tools.rs` / `convert.rs` | `RunPolicy` / `ChatModel` / `Tool` / message adapters (incl. unknown-tool policy and out-of-band reasoning forwarding). |
 | `observability.rs` | Harness `AgentEvent` → `AgentProgress` + cost; `GraphTracingSink` for graph events. |
-| `orchestration.rs` | `run_parallel_fanout` (the shared `dispatch → workers → collect` graph) + re-exported `graph::orchestration` task-store types. |
-| `checkpoint.rs` | `SqlRunLedgerCheckpointer` — a `Checkpointer` over openhuman's SQLite (`graph_checkpoints` table), since the crate's `SqliteCheckpointer` is dependency-blocked and it has no durable `TaskStore`. |
+| `orchestration.rs` | Re-exported `graph::orchestration` task-store types; map-reduce fanout now uses the TinyAgents SDK surface directly. |
+| `checkpoint.rs` | `SqlRunLedgerCheckpointer` — a `Checkpointer` over openhuman's SQLite (`graph_checkpoints` table). TinyAgents 1.3 now ships `SqliteCheckpointer`; OpenHuman keeps this adapter until existing checkpoint rows are migrated or expired and schema ownership is settled. |
 | `delegation.rs` | The durable `plan → execute ⇄ review → finalize` delegation graph (production worker wired in `agent_orchestration::delegation`). |
 
 **Orchestration on graphs** (`src/openhuman/agent_orchestration/`):
 
-- **Workflow phase DAG** (`workflow_runs/engine.rs`) runs on a `dispatch ⇄ run_phase → done` conditional-routing graph; each phase fans its agents out via `run_parallel_fanout`. The durable `workflow_runs` row stays the source of truth (controllers + resume read it).
-- **Team member runtime** (`agent_teams/member_graph.rs`) is a conditional-routing graph (`execute → complete|fail → done`).
+- **Workflow phase DAG** (`workflow_runs/engine.rs`) runs on a `dispatch ⇄ run_phase → done` conditional-routing graph; each phase fans its agents out via `graph::parallel::map_reduce`. The durable `workflow_runs` row stays the source of truth (controllers + resume read it).
+- **Team member runtime** (`agent_teams/graph.rs`) is a conditional-routing graph (`execute → complete|fail → done`).
 - **Multi-stage delegation** (`agent_orchestration::delegation` + the `delegate` tool) runs `delegation.rs`, checkpointed to the session DB.
-- **Detached sub-agents** (`running_subagents.rs`) track lifecycle on the crate's `InMemoryTaskStore`; the executor (abort/steer/await) stays bespoke because the store can't inject messages, block-await, or hard-abort a task.
+- **Detached sub-agents** (`running_subagents.rs`) track lifecycle through the crate task-store seam while OpenHuman keeps the executor (abort/steer/await) bespoke for controller compatibility, message injection, and user-facing hard-abort semantics.
 
 **Deliberately kept off the crate's primitives** (documented engineering decisions, not gaps):
 
 - **Sub-agent build pipeline** (`subagent_runner/`) — definition resolution, archetype tool filtering, provider resolution, narrow prompt building, memory context, worker-thread mirror, handoff cache, checkpoint/resume — stays openhuman-owned. Sub-agents already *execute* on the harness; the crate's generic `SubAgentTool` would discard this pipeline for marginal crate-native depth tracking (openhuman's `spawn_depth_context` already bounds recursion).
-- **Durable run ledgers** (`workflow_runs`, `agent_teams`, `command_center`, `subagent_sessions`) stay on openhuman SQLite/JSON: the crate's only `TaskStore` is in-memory, so moving them would lose durability and diverge from the controllers that read them. The `agent_teams` race-safe SQL compare-and-swap task claim has no crate equivalent.
+- **Durable run ledgers** (`workflow_runs`, `agent_teams`, `command_center`, `subagent_sessions`) stay on openhuman SQLite/JSON until their controller projections and restart semantics are mapped onto TinyAgents task/status/journal records. The `agent_teams` race-safe SQL compare-and-swap task claim remains OpenHuman-owned.
+
+> **Note:** TinyAgents 1.3 ships harness store/cache/session primitives (`harness::store` with JSONL append stores, `harness::cache`, `harness::subagent`, lineage-aware status) plus graph task stores and conformance contracts. The plan for migrating the session shell, sub-agent pipeline, and detached-task lifecycle onto those primitives lives in [`docs/tinyagents-harness-migration-audit.md`](../../../docs/tinyagents-harness-migration-audit.md).
 
 ## See also
 

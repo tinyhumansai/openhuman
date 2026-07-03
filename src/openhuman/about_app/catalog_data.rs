@@ -1781,4 +1781,18 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         status: CapabilityStatus::Stable,
         privacy: LOCAL_RAW,
     },
+    Capability {
+        id: "intelligence.session_orchestration",
+        name: "Session Orchestration",
+        domain: "orchestration",
+        category: CapabilityCategory::Intelligence,
+        description: "Coordinate wrapped Claude Code / Codex sessions over tiny.place: a \
+                      split-brain wake graph (quick front end + reasoning core) replies to \
+                      session DMs, and an offline subconscious reflects on the world diff to \
+                      steer later cycles.",
+        how_to: "Intelligence > Orchestration (pair a wrapped session, then chat via the Master \
+                 window).",
+        status: CapabilityStatus::Beta,
+        privacy: DERIVED_TO_BACKEND,
+    },
 ];

@@ -136,6 +136,7 @@ fn stub_parent_context() -> ParentExecutionContext {
         model_name: "stub-model".into(),
         temperature: 0.4,
         workspace_dir: std::path::PathBuf::from("/tmp"),
+        workspace_descriptor: None,
         memory: Arc::new(StubMemory),
         agent_config: AgentConfig::default(),
         workflows: Arc::new(vec![]),

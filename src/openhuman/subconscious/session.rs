@@ -4,7 +4,7 @@
 //! fresh `Agent`, runs it once, and discards the history, a
 //! [`LongLivedSession`] keeps a single `Agent` alive across promoted
 //! triggers. Its in-memory history accumulates and is compressed by the
-//! `Agent`'s own context pipeline (microcompact / autocompact); the full
+//! `Agent`'s own context middleware stack (microcompact / autocompact); the full
 //! transcript is persisted to a reserved conversation thread for audit and
 //! cold-boot resume.
 //!

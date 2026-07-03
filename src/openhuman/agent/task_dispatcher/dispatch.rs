@@ -6,7 +6,7 @@ use crate::openhuman::config::Config;
 use crate::openhuman::todos::ops::{self, BoardLocation, CardPatch};
 use crate::openhuman::todos::runs;
 
-use super::executor::{resolve_executor, run_autonomous, TASK_RUN_MAX_ITERATIONS};
+use super::executor::{resolve_executor, run_autonomous};
 use super::poller::requires_plan_approval;
 use super::prompt::{build_progress_instruction, build_task_prompt};
 use super::registry::{register_active_run, take_active_run};

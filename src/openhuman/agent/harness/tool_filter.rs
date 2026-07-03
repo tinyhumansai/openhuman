@@ -100,7 +100,7 @@ pub fn filter_actions_by_prompt(
 /// over-matching (e.g. "open" is deliberately excluded because it appears in
 /// both "open a PR" and "open PRs").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Verb {
+enum Verb {
     Create,
     Send,
     Read,

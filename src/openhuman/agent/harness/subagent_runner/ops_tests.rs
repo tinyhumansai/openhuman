@@ -335,6 +335,7 @@ fn make_parent(provider: Arc<dyn Provider>, tools: Vec<Box<dyn Tool>>) -> Parent
     let tool_specs: Vec<crate::openhuman::tools::ToolSpec> =
         tools.iter().map(|t| t.spec()).collect();
     ParentExecutionContext {
+        workspace_descriptor: None,
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: ["test".to_string(), "child".to_string(), "inner".to_string()]
             .into_iter()
@@ -492,6 +493,7 @@ async fn typed_mode_returns_text_through_runner() {
             &def,
             "summarise X",
             SubagentRunOptions {
+                workspace_descriptor: None,
                 skill_filter_override: None,
                 toolkit_override: None,
                 context: None,
@@ -561,10 +563,10 @@ async fn capped_no_progress_subagent_returns_incomplete_status() {
 async fn run_queue_steer_lands_in_subagent_history() {
     // End-to-end proof that flipping the subagent loop's run-queue arg from
     // `None` to `Some(queue)` wires steering all the way through: a message
-    // pushed to the queue before the run is drained by the inner
-    // `run_turn_engine` and appears as a `[User steering message]:` user turn
-    // in the exact request sent to the provider. This is the mechanism behind
-    // the `steer_subagent` tool.
+    // pushed to the queue before the run is drained by the steering forwarder
+    // in the child's turn (`run_turn_via_tinyagents_shared`) and appears as a
+    // `[User steering message]:` user turn in the exact request sent to the
+    // provider. This is the mechanism behind the `steer_subagent` tool.
     let provider = ScriptedProvider::new(vec![text_response("acknowledged")]);
     let parent = make_parent(provider.clone(), vec![stub("file_read")]);
     let def = make_def_named_tools(&[]);
@@ -707,6 +709,7 @@ async fn typed_mode_filters_tools_by_skill_filter() {
             &def,
             "lookup",
             SubagentRunOptions {
+                workspace_descriptor: None,
                 skill_filter_override: Some("notion".into()),
                 toolkit_override: None,
                 context: None,
@@ -806,9 +809,18 @@ async fn typed_mode_blocks_unallowed_tool_calls() {
         .iter()
         .find(|m| m.role == "tool")
         .expect("tool result message should be present");
+    // A tool outside the allowlist is never registered on the sub-agent
+    // harness, so a call to it flows through the tinyagents
+    // `UnknownToolPolicy::ReturnToolError` path (issue #4249): the runner
+    // injects a recoverable `unknown tool `forbidden_tool` …` result (naming the
+    // blocked tool and listing the valid ones) instead of executing it, and the
+    // next iteration recovers. The security guarantee — the disallowed tool does
+    // NOT run — is preserved; only the message wording changed from the legacy
+    // "not available".
     assert!(
-        tool_msg.content.contains("not available"),
-        "blocked tool should produce a 'not available' error message"
+        tool_msg.content.contains("unknown tool") && tool_msg.content.contains("forbidden_tool"),
+        "blocked tool should produce a recoverable unknown-tool error naming it: {:?}",
+        tool_msg.content
     );
 }
 
@@ -1514,8 +1526,8 @@ fn nested_subagent_dispatch_runs_on_a_constrained_worker_stack() {
     let outcome = outcome.expect(
         "nested run_subagent must complete on a 1 MiB worker stack — \
          a stack overflow here means the recursion boundary in \
-         `run_typed_mode` regressed (see `Box::pin` callsites around \
-         `run_inner_loop` and `run_turn_engine`).",
+         `run_typed_mode` regressed (see the `Box::pin` callsites around \
+         `run_typed_mode` and the child's tinyagents drive future).",
     );
     assert!(
         outcome.output.contains("inner-final"),

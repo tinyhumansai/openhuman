@@ -1,9 +1,10 @@
 //! Tool: run_linter — run linting tools for the Critic archetype.
 
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::path::PathBuf;
+use tinyagents::harness::tool::ToolExecutionContext;
 
 /// Runs linters (cargo clippy, eslint) and returns structured findings.
 pub struct RunLinterTool {
@@ -13,6 +14,18 @@ pub struct RunLinterTool {
 impl RunLinterTool {
     pub fn new(workspace_dir: PathBuf) -> Self {
         Self { workspace_dir }
+    }
+
+    fn workspace_dir_for_context(&self, context: Option<&ToolExecutionContext>) -> PathBuf {
+        if let Some(workspace) = context.and_then(|ctx| ctx.workspace.as_ref()) {
+            tracing::debug!(
+                workspace_root = %workspace.root.display(),
+                policy_id = %workspace.policy_id,
+                "[run_linter] using TinyAgents workspace descriptor as workspace dir"
+            );
+            return workspace.root.clone();
+        }
+        self.workspace_dir.clone()
     }
 }
 
@@ -50,15 +63,26 @@ impl Tool for RunLinterTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: ToolCallOptions,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let workspace_dir = self.workspace_dir_for_context(context);
         let linter = args
             .get("linter")
             .and_then(|v| v.as_str())
             .unwrap_or("auto");
 
         let linter = if linter == "auto" {
-            if self.workspace_dir.join("Cargo.toml").exists() {
+            if workspace_dir.join("Cargo.toml").exists() {
                 "clippy"
-            } else if self.workspace_dir.join("package.json").exists() {
+            } else if workspace_dir.join("package.json").exists() {
                 "eslint"
             } else {
                 return Ok(ToolResult::error(
@@ -79,7 +103,7 @@ impl Tool for RunLinterTool {
                         "-W",
                         "clippy::all",
                     ])
-                    .current_dir(&self.workspace_dir)
+                    .current_dir(&workspace_dir)
                     .output()
                     .await?
             }
@@ -93,7 +117,7 @@ impl Tool for RunLinterTool {
                 }
                 tokio::process::Command::new("npx")
                     .args(["eslint", "--format", "compact", path])
-                    .current_dir(&self.workspace_dir)
+                    .current_dir(&workspace_dir)
                     .output()
                     .await?
             }

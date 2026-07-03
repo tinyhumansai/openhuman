@@ -218,10 +218,30 @@ fn schema_for_rpc_method_finds_internal_mcp_audit_list() {
 }
 
 #[test]
+fn schema_for_rpc_method_finds_internal_orchestration_pairing_link_session() {
+    let schema = schema_for_rpc_method("openhuman.orchestration_pairing_link_session");
+    assert!(
+        schema.is_some(),
+        "orchestration_pairing.link_session should be internally routable"
+    );
+    let s = schema.unwrap();
+    assert_eq!(s.namespace, "orchestration_pairing");
+    assert_eq!(s.function, "link_session");
+}
+
+#[test]
 fn rpc_method_from_parts_does_not_expose_internal_mcp_audit_list() {
     assert!(
         rpc_method_from_parts("mcp_audit", "list").is_none(),
         "internal MCP audit RPC must not appear in the public controller registry"
+    );
+}
+
+#[test]
+fn rpc_method_from_parts_does_not_expose_internal_orchestration_pairing() {
+    assert!(
+        rpc_method_from_parts("orchestration_pairing", "link_session").is_none(),
+        "pairing write RPCs must not appear in the public controller registry"
     );
 }
 

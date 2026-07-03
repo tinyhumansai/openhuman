@@ -1,6 +1,5 @@
 //! Subagent dispatch logic shared by all agent delegation tools.
 
-use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::harness::fork_context::current_parent;
 use crate::openhuman::agent::harness::subagent_runner::{
@@ -8,6 +7,7 @@ use crate::openhuman::agent::harness::subagent_runner::{
 };
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::tools::traits::ToolResult;
+use tinyagents::harness::workspace::WorkspaceDescriptor;
 
 pub(crate) async fn dispatch_subagent(
     agent_id: &str,
@@ -15,6 +15,7 @@ pub(crate) async fn dispatch_subagent(
     prompt: &str,
     skill_filter: Option<&str>,
     model_override: Option<&str>,
+    parent_workspace_descriptor: Option<WorkspaceDescriptor>,
 ) -> anyhow::Result<ToolResult> {
     let registry = match AgentDefinitionRegistry::global() {
         Some(reg) => reg,
@@ -95,13 +96,13 @@ pub(crate) async fn dispatch_subagent(
         .unwrap_or_else(|| "standalone".into());
     let task_id = format!("sub-{}", uuid::Uuid::new_v4());
 
-    publish_global(DomainEvent::SubagentSpawned {
-        parent_session: parent_session.clone(),
-        agent_id: definition.id.clone(),
-        mode: "typed".to_string(),
-        task_id: task_id.clone(),
-        prompt_chars: prompt.chars().count(),
-    });
+    crate::openhuman::agent_orchestration::subagent_events::publish_subagent_spawned(
+        parent_session.clone(),
+        definition.id.clone(),
+        "typed".to_string(),
+        task_id.clone(),
+        prompt.chars().count(),
+    );
 
     // Also send to the per-request progress sink so the web channel bridge
     // emits `subagent_spawned` to the frontend (same pattern as spawn_subagent.rs).
@@ -137,6 +138,18 @@ pub(crate) async fn dispatch_subagent(
     // so the filter excluded every Composio tool instead of narrowing
     // them. `toolkit_override` applies the correct `{TOOLKIT}_` prefix
     // check, restricted to skill-category tools.
+    let worktree_action_dir = parent_workspace_descriptor
+        .as_ref()
+        .map(|descriptor| descriptor.root.clone());
+    if let Some(descriptor) = parent_workspace_descriptor.as_ref() {
+        tracing::debug!(
+            agent_id,
+            tool_name,
+            workspace_root = %descriptor.root.display(),
+            policy_id = %descriptor.policy_id,
+            "[agent] using ToolExecutionContext workspace root for delegated subagent"
+        );
+    }
     let options = SubagentRunOptions {
         skill_filter_override: None,
         toolkit_override: skill_filter.map(str::to_string),
@@ -146,7 +159,8 @@ pub(crate) async fn dispatch_subagent(
         worker_thread_id: None,
         initial_history: None,
         checkpoint_dir: None,
-        worktree_action_dir: None,
+        worktree_action_dir,
+        workspace_descriptor: parent_workspace_descriptor,
         run_queue: None,
     };
 
@@ -161,12 +175,12 @@ pub(crate) async fn dispatch_subagent(
             // orchestrator's only continuation was to re-delegate, and the new
             // run paused again. Mirrors the `spawn_subagent` AwaitingUser path.
             SubagentRunStatus::AwaitingUser { question, .. } => {
-                publish_global(DomainEvent::SubagentAwaitingUser {
+                crate::openhuman::agent_orchestration::subagent_events::publish_subagent_awaiting_user(
                     parent_session,
-                    task_id: outcome.task_id.clone(),
-                    agent_id: outcome.agent_id.clone(),
-                    question: question.clone(),
-                });
+                    outcome.task_id.clone(),
+                    outcome.agent_id.clone(),
+                    question.clone(),
+                );
                 if let Some(progress) = current_parent().and_then(|p| p.on_progress.clone()) {
                     let _ = progress
                         .send(AgentProgress::SubagentAwaitingUser {
@@ -190,14 +204,14 @@ pub(crate) async fn dispatch_subagent(
                 Ok(awaiting_outcome_to_tool_result(&outcome, question))
             }
             SubagentRunStatus::Completed => {
-                publish_global(DomainEvent::SubagentCompleted {
+                crate::openhuman::agent_orchestration::subagent_events::publish_subagent_completed(
                     parent_session,
-                    task_id: outcome.task_id.clone(),
-                    agent_id: outcome.agent_id.clone(),
-                    elapsed_ms: outcome.elapsed.as_millis() as u64,
-                    output_chars: outcome.output.chars().count(),
-                    iterations: outcome.iterations,
-                });
+                    outcome.task_id.clone(),
+                    outcome.agent_id.clone(),
+                    outcome.elapsed.as_millis() as u64,
+                    outcome.output.chars().count(),
+                    outcome.iterations,
+                );
                 log::info!(
                     "[agent] {} completed via {} iterations={} output_chars={}",
                     agent_id,
@@ -213,14 +227,14 @@ pub(crate) async fn dispatch_subagent(
             // (#4096). Still a lifecycle-completed run, so publish
             // SubagentCompleted like the `Completed` arm.
             SubagentRunStatus::Incomplete { reason } => {
-                publish_global(DomainEvent::SubagentCompleted {
+                crate::openhuman::agent_orchestration::subagent_events::publish_subagent_completed(
                     parent_session,
-                    task_id: outcome.task_id.clone(),
-                    agent_id: outcome.agent_id.clone(),
-                    elapsed_ms: outcome.elapsed.as_millis() as u64,
-                    output_chars: outcome.output.chars().count(),
-                    iterations: outcome.iterations,
-                });
+                    outcome.task_id.clone(),
+                    outcome.agent_id.clone(),
+                    outcome.elapsed.as_millis() as u64,
+                    outcome.output.chars().count(),
+                    outcome.iterations,
+                );
                 log::info!(
                     "[agent] {} stopped incomplete via {} (task_id={}) iterations={} — \
                      returning partial-progress envelope, not a finished result",
@@ -239,12 +253,12 @@ pub(crate) async fn dispatch_subagent(
         },
         Err(err) => {
             let message = err.to_string();
-            publish_global(DomainEvent::SubagentFailed {
+            crate::openhuman::agent_orchestration::subagent_events::publish_subagent_failed(
                 parent_session,
                 task_id,
-                agent_id: definition.id.clone(),
-                error: message.clone(),
-            });
+                definition.id.clone(),
+                message.clone(),
+            );
             // Make the failure unmistakable to the orchestrator: the delegated
             // task did NOT run, so it must not be reported as success or have
             // its output fabricated. Without this guardrail a weak orchestrator
@@ -313,6 +327,7 @@ mod tests {
             "__definitely_not_a_real_agent__",
             "test_tool",
             "irrelevant prompt",
+            None,
             None,
             None,
         )

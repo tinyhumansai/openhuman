@@ -13,55 +13,63 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use tinyagents::harness::message::{AssistantMessage, ContentBlock, MessageDelta};
 use tinyagents::harness::model::{
-    ChatModel, ModelRequest, ModelResponse, ModelStream, ModelStreamItem,
+    ChatModel, Modalities, ModelProfile, ModelRequest, ModelResponse, ModelStream, ModelStreamItem,
 };
-use tinyagents::harness::tool::ToolCall as TaToolCall;
+use tinyagents::harness::tool::{ToolCall as TaToolCall, ToolDelta};
 use tinyagents::harness::usage::Usage;
 use tokio::sync::mpsc::{Sender, UnboundedSender};
 
-use super::observability::{IterationCursor, SubagentScope};
+use super::observability::{IterationCursor, SubagentScope, ToolNameMap};
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::inference::provider::{
     ChatMessage, ChatRequest, ChatResponse, Provider, ProviderDelta,
 };
 use crate::openhuman::tools::ToolSpec;
 
-/// Out-of-band forwarder for the streaming progress events that don't round-trip
-/// through tinyagents: model reasoning (thinking) deltas and tool-call **argument**
-/// deltas.
+/// Out-of-band forwarder for progress events that do not yet round-trip through
+/// tinyagents with OpenHuman parity: non-streaming post-hoc reasoning and the
+/// tool-call **start** marker (tool name).
 ///
-/// tinyagents' streaming `MessageDelta` carries only assembled visible text — no
-/// reasoning channel, and the model adapter assembles tool calls itself rather
-/// than streaming their argument fragments through the harness — so the
-/// [`OpenhumanEventBridge`](super::OpenhumanEventBridge) can't mirror either. The
-/// model adapter is the only seam that sees the provider's
-/// [`ProviderDelta::ThinkingDelta`] / [`ProviderDelta::ToolCallArgsDelta`], so it
-/// forwards them straight onto the progress sink here, sharing the bridge's
-/// [`IterationCursor`] so each delta is attributed to the right model call.
+/// Streaming reasoning now rides tinyagents' native `MessageDelta.reasoning`
+/// channel, and the incremental tool-call **argument** fragments ride the native
+/// `MessageDelta.tool_call` channel (crate `ToolDelta`); both are projected by
+/// [`OpenhumanEventBridge`](super::OpenhumanEventBridge). What remains here is
+/// the split the crate can't express: the crate `ToolDelta` has only
+/// `call_id`/`content` (no `tool_name`), so the tool-call **start** event — the
+/// empty-delta `ToolCallArgsDelta` that carries the tool name and opens the UI
+/// timeline row — is still emitted straight onto the progress sink, and the
+/// learned `call_id → tool_name` map is *shared* with the bridge (via
+/// [`ToolNameMap`]) so it can label the argument fragments it now projects off
+/// the crate stream. This forwarder also still emits non-streaming post-hoc
+/// reasoning (see [`ProviderModel::invoke`]). It shares the bridge's
+/// [`IterationCursor`] so each event is attributed to the right model call.
 /// Parent runs emit the top-level variants; child runs emit the `Subagent`
-/// counterpart for thinking (tool-arg deltas have no child variant, so they ride
-/// the top-level event).
+/// counterpart for thinking. Tool-arg/start events have no child variant, so
+/// they ride the top-level event.
 #[derive(Clone)]
-pub struct ThinkingForwarder {
+pub(super) struct ThinkingForwarder {
     sink: Sender<AgentProgress>,
     scope: Option<SubagentScope>,
     cursor: IterationCursor,
-    /// call_id → tool_name, learned from `ToolCallStart`, so an args delta can
-    /// carry the tool name the UI labels it with.
-    tool_names: Arc<Mutex<std::collections::HashMap<String, String>>>,
+    /// call_id → tool_name, learned from `ToolCallStart`. Shared with the
+    /// [`OpenhumanEventBridge`](super::OpenhumanEventBridge) so the streamed
+    /// argument fragments (which ride the crate `ToolDelta`, sans name) can be
+    /// labelled with the tool the UI shows.
+    tool_names: ToolNameMap,
 }
 
 impl ThinkingForwarder {
-    pub fn new(
+    pub(super) fn new(
         sink: Sender<AgentProgress>,
         scope: Option<SubagentScope>,
         cursor: IterationCursor,
+        tool_names: ToolNameMap,
     ) -> Self {
         Self {
             sink,
             scope,
             cursor,
-            tool_names: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            tool_names,
         }
     }
 
@@ -84,40 +92,28 @@ impl ThinkingForwarder {
         let _ = self.sink.try_send(progress);
     }
 
-    /// Record the tool name a streaming tool call starts with, and emit the
-    /// start marker — an empty-delta `ToolCallArgsDelta` — so consumers see the
-    /// call begin before its arguments arrive (matching the legacy
-    /// `ProviderDelta::ToolCallStart` mapping).
+    /// Record the tool name a streaming tool call starts with (into the map
+    /// shared with the bridge, so it can label the argument fragments it
+    /// projects off the crate stream), and emit the start marker — an
+    /// empty-delta `ToolCallArgsDelta` — so consumers see the call begin before
+    /// its arguments arrive (matching the legacy `ProviderDelta::ToolCallStart`
+    /// mapping). The crate `ToolDelta` has no `tool_name` field, so this half of
+    /// the tool-arg contract can't ride the crate stream and stays here.
     fn note_tool_call(&self, call_id: String, tool_name: String) {
         self.tool_names
             .lock()
             .unwrap()
             .insert(call_id.clone(), tool_name.clone());
+        tracing::trace!(
+            call_id = call_id.as_str(),
+            tool_name = tool_name.as_str(),
+            child = self.scope.is_some(),
+            "[stream] tool-call start marker (name recorded for crate-stream arg fragments)"
+        );
         let _ = self.sink.try_send(AgentProgress::ToolCallArgsDelta {
             call_id,
             tool_name,
             delta: String::new(),
-            iteration: self.cursor.load(Ordering::SeqCst),
-        });
-    }
-
-    /// Emit one tool-call argument fragment as `ToolCallArgsDelta` so the UI can
-    /// show the model composing the call before it executes.
-    fn emit_tool_args(&self, call_id: String, delta: String) {
-        if delta.is_empty() {
-            return;
-        }
-        let tool_name = self
-            .tool_names
-            .lock()
-            .unwrap()
-            .get(&call_id)
-            .cloned()
-            .unwrap_or_default();
-        let _ = self.sink.try_send(AgentProgress::ToolCallArgsDelta {
-            call_id,
-            tool_name,
-            delta,
             iteration: self.cursor.load(Ordering::SeqCst),
         });
     }
@@ -161,9 +157,8 @@ fn build_chat_inputs(
 /// dispatcher — so text-mode models drive the tinyagents loop too. The visible
 /// text is the prose with any tool-call markup stripped.
 ///
-/// Rewriting a hallucinated/unadvertised tool call onto the recovery sentinel
-/// now happens at the tool boundary in
-/// [`UnknownToolRewriteMiddleware`](super::middleware) (`before_tool`), not here.
+/// Unknown-tool recovery is handled by `RunPolicy::unknown_tool`, so the model
+/// adapter preserves the provider-requested tool name.
 fn response_to_model_response(response: &ChatResponse) -> ModelResponse {
     let (visible_text, tool_calls): (String, Vec<TaToolCall>) = if !response.tool_calls.is_empty() {
         let calls = response
@@ -202,6 +197,16 @@ fn response_to_model_response(response: &ChatResponse) -> ModelResponse {
     if !visible_text.is_empty() {
         content.push(ContentBlock::Text(visible_text));
     }
+    // Thinking models return `reasoning_content` separately from the visible
+    // reply; tinyagents' `AssistantMessage` has no reasoning channel, so stash it
+    // on a provider-extension content block. It stays out of `Message::text()`
+    // (which only concatenates `Text` blocks) but survives into persistence and
+    // the next turn's request — where thinking-mode providers require it back.
+    if let Some(block) =
+        super::convert::reasoning_content_block(response.reasoning_content.as_deref())
+    {
+        content.push(block);
+    }
     let usage = response.usage.as_ref().map(|u| {
         // Carry the provider's cached-prefix input count through the crate
         // `Usage` (it has a `cache_read_tokens` field) so downstream cost
@@ -231,12 +236,19 @@ fn response_to_model_response(response: &ChatResponse) -> ModelResponse {
     }
 }
 
-/// Forward one openhuman [`ProviderDelta`]. Visible text becomes a harness
-/// [`MessageDelta`] (so the bridge mirrors it as a text delta); reasoning and
-/// tool-call **argument** fragments ride the out-of-band [`ThinkingForwarder`]
-/// (the harness stream carries neither). The model adapter still assembles the
-/// final native tool calls from the `Completed` response — these fragments are
-/// progress-only, so the UI can show the call being composed.
+/// Forward one openhuman [`ProviderDelta`]. Visible text, reasoning, and
+/// tool-call **argument** fragments all become harness [`ModelStreamItem`]s (so
+/// the [`OpenhumanEventBridge`](super::OpenhumanEventBridge) mirrors them as
+/// progress deltas from the crate stream alone): text/reasoning as
+/// [`MessageDelta`], and each argument fragment as
+/// [`ModelStreamItem::ToolCallDelta`] correlated by `call_id`. The crate
+/// `ToolDelta` has no `tool_name`, so the tool-call **start** marker (which
+/// carries the name and opens the UI timeline row) still rides the out-of-band
+/// [`ThinkingForwarder`]; it also records the name into the map shared with the
+/// bridge so the streamed fragments stay labelled. The model adapter still
+/// assembles the final native tool calls from the `Completed` response (the
+/// `StreamAccumulator` treats it as authoritative), so these fragments are
+/// progress-only — the UI can show the call being composed.
 fn forward_delta(
     tx: &UnboundedSender<ModelStreamItem>,
     thinking: Option<&ThinkingForwarder>,
@@ -245,17 +257,14 @@ fn forward_delta(
     match delta {
         ProviderDelta::TextDelta { delta } => {
             if !delta.is_empty() {
-                // `MessageDelta::text` sets the visible-text fragment and defaults
-                // the `reasoning` (new in tinyagents 1.2.0) and `tool_call` fields.
-                // Reasoning still rides the out-of-band `ThinkingForwarder` below
-                // (see `ThinkingDelta`) rather than the native `reasoning` channel,
-                // preserving the existing subagent-scoped thinking UI wiring.
                 let _ = tx.send(ModelStreamItem::MessageDelta(MessageDelta::text(delta)));
             }
         }
         ProviderDelta::ThinkingDelta { delta } => {
-            if let Some(forwarder) = thinking {
-                forwarder.emit(delta);
+            if !delta.is_empty() {
+                let _ = tx.send(ModelStreamItem::MessageDelta(MessageDelta::reasoning(
+                    delta,
+                )));
             }
         }
         ProviderDelta::ToolCallStart { call_id, tool_name } => {
@@ -264,8 +273,16 @@ fn forward_delta(
             }
         }
         ProviderDelta::ToolCallArgsDelta { call_id, delta } => {
-            if let Some(forwarder) = thinking {
-                forwarder.emit_tool_args(call_id, delta);
+            if !delta.is_empty() {
+                tracing::trace!(
+                    call_id = call_id.as_str(),
+                    len = delta.len(),
+                    "[stream] forwarding tool-arg fragment onto crate ToolCallDelta"
+                );
+                let _ = tx.send(ModelStreamItem::ToolCallDelta(ToolDelta {
+                    call_id,
+                    content: delta,
+                }));
             }
         }
     }
@@ -284,48 +301,123 @@ fn forward_delta(
 /// Sentry suppression and `AgentError`-tagged events. The adapter stashes the
 /// original error here before returning the stringified one to the harness, so
 /// the runner can re-surface the downcastable error after the run fails.
-pub type ProviderErrorSlot = Arc<Mutex<Option<anyhow::Error>>>;
+pub(super) type ProviderErrorSlot = Arc<Mutex<Option<anyhow::Error>>>;
 
-pub struct ProviderModel {
+pub(super) struct ProviderModel {
     provider: Arc<dyn Provider>,
     model: String,
     temperature: f64,
     max_tokens: Option<u32>,
-    /// When set, the adapter forwards provider reasoning deltas onto the
-    /// progress sink (the harness stream has no reasoning channel).
+    /// When set, the adapter forwards tool-argument progress and post-hoc
+    /// non-streaming reasoning onto the progress sink.
     thinking: Option<ThinkingForwarder>,
     /// Preserves the last original provider error for the runner to re-surface.
     error_slot: ProviderErrorSlot,
+    /// Capability profile derived from the wrapped provider (issue #4249,
+    /// Phase 2): lets the crate validate a request against the model's actual
+    /// capabilities (vision, tool calling, streaming, token limits) *before*
+    /// a network call, and drives capability-aware registry resolution.
+    profile: ModelProfile,
 }
 
 impl ProviderModel {
     /// Build a model adapter for `provider`, pinned to `model`/`temperature`.
-    pub fn new(provider: Arc<dyn Provider>, model: impl Into<String>, temperature: f64) -> Self {
+    ///
+    /// The adapter's [`ModelProfile`] is derived from the provider's declared
+    /// capabilities at construction: vision → `modalities.image_in`, native
+    /// tool calling → `tool_calling`/`parallel_tool_calls` (openhuman's
+    /// `ChatResponse` carries multiple tool calls per response), and
+    /// `supports_streaming` → `streaming`. `streaming_tool_chunks` stays
+    /// `false` — [`ProviderModel::stream`] forwards text deltas only and
+    /// reconstructs tool calls from the final response. Token limits are
+    /// threaded in by the runner via [`ProviderModel::with_context_window`] /
+    /// [`ProviderModel::with_max_tokens`].
+    pub(super) fn new(
+        provider: Arc<dyn Provider>,
+        model: impl Into<String>,
+        temperature: f64,
+    ) -> Self {
+        let model = model.into();
+        // Read the canonical accessor methods (not `capabilities()` directly):
+        // several providers override `supports_native_tools`/`supports_vision`
+        // without overriding the `capabilities()` struct.
+        let native_tools = provider.supports_native_tools();
+        let profile = ModelProfile {
+            provider: Some(
+                if provider.is_local_provider_for_model(&model) {
+                    "local"
+                } else {
+                    "remote"
+                }
+                .to_string(),
+            ),
+            model: Some(model.clone()),
+            modalities: Modalities {
+                image_in: provider.supports_vision(),
+                ..Modalities::default()
+            },
+            tool_calling: native_tools,
+            parallel_tool_calls: native_tools,
+            streaming: provider.supports_streaming(),
+            ..ModelProfile::default()
+        };
         Self {
             provider,
-            model: model.into(),
+            model,
             temperature,
             max_tokens: None,
             thinking: None,
             error_slot: Arc::new(Mutex::new(None)),
+            profile,
         }
     }
 
     /// A handle to the shared error slot (clone before moving `self` into the
     /// harness, so the runner can recover the typed provider error on failure).
-    pub fn error_slot(&self) -> ProviderErrorSlot {
+    pub(super) fn error_slot(&self) -> ProviderErrorSlot {
         self.error_slot.clone()
     }
 
     /// Cap the output tokens requested from the provider for every call.
-    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
+    pub(super) fn with_max_tokens(mut self, max_tokens: u32) -> Self {
         self.max_tokens = Some(max_tokens);
+        self.profile.max_output_tokens = Some(u64::from(max_tokens));
         self
     }
 
-    /// Forward provider reasoning / thinking deltas onto a progress sink via
+    /// Record the model's effective context window on the profile so the crate
+    /// can validate/select on input capacity before dispatch. Metadata only —
+    /// history trimming stays with the context middlewares.
+    pub(super) fn with_context_window(mut self, window: u64) -> Self {
+        self.profile.max_input_tokens = Some(window);
+        self
+    }
+
+    /// Override the profile's image-input (vision) capability.
+    ///
+    /// [`ProviderModel::new`] seeds `modalities.image_in` from the provider's
+    /// *provider-wide* `supports_vision()`, but a workload-route projection
+    /// (issue #4249, Workstream 02.1 — see [`super::routes`]) knows the
+    /// per-route vision capability (e.g. the dedicated `vision-v1` tier is
+    /// multimodal while `chat-v1` is text-only). This lets the route adapter
+    /// record the accurate per-route modality so capability gating can reject a
+    /// non-vision route for an image turn before dispatch.
+    pub(super) fn with_vision(mut self, image_in: bool) -> Self {
+        self.profile.modalities.image_in = image_in;
+        self
+    }
+
+    /// Override the profile's reasoning/thinking capability. Set by the
+    /// workload-route projection ([`super::routes`]) for reasoning-tier routes so
+    /// a request that requires reasoning resolves to a reasoning-capable model.
+    pub(super) fn with_reasoning(mut self, reasoning: bool) -> Self {
+        self.profile.reasoning = reasoning;
+        self
+    }
+
+    /// Forward provider thinking/tool-argument progress onto a progress sink via
     /// `forwarder` (parent or sub-agent scoped). See [`ThinkingForwarder`].
-    pub fn with_thinking(mut self, forwarder: ThinkingForwarder) -> Self {
+    pub(super) fn with_thinking(mut self, forwarder: ThinkingForwarder) -> Self {
         self.thinking = Some(forwarder);
         self
     }
@@ -333,6 +425,10 @@ impl ProviderModel {
 
 #[async_trait]
 impl ChatModel<()> for ProviderModel {
+    fn profile(&self) -> Option<&ModelProfile> {
+        Some(&self.profile)
+    }
+
     async fn invoke(
         &self,
         _state: &(),
@@ -365,11 +461,31 @@ impl ChatModel<()> for ProviderModel {
         {
             Ok(response) => response,
             Err(e) => {
+                // Classify with OpenHuman's product error taxonomy (issue #4249,
+                // Workstream 02.2): a permanent config/auth rejection, billing/quota
+                // exhaustion, or context-window overflow is mapped to a *non-retryable*
+                // `TinyAgentsError::Validation` (crate `is_retryable` → false), while a
+                // transient 5xx/429/network blip stays a retryable `Model` error. This
+                // is the same `reliable::is_non_retryable` classifier `ReliableProvider`
+                // uses, keeping OpenHuman as the single `ProviderError` mapper. With the
+                // retry pin at a single attempt the mapping is behavior-neutral today; it
+                // stages honest retry semantics for when the crate loop owns retries.
+                let non_retryable =
+                    crate::openhuman::inference::provider::reliable::is_non_retryable(&e);
+                tracing::debug!(
+                    model = %self.model,
+                    non_retryable,
+                    "[models] provider chat failed; classifying error for tinyagents retry/fallback"
+                );
                 // Preserve the original (downcastable) error for the runner, then
                 // hand the harness a stringified copy to stop the loop.
                 let msg = format!("openhuman provider chat failed: {e}");
                 *self.error_slot.lock().unwrap() = Some(e);
-                return Err(tinyagents::TinyAgentsError::Model(msg));
+                return Err(if non_retryable {
+                    tinyagents::TinyAgentsError::Validation(msg)
+                } else {
+                    tinyagents::TinyAgentsError::Model(msg)
+                });
             }
         };
         // Non-streaming path: surface any reasoning the provider returned as a
@@ -447,21 +563,35 @@ impl ChatModel<()> for ProviderModel {
 
             let terminal = match response {
                 Ok(resp) => {
-                    // Fallback for providers that return reasoning only on the
-                    // aggregated response (no incremental thinking deltas): emit
-                    // it once so child/parent thinking output isn't lost.
+                    // Fallback for streaming providers that return reasoning only
+                    // on the aggregated response (no incremental thinking
+                    // deltas): emit it once through the native crate stream so
+                    // the bridge handles scope consistently with live reasoning.
                     if !streamed_thinking {
-                        if let Some(forwarder) = &thinking {
-                            if let Some(reasoning) =
-                                resp.reasoning_content.as_ref().filter(|r| !r.is_empty())
-                            {
-                                forwarder.emit(reasoning.clone());
-                            }
+                        if let Some(reasoning) =
+                            resp.reasoning_content.as_ref().filter(|r| !r.is_empty())
+                        {
+                            let _ = item_tx.send(ModelStreamItem::MessageDelta(
+                                MessageDelta::reasoning(reasoning.clone()),
+                            ));
                         }
                     }
                     ModelStreamItem::Completed(response_to_model_response(&resp))
                 }
                 Err(e) => {
+                    // Streaming failures ride `ModelStreamItem::Failed(String)`, which
+                    // carries no retryable flag (the harness treats it as a retryable
+                    // `Model` error), so the non-retryable mapping applied on the
+                    // buffered path cannot be expressed here — a crate limitation. With
+                    // the retry pin at a single attempt this has no effect today; logged
+                    // under `[models]` for parity/auditability (issue #4249, 02.2).
+                    let non_retryable =
+                        crate::openhuman::inference::provider::reliable::is_non_retryable(&e);
+                    tracing::debug!(
+                        model = %model,
+                        non_retryable,
+                        "[models] streaming provider chat failed; harness will treat as retryable Model error"
+                    );
                     // Preserve the original (downcastable) error for the runner.
                     let msg = format!("openhuman provider chat failed: {e}");
                     *error_slot.lock().unwrap() = Some(e);

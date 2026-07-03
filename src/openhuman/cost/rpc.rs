@@ -23,7 +23,7 @@ use crate::rpc::RpcOutcome;
 use super::global::try_global;
 use super::tracker::CostTracker;
 use super::types::{
-    BudgetStatus, CostDashboard, CostRecord, CostSummary, DailyCostEntry, ModelStats,
+    BudgetStatus, CostDashboard, CostRecord, CostSource, CostSummary, DailyCostEntry, ModelStats,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -84,7 +84,11 @@ pub struct UsageLogRecordDto {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub total_tokens: u64,
+    pub cached_input_tokens: u64,
+    pub cache_creation_tokens: u64,
+    pub reasoning_tokens: u64,
     pub cost_usd: f64,
+    pub cost_source: CostSource,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -165,7 +169,11 @@ fn usage_record_to_dto(record: &CostRecord) -> UsageLogRecordDto {
         input_tokens: record.usage.input_tokens,
         output_tokens: record.usage.output_tokens,
         total_tokens: record.usage.total_tokens,
+        cached_input_tokens: record.usage.cached_input_tokens,
+        cache_creation_tokens: record.usage.cache_creation_tokens,
+        reasoning_tokens: record.usage.reasoning_tokens,
         cost_usd: record.usage.cost_usd,
+        cost_source: record.usage.cost_source,
     }
 }
 
@@ -604,6 +612,8 @@ mod tests {
             TokenUsage::new("anthropic/claude-sonnet-4", 1000, 500, 0.0, 0.0),
         );
         chat.usage.cost_usd = 3.0;
+        chat.usage.cached_input_tokens = 250;
+        chat.usage.reasoning_tokens = 32;
         let mut embeddings = CostRecord::new(
             "session-b",
             TokenUsage::new("voyage/voyage-3", 2000, 0, 0.0, 0.0),
@@ -616,6 +626,9 @@ mod tests {
         assert_eq!(dto.by_category[0].category, "AI chat and reasoning");
         assert!((dto.by_category[0].percent_of_total - 75.0).abs() < f64::EPSILON);
         assert_eq!(dto.total_tokens, 3500);
+        assert_eq!(dto.records[0].cached_input_tokens, 250);
+        assert_eq!(dto.records[0].reasoning_tokens, 32);
+        assert_eq!(dto.records[0].cost_source, CostSource::Estimated);
     }
 
     #[test]

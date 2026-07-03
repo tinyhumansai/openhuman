@@ -624,6 +624,7 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
     let io_agent_meetings = io.clone();
     let io_tinyplace = io.clone();
     let io_channel_status = io.clone();
+    let io_orchestration = io.clone();
 
     // 2. Dictation hotkey events → broadcast to all connected clients.
     tokio::spawn(async move {
@@ -709,6 +710,30 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
             }
         }
         log::debug!("[socketio] core_notification bridge stopped");
+    });
+
+    // 5b. Orchestration chat activity → broadcast to all clients so the
+    //     TinyPlaceOrchestrationTab targeted-refetches the affected chat live
+    //     (stage 7). Mirrors the overlay/notification fire-and-forget pattern.
+    tokio::spawn(async move {
+        let mut rx = crate::openhuman::orchestration::subscribe_orchestration_socket();
+        loop {
+            let payload = match rx.recv().await {
+                Ok(payload) => payload,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    log::warn!(
+                        "[socketio] dropped {} orchestration events due to lag",
+                        skipped
+                    );
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+            log::debug!("[socketio] broadcast orchestration:message");
+            let _ = io_orchestration.emit("orchestration:message", &payload);
+            let _ = io_orchestration.emit("orchestration_message", &payload);
+        }
+        log::debug!("[socketio] orchestration bridge stopped");
     });
 
     // 6. SessionExpired events → broadcast to all clients so the UI can

@@ -129,6 +129,23 @@ pub enum DomainEvent {
         orchestration_id: String,
         reason: Option<String>,
     },
+    /// A tiny.place contact edge changed for a wrapped orchestration session.
+    /// Payload is intentionally metadata only; contact graph details stay behind
+    /// the signed tiny.place API.
+    OrchestrationPairingChanged {
+        agent_id: String,
+        status: String,
+        source: String,
+    },
+
+    /// A tiny.place harness session DM was ingested and persisted. Metadata only
+    /// — bodies stay in the workspace-internal orchestration store. Consumed by
+    /// later stages (graph run, UI socket push).
+    OrchestrationSessionMessage {
+        agent_id: String,
+        session_id: String,
+        chat_kind: String,
+    },
 
     // ── Subconscious orchestrator ───────────────────────────────────────
     /// A subconscious trigger finished gate evaluation (promote or drop).
@@ -151,13 +168,6 @@ pub enum DomainEvent {
         thread_id: String,
         mode: String,
         queue_depth: usize,
-    },
-    /// A queued steer/collect message was delivered to the engine at an
-    /// iteration boundary.
-    RunQueueMessageDelivered {
-        thread_id: String,
-        mode: String,
-        iteration: u32,
     },
     /// A queued followup message was dispatched as a fresh turn after the
     /// current turn completed.
@@ -451,6 +461,27 @@ pub enum DomainEvent {
         session_id: String,
         success: bool,
         elapsed_ms: u64,
+    },
+
+    // ── Workspace isolation ─────────────────────────────────────────────
+    /// A TinyAgents workspace descriptor was prepared for an isolated run.
+    WorkspacePrepared {
+        /// Audit identity of the policy that produced the workspace.
+        policy_id: String,
+        /// Allowed workspace root.
+        root: String,
+    },
+    /// A TinyAgents workspace descriptor blocked an out-of-root path.
+    WorkspaceViolation {
+        /// Path that failed the descriptor's allowed-root policy.
+        path: String,
+    },
+    /// A TinyAgents workspace descriptor was cleaned up.
+    WorkspaceCleanup {
+        /// Audit identity of the policy whose workspace was cleaned up.
+        policy_id: String,
+        /// Cleanup error, when cleanup failed.
+        error: Option<String>,
     },
 
     // ── Approval ────────────────────────────────────────────────────────
@@ -1217,8 +1248,9 @@ impl DomainEvent {
             | Self::AgentOrchestrationCompleted { .. }
             | Self::AgentOrchestrationFailed { .. }
             | Self::AgentOrchestrationClosed { .. }
+            | Self::OrchestrationPairingChanged { .. }
+            | Self::OrchestrationSessionMessage { .. }
             | Self::RunQueueMessageQueued { .. }
-            | Self::RunQueueMessageDelivered { .. }
             | Self::RunQueueFollowupDispatched { .. }
             | Self::RunQueueInterrupted { .. } => "agent",
 
@@ -1258,6 +1290,10 @@ impl DomainEvent {
             | Self::WorkflowsChanged { .. } => "workflow",
 
             Self::ToolExecutionStarted { .. } | Self::ToolExecutionCompleted { .. } => "tool",
+
+            Self::WorkspacePrepared { .. }
+            | Self::WorkspaceViolation { .. }
+            | Self::WorkspaceCleanup { .. } => "workspace",
 
             Self::WebhookIncomingRequest { .. }
             | Self::WebhookReceived { .. }
@@ -1373,9 +1409,10 @@ impl DomainEvent {
             Self::AgentOrchestrationCompleted { .. } => "AgentOrchestrationCompleted",
             Self::AgentOrchestrationFailed { .. } => "AgentOrchestrationFailed",
             Self::AgentOrchestrationClosed { .. } => "AgentOrchestrationClosed",
+            Self::OrchestrationPairingChanged { .. } => "OrchestrationPairingChanged",
+            Self::OrchestrationSessionMessage { .. } => "OrchestrationSessionMessage",
             Self::SubconsciousTriggerProcessed { .. } => "SubconsciousTriggerProcessed",
             Self::RunQueueMessageQueued { .. } => "RunQueueMessageQueued",
-            Self::RunQueueMessageDelivered { .. } => "RunQueueMessageDelivered",
             Self::RunQueueFollowupDispatched { .. } => "RunQueueFollowupDispatched",
             Self::RunQueueInterrupted { .. } => "RunQueueInterrupted",
             Self::MonitorStatusChanged { .. } => "MonitorStatusChanged",
@@ -1409,6 +1446,9 @@ impl DomainEvent {
             Self::WorkflowsChanged { .. } => "WorkflowsChanged",
             Self::ToolExecutionStarted { .. } => "ToolExecutionStarted",
             Self::ToolExecutionCompleted { .. } => "ToolExecutionCompleted",
+            Self::WorkspacePrepared { .. } => "WorkspacePrepared",
+            Self::WorkspaceViolation { .. } => "WorkspaceViolation",
+            Self::WorkspaceCleanup { .. } => "WorkspaceCleanup",
             Self::WebhookIncomingRequest { .. } => "WebhookIncomingRequest",
             Self::WebhookReceived { .. } => "WebhookReceived",
             Self::WebhookRegistered { .. } => "WebhookRegistered",
@@ -1515,8 +1555,10 @@ impl DomainEvent {
             | Self::ChannelDisconnected { channel, .. } => Some(channel.as_str()),
             Self::ToolExecutionStarted { tool_name, .. }
             | Self::ToolExecutionCompleted { tool_name, .. } => Some(tool_name.as_str()),
+            Self::WorkspacePrepared { policy_id, .. }
+            | Self::WorkspaceCleanup { policy_id, .. } => Some(policy_id.as_str()),
+            Self::WorkspaceViolation { path } => Some(path.as_str()),
             Self::RunQueueMessageQueued { thread_id, .. }
-            | Self::RunQueueMessageDelivered { thread_id, .. }
             | Self::RunQueueFollowupDispatched { thread_id, .. }
             | Self::RunQueueInterrupted { thread_id, .. } => Some(thread_id.as_str()),
             Self::MonitorStatusChanged { thread_id, .. } | Self::MonitorLine { thread_id, .. } => {
