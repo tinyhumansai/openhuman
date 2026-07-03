@@ -84,11 +84,30 @@ fn core_check(inputs: &ReadinessInputs, os: &str) -> ReadinessCheck {
 }
 
 fn storage_check(storage: &StorageProbe, os: &str) -> ReadinessCheck {
-    let (status, detail, remediation) = if !storage.exists {
+    let (status, detail, remediation) = if let Some(err) = &storage.probe_error {
+        // Probe itself failed (timeout / internal error) — do NOT claim the
+        // folder is missing; that would send users to recreate a folder that is
+        // probably fine (CR).
+        (
+            CheckStatus::Fail,
+            format!("Couldn't verify memory storage: {err}"),
+            "Retry in a moment. If it keeps failing, check your memory folder in \
+             Settings → Memory."
+                .to_string(),
+        )
+    } else if !storage.exists {
         (
             CheckStatus::Fail,
             "Memory folder does not exist yet.".to_string(),
             "Finish onboarding to create your memory folder, or pick a folder you can write to in \
+             Settings → Memory."
+                .to_string(),
+        )
+    } else if !storage.readable {
+        (
+            CheckStatus::Fail,
+            "Memory folder exists but cannot be read.".to_string(),
+            "Grant read access to your memory folder, or choose a different folder in \
              Settings → Memory."
                 .to_string(),
         )
@@ -401,15 +420,17 @@ pub(crate) fn core_health_from_snapshot(snapshot: &Value) -> (bool, String) {
 }
 
 async fn probe_storage(config: &Config) -> StorageProbe {
-    let (exists, readable, writable, pipeline_healthy) =
+    let (exists, readable, writable, pipeline_healthy, probe_error) =
         match crate::openhuman::memory::read_rpc::vault_health_check_rpc(config, None).await {
             Ok(outcome) => {
                 let v = outcome.value;
-                (v.exists, v.readable, v.writable, v.pipeline_healthy)
+                (v.exists, v.readable, v.writable, v.pipeline_healthy, None)
             }
             Err(e) => {
+                // Probe failed — carry the error rather than masquerading as a
+                // missing/unwritable folder (CR).
                 log::debug!("[readiness] vault_health_check failed: {e}");
-                (false, false, false, false)
+                (false, false, false, false, Some(e))
             }
         };
     let action_dir_writable = probe_dir_writable(&config.action_dir);
@@ -419,10 +440,14 @@ async fn probe_storage(config: &Config) -> StorageProbe {
         writable,
         pipeline_healthy,
         action_dir_writable,
+        probe_error,
     }
 }
 
-/// Write-probe a directory by creating, writing, and removing a temp file.
+/// Write-probe a directory by creating a *uniquely-named* temp file and removing
+/// it. Uses `tempfile` (O_CREAT|O_EXCL) so the probe can never follow a planted
+/// symlink or truncate a pre-existing fixed-name file, and concurrent readiness
+/// runs can't race on the same path (CR).
 fn probe_dir_writable(dir: &std::path::Path) -> bool {
     if !dir.is_dir() {
         // Try to create it — the working folder is app-owned and may not exist
@@ -431,10 +456,20 @@ fn probe_dir_writable(dir: &std::path::Path) -> bool {
             return false;
         }
     }
-    let probe = dir.join(".openhuman-readiness-writecheck.tmp");
-    let ok = std::fs::write(&probe, b"ok").is_ok();
-    let _ = std::fs::remove_file(&probe);
-    ok
+    match tempfile::Builder::new()
+        .prefix(".openhuman-readiness-writecheck-")
+        .tempfile_in(dir)
+    {
+        Ok(mut file) => {
+            let ok = std::io::Write::write_all(file.as_file_mut(), b"ok").is_ok();
+            // `file` drops here, removing the temp file.
+            ok
+        }
+        Err(e) => {
+            log::debug!("[readiness] write-check temp create failed in {dir:?}: {e}");
+            false
+        }
+    }
 }
 
 fn probe_permissions() -> PermissionProbe {
@@ -516,55 +551,85 @@ pub(crate) fn parse_ollama_tags(body: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Timeout for the live model-connection ping. Bounded so opening the readiness
+/// panel can never hang on a stuck provider.
+const MODEL_PROBE_TIMEOUT_SECS: u64 = 12;
+/// Minimal prompt used to confirm the configured model actually answers.
+const MODEL_PROBE_PROMPT: &str = "ping";
+
+/// Live-probe the configured chat model. The prior implementation delegated to
+/// `doctor::run_models`, which is a gutted no-op (every provider `Skipped`,
+/// `summary.ok == 0`) — so the gate reported `model_connection_ok == false`
+/// even for correctly-configured users, and Finish only unlocked via the skip
+/// override. This instead builds the real chat provider and sends a bounded
+/// one-shot ping (CR: chatgpt-codex + coderabbitai).
+///
+/// A build failure means no usable model is configured (kept distinct — empty
+/// `provider_id` so [`model_check`] shows the "no provider configured"
+/// remediation). A failed / timed-out ping means the provider is configured but
+/// unreachable, surfaced with its transport error.
 async fn probe_model_connection(config: &Config) -> ModelConnProbe {
-    match crate::openhuman::doctor::rpc::doctor_models(config, true).await {
-        Ok(outcome) => model_conn_from_report(&outcome.value),
-        Err(e) => ModelConnProbe {
+    use crate::openhuman::inference::provider::{create_chat_provider, provider_for_role};
+
+    let (provider, model) = match create_chat_provider("chat", config) {
+        Ok(pair) => pair,
+        Err(e) => {
+            log::debug!("[readiness] model provider not configured: {e}");
+            return ModelConnProbe {
+                ok: false,
+                provider_id: String::new(),
+                error: String::new(),
+            };
+        }
+    };
+
+    let provider_id = {
+        let slug = provider_for_role("chat", config);
+        if slug.trim().is_empty() {
+            model.clone()
+        } else {
+            slug
+        }
+    };
+
+    let ping = tokio::time::timeout(
+        std::time::Duration::from_secs(MODEL_PROBE_TIMEOUT_SECS),
+        provider.simple_chat(MODEL_PROBE_PROMPT, &model, 0.0),
+    )
+    .await;
+    let result = match ping {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Err(format!(
+            "Timed out after {MODEL_PROBE_TIMEOUT_SECS}s waiting for the model to respond."
+        )),
+    };
+    log::debug!(
+        "[readiness] model probe provider={provider_id} ok={}",
+        result.is_ok()
+    );
+    model_conn_from_probe(provider_id, result)
+}
+
+/// Pure mapping of a live model-probe attempt onto a [`ModelConnProbe`].
+/// Extracted so the validated / failed branches are unit-testable without a
+/// network round-trip.
+pub(crate) fn model_conn_from_probe(
+    provider_id: String,
+    result: Result<(), String>,
+) -> ModelConnProbe {
+    match result {
+        Ok(()) => ModelConnProbe {
+            ok: true,
+            provider_id,
+            error: String::new(),
+        },
+        Err(error) => ModelConnProbe {
             ok: false,
-            provider_id: String::new(),
-            error: e,
+            provider_id,
+            error,
         },
     }
-}
-
-/// Pure derivation of the model-connection gate from a doctor model-probe
-/// report. Extracted so the validated / failed / no-provider branches are
-/// unit-testable.
-pub(crate) fn model_conn_from_report(
-    report: &crate::openhuman::doctor::ModelProbeReport,
-) -> ModelConnProbe {
-    use crate::openhuman::doctor::ModelProbeOutcome as O;
-    let ok = report.summary.ok >= 1;
-    // Label with the first provider that validated (or the first probed
-    // target) — more meaningful to the user than the raw config string.
-    let provider_id = report
-        .entries
-        .iter()
-        .find(|e| matches!(e.outcome, O::Ok))
-        .or_else(|| report.entries.first())
-        .map(|e| e.provider.clone())
-        .unwrap_or_default();
-    let error = if ok {
-        String::new()
-    } else {
-        first_probe_error(report)
-    };
-    ModelConnProbe {
-        ok,
-        provider_id,
-        error,
-    }
-}
-
-/// First human-readable message from a failing model probe entry.
-fn first_probe_error(report: &crate::openhuman::doctor::ModelProbeReport) -> String {
-    use crate::openhuman::doctor::ModelProbeOutcome as O;
-    report
-        .entries
-        .iter()
-        .find(|e| matches!(e.outcome, O::Error | O::AuthOrAccess))
-        .and_then(|e| e.message.clone())
-        .unwrap_or_else(|| "no reachable model provider".to_string())
 }
 
 #[cfg(test)]
@@ -583,6 +648,7 @@ mod tests {
                 writable: true,
                 pipeline_healthy: true,
                 action_dir_writable: true,
+                probe_error: None,
             },
             permissions: PermissionProbe {
                 os_gated: true,
@@ -859,73 +925,81 @@ mod tests {
         assert!(detail.contains("unavailable"));
     }
 
-    fn probe_entry(
-        provider: &str,
-        outcome: crate::openhuman::doctor::ModelProbeOutcome,
-        message: Option<&str>,
-    ) -> crate::openhuman::doctor::ModelProbeEntry {
-        crate::openhuman::doctor::ModelProbeEntry {
-            provider: provider.into(),
-            outcome,
-            message: message.map(str::to_string),
-        }
-    }
-
-    fn probe_report(
-        entries: Vec<crate::openhuman::doctor::ModelProbeEntry>,
-        ok: usize,
-    ) -> crate::openhuman::doctor::ModelProbeReport {
-        crate::openhuman::doctor::ModelProbeReport {
-            entries,
-            summary: crate::openhuman::doctor::ModelProbeSummary {
-                ok,
-                skipped: 0,
-                auth_or_access: 0,
-                errors: 0,
-            },
-        }
-    }
-
     #[test]
-    fn model_conn_ok_labels_validated_provider() {
-        use crate::openhuman::doctor::ModelProbeOutcome as O;
-        let report = probe_report(
-            vec![
-                probe_entry("openai", O::Error, Some("boom")),
-                probe_entry("anthropic", O::Ok, None),
-            ],
-            1,
-        );
-        let probe = model_conn_from_report(&report);
+    fn model_conn_from_probe_ok_keeps_provider_no_error() {
+        let probe = model_conn_from_probe("anthropic".into(), Ok(()));
         assert!(probe.ok);
         assert_eq!(probe.provider_id, "anthropic");
         assert!(probe.error.is_empty());
     }
 
     #[test]
-    fn model_conn_fail_surfaces_first_error_message() {
-        use crate::openhuman::doctor::ModelProbeOutcome as O;
-        let report = probe_report(
-            vec![probe_entry(
-                "anthropic",
-                O::AuthOrAccess,
-                Some("401 unauthorized"),
-            )],
-            0,
-        );
-        let probe = model_conn_from_report(&report);
+    fn model_conn_from_probe_err_surfaces_transport_error() {
+        let probe = model_conn_from_probe("anthropic".into(), Err("401 unauthorized".into()));
         assert!(!probe.ok);
+        // Provider stays populated so model_check surfaces a transport error,
+        // NOT the "no provider configured" branch (CR).
         assert_eq!(probe.provider_id, "anthropic");
         assert_eq!(probe.error, "401 unauthorized");
     }
 
     #[test]
-    fn model_conn_no_entries_is_empty_provider() {
-        let report = probe_report(vec![], 0);
-        let probe = model_conn_from_report(&report);
-        assert!(!probe.ok);
-        assert!(probe.provider_id.is_empty());
-        assert_eq!(probe.error, "no reachable model provider");
+    fn model_check_maps_configured_transport_error_distinct_from_no_provider() {
+        // provider_id empty → "no provider configured"
+        let no_provider = model_check(
+            &ModelConnProbe {
+                ok: false,
+                provider_id: String::new(),
+                error: String::new(),
+            },
+            "macos",
+        );
+        assert_eq!(no_provider.status, CheckStatus::Fail);
+        assert!(no_provider.detail.contains("No model provider"));
+
+        // provider_id set + error → transport-failure branch carrying the error
+        let unreachable = model_check(
+            &ModelConnProbe {
+                ok: false,
+                provider_id: "anthropic".into(),
+                error: "401 unauthorized".into(),
+            },
+            "macos",
+        );
+        assert_eq!(unreachable.status, CheckStatus::Fail);
+        assert!(unreachable.detail.contains("401 unauthorized"));
+    }
+
+    #[test]
+    fn storage_check_probe_error_is_not_folder_missing() {
+        let storage = StorageProbe {
+            exists: false,
+            readable: false,
+            writable: false,
+            pipeline_healthy: false,
+            action_dir_writable: true,
+            probe_error: Some("vault-health timed out".into()),
+        };
+        let check = storage_check(&storage, "macos");
+        assert_eq!(check.status, CheckStatus::Fail);
+        assert!(check.detail.contains("Couldn't verify"));
+        assert!(check.detail.contains("vault-health timed out"));
+        assert!(!check.detail.contains("does not exist"));
+    }
+
+    #[test]
+    fn storage_check_unreadable_fails() {
+        let storage = StorageProbe {
+            exists: true,
+            readable: false,
+            writable: true,
+            pipeline_healthy: true,
+            action_dir_writable: true,
+            probe_error: None,
+        };
+        let check = storage_check(&storage, "macos");
+        assert_eq!(check.status, CheckStatus::Fail);
+        assert!(check.detail.contains("cannot be read"));
     }
 
     #[test]
@@ -951,12 +1025,34 @@ mod tests {
         assert!(nested.is_dir());
     }
 
+    /// Minimal always-OK provider so the live model probe is deterministic +
+    /// offline (no real network round-trip) in the end-to-end test.
+    struct OkProvider;
+    #[async_trait::async_trait]
+    impl crate::openhuman::inference::provider::traits::Provider for OkProvider {
+        async fn chat_with_system(
+            &self,
+            _system_prompt: Option<&str>,
+            _message: &str,
+            _model: &str,
+            _temperature: f64,
+        ) -> anyhow::Result<String> {
+            Ok("pong".to_string())
+        }
+    }
+
     /// Drives the async probe wrappers + RPC entry points end-to-end against a
-    /// temp-scoped default config. `doctor::run_models` is a no-op offline (all
-    /// providers Skipped) and there is no local Ollama in CI, so this executes
-    /// every gather/probe branch without network or panics.
+    /// temp-scoped default config. A mock chat provider is installed so the live
+    /// model probe resolves deterministically offline; there is no local Ollama
+    /// in CI, so this executes every gather/probe branch without real network or
+    /// panics.
     #[tokio::test]
     async fn gather_inputs_and_rpc_entry_points_execute() {
+        let _provider =
+            crate::openhuman::inference::provider::factory::test_provider_override::install(
+                std::sync::Arc::new(OkProvider),
+            );
+
         let tmp = tempfile::tempdir().unwrap();
         let mut config = crate::openhuman::config::Config::default();
         config.action_dir = tmp.path().to_path_buf();
@@ -973,9 +1069,10 @@ mod tests {
         let all = readiness_check_all(&config).await.unwrap();
         assert_eq!(all.value.checks.len(), 6);
 
-        // run_models marks everything Skipped offline → gate not ok, call ok.
+        // Mock provider answers the ping → model gate validates ok.
         let model = validate_model_connection(&config).await.unwrap();
-        assert!(!model.value.ok);
+        assert!(model.value.ok);
+        assert!(model.value.error.is_empty());
 
         // No local Ollama in CI → unreachable, empty models; call still ok.
         let ollama = ollama_models().await.unwrap();

@@ -84,6 +84,11 @@ pub struct StorageProbe {
     /// Whether the agent's action directory (`~/OpenHuman/projects`) is
     /// writable — the file-access signal (acceptance criterion 4).
     pub action_dir_writable: bool,
+    /// Set when the vault-health probe itself failed (timeout / internal error)
+    /// rather than the vault being genuinely missing. Kept distinct so the
+    /// report surfaces "couldn't verify" instead of "folder missing" (CR).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe_error: Option<String>,
 }
 
 /// Desktop-automation permission probe inputs. On macOS these come from real
