@@ -297,6 +297,8 @@ fn native_tool_response(name: &str, arguments: &str) -> ChatResponse {
             output_tokens: 600,
             context_window: 16_000,
             cached_input_tokens: 250,
+            cache_creation_tokens: 0,
+            reasoning_tokens: 0,
             charged_amount_usd: 0.002,
         }),
         reasoning_content: Some("native hidden reasoning".to_string()),
@@ -314,6 +316,8 @@ fn xml_tool_response(name: &str, value: &str) -> ChatResponse {
             output_tokens: 500,
             context_window: 16_000,
             cached_input_tokens: 100,
+            cache_creation_tokens: 0,
+            reasoning_tokens: 0,
             charged_amount_usd: 0.001,
         }),
         reasoning_content: None,
@@ -397,7 +401,6 @@ async fn native_turn_dedups_duplicate_tool_specs_and_recovers_invalid_arguments(
             ..ContextConfig::default()
         })
         .explicit_preferences_enabled(false)
-        .unified_compaction_enabled(false)
         .build()
         .unwrap();
 
@@ -457,7 +460,6 @@ async fn xml_turn_persists_tool_cycle_and_fires_failure_hook_context() {
             ..ContextConfig::default()
         })
         .explicit_preferences_enabled(false)
-        .unified_compaction_enabled(true)
         .build()
         .unwrap();
 
@@ -502,6 +504,8 @@ async fn session_memory_threshold_path_runs_only_after_successful_turn() {
                     output_tokens: 1_000,
                     context_window: 16_000,
                     cached_input_tokens: 10,
+                    cache_creation_tokens: 0,
+                    reasoning_tokens: 0,
                     charged_amount_usd: 0.003,
                 }),
             ),
@@ -541,7 +545,6 @@ async fn session_memory_threshold_path_runs_only_after_successful_turn() {
             ..ContextConfig::default()
         })
         .explicit_preferences_enabled(false)
-        .unified_compaction_enabled(true)
         .build()
         .unwrap();
 
@@ -566,7 +569,6 @@ async fn session_memory_threshold_path_runs_only_after_successful_turn() {
         .event_context("round20-empty-session", "round20-empty-channel")
         .agent_definition_name("round20/empty")
         .explicit_preferences_enabled(false)
-        .unified_compaction_enabled(false)
         .build()
         .unwrap();
     let err = failed_agent.run_single("return blank").await.unwrap_err();

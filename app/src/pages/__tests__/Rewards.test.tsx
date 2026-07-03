@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Rewards from '../Rewards';
 
 const { rewardsApi, openUrl } = vi.hoisted(() => ({
-  rewardsApi: { getMyRewards: vi.fn() },
+  rewardsApi: { getMyRewards: vi.fn(), claimReward: vi.fn() },
   openUrl: vi.fn(),
 }));
 
@@ -86,6 +86,8 @@ describe('Rewards page', () => {
           roleId: 'role-streak-7',
           discordRoleStatus: 'assigned',
           creditAmountUsd: null,
+          rewardTokens: 500000,
+          rewardRecurring: false,
         },
       ],
     });
@@ -160,6 +162,8 @@ describe('Rewards page', () => {
             roleId: 'role-streak-7',
             discordRoleStatus: 'assigned',
             creditAmountUsd: null,
+            rewardTokens: 500000,
+            rewardRecurring: false,
           },
         ],
       });
@@ -303,6 +307,88 @@ describe('Rewards page', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Join Discord' }));
 
     expect(openUrl).toHaveBeenCalledWith('https://discord.gg/openhuman');
+  });
+
+  it('silently refetches after a claim without flipping into the loading or error state', async () => {
+    const claimableSnapshot = {
+      discord: {
+        linked: false,
+        discordId: null,
+        username: null,
+        inviteUrl: 'https://discord.gg/openhuman',
+        membershipStatus: 'not_linked',
+      },
+      summary: {
+        unlockedCount: 1,
+        totalCount: 1,
+        assignedDiscordRoleCount: 0,
+        claimableCount: 1,
+        plan: 'FREE',
+        hasActiveSubscription: false,
+      },
+      metrics: {
+        currentStreakDays: 7,
+        longestStreakDays: 7,
+        cumulativeTokens: 0,
+        featuresUsedCount: 0,
+        trackedFeaturesCount: 6,
+        lastEvaluatedAt: null,
+        lastSyncedAt: null,
+      },
+      achievements: [
+        {
+          id: 'STREAK_7',
+          title: '7-Day Streak',
+          description: 'Seven consecutive active days.',
+          actionLabel: 'Reach a 7-day streak',
+          unlocked: true,
+          progressLabel: 'Unlocked',
+          roleId: null,
+          discordRoleStatus: 'not_configured',
+          creditAmountUsd: 1.25,
+          rewardTokens: 500000,
+          rewardRecurring: false,
+          claimable: true,
+          claimed: false,
+          claimedAt: null,
+          claimPeriod: null,
+        },
+      ],
+    };
+    // Initial load succeeds; the post-claim silent refetch fails — the page must
+    // swallow it (no error banner, no blanking), proving the silent path.
+    rewardsApi.getMyRewards
+      .mockResolvedValueOnce(claimableSnapshot)
+      .mockRejectedValueOnce({ error: 'refetch blip' });
+    rewardsApi.claimReward.mockResolvedValueOnce({
+      reward: 'STREAK_7',
+      recurring: false,
+      period: null,
+      tokens: 500000,
+      amountUsd: 1.25,
+      alreadyClaimed: false,
+      claimedAt: '2026-07-03T00:00:00.000Z',
+      newPromoBalanceUsd: 5,
+    });
+
+    render(
+      <MemoryRouter>
+        <Rewards />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(screen.getByText('7-Day Streak')).toBeInTheDocument());
+    expect(rewardsApi.getMyRewards).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByTestId('rewards-claim-STREAK_7'));
+
+    await waitFor(() => expect(rewardsApi.claimReward).toHaveBeenCalledWith('STREAK_7'));
+    // The claim triggers exactly one silent reconcile fetch.
+    await waitFor(() => expect(rewardsApi.getMyRewards).toHaveBeenCalledTimes(2));
+
+    // The silent refetch failed, but the page stayed intact — no error, no blank.
+    expect(screen.getByText('7-Day Streak')).toBeInTheDocument();
+    expect(screen.queryByTestId('rewards-error')).not.toBeInTheDocument();
   });
 
   it('refetches the snapshot when an oauth:success event fires', async () => {

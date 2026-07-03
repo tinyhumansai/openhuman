@@ -10,9 +10,10 @@ use tokio::sync::OnceCell;
 /// rejection: the identical `(tool, args)` call can never succeed in the
 /// current tier (read-only blocking a write, a forbidden/credential path, a
 /// disallowed high-risk or hidden-execution command, an off-allowlist command).
-/// The agent harness ([`crate::openhuman::agent::harness::tool_loop`]) detects
-/// this and halts on the **first verbatim repeat** rather than reiterating a
-/// provably-futile call. Kept short and bracketed so it survives the
+/// The agent harness's repeated-failure middleware
+/// ([`crate::openhuman::tinyagents::middleware::RepeatedToolFailureMiddleware`])
+/// detects this and halts on the **first verbatim repeat** rather than
+/// reiterating a provably-futile call. Kept short and bracketed so it survives the
 /// `Error: …` wrapping the tool layer adds and is easy to grep in logs.
 pub const POLICY_BLOCKED_MARKER: &str = "[policy-blocked]";
 

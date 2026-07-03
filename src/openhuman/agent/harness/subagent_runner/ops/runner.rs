@@ -10,15 +10,19 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::openhuman::agent::harness::agent_graph::{AgentTurnRequest, AgentTurnUsage};
 use crate::openhuman::agent::harness::definition::{
     validate_tier_transition, AgentDefinition, AgentDefinitionRegistry, AgentTier, IterationPolicy,
-    PromptSource,
+    PromptSource, SandboxMode as AgentSandboxMode,
 };
-use crate::openhuman::agent::harness::fork_context::{current_parent, ParentExecutionContext};
+use crate::openhuman::agent::harness::fork_context::{
+    current_parent, with_parent_context, ParentExecutionContext,
+};
 use crate::openhuman::agent::harness::subagent_runner::extract_tool::ExtractFromResultTool;
 use crate::openhuman::agent::harness::subagent_runner::handoff::ResultHandoffCache;
 use crate::openhuman::agent::harness::subagent_runner::tool_prep::{
-    filter_tool_indices, is_subagent_spawn_tool, load_prompt_source, top_k_for_toolkit,
+    build_text_mode_tool_instructions, filter_tool_indices, is_subagent_spawn_tool,
+    load_prompt_source, top_k_for_toolkit,
 };
 use crate::openhuman::agent::harness::subagent_runner::types::{
     SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome,
@@ -32,6 +36,8 @@ use crate::openhuman::context::prompt::{
 use crate::openhuman::file_state::with_file_state_agent_id;
 use crate::openhuman::inference::provider::AGENT_TURN_MAX_OUTPUT_TOKENS;
 use crate::openhuman::tools::{Tool, ToolCategory, ToolSpec};
+use tinyagents::harness::tool::SandboxMode as TinyagentsSandboxMode;
+use tinyagents::harness::workspace::WorkspaceDescriptor;
 
 use super::prompt::{append_subagent_role_contract, dedup_tool_specs_by_name};
 use super::provider::{
@@ -60,7 +66,7 @@ use super::provider::{
 /// boot loader walk); a forbidden hop is logged and becomes a
 /// [`SubagentRunError::TierViolation`]. Logging lives here (rather than at the
 /// call site) so the deny path is exercised by this fn's unit tests.
-pub(crate) fn tier_gate_decision(
+pub(super) fn tier_gate_decision(
     parent_def: Option<&AgentDefinition>,
     child: &AgentDefinition,
     parent_agent_id: &str,
@@ -108,16 +114,17 @@ pub async fn run_subagent(
     // Unconditionally heap-allocate the entire run_subagent body so
     // every caller doesn't have to carry this future's state inline.
     // Tools that delegate run inside the parent agent's already-deep
-    // `run_turn_engine` poll, so the parent's stack would otherwise pile
-    // (parent engine state + dispatch_subagent state + run_subagent's
-    // wrapper state + run_typed_mode state + child engine state) onto
-    // tokio's 2 MiB worker stack and abort with "thread
+    // turn poll (the boxed tinyagents harness drive future in
+    // `run_turn_via_tinyagents_shared`), so the parent's stack would
+    // otherwise pile (parent turn state + dispatch_subagent state +
+    // run_subagent's wrapper state + run_typed_mode state + child turn
+    // state) onto tokio's 2 MiB worker stack and abort with "thread
     // 'tokio-rt-worker' has overflowed its stack, fatal runtime error:
     // stack overflow" — observed at `[subagent_runner] dispatching
     // agent_id=researcher ...` in the `chat-harness-subagent` Playwright
-    // lane crash. The inner `Box::pin`s around `run_typed_mode` /
-    // `run_inner_loop` / child `run_turn_engine` further chunk the
-    // child's state so a single sub-agent run can't blow the stack either.
+    // lane crash. The inner `Box::pin`s around `run_typed_mode` and the
+    // child's tinyagents drive future further chunk the child's state so
+    // a single sub-agent run can't blow the stack either.
     Box::pin(async move {
         let parent = current_parent().ok_or(SubagentRunError::NoParentContext)?;
         let task_id = options
@@ -128,6 +135,11 @@ pub async fn run_subagent(
         let current_depth = current_spawn_depth();
         let attempted_depth = current_depth.saturating_add(1);
 
+        // Synchronous pre-dispatch projection of the single depth authority
+        // (`MAX_SPAWN_DEPTH`, also fed to the crate's `RunPolicy.limits.max_depth`).
+        // This surfaces `SpawnDepthExceeded` before a provider round-trip and
+        // across the MCP process hop; the crate's `TinyAgentsError::SubAgentDepth`
+        // maps onto this same error shape for over-deep in-process runs.
         if attempted_depth > MAX_SPAWN_DEPTH {
             tracing::warn!(
                 agent_id = %definition.id,
@@ -167,35 +179,43 @@ pub async fn run_subagent(
         // Install the sub-agent's declared `sandbox_mode` as the active
         // task-local for every tool invocation inside this run.
         //
-        // When the worker opted into git-worktree isolation, also install
-        // its isolated checkout path as the `action_dir` override so acting
-        // tools (shell, git) operate inside that worktree instead of the
-        // shared `Config.action_dir`. When `worktree_action_dir` is `None`
-        // (the default / non-isolated path), no override scope is entered and
-        // behaviour is unchanged.
-        let worktree_action_dir = options.worktree_action_dir.clone();
-        if let Some(ref wt_dir) = worktree_action_dir {
+        // When the worker opted into git-worktree isolation, its isolated
+        // checkout is carried on the `WorkspaceDescriptor` prepared below and
+        // threaded onto the run's tinyagents `RunContext`
+        // (`run_turn_via_tinyagents_shared` → `RunContext::with_workspace`).
+        // Every tool call then receives it via
+        // `ToolExecutionContext::from_run_context`, so acting tools (shell, git)
+        // resolve their CWD to that worktree (`effective_action_dir_for_context`)
+        // instead of the shared `Config.action_dir` — no task-local override
+        // needed. When no descriptor is prepared (the default / non-isolated
+        // path), tools fall through to `security.action_dir` and behaviour is
+        // unchanged.
+        let mut parent_for_subagent = parent.clone();
+        parent_for_subagent.workspace_descriptor =
+            workspace_descriptor_for_subagent(definition, &options, &parent, &task_id);
+        if let Some(descriptor) = parent_for_subagent.workspace_descriptor.as_ref() {
             tracing::debug!(
                 agent_id = %definition.id,
                 task_id = %task_id,
-                worktree = %wt_dir.display(),
-                "[subagent_runner] installing worktree action_dir override"
+                worktree = %descriptor.root.display(),
+                policy_id = %descriptor.policy_id,
+                "[subagent_runner] worktree-isolated worker: descriptor will route acting-tool CWD"
             );
         }
         let mut outcome = with_spawn_depth(attempted_depth, async {
             with_file_state_agent_id(task_id.clone(), async {
                 with_current_sandbox_mode(definition.sandbox_mode, async {
-                    let run = run_typed_mode(definition, task_prompt, &options, &parent, &task_id);
-                    match worktree_action_dir {
-                        Some(wt_dir) => {
-                            crate::openhuman::agent::harness::with_action_dir_override(
-                                wt_dir,
-                                Box::pin(run),
-                            )
-                            .await
-                        }
-                        None => Box::pin(run).await,
-                    }
+                    with_parent_context(parent_for_subagent.clone(), async {
+                        Box::pin(run_typed_mode(
+                            definition,
+                            task_prompt,
+                            &options,
+                            &parent_for_subagent,
+                            &task_id,
+                        ))
+                        .await
+                    })
+                    .await
                 })
                 .await
             })
@@ -242,6 +262,30 @@ pub async fn run_subagent(
     .await
 }
 
+fn workspace_descriptor_for_subagent(
+    definition: &AgentDefinition,
+    options: &SubagentRunOptions,
+    parent: &ParentExecutionContext,
+    task_id: &str,
+) -> Option<WorkspaceDescriptor> {
+    if let Some(descriptor) = options.workspace_descriptor.clone() {
+        return Some(descriptor);
+    }
+    if let Some(descriptor) = parent.workspace_descriptor.clone() {
+        return Some(descriptor);
+    }
+    let root = options.worktree_action_dir.clone()?;
+    let sandbox = match definition.sandbox_mode {
+        AgentSandboxMode::Sandboxed => TinyagentsSandboxMode::Required,
+        AgentSandboxMode::None | AgentSandboxMode::ReadOnly => TinyagentsSandboxMode::Inherit,
+    };
+    Some(
+        WorkspaceDescriptor::new(root)
+            .with_policy_id(format!("openhuman.worktree:{task_id}"))
+            .with_sandbox(sandbox),
+    )
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Typed mode — narrow prompt, filtered tools, cheaper model
 // ─────────────────────────────────────────────────────────────────────────────
@@ -259,6 +303,29 @@ async fn run_typed_mode(
     task_id: &str,
 ) -> Result<SubagentRunOutcome, SubagentRunError> {
     let started = Instant::now();
+    match crate::openhuman::tinyagents::subagent_graph::run_subagent_pipeline_skeleton(
+        &definition.id,
+        task_id,
+    )
+    .await
+    {
+        Ok(phases) => {
+            tracing::debug!(
+                agent_id = %definition.id,
+                task_id,
+                phases = ?phases,
+                "[subagent_runner:graph] sub-agent pipeline skeleton completed"
+            );
+        }
+        Err(err) => {
+            tracing::warn!(
+                agent_id = %definition.id,
+                task_id,
+                error = %err,
+                "[subagent_runner:graph] sub-agent pipeline skeleton failed; continuing procedural runner"
+            );
+        }
+    }
 
     // Resolve provider + model. See `resolve_subagent_provider` for the
     // semantics of each ModelSpec variant. `Config::load_or_init()` is
@@ -782,6 +849,31 @@ async fn run_typed_mode(
             ]
         };
 
+    // `integrations_agent` with a resolved toolkit runs in **text mode**: its
+    // large per-action Composio toolkit compiles into a provider grammar that
+    // blows the native tool-schema ceiling, so omit native tool advertisement and
+    // describe the tools in the system prompt as prose, parsing `<tool_call>` tags
+    // from the response (legacy `force_text_mode` parity — the tinyagents rewrite
+    // dropped it, so integrations turns advertised native schemas the backend then
+    // rejected). Wrapping the provider clears `native_tool_calling`, which makes
+    // the model adapter skip native advertisement and fall back to XML parsing.
+    let subagent_provider: Arc<dyn crate::openhuman::inference::provider::Provider> =
+        if is_integrations_agent_with_toolkit {
+            if let Some(sys) = history.iter_mut().find(|m| m.role == "system") {
+                sys.content.push_str("\n\n");
+                sys.content.push_str(&build_text_mode_tool_instructions());
+            }
+            tracing::info!(
+                agent_id = %definition.id,
+                task_id = %task_id,
+                tool_count = filtered_specs.len(),
+                "[subagent_runner:text-mode] omitting native tool schemas; injected XML tool protocol into system prompt"
+            );
+            Arc::new(TextModeProvider::new(subagent_provider))
+        } else {
+            subagent_provider
+        };
+
     // ── Run the inner tool-call loop ───────────────────────────────────
     // Resolve the sub-agent model's user-configured vision flag; defaults to
     // `false` when config can't be loaded. Combined with the provider capability
@@ -807,15 +899,65 @@ async fn run_typed_mode(
     // `handoff_cache` — the integrations-agent progressive-disclosure seams — are
     // not yet re-expressed on the tinyagents path; they need a tool-result
     // interception middleware and are tracked as a follow-up (issue #4249, 1b).
-    let _ = (&lazy_resolver, &handoff_cache);
+    // `handoff_cache` is now threaded into the graph route below (progressive
+    // disclosure). `lazy_resolver` remains a follow-up (#4249 1b).
+    let _ = &lazy_resolver;
     // Per-agent turn graph (issue #4249): `Default` runs the shared sub-agent
     // graph; `Custom` hands the assembled turn to this agent's own graph runner
     // (declared in its `graph.rs::graph()`). Every built-in agent selects
     // `Default` today — the branch is the extension point.
-    use super::usage::AggregatedUsage;
-    use crate::openhuman::agent::harness::agent_graph::{
-        AgentGraph, AgentTurnRequest, AgentTurnUsage,
+    use super::graph::AggregatedUsage;
+    use crate::openhuman::agent::harness::agent_graph::AgentGraph;
+    // Resolve the child transcript stem once — `{parent_chain}__{child_session_key}`
+    // — so the sub-agent's raw transcript lands in `session_raw` under a filename
+    // that chains the parent session (parity with the removed observer stem).
+    let child_session_key = {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let unix_ts = now.as_secs();
+        let nanos = now.subsec_nanos();
+        let sanitized: String = definition
+            .id
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let task_suffix: String = task_id
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+            .take(12)
+            .collect();
+        if task_suffix.is_empty() {
+            format!("{unix_ts}_{nanos:09}_{sanitized}")
+        } else {
+            format!("{unix_ts}_{nanos:09}_{sanitized}_{task_suffix}")
+        }
     };
+    let transcript_stem = {
+        let parent_chain = match parent.session_parent_prefix.as_deref() {
+            Some(prefix) => format!("{}__{}", prefix, parent.session_key),
+            None => parent.session_key.clone(),
+        };
+        format!("{parent_chain}__{child_session_key}")
+    };
+    let workspace_descriptor =
+        workspace_descriptor_for_subagent(definition, options, parent, task_id);
+    if let Some(descriptor) = &workspace_descriptor {
+        tracing::debug!(
+            agent_id = %definition.id,
+            task_id,
+            root = %descriptor.root.display(),
+            policy_id = %descriptor.policy_id,
+            "[subagent_runner] prepared workspace descriptor for tinyagents run"
+        );
+    }
+
     let (output, iterations, agg_usage, early_exit_tool, hit_cap) = match &definition.graph {
         AgentGraph::Default => {
             super::graph::run_subagent_via_graph(
@@ -835,8 +977,18 @@ async fn run_typed_mode(
                 definition.iteration_policy == IterationPolicy::Extended,
                 options.worker_thread_id.clone(),
                 parent.workspace_dir.clone(),
+                workspace_descriptor.clone(),
                 max_output_tokens,
                 model_vision,
+                &transcript_stem,
+                // Sub-agent turns record their provider label as the literal
+                // "subagent" (parity with the legacy observer's TurnObserver
+                // provenance), distinguishing delegated spend from the parent's
+                // own channel in per-thread usage reads.
+                "subagent",
+                // Progressive-disclosure handoff cache (shared with the
+                // extract_from_result tool registered above).
+                handoff_cache.clone(),
             )
             .await?
         }
@@ -858,8 +1010,12 @@ async fn run_typed_mode(
                 extended_policy: definition.iteration_policy == IterationPolicy::Extended,
                 worker_thread_id: options.worker_thread_id.clone(),
                 workspace_dir: parent.workspace_dir.clone(),
+                workspace_descriptor: workspace_descriptor.clone(),
                 max_output_tokens,
                 model_vision,
+                transcript_stem: transcript_stem.clone(),
+                provider_label: "subagent".to_string(),
+                handoff_cache: handoff_cache.clone(),
             };
             let res = run(req).await?;
             history = res.history;
@@ -991,4 +1147,66 @@ async fn run_typed_mode(
         final_history: history,
         usage,
     })
+}
+
+/// A [`Provider`] decorator that reports **no native tool calling**, forcing the
+/// tinyagents model adapter to omit native tool schemas and fall back to
+/// prompt-guided (`<tool_call>` XML) parsing. Everything else delegates to the
+/// inner provider. Used to run `integrations_agent` in text mode (its large
+/// toolkit would otherwise blow the provider's native tool-grammar ceiling).
+struct TextModeProvider {
+    inner: Arc<dyn crate::openhuman::inference::provider::Provider>,
+}
+
+impl TextModeProvider {
+    fn new(inner: Arc<dyn crate::openhuman::inference::provider::Provider>) -> Self {
+        Self { inner }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::openhuman::inference::provider::Provider for TextModeProvider {
+    fn capabilities(&self) -> crate::openhuman::inference::provider::traits::ProviderCapabilities {
+        let mut caps = self.inner.capabilities();
+        // The whole point: hide native tool calling so the adapter advertises none.
+        caps.native_tool_calling = false;
+        caps
+    }
+
+    async fn chat_with_system(
+        &self,
+        system_prompt: Option<&str>,
+        message: &str,
+        model: &str,
+        temperature: f64,
+    ) -> anyhow::Result<String> {
+        self.inner
+            .chat_with_system(system_prompt, message, model, temperature)
+            .await
+    }
+
+    async fn chat(
+        &self,
+        request: crate::openhuman::inference::provider::ChatRequest<'_>,
+        model: &str,
+        temperature: f64,
+    ) -> anyhow::Result<crate::openhuman::inference::provider::ChatResponse> {
+        self.inner.chat(request, model, temperature).await
+    }
+
+    fn supports_vision(&self) -> bool {
+        self.inner.supports_vision()
+    }
+
+    fn supports_streaming(&self) -> bool {
+        self.inner.supports_streaming()
+    }
+
+    async fn effective_context_window(&self, model: &str) -> Option<u64> {
+        self.inner.effective_context_window(model).await
+    }
+
+    async fn warmup(&self) -> anyhow::Result<()> {
+        self.inner.warmup().await
+    }
 }

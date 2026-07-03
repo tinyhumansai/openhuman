@@ -291,7 +291,7 @@ pub async fn start_chat(
     //   [FILE:data:…]  → [FILE-EXTRACTED]text (or [FILE-ATTACHED] placeholder)
     //   [IMAGE:data:…] → [Image: … #att:<id>] placeholder + out-of-band stash
     // Images are rehydrated to a data URI at provider dispatch for vision-capable
-    // models only (engine::core).
+    // models only.
     let message = if message.contains("[FILE:") || message.contains("[IMAGE:") {
         let before_chars = message.chars().count();
         log::debug!(

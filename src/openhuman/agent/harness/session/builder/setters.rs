@@ -6,7 +6,7 @@
 use super::{dedup_visible_tool_specs, visible_tool_specs_for_policy};
 use crate::openhuman::agent::harness::session::types::{Agent, AgentBuilder};
 use crate::openhuman::agent::harness::TriggerMemoryAgent;
-use crate::openhuman::agent::memory_loader::DefaultMemoryLoader;
+use crate::openhuman::agent_memory::memory_loader::DefaultMemoryLoader;
 use crate::openhuman::agent_tool_policy::ToolPolicyEngine;
 use crate::openhuman::config::ContextConfig;
 use crate::openhuman::context::ContextManager;
@@ -116,7 +116,7 @@ impl AgentBuilder {
     /// Sets the memory loader for the agent.
     pub fn memory_loader(
         mut self,
-        memory_loader: Box<dyn crate::openhuman::agent::memory_loader::MemoryLoader>,
+        memory_loader: Box<dyn crate::openhuman::agent_memory::memory_loader::MemoryLoader>,
     ) -> Self {
         self.memory_loader = Some(memory_loader);
         self
@@ -297,18 +297,15 @@ impl AgentBuilder {
         self
     }
 
-    /// Wire an oversized-tool-result summarizer into the agent. When
-    /// set, [`Agent::execute_tool_call`] calls
-    /// [`crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer::maybe_summarize`]
-    /// on every successful tool output and replaces the raw payload
-    /// with the compressed summary on success. Currently set only for
-    /// the orchestrator session by
-    /// [`Agent::build_session_agent_inner`].
+    /// Wire an oversized-tool-result summarizer into the agent. The live
+    /// TinyAgents turn path passes it to `ToolOutputMiddleware`, which calls
+    /// [`crate::openhuman::tinyagents::payload_summarizer::PayloadSummarizer::maybe_summarize_in_parent`]
+    /// on successful tool output and replaces the raw payload with the
+    /// compressed summary on success. Currently set only for the orchestrator
+    /// session by [`Agent::build_session_agent_inner`].
     pub fn payload_summarizer(
         mut self,
-        summarizer: Arc<
-            dyn crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer,
-        >,
+        summarizer: Arc<dyn crate::openhuman::tinyagents::payload_summarizer::PayloadSummarizer>,
     ) -> Self {
         self.payload_summarizer = Some(summarizer);
         self

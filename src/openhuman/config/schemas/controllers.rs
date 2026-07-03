@@ -3,6 +3,7 @@ use serde_json::{Map, Value};
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::ControllerSchema;
 use crate::openhuman::config::rpc as config_rpc;
+use crate::openhuman::config::schema::CalendarProvider;
 use crate::openhuman::config::{AutoJoinPolicy, AutoSummarizePolicy};
 
 use super::helpers::{
@@ -701,6 +702,17 @@ fn handle_update_meet_settings(params: Map<String, Value>) -> ControllerFuture {
             platform_auto_join_policies.as_ref().map(|m| m.len()),
             update.watch_calendar,
         );
+        let calendar_provider = match update.calendar_provider.as_deref() {
+            Some("composio") => Some(CalendarProvider::Composio),
+            Some("recall") => Some(CalendarProvider::Recall),
+            None => None,
+            Some(other) => {
+                log::warn!("[config][rpc] update_meet_settings invalid calendar_provider: {other}");
+                return Err(format!(
+                    "invalid calendar_provider: {other} (valid: composio, recall)"
+                ));
+            }
+        };
         let patch = config_rpc::MeetSettingsPatch {
             auto_orchestrator_handoff: update.auto_orchestrator_handoff,
             auto_join_policy,
@@ -709,6 +721,8 @@ fn handle_update_meet_settings(params: Map<String, Value>) -> ControllerFuture {
             ingest_backend_transcripts: update.ingest_backend_transcripts,
             platform_auto_join_policies,
             watch_calendar: update.watch_calendar,
+            calendar_provider,
+            reply_display_name: update.reply_display_name,
         };
         match config_rpc::load_and_apply_meet_settings(patch).await {
             Ok(outcome) => {
@@ -736,12 +750,13 @@ fn handle_get_meet_settings(_params: Map<String, Value>) -> ControllerFuture {
         };
         let auto_orchestrator_handoff = config.meet.auto_orchestrator_handoff;
         log::debug!(
-            "[config][rpc] get_meet_settings ok auto_orchestrator_handoff={auto_orchestrator_handoff} auto_join_policy={:?} auto_summarize_policy={:?} listen_only_default={} ingest_backend_transcripts={} watch_calendar={}",
+            "[config][rpc] get_meet_settings ok auto_orchestrator_handoff={auto_orchestrator_handoff} auto_join_policy={:?} auto_summarize_policy={:?} listen_only_default={} ingest_backend_transcripts={} watch_calendar={} calendar_provider={:?}",
             config.meet.auto_join_policy,
             config.meet.auto_summarize_policy,
             config.meet.listen_only_default,
             config.meet.ingest_backend_transcripts,
             config.meet.watch_calendar,
+            config.meet.calendar_provider,
         );
         // Enums serialize via `#[serde(rename_all = "snake_case")]` →
         // "ask_each_time"/"always"/"never" and "ask"/"always"/"never".
@@ -753,6 +768,8 @@ fn handle_get_meet_settings(_params: Map<String, Value>) -> ControllerFuture {
             "ingest_backend_transcripts": config.meet.ingest_backend_transcripts,
             "platform_auto_join_policies": config.meet.platform_auto_join_policies,
             "watch_calendar": config.meet.watch_calendar,
+            "calendar_provider": config.meet.calendar_provider,
+            "reply_display_name": config.meet.reply_display_name,
         });
         to_json(RpcOutcome::new(
             result,

@@ -1,3 +1,25 @@
+//! # Deletion staged (issue #4249, Workstream 02.2)
+//!
+//! `ReliableProvider` is **slated for removal** once the tinyagents crate owns
+//! retry/fallback with proven parity. As of 02.2 the crate path now covers this
+//! module's responsibilities: transient-vs-permanent error classification (the
+//! `is_non_retryable` / `is_rate_limited` / `is_upstream_unhealthy` helpers here
+//! are reused by `tinyagents::model::ProviderModel` to map errors onto the crate's
+//! retryable/non-retryable `TinyAgentsError` variants), exponential-backoff retry
+//! (`RunPolicy.retry`, pinned to a single attempt until this wrapper is removed),
+//! and cross-route model fallover (`RunPolicy.fallback` + the event-visible
+//! `FallbackObserverMiddleware`, which additionally fails over across the
+//! registered workload-tier routes — something this wrapper never did).
+//!
+//! **Do not delete yet.** Removal is gated on the deferred conformance pass
+//! (Workstream 11): un-wrapping `ReliableProvider` from its remaining call sites
+//! (session builder/factory + the non-turn callers: memory-tree local summarizer,
+//! memory scoring, triage classification), flipping `RunPolicy.retry.max_attempts`
+//! off the single-attempt pin, and rewriting the behaviorally-relevant tests here
+//! (attempt-count parity for 429 / 500 / config-rejection / billing, retry/fallback
+//! event visibility, and no-double-retry) against the crate loop. Until then this
+//! wrapper stays authoritative for single-attempt retry on the live path.
+
 use super::traits::{
     ChatMessage, ChatRequest, ChatResponse, StreamChunk, StreamError, StreamOptions, StreamResult,
 };
@@ -9,305 +31,13 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-/// Extract an HTTP `4xx` status code from an error message, but only when it
-/// appears in a *structured* position — never from arbitrary digit runs in
-/// free text (audit C10). Recognised positions:
-///
-/// - the documented provider envelope `"… API error (<status>): …"`
-///   (e.g. `"OpenAI API error (401 Unauthorized): …"`),
-/// - an explicit `HTTP <status>` marker,
-/// - a `status: <status>` / `status <status>` field,
-/// - a status code that *leads* the message (e.g. `"404 Not Found"`).
-///
-/// Returns the matched code (always in `400..=499`) or `None`.
-fn structured_http_4xx(msg: &str) -> Option<u16> {
-    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let re = RE.get_or_init(|| {
-        // (?i) case-insensitive; capture the 4xx in any one of the structured
-        // anchors. `\A` matches start-of-string for the leading-status form.
-        regex::Regex::new(r"(?i)(?:\(|HTTP\s+|status[:\s]+|\A)(4\d\d)\b")
-            .expect("static is_non_retryable 4xx regex is valid")
-    });
-    re.captures(msg)
-        .and_then(|c| c.get(1))
-        .and_then(|m| m.as_str().parse::<u16>().ok())
-}
-
-/// Check if an error is non-retryable (client errors that won't resolve with retries).
-///
-/// `pub(crate)` so other layers that run their own retry loop over a provider
-/// call (e.g. `memory_tree::extract::llm`) classify failures against the same
-/// source of truth instead of treating every error as a retryable transport
-/// blip — retrying a permanent 4xx (402 out of credits, bad key, model gone)
-/// only multiplies wasted calls and Sentry events (TAURI-RUST-C62).
-pub(crate) fn is_non_retryable(err: &anyhow::Error) -> bool {
-    if is_context_window_exceeded(err) {
-        return true;
-    }
-    let msg = err.to_string();
-    // Session-expired is a user-auth-state boundary condition, not a
-    // transient provider outage. Retrying just burns attempts and delays
-    // the sign-in prompt.
-    if crate::core::observability::is_session_expired_message(&msg) {
-        return true;
-    }
-    // Monthly-quota / usage-limit exhaustion (e.g. Kiro `MONTHLY_REQUEST_COUNT`,
-    // possibly wrapped in a 500 envelope so `structured_http_4xx` can't see the
-    // inner 402) is terminal for the period — retrying a spent plan quota only
-    // multiplies wasted calls and Sentry events (TAURI-RUST-C9A).
-    if crate::openhuman::inference::provider::body_indicates_quota_exhausted(&msg) {
-        return true;
-    }
-
-    if let Some(reqwest_err) = err.downcast_ref::<reqwest::Error>() {
-        if let Some(status) = reqwest_err.status() {
-            let code = status.as_u16();
-            return status.is_client_error() && code != 429 && code != 408;
-        }
-    }
-    // Don't infer an HTTP status from *any* free-text digit run — strings like
-    // "took 450ms" (→450) or model ids like "gpt-4-0409" (→409) would be
-    // misclassified as permanent client errors and short-circuit retries
-    // (audit C10). Match only a 4xx code in a *structured* position: the
-    // documented `… API error (<status>): …` envelope, an `HTTP <status>` /
-    // `status: <status>` marker, or a status that leads the message.
-    if let Some(code) = structured_http_4xx(&msg) {
-        return code != 429 && code != 408;
-    }
-
-    let msg_lower = msg.to_lowercase();
-    let auth_failure_hints = [
-        "invalid api key",
-        "incorrect api key",
-        "missing api key",
-        "api key not set",
-        "authentication failed",
-        "auth failed",
-        "unauthorized",
-        "forbidden",
-        "permission denied",
-        "access denied",
-        "invalid token",
-    ];
-
-    if auth_failure_hints
-        .iter()
-        .any(|hint| msg_lower.contains(hint))
-    {
-        return true;
-    }
-
-    msg_lower.contains("model")
-        && (msg_lower.contains("not found")
-            || msg_lower.contains("unknown")
-            || msg_lower.contains("unsupported")
-            || msg_lower.contains("does not exist")
-            || msg_lower.contains("invalid"))
-}
-
-/// Classify a StreamError without losing type information.
-/// Inspects the inner reqwest::Error status directly for Http variants.
-fn is_stream_error_non_retryable(err: &StreamError) -> bool {
-    match err {
-        StreamError::Http(reqwest_err) => {
-            if let Some(status) = reqwest_err.status() {
-                let code = status.as_u16();
-                // Client errors except 429 (rate limit) and 408 (timeout) are non-retryable
-                return status.is_client_error() && code != 429 && code != 408;
-            }
-            false
-        }
-        StreamError::Provider(msg) => {
-            // Mirror the non-streaming classifier: session-expired is a
-            // user-auth-state boundary, not a transient provider outage —
-            // fail fast so the streaming caller can prompt sign-in instead
-            // of burning the retry budget.
-            if crate::core::observability::is_session_expired_message(msg) {
-                return true;
-            }
-            let lower = msg.to_lowercase();
-            lower.contains("invalid api key")
-                || lower.contains("unauthorized")
-                || lower.contains("forbidden")
-                || lower.contains("model")
-                    && (lower.contains("not found") || lower.contains("unsupported"))
-        }
-        // JSON/SSE parse errors and IO errors are generally non-retryable
-        StreamError::Json(_) | StreamError::InvalidSse(_) => true,
-        StreamError::Io(_) => false,
-    }
-}
-
-fn is_context_window_exceeded(err: &anyhow::Error) -> bool {
-    // Single source of truth for the context-overflow phrasing lives in
-    // `ops::is_context_window_exceeded_message` so the non-retryable
-    // classifier here, the `api_error` Sentry-suppression cascade, and the
-    // `core::observability` `ContextWindowExceeded` arm can't drift apart.
-    super::is_context_window_exceeded_message(&err.to_string())
-}
-
-/// Detect provider-side temporary capacity/outage errors. Covers:
-///
-/// - HTTP `408 Request Timeout`, `502 Bad Gateway`, `503 Service Unavailable`,
-///   `504 Gateway Timeout` — both via direct `reqwest::Error` downcast and via
-///   the formatted `"<provider> API error (<status>): …"` text emitted by
-///   `ops::api_error` (the path that actually reaches `report_error`).
-/// - Provider-agnostic text markers like `"no healthy upstream"` /
-///   `"upstream unavailable"` that don't come with a typed status.
-///
-/// Pairs with [`is_rate_limited`] which handles 429 separately. Together they
-/// form the transient-classifier the tool-call loop uses before deciding
-/// whether to push a per-attempt event to Sentry (see OPENHUMAN-TAURI-2E /
-/// -84 / -T / -G classes — per-iteration noise from upstream throttling).
-///
-/// **Status list maintenance note**: the codes matched below (408/502/503/504)
-/// are a subset of
-/// [`crate::core::observability::TRANSIENT_PROVIDER_HTTP_STATUSES`] — that
-/// const is the single source of truth for the `before_send` filter and the
-/// call-site classifier in `providers/ops.rs`. We don't reference the const
-/// directly here because this function takes a different code path (anyhow
-/// error downcast vs typed `reqwest::StatusCode`) and because 429 is split out
-/// into `is_rate_limited` (with its own retry-after parsing). If a new
-/// transient status is added to the const, **also add it to this `matches!`
-/// arm and the text-pattern list below**.
-///
-/// Note: 429 lives in `TRANSIENT_PROVIDER_HTTP_STATUSES` but is intentionally
-/// absent here — `is_rate_limited` handles it separately because 429 responses
-/// may carry a `Retry-After` header that `parse_retry_after_ms` uses to pick a
-/// precise backoff rather than the default exponential schedule.
-pub(crate) fn is_upstream_unhealthy(err: &anyhow::Error) -> bool {
-    if let Some(reqwest_err) = err.downcast_ref::<reqwest::Error>() {
-        if let Some(status) = reqwest_err.status() {
-            if matches!(status.as_u16(), 408 | 502 | 503 | 504) {
-                return true;
-            }
-        }
-    }
-    let lower = err.to_string().to_lowercase();
-    lower.contains("no healthy upstream")
-        || lower.contains("upstream unavailable")
-        || lower.contains("service unavailable")
-        || lower.contains("503 service unavailable")
-        || lower.contains("408 request timeout")
-        || lower.contains("502 bad gateway")
-        || lower.contains("504 gateway timeout")
-}
-
-/// Check if an error is a rate-limit (429) error.
-pub(crate) fn is_rate_limited(err: &anyhow::Error) -> bool {
-    if let Some(reqwest_err) = err.downcast_ref::<reqwest::Error>() {
-        if let Some(status) = reqwest_err.status() {
-            return status.as_u16() == 429;
-        }
-    }
-    let msg = err.to_string();
-    msg.contains("429")
-        && (msg.contains("Too Many") || msg.contains("rate") || msg.contains("limit"))
-}
-
-/// Check if a 429 is a business/quota-plan error that retries cannot fix.
-///
-/// Examples:
-/// - plan does not include requested model
-/// - insufficient balance / package not active
-/// - known provider business codes (e.g. Z.AI: 1311, 1113)
-fn is_non_retryable_rate_limit(err: &anyhow::Error) -> bool {
-    if !is_rate_limited(err) {
-        return false;
-    }
-
-    let msg = err.to_string();
-    let lower = msg.to_lowercase();
-
-    let business_hints = [
-        "plan does not include",
-        "doesn't include",
-        "not include",
-        "insufficient balance",
-        "insufficient_balance",
-        "insufficient quota",
-        "insufficient_quota",
-        "quota exhausted",
-        "out of credits",
-        "no available package",
-        "package not active",
-        "purchase package",
-        "model not available for your plan",
-    ];
-
-    if business_hints.iter().any(|hint| lower.contains(hint)) {
-        return true;
-    }
-
-    // Known provider business codes observed for 429 where retry is futile.
-    for token in lower.split(|c: char| !c.is_ascii_digit()) {
-        if let Ok(code) = token.parse::<u16>() {
-            if matches!(code, 1113 | 1311) {
-                return true;
-            }
-        }
-    }
-
-    false
-}
-
-/// Try to extract a Retry-After value (in milliseconds) from an error message.
-/// Looks for patterns like `Retry-After: 5` or `retry_after: 2.5` in the error string.
-pub(crate) fn parse_retry_after_ms(err: &anyhow::Error) -> Option<u64> {
-    let msg = err.to_string();
-    let lower = msg.to_lowercase();
-
-    // Look for "retry-after: <number>" or "retry_after: <number>"
-    for prefix in &[
-        "retry-after:",
-        "retry_after:",
-        "retry-after ",
-        "retry_after ",
-    ] {
-        if let Some(pos) = lower.find(prefix) {
-            let after = &msg[pos + prefix.len()..];
-            let num_str: String = after
-                .trim()
-                .chars()
-                .take_while(|c| c.is_ascii_digit() || *c == '.')
-                .collect();
-            if let Ok(secs) = num_str.parse::<f64>() {
-                if secs.is_finite() && secs >= 0.0 {
-                    let millis = Duration::from_secs_f64(secs).as_millis();
-                    if let Ok(value) = u64::try_from(millis) {
-                        return Some(value);
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
-fn failure_reason(
-    rate_limited: bool,
-    non_retryable: bool,
-    upstream_unhealthy: bool,
-) -> &'static str {
-    if upstream_unhealthy {
-        "upstream_unhealthy"
-    } else if rate_limited && non_retryable {
-        "rate_limited_non_retryable"
-    } else if rate_limited {
-        "rate_limited"
-    } else if non_retryable {
-        "non_retryable"
-    } else {
-        "retryable"
-    }
-}
-
-fn compact_error_detail(err: &anyhow::Error) -> String {
-    super::sanitize_api_error(&super::format_anyhow_chain(err))
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-}
+// The pure, stateless error-classification / backoff helpers now live in the
+// sibling `error_classify` module (issue #4249, Workstream 02.2). Re-export
+// them at crate visibility so `ReliableProvider` below keeps using them
+// unchanged AND existing external `reliable::is_non_retryable` /
+// `reliable::{is_rate_limited, is_upstream_unhealthy, parse_retry_after_ms}` /
+// `reliable::format_failure_aggregate` import paths continue to resolve.
+pub(crate) use super::error_classify::*;
 
 fn push_failure(
     failures: &mut Vec<String>,
@@ -321,51 +51,6 @@ fn push_failure(
     failures.push(format!(
         "provider={provider_name} model={model} attempt {attempt}/{max_attempts}: {reason}; error={error_detail}"
     ));
-}
-
-fn rotated_key_log_detail(after_rotate_index: usize, total: usize) -> String {
-    let slot = if total == 0 {
-        0
-    } else {
-        after_rotate_index.saturating_sub(1) % total + 1
-    };
-    format!("slot={slot}/{total}")
-}
-
-/// Format the final bail message produced when every provider+model in the
-/// chain has failed.
-///
-/// When the originally-requested `model` has no fallback chain configured
-/// in `model_fallbacks`, prepend a single user-actionable hint pointing at
-/// the most common cause we see in production (OPENHUMAN-TAURI-BY / -BZ /
-/// -C0 / -C1, issue #1596): the user has wired up a `custom_openai`
-/// provider whose endpoint does not expose the configured `default_model`.
-/// In that scenario the bail aggregate is otherwise an opaque stack of
-/// provider-formatted error envelopes which gives the user no clue where
-/// to look.
-///
-/// We deliberately avoid emitting the hint when fallbacks *are* configured
-/// — the user has already engaged with the knob and likely has either a
-/// real outage or a misconfigured chain; the dump-of-attempts surface is
-/// what they need to debug it.
-fn format_failure_aggregate(
-    model: &str,
-    failures: &[String],
-    has_configured_fallbacks: bool,
-) -> String {
-    let attempts = format!(
-        "All providers/models failed. Attempts:\n{}",
-        failures.join("\n")
-    );
-    if has_configured_fallbacks {
-        attempts
-    } else {
-        format!(
-            "The model `{model}` may not be available on your provider. \
-             Configure a fallback chain via `reliability.model_fallbacks` in your \
-             OpenHuman config, or change your default model in Settings → AI.\n\n{attempts}"
-        )
-    }
 }
 
 /// Provider wrapper with retry, fallback, auth rotation, and model failover.

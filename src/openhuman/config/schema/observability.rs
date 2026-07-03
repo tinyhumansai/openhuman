@@ -17,13 +17,28 @@ pub struct ObservabilityConfig {
     #[serde(default = "default_analytics_enabled")]
     pub analytics_enabled: bool,
 
-    /// Opt-in structured tracing export for agent runs (issue #3886).
-    /// Off by default; see [`AgentTracingConfig`].
+    /// User consent to share anonymized agent-run usage data (structured trace
+    /// spans) with the OpenHuman backend's Langfuse. On by default; opting out
+    /// stops the export. Spans are metadata-only (names/kinds/timings/token &
+    /// cost figures) — never prompt text, tool arguments, or PII. Distinct from
+    /// [`Self::analytics_enabled`] (Sentry / product analytics) so users can
+    /// tune the two independently.
+    #[serde(default = "default_share_usage_data")]
+    pub share_usage_data: bool,
+
+    /// Local structured-tracing exporter for agent runs (issue #3886). Opt-in,
+    /// independent of [`Self::share_usage_data`]: for power users who want spans
+    /// written locally (OTel/NDJSON) regardless of backend sharing. See
+    /// [`AgentTracingConfig`].
     #[serde(default)]
     pub agent_tracing: AgentTracingConfig,
 }
 
 fn default_analytics_enabled() -> bool {
+    true
+}
+
+fn default_share_usage_data() -> bool {
     true
 }
 
@@ -40,20 +55,23 @@ pub enum AgentTracingBackend {
     Langfuse,
 }
 
-/// Opt-in structured tracing export driven by the agent progress channel.
+/// Opt-in local structured-tracing export driven by the agent progress channel.
 ///
 /// When [`Self::enabled`] is `true`, agent runs emit OpenTelemetry/Langfuse-
 /// style spans (turn → iteration → tool call / subagent) correlated by session
-/// id with user attribution, appended as NDJSON to [`Self::export_path`].
+/// id with user attribution, appended as NDJSON to [`Self::export_path`] (or the
+/// application log when unset). This is the *local* exporter and is independent
+/// of [`ObservabilityConfig::share_usage_data`], which owns the backend Langfuse
+/// push.
 ///
-/// Off by default and intentionally side-effect-free when disabled. Spans
-/// carry only metadata (names, counts, timings, token/cost figures) — never
-/// prompt text, tool arguments, streamed deltas, error text, or file paths —
-/// honoring the project's "never log secrets or full PII" rule.
+/// Off by default and intentionally side-effect-free when disabled. Spans carry
+/// only metadata (names, counts, timings, token/cost figures) — never prompt
+/// text, tool arguments, streamed deltas, error text, or file paths — honoring
+/// the project's "never log secrets or full PII" rule.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct AgentTracingConfig {
-    /// Master switch. Off by default.
+    /// Master switch for the local exporter. Off by default.
     pub enabled: bool,
 
     /// Serialized span envelope to emit. Defaults to OpenTelemetry.
@@ -80,6 +98,7 @@ impl Default for ObservabilityConfig {
         Self {
             sentry_dsn: None,
             analytics_enabled: true,
+            share_usage_data: default_share_usage_data(),
             agent_tracing: AgentTracingConfig::default(),
         }
     }
@@ -103,15 +122,33 @@ mod tests {
     }
 
     #[test]
+    fn share_usage_data_is_on_by_default() {
+        assert!(default_share_usage_data());
+        assert!(ObservabilityConfig::default().share_usage_data);
+    }
+
+    #[test]
     fn deserialize_missing_optional_fields_uses_defaults() {
         let cfg: ObservabilityConfig = serde_json::from_value(json!({})).unwrap();
         assert!(cfg.analytics_enabled, "analytics default must be true");
         assert!(
+            cfg.share_usage_data,
+            "usage-data sharing is on by default (consent to Langfuse push)"
+        );
+        // The local exporter stays opt-in and vendor-neutral by default.
+        assert!(
             !cfg.agent_tracing.enabled,
-            "agent tracing must default off (opt-in)"
+            "local tracing exporter is opt-in"
         );
         assert_eq!(cfg.agent_tracing.backend, AgentTracingBackend::Otel);
         assert!(cfg.agent_tracing.export_path.is_none());
+    }
+
+    #[test]
+    fn share_usage_data_can_be_disabled() {
+        let cfg: ObservabilityConfig =
+            serde_json::from_value(json!({ "share_usage_data": false })).unwrap();
+        assert!(!cfg.share_usage_data);
     }
 
     #[test]
@@ -152,6 +189,7 @@ mod tests {
         let original = ObservabilityConfig {
             sentry_dsn: Some("https://token@sentry.io/1".into()),
             analytics_enabled: false,
+            share_usage_data: false,
             agent_tracing: AgentTracingConfig::default(),
         };
         let s = serde_json::to_string(&original).unwrap();
@@ -161,5 +199,6 @@ mod tests {
             Some("https://token@sentry.io/1")
         );
         assert!(!back.analytics_enabled);
+        assert!(!back.share_usage_data);
     }
 }

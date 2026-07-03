@@ -89,9 +89,13 @@ fn agent_error_to_user_message(err: &AgentError) -> &'static str {
         // ToolExecutionError and Other have no actionable canned message —
         // their error bodies are too freeform to summarise safely without
         // interpolating contents. Fall back to the generic copy.
-        AgentError::ToolExecutionError { .. } | AgentError::Other(_) => {
-            AGENT_JOB_USER_FAILURE_MESSAGE
-        }
+        // RegistryValidationFailed carries diagnostic message bodies that name
+        // internal tool/component identifiers — too freeform to summarise safely
+        // without interpolation, so fall back to the generic copy like the other
+        // non-actionable variants.
+        AgentError::ToolExecutionError { .. }
+        | AgentError::RegistryValidationFailed { .. }
+        | AgentError::Other(_) => AGENT_JOB_USER_FAILURE_MESSAGE,
     }
 }
 
@@ -317,8 +321,9 @@ pub async fn execute_job_now(config: &Config, job: &CronJob) -> (bool, String) {
 /// after a single JWT lapse, every retries-exhausted capture pointing at a
 /// problem the user can only fix from the UI.
 ///
-/// The right move is the same halt-on-first-occurrence pattern as
-/// `agent::harness::tool_loop::BACKEND_USER_STATE_MARKER` (#3334): the
+/// The right move is the same halt-on-first-occurrence pattern as the
+/// legacy tool loop's `BACKEND_USER_STATE_MARKER` convention (#3334, the
+/// loop itself was retired in the tinyagents migration, #4249): the
 /// condition is global and retries can't recover it, so we stop after the
 /// first attempt. Skipping the `report_error` call too is correct because
 /// the existing classifier

@@ -34,7 +34,15 @@ use crate::rpc::RpcOutcome;
 const LOG_PREFIX: &str = "[app_state]";
 const APP_STATE_FILENAME: &str = "app-state.json";
 const CURRENT_USER_REFRESH_TTL: Duration = Duration::from_secs(5);
-const RUNTIME_SNAPSHOT_TTL: Duration = Duration::from_secs(2);
+// Runtime-status widgets (screen intelligence / local AI / autocomplete /
+// service) tolerate ~10s of staleness. A short TTL (was 2s < the ~2.4s build
+// time) meant the cache was stale before it was even written, so the frontend's
+// ~4s `app_state_snapshot` poll never hit the fast path and every poll re-ran
+// the full 4-way fan-out (issue #4249 profiling: this, combined with the lack
+// of a single-flight gate, pegged ~2 cores and starved the shared tokio runtime
+// the agent harness runs on — the agent's turns stalled 50-100s between model
+// calls even though inference itself was idle).
+const RUNTIME_SNAPSHOT_TTL: Duration = Duration::from_secs(10);
 const AUTH_FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 const RUNTIME_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(10);
 const SNAPSHOT_SUB_OP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -44,6 +52,15 @@ static APP_STATE_FILE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 static CURRENT_USER_CACHE: Lazy<Mutex<Option<CachedCurrentUser>>> = Lazy::new(|| Mutex::new(None));
 static RUNTIME_SNAPSHOT_CACHE: Lazy<Mutex<Option<CachedRuntimeSnapshot>>> =
     Lazy::new(|| Mutex::new(None));
+/// Single-flight gate for the runtime-snapshot rebuild. Concurrent callers whose
+/// cache read missed serialize here so only ONE runs the expensive sub-op
+/// fan-out; the rest wait, then re-read the cache the winner populated (see the
+/// double-check in `build_runtime_snapshot`). This is an async mutex because the
+/// guard is held across `.await` points (the sub-op `join`). Without it, every
+/// overlapping `app_state_snapshot` poll launched its own build — the rebuild
+/// stampede described on `RUNTIME_SNAPSHOT_TTL`.
+static RUNTIME_SNAPSHOT_REBUILD: Lazy<tokio::sync::Mutex<()>> =
+    Lazy::new(|| tokio::sync::Mutex::new(()));
 static SNAPSHOT_REQ_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone)]
@@ -736,19 +753,41 @@ pub fn peek_cached_current_user_identity() -> Option<crate::openhuman::agent::pr
     }
 }
 
+/// Return the cached runtime snapshot when it is still within
+/// `RUNTIME_SNAPSHOT_TTL`, else `None`. Kept as a small helper so both the
+/// fast-path read and the post-lock double-check share identical freshness logic.
+fn fresh_cached_runtime_snapshot(req_id: u64) -> Option<RuntimeSnapshot> {
+    let cache = RUNTIME_SNAPSHOT_CACHE.lock();
+    let entry = cache.as_ref()?;
+    let age = entry.fetched_at.elapsed();
+    if age < RUNTIME_SNAPSHOT_TTL {
+        debug!(
+            "{LOG_PREFIX} build_runtime_snapshot: returning cached snapshot req_id={req_id} age_ms={}",
+            age.as_millis()
+        );
+        Some(entry.snapshot.clone())
+    } else {
+        None
+    }
+}
+
 async fn build_runtime_snapshot(config: &Config, req_id: u64) -> RuntimeSnapshot {
-    {
-        let cache = RUNTIME_SNAPSHOT_CACHE.lock();
-        if let Some(entry) = cache.as_ref() {
-            if entry.fetched_at.elapsed() < RUNTIME_SNAPSHOT_TTL {
-                debug!(
-                    "{LOG_PREFIX} build_runtime_snapshot: returning cached snapshot req_id={} age_ms={}",
-                    req_id,
-                    entry.fetched_at.elapsed().as_millis()
-                );
-                return entry.snapshot.clone();
-            }
-        }
+    // Fast path: a fresh cached snapshot serves every poller without touching the
+    // sub-op fan-out.
+    if let Some(snapshot) = fresh_cached_runtime_snapshot(req_id) {
+        return snapshot;
+    }
+
+    // Cache miss: single-flight the rebuild so only one caller runs the expensive
+    // fan-out. Waiters re-check the cache the winner just populated (this
+    // double-check) and return it instead of launching a duplicate build —
+    // collapsing an N-way stampede into one build per TTL window.
+    let _rebuild_guard = RUNTIME_SNAPSHOT_REBUILD.lock().await;
+    if let Some(snapshot) = fresh_cached_runtime_snapshot(req_id) {
+        debug!(
+            "{LOG_PREFIX} build_runtime_snapshot: coalesced onto concurrent rebuild req_id={req_id}"
+        );
+        return snapshot;
     }
 
     let si_config = config.screen_intelligence.clone();

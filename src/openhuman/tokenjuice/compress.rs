@@ -7,8 +7,9 @@
 //! ever silently lost. Use it for tool output, file reads, web/HTML fetches, or
 //! any large payload headed for the model context.
 //!
-//! The tool-output adapter [`crate::openhuman::tokenjuice::compact_tool_output`]
-//! builds a [`CompressInput`] with a derived command/argv and calls [`route`].
+//! The tool-output adapter
+//! [`crate::openhuman::tokenjuice::compact_tool_output_with_policy`] builds a
+//! [`CompressInput`] with a derived command/argv and calls [`route`].
 
 use crate::openhuman::tokenjuice::cache;
 use crate::openhuman::tokenjuice::compressors::{compressor_for, generic_compressor};

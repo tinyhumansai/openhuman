@@ -32,17 +32,18 @@ fn names(spans: &[TraceSpan]) -> Vec<String> {
 // ── config ────────────────────────────────────────────────────────────────
 
 #[test]
-fn tracing_config_is_off_by_default() {
+fn local_tracing_exporter_is_off_by_default() {
     let cfg = AgentTracingConfig::default();
-    assert!(!cfg.enabled, "tracing must be opt-in");
+    assert!(!cfg.enabled, "local exporter is opt-in");
     assert_eq!(cfg.backend, AgentTracingBackend::Otel);
     assert!(cfg.export_path.is_none());
 }
 
 #[test]
-fn observability_default_embeds_disabled_tracing() {
+fn observability_default_shares_usage_but_keeps_local_exporter_off() {
     let obs = ObservabilityConfig::default();
-    assert!(!obs.agent_tracing.enabled);
+    assert!(obs.share_usage_data, "usage-data sharing is on by default");
+    assert!(!obs.agent_tracing.enabled, "local exporter stays opt-in");
 }
 
 #[test]
@@ -613,4 +614,42 @@ fn export_with_no_path_does_not_panic() {
     };
     export_spans(&cfg, &one_turn_spans());
     export_spans(&cfg, &[]); // empty slice short-circuits.
+}
+
+#[tokio::test]
+async fn export_run_trace_is_noop_when_disabled_or_empty() {
+    // Both sharing AND the local exporter off → no-op regardless of spans.
+    let mut disabled = crate::openhuman::config::Config::default();
+    disabled.observability.share_usage_data = false;
+    disabled.observability.agent_tracing.enabled = false;
+    export_run_trace(&disabled, &one_turn_spans()).await;
+
+    // No spans → no-op even with sharing on (the default).
+    let enabled = crate::openhuman::config::Config::default();
+    export_run_trace(&enabled, &[]).await;
+}
+
+#[tokio::test]
+async fn export_run_trace_otel_backend_uses_local_sink() {
+    // The Otel local exporter never touches the network — it writes the
+    // file/log sink. Disable usage-data sharing to isolate that path (no push).
+    let dir = std::env::temp_dir().join(format!("oh-trace-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("spans.ndjson");
+
+    let mut config = crate::openhuman::config::Config::default();
+    config.observability.share_usage_data = false;
+    config.observability.agent_tracing = AgentTracingConfig {
+        enabled: true,
+        backend: AgentTracingBackend::Otel,
+        export_path: Some(path.to_string_lossy().to_string()),
+    };
+    export_run_trace(&config, &one_turn_spans()).await;
+
+    let written = std::fs::read_to_string(&path).expect("otel export should write the file");
+    assert!(
+        !written.trim().is_empty(),
+        "spans should be appended locally"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }

@@ -18,6 +18,35 @@ function formatNumber(value: number): string {
   return new Intl.NumberFormat('en-US').format(Math.max(0, Math.trunc(value)));
 }
 
+// Compact token amounts for reward badges: 500000 -> "500K", 2000000 -> "2M".
+function formatTokens(value: number): string {
+  return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(
+    Math.max(0, Math.trunc(value))
+  );
+}
+
+// Locale-aware USD so the money glyph matches the surrounding translated sentence.
+function formatUsd(value: number): string {
+  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(
+    Math.max(0, value)
+  );
+}
+
+// Prefer the backend's actionable claim-error message (e.g. "not unlocked yet",
+// "no active paid subscription"); fall back to the generic localized string.
+function claimErrorMessage(err: unknown, fallback: string): string {
+  if (
+    err &&
+    typeof err === 'object' &&
+    'error' in err &&
+    typeof (err as { error?: unknown }).error === 'string'
+  ) {
+    return (err as { error: string }).error;
+  }
+  if (err instanceof Error && err.message) return err.message;
+  return fallback;
+}
+
 function roleAccentTone(index: number) {
   const tones = [
     {
@@ -82,6 +111,8 @@ interface RewardsCommunityTabProps {
   error: string | null;
   isLoading: boolean;
   onRetry?: () => void;
+  /** Reconcile the snapshot after a claim without the full-page loading state. */
+  onSilentRefresh?: () => Promise<void> | void;
   snapshot: RewardsSnapshot | null;
 }
 
@@ -89,6 +120,7 @@ export default function RewardsCommunityTab({
   error,
   isLoading,
   onRetry,
+  onSilentRefresh,
   snapshot,
 }: RewardsCommunityTabProps) {
   const { t } = useT();
@@ -96,23 +128,43 @@ export default function RewardsCommunityTab({
   const [disconnectState, setDisconnectState] = useState<'idle' | 'disconnecting' | 'error'>(
     'idle'
   );
+  // Reward claim state, keyed by achievement id. Claimed/claimable are read from
+  // the server snapshot (single source of truth); these hold only the in-flight id,
+  // a transient "credited" note for a fresh grant, and per-card error text.
+  // Track in-flight claims as a Set of ids so concurrent claims on different
+  // achievements each disable their own button independently (a single scalar
+  // would let a second claim re-enable the first's button mid-flight).
+  const [claimingIds, setClaimingIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [claimedFeedback, setClaimedFeedback] = useState<Record<string, string>>({});
+  const [claimErrors, setClaimErrors] = useState<Record<string, string>>({});
   const rewardRoles: RewardsAchievement[] = snapshot?.achievements ?? [];
   const unlocked =
     snapshot?.summary.unlockedCount ?? rewardRoles.filter(role => role.unlocked).length;
   const total = snapshot?.summary.totalCount ?? rewardRoles.length;
   const inviteUrl = snapshot?.discord.inviteUrl ?? DISCORD_INVITE_URL;
   const progressPercent = total > 0 ? Math.round((unlocked / total) * 100) : 0;
-  const achievementSlots =
-    rewardRoles.length > 0 ? rewardRoles.slice(0, 8) : new Array(4).fill(null);
+  // Render one progress circle per achievement so the row always matches the
+  // "{unlocked} of {total} achievements" count. Previously capped at 8, which
+  // silently hid the remaining badges (11 achievements → only 8 circles).
+  const achievementSlots: (RewardsAchievement | null)[] =
+    rewardRoles.length > 0 ? rewardRoles : new Array<null>(4).fill(null);
   const ringCircumference = 2 * Math.PI * 24;
   const ringOffset = ringCircumference - (progressPercent / 100) * ringCircumference;
   const discordLinked = snapshot?.discord.linked ?? false;
   const discordUsername = snapshot?.discord.username ?? null;
   const membershipStatus = snapshot?.discord.membershipStatus ?? null;
-  const assignedRoleCount = snapshot?.summary.assignedDiscordRoleCount ?? 0;
+  // "Roles assigned" is a ratio over *assignable* achievements — the ones both unlocked
+  // and backed by a configured Discord role. Locked achievements (no role yet) and
+  // unlocked achievements with no configured role can never be assigned, so counting
+  // them would misreport the ratio (e.g. "3 of 4" when the 4th can never be granted).
+  const assignableRoles = rewardRoles.filter(role => role.unlocked && Boolean(role.roleId));
+  const assignableRoleCount = assignableRoles.length;
+  const assignedRoleCount = assignableRoles.filter(
+    role => role.discordRoleStatus === 'assigned'
+  ).length;
   // A connected member who unlocked a role-bearing achievement but has not joined the
   // server yet cannot receive the role — surface an actionable prompt to join.
-  const hasUnlockedConfiguredRole = rewardRoles.some(role => role.unlocked && Boolean(role.roleId));
+  const hasUnlockedConfiguredRole = assignableRoles.length > 0;
   const showClaimBanner =
     discordLinked && membershipStatus === 'not_in_guild' && hasUnlockedConfiguredRole;
 
@@ -158,6 +210,57 @@ export default function RewardsCommunityTab({
       setDisconnectState('error');
     }
   }, [onRetry]);
+
+  const handleClaim = useCallback(
+    async (role: RewardsAchievement) => {
+      log('claim requested reward=%s', role.id);
+      setClaimingIds(prev => new Set(prev).add(role.id));
+      setClaimErrors(prev => {
+        if (!(role.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[role.id];
+        return next;
+      });
+      try {
+        const result = await rewardsApi.claimReward(role.id);
+        log(
+          'claim ok reward=%s amountUsd=%d alreadyClaimed=%s',
+          role.id,
+          result.amountUsd,
+          result.alreadyClaimed
+        );
+        // Only a fresh grant moves new money — an idempotent re-claim must NOT
+        // imply "$X credited", so gate the credited note on !alreadyClaimed.
+        if (!result.alreadyClaimed) {
+          setClaimedFeedback(prev => ({ ...prev, [role.id]: formatUsd(result.amountUsd) }));
+        }
+        // Reconcile with server truth (claimed / claimable / claimableCount and any
+        // balance surface) without the full-page loading flicker. The button stays
+        // "Claiming…" until this lands, then the server snapshot flips it to Claimed.
+        await onSilentRefresh?.();
+      } catch (err) {
+        log(
+          'claim failed reward=%s error=%s',
+          role.id,
+          err instanceof Error ? err.message : String(err)
+        );
+        setClaimErrors(prev => ({
+          ...prev,
+          [role.id]: claimErrorMessage(err, t('rewards.community.claimError')),
+        }));
+      } finally {
+        // Only clear the id that just settled — leave any other in-flight claim's
+        // button disabled.
+        setClaimingIds(prev => {
+          const next = new Set(prev);
+          next.delete(role.id);
+          return next;
+        });
+      }
+    },
+    [onSilentRefresh, t]
+  );
+
   return (
     <>
       <section className="relative overflow-hidden rounded-[1.25rem] bg-gradient-to-br from-[#004ad0] to-[#2b64f1] p-6 text-white shadow-[0_20px_40px_rgba(25,28,30,0.08)]">
@@ -327,6 +430,9 @@ export default function RewardsCommunityTab({
             {achievementSlots.map((role, index) => (
               <div
                 key={role?.id ?? `placeholder-${index}`}
+                title={role?.title ?? undefined}
+                aria-label={role?.title ?? undefined}
+                data-testid={role ? `rewards-achievement-badge-${role.id}` : undefined}
                 className={`flex h-16 w-16 flex-shrink-0 items-center justify-center rounded-full border-2 ${
                   role?.unlocked
                     ? 'border-primary-200 dark:border-primary-500/30 bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-300'
@@ -405,6 +511,13 @@ export default function RewardsCommunityTab({
                         : null
                   : null;
 
+              // Claimed/claimable come from the server snapshot (single source of
+              // truth); the local overlay only holds the transient credited note.
+              const claimed = role.claimed === true;
+              const feedback = claimedFeedback[role.id];
+              const claimError = claimErrors[role.id];
+              const showClaimFooter = role.claimable === true || claimed;
+
               return (
                 <div
                   key={role.id}
@@ -426,6 +539,23 @@ export default function RewardsCommunityTab({
                         <p className="mt-1 text-xs leading-relaxed text-content-secondary">
                           {role.description}
                         </p>
+                        {!role.unlocked && role.progressLabel ? (
+                          <p
+                            data-testid={`rewards-achievement-progress-${role.id}`}
+                            className="mt-1.5 text-[11px] font-semibold text-primary-600 dark:text-primary-300">
+                            {role.progressLabel}
+                          </p>
+                        ) : null}
+                        {role.rewardTokens ? (
+                          <p
+                            data-testid={`rewards-achievement-reward-${role.id}`}
+                            className="mt-1.5 inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">
+                            {(role.rewardRecurring
+                              ? t('rewards.community.rewardTokensMonthly')
+                              : t('rewards.community.rewardTokens')
+                            ).replace('{tokens}', formatTokens(role.rewardTokens))}
+                          </p>
+                        ) : null}
                       </div>
                     </div>
                     <div className="flex items-center gap-1 text-primary-700 dark:text-primary-300">
@@ -456,6 +586,60 @@ export default function RewardsCommunityTab({
                       </span>
                     </div>
                   ) : null}
+                  {showClaimFooter ? (
+                    <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line pt-3">
+                      {claimed ? (
+                        <>
+                          <span
+                            data-testid={`rewards-claimed-${role.id}`}
+                            className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
+                            <svg
+                              className="h-3.5 w-3.5"
+                              viewBox="0 0 24 24"
+                              fill="currentColor"
+                              aria-hidden="true">
+                              <path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+                            </svg>
+                            {t('rewards.community.claimed')}
+                          </span>
+                          {feedback ? (
+                            <span
+                              role="status"
+                              data-testid={`rewards-claim-credited-${role.id}`}
+                              className="text-xs font-semibold text-emerald-600 dark:text-emerald-300">
+                              {t('rewards.community.claimCredited').replace('{amount}', feedback)}
+                            </span>
+                          ) : null}
+                        </>
+                      ) : (
+                        <>
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            data-testid={`rewards-claim-${role.id}`}
+                            disabled={claimingIds.has(role.id)}
+                            onClick={() => {
+                              void handleClaim(role);
+                            }}>
+                            {claimingIds.has(role.id)
+                              ? t('rewards.community.claiming')
+                              : t('rewards.community.claimTokens').replace(
+                                  '{tokens}',
+                                  formatTokens(role.rewardTokens ?? 0)
+                                )}
+                          </Button>
+                          {claimError ? (
+                            <span
+                              role="alert"
+                              data-testid={`rewards-claim-error-${role.id}`}
+                              className="text-xs font-semibold text-coral-600 dark:text-coral-300">
+                              {claimError}
+                            </span>
+                          ) : null}
+                        </>
+                      )}
+                    </div>
+                  ) : null}
                 </div>
               );
             })
@@ -471,7 +655,14 @@ export default function RewardsCommunityTab({
           )}
         </section>
 
-        <section className="rounded-[1.25rem] bg-[#f2f4f6] dark:bg-surface-muted/60 p-4 text-sm text-content-secondary">
+        {/* Discord-specific status — kept separate from product activity metrics
+            so the two are no longer conflated in a single list. */}
+        <section
+          data-testid="rewards-discord-stats"
+          className="rounded-[1.25rem] bg-[#f2f4f6] dark:bg-surface-muted/60 p-4 text-sm text-content-secondary">
+          <h2 className="mb-3 text-sm font-bold text-content">
+            {t('rewards.community.discordDetails')}
+          </h2>
           <div className="flex items-center justify-between gap-3">
             <span>{t('rewards.community.discordServer')}</span>
             <span className="font-semibold text-content">
@@ -500,17 +691,39 @@ export default function RewardsCommunityTab({
               <span data-testid="rewards-roles-assigned" className="font-semibold text-content">
                 {t('rewards.community.roleAssignmentCount')
                   .replace('{assigned}', String(assignedRoleCount))
-                  .replace('{unlocked}', String(unlocked))}
+                  .replace('{unlocked}', String(assignableRoleCount))}
               </span>
             </div>
           ) : null}
-          <div className="mt-3 flex items-center justify-between gap-3">
+        </section>
+
+        {/* Product-usage metrics — the activity streak counts consecutive days the
+            user actually used OpenHuman (token-processing days), not a check-in. */}
+        <section
+          data-testid="rewards-activity-stats"
+          className="rounded-[1.25rem] bg-[#f2f4f6] dark:bg-surface-muted/60 p-4 text-sm text-content-secondary">
+          <h2 className="text-sm font-bold text-content">{t('rewards.community.activityTitle')}</h2>
+          <p className="mb-3 mt-0.5 text-xs leading-relaxed text-content-muted">
+            {t('rewards.community.activityStreakHint')}
+          </p>
+          <div className="flex items-center justify-between gap-3">
             <span>{t('rewards.community.currentStreak')}</span>
-            <span className="font-semibold text-content">
+            <span data-testid="rewards-current-streak" className="font-semibold text-content">
               {snapshot
                 ? t('rewards.community.streakDays').replace(
                     '{n}',
                     String(snapshot.metrics.currentStreakDays)
+                  )
+                : t('rewards.community.unknown')}
+            </span>
+          </div>
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <span>{t('rewards.community.longestStreak')}</span>
+            <span data-testid="rewards-longest-streak" className="font-semibold text-content">
+              {snapshot
+                ? t('rewards.community.streakDays').replace(
+                    '{n}',
+                    String(snapshot.metrics.longestStreakDays)
                   )
                 : t('rewards.community.unknown')}
             </span>

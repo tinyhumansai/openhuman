@@ -11,7 +11,7 @@ use crate::openhuman::agent::harness::definition::{
 };
 use crate::openhuman::agent::harness::session::types::Agent;
 use crate::openhuman::agent::host_runtime;
-use crate::openhuman::agent::memory_loader::DefaultMemoryLoader;
+use crate::openhuman::agent_memory::memory_loader::DefaultMemoryLoader;
 use crate::openhuman::config::Config;
 use crate::openhuman::context::prompt::SystemPromptBuilder;
 use crate::openhuman::inference::provider::{self, Provider};
@@ -1130,9 +1130,7 @@ impl Agent {
         // `None` and their tool results stay untouched (the summarizer
         // itself MUST be `None` to avoid recursive self-summarization).
         let payload_summarizer: Option<
-            std::sync::Arc<
-                dyn crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer,
-            >,
+            std::sync::Arc<dyn crate::openhuman::tinyagents::payload_summarizer::PayloadSummarizer>,
         > = if agent_id == "orchestrator" && config.context.summarizer_payload_threshold_tokens > 0
         {
             match crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::global() {
@@ -1145,7 +1143,7 @@ impl Agent {
                             config.context.summarizer_max_payload_tokens
                         );
                         Some(std::sync::Arc::new(
-                            crate::openhuman::agent::harness::payload_summarizer::SubagentPayloadSummarizer::new(
+                            crate::openhuman::tinyagents::payload_summarizer::SubagentPayloadSummarizer::new(
                                 summarizer_def.clone(),
                                 config.context.summarizer_payload_threshold_tokens,
                                 config.context.summarizer_max_payload_tokens,

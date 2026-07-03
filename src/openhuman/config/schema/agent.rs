@@ -225,7 +225,7 @@ pub struct AgentConfig {
     pub channel_permissions: std::collections::HashMap<String, String>,
 
     /// Maximum byte length of a single tool-result body before the
-    /// context pipeline's tool-result budget stage truncates it. Applied
+    /// TinyAgents tool-output middleware budget stage truncates it. Applied
     /// inline at tool-execution time (before the result enters history),
     /// so it is cache-safe. `0` disables the cap. Defaults to
     /// `DEFAULT_TOOL_RESULT_BUDGET_BYTES` (16 KiB).

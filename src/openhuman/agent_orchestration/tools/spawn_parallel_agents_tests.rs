@@ -1,8 +1,14 @@
 use super::*;
 use crate::openhuman::agent::dispatcher::NativeToolDispatcher;
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
+use crate::openhuman::agent::harness::definition::{
+    AgentDefinition, AgentTier, DefinitionSource, ModelSpec, PromptSource, SandboxMode, ToolScope,
+};
 use crate::openhuman::agent::harness::fork_context::{with_parent_context, ParentExecutionContext};
 use crate::openhuman::agent::Agent;
+use crate::openhuman::agent_orchestration::spawn_parallel_graph::{
+    prepare_spawn_parallel_tasks_from_defs, ParallelTaskRejectionKind, SpawnParallelTaskPreflight,
+};
 use crate::openhuman::config::AgentConfig;
 use crate::openhuman::context::prompt::ToolCallFormat;
 use crate::openhuman::inference::provider::traits::ProviderCapabilities;
@@ -14,6 +20,7 @@ use crate::openhuman::tools::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use serde_json::json;
+use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
@@ -26,6 +33,14 @@ const PLANNER_PROMPT_CANARY: &str = "planner-branch-canary";
 const RESEARCH_DONE_CANARY: &str = "research-finished-canary";
 const PLANNER_DONE_CANARY: &str = "planner-finished-canary";
 const FINAL_CANARY: &str = "parallel-summary-canary";
+
+fn test_lineage(task_id: &str) -> ParallelAgentLineage {
+    ParallelAgentLineage {
+        parent_session: "parent-session".into(),
+        root_session: "root-session".into(),
+        child_task_id: task_id.into(),
+    }
+}
 
 #[test]
 fn metadata_methods_expose_execute_permission_and_schema() {
@@ -86,6 +101,7 @@ fn result_omits_worktree_fields_when_absent() {
     let result = ParallelAgentResult {
         task_id: "t1".into(),
         agent_id: "a".into(),
+        lineage: test_lineage("t1"),
         success: true,
         output: Some("ok".into()),
         error: None,
@@ -108,6 +124,7 @@ fn result_serializes_worktree_fields_when_present() {
     let result = ParallelAgentResult {
         task_id: "t2".into(),
         agent_id: "coder".into(),
+        lineage: test_lineage("t2"),
         success: true,
         output: None,
         error: None,
@@ -264,6 +281,7 @@ fn parent_context_with_provider(
         ..Default::default()
     };
     ParentExecutionContext {
+        workspace_descriptor: None,
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: [
             "researcher".to_string(),
@@ -296,6 +314,54 @@ fn parent_context_with_provider(
 
 fn parent_context(max_parallel_tools: usize) -> ParentExecutionContext {
     parent_context_with_provider(max_parallel_tools, Arc::new(NoopProvider))
+}
+
+fn parent_context_with_tools(
+    max_parallel_tools: usize,
+    tools: Vec<Box<dyn Tool>>,
+) -> ParentExecutionContext {
+    let mut parent = parent_context(max_parallel_tools);
+    parent.all_tools = Arc::new(tools);
+    parent
+}
+
+fn definition_with_tool_scope(
+    id: &str,
+    tools: ToolScope,
+    sandbox_mode: SandboxMode,
+) -> AgentDefinition {
+    AgentDefinition {
+        id: id.to_string(),
+        when_to_use: "test definition".into(),
+        display_name: None,
+        system_prompt: PromptSource::Inline("test prompt".into()),
+        omit_identity: true,
+        omit_memory_context: true,
+        omit_safety_preamble: true,
+        omit_skills_catalog: true,
+        omit_profile: true,
+        omit_memory_md: true,
+        model: ModelSpec::Inherit,
+        temperature: 0.0,
+        tools,
+        disallowed_tools: Vec::new(),
+        skill_filter: None,
+        extra_tools: Vec::new(),
+        max_iterations: 3,
+        iteration_policy: Default::default(),
+        max_result_chars: None,
+        max_turn_output_tokens: None,
+        timeout_secs: None,
+        sandbox_mode,
+        background: false,
+        trigger_memory_agent: Default::default(),
+        tokenjuice_compression: Default::default(),
+        subagents: Vec::new(),
+        delegate_name: None,
+        agent_tier: AgentTier::Worker,
+        source: DefinitionSource::Builtin,
+        graph: Default::default(),
+    }
 }
 
 #[tokio::test]
@@ -401,6 +467,127 @@ impl Tool for FixtureStepTool {
     fn permission_level(&self) -> PermissionLevel {
         PermissionLevel::None
     }
+}
+
+struct PermissionFixtureTool {
+    name: &'static str,
+    level: PermissionLevel,
+}
+
+#[async_trait]
+impl Tool for PermissionFixtureTool {
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn description(&self) -> &str {
+        "Fixture tool with a configurable permission level."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({ "type": "object" })
+    }
+
+    async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        Ok(ToolResult::success("ok"))
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        self.level
+    }
+}
+
+#[test]
+fn shared_workspace_rejects_write_capable_named_worker_without_worktree() {
+    let definition = definition_with_tool_scope(
+        "researcher",
+        ToolScope::Named(vec!["write_fixture".into()]),
+        SandboxMode::None,
+    );
+    let definitions = HashMap::from([(definition.id.clone(), definition)]);
+    let parent = parent_context_with_tools(
+        4,
+        vec![Box::new(PermissionFixtureTool {
+            name: "write_fixture",
+            level: PermissionLevel::Write,
+        })],
+    );
+
+    let preflight = prepare_spawn_parallel_tasks_from_defs(
+        vec![ParallelAgentTask {
+            agent_id: "researcher".into(),
+            prompt: "edit a file".into(),
+            context: None,
+            toolkit: None,
+            ownership: None,
+            isolation: None,
+            base_ref: None,
+        }],
+        &definitions,
+        &parent,
+    );
+
+    match preflight.into_iter().next().expect("one preflight result") {
+        SpawnParallelTaskPreflight::Rejected(rejection) => {
+            assert_eq!(rejection.kind, ParallelTaskRejectionKind::RequiresIsolation);
+            assert!(rejection.error.contains("write_fixture:Write"));
+            assert!(rejection.error.contains("isolation=\"worktree\""));
+        }
+        SpawnParallelTaskPreflight::Prepared(_) => {
+            panic!("write-capable shared worker must require worktree isolation")
+        }
+    }
+}
+
+#[test]
+fn shared_workspace_allows_readonly_or_explicitly_isolated_workers() {
+    let readonly = definition_with_tool_scope(
+        "researcher",
+        ToolScope::Named(vec!["write_fixture".into()]),
+        SandboxMode::ReadOnly,
+    );
+    let writer = definition_with_tool_scope(
+        "critic",
+        ToolScope::Named(vec!["write_fixture".into()]),
+        SandboxMode::None,
+    );
+    let definitions = HashMap::from([(readonly.id.clone(), readonly), (writer.id.clone(), writer)]);
+    let parent = parent_context_with_tools(
+        4,
+        vec![Box::new(PermissionFixtureTool {
+            name: "write_fixture",
+            level: PermissionLevel::Write,
+        })],
+    );
+
+    let preflight = prepare_spawn_parallel_tasks_from_defs(
+        vec![
+            ParallelAgentTask {
+                agent_id: "researcher".into(),
+                prompt: "read only".into(),
+                context: None,
+                toolkit: None,
+                ownership: None,
+                isolation: None,
+                base_ref: None,
+            },
+            ParallelAgentTask {
+                agent_id: "critic".into(),
+                prompt: "isolated edit".into(),
+                context: None,
+                toolkit: None,
+                ownership: Some("files: src/b.rs".into()),
+                isolation: Some("worktree".into()),
+                base_ref: None,
+            },
+        ],
+        &definitions,
+        &parent,
+    );
+
+    assert!(preflight
+        .into_iter()
+        .all(|item| matches!(item, SpawnParallelTaskPreflight::Prepared(_))));
 }
 
 #[derive(Default)]

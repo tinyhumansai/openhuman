@@ -566,7 +566,9 @@ mod tests {
     // across `#[test]` fns would race on `OPENHUMAN_COMPOSIO_DAILY_REQUEST_LIMIT`.
     #[test]
     fn resolved_daily_request_limit_honors_env() {
-        let _lock = crate::openhuman::config::TEST_ENV_LOCK.lock().unwrap();
+        let _lock = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         // Unset → default.
         let _g = EnvGuard::unset(ENV_DAILY_REQUEST_LIMIT);

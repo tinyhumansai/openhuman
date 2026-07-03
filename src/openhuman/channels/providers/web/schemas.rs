@@ -61,7 +61,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 optional_u64("session_id", "Optional caller-provided correlation id (PTT session id)."),
                 optional_string(
                     "queue_mode",
-                    "Queue mode: 'interrupt' (default), 'steer', 'followup', or 'collect'.",
+                    "Queue mode: 'interrupt' (default), 'steer', 'followup', 'collect', or 'parallel'.",
                 ),
             ],
             outputs: vec![json_output("ack", "Acceptance payload.")],

@@ -1,4 +1,4 @@
-//! External channel backends (Telegram, Signal, WhatsApp, Slack, Matrix, …).
+//! External channel backends (Telegram, Signal, WhatsApp, Slack, …).
 
 pub mod dingtalk;
 pub mod discord;
@@ -7,8 +7,6 @@ pub mod imessage;
 pub mod irc;
 pub mod lark;
 pub mod linq;
-#[cfg(feature = "channel-matrix")]
-pub mod matrix;
 pub mod mattermost;
 // Public (like every sibling provider module) so cross-module callers reach it
 // in *all* profiles. It was previously `pub` only under test/debug and private

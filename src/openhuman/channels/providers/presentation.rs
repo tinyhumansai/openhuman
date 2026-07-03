@@ -50,13 +50,13 @@ fn usage_payload(usage: Option<&LastTurnUsage>) -> Option<TurnUsagePayload> {
 /// Always emits at least one `chat_done` event. When the response is
 /// segmented, emits one `chat_segment` per bubble first, then a final
 /// `chat_done` with the full text for deduplication.
-pub async fn deliver_response(
+pub(crate) async fn deliver_response(
     client_id: &str,
     thread_id: &str,
     request_id: &str,
     full_response: &str,
     user_message: &str,
-    citations: &[crate::openhuman::agent::memory_loader::MemoryCitation],
+    citations: &[crate::openhuman::agent_memory::memory_loader::MemoryCitation],
     usage: Option<&LastTurnUsage>,
 ) {
     let usage_payload = usage_payload(usage);
@@ -471,7 +471,7 @@ async fn try_reaction(user_message: &str) -> Option<String> {
 
 #[cfg(any(test, debug_assertions))]
 pub mod test_support {
-    use crate::openhuman::agent::memory_loader::MemoryCitation;
+    use crate::openhuman::agent_memory::memory_loader::MemoryCitation;
 
     pub fn segment_for_delivery_for_test(text: &str) -> Vec<String> {
         super::segment_for_delivery(text)

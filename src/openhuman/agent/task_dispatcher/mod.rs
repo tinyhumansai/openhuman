@@ -52,6 +52,3 @@ pub async fn run_system_turn_on_thread(
     let run_id = format!("bgdeliver-{}", uuid::Uuid::new_v4());
     executor::run_autonomous(config, &executor, &prompt, &run_id, Some(thread_id)).await
 }
-
-// `pub(crate)` for test drivers.
-pub(crate) use poller::poll_once;

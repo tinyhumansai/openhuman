@@ -11,12 +11,12 @@
 //! hooks). When the caller supplies an `on_progress` sender the harness event
 //! stream is mirrored onto `AgentProgress` (live tool timeline, streaming text
 //! deltas, cost/token footer) via the same
-//! [`OpenhumanEventBridge`](crate::openhuman::tinyagents::OpenhumanEventBridge)
+//! `OpenhumanEventBridge`
 //! the chat route uses.
 //!
 //! **Available tools.** Reuses the bus handler's `Arc`-shared tool sets
 //! (`tools_registry: Arc<Vec<Box<dyn Tool>>>` + per-turn `extra_tools`),
-//! advertised via [`SharedToolAdapter`](crate::openhuman::tinyagents::SharedToolAdapter)
+//! advertised via `SharedToolAdapter`
 //! and filtered by `visible_tool_names`. No early-exit tools on this path.
 //!
 //! **Summarization.** [`run_channel_turn_via_graph`] resolves the model's
@@ -126,6 +126,12 @@ pub(crate) async fn run_channel_turn_via_graph(
         // Context middlewares: cache-align + default tool-result byte cap (the
         // channel path has no session `ContextManager` to source config from).
         crate::openhuman::tinyagents::TurnContextMiddleware::defaults(),
+        // Channel/CLI path carries its own gating; no session `.tool_policy()`.
+        None,
+        // Channel turns do not yet carry SDK workspace descriptors.
+        None,
+        // Interactive channel/CLI turn — never serve a cached model response.
+        false,
     )
     .await?;
     // Append only this turn's typed suffix (assistant tool-calls + tool results +
