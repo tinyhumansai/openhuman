@@ -136,6 +136,12 @@ pub struct Config {
     #[serde(default)]
     pub autonomy: AutonomyConfig,
 
+    /// Data-egress posture (Privacy Mode). Distinct from `autonomy` (which
+    /// governs agent *act* power). Missing `[privacy]` block → `Standard`
+    /// (#4435, epic #4256).
+    #[serde(default)]
+    pub privacy: PrivacyConfig,
+
     #[serde(default)]
     pub sandbox: SandboxConfig,
 
@@ -739,6 +745,7 @@ impl Default for Config {
             observability: ObservabilityConfig::default(),
             dashboard: DashboardConfig::default(),
             autonomy: AutonomyConfig::default(),
+            privacy: PrivacyConfig::default(),
             sandbox: SandboxConfig::default(),
             runtime: RuntimeConfig::default(),
             shell: ShellConfig::default(),

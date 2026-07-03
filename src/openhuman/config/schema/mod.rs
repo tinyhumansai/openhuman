@@ -35,6 +35,7 @@ mod meet;
 mod node;
 mod observability;
 mod orchestration;
+mod privacy;
 mod proxy;
 mod routes;
 mod runtime;
@@ -71,6 +72,7 @@ pub use meet::{AutoJoinPolicy, AutoSummarizePolicy, CalendarProvider, MeetConfig
 pub use node::NodeConfig;
 pub use observability::{AgentTracingBackend, AgentTracingConfig, ObservabilityConfig};
 pub use orchestration::OrchestrationConfig;
+pub use privacy::{PrivacyConfig, PrivacyMode};
 pub use proxy::{
     apply_runtime_proxy_to_builder, build_runtime_proxy_client,
     build_runtime_proxy_client_with_timeouts, runtime_proxy_config, set_runtime_proxy_config,
