@@ -3,6 +3,18 @@ import type { TranslationMap } from './types';
 // Hindi (हिन्दी) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Privacy Mode selector (#4435) — data-egress posture
+  'privacy.mode.title': 'गोपनीयता मोड',
+  'privacy.mode.description':
+    'नियंत्रित करता है कि आपका कितना डेटा इस डिवाइस से बाहर जा सकता है। एजेंट एक्सेस मोड से अलग।',
+  'privacy.mode.localOnly': 'केवल लोकल',
+  'privacy.mode.localOnlyDesc': 'केवल डिवाइस पर मौजूद मॉडल। बाहरी मॉडल कॉल अवरुद्ध हैं।',
+  'privacy.mode.standard': 'मानक',
+  'privacy.mode.standardDesc': 'संतुलित। बाहरी मॉडल कॉन्फ़िगरेशन के अनुसार उपयोग किए जाते हैं।',
+  'privacy.mode.sensitive': 'संवेदनशील',
+  'privacy.mode.sensitiveDesc': 'संवेदनशील डेटा के लिए अतिरिक्त सावधानी। अधिक नियंत्रण जल्द ही।',
+  'privacy.mode.saved': 'सहेजा गया',
+  'privacy.mode.saveError': 'गोपनीयता मोड अपडेट नहीं किया जा सका।',
   'skills.recallCalendar.title': 'Google Calendar',
   'skills.recallCalendar.description': 'Recall.ai के ज़रिए Google Meet कॉल में अपने-आप शामिल हों',
   // Cross-host vault (#4278)

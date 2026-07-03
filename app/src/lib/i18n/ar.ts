@@ -3,6 +3,18 @@ import type { TranslationMap } from './types';
 // Arabic (العربية) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Privacy Mode selector (#4435) — data-egress posture
+  'privacy.mode.title': 'وضع الخصوصية',
+  'privacy.mode.description':
+    'يتحكم في مقدار بياناتك التي يمكن أن تغادر هذا الجهاز. منفصل عن وضع وصول الوكيل.',
+  'privacy.mode.localOnly': 'محلي فقط',
+  'privacy.mode.localOnlyDesc': 'النماذج على الجهاز فقط. يتم حظر استدعاءات النماذج الخارجية.',
+  'privacy.mode.standard': 'قياسي',
+  'privacy.mode.standardDesc': 'متوازن. تُستخدم النماذج الخارجية وفق الإعدادات.',
+  'privacy.mode.sensitive': 'حساس',
+  'privacy.mode.sensitiveDesc': 'عناية إضافية بالبيانات الحساسة. المزيد من الضوابط قريبًا.',
+  'privacy.mode.saved': 'تم الحفظ',
+  'privacy.mode.saveError': 'تعذّر تحديث وضع الخصوصية.',
   'skills.recallCalendar.title': 'تقويم Google',
   'skills.recallCalendar.description': 'الانضمام تلقائيًا إلى مكالمات Google Meet عبر Recall.ai',
   // Cross-host vault (#4278)

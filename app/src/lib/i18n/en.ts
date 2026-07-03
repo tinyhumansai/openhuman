@@ -1460,6 +1460,19 @@ const en: TranslationMap = {
   'privacy.analyticsDisclaimer':
     'When enabled, Product Analytics and Diagnostics may include privacy-limited crash reports and usage events, a stable account ID, and app version metadata. Messages, wallet keys, API keys, and session tokens are never collected. You can change this setting at any time.',
 
+  // Privacy Mode selector (#4435) — data-egress posture
+  'privacy.mode.title': 'Privacy Mode',
+  'privacy.mode.description':
+    'Controls how much of your data can leave this device. Separate from the agent access mode.',
+  'privacy.mode.localOnly': 'Local-only',
+  'privacy.mode.localOnlyDesc': 'Only on-device models. External model calls are blocked.',
+  'privacy.mode.standard': 'Standard',
+  'privacy.mode.standardDesc': 'Balanced. External models are used as configured.',
+  'privacy.mode.sensitive': 'Sensitive',
+  'privacy.mode.sensitiveDesc': 'Extra care for sensitive data. More controls coming soon.',
+  'privacy.mode.saved': 'Saved',
+  'privacy.mode.saveError': 'Could not update privacy mode.',
+
   // Settings: About
   'settings.about.version': 'Version',
   'settings.about.updateAvailable': 'is available',

@@ -3,6 +3,19 @@ import type { TranslationMap } from './types';
 // Korean (한국어) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Privacy Mode selector (#4435) — data-egress posture
+  'privacy.mode.title': '개인정보 보호 모드',
+  'privacy.mode.description':
+    '이 기기에서 나갈 수 있는 데이터의 양을 제어합니다. 에이전트 접근 모드와 별개입니다.',
+  'privacy.mode.localOnly': '로컬 전용',
+  'privacy.mode.localOnlyDesc': '기기 내 모델만 사용합니다. 외부 모델 호출이 차단됩니다.',
+  'privacy.mode.standard': '표준',
+  'privacy.mode.standardDesc': '균형. 외부 모델은 설정에 따라 사용됩니다.',
+  'privacy.mode.sensitive': '민감',
+  'privacy.mode.sensitiveDesc':
+    '민감한 데이터에 대한 추가 주의. 더 많은 제어 기능이 곧 제공됩니다.',
+  'privacy.mode.saved': '저장됨',
+  'privacy.mode.saveError': '개인정보 보호 모드를 업데이트할 수 없습니다.',
   'skills.recallCalendar.title': 'Google 캘린더',
   'skills.recallCalendar.description': 'Recall.ai를 통해 Google Meet 통화에 자동 참여',
   // Cross-host vault (#4278)

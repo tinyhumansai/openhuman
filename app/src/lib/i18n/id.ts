@@ -3,6 +3,19 @@ import type { TranslationMap } from './types';
 // Indonesian (Bahasa Indonesia) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Privacy Mode selector (#4435) — data-egress posture
+  'privacy.mode.title': 'Mode Privasi',
+  'privacy.mode.description':
+    'Mengontrol seberapa banyak data Anda yang boleh keluar dari perangkat ini. Terpisah dari mode akses agen.',
+  'privacy.mode.localOnly': 'Hanya lokal',
+  'privacy.mode.localOnlyDesc': 'Hanya model di perangkat. Panggilan model eksternal diblokir.',
+  'privacy.mode.standard': 'Standar',
+  'privacy.mode.standardDesc': 'Seimbang. Model eksternal digunakan sesuai konfigurasi.',
+  'privacy.mode.sensitive': 'Sensitif',
+  'privacy.mode.sensitiveDesc':
+    'Perhatian ekstra untuk data sensitif. Kontrol lainnya segera hadir.',
+  'privacy.mode.saved': 'Tersimpan',
+  'privacy.mode.saveError': 'Tidak dapat memperbarui mode privasi.',
   'skills.recallCalendar.title': 'Google Kalender',
   'skills.recallCalendar.description':
     'Bergabung otomatis ke panggilan Google Meet melalui Recall.ai',

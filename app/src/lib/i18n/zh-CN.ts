@@ -3,6 +3,17 @@ import type { TranslationMap } from './types';
 // Simplified Chinese (简体中文) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Privacy Mode selector (#4435) — data-egress posture
+  'privacy.mode.title': '隐私模式',
+  'privacy.mode.description': '控制有多少数据可以离开此设备。与代理访问模式相互独立。',
+  'privacy.mode.localOnly': '仅本地',
+  'privacy.mode.localOnlyDesc': '仅使用设备端模型。外部模型调用将被阻止。',
+  'privacy.mode.standard': '标准',
+  'privacy.mode.standardDesc': '均衡。按配置使用外部模型。',
+  'privacy.mode.sensitive': '敏感',
+  'privacy.mode.sensitiveDesc': '对敏感数据格外谨慎。更多控制项即将推出。',
+  'privacy.mode.saved': '已保存',
+  'privacy.mode.saveError': '无法更新隐私模式。',
   'skills.recallCalendar.title': 'Google 日历',
   'skills.recallCalendar.description': '通过 Recall.ai 自动加入 Google Meet 通话',
   // Cross-host vault (#4278)

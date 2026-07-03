@@ -3,6 +3,21 @@ import type { TranslationMap } from './types';
 // French (Français) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Privacy Mode selector (#4435) — data-egress posture
+  'privacy.mode.title': 'Mode de confidentialité',
+  'privacy.mode.description':
+    'Contrôle la quantité de vos données pouvant quitter cet appareil. Distinct du mode d’accès de l’agent.',
+  'privacy.mode.localOnly': 'Local uniquement',
+  'privacy.mode.localOnlyDesc':
+    'Uniquement les modèles sur l’appareil. Les appels aux modèles externes sont bloqués.',
+  'privacy.mode.standard': 'Standard',
+  'privacy.mode.standardDesc':
+    'Équilibré. Les modèles externes sont utilisés selon la configuration.',
+  'privacy.mode.sensitive': 'Sensible',
+  'privacy.mode.sensitiveDesc':
+    'Précautions supplémentaires pour les données sensibles. D’autres contrôles arrivent bientôt.',
+  'privacy.mode.saved': 'Enregistré',
+  'privacy.mode.saveError': 'Impossible de mettre à jour le mode de confidentialité.',
   'skills.recallCalendar.title': 'Google Agenda',
   'skills.recallCalendar.description':
     'Rejoindre automatiquement les appels Google Meet via Recall.ai',

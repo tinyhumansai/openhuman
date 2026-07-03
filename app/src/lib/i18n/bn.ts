@@ -3,6 +3,18 @@ import type { TranslationMap } from './types';
 // Bengali (বাংলা) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Privacy Mode selector (#4435) — data-egress posture
+  'privacy.mode.title': 'গোপনীয়তা মোড',
+  'privacy.mode.description':
+    'আপনার কতটা ডেটা এই ডিভাইস থেকে বের হতে পারে তা নিয়ন্ত্রণ করে। এজেন্ট অ্যাক্সেস মোড থেকে আলাদা।',
+  'privacy.mode.localOnly': 'শুধু লোকাল',
+  'privacy.mode.localOnlyDesc': 'শুধুমাত্র ডিভাইসে থাকা মডেল। বাহ্যিক মডেল কল ব্লক করা হয়।',
+  'privacy.mode.standard': 'স্ট্যান্ডার্ড',
+  'privacy.mode.standardDesc': 'ভারসাম্যপূর্ণ। বাহ্যিক মডেল কনফিগার অনুযায়ী ব্যবহৃত হয়।',
+  'privacy.mode.sensitive': 'সংবেদনশীল',
+  'privacy.mode.sensitiveDesc': 'সংবেদনশীল ডেটার জন্য অতিরিক্ত যত্ন। আরও নিয়ন্ত্রণ শীঘ্রই আসছে।',
+  'privacy.mode.saved': 'সংরক্ষিত',
+  'privacy.mode.saveError': 'গোপনীয়তা মোড আপডেট করা যায়নি।',
   'skills.recallCalendar.title': 'Google Calendar',
   'skills.recallCalendar.description':
     'Recall.ai-এর মাধ্যমে Google Meet কলে স্বয়ংক্রিয়ভাবে যোগ দিন',
