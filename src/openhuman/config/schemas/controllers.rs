@@ -11,7 +11,7 @@ use super::helpers::{
     AgentSettingsUpdate, AnalyticsSettingsUpdate, AutonomySettingsUpdate, BrowserSettingsUpdate,
     ComposioTriggerSettingsUpdate, DictationSettingsUpdate, LocalAiSettingsUpdate,
     MeetSettingsUpdate, MemorySettingsUpdate, MemorySyncSettingsUpdate, ModelSettingsUpdate,
-    OnboardingCompletedSetParams, RuntimeSettingsUpdate, SandboxSettingsUpdate,
+    OnboardingCompletedSetParams, PrivacyModeUpdate, RuntimeSettingsUpdate, SandboxSettingsUpdate,
     ScreenIntelligenceSettingsUpdate, SearchSettingsUpdate, SetBrowserAllowAllParams,
     SuperContextSetParams, VoiceServerSettingsUpdate, WorkspaceOnboardingFlagParams,
     WorkspaceOnboardingFlagSetParams, DEFAULT_ONBOARDING_FLAG_NAME,
@@ -55,6 +55,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("get_composio_trigger_settings"),
         schemas("get_autonomy_settings"),
         schemas("update_autonomy_settings"),
+        schemas("get_privacy_mode"),
+        schemas("set_privacy_mode"),
         schemas("get_agent_settings"),
         schemas("update_agent_settings"),
         schemas("update_search_settings"),
@@ -209,6 +211,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("update_autonomy_settings"),
             handler: handle_update_autonomy_settings,
+        },
+        RegisteredController {
+            schema: schemas("get_privacy_mode"),
+            handler: handle_get_privacy_mode,
+        },
+        RegisteredController {
+            schema: schemas("set_privacy_mode"),
+            handler: handle_set_privacy_mode,
         },
         RegisteredController {
             schema: schemas("get_agent_settings"),
@@ -458,6 +468,18 @@ pub(super) fn handle_update_autonomy_settings(params: Map<String, Value>) -> Con
             require_task_plan_approval: update.require_task_plan_approval,
         };
         to_json(config_rpc::load_and_apply_autonomy_settings(patch).await?)
+    })
+}
+
+pub(super) fn handle_get_privacy_mode(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { to_json(config_rpc::get_privacy_mode().await?) })
+}
+
+pub(super) fn handle_set_privacy_mode(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let update = deserialize_params::<PrivacyModeUpdate>(params)?;
+        let patch = config_rpc::PrivacySettingsPatch { mode: update.mode };
+        to_json(config_rpc::load_and_apply_privacy_settings(patch).await?)
     })
 }
 

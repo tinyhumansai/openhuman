@@ -227,6 +227,22 @@ pub fn schemas(function: &str) -> ControllerSchema {
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
+        "get_privacy_mode" => ControllerSchema {
+            namespace: "config",
+            function: "get_privacy_mode",
+            description: "Get the active Privacy Mode (data-egress posture): local_only | standard | sensitive. Distinct from the autonomy access mode.",
+            inputs: vec![],
+            outputs: vec![json_output("mode", "Current privacy mode: local_only | standard | sensitive.")],
+        },
+        "set_privacy_mode" => ControllerSchema {
+            namespace: "config",
+            function: "set_privacy_mode",
+            description: "Set the Privacy Mode (data-egress posture). local_only blocks external model calls at the inference chokepoint. Applies live to active sessions without a restart.",
+            inputs: vec![
+                optional_string("mode", "Privacy mode: local_only | standard | sensitive."),
+            ],
+            outputs: vec![json_output("mode", "Updated privacy mode.")],
+        },
         "get_agent_settings" => ControllerSchema {
             namespace: "config",
             function: "get_agent_settings",

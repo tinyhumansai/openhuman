@@ -246,6 +246,12 @@ pub(super) struct AutonomySettingsUpdate {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct PrivacyModeUpdate {
+    /// `"local_only" | "standard" | "sensitive"` (case-insensitive).
+    pub(super) mode: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct AgentSettingsUpdate {
     /// Tool/action wall-clock timeout in seconds (1–3600). Validated server-side.
     pub(super) agent_timeout_secs: Option<u64>,
