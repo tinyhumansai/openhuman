@@ -2573,3 +2573,107 @@ fn byo_route_without_usable_key_stays_gated() {
     store_byo_key(&config, "openai", "sk-byo-test");
     assert!(role_bypasses_managed_credits("chat", &config));
 }
+
+// ── Privacy Mode: local-only inference enforcement (#4435) ───────────────────
+
+#[test]
+fn local_only_blocks_external_cloud_slug() {
+    use crate::openhuman::config::PrivacyMode;
+    let v = local_only_violation(PrivacyMode::LocalOnly, "openai:gpt-4o");
+    assert_eq!(v.as_deref(), Some("openai"));
+}
+
+#[test]
+fn local_only_blocks_managed_backend() {
+    use crate::openhuman::config::PrivacyMode;
+    let v = local_only_violation(PrivacyMode::LocalOnly, PROVIDER_OPENHUMAN);
+    assert_eq!(v.as_deref(), Some("OpenHuman (managed cloud)"));
+}
+
+#[test]
+fn local_only_blocks_claude_code_cli() {
+    use crate::openhuman::config::PrivacyMode;
+    let v = local_only_violation(PrivacyMode::LocalOnly, "claude-code:sonnet");
+    assert_eq!(v.as_deref(), Some("Claude Code CLI"));
+}
+
+#[test]
+fn local_only_permits_local_runtimes() {
+    use crate::openhuman::config::PrivacyMode;
+    for local in [
+        "ollama:llama3",
+        "lmstudio:qwen",
+        "mlx:phi",
+        "local-openai:foo",
+    ] {
+        assert_eq!(
+            local_only_violation(PrivacyMode::LocalOnly, local),
+            None,
+            "local provider '{local}' must be permitted in LocalOnly mode"
+        );
+    }
+}
+
+#[test]
+fn local_only_defers_reresolving_sentinels() {
+    use crate::openhuman::config::PrivacyMode;
+    // Empty / "cloud" re-resolve to a concrete string and are re-checked on the
+    // recursive call — not blocked here.
+    assert_eq!(local_only_violation(PrivacyMode::LocalOnly, ""), None);
+    assert_eq!(local_only_violation(PrivacyMode::LocalOnly, "cloud"), None);
+}
+
+#[test]
+fn standard_mode_permits_external() {
+    use crate::openhuman::config::PrivacyMode;
+    assert_eq!(
+        local_only_violation(PrivacyMode::Standard, "openai:gpt-4o"),
+        None
+    );
+    assert_eq!(
+        local_only_violation(PrivacyMode::Sensitive, "openai:gpt-4o"),
+        None,
+        "Sensitive mode has no egress enforcement in S1"
+    );
+}
+
+#[test]
+fn enforce_local_only_inference_errors_on_external_when_local_only() {
+    // Drive the live-policy-backed wrapper: install a LocalOnly policy, then
+    // assert an external provider is refused with the privacy message and a
+    // local provider passes.
+    let _env = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    use crate::openhuman::config::PrivacyMode;
+    use crate::openhuman::security::SecurityPolicy;
+    let ws = std::env::temp_dir().join("openhuman_factory_privacy_test");
+    let policy = std::sync::Arc::new(
+        SecurityPolicy {
+            workspace_dir: ws.clone(),
+            ..SecurityPolicy::default()
+        }
+        .with_privacy_mode(PrivacyMode::LocalOnly),
+    );
+    crate::openhuman::security::live_policy::install(policy, ws.clone(), ws.clone());
+
+    let err = enforce_local_only_inference("chat", "openai:gpt-4o")
+        .expect_err("external provider must be refused in LocalOnly mode");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Local-only privacy mode is active"),
+        "unexpected error: {msg}"
+    );
+    assert!(
+        msg.contains("openai"),
+        "error should name the provider: {msg}"
+    );
+
+    // Local provider passes.
+    enforce_local_only_inference("chat", "ollama:llama3")
+        .expect("local provider must be permitted in LocalOnly mode");
+
+    // Restore Standard so we don't leak LocalOnly into other serial tests.
+    crate::openhuman::security::live_policy::reload_privacy(PrivacyMode::Standard)
+        .expect("policy installed");
+}

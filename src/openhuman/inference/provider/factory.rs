@@ -524,6 +524,89 @@ pub mod test_provider_override {
     }
 }
 
+/// Human-readable label for an *external* provider string, used in the
+/// LocalOnly privacy-mode block message so the user knows what was refused.
+fn external_provider_label(provider: &str) -> String {
+    let p = provider.trim();
+    if p == PROVIDER_OPENHUMAN {
+        return "OpenHuman (managed cloud)".to_string();
+    }
+    if p == BYOK_INCOMPLETE_SENTINEL {
+        return "cloud (incomplete BYOK config)".to_string();
+    }
+    if p == CLAUDE_AGENT_SDK_PROVIDER || p.starts_with(CLAUDE_AGENT_SDK_PREFIX) {
+        return "Claude Agent SDK".to_string();
+    }
+    if p.starts_with(crate::openhuman::inference::provider::claude_code::PROVIDER_PREFIX) {
+        return "Claude Code CLI".to_string();
+    }
+    // Concrete cloud slug "<slug>:<model>" → surface just the slug.
+    match p.split_once(':') {
+        Some((slug, _)) if !slug.trim().is_empty() => slug.trim().to_string(),
+        _ => p.to_string(),
+    }
+}
+
+/// Privacy Mode (#4435) pure decision: under `mode`, is constructing chat
+/// provider `provider` a local-only violation? Returns `Some(label)` naming the
+/// blocked external provider when refused, else `None`.
+///
+/// Only `LocalOnly` restricts anything. Local runtimes (Ollama / LM Studio / MLX
+/// / local-openai) are always permitted. Re-resolving sentinels (`""` / `"cloud"`)
+/// return `None` here — they recurse through
+/// [`create_chat_provider_from_string`] and are re-checked with the concrete
+/// resolved string. Extracted as a pure fn so it is unit-testable without the
+/// process-global live policy.
+fn local_only_violation(
+    mode: crate::openhuman::config::PrivacyMode,
+    provider: &str,
+) -> Option<String> {
+    use crate::openhuman::config::PrivacyMode;
+    if mode != PrivacyMode::LocalOnly {
+        return None;
+    }
+    let p = provider.trim();
+    if p.is_empty() || p == "cloud" {
+        // Deferred: re-resolves to a concrete string on the recursive call.
+        return None;
+    }
+    if crate::openhuman::inference::local::profile::is_local_provider_string(p) {
+        return None;
+    }
+    Some(external_provider_label(p))
+}
+
+/// Enforce Privacy Mode `LocalOnly` at the inference chokepoint: refuse to build
+/// an external chat provider when the live policy is local-only. Reads the live
+/// privacy mode (defaults to `Standard`/allow when no session policy is
+/// installed). See [`local_only_violation`] for the pure decision.
+fn enforce_local_only_inference(role: &str, provider: &str) -> anyhow::Result<()> {
+    let mode = crate::openhuman::security::live_policy::current_privacy_mode();
+    match local_only_violation(mode, provider) {
+        None => {
+            log::debug!(
+                "[privacy][chat-factory] privacy_mode={:?} role={} provider='{}' — inference permitted",
+                mode,
+                role,
+                provider.trim()
+            );
+            Ok(())
+        }
+        Some(label) => {
+            log::warn!(
+                "[privacy][chat-factory] LocalOnly BLOCK: role={} external provider='{}' ({}) refused",
+                role,
+                provider.trim(),
+                label
+            );
+            anyhow::bail!(
+                "Local-only privacy mode is active: this action needs external provider {label}. \
+                 Switch to a local model (Ollama/LM Studio/etc.) or change privacy mode in Settings."
+            )
+        }
+    }
+}
+
 /// Build a `(Provider, model)` for the given workload role.
 pub fn create_chat_provider(
     role: &str,
@@ -563,6 +646,12 @@ pub fn create_chat_provider_from_string(
         role,
         p
     );
+
+    // Privacy Mode (#4435): in LocalOnly mode, refuse to construct any external
+    // provider here — the single inference chokepoint. Re-resolving sentinels
+    // ("" / "cloud") are allowed through and re-checked on the recursive call
+    // below with the concrete resolved provider string.
+    enforce_local_only_inference(role, p)?;
 
     // Fail-closed: BYOK intent was detected upstream but no matching provider
     // entry was found. Surface a clear configuration error instead of silently
