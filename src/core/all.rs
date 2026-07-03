@@ -119,6 +119,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
         .extend(crate::openhuman::recall_calendar::all_recall_calendar_registered_controllers());
     // Scheduled job management
     controllers.extend(crate::openhuman::cron::all_cron_registered_controllers());
+    // Saved automation workflows (tinyflows graphs): create/get/list/update/delete/run
+    controllers.extend(crate::openhuman::flows::all_flows_registered_controllers());
     // Proactive task ingestion from external tools (github/notion/linear/clickup)
     controllers.extend(crate::openhuman::task_sources::all_task_sources_registered_controllers());
     controllers.extend(crate::openhuman::dashboard::all_dashboard_registered_controllers());
@@ -375,6 +377,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::composio::all_composio_controller_schemas());
     schemas.extend(crate::openhuman::recall_calendar::all_recall_calendar_controller_schemas());
     schemas.extend(crate::openhuman::cron::all_cron_controller_schemas());
+    schemas.extend(crate::openhuman::flows::all_flows_controller_schemas());
     schemas.extend(crate::openhuman::task_sources::all_task_sources_controller_schemas());
     schemas.extend(crate::openhuman::dashboard::all_dashboard_controller_schemas());
     schemas.extend(crate::openhuman::mcp_registry::all_mcp_registry_controller_schemas());
@@ -536,6 +539,7 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
             "Connectivity diagnostics for the local sidecar, listening port, and backend Socket.IO state.",
         ),
         "cron" => Some("Manage scheduled jobs and run history."),
+        "flows" => Some("Create, store, and run automation workflows."),
         "dashboard" => Some(
             "Operator-facing dashboard aggregations: per-model health comparison rows.",
         ),

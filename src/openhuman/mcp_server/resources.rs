@@ -260,6 +260,18 @@ const RESOURCE_CATALOG: &[PromptResource] = &[
         content: include_str!("../subconscious/agent/prompt.md"),
     },
     PromptResource {
+        uri: "openhuman://prompts/agents/frontend_agent",
+        name: "frontend_agent",
+        description: "Fast, always-on front end of the split-brain orchestration loop: triages incoming sessions and routes macro-instructions to the reasoning core.",
+        content: include_str!("../orchestration/frontend_agent/prompt.md"),
+    },
+    PromptResource {
+        uri: "openhuman://prompts/agents/reasoning_agent",
+        name: "reasoning_agent",
+        description: "Reasoning core of the split-brain orchestration loop: executes the front end's macro-instructions and compiles the channel reply.",
+        content: include_str!("../orchestration/reasoning_agent/prompt.md"),
+    },
+    PromptResource {
         uri: "openhuman://prompts/agents/skill_setup",
         name: "skill_setup",
         description: "Worker that guides skill installation and backend configuration.",

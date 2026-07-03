@@ -727,9 +727,9 @@ impl OrchestrationRuntime for ProductionRuntime {
 mod tests {
     use super::*;
     use crate::openhuman::orchestration::types::OrchestrationMessage;
-    use crate::openhuman::tinyagents::SqlRunLedgerCheckpointer;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tinyagents::graph::checkpoint::Checkpointer;
+    use tinyagents::graph::SqliteCheckpointer;
 
     fn test_config(tmp: &tempfile::TempDir) -> Config {
         Config {
@@ -910,7 +910,13 @@ mod tests {
         .unwrap();
 
         // Checkpoints persisted → kill/restart could resume without re-sending.
-        let cp = SqlRunLedgerCheckpointer::<OrchestrationState>::new(config);
+        // Same `orchestration_graph_checkpoints.db` path `run_orchestration_graph`
+        // opens (see `orchestration/graph/mod.rs`).
+        let checkpoint_db = config
+            .workspace_dir
+            .join("orchestration_graph_checkpoints.db");
+        let cp = SqliteCheckpointer::<OrchestrationState>::open(&checkpoint_db)
+            .expect("open checkpoint store");
         let list = cp.list("orchestration:h1").await.expect("list checkpoints");
         assert!(!list.is_empty(), "wake cycle persisted checkpoints");
     }
