@@ -3,6 +3,9 @@ import type { TranslationMap } from './types';
 // Bengali (বাংলা) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  'skills.recallCalendar.title': 'Google Calendar',
+  'skills.recallCalendar.description':
+    'Recall.ai-এর মাধ্যমে Google Meet কলে স্বয়ংক্রিয়ভাবে যোগ দিন',
   // Cross-host vault (#4278)
   'crossHostVault.title': 'ভল্টটি কোর হোস্টে রয়েছে।',
   'crossHostVault.message':
@@ -5239,6 +5242,10 @@ const messages: TranslationMap = {
   'skills.meetingBots.leavingButton': 'বেরিয়ে যাচ্ছে…',
   'skills.meetingBots.respondToParticipant': 'এই মিটিংয়ে আপনার নাম',
   'skills.meetingBots.respondToParticipantHint': 'যেমন: রিয়া (কলে আপনার প্রদর্শনী নাম)',
+  'skills.meetingBots.replyName.label': 'মিটিংয়ে আপনার নাম',
+  'skills.meetingBots.replyName.description':
+    'যে নামে বট শোনে ও উত্তর দেয়। কলে যেভাবে দেখায় সেভাবে আপনার নাম দিন — এটি যোগ দেওয়া প্রতিটি মিটিংয়ে প্রযোজ্য।',
+  'skills.meetingBots.replyName.placeholder': 'যেমন: অ্যালেক্স কিম',
   'skills.meetingBots.respondToParticipantDesc':
     'মিটিং থেকে আপনার সঠিক প্রদর্শন নাম লিখুন। বট কেবল তখনই সাড়া দেয় যখন আপনি তার নাম বলেন (ওয়েক ফ্রেজ)।',
   'skills.meetingBots.wakePhrase': 'ওয়েক ফ্রেজ',

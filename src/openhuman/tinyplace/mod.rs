@@ -28,6 +28,7 @@
 pub(crate) mod agent;
 mod agent_tools;
 mod manifest;
+pub(crate) use manifest::{acknowledge_message, decrypt_envelope};
 pub(crate) mod ops;
 mod payment;
 mod schemas;

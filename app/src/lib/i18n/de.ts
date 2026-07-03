@@ -3,6 +3,8 @@ import type { TranslationMap } from './types';
 // German (Deutsch) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  'skills.recallCalendar.title': 'Google Kalender',
+  'skills.recallCalendar.description': 'Google Meet-Anrufen automatisch über Recall.ai beitreten',
   // Cross-host vault (#4278)
   'crossHostVault.title': 'Der Vault liegt auf dem Core-Host.',
   'crossHostVault.message':
@@ -5373,6 +5375,10 @@ const messages: TranslationMap = {
   'skills.meetingBots.leavingButton': 'Wird verlassen…',
   'skills.meetingBots.respondToParticipant': 'Ihr Name in diesem Meeting',
   'skills.meetingBots.respondToParticipantHint': 'z. B. Max (Ihr Anzeigename im Anruf)',
+  'skills.meetingBots.replyName.label': 'Ihr Name in Meetings',
+  'skills.meetingBots.replyName.description':
+    'Der Name, auf den der Bot hört und antwortet. Geben Sie Ihren Namen so ein, wie er im Anruf erscheint – gilt für jedes Meeting, dem er beitritt.',
+  'skills.meetingBots.replyName.placeholder': 'z. B. Alex Kim',
   'skills.meetingBots.respondToParticipantDesc':
     'Geben Sie Ihren genauen Anzeigenamen aus dem Meeting ein. Der Bot antwortet nur, wenn Sie seinen Namen sagen (Wake-Phrase).',
   'skills.meetingBots.wakePhrase': 'Wake-Phrase',

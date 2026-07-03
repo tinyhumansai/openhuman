@@ -1103,6 +1103,13 @@ pub async fn handle_notification_action(params: Map<String, Value>) -> Result<Va
                 .ok_or_else(|| "[agent_meetings] payload.meetUrl is required".to_string())?;
             let config = crate::openhuman::config::ops::load_config_with_timeout().await?;
 
+            // Final anchor fallback: the display name the user saved on the
+            // Meetings page, so the "Join & reply" button honors it too.
+            let respond_to_participant = respond_to_participant.or_else(|| {
+                let saved = config.meet.reply_display_name.trim();
+                (!saved.is_empty()).then(|| saved.to_string())
+            });
+
             if action_id == "always_join" {
                 let mut cfg = config.clone();
                 cfg.meet.auto_join_policy =
@@ -1642,6 +1649,46 @@ mod tests {
         params.insert("payload".to_string(), json!({ "meetingId": "m-1" }));
         let err = handle_notification_action(params).await.unwrap_err();
         assert!(err.contains("meetUrl"));
+    }
+
+    #[tokio::test]
+    async fn notification_join_falls_back_to_saved_reply_display_name() {
+        // Join branch anchor resolution: when the notification payload carries
+        // no `respondToParticipant` and no cached account identity resolves, the
+        // reply anchor must fall back to the display name the user saved on the
+        // Meetings page (`config.meet.reply_display_name`). We can't inspect the
+        // resolved anchor without a live socket, but the handler must load
+        // config, run the fallback, build the join map, and reach `handle_join`
+        // — which then fails only at the (absent) socket. Reaching that error
+        // proves the changed fallback lines executed.
+        let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::TempDir::new().unwrap();
+        let _env = EnvGuard::set_workspace(tmp.path());
+
+        let mut cfg = crate::openhuman::config::Config::load_or_init()
+            .await
+            .unwrap();
+        cfg.meet.reply_display_name = "Saved Anchor".to_string();
+        cfg.save().await.unwrap();
+
+        let mut params = Map::new();
+        params.insert("action_id".to_string(), json!("join_active"));
+        params.insert(
+            "payload".to_string(),
+            json!({
+                "meetingId": "m-anchor-1",
+                "meetUrl": "https://meet.google.com/anchor-fallback",
+                // deliberately no respondToParticipant → config fallback path
+            }),
+        );
+
+        let err = handle_notification_action(params).await.unwrap_err();
+        assert!(
+            err.contains("socket not connected"),
+            "expected socket error after anchor fallback, got: {err}"
+        );
     }
 
     #[tokio::test]

@@ -329,6 +329,35 @@ async fn unit_phases_execute_in_dependency_order() {
     );
 }
 
+/// Covers `run_engine_loop` — the `with_root_parent` wrapper around
+/// `drive_phases`. With a mock parent installed, `with_root_parent` reuses it
+/// (rather than building a real root), so the engine loop drives the run to
+/// completion under the mock provider. Mirrors the `drive_phases` happy path,
+/// but through the wrapper the live engine spawns on its background task.
+#[tokio::test]
+async fn run_engine_loop_completes_run_under_ambient_parent() {
+    AgentDefinitionRegistry::init_global_builtins().unwrap();
+    let (_dir, config) = test_config();
+    let provider = PeakProvider::default();
+    let def = linear_def(2, 8, 2);
+    let id = seed_run(
+        &config,
+        &def,
+        json!({ "question": "what is X?", "modelOverride": "test-model" }),
+    );
+
+    with_parent_context(mock_parent(Arc::new(provider.clone())), async {
+        run_engine_loop(&config, &id, def).await
+    })
+    .await;
+
+    assert_eq!(
+        status_of(&config, &id),
+        WorkflowRunStatus::Completed,
+        "run_engine_loop drove the run to completion through with_root_parent"
+    );
+}
+
 #[tokio::test]
 async fn unit_concurrency_cap_is_respected() {
     AgentDefinitionRegistry::init_global_builtins().unwrap();

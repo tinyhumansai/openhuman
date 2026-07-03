@@ -3,6 +3,9 @@ import type { TranslationMap } from './types';
 // Italian (Italiano) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  'skills.recallCalendar.title': 'Google Calendar',
+  'skills.recallCalendar.description':
+    'Partecipa automaticamente alle chiamate Google Meet tramite Recall.ai',
   // Cross-host vault (#4278)
   'crossHostVault.title': "Il vault è sull'host del core.",
   'crossHostVault.message':
@@ -5327,6 +5330,10 @@ const messages: TranslationMap = {
   'skills.meetingBots.respondToParticipant': 'Il tuo nome in questa riunione',
   'skills.meetingBots.respondToParticipantHint':
     'es. Mario (il tuo nome visualizzato nella chiamata)',
+  'skills.meetingBots.replyName.label': 'Il tuo nome nelle riunioni',
+  'skills.meetingBots.replyName.description':
+    'Il nome che il bot ascolta e a cui risponde. Inserisci il tuo nome come appare nella chiamata: si applica a ogni riunione a cui partecipa.',
+  'skills.meetingBots.replyName.placeholder': 'es. Alex Kim',
   'skills.meetingBots.respondToParticipantDesc':
     'Inserisci il tuo nome visualizzato esatto nella riunione. Il bot risponde solo quando pronunci il suo nome (frase di attivazione).',
   'skills.meetingBots.wakePhrase': 'Frase di attivazione',

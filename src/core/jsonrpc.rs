@@ -2242,6 +2242,8 @@ fn register_domain_subscribers(
         // only walks Composio connections, so without this they only sync
         // on manual "Sync now" and silently go stale.
         crate::openhuman::memory_sync::workspace::start_workspace_periodic_sync();
+        // Orchestration: ingest tiny.place harness session DMs off the stream bus.
+        crate::openhuman::orchestration::register_orchestration_ingest_subscriber();
         // Task-sources proactive ingestion: connection-created hook + poll.
         crate::openhuman::task_sources::bus::register_task_sources_subscriber();
         crate::openhuman::task_sources::start_periodic_poll();

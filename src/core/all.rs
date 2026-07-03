@@ -114,6 +114,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::audio_toolkit::all_audio_toolkit_registered_controllers());
     // Composio integration controllers
     controllers.extend(crate::openhuman::composio::all_composio_registered_controllers());
+    // Recall.ai Calendar V1 (backend-proxied) controllers
+    controllers
+        .extend(crate::openhuman::recall_calendar::all_recall_calendar_registered_controllers());
     // Scheduled job management
     controllers.extend(crate::openhuman::cron::all_cron_registered_controllers());
     // Proactive task ingestion from external tools (github/notion/linear/clickup)
@@ -365,6 +368,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::app_state::all_app_state_controller_schemas());
     schemas.extend(crate::openhuman::audio_toolkit::all_audio_toolkit_controller_schemas());
     schemas.extend(crate::openhuman::composio::all_composio_controller_schemas());
+    schemas.extend(crate::openhuman::recall_calendar::all_recall_calendar_controller_schemas());
     schemas.extend(crate::openhuman::cron::all_cron_controller_schemas());
     schemas.extend(crate::openhuman::task_sources::all_task_sources_controller_schemas());
     schemas.extend(crate::openhuman::dashboard::all_dashboard_controller_schemas());

@@ -3,6 +3,8 @@ import type { TranslationMap } from './types';
 // Simplified Chinese (简体中文) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  'skills.recallCalendar.title': 'Google 日历',
+  'skills.recallCalendar.description': '通过 Recall.ai 自动加入 Google Meet 通话',
   // Cross-host vault (#4278)
   'crossHostVault.title': '记忆库位于核心主机上。',
   'crossHostVault.message':
@@ -4980,6 +4982,10 @@ const messages: TranslationMap = {
   'skills.meetingBots.leavingButton': '正在离开…',
   'skills.meetingBots.respondToParticipant': '您在此会议中的姓名',
   'skills.meetingBots.respondToParticipantHint': '例如：小明（通话中的显示名称）',
+  'skills.meetingBots.replyName.label': '您在会议中的名称',
+  'skills.meetingBots.replyName.description':
+    '机器人识别并回复的名称。请输入您在通话中显示的名称——适用于它加入的每个会议。',
+  'skills.meetingBots.replyName.placeholder': '例如：Alex Kim',
   'skills.meetingBots.respondToParticipantDesc':
     '输入您在会议中的确切显示名称。机器人仅在您说出其名称（唤醒词）时才会响应。',
   'skills.meetingBots.wakePhrase': '唤醒词',

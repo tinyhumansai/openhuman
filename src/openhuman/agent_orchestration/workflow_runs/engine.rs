@@ -34,8 +34,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 
-use crate::openhuman::agent::harness::fork_context::with_parent_context;
-use crate::openhuman::agent_orchestration::parent_context::build_root_parent;
+use crate::openhuman::agent_orchestration::parent_context::with_root_parent;
 use crate::openhuman::config::Config;
 use crate::openhuman::session_db::run_ledger::{
     get_workflow_run, upsert_workflow_run, WorkflowRun, WorkflowRunStatus, WorkflowRunUpsert,
@@ -300,15 +299,12 @@ pub async fn resume_workflow_run(config: &Config, id: &str) -> Result<WorkflowRu
 async fn run_engine_loop(config: &Config, run_id: &str, definition: WorkflowDefinition) {
     let cancel = lookup_cancel_flag(run_id).unwrap_or_else(|| register_cancel_flag(run_id));
 
-    let outcome = match build_root_parent(config, "workflow_engine", "workflow", "workflow").await {
-        Ok(parent) => {
-            with_parent_context(parent, async {
-                super::graph::drive_phases(config, run_id, &definition, &cancel).await
-            })
-            .await
-        }
-        Err(err) => Err(err),
-    };
+    let outcome = with_root_parent(config, "workflow_engine", "workflow", "workflow", async {
+        super::graph::drive_phases(config, run_id, &definition, &cancel).await
+    })
+    .await
+    // Flatten: outer Err = root-parent build failure, inner = drive_phases result.
+    .unwrap_or_else(Err);
 
     if let Err(err) = outcome {
         log::error!(

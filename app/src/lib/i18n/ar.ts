@@ -3,6 +3,8 @@ import type { TranslationMap } from './types';
 // Arabic (العربية) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  'skills.recallCalendar.title': 'تقويم Google',
+  'skills.recallCalendar.description': 'الانضمام تلقائيًا إلى مكالمات Google Meet عبر Recall.ai',
   // Cross-host vault (#4278)
   'crossHostVault.title': 'الخزنة موجودة على مضيف النواة.',
   'crossHostVault.message':
@@ -5134,6 +5136,10 @@ const messages: TranslationMap = {
   'skills.meetingBots.leavingButton': 'جارٍ المغادرة…',
   'skills.meetingBots.respondToParticipant': 'اسمك في هذا الاجتماع',
   'skills.meetingBots.respondToParticipantHint': 'مثال: أحمد (اسمك في المكالمة)',
+  'skills.meetingBots.replyName.label': 'اسمك في الاجتماعات',
+  'skills.meetingBots.replyName.description':
+    'الاسم الذي يستمع إليه المساعد ويرد عليه. أدخل اسمك كما يظهر في المكالمة — يُطبَّق على كل اجتماع ينضم إليه.',
+  'skills.meetingBots.replyName.placeholder': 'مثال: أليكس كيم',
   'skills.meetingBots.respondToParticipantDesc':
     'أدخل اسمك الظاهر بالضبط في الاجتماع. لن يستجيب البوت إلا عندما تنطق باسمه (عبارة التنشيط).',
   'skills.meetingBots.wakePhrase': 'عبارة التنشيط',

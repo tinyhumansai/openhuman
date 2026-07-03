@@ -3,6 +3,9 @@ import type { TranslationMap } from './types';
 // Russian (Русский) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  'skills.recallCalendar.title': 'Google Календарь',
+  'skills.recallCalendar.description':
+    'Автоматически подключаться к звонкам Google Meet через Recall.ai',
   // Cross-host vault (#4278)
   'crossHostVault.title': 'Хранилище находится на хосте ядра.',
   'crossHostVault.message':
@@ -5285,6 +5288,10 @@ const messages: TranslationMap = {
   'skills.meetingBots.leavingButton': 'Выход…',
   'skills.meetingBots.respondToParticipant': 'Ваше имя на этой встрече',
   'skills.meetingBots.respondToParticipantHint': 'напр. Иван (ваше отображаемое имя в звонке)',
+  'skills.meetingBots.replyName.label': 'Ваше имя на встречах',
+  'skills.meetingBots.replyName.description':
+    'Имя, на которое бот откликается и отвечает. Введите своё имя так, как оно отображается в звонке — применяется к каждой встрече, к которой он подключается.',
+  'skills.meetingBots.replyName.placeholder': 'напр. Алекс Ким',
   'skills.meetingBots.respondToParticipantDesc':
     'Введите своё точное отображаемое имя из встречи. Бот реагирует только когда вы произносите его имя (фраза активации).',
   'skills.meetingBots.wakePhrase': 'Фраза активации',

@@ -1,6 +1,8 @@
 import type { TranslationMap } from './types';
 
 const en: TranslationMap = {
+  'skills.recallCalendar.title': 'Google Calendar',
+  'skills.recallCalendar.description': 'Auto-join Google Meet calls via Recall.ai',
   // Navigation
   'nav.home': 'Home',
   'nav.human': 'Human',
@@ -5911,6 +5913,10 @@ const en: TranslationMap = {
   'skills.meetingBots.leavingButton': 'Leaving…',
   'skills.meetingBots.respondToParticipant': 'Your Name in This Meeting',
   'skills.meetingBots.respondToParticipantHint': 'e.g. Alice (your display name in the call)',
+  'skills.meetingBots.replyName.label': 'Your name in meetings',
+  'skills.meetingBots.replyName.description':
+    'The name the bot listens for and replies to. Enter your name as it appears in the call — applied to every meeting it joins.',
+  'skills.meetingBots.replyName.placeholder': 'e.g. Alex Kim',
   'skills.meetingBots.respondToParticipantDesc':
     'Enter your exact display name from the meeting. The bot only responds when you say its name (wake phrase).',
   'skills.meetingBots.wakePhrase': 'Wake Phrase',

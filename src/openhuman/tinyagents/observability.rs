@@ -259,7 +259,19 @@ impl EventListener for OpenhumanEventBridge {
             // exactly once per model call; prefer it over `ModelCompleted`'s
             // optional usage to avoid double counting.
             AgentEvent::UsageRecorded { usage } => self.record_usage(usage),
-            AgentEvent::ToolStarted { call_id, tool_name } => {
+            AgentEvent::ToolStarted { call_id, tool_name }
+                if tool_name.as_str() != super::tools::UNKNOWN_TOOL_SENTINEL =>
+            {
+                // Skip the sentinel Started event. When the model calls a tool the
+                // agent can't see, `UnknownToolRewriteMiddleware` rewrites the name
+                // to `UNKNOWN_TOOL_SENTINEL` *before* this event fires. The frontend
+                // keys tool-timeline rows by `call_id` and overwrites the name on
+                // Started, so a real streamed `web_fetch` row would be clobbered to
+                // the sentinel — dropping the attempted tool name from the timeline
+                // (regression vs. the pre-tinyagents engine, which emitted the real
+                // name before the availability block). The streamed
+                // `tool_args_delta` row (carrying the attempted name) survives, and
+                // the sentinel `ToolCompleted` only updates status by `call_id`.
                 let iteration = self.iteration();
                 match &self.scope {
                     None => self.send(AgentProgress::ToolCallStarted {
@@ -359,6 +371,40 @@ mod tests {
 
         let (input, output, _) = bridge.totals();
         assert_eq!((input, output), (100, 40));
+    }
+
+    #[tokio::test]
+    async fn sentinel_tool_started_is_not_forwarded() {
+        // #4249 regression guard: a `ToolStarted` for the unknown-tool sentinel
+        // must NOT emit a `ToolCallStarted`. The frontend keys tool-timeline rows
+        // by `call_id` and overwrites the name on Started, so forwarding the
+        // sentinel would clobber the real streamed row (e.g. `web_fetch`) and drop
+        // the attempted tool from the UI timeline. A real tool name still forwards.
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let bridge = OpenhumanEventBridge::new(Some(tx), "mock-model", 10);
+        let sink = EventSink::new();
+        sink.subscribe(bridge.clone());
+
+        sink.emit(AgentEvent::ToolStarted {
+            call_id: "c1".into(),
+            tool_name: crate::openhuman::tinyagents::tools::UNKNOWN_TOOL_SENTINEL.to_string(),
+        });
+        sink.emit(AgentEvent::ToolStarted {
+            call_id: "c2".into(),
+            tool_name: "web_fetch".to_string(),
+        });
+
+        let mut started_names = Vec::new();
+        while let Ok(p) = rx.try_recv() {
+            if let AgentProgress::ToolCallStarted { tool_name, .. } = p {
+                started_names.push(tool_name);
+            }
+        }
+        assert_eq!(
+            started_names,
+            vec!["web_fetch".to_string()],
+            "sentinel Started must be skipped; the real tool name must still forward"
+        );
     }
 }
 

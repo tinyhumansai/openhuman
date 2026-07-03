@@ -313,6 +313,25 @@ async fn load_store(workspace_dir: &Path) -> Result<PairingStore, String> {
     }
 }
 
+/// Agent ids that hold an accepted (linked) local pairing record. Local-only
+/// read (no network) — used to gate which DM senders the orchestration layer is
+/// allowed to decrypt/ingest, so ordinary human DMs are never consumed. Returns
+/// an empty set on any read error (fail-closed: nothing is ingested).
+pub(crate) async fn linked_agent_ids(workspace_dir: &Path) -> std::collections::HashSet<String> {
+    match load_store(workspace_dir).await {
+        Ok(store) => store
+            .records
+            .into_iter()
+            .filter(|record| record.status == PairingStatus::Linked)
+            .map(|record| record.agent_id)
+            .collect(),
+        Err(e) => {
+            log::warn!(target: LOG_TARGET, "[orchestration_pairing] linked_agent_ids read failed: {e}");
+            std::collections::HashSet::new()
+        }
+    }
+}
+
 async fn save_store(workspace_dir: &Path, store: &PairingStore) -> Result<(), String> {
     let path = store_path(workspace_dir);
     let parent = path

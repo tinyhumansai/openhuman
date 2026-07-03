@@ -3351,6 +3351,75 @@ pub(crate) fn handle_tinyplace_signal_send_message(params: Map<String, Value>) -
     })
 }
 
+/// Decrypt a single inbound Signal DM envelope to its plaintext body.
+///
+/// Shared by the `signal_decrypt_message` controller and the orchestration
+/// ingest path. NOTE: `SignalSession::decrypt` advances the double ratchet and
+/// consumes one-time pre-keys — it is NOT idempotent. Callers that may re-see
+/// the same envelope must dedupe by message id BEFORE calling this.
+pub(crate) async fn decrypt_envelope(
+    envelope: &tinyplace::types::MessageEnvelope,
+) -> Result<String, String> {
+    log::debug!(
+        "{LOG_PREFIX} decrypt_envelope from={} type={} id={}",
+        envelope.from,
+        envelope.envelope_type,
+        envelope.id
+    );
+
+    // Obtain our identity public key and an Arc-wrapped store for SignalSession.
+    let store = crate::openhuman::tinyplace::signal_store::global_signal_store_arc().await?;
+    let client = global_state().client().await?;
+    let our_identity_pub = store
+        .identity_x25519_key_pair()
+        .await
+        .map_err(|e| format!("identity key: {e}"))?
+        .public_key;
+
+    let sender = envelope.from.clone();
+
+    // Fetch sender's published key bundle to obtain their X25519 identity key.
+    // Ed25519 -> X25519 conversion via decode_identity_key — must be preserved.
+    let sender_bundle = client.keys.get_bundle(&sender).await.map_err(map_err)?;
+    let sender_x25519_identity = decode_identity_key(&sender_bundle.identity_key)?;
+
+    // Decrypt via SDK SignalSession.
+    //
+    // SignalSession::decrypt handles both PREKEY_BUNDLE and CIPHERTEXT paths
+    // internally (via process_pre_key_message), including one-time pre-key
+    // consumption, x3dh_respond, ratchet_decrypt, and store_session.
+    let signal_session = SignalSession::new(
+        Arc::clone(&store) as Arc<dyn SessionStore>,
+        our_identity_pub,
+    );
+    let plaintext_bytes = signal_session
+        .decrypt(&sender, &sender_x25519_identity, envelope)
+        .await
+        .map_err(|e| format!("decryption failed: {e}"))?;
+
+    let plaintext = String::from_utf8(plaintext_bytes)
+        .map_err(|e| format!("plaintext is not valid UTF-8: {e}"))?;
+    log::info!(
+        "{LOG_PREFIX} decrypt_envelope decrypted from={sender} id={} len={}",
+        envelope.id,
+        plaintext.len()
+    );
+    Ok(plaintext)
+}
+
+/// Acknowledge (delete) a delivered message from the relay mailbox. Shared by
+/// the `messages_acknowledge` controller and orchestration ingest.
+pub(crate) async fn acknowledge_message(message_id: &str) -> Result<(), String> {
+    let client = global_state().client().await?;
+    let signer = require_signer(client)?;
+    client
+        .messages
+        .acknowledge(message_id, &signer.agent_id())
+        .await
+        .map_err(map_err)?;
+    Ok(())
+}
+
 pub(crate) fn handle_tinyplace_signal_decrypt_message(
     params: Map<String, Value>,
 ) -> ControllerFuture {
@@ -3361,50 +3430,7 @@ pub(crate) fn handle_tinyplace_signal_decrypt_message(
         let envelope: tinyplace::types::MessageEnvelope =
             serde_json::from_value(envelope_val.clone())
                 .map_err(|e| format!("invalid envelope: {e}"))?;
-        log::debug!(
-            "{LOG_PREFIX} signal_decrypt_message from={} type={} id={}",
-            envelope.from,
-            envelope.envelope_type,
-            envelope.id
-        );
-
-        // Obtain our identity public key and an Arc-wrapped store for SignalSession.
-        let store = crate::openhuman::tinyplace::signal_store::global_signal_store_arc().await?;
-        let client = global_state().client().await?;
-        let our_identity_pub = store
-            .identity_x25519_key_pair()
-            .await
-            .map_err(|e| format!("identity key: {e}"))?
-            .public_key;
-
-        let sender = envelope.from.clone();
-
-        // Fetch sender's published key bundle to obtain their X25519 identity key.
-        // Ed25519 -> X25519 conversion via decode_identity_key — must be preserved.
-        let sender_bundle = client.keys.get_bundle(&sender).await.map_err(map_err)?;
-        let sender_x25519_identity = decode_identity_key(&sender_bundle.identity_key)?;
-
-        // Decrypt via SDK SignalSession.
-        //
-        // SignalSession::decrypt handles both PREKEY_BUNDLE and CIPHERTEXT paths
-        // internally (via process_pre_key_message), including one-time pre-key
-        // consumption, x3dh_respond, ratchet_decrypt, and store_session.
-        let signal_session = SignalSession::new(
-            Arc::clone(&store) as Arc<dyn SessionStore>,
-            our_identity_pub,
-        );
-        let plaintext_bytes = signal_session
-            .decrypt(&sender, &sender_x25519_identity, &envelope)
-            .await
-            .map_err(|e| format!("decryption failed: {e}"))?;
-
-        let plaintext = String::from_utf8(plaintext_bytes)
-            .map_err(|e| format!("plaintext is not valid UTF-8: {e}"))?;
-        log::info!(
-            "{LOG_PREFIX} signal_decrypt_message decrypted from={sender} id={} len={}",
-            envelope.id,
-            plaintext.len()
-        );
+        let plaintext = decrypt_envelope(&envelope).await?;
         to_value(serde_json::json!({
             "plaintext": plaintext,
             "from": envelope.from,
@@ -3451,13 +3477,7 @@ pub(crate) fn handle_tinyplace_messages_acknowledge(
     Box::pin(async move {
         let message_id = req_str(&params, "messageId")?.to_string();
         log::debug!("{LOG_PREFIX} messages_acknowledge id={message_id}");
-        let client = global_state().client().await?;
-        let signer = require_signer(client)?;
-        client
-            .messages
-            .acknowledge(&message_id, &signer.agent_id())
-            .await
-            .map_err(map_err)?;
+        acknowledge_message(&message_id).await?;
         to_value(serde_json::json!({ "ok": true }))
     })
 }
