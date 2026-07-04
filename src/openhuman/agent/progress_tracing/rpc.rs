@@ -174,12 +174,15 @@ mod tests {
     #[tokio::test]
     async fn test_handle_submit_score_success() {
         std::env::set_var("OPENHUMAN_SHARE_USAGE_DATA", "false"); // Disable real network
-        
+
         let params = json!({
             "trace_id": "trace-test",
             "name": "user-feedback",
             "value": 1.0,
-        }).as_object().unwrap().clone();
+        })
+        .as_object()
+        .unwrap()
+        .clone();
 
         let result = handle_submit_score(params).await.unwrap();
         assert_eq!(result, json!({ "ok": true }));
@@ -189,7 +192,10 @@ mod tests {
     async fn test_handle_submit_score_invalid_params() {
         let params = json!({
             "trace_id": "trace-test",
-        }).as_object().unwrap().clone();
+        })
+        .as_object()
+        .unwrap()
+        .clone();
 
         let err = handle_submit_score(params).await.unwrap_err();
         assert!(err.to_string().contains("Invalid SubmitScoreRequest"));
