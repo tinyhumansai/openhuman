@@ -913,4 +913,41 @@ mod tests {
             .expect_err("missing thread_id");
         assert!(err.to_string().contains("thread_id"));
     }
+
+    #[tokio::test]
+    async fn message_append_injects_trace_id() {
+        use crate::openhuman::agent::progress_tracing::TURN_TRACE_ID;
+        use crate::openhuman::threads::ops;
+        use crate::openhuman::threads::schemas::CreateConversationThreadRequest;
+
+        // Create a real thread so ops::message_append succeeds
+        let req = CreateConversationThreadRequest {
+            labels: None,
+            personality_id: None,
+        };
+        let created = ops::thread_create_new(req).await.unwrap().value;
+        let thread_id = created.id;
+
+        let tool_args = json!({
+            "thread_id": thread_id,
+            "message": {
+                "id": "msg-1",
+                "role": "assistant",
+                "content": "Testing trace",
+                "type": "text",
+                "created_at": chrono::Utc::now().to_rfc3339()
+            }
+        });
+
+        // Run the tool within a TURN_TRACE_ID scope
+        let tool = ThreadMessageAppendTool;
+        let result = TURN_TRACE_ID
+            .scope("trace-abc-123".to_string(), tool.execute(tool_args))
+            .await
+            .expect("tool execution should succeed");
+
+        let outcome: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+        let meta = &outcome["extra_metadata"];
+        assert_eq!(meta["traceId"].as_str(), Some("trace-abc-123"));
+    }
 }
