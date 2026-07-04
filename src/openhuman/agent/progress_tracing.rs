@@ -64,6 +64,7 @@ use crate::openhuman::config::Config;
 pub(crate) mod journal_projection;
 /// Langfuse ingestion exporter (remote push to the co-hosted staging server).
 pub(crate) mod langfuse;
+pub mod rpc;
 
 #[cfg(test)]
 mod journal_projection_tests;

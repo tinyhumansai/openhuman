@@ -657,6 +657,94 @@ pub(crate) async fn push_spans(config: &Config, spans: &[TraceSpan]) -> Result<(
             target: LOG_TARGET,
             "[agent-tracing] pushed {span_count} spans to Langfuse ({status})"
         );
+    Ok(())
+}
+
+/// Push a single `score-create` event to Langfuse, attaching it to an existing
+/// trace. Follows the same privacy gate, resolution, and error handling patterns
+/// as `push_spans`.
+pub(crate) async fn push_score(
+    config: &Config,
+    trace_id: &str,
+    name: &str,
+    value: f64,
+    comment: Option<&str>,
+) -> Result<(), String> {
+    if !config.observability.share_usage_data {
+        return Ok(());
+    }
+
+    let url = ingestion_url(config);
+    if !url.starts_with("http") {
+        return Err(format!(
+            "could not resolve Langfuse ingestion URL from backend host (got {url:?})"
+        ));
+    }
+
+    let token = require_live_session_token(config)?;
+    let mut body = json!({
+        "id": new_event_id(),
+        "traceId": trace_id,
+        "name": name,
+        "value": value,
+    });
+    if let Some(c) = comment {
+        body["comment"] = json!(c);
+    }
+
+    let batch = json!({
+        "batch": [{
+            "id": new_event_id(),
+            "type": "score-create",
+            "timestamp": iso_millis(chrono::Utc::now().timestamp_millis() as u64),
+            "body": body
+        }]
+    });
+
+    tracing::debug!(
+        target: LOG_TARGET,
+        "[agent-tracing] pushing score {name}={value} to Langfuse at {url}"
+    );
+
+    let response = reqwest::Client::new()
+        .post(&url)
+        .header(
+            reqwest::header::AUTHORIZATION,
+            bearer_authorization_value(&token),
+        )
+        .timeout(PUSH_TIMEOUT)
+        .json(&batch)
+        .send()
+        .await
+        .map_err(|err| format!("POST {url} failed: {err}"))?;
+
+    let status = response.status();
+    let body_text = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        let excerpt: String = body_text.chars().take(200).collect();
+        return Err(format!("Langfuse ingestion returned {status}: {excerpt}"));
+    }
+
+    let rejected = serde_json::from_str::<Value>(&body_text)
+        .ok()
+        .and_then(|v| v.get("errors").and_then(Value::as_array).cloned())
+        .filter(|errs| !errs.is_empty());
+
+    if let Some(errs) = rejected {
+        let excerpt: String = serde_json::to_string(&errs)
+            .unwrap_or_default()
+            .chars()
+            .take(400)
+            .collect();
+        tracing::warn!(
+            target: LOG_TARGET,
+            "[agent-tracing] Langfuse ({status}) rejected score event: {excerpt}"
+        );
+    } else {
+        tracing::debug!(
+            target: LOG_TARGET,
+            "[agent-tracing] pushed score to Langfuse ({status})"
+        );
     }
     Ok(())
 }

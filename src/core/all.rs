@@ -269,6 +269,10 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         DomainGroup::Agent,
         crate::openhuman::agent::all_agent_registered_controllers(),
     );
+    // Langfuse progress-tracing feedback scores (observability_submit_score RPC)
+    controllers.extend(
+        crate::openhuman::agent::progress_tracing::rpc::all_progress_tracing_registered_controllers(),
+    );
     // Read-only agent run replay + status over the durable journal/status seams
     // (agent_run_events / agent_run_status / agent_runs_active).
     push(
@@ -1049,6 +1053,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         ),
         "tinyplace" => Some(
             "tiny.place A2A social-network integration: directory, explorer, and search over the agent network.",
+        ),
+        "observability" => Some(
+            "Submit observability feedback such as quality scores to the active trace.",
         ),
         _ => None,
     }

@@ -2299,6 +2299,38 @@ const Conversations = ({
                                   const pickerOpen = reactionPickerMsgId === msg.id;
                                   return (
                                     <div className="absolute -bottom-2 left-3 z-10 flex items-center gap-1">
+                                      {msg.sender === 'agent' && selectedThreadId && (
+                                        <>
+                                          <button
+                                            type="button"
+                                            className="rounded-full bg-white p-1 text-stone-500 shadow-sm ring-1 ring-inset ring-stone-200 hover:bg-stone-50 hover:text-stone-700 dark:bg-stone-800 dark:text-stone-400 dark:ring-stone-700 dark:hover:bg-stone-700 dark:hover:text-stone-200"
+                                            onClick={() => {
+                                              void callCoreRpc('openhuman.observability_submit_score', {
+                                                trace_id: `${selectedThreadId}:${msg.id}`,
+                                                name: 'user-feedback',
+                                                value: 1.0,
+                                              });
+                                            }}
+                                            title="Good response"
+                                          >
+                                            <LuThumbsUp className="h-3 w-3" />
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="rounded-full bg-white p-1 text-stone-500 shadow-sm ring-1 ring-inset ring-stone-200 hover:bg-stone-50 hover:text-stone-700 dark:bg-stone-800 dark:text-stone-400 dark:ring-stone-700 dark:hover:bg-stone-700 dark:hover:text-stone-200"
+                                            onClick={() => {
+                                              void callCoreRpc('openhuman.observability_submit_score', {
+                                                trace_id: `${selectedThreadId}:${msg.id}`,
+                                                name: 'user-feedback',
+                                                value: 0.0,
+                                              });
+                                            }}
+                                            title="Bad response"
+                                          >
+                                            <LuThumbsDown className="h-3 w-3" />
+                                          </button>
+                                        </>
+                                      )}
                                       {myReactions.map(emoji => (
                                         <button
                                           key={emoji}
