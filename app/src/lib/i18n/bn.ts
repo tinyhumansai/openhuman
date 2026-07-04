@@ -2650,6 +2650,8 @@ const messages: TranslationMap = {
   'chat.failedToLoadMessages': 'বার্তা লোড করতে ব্যর্থ',
   'chat.thinkingIteration': 'ভাবছে... ({n})',
   'chat.thinkingDots': 'ভাবছে...',
+  'chat.feedback.goodResponse': 'ভালো সাড়া',
+  'chat.feedback.badResponse': 'খারাপ সাড়া',
   'chat.approachingLimit': 'ব্যবহার সীমার কাছাকাছি',
   'chat.approachingLimitMsg': 'আপনি আপনার উপলব্ধ কোটার {pct}% ব্যবহার করেছেন।',
   'chat.upgrade': 'আপগ্রেড করুন',

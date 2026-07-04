@@ -313,6 +313,7 @@ fn new_event_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+<<<<<<< HEAD
 /// Enrich `trace_ctx` with the run lineage (`run_id` / `parent_run_id` /
 /// `root_run_id`) carried by the run's journalled `observations` (#4657).
 ///
@@ -591,6 +592,36 @@ pub(crate) async fn push_observations(
     Ok(())
 }
 
+/// Build a Langfuse `/api/public/ingestion` batch for a single `score-create`
+/// event. Extracted from [`push_score`] so the batch shape is independently
+/// testable.
+pub(crate) fn build_score_batch(
+    trace_id: &str,
+    name: &str,
+    value: f64,
+    comment: Option<&str>,
+) -> Value {
+    let score_id = new_event_id();
+    let event_id = new_event_id();
+    let mut body = json!({
+        "id": score_id,
+        "traceId": trace_id,
+        "name": name,
+        "value": value,
+    });
+    if let Some(c) = comment {
+        body["comment"] = json!(c);
+    }
+    json!({
+        "batch": [{
+            "id": event_id,
+            "type": "score-create",
+            "timestamp": iso_millis(chrono::Utc::now().timestamp_millis() as u64),
+            "body": body,
+        }]
+    })
+}
+
 /// Push `spans` to the co-hosted Langfuse server. Resolves the endpoint from the
 /// current backend host and authenticates with the live session bearer. Returns
 /// `Err` (for the caller to log + fall back) when there is no live session, the
@@ -657,6 +688,7 @@ pub(crate) async fn push_spans(config: &Config, spans: &[TraceSpan]) -> Result<(
             target: LOG_TARGET,
             "[agent-tracing] pushed {span_count} spans to Langfuse ({status})"
         );
+    }
     Ok(())
 }
 
@@ -682,24 +714,7 @@ pub(crate) async fn push_score(
     }
 
     let token = require_live_session_token(config)?;
-    let mut body = json!({
-        "id": new_event_id(),
-        "traceId": trace_id,
-        "name": name,
-        "value": value,
-    });
-    if let Some(c) = comment {
-        body["comment"] = json!(c);
-    }
-
-    let batch = json!({
-        "batch": [{
-            "id": new_event_id(),
-            "type": "score-create",
-            "timestamp": iso_millis(chrono::Utc::now().timestamp_millis() as u64),
-            "body": body
-        }]
-    });
+    let batch = build_score_batch(trace_id, name, value, comment);
 
     tracing::debug!(
         target: LOG_TARGET,
@@ -1173,6 +1188,33 @@ mod tests {
     }
 
     #[test]
+    fn test_score_to_langfuse_batch() {
+        // Batch shape with name/value.
+        let batch = build_score_batch("trace-req-42", "user-feedback", 1.0, None);
+        let events = batch["batch"].as_array().expect("batch array");
+        assert_eq!(events.len(), 1, "exactly one score event");
+        let event = &events[0];
+        assert_eq!(event["type"], "score-create");
+        assert!(event["id"].as_str().is_some(), "event id present");
+        assert!(event["timestamp"].as_str().is_some(), "timestamp present");
+        let body = &event["body"];
+        assert_eq!(body["traceId"], "trace-req-42");
+        assert_eq!(body["name"], "user-feedback");
+        assert_eq!(body["value"], 1.0);
+        assert!(body["id"].as_str().is_some(), "score id present");
+        assert!(body.get("comment").is_none(), "no comment when omitted");
+
+        // With comment.
+        let batch = build_score_batch("trace-abc", "quality", 0.5, Some("Great response"));
+        let event = &batch["batch"][0];
+        assert_eq!(event["body"]["comment"], "Great response");
+
+        // Binary thumbs down (value = 0).
+        let batch = build_score_batch("trace-xyz", "user-feedback", 0.0, None);
+        assert_eq!(batch["batch"][0]["body"]["value"], 0.0);
+    }
+
+    #[test]
     fn trace_create_carries_user_and_session_grouping() {
         // The turn span's user.id / thread.id attributes are promoted onto the
         // trace-create as Langfuse userId / sessionId so per-turn traces group
@@ -1449,5 +1491,26 @@ mod tests {
         let config = Config::default();
         // Empty batch short-circuits before any host/token resolution or network.
         assert!(push_spans(&config, &[]).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn push_score_respects_privacy_gate() {
+        let mut config = Config::default();
+        config.observability.share_usage_data = false;
+        // Privacy gate returns Ok(()) before any host/token resolution.
+        assert!(push_score(&config, "trace-1", "user-feedback", 1.0, None)
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn push_score_returns_error_for_unresolvable_url() {
+        let mut config = Config::default();
+        config.observability.share_usage_data = true;
+        config.api_url = Some("not-a-valid-url".to_string());
+        // Without a valid scheme prefix, ingestion_url fails the http check.
+        assert!(push_score(&config, "trace-1", "user-feedback", 1.0, None)
+            .await
+            .is_err());
     }
 }

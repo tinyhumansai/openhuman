@@ -856,6 +856,12 @@ fn build_internal_only_controllers() -> Vec<GroupedController> {
         DomainGroup::Agent,
         crate::openhuman::orchestration::all_registered_controllers(),
     );
+    // observability_submit_score: score feedback from the UI (renderer-only).
+    // Excluded from agent-facing catalog — agents must NOT be able to
+    // fabricate Langfuse scores.
+    controllers.extend(
+        crate::openhuman::agent::progress_tracing::rpc::all_progress_tracing_registered_controllers(),
+    );
     controllers
 }
 

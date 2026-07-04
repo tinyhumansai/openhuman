@@ -2724,6 +2724,8 @@ const messages: TranslationMap = {
   'chat.failedToLoadMessages': 'Échec du chargement des messages',
   'chat.thinkingIteration': 'Réflexion… ({n})',
   'chat.thinkingDots': 'Réflexion…',
+  'chat.feedback.goodResponse': 'Bonne réponse',
+  'chat.feedback.badResponse': 'Mauvaise réponse',
   'chat.approachingLimit': "Limite d'utilisation proche",
   'chat.approachingLimitMsg': 'Tu as utilisé {pct}% de ton quota disponible.',
   'chat.upgrade': 'Passer à la version supérieure',

@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use serde_json::json;
+use serde_json::{json, Map, Value};
 
 use crate::openhuman::agent::task_board::{
     board_for_thread, TaskBoard, TaskBoardCard, TaskBoardStore,
@@ -443,7 +443,21 @@ impl Tool for ThreadMessageAppendTool {
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         log::debug!("[tool][threads] message_append invoked");
-        let req: AppendConversationMessageRequest = parse_req(args, "thread_message_append")?;
+        let mut req: AppendConversationMessageRequest = parse_req(args, "thread_message_append")?;
+        // Stamp the Langfuse trace ID onto the message so the frontend feedback
+        // buttons can attach scores to the correct trace. No-op when the turn is
+        // not being traced (e.g. non-interactive / no share_usage_data).
+        if let Ok(id) = crate::openhuman::agent::progress_tracing::TURN_TRACE_ID
+            .try_with(|id| id.clone())
+        {
+            if let Some(meta) = req.message.extra_metadata.as_object_mut() {
+                meta.insert("traceId".to_string(), Value::String(id));
+            } else {
+                let mut meta = Map::new();
+                meta.insert("traceId".to_string(), Value::String(id));
+                req.message.extra_metadata = Value::Object(meta);
+            }
+        }
         let outcome = ops::message_append(req)
             .await
             .map_err(|e| anyhow::anyhow!("thread_message_append: {e}"))?;

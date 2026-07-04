@@ -162,6 +162,13 @@ pub struct TraceContext {
     pub root_run_id: Option<String>,
 }
 
+tokio::task_local! {
+    /// Trace ID of the currently executing turn, set by the web-chat runner
+    /// so tool implementations can stamp the Langfuse trace ID onto message
+    /// extra_metadata for feedback-score correlation.
+    pub(crate) static TURN_TRACE_ID: String;
+}
+
 impl TraceContext {
     pub fn new(session_id: impl Into<String>, user_id: Option<String>) -> Self {
         Self {
