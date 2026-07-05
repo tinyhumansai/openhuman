@@ -917,8 +917,8 @@ mod tests {
     #[tokio::test]
     async fn message_append_injects_trace_id() {
         use crate::openhuman::agent::progress_tracing::TURN_TRACE_ID;
-        use crate::openhuman::threads::ops;
         use crate::openhuman::memory::CreateConversationThreadRequest;
+        use crate::openhuman::threads::ops;
 
         // Create a real thread so ops::message_append succeeds
         let req = CreateConversationThreadRequest {
