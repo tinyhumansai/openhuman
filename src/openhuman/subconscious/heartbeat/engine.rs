@@ -1,9 +1,16 @@
 use crate::openhuman::config::{Config, HeartbeatConfig};
-use crate::openhuman::subconscious::global::get_or_init_engine;
+use crate::openhuman::subconscious::registry::registered_instances;
 use anyhow::Result;
 use std::path::Path;
 use tokio::time::{self, Duration};
 use tracing::{info, warn};
+
+fn now_secs() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
+}
 
 /// Heartbeat engine — periodic scheduler that delegates to planner collectors
 /// and optional subconscious model inference.
@@ -101,32 +108,29 @@ impl HeartbeatEngine {
             }
 
             if current.inference_enabled {
-                // Get the shared global engine (same instance as RPC handlers)
-                let lock = match get_or_init_engine().await {
-                    Ok(l) => l,
-                    Err(e) => {
-                        warn!("[heartbeat] failed to get engine: {e}");
-                        continue;
+                // Fan out: tick every registered instance whose own cadence has
+                // elapsed, concurrently — a slow memory tick must not delay a
+                // tinyplace review. `is_due` is a lock-free read of each
+                // instance's `last_tick_at`, so this poll never blocks.
+                let now = now_secs();
+                let mut handles = Vec::new();
+                for inst in registered_instances().await {
+                    if inst.is_due(now).await {
+                        handles.push(tokio::spawn(async move {
+                            let id = inst.id();
+                            match inst.tick().await {
+                                Ok(result) => info!(
+                                    "[heartbeat] {id} tick: duration={}ms response_chars={}",
+                                    result.duration_ms, result.response_chars
+                                ),
+                                Err(e) => warn!("[heartbeat] {id} tick error: {e}"),
+                            }
+                        }));
                     }
-                };
-                let guard = lock.lock().await;
-                let engine = match guard.as_ref() {
-                    Some(e) => e,
-                    None => {
-                        warn!("[heartbeat] engine not initialized");
-                        continue;
-                    }
-                };
-
-                match engine.tick().await {
-                    Ok(result) => {
-                        info!(
-                            "[heartbeat] tick: duration={}ms response_chars={}",
-                            result.duration_ms, result.response_chars
-                        );
-                    }
-                    Err(e) => {
-                        warn!("[heartbeat] subconscious tick error: {e}");
+                }
+                for handle in handles {
+                    if let Err(e) = handle.await {
+                        warn!("[heartbeat] subconscious tick task join failed: {e}");
                     }
                 }
             } else {

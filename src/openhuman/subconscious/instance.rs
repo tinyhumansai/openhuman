@@ -513,6 +513,23 @@ impl SubconsciousInstance {
         Ok(graph)
     }
 
+    /// Stable world id (`"memory"` | `"tinyplace"`) — for logging + fan-out.
+    pub fn id(&self) -> &'static str {
+        self.profile.id()
+    }
+
+    /// Whether this instance's cadence has elapsed since its last successful
+    /// tick (a never-ticked instance is always due). Pure read of the small
+    /// `state` mutex — never touches `tick_lock`, so the heartbeat fan-out can
+    /// poll it without ever blocking on a running tick.
+    pub async fn is_due(&self, now: f64) -> bool {
+        let last = self.state.lock().await.last_tick_at;
+        if last <= 0.0 {
+            return true;
+        }
+        now - last >= f64::from(self.interval_minutes) * 60.0
+    }
+
     pub async fn status(&self) -> SubconsciousStatus {
         let state = self.state.lock().await;
         SubconsciousStatus {

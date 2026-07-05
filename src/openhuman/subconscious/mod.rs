@@ -1,10 +1,11 @@
 pub mod agent;
-pub mod global;
+pub mod factory;
 pub mod heartbeat;
 pub mod instance;
 pub mod profile;
 pub mod profiles;
 pub mod provider;
+pub mod registry;
 mod schemas;
 pub mod session;
 pub mod source_chunk;
@@ -12,6 +13,7 @@ pub mod store;
 pub mod types;
 pub mod user_thread;
 
+pub use factory::{make_subconscious, SubconsciousKind};
 pub use instance::SubconsciousInstance;
 pub use profile::{Observation, Reflection, SubconsciousProfile};
 pub use profiles::memory::memory_instance;

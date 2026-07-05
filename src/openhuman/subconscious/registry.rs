@@ -1,47 +1,61 @@
-//! Global singleton for the SubconsciousEngine.
+//! Registry of live subconscious instances — one per enabled [`SubconsciousKind`].
 //!
-//! Shared between the heartbeat background loop and RPC handlers
-//! so both see the same state and counters.
+//! Shared between the heartbeat fan-out and the RPC handlers so both see the
+//! same instances and counters. Instances are held as plain `Arc` (not
+//! `Mutex<Option<..>>`): each instance's own `tick_lock`/`state` mutexes
+//! serialize what needs serializing, and the status path must stay lock-free
+//! (it never takes `tick_lock`).
 
-use super::SubconsciousEngine;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
-static ENGINE: OnceLock<Arc<Mutex<Option<SubconsciousEngine>>>> = OnceLock::new();
+use super::factory::{make_subconscious, SubconsciousKind};
+use super::instance::SubconsciousInstance;
+
+static REGISTRY: OnceLock<Mutex<HashMap<SubconsciousKind, Arc<SubconsciousInstance>>>> =
+    OnceLock::new();
 static BOOTSTRAPPED: AtomicBool = AtomicBool::new(false);
 static HEARTBEAT_HANDLE: OnceLock<Mutex<Option<JoinHandle<()>>>> = OnceLock::new();
 
-fn engine_lock() -> &'static Arc<Mutex<Option<SubconsciousEngine>>> {
-    ENGINE.get_or_init(|| Arc::new(Mutex::new(None)))
+fn registry() -> &'static Mutex<HashMap<SubconsciousKind, Arc<SubconsciousInstance>>> {
+    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn heartbeat_slot() -> &'static Mutex<Option<JoinHandle<()>>> {
     HEARTBEAT_HANDLE.get_or_init(|| Mutex::new(None))
 }
 
-pub async fn get_or_init_engine() -> Result<Arc<Mutex<Option<SubconsciousEngine>>>, String> {
-    let lock = engine_lock();
+/// Lazily construct (or fetch) the instance for `kind`, keyed in the registry.
+pub async fn get_or_init_instance(
+    kind: SubconsciousKind,
+) -> Result<Arc<SubconsciousInstance>, String> {
     {
-        let guard = lock.lock().await;
-        if guard.is_some() {
-            return Ok(Arc::clone(lock));
+        let map = registry().lock().await;
+        if let Some(inst) = map.get(&kind) {
+            return Ok(Arc::clone(inst));
         }
     }
 
     let config = crate::openhuman::config::Config::load_or_init()
         .await
         .map_err(|e| format!("load config: {e}"))?;
+    let inst = Arc::new(make_subconscious(kind, &config));
 
-    let engine = super::memory_instance(&config);
+    let mut map = registry().lock().await;
+    Ok(Arc::clone(map.entry(kind).or_insert(inst)))
+}
 
-    let mut guard = lock.lock().await;
-    if guard.is_none() {
-        *guard = Some(engine);
-    }
-
-    Ok(Arc::clone(lock))
+/// Every currently-registered instance (the bootstrap set), in a stable order
+/// (memory first). Used by the heartbeat fan-out and `subconscious.status`.
+pub async fn registered_instances() -> Vec<Arc<SubconsciousInstance>> {
+    let map = registry().lock().await;
+    SubconsciousKind::ALL
+        .iter()
+        .filter_map(|k| map.get(k).map(Arc::clone))
+        .collect()
 }
 
 pub async fn bootstrap_after_login() -> Result<(), String> {
@@ -57,18 +71,26 @@ pub async fn bootstrap_after_login() -> Result<(), String> {
             format!("load config: {e}")
         })?;
 
+    // The heartbeat loop is the clock that drives every instance's tick (plus
+    // the event-planner duties). If it is disabled, no world ticks — same gate
+    // as the pre-factory build.
     if !config.heartbeat.enabled {
         tracing::info!("[subconscious] heartbeat disabled in config — bootstrap skipped");
         BOOTSTRAPPED.store(false, Ordering::SeqCst);
         return Ok(());
     }
 
-    get_or_init_engine().await.inspect_err(|_e| {
-        BOOTSTRAPPED.store(false, Ordering::SeqCst);
-    })?;
+    // Initialize every enabled world against the per-user workspace.
+    let kinds = SubconsciousKind::enabled_kinds(&config);
+    for kind in &kinds {
+        get_or_init_instance(*kind).await.inspect_err(|_e| {
+            BOOTSTRAPPED.store(false, Ordering::SeqCst);
+        })?;
+    }
     tracing::info!(
         workspace = %config.workspace_dir.display(),
-        "[subconscious] engine initialized against per-user workspace"
+        kinds = ?kinds.iter().map(|k| k.id()).collect::<Vec<_>>(),
+        "[subconscious] instances initialized against per-user workspace"
     );
 
     let heartbeat = crate::openhuman::heartbeat::engine::HeartbeatEngine::new(
@@ -156,12 +178,11 @@ pub async fn stop_heartbeat_loop() {
     BOOTSTRAPPED.store(false, Ordering::SeqCst);
 }
 
+/// Reset for a user switch: stop the heartbeat + triggers, then clear the whole
+/// registry so a subsequent bootstrap rebuilds every instance against the new
+/// workspace.
 pub async fn reset_engine_for_user_switch() {
     stop_heartbeat_loop().await;
-
-    let lock = engine_lock();
-    let mut guard = lock.lock().await;
-    *guard = None;
-
-    tracing::info!("[subconscious] engine reset for user switch");
+    registry().lock().await.clear();
+    tracing::info!("[subconscious] registry reset for user switch");
 }

@@ -1798,8 +1798,10 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         category: CapabilityCategory::Intelligence,
         description: "Coordinate wrapped Claude Code / Codex sessions over tiny.place: a \
                       split-brain wake graph (quick front end + reasoning core) replies to \
-                      session DMs, and an offline subconscious reflects on the world diff to \
-                      steer later cycles.",
+                      session DMs, and a dedicated tiny.place subconscious instance reflects on \
+                      the compressed history + world diff on its own cadence to steer later \
+                      cycles — separate from the memory subconscious that watches your \
+                      connected sources.",
         how_to: "Intelligence > Orchestration (pair a wrapped session, then chat via the Master \
                  window).",
         status: CapabilityStatus::Beta,

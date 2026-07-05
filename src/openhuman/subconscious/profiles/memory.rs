@@ -229,26 +229,10 @@ impl SubconsciousProfile for MemoryProfile {
     }
 
     async fn observe(&self, config: &Config) -> Observation {
-        // ── phase-3 removes this ─────────────────────────────────────────────
-        // The tiny.place orchestration review still piggybacks on the memory
-        // tick during phase 2 (it becomes its own `tinyplace` instance in phase
-        // 3). Runs before the memory diff, independently of it; a clean no-op
-        // when orchestration is disabled or there is nothing new to review.
-        let review_tick_id = format!("subconscious:orchestration_review:{}", now_secs() as u64);
-        match crate::openhuman::orchestration::ops::run_orchestration_review(
-            config,
-            &review_tick_id,
-        )
-        .await
-        {
-            Ok(true) => {
-                info!("[subconscious:memory] orchestration_review emitted a steering directive")
-            }
-            Ok(false) => {}
-            Err(e) => warn!("[subconscious:memory] orchestration_review failed: {e}"),
-        }
-
         // ── Stage 1: memory_diff — how did the agent's world change? ──────────
+        // (The tiny.place orchestration review is now its own `tinyplace`
+        // instance, ticked independently by the heartbeat fan-out — it no longer
+        // piggybacks here.)
         let baseline = store::with_connection(&config.workspace_dir, |conn| {
             store::get_baseline_checkpoint_id(conn, "memory")
         })

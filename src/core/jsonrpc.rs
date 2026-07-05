@@ -2088,7 +2088,8 @@ async fn run_server_inner(
                     if !config.heartbeat.enabled {
                         log::info!("[subconscious] disabled by config (heartbeat.enabled = false)");
                     } else {
-                        match crate::openhuman::subconscious::global::bootstrap_after_login().await
+                        match crate::openhuman::subconscious::registry::bootstrap_after_login()
+                            .await
                         {
                             Ok(()) => log::info!(
                                 "[subconscious] bootstrapped on startup (existing session)"
