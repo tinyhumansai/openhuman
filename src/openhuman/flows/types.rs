@@ -58,6 +58,28 @@ pub struct FlowValidation {
     pub warnings: Vec<String>,
 }
 
+/// The result of importing a workflow definition (native tinyflows JSON or an
+/// n8n export) via `openhuman.flows_import` (PHASE 4d) — the normalized,
+/// migrated + validated [`WorkflowGraph`] plus any non-fatal import warnings
+/// (unmapped n8n node types, untranslated expressions, a synthesized/demoted
+/// trigger, …).
+///
+/// **Import never persists.** This is the same contract as
+/// [`FlowValidation`]: the graph comes back ready for the editable canvas as a
+/// *draft*, and only the user's explicit Save (the existing `flows_create`
+/// gate) writes it. A structurally invalid graph is reported as an `Err` on the
+/// RPC (validation is authoritative), not as an `FlowImport` with `valid:
+/// false` — there is no partial-import row.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FlowImport {
+    /// The normalized workflow graph, migrated to the current schema and
+    /// structurally validated. Ready to open on the canvas as an unsaved draft.
+    pub graph: WorkflowGraph,
+    /// Non-fatal import warnings surfaced next to the draft. Empty for a clean
+    /// native import; an n8n import populates it with any approximations made.
+    pub warnings: Vec<String>,
+}
+
 /// A saved automation workflow: a `tinyflows` graph plus OpenHuman-side
 /// bookkeeping (enablement, run history summary).
 #[derive(Debug, Clone, Serialize, Deserialize)]

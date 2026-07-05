@@ -319,14 +319,14 @@ impl Agent {
     /// Returns `true` when the installed set changed. Cheap no-op when it
     /// hasn't: a directory scan plus an id-set comparison, no prompt rebuild.
     pub(in super::super) fn refresh_workflows(&mut self, trigger: &str) -> bool {
-        let id_of = |w: &crate::openhuman::workflows::Workflow| -> String {
+        let id_of = |w: &crate::openhuman::skills::Workflow| -> String {
             if w.dir_name.is_empty() {
                 w.name.clone()
             } else {
                 w.dir_name.clone()
             }
         };
-        let latest = crate::openhuman::workflows::load_workflow_metadata(&self.workspace_dir);
+        let latest = crate::openhuman::skills::load_workflow_metadata(&self.workspace_dir);
         let current_ids: std::collections::HashSet<String> =
             self.workflows.iter().map(&id_of).collect();
         let latest_ids: std::collections::HashSet<String> = latest.iter().map(&id_of).collect();

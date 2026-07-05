@@ -3,7 +3,7 @@
 // Generalises across every bundled skill (`github-issue-crusher`,
 // `pr-review-shepherd`, `dev-workflow`, plus anything the user installs
 // later) — pick one from the dropdown, fill the dynamically-rendered
-// inputs (loaded from `openhuman.workflows_describe`), Run Now to
+// inputs (loaded from `openhuman.skills_describe`), Run Now to
 // fire-and-forget a background autonomous run, or Save as a recurring
 // cron schedule. Recent runs are listed below with an inline log
 // viewer (click-to-expand, auto-tail for in-flight runs).
@@ -22,9 +22,9 @@ import {
   type ScannedRun,
   type WorkflowDescription,
   type WorkflowRunStarted,
-  workflowsApi,
+  skillsApi,
   type WorkflowSummary,
-} from '../../services/api/workflowsApi';
+} from '../../services/api/skillsApi';
 import {
   type CoreCronJob,
   type CoreCronRun,
@@ -454,12 +454,12 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
     return () => clearTimeout(timer);
   }, [searchParams, selectedSkillId]);
 
-  // ── Initial load: workflows_list ──────────────────────────────────────
+  // ── Initial load: skills_list ──────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
     setSkillsLoading(true);
     setSkillsError(null);
-    workflowsApi
+    skillsApi
       // Include `skills/`-root installs so registry-installed skills are runnable here.
       .listWorkflows({ includeSkills: true })
       .then(list => {
@@ -483,7 +483,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
     };
   }, []);
 
-  // ── On selection: workflows_describe ──────────────────────────────────
+  // ── On selection: skills_describe ──────────────────────────────────
   useEffect(() => {
     if (!selectedSkillId) {
       setDescription(null);
@@ -494,7 +494,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
     setDescLoading(true);
     setDescError(null);
     setRun({ status: 'idle' });
-    workflowsApi
+    skillsApi
       .describeWorkflow(selectedSkillId)
       .then(desc => {
         if (cancelled) return;
@@ -546,7 +546,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
   const handleStopRun = useCallback(async (runId: string) => {
     log('stop run runId=%s', runId);
     try {
-      await workflowsApi.cancelRun(runId);
+      await skillsApi.cancelRun(runId);
     } catch (err) {
       log('cancelRun error: %s', err instanceof Error ? err.message : String(err));
     }
@@ -557,7 +557,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
     const runtimeRequirement = inferRuntimeRequirement(selectedWorkflow);
     if (!runtimeRequirement) return;
 
-    const resolved = await workflowsApi.resolveRuntimes(runtimeRequirement);
+    const resolved = await skillsApi.resolveRuntimes(runtimeRequirement);
     const unavailable = resolved.runtimes.filter(runtime => !runtime.available);
     if (unavailable.length === 0) return;
 
@@ -592,7 +592,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
       const inputs = buildInputsPayload(description, formValues);
       log('runWorkflow %s inputs=%o', description.id, inputs);
       await ensureRuntimeAvailability();
-      const result = await workflowsApi.runWorkflow(description.id, inputs);
+      const result = await skillsApi.runWorkflow(description.id, inputs);
       setRun({ status: 'started', result });
       // Surface the new run in "Recent runs" without a manual refresh, and
       // hold the guard through a short cooldown so a second click can't spawn
@@ -619,7 +619,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
   useEffect(() => {
     let cancelled = false;
     setRecentRunsLoading(true);
-    workflowsApi
+    skillsApi
       .recentRuns(selectedSkillId || undefined, 10)
       .then(list => {
         if (cancelled) return;
@@ -735,7 +735,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
             error: null,
           },
         }));
-        const slice: RunLogSlice = await workflowsApi.readRunLog(runId, fromOffset);
+        const slice: RunLogSlice = await skillsApi.readRunLog(runId, fromOffset);
         if (cancelled) return;
         setViewer(prev => {
           const prior = prev[runId]?.content ?? '';
@@ -818,7 +818,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
       try {
         log('runJobNow: running %s directly with %o', selectedSkillId, inputs);
         await ensureRuntimeAvailability();
-        await workflowsApi.runWorkflow(selectedSkillId, inputs);
+        await skillsApi.runWorkflow(selectedSkillId, inputs);
         scheduleRecentRunsRefresh();
         releaseRunGuard(2500);
       } catch (err: unknown) {
@@ -1586,11 +1586,11 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
           onClose={() => setEditOpen(false)}
           onCreated={() => {
             setEditOpen(false);
-            void workflowsApi
+            void skillsApi
               .listWorkflows({ includeSkills: true })
               .then(list => setSkills(list.filter(s => s.id !== 'codegraph-smoke')))
               .catch(() => {});
-            void workflowsApi
+            void skillsApi
               .describeWorkflow(selectedSkillId)
               .then(setDescription)
               .catch(() => {});

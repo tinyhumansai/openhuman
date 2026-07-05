@@ -69,8 +69,7 @@ pub(super) fn resolve_executor(workspace_dir: &Path, assigned: Option<&str>) -> 
     }
 
     // 2) Workflow (#2824): the same autonomous run, seeded with SKILL.md.
-    if let Some(skill) = crate::openhuman::workflows::registry::get_workflow(workspace_dir, handle)
-    {
+    if let Some(skill) = crate::openhuman::skills::registry::get_workflow(workspace_dir, handle) {
         let guidelines = match &skill.definition.system_prompt {
             PromptSource::Inline(s) => truncate_chars(s, EXECUTOR_PREAMBLE_MAX_CHARS),
             _ => String::new(),

@@ -1,0 +1,38 @@
+id = "workflow_builder"
+display_name = "Workflow Builder"
+delegate_name = "build_workflow"
+when_to_use = "Workflow authoring specialist — owns building tinyflows automation graphs from a natural-language description. Route any request to 'set up a workflow that…', 'automate…', 'when X happens do Y', 'build/create/edit an automation or flow', or to iterate on a proposed workflow here. It grounds nodes in real tool slugs + connections, can dry-run a draft in a sandbox to self-check, and returns a workflow PROPOSAL for the user to review and save — it NEVER creates, enables, or runs a real flow itself. Not for running an already-saved flow (that is a direct flows_run) and not for the legacy skill 'workflows'."
+temperature = 0.2
+max_iterations = 12
+iteration_policy = "extended"
+max_result_chars = 12000
+# No sandbox filter needed: every tool in scope is propose-or-read, and
+# dry_run_workflow runs against tinyflows MOCK capabilities (no real effects).
+sandbox_mode = "none"
+omit_identity = true
+omit_memory_context = true
+# Safety preamble stays OFF: this agent has zero real external effect (it only
+# proposes validated graphs and reads), so the general acting guard-rails would
+# be noise. The "propose, never persist" invariant is taught in prompt.md.
+omit_safety_preamble = true
+omit_skills_catalog = true
+
+[model]
+# Structured authoring on the cheap, high-throughput worker tier.
+hint = "burst"
+
+[tools]
+# DELIBERATELY NARROW: propose/revise (validate-only) + read (flows, runs,
+# connections, tool catalog) + sandbox dry-run. NO shell, NO file writes, NO
+# channel sends, NO flows_create/update/set_enabled — the agent can never
+# persist or enable a flow.
+named = [
+    "propose_workflow",
+    "revise_workflow",
+    "list_flows",
+    "get_flow",
+    "get_flow_run",
+    "list_flow_connections",
+    "search_tool_catalog",
+    "dry_run_workflow",
+]

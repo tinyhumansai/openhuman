@@ -169,7 +169,7 @@ impl AgentBuilder {
     }
 
     /// Sets the skills available to the agent.
-    pub fn workflows(mut self, skills: Vec<crate::openhuman::workflows::Workflow>) -> Self {
+    pub fn workflows(mut self, skills: Vec<crate::openhuman::skills::Workflow>) -> Self {
         self.workflows = Some(skills);
         self
     }

@@ -700,7 +700,7 @@ pub fn default_workspace_file_content(filename: &str) -> &'static str {
 /// manufacture a full context when they only need the static text.
 fn empty_prompt_context_for_static_sections() -> PromptContext<'static> {
     static EMPTY_TOOLS: &[PromptTool<'static>] = &[];
-    static EMPTY_WORKFLOWS: &[crate::openhuman::workflows::Workflow] = &[];
+    static EMPTY_WORKFLOWS: &[crate::openhuman::skills::Workflow] = &[];
     static EMPTY_INTEGRATIONS: &[ConnectedIntegration] = &[];
     // SAFETY: the &HashSet reference must outlive the returned context;
     // a leaked OnceLock-style allocation gives us a permanent 'static

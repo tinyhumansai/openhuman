@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "name": "Webhook to agent triage",
+  "nodes": [
+    {
+      "id": "trigger",
+      "kind": "trigger",
+      "name": "Incoming webhook",
+      "config": { "trigger_kind": "webhook" },
+      "ports": [],
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "triage",
+      "kind": "agent",
+      "name": "Triage the payload",
+      "config": {
+        "prompt": "Read the incoming webhook payload and decide how urgent it is. Summarize what it is about and what action, if any, is needed."
+      },
+      "ports": [],
+      "position": { "x": 0, "y": 160 }
+    },
+    {
+      "id": "notify",
+      "kind": "tool_call",
+      "name": "Notify me",
+      "config": { "slug": "", "args": {} },
+      "ports": [],
+      "position": { "x": 0, "y": 320 }
+    }
+  ],
+  "edges": [
+    { "from_node": "trigger", "from_port": "main", "to_node": "triage", "to_port": "main" },
+    { "from_node": "triage", "from_port": "main", "to_node": "notify", "to_port": "main" }
+  ]
+}

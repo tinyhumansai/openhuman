@@ -154,6 +154,13 @@ allowlist = [
     # SKILL.md instructions and executing the procedure.
     "skill_setup",
     "skill_executor",
+    # Workflow-authoring specialist (Phase 5a). Synthesised into a
+    # `build_workflow` tool at agent-build time. Route any "set up a workflow
+    # that…", "automate…", "when X happens do Y", or "build/edit an automation
+    # or flow" request here — it grounds nodes in real tool slugs + connections,
+    # can sandbox dry-run a draft, and returns a workflow PROPOSAL for the user
+    # to review and save. It never creates/enables/runs a real flow itself.
+    "workflow_builder",
     # NOTE: `summarizer` used to be listed here for the runtime-only
     # oversized-tool-result hook. That path is currently disabled
     # (`context.summarizer_payload_threshold_tokens = 0`) after recursive
@@ -298,7 +305,7 @@ named = [
     # what's installed and learn a workflow's inputs before running it; the
     # `*_run*` read tools let it inspect a run's status + log. All route
     # through `workflows::schemas::spawn_skill_run_background` +
-    # `await_run_outcome` — the same spawn path the `openhuman.workflows_run`
+    # `await_run_outcome` — the same spawn path the `openhuman.skills_run`
     # JSON-RPC controller uses (iter cap, transcript isolation,
     # degenerate-response detector all apply).
     "list_workflows",

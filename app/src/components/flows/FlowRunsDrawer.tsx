@@ -33,6 +33,7 @@ import {
   FLOW_RUN_STATUS_ACCENT,
   FLOW_RUN_STATUS_DOT,
   FLOW_RUN_STATUS_KEY,
+  type FlowRepairRequest,
   FlowRunInspectorDrawer,
 } from './FlowRunInspectorDrawer';
 
@@ -56,6 +57,8 @@ interface Props {
   /** Flow name for the drawer title, when known. */
   flowName?: string;
   onClose: () => void;
+  /** "Fix with agent" (Phase 5c) — forwarded to the inspector for failed runs. */
+  onFixWithAgent?: (request: FlowRepairRequest) => void;
 }
 
 /**
@@ -63,7 +66,7 @@ interface Props {
  * unconditionally and just flip `flowId` (same convention as
  * `FlowRunInspectorDrawer`/`SubagentDrawer`).
  */
-export function FlowRunsDrawer({ flowId, flowName, onClose }: Props) {
+export function FlowRunsDrawer({ flowId, flowName, onClose, onFixWithAgent }: Props) {
   const { t } = useT();
   const [runs, setRuns] = useState<FlowRun[]>([]);
   const [loading, setLoading] = useState(false);
@@ -209,7 +212,11 @@ export function FlowRunsDrawer({ flowId, flowName, onClose }: Props) {
       </div>
 
       {selectedRunId && (
-        <FlowRunInspectorDrawer runId={selectedRunId} onClose={() => setSelectedRunId(null)} />
+        <FlowRunInspectorDrawer
+          runId={selectedRunId}
+          onClose={() => setSelectedRunId(null)}
+          onFixWithAgent={onFixWithAgent}
+        />
       )}
     </>
   );

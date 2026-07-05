@@ -2,24 +2,41 @@
  * FlowsPage — the Workflows list page (issue B5a).
  *
  * The discoverable hub for the `flows::` domain: lists every saved
- * `Flow` (name, enabled toggle, last-run status, Run button). This is NOT the
- * canvas (B5b ships flow authoring/editing) — until it lands, "New workflow"
- * (header + empty-state) bridges to the B4 agent-proposal flow in Chat
- * instead, since that's the only way to author a flow today.
+ * `Flow` (name, enabled toggle, last-run status, Run button). "New workflow"
+ * (header + empty-state) opens the Phase 4a chooser — start from scratch, pick
+ * a template (Phase 4c), or describe it in Chat — each of which creates a flow
+ * and opens the editable canvas (`/flows/:id`). The empty state also surfaces
+ * the template gallery inline so first-time users have a one-click starting
+ * point.
  */
 import createDebug from 'debug';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import EmptyStateCard from '../components/EmptyStateCard';
 import FlowListRow, { type FlowListRowBusy } from '../components/flows/FlowListRow';
+import type { FlowRepairRequest } from '../components/flows/FlowRunInspectorDrawer';
 import FlowRunsDrawer from '../components/flows/FlowRunsDrawer';
+import FlowTemplateGallery from '../components/flows/FlowTemplateGallery';
+import NewWorkflowModal from '../components/flows/NewWorkflowModal';
+import { useCreateFlow } from '../components/flows/useCreateFlow';
+import WorkflowPromptBar from '../components/flows/WorkflowPromptBar';
 import { ToastContainer } from '../components/intelligence/Toast';
 import PanelPage from '../components/layout/PanelPage';
 import Button from '../components/ui/Button';
 import { CenteredLoadingState, ErrorBanner } from '../components/ui/LoadingState';
+import { FLOW_CANVAS_DRAFT_ROUTE, type FlowCanvasDraftState } from '../lib/flows/canvasDraft';
+import { downloadFlowGraph } from '../lib/flows/exportFlow';
+import { type FlowTemplate, templateNameKey } from '../lib/flows/templates';
+import type { WorkflowGraph } from '../lib/flows/types';
 import { useT } from '../lib/i18n/I18nContext';
-import { type Flow, listFlows, runFlow, setFlowEnabled } from '../services/api/flowsApi';
+import {
+  type Flow,
+  importFlow,
+  listFlows,
+  runFlow,
+  setFlowEnabled,
+} from '../services/api/flowsApi';
 import type { ToastNotification } from '../types/intelligence';
 
 const log = createDebug('app:flows');
@@ -43,6 +60,14 @@ export default function FlowsPage() {
   // then stacks on top of that when a specific run is picked). `null` keeps
   // the drawer unmounted.
   const [selectedFlowId, setSelectedFlowId] = useState<string | null>(null);
+  // Whether the Phase 4a "New workflow" chooser modal is open.
+  const [chooserOpen, setChooserOpen] = useState(false);
+  // Bumped by the chooser's "Describe it" action so the prompt bar remounts and
+  // takes focus (Phase 5c). Starts at 0 (no autofocus on initial page load).
+  const [describeNonce, setDescribeNonce] = useState(0);
+  // Create-and-open logic for the empty-state inline template gallery. (The
+  // chooser modal owns its own `useCreateFlow` instance.)
+  const emptyCreate = useCreateFlow();
 
   const addToast = useCallback((toast: Omit<ToastNotification, 'id'>) => {
     setToasts(prev => [...prev, { ...toast, id: `toast-${Date.now()}-${Math.random()}` }]);
@@ -129,6 +154,29 @@ export default function FlowsPage() {
     setSelectedFlowId(flow.id);
   }, []);
 
+  /**
+   * "Fix with agent" (Phase 5c) from a failed run's inspector: open the flow's
+   * canvas with a copilot repair seed in `location.state` so the copilot opens
+   * preloaded, diagnosing the failed run. Never persists — the copilot only
+   * proposes.
+   */
+  const handleFixWithAgent = useCallback(
+    (request: FlowRepairRequest) => {
+      log('fix with agent: flow=%s run=%s', request.flowId, request.runId);
+      setSelectedFlowId(null);
+      navigate(`/flows/${request.flowId}`, {
+        state: {
+          copilotRepair: {
+            runId: request.runId,
+            error: request.error,
+            failingNodeIds: request.failingNodeIds,
+          },
+        },
+      });
+    },
+    [navigate]
+  );
+
   /** Opens the read-only Workflow Canvas for this flow (issue B5b.1). */
   const handleView = useCallback(
     (flow: Flow) => {
@@ -140,24 +188,95 @@ export default function FlowsPage() {
 
   const selectedFlow = flows.find(f => f.id === selectedFlowId) ?? null;
 
+  /** Downloads a flow's `WorkflowGraph` as a JSON file (Phase 4d export). */
+  const handleExport = useCallback(
+    (flow: Flow) => {
+      log('export: id=%s', flow.id);
+      const ok = downloadFlowGraph(flow.name, flow.graph);
+      if (ok) {
+        addToast({ type: 'success', title: t('flows.list.exported') });
+      }
+    },
+    [addToast, t]
+  );
+
+  // Hidden file input backing the header "Import" action. Clicking the button
+  // opens the OS file picker; the change handler reads + imports the file.
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleImportClick = useCallback(() => {
+    log('import: opening file picker');
+    importInputRef.current?.click();
+  }, []);
+
   /**
-   * "New workflow" (there's no canvas builder yet — B5b) bridges to Chat so
-   * the user can kick off B4's agent-proposal flow instead. There's no
-   * existing mechanism to prefill or auto-send an initial composer message
-   * from outside the Chat page — `Conversations.tsx` only reads
-   * `location.state.openThreadId` (to reopen a thread), and the composer's
-   * text is local `useState` with no Redux draft slice. This is the same gap
-   * `ActionItemChecklist.tsx`'s "Run with OpenHuman" button already hit, so
-   * we follow its precedent: navigate to `/chat` with no prefill rather than
-   * build new prefill plumbing from scratch.
+   * Reads the picked JSON file and runs it through `flows_import` (host-side
+   * migrate + validate + best-effort n8n mapping). On success, opens the
+   * normalized graph on the editable canvas as an UNSAVED draft — nothing is
+   * persisted until the user Saves via the canvas's existing gate. Auto-detect
+   * handles native vs n8n, so no format prompt is needed.
    */
+  const handleImportFile = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      // Reset the input so re-picking the same file fires `change` again.
+      event.target.value = '';
+      if (!file) return;
+      setError(null);
+      log('import: reading file name=%s size=%d', file.name, file.size);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(await file.text());
+      } catch (err) {
+        log('import: invalid JSON: %o', err);
+        setError(t('flows.import.invalidFile'));
+        return;
+      }
+      try {
+        const result = await importFlow(parsed, 'auto');
+        const graph = result.graph as WorkflowGraph;
+        log('import: ok warnings=%d', result.warnings.length);
+        const draft: FlowCanvasDraftState = {
+          name: graph.name || file.name.replace(/\.[^.]+$/, ''),
+          graph,
+          requireApproval: true,
+          importWarnings: result.warnings,
+        };
+        navigate(FLOW_CANVAS_DRAFT_ROUTE, { state: draft });
+      } catch (err) {
+        log('import failed: %o', err);
+        setError(t('flows.import.error'));
+      }
+    },
+    [navigate, t]
+  );
+
+  /** "New workflow" opens the Phase 4a chooser (scratch / template / describe). */
   const handleNewWorkflow = useCallback(() => {
-    log('new workflow: navigating to chat');
-    // TODO: prefill the chat composer with a workflow-building prompt once a
-    // draft/initial-message API exists (see ActionItemChecklist.tsx's
-    // identical TODO for the same gap).
-    navigate('/chat');
-  }, [navigate]);
+    log('new workflow: opening chooser');
+    setChooserOpen(true);
+  }, []);
+
+  /**
+   * "Describe it" hand-off (Phase 5c): rather than punting to Chat, focus the
+   * in-place prompt bar at the top of this page — it spawns a `workflow_builder`
+   * turn in a dedicated thread and renders the proposal inline. Bumping the
+   * nonce remounts the bar so it takes focus even though it's already visible.
+   */
+  const handleDescribe = useCallback(() => {
+    log('new workflow: describe — focusing the prompt bar');
+    setChooserOpen(false);
+    setDescribeNonce(n => n + 1);
+  }, []);
+
+  /** Create a flow from an empty-state gallery card and open its canvas. */
+  const handleEmptyTemplate = useCallback(
+    (template: FlowTemplate) => {
+      log('empty-state template selected: id=%s', template.id);
+      void emptyCreate.create(template.id, t(templateNameKey(template.id)), template.graph);
+    },
+    [emptyCreate, t]
+  );
 
   return (
     <PanelPage
@@ -165,16 +284,44 @@ export default function FlowsPage() {
       title={t('flows.page.title')}
       description={t('flows.page.description')}
       action={
-        <Button
-          type="button"
-          variant="primary"
-          size="sm"
-          data-testid="flows-new-workflow"
-          onClick={handleNewWorkflow}>
-          {t('flows.page.newWorkflow')}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            data-testid="flows-import"
+            onClick={handleImportClick}>
+            {t('flows.page.import')}
+          </Button>
+          <Button
+            type="button"
+            variant="primary"
+            size="sm"
+            data-testid="flows-new-workflow"
+            onClick={handleNewWorkflow}>
+            {t('flows.page.newWorkflow')}
+          </Button>
+        </div>
       }>
+      <input
+        ref={importInputRef}
+        type="file"
+        accept="application/json,.json"
+        className="hidden"
+        data-testid="flows-import-input"
+        onChange={e => void handleImportFile(e)}
+      />
       <div className="mx-auto w-full max-w-3xl space-y-4">
+        {/* Prompt-first authoring (Phase 5c): describe a workflow and let the
+            builder agent propose it. Hero presentation when the list is empty,
+            compact otherwise. Keyed by `describeNonce` so the chooser's
+            "Describe it" action remounts + focuses it. */}
+        <WorkflowPromptBar
+          key={`prompt-bar-${describeNonce}`}
+          variant={!loading && flows.length === 0 ? 'hero' : 'compact'}
+          autoFocus={describeNonce > 0}
+        />
+
         {error && (
           <div data-testid="flows-error">
             <ErrorBanner message={error} />
@@ -184,26 +331,41 @@ export default function FlowsPage() {
         {loading && <CenteredLoadingState label={t('flows.page.loading')} />}
 
         {!loading && flows.length === 0 && !error && (
-          <EmptyStateCard
-            icon={
-              <svg
-                className="h-7 w-7 text-primary-500"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={1.5}>
-                <circle cx="5" cy="6" r="2" />
-                <circle cx="5" cy="18" r="2" />
-                <circle cx="19" cy="12" r="2" />
-                <path strokeLinecap="round" d="M7 6h4a4 4 0 014 4M7 18h4a4 4 0 004-4" />
-              </svg>
-            }
-            title={t('flows.page.emptyTitle')}
-            description={t('flows.page.emptyDescription')}
-            actionLabel={t('flows.page.newWorkflow')}
-            actionTestId="flows-empty-new-workflow"
-            onAction={handleNewWorkflow}
-          />
+          <div className="space-y-4">
+            <EmptyStateCard
+              icon={
+                <svg
+                  className="h-7 w-7 text-primary-500"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={1.5}>
+                  <circle cx="5" cy="6" r="2" />
+                  <circle cx="5" cy="18" r="2" />
+                  <circle cx="19" cy="12" r="2" />
+                  <path strokeLinecap="round" d="M7 6h4a4 4 0 014 4M7 18h4a4 4 0 004-4" />
+                </svg>
+              }
+              title={t('flows.page.emptyTitle')}
+              description={t('flows.page.emptyDescription')}
+              actionLabel={t('flows.page.newWorkflow')}
+              actionTestId="flows-empty-new-workflow"
+              onAction={handleNewWorkflow}
+            />
+
+            <section className="space-y-3" data-testid="flows-empty-templates">
+              <div>
+                <h3 className="text-sm font-semibold text-content">{t('flows.templates.title')}</h3>
+                <p className="text-xs text-content-muted">{t('flows.templates.subtitle')}</p>
+              </div>
+              {emptyCreate.error && (
+                <div data-testid="flows-empty-template-error">
+                  <ErrorBanner message={emptyCreate.error} />
+                </div>
+              )}
+              <FlowTemplateGallery onSelect={handleEmptyTemplate} busyId={emptyCreate.busyKey} />
+            </section>
+          </div>
         )}
 
         {!loading && flows.length > 0 && (
@@ -219,6 +381,7 @@ export default function FlowsPage() {
                 onRun={f => void handleRun(f)}
                 onViewRuns={handleViewRuns}
                 onView={handleView}
+                onExport={handleExport}
               />
             ))}
           </div>
@@ -229,7 +392,12 @@ export default function FlowsPage() {
         flowId={selectedFlowId}
         flowName={selectedFlow?.name}
         onClose={() => setSelectedFlowId(null)}
+        onFixWithAgent={handleFixWithAgent}
       />
+
+      {chooserOpen && (
+        <NewWorkflowModal onClose={() => setChooserOpen(false)} onDescribe={handleDescribe} />
+      )}
 
       <ToastContainer notifications={toasts} onRemove={removeToast} />
     </PanelPage>

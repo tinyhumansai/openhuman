@@ -358,7 +358,7 @@ pub async fn list_categories() -> Result<Vec<String>, String> {
 pub async fn install_from_catalog(
     workspace_dir: &std::path::Path,
     entry: &CatalogEntry,
-) -> Result<crate::openhuman::workflows::ops_install::InstallWorkflowFromUrlOutcome, String> {
+) -> Result<crate::openhuman::skills::ops_install::InstallWorkflowFromUrlOutcome, String> {
     tracing::info!(
         entry_id = %entry.id,
         source = %entry.source,
@@ -378,12 +378,12 @@ pub async fn install_from_catalog(
         ));
     }
 
-    let params = crate::openhuman::workflows::ops_install::InstallWorkflowFromUrlParams {
+    let params = crate::openhuman::skills::ops_install::InstallWorkflowFromUrlParams {
         url: entry.download_url.clone(),
         timeout_secs: Some(60),
     };
 
-    crate::openhuman::workflows::ops_install::install_workflow_from_url(workspace_dir, params).await
+    crate::openhuman::skills::ops_install::install_workflow_from_url(workspace_dir, params).await
 }
 
 pub(crate) fn parse_hermes_entry(item: &serde_json::Value) -> Option<CatalogEntry> {

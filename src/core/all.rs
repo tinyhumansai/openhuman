@@ -214,7 +214,7 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     // Managed Node.js runtime bridge (tool listing + dispatch)
     controllers.extend(crate::openhuman::javascript::all_javascript_registered_controllers());
     // Discovered SKILL.md skills and their bundled resources
-    controllers.extend(crate::openhuman::workflows::all_workflows_registered_controllers());
+    controllers.extend(crate::openhuman::skills::all_skills_registered_controllers());
     // Skill runtime: run/cancel/log skill executions and resolve Node/Python toolchains
     controllers.extend(crate::openhuman::skill_runtime::all_skill_runtime_registered_controllers());
     // Skill registry: browse, search, install from remote registries
@@ -427,7 +427,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::sandbox::all_sandbox_controller_schemas());
     schemas.extend(crate::openhuman::socket::all_socket_controller_schemas());
     schemas.extend(crate::openhuman::javascript::all_javascript_controller_schemas());
-    schemas.extend(crate::openhuman::workflows::all_workflows_controller_schemas());
+    schemas.extend(crate::openhuman::skills::all_skills_controller_schemas());
     schemas.extend(crate::openhuman::skill_runtime::all_skill_runtime_controller_schemas());
     schemas.extend(crate::openhuman::skill_registry::all_skill_registry_controller_schemas());
     schemas.extend(crate::openhuman::workspace::all_workspace_controller_schemas());
@@ -571,7 +571,7 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         }
         "skill_registry" => Some("Browse, search, install, and uninstall skills from remote registries (OpenHuman, Hermes, OpenClaw)."),
         "skill_runtime" => Some("Run installed skills, inspect run logs, and resolve Node/Python skill runtimes."),
-        "workflows" => Some("Discovered workflows (WORKFLOW.md/SKILL.md bundles) and their resources."),
+        "skills" => Some("Discovered SKILL.md skills (discovery, parse, install, run) and their resources."),
         "socket" => Some("Backend Socket.IO bridge controls."),
         "memory" => Some("Document storage, vector search, key-value store, and knowledge graph."),
         "memory_goals" => Some(

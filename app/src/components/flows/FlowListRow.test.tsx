@@ -37,6 +37,7 @@ describe('FlowListRow', () => {
         onRun={vi.fn()}
         onViewRuns={vi.fn()}
         onView={vi.fn()}
+        onExport={vi.fn()}
       />
     );
 
@@ -52,6 +53,7 @@ describe('FlowListRow', () => {
         onRun={vi.fn()}
         onViewRuns={vi.fn()}
         onView={vi.fn()}
+        onExport={vi.fn()}
       />
     );
 
@@ -66,6 +68,7 @@ describe('FlowListRow', () => {
         onRun={vi.fn()}
         onViewRuns={vi.fn()}
         onView={vi.fn()}
+        onExport={vi.fn()}
       />
     );
 
@@ -80,6 +83,7 @@ describe('FlowListRow', () => {
         onRun={vi.fn()}
         onViewRuns={vi.fn()}
         onView={vi.fn()}
+        onExport={vi.fn()}
       />
     );
 
@@ -95,6 +99,7 @@ describe('FlowListRow', () => {
         onRun={vi.fn()}
         onViewRuns={vi.fn()}
         onView={vi.fn()}
+        onExport={vi.fn()}
       />
     );
 
@@ -110,6 +115,7 @@ describe('FlowListRow', () => {
         onRun={vi.fn()}
         onViewRuns={vi.fn()}
         onView={vi.fn()}
+        onExport={vi.fn()}
       />
     );
 
@@ -125,6 +131,7 @@ describe('FlowListRow', () => {
         onRun={vi.fn()}
         onViewRuns={vi.fn()}
         onView={vi.fn()}
+        onExport={vi.fn()}
       />
     );
 
@@ -140,6 +147,7 @@ describe('FlowListRow', () => {
         onRun={vi.fn()}
         onViewRuns={vi.fn()}
         onView={vi.fn()}
+        onExport={vi.fn()}
       />
     );
 
@@ -157,6 +165,7 @@ describe('FlowListRow', () => {
         onRun={onRun}
         onViewRuns={vi.fn()}
         onView={vi.fn()}
+        onExport={vi.fn()}
       />
     );
 
@@ -174,6 +183,7 @@ describe('FlowListRow', () => {
         onRun={vi.fn()}
         onViewRuns={onViewRuns}
         onView={vi.fn()}
+        onExport={vi.fn()}
       />
     );
 
@@ -193,6 +203,7 @@ describe('FlowListRow', () => {
         onRun={vi.fn()}
         onViewRuns={vi.fn()}
         onView={onView}
+        onExport={vi.fn()}
       />
     );
 
@@ -211,6 +222,7 @@ describe('FlowListRow', () => {
         onRun={vi.fn()}
         onViewRuns={vi.fn()}
         onView={vi.fn()}
+        onExport={vi.fn()}
         busy="run"
       />
     );
@@ -228,10 +240,31 @@ describe('FlowListRow', () => {
         onRun={vi.fn()}
         onViewRuns={vi.fn()}
         onView={vi.fn()}
+        onExport={vi.fn()}
         busy="toggle"
       />
     );
 
     expect(screen.getByTestId('flow-toggle-flow-1')).toBeDisabled();
+  });
+
+  it('renders an Export control and calls onExport with the flow when clicked', () => {
+    const onExport = vi.fn();
+    renderWithProviders(
+      <FlowListRow
+        flow={makeFlow()}
+        onToggle={vi.fn()}
+        onRun={vi.fn()}
+        onViewRuns={vi.fn()}
+        onView={vi.fn()}
+        onExport={onExport}
+      />
+    );
+
+    const exportButton = screen.getByTestId('flow-export-flow-1');
+    expect(exportButton).toHaveTextContent('Export');
+    fireEvent.click(exportButton);
+
+    expect(onExport).toHaveBeenCalledWith(makeFlow());
   });
 });

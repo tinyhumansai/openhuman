@@ -67,6 +67,46 @@ async fn flows_create_get_list_delete_roundtrip() {
 }
 
 #[tokio::test]
+async fn flows_duplicate_produces_disabled_unbound_copy_with_new_id() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    // Enabled source with require_approval set.
+    let created = flows_create(&config, "My Flow".to_string(), trigger_only_graph(), true)
+        .await
+        .unwrap();
+    assert!(created.value.enabled);
+    let source_id = created.value.id.clone();
+
+    let dup = flows_duplicate(&config, &source_id).await.unwrap();
+
+    // New id, suffixed name, DISABLED (so no trigger is bound => never fires).
+    assert_ne!(dup.value.id, source_id);
+    assert_eq!(dup.value.name, "My Flow (copy)");
+    assert!(
+        !dup.value.enabled,
+        "a duplicate must be disabled and thus not schedule/trigger-bound"
+    );
+    // Identical graph + require_approval carried over; run history reset.
+    assert_eq!(dup.value.graph, created.value.graph);
+    assert!(dup.value.require_approval);
+    assert!(dup.value.last_run_at.is_none());
+    assert!(dup.value.last_status.is_none());
+
+    // Both flows now exist independently.
+    let listed = flows_list(&config).await.unwrap();
+    assert_eq!(listed.value.len(), 2);
+}
+
+#[tokio::test]
+async fn flows_duplicate_missing_flow_errors() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let err = flows_duplicate(&config, "missing").await.unwrap_err();
+    assert!(err.contains("not found"));
+}
+
+#[tokio::test]
 async fn flows_set_enabled_toggles() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);

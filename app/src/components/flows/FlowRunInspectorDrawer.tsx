@@ -25,8 +25,24 @@ import debug from 'debug';
 
 import { useEscapeKey } from '../../hooks/useEscapeKey';
 import { useFlowRunPoller } from '../../hooks/useFlowRunPoller';
+import { type FlowNodeRunStatus, useFlowRunProgress } from '../../hooks/useFlowRunProgress';
+import { type FlowRunItem, normalizeItems } from '../../lib/flows/runItems';
 import { useT } from '../../lib/i18n/I18nContext';
 import type { FlowRunStatus, FlowRunStep } from '../../services/api/flowsApi';
+import Button from '../ui/Button';
+import { RunItemDataBrowser } from './RunItemDataBrowser';
+
+/**
+ * Context handed to the "Fix with agent" action (Phase 5c) so the canvas
+ * copilot can open preloaded with the failed run. `flowId` routes to the flow's
+ * canvas; the rest seeds the repair prompt.
+ */
+export interface FlowRepairRequest {
+  flowId: string;
+  runId: string;
+  error?: string | null;
+  failingNodeIds?: string[];
+}
 
 const log = debug('flows:run-inspector-drawer');
 
@@ -76,27 +92,50 @@ function formatTimestamp(value: string | null | undefined): string | null {
   }).format(new Date(parsed));
 }
 
-/** Render a step's `output` — pretty-printed JSON for objects/arrays, verbatim for strings. */
-function formatStepOutput(output: unknown): string {
-  if (output == null) return '';
-  if (typeof output === 'string') return output;
-  try {
-    return JSON.stringify(output, null, 2);
-  } catch {
-    return String(output);
-  }
-}
+/**
+ * Live per-node status dot colour, keyed off the socket `flow:run_progress`
+ * feed (Phase 3e). Mirrors the run-level {@link FLOW_RUN_STATUS_DOT} language:
+ * ocean (running, pulsing), sage (success), coral (error). Falls back to the
+ * faint dot when the node has no live status yet (the poller stays the source
+ * of truth for the durable step list).
+ */
+const FLOW_STEP_LIVE_DOT: Record<string, string> = {
+  running: 'bg-ocean-500 animate-pulse',
+  success: 'bg-sage-500',
+  error: 'bg-coral-500',
+  failed: 'bg-coral-500',
+};
 
-function StepRow({ step, index }: { step: FlowRunStep; index: number }) {
+function StepRow({
+  step,
+  index,
+  liveStatus,
+  inputItems,
+}: {
+  step: FlowRunStep;
+  index: number;
+  liveStatus?: FlowNodeRunStatus;
+  /**
+   * Normalized items of this step's *input* (the upstream step's output) so the
+   * data browser can resolve `paired_item` back to a source input item.
+   * Omitted for the first step, which has no upstream producer here.
+   */
+  inputItems?: FlowRunItem[];
+}) {
   const { t } = useT();
-  const outputText = formatStepOutput(step.output);
+  const items = normalizeItems(step.output);
+  const dotClass = (liveStatus && FLOW_STEP_LIVE_DOT[liveStatus]) ?? 'bg-content-faint';
 
   return (
     <li
       data-testid={`flow-run-step-${index}`}
       className="rounded-lg border border-line bg-surface-muted p-2.5 text-xs">
       <div className="flex flex-wrap items-center gap-1.5">
-        <span className="h-1.5 w-1.5 flex-none rounded-full bg-content-faint" aria-hidden />
+        <span
+          data-testid={`flow-run-step-dot-${index}`}
+          className={`h-1.5 w-1.5 flex-none rounded-full ${dotClass}`}
+          aria-hidden
+        />
         <span className="truncate font-mono font-medium text-content-secondary">
           {step.node_id}
         </span>
@@ -108,14 +147,18 @@ function StepRow({ step, index }: { step: FlowRunStep; index: number }) {
           </span>
         )}
       </div>
-      {outputText.length > 0 && (
+      {items.length > 0 && (
         <details className="mt-1.5">
           <summary className="cursor-pointer text-[11px] font-medium text-content-faint hover:text-content-secondary">
             {t('flowRuns.inspector.output')}
           </summary>
-          <pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded bg-surface px-2 py-1.5 font-mono text-[11px] leading-relaxed text-content-secondary">
-            {outputText}
-          </pre>
+          <div className="mt-1.5">
+            <RunItemDataBrowser
+              items={items}
+              inputItems={inputItems}
+              testIdPrefix={`flow-run-step-${index}`}
+            />
+          </div>
         </details>
       )}
     </li>
@@ -126,6 +169,12 @@ interface Props {
   /** Run id (== thread_id) to inspect. Renders `null` (nothing) when absent. */
   runId: string | null;
   onClose: () => void;
+  /**
+   * "Fix with agent" (Phase 5c) — when provided and the run failed, a repair
+   * action surfaces that hands the run context up so the host can open the
+   * canvas copilot preloaded. Omitted where there's no copilot to route to.
+   */
+  onFixWithAgent?: (request: FlowRepairRequest) => void;
 }
 
 /**
@@ -133,9 +182,32 @@ interface Props {
  * unconditionally and just flip `runId` (same convention as
  * `SubagentDrawer`).
  */
-export function FlowRunInspectorDrawer({ runId, onClose }: Props) {
+export function FlowRunInspectorDrawer({ runId, onClose, onFixWithAgent }: Props) {
   const { t } = useT();
   const { run, loading, error } = useFlowRunPoller(runId);
+  // Live per-node status overlay (Phase 3e): the socket feed makes the poller's
+  // durable step list feel live without replacing it as the source of truth.
+  const liveStatuses = useFlowRunProgress(runId);
+
+  const handleFixWithAgent = () => {
+    if (!run || !onFixWithAgent) return;
+    // Best-effort failing-node hints from the live status feed (error/failed).
+    const failingNodeIds = Object.entries(liveStatuses)
+      .filter(([, status]) => status === 'error' || status === 'failed')
+      .map(([nodeId]) => nodeId);
+    log(
+      'fix-with-agent: flow=%s run=%s failing=%d',
+      run.flow_id,
+      run.thread_id,
+      failingNodeIds.length
+    );
+    onFixWithAgent({
+      flowId: run.flow_id,
+      runId: run.thread_id,
+      error: run.error,
+      failingNodeIds: failingNodeIds.length > 0 ? failingNodeIds : undefined,
+    });
+  };
 
   useEscapeKey(() => {
     log('escape: closing runId=%s', runId);
@@ -242,6 +314,21 @@ export function FlowRunInspectorDrawer({ runId, onClose }: Props) {
                 </div>
               )}
 
+              {/* Repair entry point (Phase 5c): open the canvas copilot preloaded
+                  with this failed run so the workflow builder can propose a fix. */}
+              {run.status === 'failed' && onFixWithAgent && (
+                <div>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    size="sm"
+                    data-testid="flow-run-fix-with-agent"
+                    onClick={handleFixWithAgent}>
+                    {t('flowRuns.inspector.fixWithAgent')}
+                  </Button>
+                </div>
+              )}
+
               {/* Pending approvals banner */}
               {run.status === 'pending_approval' && pendingCount > 0 && (
                 <div
@@ -266,7 +353,13 @@ export function FlowRunInspectorDrawer({ runId, onClose }: Props) {
                 ) : (
                   <ol className="space-y-2" data-testid="flow-run-steps">
                     {run.steps.map((step, idx) => (
-                      <StepRow key={`${step.node_id}-${idx}`} step={step} index={idx} />
+                      <StepRow
+                        key={`${step.node_id}-${idx}`}
+                        step={step}
+                        index={idx}
+                        liveStatus={liveStatuses[step.node_id]}
+                        inputItems={idx > 0 ? normalizeItems(run.steps[idx - 1].output) : undefined}
+                      />
                     ))}
                   </ol>
                 )}

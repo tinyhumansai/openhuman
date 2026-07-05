@@ -266,6 +266,7 @@ mod tests {
             "critic",
             "archivist",
             "summarizer",
+            "workflow_builder",
         ] {
             assert!(ids.contains(&expected.to_string()), "missing {expected}");
         }

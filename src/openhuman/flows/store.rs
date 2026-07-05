@@ -167,6 +167,31 @@ pub fn upsert_flow(config: &Config, flow: &Flow) -> Result<()> {
     })
 }
 
+/// Duplicates an existing [`Flow`] into a fresh row: same graph +
+/// `require_approval`, a new id/timestamps, the given `new_name`, and
+/// **`enabled = false`** so the copy never auto-fires (no schedule/app_event
+/// trigger is bound while disabled — the caller relies on this to keep a
+/// duplicate inert until explicitly enabled). `last_run_at`/`last_status` are
+/// reset to `None` — run history does not carry over. Returns the persisted
+/// copy.
+pub fn insert_duplicate_flow(config: &Config, source: &Flow, new_name: String) -> Result<Flow> {
+    let now = Utc::now().to_rfc3339();
+    let flow = Flow {
+        id: Uuid::new_v4().to_string(),
+        name: new_name,
+        enabled: false,
+        graph: source.graph.clone(),
+        created_at: now.clone(),
+        updated_at: now,
+        last_run_at: None,
+        last_status: None,
+        require_approval: source.require_approval,
+    };
+    upsert_flow(config, &flow)?;
+    tracing::debug!(target: "flows", source_id = %source.id, new_id = %flow.id, "[flows] inserted duplicate flow (disabled)");
+    Ok(flow)
+}
+
 /// Creates a brand-new [`Flow`] row from a name + validated graph, stamping
 /// fresh id/timestamps, and returns the persisted record.
 pub fn create_flow(
@@ -399,6 +424,18 @@ pub fn kv_set(
 const FLOW_RUN_COLUMNS: &str = "id, flow_id, thread_id, status, started_at, finished_at, \
      steps_json, pending_approvals_json, error";
 
+/// Default per-flow run-history retention cap: how many of the most-recent runs
+/// a single flow keeps before older *terminal* runs are pruned on the next
+/// insert (and by the manual `flows_prune_runs` sweep). Bounds unbounded
+/// `flow_runs` growth for a hot, frequently-triggered flow while keeping enough
+/// history for the run-history inspector.
+///
+/// Non-terminal runs (`running`, `pending_approval`) are **never** pruned — a
+/// parked `pending_approval` run must survive so a later `flows_resume` can find
+/// it — so the effective row count for a flow may briefly exceed this cap by the
+/// number of live/parked runs. See [`prune_flow_runs`].
+pub const MAX_FLOW_RUNS_PER_FLOW: usize = 100;
+
 /// Inserts the initial `"running"` row for a new `flows_run` / `flows_resume`
 /// invocation. `id` and `thread_id` are the same value in practice (the
 /// tinyflows checkpointer thread id doubles as the run's stable identifier),
@@ -418,8 +455,54 @@ pub fn insert_flow_run(
             params![id, flow_id, thread_id, started_at],
         )
         .context("Failed to insert flow run")?;
+        // Retention: prune older terminal runs for this flow on every new-run
+        // insert, so `flow_runs` stays bounded for a hot flow. Same connection
+        // as the insert — atomic w.r.t. this write. A pruning failure is not
+        // fatal to the insert (the run itself matters more than trimming
+        // history), so it's logged and swallowed.
+        if let Err(e) = prune_flow_runs_conn(conn, flow_id, MAX_FLOW_RUNS_PER_FLOW) {
+            tracing::warn!(target: "flows", flow_id, error = %e, "[flows] insert_flow_run: retention prune failed (insert kept)");
+        }
         Ok(())
     })
+}
+
+/// Prunes a flow's run history down to at most `keep` of its most-recent runs,
+/// deleting only **terminal** rows (`completed` / `failed` / `cancelled`) that
+/// fall outside the newest-`keep` window. Non-terminal runs (`running`,
+/// `pending_approval`) are never deleted — a parked `pending_approval` run must
+/// never be pruned out from under a pending `flows_resume`, and a `running` row
+/// belongs to a live task. Returns the number of rows deleted.
+///
+/// `keep` is clamped to at least 1. Exposed for the manual `flows_prune_runs`
+/// sweep; the new-run insert path calls the connection-scoped helper directly.
+pub fn prune_flow_runs(config: &Config, flow_id: &str, keep: usize) -> Result<usize> {
+    with_connection(config, |conn| prune_flow_runs_conn(conn, flow_id, keep))
+}
+
+/// Connection-scoped core of [`prune_flow_runs`] — see its doc. Kept separate so
+/// the new-run insert path can prune inside its own `with_connection` block
+/// without reopening the database.
+fn prune_flow_runs_conn(conn: &Connection, flow_id: &str, keep: usize) -> Result<usize> {
+    let keep = i64::try_from(keep.max(1)).context("Run retention cap overflow")?;
+    let deleted = conn
+        .execute(
+            "DELETE FROM flow_runs
+              WHERE flow_id = ?1
+                AND status NOT IN ('running', 'pending_approval')
+                AND id NOT IN (
+                    SELECT id FROM flow_runs
+                     WHERE flow_id = ?1
+                     ORDER BY started_at DESC, id DESC
+                     LIMIT ?2
+                )",
+            params![flow_id, keep],
+        )
+        .context("Failed to prune flow runs")?;
+    if deleted > 0 {
+        tracing::debug!(target: "flows", flow_id, deleted, keep, "[flows] pruned old terminal flow runs past retention cap");
+    }
+    Ok(deleted)
 }
 
 /// Finalizes a flow run row: settles its terminal `status`, `finished_at`,

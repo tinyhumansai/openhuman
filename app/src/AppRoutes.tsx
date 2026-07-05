@@ -12,7 +12,7 @@ import Accounts from './pages/Accounts';
 import Brain from './pages/Brain';
 import AgentInsightsPreview from './pages/dev/AgentInsightsPreview';
 import Feedback from './pages/Feedback';
-import FlowCanvasPage from './pages/FlowCanvasPage';
+import FlowCanvasPage, { FlowCanvasDraftPage } from './pages/FlowCanvasPage';
 import FlowsPage from './pages/FlowsPage';
 import Invites from './pages/Invites';
 import Notifications from './pages/Notifications';
@@ -22,7 +22,6 @@ import Rewards from './pages/Rewards';
 import Skills from './pages/Skills';
 import WebCallbackPage from './pages/WebCallbackPage';
 import Welcome from './pages/Welcome';
-import WorkflowNew from './pages/WorkflowNew';
 import WorkflowsRun from './pages/WorkflowsRun';
 
 interface AppRoutesProps {
@@ -113,6 +112,19 @@ const AppRoutes = ({ location }: AppRoutesProps = {}) => {
           </ProtectedRoute>
         }
       />
+      {/* Unsaved draft canvas (Phase 4e) — the chat WorkflowProposalCard's
+          "Open in canvas" action lands here with the proposed graph in
+          `location.state`. Declared BEFORE `/flows/:id` so it matches first;
+          otherwise `:id` would capture "draft" and try to `flows_get('draft')`.
+          Opening a draft never persists — the canvas's own Save is the gate. */}
+      <Route
+        path="/flows/draft"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <FlowCanvasDraftPage />
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/flows/:id"
         element={
@@ -130,19 +142,9 @@ const AppRoutes = ({ location }: AppRoutesProps = {}) => {
           The old /skills path is kept as a back-compat redirect so bookmarks
           and deep links continue to work.  `?tab=` query params are preserved
           by Navigate (replace) so existing deep links still land on the right
-          sub-tab.
-          `/workflows/new` is the create-a-skill authoring page.
-          Order matters: keep `/workflows/new` before `/connections` so it wins
-          the prefix match. */}
-      <Route
-        path="/workflows/new"
-        element={
-          <ProtectedRoute requireAuth={true}>
-            <WorkflowNew />
-          </ProtectedRoute>
-        }
-      />
-
+          sub-tab. */}
+      {/* `/workflows/run` is the single-purpose Skill runner page — the live
+          destination of the Run button in the Automations tab (WorkflowsTab). */}
       <Route
         path="/workflows/run"
         element={

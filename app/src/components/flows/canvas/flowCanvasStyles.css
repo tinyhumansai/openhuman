@@ -63,3 +63,80 @@
   background: rgb(var(--surface) / 0.7);
   color: rgb(var(--content-muted));
 }
+
+/*
+ * Validation highlight (Phase 3c): a node named by a hard validation error
+ * (invalid config / cycle / duplicate / unknown-node) gets a coral ring so the
+ * inline banner's message points at a visible culprit on the canvas. `.flow-node-error`
+ * is applied to the outer `.react-flow__node` wrapper via the node's `className`.
+ */
+.flow-canvas .react-flow__node.flow-node-error {
+  outline: 2px solid rgb(var(--coral-500));
+  outline-offset: 3px;
+  border-radius: 0.85rem;
+}
+
+/*
+ * Live run overlay (Phase 3e): while a run is in flight the canvas rings each
+ * node with its live status from `useFlowRunProgress` — n8n's signature
+ * running/success/error interaction. Classes are applied to the outer
+ * `.react-flow__node` wrapper via the node's `className` (composed alongside the
+ * validation `.flow-node-error` ring). `flow-node-failed` is kept distinct from
+ * the validation `.flow-node-error` so a *runtime* failure reads differently
+ * from a *config* error.
+ */
+.flow-canvas .react-flow__node.flow-node-running {
+  outline: 2px solid rgb(var(--primary-500));
+  outline-offset: 3px;
+  border-radius: 0.85rem;
+  animation: flow-node-run-pulse 1.2s ease-in-out infinite;
+}
+
+.flow-canvas .react-flow__node.flow-node-success {
+  outline: 2px solid rgb(var(--sage-500));
+  outline-offset: 3px;
+  border-radius: 0.85rem;
+}
+
+.flow-canvas .react-flow__node.flow-node-failed {
+  outline: 2px solid rgb(var(--coral-500));
+  outline-offset: 3px;
+  border-radius: 0.85rem;
+}
+
+/*
+ * Copilot diff overlay (Phase 5c): while the user reviews an agent proposal on
+ * the canvas, nodes the proposal ADDS get a sage ring (like a live-success
+ * highlight) and nodes it REMOVES are ghosted (dimmed + dashed coral ring) so
+ * the change reads diff-style before Accept/Reject. Applied via the node's
+ * `className` alongside the validation/run rings.
+ */
+.flow-canvas .react-flow__node.flow-node-added {
+  outline: 2px solid rgb(var(--sage-500));
+  outline-offset: 3px;
+  border-radius: 0.85rem;
+}
+
+.flow-canvas .react-flow__node.flow-node-removed {
+  outline: 2px dashed rgb(var(--coral-500));
+  outline-offset: 3px;
+  border-radius: 0.85rem;
+  opacity: 0.45;
+}
+
+@keyframes flow-node-run-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(var(--primary-500) / 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgb(var(--primary-500) / 0);
+  }
+}
+
+/* Respect reduced-motion: keep the ring, drop the pulse. */
+@media (prefers-reduced-motion: reduce) {
+  .flow-canvas .react-flow__node.flow-node-running {
+    animation: none;
+  }
+}

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::openhuman::agent::tool_policy::GeneratedToolRuntimeContext;
 
 // Re-export the unified ToolResult from the lightweight skills types module so all tools use one type.
-pub use crate::openhuman::workflows::types::{ToolContent, ToolResult};
+pub use crate::openhuman::skills::types::{ToolContent, ToolResult};
 
 /// Controls where a tool is available.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

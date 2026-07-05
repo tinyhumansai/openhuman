@@ -9,7 +9,7 @@
  *
  * Covered here:
  *  - Mount with one saved schedule for the picked skill (mocking
- *    workflows_list, workflows_describe, cron_list, recent_runs).
+ *    skills_list, skills_describe, cron_list, recent_runs).
  *  - Toggle flips enabled → false via openhumanCronUpdate(id, { enabled }).
  *  - The list re-loads after toggle (openhumanCronList called again).
  *  - aria-checked reflects the new state once the list refreshes.
@@ -51,8 +51,8 @@ vi.mock('../../../utils/tauriCommands/cron', () => ({
   openhumanCronRuns: hoisted.cronRuns,
 }));
 
-vi.mock('../../../services/api/workflowsApi', () => ({
-  workflowsApi: {
+vi.mock('../../../services/api/skillsApi', () => ({
+  skillsApi: {
     listWorkflows: hoisted.listWorkflows,
     describeWorkflow: hoisted.describeWorkflow,
     runWorkflow: hoisted.runWorkflow,
@@ -173,7 +173,7 @@ describe('WorkflowRunnerBody — saved-schedule toggle', () => {
     const Body = await importBody();
     renderBody(Body);
 
-    // Wait for workflows_list to resolve and populate the dropdown.
+    // Wait for skills_list to resolve and populate the dropdown.
     await waitFor(() => expect(hoisted.listWorkflows).toHaveBeenCalled());
 
     // Pick the skill so the schedule list mounts.
@@ -546,7 +546,7 @@ describe('WorkflowRunnerBody — URL ?workflow= preselect', () => {
     expect(hoisted.describeWorkflow).not.toHaveBeenCalled();
   });
 
-  it('ignores ?workflow= when the value is not in the workflows_list (picker stays empty, describeWorkflow called once with empty=never)', async () => {
+  it('ignores ?workflow= when the value is not in the skills_list (picker stays empty, describeWorkflow called once with empty=never)', async () => {
     // ?workflow=unknown-skill is treated as best-effort: we set the state
     // but the picker shows "Select a skill" since the option isn't in
     // the list. The describe call IS attempted (we don't pre-filter

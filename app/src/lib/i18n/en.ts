@@ -3568,6 +3568,7 @@ const en: TranslationMap = {
   'chat.flowProposal.requireApprovalHint': 'Every outbound action will need your approval.',
   'chat.flowProposal.save': 'Save & enable',
   'chat.flowProposal.saving': 'Saving…',
+  'chat.flowProposal.openInCanvas': 'Open in canvas',
   'chat.flowProposal.dismiss': 'Dismiss',
   'chat.flowProposal.error': 'Could not save the workflow. Please try again.',
 
@@ -4319,6 +4320,21 @@ const en: TranslationMap = {
   'flowRuns.inspector.port': 'Port',
   'flowRuns.inspector.loading': 'Loading run…',
   'flowRuns.inspector.loadError': 'Could not load this run',
+  // Phase 5c — "Fix with agent" opens the canvas copilot preloaded with this
+  // failed run's context so the workflow builder can propose a fix.
+  'flowRuns.inspector.fixWithAgent': 'Fix with agent',
+  // Phase 6 — per-item data browser (n8n-style table ⟷ JSON toggle) for a
+  // step's output items, plus the input↔output pairing affordance.
+  'flowRuns.inspector.dataTable': 'Table',
+  'flowRuns.inspector.dataJson': 'JSON',
+  'flowRuns.inspector.dataViewLabel': 'Output view',
+  'flowRuns.inspector.itemCount': '{count} item(s)',
+  'flowRuns.inspector.noItems': 'No output items',
+  'flowRuns.inspector.emptyValue': '(empty)',
+  'flowRuns.inspector.binaryLabel': 'Binary',
+  'flowRuns.inspector.showSource': 'Source',
+  'flowRuns.inspector.hideSource': 'Hide source',
+  'flowRuns.inspector.sourceInputTitle': 'Source input item',
   'flowRuns.status.running': 'Running',
   'flowRuns.status.completed': 'Completed',
   'flowRuns.status.pending_approval': 'Awaiting approval',
@@ -4351,11 +4367,49 @@ const en: TranslationMap = {
   'flows.list.paused': 'Paused',
   'flows.list.runStarted': 'Workflow started',
   'flows.list.view': 'View workflow',
+  'flows.list.export': 'Export',
+  'flows.list.exported': 'Workflow exported',
+  'flows.page.import': 'Import',
+  'flows.import.invalidFile': 'That file is not valid workflow JSON.',
+  'flows.import.error': 'Could not import this workflow. Check the file and try again.',
+  'flows.import.warningTitle': 'Import warning',
   'flows.runs.title': 'Runs for {name}',
   'flows.runs.titleFallback': 'Workflow runs',
   'flows.runs.loading': 'Loading runs…',
   'flows.runs.loadError': 'Could not load runs',
   'flows.runs.empty': 'No runs yet',
+
+  // ── Phase 5c: prompt-first authoring + canvas copilot ────────────────────
+  // The Flows prompt bar (describe a workflow → builder agent proposes it) and
+  // the canvas copilot (iterate on a draft with a diff overlay). Everything
+  // here only PROPOSES — saving/enabling stays behind explicit clicks.
+  'flows.promptBar.label': 'Describe a workflow',
+  'flows.promptBar.placeholder': 'Describe a workflow…',
+  'flows.promptBar.submit': 'Build',
+  'flows.promptBar.thinking': 'Building…',
+  'flows.promptBar.heroTitle': 'Describe a workflow',
+  'flows.promptBar.heroSubtitle': 'Tell the builder what to automate and review its proposal.',
+  'flows.promptBar.error': 'Could not reach the workflow builder. Please try again.',
+  'flows.promptBar.offline': 'You are offline. Reconnect to build a workflow.',
+  'flows.copilot.open': 'Copilot',
+  'flows.copilot.title': 'Workflow copilot',
+  'flows.copilot.subtitle': 'Ask for changes and review each proposal before applying it.',
+  'flows.copilot.close': 'Close copilot',
+  'flows.copilot.placeholder': 'Ask for a change…',
+  'flows.copilot.send': 'Send',
+  'flows.copilot.thinking': 'Thinking…',
+  'flows.copilot.error': 'Could not reach the workflow builder. Please try again.',
+  'flows.copilot.offline': 'You are offline. Reconnect to use the copilot.',
+  'flows.copilot.emptyState':
+    'Describe a change to this workflow and the builder will propose an update.',
+  'flows.copilot.proposalTitle': 'Proposed changes',
+  'flows.copilot.added': '{count} added',
+  'flows.copilot.removed': '{count} removed',
+  'flows.copilot.noChanges': 'No node changes in this proposal.',
+  'flows.copilot.accept': 'Apply to draft',
+  'flows.copilot.reject': 'Discard',
+  'flows.copilot.previewHint': 'Reviewing a proposed draft — nothing is saved yet.',
+  'flows.copilot.repairDisplay': 'A run failed — please look at it and propose a fix.',
 
   // ── Workflow Canvas (issue B5b.1) — the read-only graph view of a saved
   // flow at /flows/:id. `flows.nodeKind.*` labels the 12 tinyflows node
@@ -4364,6 +4418,7 @@ const en: TranslationMap = {
   'flows.canvas.loading': 'Loading workflow…',
   'flows.canvas.loadError': 'Could not load this workflow. Please try again.',
   'flows.canvas.notFound': 'This workflow could not be found.',
+  'flows.canvas.draftMissing': 'No workflow draft to open. Propose one from chat first.',
   'flows.canvas.backToList': 'Back to workflows',
   'flows.nodeKind.trigger': 'Trigger',
   'flows.nodeKind.agent': 'Agent',
@@ -4377,6 +4432,125 @@ const en: TranslationMap = {
   'flows.nodeKind.transform': 'Transform',
   'flows.nodeKind.output_parser': 'Output parser',
   'flows.nodeKind.sub_workflow': 'Sub-workflow',
+
+  // ── Editable Workflow Canvas (issue B5b.2 / Phase 3a) — the node palette
+  // and editor toolbar layered on top of the read-only canvas above.
+  'flows.palette.title': 'Nodes',
+  'flows.palette.addNode': 'Add {kind} node',
+  'flows.editor.save': 'Save',
+  'flows.editor.saving': 'Saving…',
+  'flows.editor.run': 'Run',
+  'flows.editor.running': 'Running…',
+  'flows.editor.runFailed': 'Could not start run',
+  'flows.editor.deleteSelected': 'Delete selected',
+  // ── Validation UX + draft/dirty state (issue B5b / Phase 3c–3d)
+  'flows.editor.validate': 'Validate',
+  'flows.editor.validating': 'Validating…',
+  'flows.editor.discard': 'Discard changes',
+  'flows.editor.unsaved': 'Unsaved changes',
+  'flows.editor.saveBlocked': 'Fix the errors below before saving.',
+  'flows.editor.errorsTitle': 'Errors',
+  'flows.editor.warningsTitle': 'Warnings',
+  'flows.editor.saveFailedTitle': 'Could not save',
+  'flows.editor.leaveTitle': 'Leave without saving?',
+  'flows.editor.leaveBody':
+    'You have unsaved changes to this workflow. If you leave now, they will be lost.',
+  'flows.editor.leaveStay': 'Stay',
+  'flows.editor.leaveDiscard': 'Leave',
+  // ── Node config drawer (issue B5b / Phase 3b) — per-kind config forms
+  'flows.nodeConfig.close': 'Close settings',
+  'flows.nodeConfig.nameLabel': 'Name',
+  'flows.nodeConfig.namePlaceholder': 'Node name',
+  'flows.nodeConfig.editForm': 'Edit as form',
+  'flows.nodeConfig.editJson': 'Edit as JSON',
+  'flows.nodeConfig.rawJsonLabel': 'Configuration (JSON)',
+  'flows.nodeConfig.rawJsonHint': 'Free-form configuration for this node.',
+  'flows.nodeConfig.rawJsonInvalid': 'Invalid JSON — changes are not applied until it parses.',
+  'flows.nodeConfig.expressionHint':
+    'Start with = to compute the value from the node input, e.g. =item.url',
+  'flows.nodeConfig.expressionBadge': 'Expression',
+  'flows.nodeConfig.keymapKeyPlaceholder': 'Key',
+  'flows.nodeConfig.keymapValuePlaceholder': 'Value',
+  'flows.nodeConfig.keymapRemove': 'Remove row',
+  'flows.nodeConfig.keymapAdd': 'Add row',
+  'flows.nodeConfig.credentialLabel': 'Credential',
+  'flows.nodeConfig.credentialHint': 'Choose a connected account or credential for this node.',
+  'flows.nodeConfig.credentialEmpty': 'No connected credentials available.',
+  'flows.nodeConfig.credentialNone': 'None',
+  'flows.nodeConfig.trigger.kindLabel': 'Trigger type',
+  'flows.nodeConfig.trigger.kind_manual': 'Manual',
+  'flows.nodeConfig.trigger.kind_schedule': 'Schedule',
+  'flows.nodeConfig.trigger.kind_webhook': 'Webhook',
+  'flows.nodeConfig.trigger.kind_app_event': 'App event',
+  'flows.nodeConfig.trigger.scheduleLabel': 'Cron schedule',
+  'flows.nodeConfig.trigger.scheduleHint': 'Cron expression: minute hour day month weekday.',
+  'flows.nodeConfig.trigger.toolkitLabel': 'Toolkit',
+  'flows.nodeConfig.trigger.triggerSlugLabel': 'Trigger slug',
+  'flows.nodeConfig.trigger.webhookHint':
+    'Webhook triggers are saved but not dispatched automatically yet.',
+  'flows.nodeConfig.http.methodLabel': 'Method',
+  'flows.nodeConfig.http.urlLabel': 'URL',
+  'flows.nodeConfig.http.headersLabel': 'Headers',
+  'flows.nodeConfig.http.bodyLabel': 'Body (JSON)',
+  'flows.nodeConfig.agent.promptLabel': 'Prompt',
+  'flows.nodeConfig.agent.promptPlaceholder': 'Instructions for the agent…',
+  'flows.nodeConfig.agent.modelLabel': 'Model',
+  'flows.nodeConfig.tool.slugLabel': 'Tool slug',
+  'flows.nodeConfig.tool.argsLabel': 'Arguments (JSON)',
+  'flows.nodeConfig.condition.fieldLabel': 'Field',
+  'flows.nodeConfig.condition.fieldHint':
+    'Key on the input item to test for truthiness. Routes to true or false.',
+  'flows.nodeConfig.switch.expressionLabel': 'Expression',
+  'flows.nodeConfig.switch.hint':
+    'The result value selects the matching output port; null routes to default.',
+  'flows.nodeConfig.switch.fieldLabel': 'Field (fallback)',
+  'flows.nodeConfig.transform.setLabel': 'Set fields',
+  'flows.nodeConfig.transform.setHint':
+    'Each value is an expression evaluated per item, e.g. =item.name',
+  'flows.nodeConfig.code.languageLabel': 'Language',
+  'flows.nodeConfig.code.language_javascript': 'JavaScript',
+  'flows.nodeConfig.code.language_python': 'Python',
+  'flows.nodeConfig.code.sourceLabel': 'Source',
+
+  // Phase 4a "New workflow" chooser + Phase 4c templates gallery. The chooser
+  // offers scratch / template / describe; the gallery lists the curated
+  // `WorkflowGraph` templates bundled under `lib/flows/templates/`.
+  'flows.chooser.title': 'Create a workflow',
+  'flows.chooser.subtitle': 'Choose how you want to start.',
+  'flows.chooser.scratchTitle': 'Start from scratch',
+  'flows.chooser.scratchDescription': 'Begin with a blank canvas and a single manual trigger.',
+  'flows.chooser.templateTitle': 'From a template',
+  'flows.chooser.templateDescription': 'Start from a ready-made example and customize it.',
+  'flows.chooser.describeTitle': 'Describe it',
+  'flows.chooser.describeDescription':
+    'Tell the assistant what you want and let it draft the workflow.',
+  'flows.chooser.creating': 'Creating workflow…',
+  'flows.chooser.createError': 'Could not create the workflow. Please try again.',
+  'flows.templates.title': 'Start from a template',
+  'flows.templates.subtitle': 'Pick a starting point and customize it in the editor.',
+  'flows.templates.use': 'Use template',
+  'flows.templates.back': 'Back',
+  'flows.templates.empty': 'No templates available.',
+  'flows.templates.category.scheduled': 'Scheduled',
+  'flows.templates.category.triggered': 'Triggered',
+  'flows.templates.category.onDemand': 'On demand',
+  'flows.templates.daily-digest.name': 'Daily digest to channel',
+  'flows.templates.daily-digest.description':
+    'On a schedule, an agent writes a short summary and posts it to a channel.',
+  'flows.templates.scheduled-scrape.name': 'Scheduled scrape to memory',
+  'flows.templates.scheduled-scrape.description':
+    'Fetch a source on a schedule, reshape the results, and store them in memory.',
+  'flows.templates.webhook-triage.name': 'Webhook triage and notify',
+  'flows.templates.webhook-triage.description':
+    'An incoming webhook is triaged by an agent, then you get notified.',
+  'flows.templates.app-event-route.name': 'App event to conditional action',
+  'flows.templates.app-event-route.description':
+    'A connected-app event runs a check, then takes an action when it matches.',
+  'flows.templates.http-fetch-parse.name': 'Fetch and parse an API',
+  'flows.templates.http-fetch-parse.description':
+    'Call an HTTP endpoint on demand and parse the response into a usable shape.',
+  'flows.templates.ask-agent.name': 'Ask the agent',
+  'flows.templates.ask-agent.description': 'A simple manual trigger that hands a task to an agent.',
 
   'oauth.button.connecting': 'Connecting...',
   'oauth.button.loopbackTimeout':

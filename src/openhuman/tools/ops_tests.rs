@@ -2,7 +2,7 @@ use super::*;
 use crate::openhuman::config::{BrowserConfig, Config, MemoryConfig};
 use crate::openhuman::credentials::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
 use crate::openhuman::security::AuditLogger;
-use crate::openhuman::workflows::types::ToolContent;
+use crate::openhuman::skills::types::ToolContent;
 use tempfile::TempDir;
 
 #[path = "../integrations/test_support.rs"]

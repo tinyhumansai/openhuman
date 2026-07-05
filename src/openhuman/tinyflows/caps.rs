@@ -18,8 +18,10 @@ use serde_json::{json, Value};
 use tinyagents::graph::SqliteCheckpointer;
 use tinyflows::caps::{
     Capabilities, CodeLanguage, CodeRunner, HttpClient, LlmProvider, StateStore, ToolInvoker,
+    WorkflowResolver,
 };
 use tinyflows::error::{EngineError, Result};
+use tinyflows::model::WorkflowGraph;
 
 use crate::openhuman::agent::harness::definition::SandboxMode;
 use crate::openhuman::composio::client::{
@@ -1126,7 +1128,66 @@ impl StateStore for FlowStateStore {
     }
 }
 
-/// Builds the [`Capabilities`] bundle for one run, wiring each of the five
+/// [`WorkflowResolver`] adapter over the `flows::` domain's saved-flow store.
+///
+/// A `sub_workflow` node that references a child by `workflow_id` (rather than
+/// embedding it inline) resolves through this adapter: the id is a saved flow's
+/// id, and [`flows::ops::load_flow_graph`] loads that flow's portable
+/// [`WorkflowGraph`] from the SQLite store. An unknown id maps to
+/// [`EngineError::Capability`], so the referencing node fails with a clear "no
+/// such workflow" error rather than silently no-op'ing.
+///
+/// The engine bounds recursion (its `MAX_SUB_WORKFLOW_DEPTH` depth counter) and
+/// rejects direct self-references before a child runs, so this adapter does not
+/// itself need cycle detection — it is a pure id → graph lookup.
+pub struct OpenHumanWorkflowResolver {
+    pub config: Arc<Config>,
+}
+
+#[async_trait]
+impl WorkflowResolver for OpenHumanWorkflowResolver {
+    async fn resolve(&self, workflow_id: &str) -> Result<WorkflowGraph> {
+        tracing::debug!(
+            target: "flows",
+            %workflow_id,
+            "[flows] sub_workflow resolver: resolving workflow_id to a saved flow graph"
+        );
+        match flows::ops::load_flow_graph(&self.config, workflow_id) {
+            Ok(Some(graph)) => {
+                tracing::debug!(
+                    target: "flows",
+                    %workflow_id,
+                    node_count = graph.nodes.len(),
+                    "[flows] sub_workflow resolver: resolved saved flow graph"
+                );
+                Ok(graph)
+            }
+            Ok(None) => {
+                tracing::warn!(
+                    target: "flows",
+                    %workflow_id,
+                    "[flows] sub_workflow resolver: no saved flow with that workflow_id"
+                );
+                Err(EngineError::Capability(format!(
+                    "sub_workflow: no saved flow found for workflow_id '{workflow_id}'"
+                )))
+            }
+            Err(e) => {
+                tracing::error!(
+                    target: "flows",
+                    %workflow_id,
+                    error = %e,
+                    "[flows] sub_workflow resolver: failed to load saved flow graph"
+                );
+                Err(EngineError::Capability(format!(
+                    "sub_workflow: failed to load workflow_id '{workflow_id}': {e}"
+                )))
+            }
+        }
+    }
+}
+
+/// Builds the [`Capabilities`] bundle for one run, wiring each of the six
 /// host-injected traits to a real OpenHuman adapter (see each adapter above for
 /// its contract).
 ///
@@ -1159,9 +1220,10 @@ pub fn build_capabilities(config: Arc<Config>, state_namespace: impl Into<String
             security,
         }),
         state: Arc::new(FlowStateStore {
-            config,
+            config: config.clone(),
             namespace: state_namespace.into(),
         }),
+        resolver: Arc::new(OpenHumanWorkflowResolver { config }),
     }
 }
 
@@ -1590,5 +1652,79 @@ mod tests {
     #[test]
     fn prompt_decision_does_not_escalate_without_a_workflow_origin() {
         assert!(escalated_origin_for_prompt(GateDecision::Prompt, None).is_none());
+    }
+
+    // ── Phase 7: sub_workflow-by-id resolver ───────────────────────────────
+
+    fn resolver_test_config(tmp: &tempfile::TempDir) -> Config {
+        let config = Config {
+            workspace_dir: tmp.path().join("workspace"),
+            action_dir: tmp.path().join("workspace"),
+            config_path: tmp.path().join("config.toml"),
+            ..Config::default()
+        };
+        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        config
+    }
+
+    fn trigger_only_graph() -> WorkflowGraph {
+        use tinyflows::model::{Node, NodeKind};
+        WorkflowGraph {
+            nodes: vec![Node {
+                id: "t".to_string(),
+                kind: NodeKind::Trigger,
+                type_version: 1,
+                name: "Trigger".to_string(),
+                config: Value::Null,
+                ports: Vec::new(),
+                position: None,
+            }],
+            ..Default::default()
+        }
+    }
+
+    /// The resolver loads a saved flow's graph by its id — the by-`workflow_id`
+    /// sub_workflow path resolves against the real flows store.
+    #[tokio::test]
+    async fn resolver_loads_saved_flow_graph_by_id() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let config = Arc::new(resolver_test_config(&tmp));
+
+        let graph_json = serde_json::to_value(trigger_only_graph()).unwrap();
+        let flow = flows::ops::flows_create(&config, "child".to_string(), graph_json, false)
+            .await
+            .expect("create flow");
+        let flow_id = flow.value.id.clone();
+
+        let resolver = OpenHumanWorkflowResolver {
+            config: config.clone(),
+        };
+        let graph = resolver
+            .resolve(&flow_id)
+            .await
+            .expect("resolver should load the saved flow graph");
+        assert_eq!(graph.nodes.len(), 1);
+        assert_eq!(graph.nodes[0].id, "t");
+    }
+
+    /// An unknown workflow_id surfaces a capability error naming the id, rather
+    /// than silently resolving to nothing.
+    #[tokio::test]
+    async fn resolver_unknown_id_is_a_capability_error() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let config = Arc::new(resolver_test_config(&tmp));
+        let resolver = OpenHumanWorkflowResolver { config };
+
+        let err = resolver
+            .resolve("does-not-exist")
+            .await
+            .expect_err("unknown workflow_id must error");
+        match err {
+            EngineError::Capability(msg) => assert!(
+                msg.contains("does-not-exist"),
+                "error should name the missing id: {msg}"
+            ),
+            other => panic!("expected a capability error, got: {other:?}"),
+        }
     }
 }

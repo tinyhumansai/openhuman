@@ -1859,7 +1859,7 @@ async fn run_server_inner(
                 // / pr-review-shepherd) that older builds seeded into
                 // <workspace>/skills/. OpenHuman no longer ships bundled defaults;
                 // this removes the stale dirs on upgrade. Idempotent.
-                crate::openhuman::workflows::registry::prune_legacy_default_workflows(
+                crate::openhuman::skills::registry::prune_legacy_default_workflows(
                     &cfg.workspace_dir,
                 );
                 // Boot-time Sentry user binding — issue #3135. If the user is
@@ -2593,7 +2593,7 @@ pub async fn bootstrap_core_runtime(host_kind: crate::core::types::HostKind) {
     // installs. Idempotent — shares a process-global OnceLock with the
     // `start_channels` site so it registers exactly once regardless of which
     // path runs first. (Matching only for now; activation handoff still pending.)
-    crate::openhuman::workflows::bus::ensure_triggered_workflow_subscriber(&workspace_dir);
+    crate::openhuman::skills::bus::ensure_triggered_workflow_subscriber(&workspace_dir);
 
     // --- Approval gate (#1339) ---
     // ON by default; opt out with `OPENHUMAN_APPROVAL_GATE=0` (or `false`).

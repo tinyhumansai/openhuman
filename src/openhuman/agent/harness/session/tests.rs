@@ -487,7 +487,7 @@ fn skill_listener_closed_channel_nulls_rx_and_is_not_a_signal() {
 
 #[test]
 fn refresh_workflows_picks_up_skill_installed_on_disk() {
-    use crate::openhuman::workflows::ops_types::{SKILL_MD, TRUST_MARKER};
+    use crate::openhuman::skills::ops_types::{SKILL_MD, TRUST_MARKER};
 
     // Isolated, trusted workspace with one project-scope skill on disk.
     let ws = tempfile::TempDir::new().expect("temp workspace");
@@ -553,7 +553,7 @@ fn refresh_workflows_picks_up_skill_installed_on_disk() {
 
 #[test]
 fn refresh_workflows_retracts_skill_removed_from_disk() {
-    use crate::openhuman::workflows::ops_types::{SKILL_MD, TRUST_MARKER};
+    use crate::openhuman::skills::ops_types::{SKILL_MD, TRUST_MARKER};
 
     let ws = tempfile::TempDir::new().expect("temp workspace");
     let wsp = ws.path().to_path_buf();

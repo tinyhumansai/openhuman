@@ -9,7 +9,7 @@
  *   - All form fields (name, description, scope, license, author,
  *     tags, allowed-tools).
  *   - Slug preview + validation (name and description required).
- *   - Submit handler that calls `workflowsApi.createWorkflow` and surfaces
+ *   - Submit handler that calls `skillsApi.createWorkflow` and surfaces
  *     the result via `onCreated(skill)` / error string via inline
  *     `<div role="alert">`.
  *
@@ -43,10 +43,10 @@ import { useT } from '../../lib/i18n/I18nContext';
 import {
   type CreateWorkflowInput,
   type CreateWorkflowInputDef,
-  workflowsApi,
+  skillsApi,
   type WorkflowScope,
   type WorkflowSummary,
-} from '../../services/api/workflowsApi';
+} from '../../services/api/skillsApi';
 import Button from '../ui/Button';
 
 /** Mirrors `SkillCreateInputDef` shape used as wire payload, with one
@@ -81,7 +81,7 @@ const log = debug('skills:create-form');
 export interface CreateSkillFormHandle {
   /** True iff name+description are present and no submit is in flight. */
   isValid: () => boolean;
-  /** True while workflowsApi.createWorkflow is in flight. */
+  /** True while skillsApi.createWorkflow is in flight. */
   isSubmitting: () => boolean;
   /** Imperatively trigger submit. Resolves once the round-trip finishes. */
   submit: () => Promise<void>;
@@ -107,7 +107,7 @@ export interface CreateSkillFormProps {
   /**
    * When set, the form is in EDIT mode for this workflow: fields are
    * pre-filled (name read-only — the slug is identity), and submit calls
-   * `workflows_update` instead of `workflows_create`. Tags / author /
+   * `skills_update` instead of `skills_create`. Tags / author /
    * allowed-tools (not exposed as editable fields) are carried through so
    * they're preserved on save.
    */
@@ -143,7 +143,7 @@ const CreateWorkflowForm = forwardRef<CreateSkillFormHandle, CreateSkillFormProp
     const { t } = useT();
     const isEdit = !!editing;
     // Fields the form doesn't expose but must preserve across an edit
-    // (otherwise workflows_update would regenerate frontmatter without them).
+    // (otherwise skills_update would regenerate frontmatter without them).
     const preservedRef = useRef<{ tags?: string[]; author?: string; allowedTools?: string[] }>({});
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
@@ -218,7 +218,7 @@ const CreateWorkflowForm = forwardRef<CreateSkillFormHandle, CreateSkillFormProp
       let cancelled = false;
       void (async () => {
         try {
-          const desc = await workflowsApi.describeWorkflow(editing.id);
+          const desc = await skillsApi.describeWorkflow(editing.id);
           if (cancelled) return;
           if (desc.when_to_use) setWhenToUse(desc.when_to_use);
           setInputs(
@@ -280,8 +280,8 @@ const CreateWorkflowForm = forwardRef<CreateSkillFormHandle, CreateSkillFormProp
       setError(null);
       try {
         const saved = editing
-          ? await workflowsApi.updateWorkflow(payload)
-          : await workflowsApi.createWorkflow(payload);
+          ? await skillsApi.updateWorkflow(payload)
+          : await skillsApi.createWorkflow(payload);
         log('submit-ok id=%s edit=%s', saved.id, isEdit);
         onCreated(saved);
       } catch (err) {

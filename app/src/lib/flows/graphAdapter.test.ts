@@ -2,13 +2,15 @@ import { describe, expect, it } from 'vitest';
 
 import {
   autoLayout,
+  createFlowNode,
   edgeId,
   type FlowEdge,
   type FlowNode,
+  isValidFlowConnection,
   workflowGraphToXyflow,
   xyflowToWorkflowGraph,
 } from './graphAdapter';
-import type { WorkflowEdge, WorkflowGraph, WorkflowNode } from './types';
+import type { NodeKind, WorkflowEdge, WorkflowGraph, WorkflowNode } from './types';
 
 function node(overrides: Partial<WorkflowNode> = {}): WorkflowNode {
   return { id: 'n1', kind: 'agent', name: 'Agent', config: {}, ports: [], ...overrides };
@@ -329,6 +331,153 @@ describe('graphAdapter', () => {
         edgeId({ ...base, to_port: 'other' }),
       ]);
       expect(ids.size).toBe(5);
+    });
+  });
+
+  describe('createFlowNode', () => {
+    it('builds a flowNode with a single default main input/output and empty config/ports', () => {
+      const created = createFlowNode('agent', { x: 12, y: 34 }, 'new-agent-0', 'Agent');
+      expect(created.id).toBe('new-agent-0');
+      expect(created.type).toBe('flowNode');
+      expect(created.position).toEqual({ x: 12, y: 34 });
+      expect(created.data.kind).toBe('agent');
+      expect(created.data.name).toBe('Agent');
+      expect(created.data.config).toEqual({});
+      expect(created.data.ports).toEqual([]);
+      expect(created.data.inputPorts).toEqual(['main']);
+      expect(created.data.outputPorts).toEqual(['main']);
+    });
+
+    it('falls back to the kind as the name when none is given', () => {
+      const created = createFlowNode('http_request', { x: 0, y: 0 }, 'id1');
+      expect(created.data.name).toBe('http_request');
+    });
+
+    it('seeds a condition node with declared true/false output ports (fixed runtime routing)', () => {
+      const created = createFlowNode('condition', { x: 0, y: 0 }, 'cond-0', 'Branch');
+      expect(created.data.ports).toEqual([{ name: 'true' }, { name: 'false' }]);
+      expect(created.data.inputPorts).toEqual(['main']);
+      expect(created.data.outputPorts).toEqual(['true', 'false']);
+    });
+  });
+
+  describe('isValidFlowConnection', () => {
+    // A trigger → agent pair, both with the default single `main` handle, as a
+    // freshly palette-built canvas would produce.
+    const nodes: FlowNode[] = [
+      createFlowNode('trigger', { x: 0, y: 0 }, 't', 'Start'),
+      createFlowNode('agent', { x: 280, y: 0 }, 'a', 'Reply'),
+    ];
+
+    it('accepts a main→main connection between two distinct nodes', () => {
+      expect(
+        isValidFlowConnection(
+          { source: 't', target: 'a', sourceHandle: 'main', targetHandle: 'main' },
+          nodes,
+          []
+        )
+      ).toBe(true);
+    });
+
+    it('accepts a connection with null handles (defaults to main)', () => {
+      expect(
+        isValidFlowConnection(
+          { source: 't', target: 'a', sourceHandle: null, targetHandle: null },
+          nodes,
+          []
+        )
+      ).toBe(true);
+    });
+
+    it('rejects a self-loop', () => {
+      expect(
+        isValidFlowConnection(
+          { source: 't', target: 't', sourceHandle: 'main', targetHandle: 'main' },
+          nodes,
+          []
+        )
+      ).toBe(false);
+    });
+
+    it('rejects a missing endpoint', () => {
+      expect(
+        isValidFlowConnection({ source: 't', target: null, sourceHandle: 'main' }, nodes, [])
+      ).toBe(false);
+    });
+
+    it('rejects an endpoint that is not on the canvas', () => {
+      expect(
+        isValidFlowConnection(
+          { source: 't', target: 'ghost', sourceHandle: 'main', targetHandle: 'main' },
+          nodes,
+          []
+        )
+      ).toBe(false);
+    });
+
+    it('rejects an unknown source output port', () => {
+      expect(
+        isValidFlowConnection(
+          { source: 't', target: 'a', sourceHandle: 'nonexistent', targetHandle: 'main' },
+          nodes,
+          []
+        )
+      ).toBe(false);
+    });
+
+    it('rejects an unknown target input port', () => {
+      expect(
+        isValidFlowConnection(
+          { source: 't', target: 'a', sourceHandle: 'main', targetHandle: 'nonexistent' },
+          nodes,
+          []
+        )
+      ).toBe(false);
+    });
+
+    it('rejects a duplicate of an edge already present', () => {
+      const existing: FlowEdge[] = [
+        { id: 'e1', source: 't', target: 'a', sourceHandle: 'main', targetHandle: 'main' },
+      ];
+      expect(
+        isValidFlowConnection(
+          { source: 't', target: 'a', sourceHandle: 'main', targetHandle: 'main' },
+          nodes,
+          existing
+        )
+      ).toBe(false);
+    });
+  });
+
+  describe('palette-built graph round-trips through xyflowToWorkflowGraph', () => {
+    it('serializes click-added nodes + a valid connection back into a WorkflowGraph', () => {
+      const kinds: NodeKind[] = ['trigger', 'agent'];
+      const built = kinds.map((kind, i) =>
+        createFlowNode(kind, { x: i * 280, y: 0 }, `new-${kind}-${i}`, kind)
+      );
+      const connection = {
+        source: 'new-trigger-0',
+        target: 'new-agent-1',
+        sourceHandle: 'main',
+        targetHandle: 'main',
+      };
+      expect(isValidFlowConnection(connection, built, [])).toBe(true);
+
+      const edges: FlowEdge[] = [{ id: 'e', ...connection }];
+      const result = xyflowToWorkflowGraph(built, edges, {
+        schema_version: 1,
+        id: 'wf_new',
+        name: 'Fresh flow',
+      });
+
+      expect(result.schema_version).toBe(1);
+      expect(result.id).toBe('wf_new');
+      expect(result.name).toBe('Fresh flow');
+      expect(result.nodes.map(n => n.kind)).toEqual(['trigger', 'agent']);
+      expect(result.nodes.every(n => n.config && Array.isArray(n.ports))).toBe(true);
+      expect(result.edges).toEqual([
+        { from_node: 'new-trigger-0', from_port: 'main', to_node: 'new-agent-1', to_port: 'main' },
+      ]);
     });
   });
 });

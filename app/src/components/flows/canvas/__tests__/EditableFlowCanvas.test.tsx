@@ -1,0 +1,105 @@
+/**
+ * EditableFlowCanvas (issue B5b.2 / Phase 3a) — behavior tests for the mutable
+ * Workflow Canvas driven through the public `FlowCanvas editable` entry point.
+ *
+ * `@xyflow/react` mounts for real in jsdom (nodes measure 0x0, but the DOM
+ * tree, palette, toolbar, and `FlowNodeComponent` cards are all assertable), so
+ * these tests drive the *click* affordances (palette add, save) rather than
+ * drag geometry, which jsdom can't produce. Port-aware connection validity is
+ * unit-tested directly against `isValidFlowConnection` in
+ * `lib/flows/graphAdapter.test.ts`.
+ */
+import { fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+
+import type { FlowEdge, FlowNode } from '../../../../lib/flows/graphAdapter';
+import type { WorkflowGraph } from '../../../../lib/flows/types';
+import FlowCanvas from '../FlowCanvas';
+
+// `FlowNodeComponent` / palette call `useT()`, which falls back to the bundled
+// English map when no `I18nProvider` (and its Redux dependency) is mounted —
+// the same no-provider render the read-only `FlowCanvas.test.tsx` relies on.
+function renderCanvas(ui: React.ReactElement) {
+  return render(ui);
+}
+
+function triggerNode(): FlowNode {
+  return {
+    id: 't',
+    type: 'flowNode',
+    position: { x: 0, y: 0 },
+    data: {
+      kind: 'trigger',
+      name: 'Start',
+      config: {},
+      ports: [],
+      inputPorts: ['main'],
+      outputPorts: ['main'],
+    },
+  };
+}
+
+describe('FlowCanvas (editable)', () => {
+  it('renders the node palette with all 12 node kinds', () => {
+    renderCanvas(<FlowCanvas editable nodes={[triggerNode()]} edges={[]} />);
+    expect(screen.getByTestId('flow-node-palette')).toBeInTheDocument();
+    // Palette items are keyed by kind via data-testid `flow-palette-item-<kind>`.
+    expect(screen.getByTestId('flow-palette-item-trigger')).toBeInTheDocument();
+    expect(screen.getByTestId('flow-palette-item-agent')).toBeInTheDocument();
+    expect(screen.getByTestId('flow-palette-item-sub_workflow')).toBeInTheDocument();
+  });
+
+  it('does NOT render the palette in read-only mode', () => {
+    renderCanvas(<FlowCanvas nodes={[triggerNode()]} edges={[]} />);
+    expect(screen.queryByTestId('flow-node-palette')).not.toBeInTheDocument();
+  });
+
+  it('adds a node to the canvas when a palette item is clicked', () => {
+    renderCanvas(<FlowCanvas editable nodes={[triggerNode()]} edges={[]} />);
+    // One node to start (the trigger).
+    expect(screen.getAllByTestId('flow-node')).toHaveLength(1);
+
+    fireEvent.click(screen.getByTestId('flow-palette-item-agent'));
+
+    const rendered = screen.getAllByTestId('flow-node');
+    expect(rendered).toHaveLength(2);
+    // The newly added node carries data-node-kind="agent".
+    expect(rendered.some(el => el.getAttribute('data-node-kind') === 'agent')).toBe(true);
+  });
+
+  it('serializes the live canvas to a valid WorkflowGraph on Save', () => {
+    const onSave = vi.fn<(graph: WorkflowGraph) => void>();
+    renderCanvas(
+      <FlowCanvas
+        editable
+        nodes={[triggerNode()]}
+        edges={[]}
+        meta={{ schema_version: 1, id: 'wf_1', name: 'My flow' }}
+        onSave={onSave}
+      />
+    );
+
+    // Add an agent node, then save.
+    fireEvent.click(screen.getByTestId('flow-palette-item-agent'));
+    fireEvent.click(screen.getByTestId('flow-editor-save'));
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    const graph = onSave.mock.calls[0][0];
+    expect(graph.schema_version).toBe(1);
+    expect(graph.id).toBe('wf_1');
+    expect(graph.name).toBe('My flow');
+    // Original trigger + the palette-added agent.
+    expect(graph.nodes.map(n => n.kind).sort()).toEqual(['agent', 'trigger']);
+    expect(graph.edges).toEqual([]);
+  });
+
+  it('disables the delete button when nothing is selected', () => {
+    renderCanvas(<FlowCanvas editable nodes={[triggerNode()]} edges={[]} />);
+    expect(screen.getByTestId('flow-editor-delete')).toBeDisabled();
+  });
+
+  it('exposes no Save button when onSave is not provided', () => {
+    renderCanvas(<FlowCanvas editable nodes={[triggerNode()]} edges={[] as FlowEdge[]} />);
+    expect(screen.queryByTestId('flow-editor-save')).not.toBeInTheDocument();
+  });
+});

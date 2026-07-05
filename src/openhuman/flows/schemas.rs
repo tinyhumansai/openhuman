@@ -110,7 +110,9 @@ fn flow_connection_fields() -> Vec<FieldSchema> {
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("create"),
+        schemas("duplicate"),
         schemas("validate"),
+        schemas("import"),
         schemas("get"),
         schemas("list"),
         schemas("list_connections"),
@@ -122,6 +124,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("cancel_run"),
         schemas("list_runs"),
         schemas("get_run"),
+        schemas("prune_runs"),
     ]
 }
 
@@ -132,8 +135,16 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_create,
         },
         RegisteredController {
+            schema: schemas("duplicate"),
+            handler: handle_duplicate,
+        },
+        RegisteredController {
             schema: schemas("validate"),
             handler: handle_validate,
+        },
+        RegisteredController {
+            schema: schemas("import"),
+            handler: handle_import,
         },
         RegisteredController {
             schema: schemas("get"),
@@ -179,6 +190,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             schema: schemas("get_run"),
             handler: handle_get_run,
         },
+        RegisteredController {
+            schema: schemas("prune_runs"),
+            handler: handle_prune_runs,
+        },
     ]
 }
 
@@ -204,6 +219,16 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 },
                 require_approval_input(),
             ],
+            outputs: vec![flow_output()],
+        },
+        "duplicate" => ControllerSchema {
+            namespace: "flows",
+            function: "duplicate",
+            description: "Duplicate a saved flow: create an independent copy of its graph under a \
+                          new id, with the name suffixed \" (copy)\". The copy is created DISABLED \
+                          and is NOT schedule/trigger-bound, so it never immediately fires — the \
+                          user enables it explicitly once reviewed. Run history does not carry over.",
+            inputs: vec![id_input("Identifier of the flow to duplicate.")],
             outputs: vec![flow_output()],
         },
         "validate" => ControllerSchema {
@@ -236,6 +261,50 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     ty: TypeSchema::Array(Box::new(TypeSchema::String)),
                     comment: "Non-fatal warnings (e.g. an unfired trigger kind); the graph is \
                               still saveable/enable-able.",
+                    required: true,
+                },
+            ],
+        },
+        "import" => ControllerSchema {
+            namespace: "flows",
+            function: "import",
+            description: "Import a workflow definition WITHOUT saving it: parse a native tinyflows \
+                          graph or an n8n workflow export, migrate + validate it, and return the \
+                          normalized WorkflowGraph plus non-fatal import warnings. The caller opens \
+                          the result on the canvas as a draft and Saves via the normal gate — \
+                          import never persists or enables anything.",
+            inputs: vec![
+                FieldSchema {
+                    name: "graph",
+                    ty: TypeSchema::Json,
+                    comment: "The workflow JSON to import: a tinyflows WorkflowGraph (native) or \
+                              an n8n workflow export.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "format",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Enum {
+                        variants: vec!["native", "n8n", "auto"],
+                    })),
+                    comment: "Source format: `native` (tinyflows), `n8n`, or `auto` (default — \
+                              detect by shape).",
+                    required: false,
+                },
+            ],
+            outputs: vec![
+                FieldSchema {
+                    name: "graph",
+                    ty: TypeSchema::Json,
+                    comment: "The normalized, migrated + validated WorkflowGraph, ready to open \
+                              as an editable draft.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "warnings",
+                    ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+                    comment: "Non-fatal import warnings (unmapped n8n node types, untranslated \
+                              expressions, a synthesized/demoted trigger). Empty for a clean \
+                              native import.",
                     required: true,
                 },
             ],
@@ -486,6 +555,43 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "prune_runs" => ControllerSchema {
+            namespace: "flows",
+            function: "prune_runs",
+            description: "Manually prune a flow's run history down to the retention cap, deleting \
+                          only terminal runs (completed/failed/cancelled) outside the newest-N \
+                          window. Never removes a running or pending_approval run. Pruning also \
+                          happens automatically on every new run; this is an explicit on-demand \
+                          sweep.",
+            inputs: vec![id_input("Identifier of the flow whose run history to prune.")],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Object {
+                    fields: vec![
+                        FieldSchema {
+                            name: "flow_id",
+                            ty: TypeSchema::String,
+                            comment: "Identifier of the flow whose runs were pruned.",
+                            required: true,
+                        },
+                        FieldSchema {
+                            name: "pruned",
+                            ty: TypeSchema::U64,
+                            comment: "Number of run records removed.",
+                            required: true,
+                        },
+                        FieldSchema {
+                            name: "kept",
+                            ty: TypeSchema::U64,
+                            comment: "The retention cap (most-recent runs kept).",
+                            required: true,
+                        },
+                    ],
+                },
+                comment: "Prune result payload.",
+                required: true,
+            }],
+        },
         _other => ControllerSchema {
             namespace: "flows",
             function: "unknown",
@@ -524,6 +630,28 @@ fn handle_validate(params: Map<String, Value>) -> ControllerFuture {
         // No config load: validation is pure (no persistence, no workspace).
         let graph = read_required::<Value>(&params, "graph")?;
         to_json(ops::flows_validate(graph))
+    })
+}
+
+fn handle_import(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        // No config load: import is pure (no persistence, no workspace).
+        let graph = read_required::<Value>(&params, "graph")?;
+        let format = params
+            .get("format")
+            .filter(|v| !v.is_null())
+            .map(|v| serde_json::from_value::<String>(v.clone()))
+            .transpose()
+            .map_err(|e| format!("invalid 'format': {e}"))?;
+        to_json(ops::flows_import(graph, format)?)
+    })
+}
+
+fn handle_duplicate(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let id = read_required::<String>(&params, "id")?;
+        to_json(ops::flows_duplicate(&config, id.trim()).await?)
     })
 }
 
@@ -658,6 +786,14 @@ fn handle_get_run(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_prune_runs(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let id = read_required::<String>(&params, "id")?;
+        to_json(ops::flows_prune_runs(&config, id.trim()).await?)
+    })
+}
+
 fn read_required<T: DeserializeOwned>(params: &Map<String, Value>, key: &str) -> Result<T, String> {
     let value = params
         .get(key)
@@ -684,7 +820,9 @@ mod tests {
             names,
             vec![
                 "create",
+                "duplicate",
                 "validate",
+                "import",
                 "get",
                 "list",
                 "list_connections",
@@ -696,6 +834,7 @@ mod tests {
                 "cancel_run",
                 "list_runs",
                 "get_run",
+                "prune_runs",
             ]
         );
     }
@@ -703,13 +842,15 @@ mod tests {
     #[test]
     fn all_registered_controllers_has_handler_per_schema() {
         let controllers = all_registered_controllers();
-        assert_eq!(controllers.len(), 13);
+        assert_eq!(controllers.len(), 16);
         let names: Vec<_> = controllers.iter().map(|c| c.schema.function).collect();
         assert_eq!(
             names,
             vec![
                 "create",
+                "duplicate",
                 "validate",
+                "import",
                 "get",
                 "list",
                 "list_connections",
@@ -721,8 +862,26 @@ mod tests {
                 "cancel_run",
                 "list_runs",
                 "get_run",
+                "prune_runs",
             ]
         );
+    }
+
+    #[test]
+    fn schemas_import_requires_graph_and_optional_format() {
+        let s = schemas("import");
+        assert_eq!(s.namespace, "flows");
+        let required: Vec<_> = s
+            .inputs
+            .iter()
+            .filter(|f| f.required)
+            .map(|f| f.name)
+            .collect();
+        assert_eq!(required, vec!["graph"]);
+        let format = s.inputs.iter().find(|f| f.name == "format").unwrap();
+        assert!(!format.required);
+        let names: Vec<_> = s.outputs.iter().map(|f| f.name).collect();
+        assert_eq!(names, vec!["graph", "warnings"]);
     }
 
     #[test]
@@ -782,6 +941,35 @@ mod tests {
             .find(|f| f.name == "require_approval")
             .unwrap();
         assert!(!field.required);
+    }
+
+    #[test]
+    fn schemas_duplicate_requires_id_and_outputs_flow() {
+        let s = schemas("duplicate");
+        assert_eq!(s.namespace, "flows");
+        let required: Vec<_> = s
+            .inputs
+            .iter()
+            .filter(|f| f.required)
+            .map(|f| f.name)
+            .collect();
+        assert_eq!(required, vec!["id"]);
+        assert_eq!(s.outputs.len(), 1);
+        assert_eq!(s.outputs[0].name, "flow");
+    }
+
+    #[test]
+    fn schemas_prune_runs_requires_id_and_reports_counts() {
+        let s = schemas("prune_runs");
+        assert_eq!(s.namespace, "flows");
+        let required: Vec<_> = s
+            .inputs
+            .iter()
+            .filter(|f| f.required)
+            .map(|f| f.name)
+            .collect();
+        assert_eq!(required, vec!["id"]);
+        assert_eq!(s.outputs[0].name, "result");
     }
 
     #[test]

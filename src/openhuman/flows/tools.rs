@@ -199,7 +199,11 @@ impl Tool for ProposeWorkflowTool {
 
 /// Builds the `{ trigger, steps }` summary surfaced to both the LLM (in the
 /// tool result) and the chat UI's `WorkflowProposalCard`.
-fn build_summary(graph: &WorkflowGraph) -> Value {
+///
+/// `pub(crate)` so the `workflow-builder` tool belt's
+/// [`crate::openhuman::flows::builder_tools::ReviseWorkflowTool`] reuses the
+/// identical summary shape rather than duplicating it.
+pub(crate) fn build_summary(graph: &WorkflowGraph) -> Value {
     let trigger = graph
         .trigger()
         .map(describe_trigger)

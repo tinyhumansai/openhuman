@@ -36,5 +36,6 @@ pub mod trigger_reactor;
 pub mod trigger_triage;
 pub mod video_agent;
 pub mod vision_agent;
+pub mod workflow_builder;
 
 pub use loader::{load_builtins, validate_tier_hierarchy, BuiltinAgent, BUILTINS};

@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "name": "Fetch and parse an API",
+  "nodes": [
+    {
+      "id": "trigger",
+      "kind": "trigger",
+      "name": "Run manually",
+      "config": { "trigger_kind": "manual" },
+      "ports": [],
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "fetch",
+      "kind": "http_request",
+      "name": "Call the API",
+      "config": { "method": "GET", "url": "https://api.example.com/v1/resource", "headers": {} },
+      "ports": [],
+      "position": { "x": 0, "y": 160 }
+    },
+    {
+      "id": "parse",
+      "kind": "output_parser",
+      "name": "Parse the response",
+      "config": {},
+      "ports": [],
+      "position": { "x": 0, "y": 320 }
+    }
+  ],
+  "edges": [
+    { "from_node": "trigger", "from_port": "main", "to_node": "fetch", "to_port": "main" },
+    { "from_node": "fetch", "from_port": "main", "to_node": "parse", "to_port": "main" }
+  ]
+}

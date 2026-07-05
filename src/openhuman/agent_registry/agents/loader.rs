@@ -299,6 +299,15 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         prompt_fn: crate::openhuman::orchestration::reasoning_agent::prompt::build,
         graph_fn: Some(crate::openhuman::orchestration::reasoning_agent::graph::graph),
     },
+    // Workflow-authoring specialist (Phase 5a): builds tinyflows automation
+    // graphs from natural language and returns a validated PROPOSAL — it never
+    // persists or enables a flow. Deliberately narrow propose-or-read tool belt.
+    BuiltinAgent {
+        id: "workflow_builder",
+        toml: include_str!("workflow_builder/agent.toml"),
+        prompt_fn: super::workflow_builder::prompt::build,
+        graph_fn: None,
+    },
 ];
 
 /// Parse every entry in [`BUILTINS`] into an [`AgentDefinition`].
@@ -963,6 +972,76 @@ mod tests {
         }
         // Leaf reflex: no onward delegation.
         assert!(def.subagents.is_empty());
+    }
+
+    #[test]
+    fn workflow_builder_is_registered_worker_with_narrow_propose_or_read_scope() {
+        // Phase 5a/5b: the workflow-builder must be a Worker-tier leaf whose
+        // tool scope is EXACTLY the propose-or-read belt — no persistence
+        // (flows_create/update/set_enabled), no shell, no file writes, no
+        // channel sends. This pins the "propose, never persist" invariant in
+        // the agent definition itself, not just the tool implementations.
+        let def = find("workflow_builder");
+        assert_eq!(def.agent_tier, AgentTier::Worker);
+        assert_eq!(def.delegate_name.as_deref(), Some("build_workflow"));
+        assert_eq!(def.sandbox_mode, SandboxMode::None);
+        // Worker leaf: no onward delegation.
+        assert!(
+            def.subagents.is_empty(),
+            "workflow_builder is a leaf and must not list subagents"
+        );
+        match &def.tools {
+            ToolScope::Named(names) => {
+                let expected = [
+                    "propose_workflow",
+                    "revise_workflow",
+                    "list_flows",
+                    "get_flow",
+                    "get_flow_run",
+                    "list_flow_connections",
+                    "search_tool_catalog",
+                    "dry_run_workflow",
+                ];
+                for required in expected {
+                    assert!(
+                        names.iter().any(|n| n == required),
+                        "workflow_builder tool list missing `{required}`"
+                    );
+                }
+                assert_eq!(
+                    names.len(),
+                    expected.len(),
+                    "workflow_builder scope must be EXACTLY the propose-or-read belt (got {names:?})"
+                );
+                // Hard exclusions: nothing that persists, executes, or sends.
+                for forbidden in [
+                    "flows_create",
+                    "flows_update",
+                    "flows_set_enabled",
+                    "shell",
+                    "file_write",
+                    "edit",
+                    "apply_patch",
+                    "composio_execute",
+                    "spawn_subagent",
+                ] {
+                    assert!(
+                        !names.iter().any(|n| n == forbidden),
+                        "workflow_builder must NOT have `{forbidden}` — propose/read only"
+                    );
+                }
+            }
+            ToolScope::Wildcard => panic!("workflow_builder must have a Named tool scope"),
+        }
+
+        // Reachable by delegation from the orchestrator (Phase 5 routing).
+        let orchestrator = find("orchestrator");
+        assert!(
+            orchestrator.subagents.iter().any(
+                |entry| matches!(entry, SubagentEntry::AgentId(id) if id == "workflow_builder")
+            ),
+            "orchestrator must allow `workflow_builder` so build_workflow can spawn it"
+        );
     }
 
     #[test]

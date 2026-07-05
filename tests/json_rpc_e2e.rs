@@ -8680,7 +8680,7 @@ async fn credentials_crud_roundtrip() {
     rpc_join.abort();
 }
 
-/// End-to-end coverage for `openhuman.workflows_uninstall`.
+/// End-to-end coverage for `openhuman.skills_uninstall`.
 ///
 /// Validates that the RPC method is registered, wire-decodes
 /// `UninstallSkillParams`, resolves the slug against
@@ -8720,11 +8720,11 @@ async fn skills_uninstall_rpc_e2e() {
     let ok = post_json_rpc(
         &rpc_base,
         6001,
-        "openhuman.workflows_uninstall",
+        "openhuman.skills_uninstall",
         json!({ "name": slug }),
     )
     .await;
-    let ok_result = assert_no_jsonrpc_error(&ok, "workflows_uninstall success");
+    let ok_result = assert_no_jsonrpc_error(&ok, "skills_uninstall success");
     assert_eq!(
         ok_result.get("name").and_then(Value::as_str),
         Some(slug),
@@ -8753,7 +8753,7 @@ async fn skills_uninstall_rpc_e2e() {
     let missing = post_json_rpc(
         &rpc_base,
         6002,
-        "openhuman.workflows_uninstall",
+        "openhuman.skills_uninstall",
         json!({ "name": "does-not-exist" }),
     )
     .await;
@@ -8774,7 +8774,7 @@ async fn skills_uninstall_rpc_e2e() {
     let traversal = post_json_rpc(
         &rpc_base,
         6003,
-        "openhuman.workflows_uninstall",
+        "openhuman.skills_uninstall",
         json!({ "name": "../etc" }),
     )
     .await;
@@ -10115,7 +10115,7 @@ async fn whatsapp_data_agent_tools_e2e_1341() {
     .expect("ingest");
 
     // Helper: parse a successful Tool response back into JSON.
-    fn parse_tool_output(result: openhuman_core::openhuman::workflows::types::ToolResult) -> Value {
+    fn parse_tool_output(result: openhuman_core::openhuman::skills::types::ToolResult) -> Value {
         assert!(!result.is_error, "tool returned error: {result:?}");
         serde_json::from_str(&result.output()).expect("tool output is valid JSON")
     }
@@ -12167,7 +12167,7 @@ async fn json_rpc_workflows_lifecycle_round_trip() {
     let create = post_json_rpc(
         &rpc_base,
         9201,
-        "openhuman.workflows_create",
+        "openhuman.skills_create",
         json!({
             "name": "Bug Triage",
             "description": "How to handle an incoming bug report",
@@ -12175,7 +12175,7 @@ async fn json_rpc_workflows_lifecycle_round_trip() {
         }),
     )
     .await;
-    let create_result = assert_no_jsonrpc_error(&create, "workflows_create");
+    let create_result = assert_no_jsonrpc_error(&create, "skills_create");
     let wf = create_result
         .get("workflow")
         .expect("workflow in create result");
@@ -12185,8 +12185,8 @@ async fn json_rpc_workflows_lifecycle_round_trip() {
     assert_eq!(wf.get("name").and_then(Value::as_str), Some("bug-triage"));
 
     // 2. List reflects the new workflow.
-    let list = post_json_rpc(&rpc_base, 9202, "openhuman.workflows_list", json!({})).await;
-    let list_result = assert_no_jsonrpc_error(&list, "workflows_list");
+    let list = post_json_rpc(&rpc_base, 9202, "openhuman.skills_list", json!({})).await;
+    let list_result = assert_no_jsonrpc_error(&list, "skills_list");
     let workflows = list_result
         .get("workflows")
         .and_then(Value::as_array)
@@ -12196,17 +12196,17 @@ async fn json_rpc_workflows_lifecycle_round_trip() {
         workflows[0].get("id").and_then(Value::as_str),
         Some("bug-triage")
     );
-    // when_to_use is surfaced via `workflows_describe` (step 3), not the list summary.
+    // when_to_use is surfaced via `skills_describe` (step 3), not the list summary.
 
     // 3. Describe returns the workflow's display name, when-to-use, and inputs.
     let describe = post_json_rpc(
         &rpc_base,
         9203,
-        "openhuman.workflows_describe",
+        "openhuman.skills_describe",
         json!({ "workflow_id": "bug-triage" }),
     )
     .await;
-    let describe_result = assert_no_jsonrpc_error(&describe, "workflows_describe");
+    let describe_result = assert_no_jsonrpc_error(&describe, "skills_describe");
     // Display name isn't separately preserved today — create slugifies it, so
     // describe reflects the slug. (Preserving the human display name is a known
     // minor gap, tracked separately.)
@@ -12230,19 +12230,19 @@ async fn json_rpc_workflows_lifecycle_round_trip() {
     let uninstall = post_json_rpc(
         &rpc_base,
         9205,
-        "openhuman.workflows_uninstall",
+        "openhuman.skills_uninstall",
         json!({ "name": "bug-triage" }),
     )
     .await;
-    let uninstall_result = assert_no_jsonrpc_error(&uninstall, "workflows_uninstall");
+    let uninstall_result = assert_no_jsonrpc_error(&uninstall, "skills_uninstall");
     assert_eq!(
         uninstall_result.get("name").and_then(Value::as_str),
         Some("bug-triage"),
         "uninstall echoes the slug it removed"
     );
 
-    let after = post_json_rpc(&rpc_base, 9206, "openhuman.workflows_list", json!({})).await;
-    let after_result = assert_no_jsonrpc_error(&after, "workflows_list");
+    let after = post_json_rpc(&rpc_base, 9206, "openhuman.skills_list", json!({})).await;
+    let after_result = assert_no_jsonrpc_error(&after, "skills_list");
     assert!(
         after_result
             .get("workflows")
@@ -12725,6 +12725,112 @@ async fn json_rpc_flows_validate_reports_warnings_and_errors() {
             .is_empty(),
         "an invalid graph reports errors, not warnings"
     );
+
+    api_join.abort();
+    rpc_join.abort();
+}
+
+/// `openhuman.flows_import` over JSON-RPC (PHASE 4d): a native tinyflows graph
+/// imports clean (no warnings), and an n8n workflow export is mapped
+/// best-effort — an `if` node becomes a `condition`, an unmapped node type
+/// becomes an annotated placeholder, and the approximations come back as
+/// warnings — all WITHOUT persisting (the returned payload is a graph, not a
+/// saved Flow row; `flows_list` stays empty afterwards).
+#[tokio::test]
+async fn json_rpc_flows_import_native_and_n8n() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let (rpc_base, _tmp, api_join, rpc_join, _guards) = boot_flows_rpc_env().await;
+
+    // 1. Native import — a valid tinyflows graph, warning-free.
+    let native = json!({
+        "name": "native-flow",
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Trigger", "config": { "trigger_kind": "manual" } }
+        ],
+        "edges": []
+    });
+    let imp = post_json_rpc(
+        &rpc_base,
+        9601,
+        "openhuman.flows_import",
+        json!({ "graph": native, "format": "native" }),
+    )
+    .await;
+    let out = peel_logs_envelope(assert_no_jsonrpc_error(&imp, "flows_import native"));
+    assert_eq!(
+        out.get("graph")
+            .and_then(|g| g.get("name"))
+            .and_then(Value::as_str),
+        Some("native-flow")
+    );
+    assert!(
+        out.get("warnings")
+            .and_then(Value::as_array)
+            .expect("warnings")
+            .is_empty(),
+        "a clean native import has no warnings"
+    );
+
+    // 2. n8n import (auto-detected) — IF → condition, unmapped → placeholder.
+    let n8n = json!({
+        "name": "n8n-flow",
+        "nodes": [
+            { "id": "s", "name": "Schedule Trigger", "type": "n8n-nodes-base.scheduleTrigger" },
+            { "id": "c", "name": "IF", "type": "n8n-nodes-base.if" },
+            { "id": "x", "name": "Airtable", "type": "n8n-nodes-base.airtable",
+              "parameters": { "table": "leads" } }
+        ],
+        "connections": {
+            "Schedule Trigger": { "main": [[{ "node": "IF", "type": "main", "index": 0 }]] },
+            "IF": { "main": [[{ "node": "Airtable", "type": "main", "index": 0 }]] }
+        }
+    });
+    let imp2 = post_json_rpc(
+        &rpc_base,
+        9602,
+        "openhuman.flows_import",
+        json!({ "graph": n8n }),
+    )
+    .await;
+    let out2 = peel_logs_envelope(assert_no_jsonrpc_error(&imp2, "flows_import n8n"));
+    let graph = out2.get("graph").expect("graph");
+    let nodes = graph.get("nodes").and_then(Value::as_array).expect("nodes");
+    let kind_of = |id: &str| {
+        nodes
+            .iter()
+            .find(|n| n.get("id").and_then(Value::as_str) == Some(id))
+            .and_then(|n| n.get("kind"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    };
+    assert_eq!(
+        kind_of("c").as_deref(),
+        Some("condition"),
+        "IF maps to condition"
+    );
+    assert_eq!(
+        kind_of("x").as_deref(),
+        Some("transform"),
+        "unmapped Airtable node becomes a placeholder transform"
+    );
+    let warnings = out2
+        .get("warnings")
+        .and_then(Value::as_array)
+        .expect("warnings");
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.as_str().is_some_and(|s| s.contains("airtable"))),
+        "the unmapped node produces a warning, got: {warnings:?}"
+    );
+
+    // 3. Import never persists — no flow row was created by either call.
+    let list = post_json_rpc(&rpc_base, 9603, "openhuman.flows_list", json!({})).await;
+    let flows = peel_logs_envelope(assert_no_jsonrpc_error(&list, "flows_list"))
+        .as_array()
+        .expect("flows array")
+        .len();
+    assert_eq!(flows, 0, "flows_import must not persist a flow");
 
     api_join.abort();
     rpc_join.abort();

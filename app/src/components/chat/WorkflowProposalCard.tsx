@@ -1,6 +1,9 @@
 import debug from 'debug';
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
+import { FLOW_CANVAS_DRAFT_ROUTE, type FlowCanvasDraftState } from '../../lib/flows/canvasDraft';
+import type { WorkflowGraph } from '../../lib/flows/types';
 import { useT } from '../../lib/i18n/I18nContext';
 import { createFlow } from '../../services/api/flowsApi';
 import {
@@ -33,11 +36,37 @@ interface Props {
 export const WorkflowProposalCard: React.FC<Props> = ({ threadId, proposal }) => {
   const { t } = useT();
   const dispatch = useAppDispatch();
+  const navigate = useNavigate();
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const dismiss = () => {
     dispatch(clearWorkflowProposalForThread({ threadId }));
+  };
+
+  /**
+   * Open the proposed graph in the editable Workflow Canvas as an UNSAVED
+   * draft. This deliberately does NOT persist or enable anything — no
+   * `flows_create`/`flows_update` — so the user can review/edit first; the
+   * canvas's own Save button stays the single persistence gate. The proposal
+   * is left intact in the thread (not dismissed) so returning without saving
+   * loses nothing.
+   */
+  const openInCanvas = () => {
+    const graph = proposal.graph as WorkflowGraph;
+    // Log shape, not the user-authored `proposal.name` (no secrets/PII in logs).
+    log(
+      'openInCanvas: threadId=%s node_count=%d edge_count=%d',
+      threadId,
+      graph.nodes.length,
+      graph.edges.length
+    );
+    const draft: FlowCanvasDraftState = {
+      name: proposal.name,
+      graph,
+      requireApproval: proposal.requireApproval,
+    };
+    navigate(FLOW_CANVAS_DRAFT_ROUTE, { state: draft });
   };
 
   const save = async () => {
@@ -124,6 +153,14 @@ export const WorkflowProposalCard: React.FC<Props> = ({ threadId, proposal }) =>
               onClick={() => void save()}
               disabled={saving}>
               {saving ? t('chat.flowProposal.saving') : t('chat.flowProposal.save')}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              data-analytics-id="workflow-proposal-open-canvas"
+              onClick={openInCanvas}
+              disabled={saving}>
+              {t('chat.flowProposal.openInCanvas')}
             </Button>
             <Button
               variant="secondary"

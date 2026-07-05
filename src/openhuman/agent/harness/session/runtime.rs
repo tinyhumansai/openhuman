@@ -115,7 +115,7 @@ impl Agent {
     }
 
     /// The agent's loaded workflows, if any.
-    pub fn workflows(&self) -> &[crate::openhuman::workflows::Workflow] {
+    pub fn workflows(&self) -> &[crate::openhuman::skills::Workflow] {
         &self.workflows
     }
 

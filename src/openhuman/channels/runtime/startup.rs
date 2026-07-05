@@ -156,7 +156,7 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     let bus = event_bus::init_global(DEFAULT_CAPACITY);
     let _tracing_handle = bus.subscribe(Arc::new(TracingSubscriber));
     crate::openhuman::health::bus::register_health_subscriber();
-    crate::openhuman::workflows::bus::register_workflow_cleanup_subscriber();
+    crate::openhuman::skills::bus::register_workflow_cleanup_subscriber();
     crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
         config.workspace_dir.clone(),
     );
@@ -427,14 +427,14 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         None,
     ));
 
-    let skills = crate::openhuman::workflows::load_workflow_metadata(&workspace);
+    let skills = crate::openhuman::skills::load_workflow_metadata(&workspace);
 
     // Install the triggered-workflow subscriber now that workflows are
     // discovered — otherwise any workflow declaring `triggers:` is silently
     // ignored. Idempotent + shares a process-global OnceLock with the
     // `bootstrap_core_runtime` site, so it registers exactly once regardless of
     // which startup path runs first (web-chat-only cores never reach here).
-    crate::openhuman::workflows::bus::ensure_triggered_workflow_subscriber(&workspace);
+    crate::openhuman::skills::bus::ensure_triggered_workflow_subscriber(&workspace);
 
     // Collect tool descriptions for the prompt
     let mut tool_descs: Vec<(&str, &str)> = vec![

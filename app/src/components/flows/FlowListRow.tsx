@@ -38,6 +38,8 @@ export interface FlowListRowProps {
   onViewRuns: (flow: Flow) => void;
   /** Opens the read-only Workflow Canvas for this flow (issue B5b.1). */
   onView: (flow: Flow) => void;
+  /** Downloads this flow's `WorkflowGraph` as a JSON file (Phase 4d export). */
+  onExport: (flow: Flow) => void;
   busy?: FlowListRowBusy;
 }
 
@@ -72,6 +74,7 @@ const FlowListRow = ({
   onRun,
   onViewRuns,
   onView,
+  onExport,
   busy = null,
 }: FlowListRowProps) => {
   const { t } = useT();
@@ -136,6 +139,14 @@ const FlowListRow = ({
           disabled={runBusy}
           onClick={() => onRun(flow)}>
           {runBusy ? t('flows.list.running') : t('flows.list.runNow')}
+        </Button>
+        <Button
+          type="button"
+          variant="tertiary"
+          size="sm"
+          data-testid={`flow-export-${flow.id}`}
+          onClick={() => onExport(flow)}>
+          {t('flows.list.export')}
         </Button>
       </div>
     </div>

@@ -1201,7 +1201,7 @@ impl Agent {
             .temperature(effective_temperature)
             .workspace_dir(config.workspace_dir.clone())
             .action_dir(config.action_dir.clone())
-            .workflows(crate::openhuman::workflows::load_workflow_metadata(
+            .workflows(crate::openhuman::skills::load_workflow_metadata(
                 &config.workspace_dir,
             ))
             .auto_save(config.memory.auto_save)

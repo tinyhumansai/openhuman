@@ -111,6 +111,61 @@ export interface Flow {
   require_approval: boolean;
 }
 
+/**
+ * Result of `openhuman.flows_validate` (`src/openhuman/flows/types.rs::FlowValidation`).
+ * `valid === false` means the graph is structurally rejected and won't
+ * persist/enable; `warnings` are advisory and orthogonal to validity (a valid
+ * graph can still carry them). `errors` carries at most one message — the
+ * first structural error tinyflows's validator reports — so it's a
+ * graph-level signal, not a per-node list.
+ */
+export interface FlowValidation {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+/**
+ * Source format for {@link importFlow}. `native` is a tinyflows `WorkflowGraph`
+ * JSON; `n8n` is an n8n workflow export (mapped best-effort host-side); `auto`
+ * (the default) detects the shape.
+ */
+export type FlowImportFormat = 'native' | 'n8n' | 'auto';
+
+/**
+ * Result of `openhuman.flows_import` (`src/openhuman/flows/types.rs::FlowImport`).
+ * The `graph` is the normalized, migrated + validated `WorkflowGraph` ready to
+ * open on the canvas as an unsaved draft; `warnings` carries non-fatal import
+ * notes (unmapped n8n node types, untranslated expressions, a synthesized or
+ * demoted trigger). Import NEVER persists — the user Saves via the normal gate.
+ */
+export interface FlowImport {
+  graph: unknown;
+  warnings: string[];
+}
+
+/**
+ * A secret-free credential reference for the node-config credential picker
+ * (`src/openhuman/flows/types.rs::FlowConnection`). `connection_ref` is
+ * `"composio:<toolkit>:<connection_id>"` (composio) or `"http_cred:<name>"`
+ * (raw HTTP cred). `toolkit` is present only for composio; `scheme`
+ * (`"bearer"|"basic"|"header"`) only for http.
+ */
+export interface FlowConnection {
+  connection_ref: string;
+  kind: 'composio' | 'http';
+  display: string;
+  toolkit?: string;
+  scheme?: string;
+}
+
+/** Optional fields for {@link updateFlow}. Omitted fields are left untouched. */
+export interface FlowUpdate {
+  name?: string;
+  graph?: unknown;
+  requireApproval?: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // CLI-compatible envelope unwrapping.
 // ---------------------------------------------------------------------------
@@ -299,8 +354,96 @@ export async function runFlow(id: string, input?: unknown): Promise<FlowResumeRe
   return result;
 }
 
+/**
+ * Update a saved flow's name and/or graph via `openhuman.flows_update` (the
+ * Workflow Canvas Save path, B5b.2 / Phase 3d). The server re-validates the
+ * graph before persisting and rejects a structurally-invalid one, so callers
+ * should {@link validateFlow} first to surface errors pre-save. Omitted fields
+ * are left untouched; returns the updated `Flow` row.
+ */
+export async function updateFlow(id: string, update: FlowUpdate): Promise<Flow> {
+  log(
+    'updateFlow: request id=%s name=%s graph=%s requireApproval=%s',
+    id,
+    update.name ?? '(unchanged)',
+    update.graph === undefined ? '(unchanged)' : 'present',
+    update.requireApproval ?? 'unchanged'
+  );
+  const params: Record<string, unknown> = { id };
+  if (update.name !== undefined) params.name = update.name;
+  if (update.graph !== undefined) params.graph = update.graph;
+  if (update.requireApproval !== undefined) params.require_approval = update.requireApproval;
+  const response = await callCoreRpc<unknown>({ method: 'openhuman.flows_update', params });
+  const flow = unwrapCliEnvelope<Flow>(response);
+  log('updateFlow: response id=%s name=%s', flow.id, flow.name);
+  return flow;
+}
+
+/**
+ * Validate a candidate `WorkflowGraph` via `openhuman.flows_validate`. Pure and
+ * cheap server-side (no config load), so it's safe to call on a debounce while
+ * editing. Returns {@link FlowValidation} — check `valid` to gate Save, and
+ * surface `warnings` separately (they never block).
+ */
+export async function validateFlow(graph: unknown): Promise<FlowValidation> {
+  log('validateFlow: request');
+  const response = await callCoreRpc<unknown>({
+    method: 'openhuman.flows_validate',
+    params: { graph },
+  });
+  const validation = unwrapCliEnvelope<FlowValidation>(response);
+  log(
+    'validateFlow: response valid=%s errors=%d warnings=%d',
+    validation.valid,
+    validation.errors.length,
+    validation.warnings.length
+  );
+  return validation;
+}
+
+/**
+ * List the secret-free credential references (composio + http) available to a
+ * node's config credential picker via `openhuman.flows_list_connections`. No
+ * params; returns the `FlowConnection[]` directly (same no-wrapper shape as
+ * `flows_list`).
+ */
+export async function listFlowConnections(): Promise<FlowConnection[]> {
+  log('listFlowConnections: request');
+  const response = await callCoreRpc<unknown>({
+    method: 'openhuman.flows_list_connections',
+    params: {},
+  });
+  const connections = unwrapCliEnvelope<FlowConnection[]>(response);
+  log('listFlowConnections: response count=%d', connections.length);
+  return connections;
+}
+
+/**
+ * Import a workflow definition (native tinyflows JSON or an n8n export) via
+ * `openhuman.flows_import`. The server migrates + validates it host-side and
+ * returns the normalized graph plus non-fatal warnings WITHOUT persisting — the
+ * caller opens the result on the canvas as a draft and Saves via the existing
+ * `flows_create` gate. Rejects (throws) when the definition is structurally
+ * invalid or unparseable server-side, so the UI can surface a load error
+ * instead of opening a broken canvas.
+ */
+export async function importFlow(
+  graph: unknown,
+  format: FlowImportFormat = 'auto'
+): Promise<FlowImport> {
+  log('importFlow: request format=%s', format);
+  const response = await callCoreRpc<unknown>({
+    method: 'openhuman.flows_import',
+    params: { graph, format },
+  });
+  const result = unwrapCliEnvelope<FlowImport>(response);
+  log('importFlow: response warnings=%d', result.warnings?.length ?? 0);
+  return result;
+}
+
 export const flowsApi = {
   createFlow,
+  importFlow,
   resumeFlow,
   listFlowRuns,
   getFlowRun,
@@ -308,6 +451,9 @@ export const flowsApi = {
   listFlows,
   setFlowEnabled,
   runFlow,
+  updateFlow,
+  validateFlow,
+  listFlowConnections,
 };
 
 export default flowsApi;

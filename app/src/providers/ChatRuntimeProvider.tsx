@@ -265,6 +265,34 @@ function chatTurnUsagePayload(event: ChatDoneEvent): {
  * must never crash the chat runtime, it should just silently not render a
  * card.
  */
+/**
+ * Tool names whose successful `output` carries a `workflow_proposal` payload.
+ * `propose_workflow` (first draft) and `revise_workflow` (iterative refine)
+ * both return the identical wire shape (see `src/openhuman/flows/builder_tools.rs`),
+ * so the runtime surfaces a `WorkflowProposalCard` from either. These run inside
+ * the `workflow_builder` specialist — reached either as the main agent's own
+ * tool or, in the Flows copilot / prompt-bar flow, as a delegated subagent
+ * (`build_workflow`) — so BOTH `onToolResult` and `onSubagentToolResult` funnel
+ * through {@link maybeParseWorkflowProposalTool}.
+ */
+const WORKFLOW_PROPOSAL_TOOLS = new Set(['propose_workflow', 'revise_workflow']);
+
+/**
+ * If a completed tool result is a successful workflow-builder proposal
+ * (`propose_workflow`/`revise_workflow`), parse it. Returns `null` for anything
+ * else so callers can cheaply gate on it. Keyed by the tool NAME + success, not
+ * by agent, so a proposal surfaces whether the tool ran in the main agent or in
+ * the delegated `workflow_builder` worker.
+ */
+function maybeParseWorkflowProposalTool(
+  toolName: string,
+  success: boolean,
+  output: string | undefined
+): WorkflowProposal | null {
+  if (!success || !WORKFLOW_PROPOSAL_TOOLS.has(toolName) || !output) return null;
+  return parseWorkflowProposal(output);
+}
+
 function parseWorkflowProposal(output: string): WorkflowProposal | null {
   let parsed: unknown;
   try {
@@ -694,19 +722,20 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         // composer. The tool only validates; only the card's "Save & enable"
         // action ever calls `flows_create`, so this dispatch alone can never
         // create a flow.
-        if (event.tool_name === 'propose_workflow' && event.success) {
-          const proposal = parseWorkflowProposal(event.output);
-          if (proposal) {
-            rtLog('propose_workflow proposal parsed', {
-              thread: event.thread_id,
-              name: proposal.name,
-            });
-            dispatch(setWorkflowProposalForThread({ threadId: event.thread_id, proposal }));
-          } else {
-            rtLog('propose_workflow result did not parse as a workflow_proposal', {
-              thread: event.thread_id,
-            });
-          }
+        const mainProposal = maybeParseWorkflowProposalTool(
+          event.tool_name,
+          event.success,
+          event.output
+        );
+        if (mainProposal) {
+          rtLog('workflow proposal parsed (main agent)', {
+            thread: event.thread_id,
+            tool: event.tool_name,
+            name: mainProposal.name,
+          });
+          dispatch(
+            setWorkflowProposalForThread({ threadId: event.thread_id, proposal: mainProposal })
+          );
         }
 
         const current = store.getState().chatRuntime.inferenceStatusByThread[event.thread_id];
@@ -931,6 +960,30 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
             failure: event.success ? undefined : parseToolFailure(event.failure),
           })
         );
+
+        // Phase 5c: the Flows prompt bar / canvas copilot route to the
+        // `workflow_builder` specialist via delegation (`build_workflow`), so a
+        // `propose_workflow`/`revise_workflow` proposal is produced INSIDE the
+        // delegated worker and arrives here (not on `onToolResult`). Surface it
+        // on the PARENT thread (`event.thread_id`) so the same
+        // `WorkflowProposalCard` / copilot the direct-tool path uses renders it.
+        // Still validate-only — the card's explicit Save is the sole persistence
+        // gate.
+        const subagentProposal = maybeParseWorkflowProposalTool(
+          event.tool_name,
+          event.success,
+          event.output
+        );
+        if (subagentProposal) {
+          rtLog('workflow proposal parsed (delegated worker)', {
+            thread: event.thread_id,
+            tool: event.tool_name,
+            name: subagentProposal.name,
+          });
+          dispatch(
+            setWorkflowProposalForThread({ threadId: event.thread_id, proposal: subagentProposal })
+          );
+        }
       },
       onSubagentTextDelta: (event: ChatSubagentTextDeltaEvent) => {
         const taskId = event.subagent?.task_id;

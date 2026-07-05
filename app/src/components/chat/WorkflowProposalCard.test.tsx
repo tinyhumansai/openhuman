@@ -7,13 +7,24 @@ import { WorkflowProposalCard } from './WorkflowProposalCard';
 // Echo i18n keys so we can assert on the stable key string.
 vi.mock('../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (key: string) => key }) }));
 
-const mockCreateFlow = vi.fn();
+// `vi.mock` factories are hoisted above the module's top-level statements, so
+// every handle a factory closes over must be declared via `vi.hoisted` rather
+// than a plain top-level `const` — otherwise it'd be a TDZ reference at the
+// time the (hoisted) factory runs. (These specific names happened to work
+// without it, since Vitest's compiler special-cases `mock`-prefixed
+// identifiers, but that's an incidental heuristic, not a guarantee.)
+const { mockCreateFlow, mockUpdateFlow, mockDispatch, mockNavigate } = vi.hoisted(() => ({
+  mockCreateFlow: vi.fn(),
+  mockUpdateFlow: vi.fn(),
+  mockDispatch: vi.fn(),
+  mockNavigate: vi.fn(),
+}));
 vi.mock('../../services/api/flowsApi', () => ({
   createFlow: (...args: unknown[]) => mockCreateFlow(...args),
+  updateFlow: (...args: unknown[]) => mockUpdateFlow(...args),
 }));
-
-const mockDispatch = vi.fn();
 vi.mock('../../store/hooks', () => ({ useAppDispatch: () => mockDispatch }));
+vi.mock('react-router-dom', () => ({ useNavigate: () => mockNavigate }));
 
 function proposal(partial: Partial<WorkflowProposal> = {}): WorkflowProposal {
   return {
@@ -34,7 +45,9 @@ function proposal(partial: Partial<WorkflowProposal> = {}): WorkflowProposal {
 describe('WorkflowProposalCard', () => {
   beforeEach(() => {
     mockCreateFlow.mockReset().mockResolvedValue({ id: 'f1', name: 'Daily standup summary' });
+    mockUpdateFlow.mockReset();
     mockDispatch.mockReset();
+    mockNavigate.mockReset();
   });
 
   it('renders the name, trigger, and steps with node-kind badges', () => {
@@ -82,6 +95,28 @@ describe('WorkflowProposalCard', () => {
     fireEvent.click(screen.getByText('chat.flowProposal.save'));
     await waitFor(() => expect(screen.getByText(/chat\.flowProposal\.error/)).toBeInTheDocument());
     // Not cleared on failure.
+    expect(mockDispatch).not.toHaveBeenCalled();
+  });
+
+  it('opens the proposed graph in the canvas as an unsaved draft without persisting', () => {
+    const p = proposal();
+    render(<WorkflowProposalCard threadId="t1" proposal={p} />);
+    fireEvent.click(screen.getByText('chat.flowProposal.openInCanvas'));
+
+    // Navigates to the draft canvas route, carrying the graph in router state.
+    expect(mockNavigate).toHaveBeenCalledTimes(1);
+    const [route, opts] = mockNavigate.mock.calls[0];
+    expect(route).toBe('/flows/draft');
+    expect(opts.state).toEqual({
+      name: p.name,
+      graph: p.graph,
+      requireApproval: p.requireApproval,
+    });
+
+    // The single persistence gate is untouched — no create/update, and the
+    // proposal is left intact in the thread (not dismissed).
+    expect(mockCreateFlow).not.toHaveBeenCalled();
+    expect(mockUpdateFlow).not.toHaveBeenCalled();
     expect(mockDispatch).not.toHaveBeenCalled();
   });
 

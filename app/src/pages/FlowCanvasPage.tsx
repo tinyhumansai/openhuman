@@ -1,24 +1,69 @@
 /**
- * FlowCanvasPage — the read-only Workflow Canvas view (issue B5b.1) at
+ * FlowCanvasPage (issue B5b / Phase 3) — the Workflow Canvas builder at
  * `/flows/:id`. Loads one saved flow via `flows_get`, converts its
  * `WorkflowGraph` (`Flow.graph`, opaque `unknown` on the wire type — see
  * `services/api/flowsApi.ts`) to xyflow's shape via `graphAdapter.ts`, and
- * renders it in `FlowCanvas` with editing disabled. This is the first slice
- * of the visual builder (de-risking the `@xyflow/react` integration) —
- * dragging nodes / drawing edges lands in B5b.2+.
+ * renders it in the *editable* `FlowCanvas` (drag / connect / add / delete /
+ * config, plus Phase 3c validation UX and Phase 3d draft/dirty state).
+ *
+ * This page owns the two host-level pieces of Phase 3d the canvas can't:
+ *  - **Save persistence** — `onSave` runs `flows_update(id, { graph })`. NO
+ *    autosave: a saved+enabled flow is live, so an accidental save would fire
+ *    real schedules. Save is only ever the explicit button in the canvas.
+ *  - **Unsaved-changes guard** — the canvas reports its dirty state up via
+ *    `onDirtyChange`; while dirty we (a) warn on a hard tab close/reload via
+ *    `beforeunload`, and (b) intercept the in-page Back button with a confirm
+ *    dialog. (App-wide route interception would need a data router; this app
+ *    mounts a `HashRouter`, so full `useBlocker` interception isn't available —
+ *    the Back button is this page's only in-app navigation affordance.)
  */
 import createDebug from 'debug';
-import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import FlowCanvas from '../components/flows/canvas/FlowCanvas';
+import WorkflowCopilotPanel from '../components/flows/WorkflowCopilotPanel';
+import { ToastContainer } from '../components/intelligence/Toast';
 import PanelPage from '../components/layout/PanelPage';
 import Button from '../components/ui/Button';
 import { CenteredLoadingState, ErrorBanner } from '../components/ui/LoadingState';
+import { asFlowCanvasDraftState } from '../lib/flows/canvasDraft';
 import { workflowGraphToXyflow } from '../lib/flows/graphAdapter';
+import { buildPreviewGraph, diffGraphs } from '../lib/flows/graphDiff';
 import type { WorkflowGraph } from '../lib/flows/types';
+import { type RepairPromptContext } from '../lib/flows/workflowBuilderPrompt';
 import { useT } from '../lib/i18n/I18nContext';
-import { type Flow, getFlow } from '../services/api/flowsApi';
+import { createFlow, type Flow, getFlow, runFlow, updateFlow } from '../services/api/flowsApi';
+import type { WorkflowProposal } from '../store/chatRuntimeSlice';
+import type { ToastNotification } from '../types/intelligence';
+
+/**
+ * Seed for opening the canvas copilot preloaded from a failed run's "Fix with
+ * agent" action (Phase 5c). Rides in `location.state` (ephemeral). The graph is
+ * supplied by the editor itself, so only the run context travels here.
+ */
+export interface CopilotRepairSeed {
+  runId: string;
+  error?: string | null;
+  failingNodeIds?: string[];
+}
+
+/** Narrow an opaque `location.state` to a {@link CopilotRepairSeed}. */
+export function asCopilotRepairSeed(state: unknown): CopilotRepairSeed | null {
+  if (!state || typeof state !== 'object') return null;
+  const record = state as Record<string, unknown>;
+  const seed = record.copilotRepair;
+  if (!seed || typeof seed !== 'object') return null;
+  const s = seed as Record<string, unknown>;
+  if (typeof s.runId !== 'string') return null;
+  return {
+    runId: s.runId,
+    error: typeof s.error === 'string' ? s.error : null,
+    failingNodeIds: Array.isArray(s.failingNodeIds)
+      ? s.failingNodeIds.filter((v): v is string => typeof v === 'string')
+      : undefined,
+  };
+}
 
 const log = createDebug('app:flows:canvas');
 
@@ -45,11 +90,358 @@ function BackIcon() {
   );
 }
 
+/**
+ * A flow ready for the editable canvas — either a persisted flow (`flowId` set)
+ * or an unsaved draft handed in from the chat `WorkflowProposalCard` "Open in
+ * canvas" action (`flowId === null`, Phase 4e).
+ */
+interface EditorFlow {
+  /** Persisted flow id, or `null` for an unsaved draft. */
+  flowId: string | null;
+  name: string;
+  graph: WorkflowGraph;
+  /** "Require approval" toggle carried into `flows_create` when saving a draft. */
+  requireApproval: boolean;
+}
+
+/** The editable canvas body — split out so its hooks only mount once a flow loads. */
+function FlowEditor({
+  editorFlow,
+  initialCopilotSeed = null,
+}: {
+  editorFlow: EditorFlow;
+  initialCopilotSeed?: CopilotRepairSeed | null;
+}) {
+  const { t } = useT();
+  const navigate = useNavigate();
+  const [dirty, setDirty] = useState(false);
+  const [leaveConfirm, setLeaveConfirm] = useState(false);
+  // Active run id (== thread_id) driving the canvas's live per-node overlay
+  // (Phase 3e). Set when the user runs the flow; the canvas subscribes to the
+  // `flow:run_progress` feed for it via `useFlowRunProgress`.
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
+
+  const { flowId, name, graph, requireApproval } = editorFlow;
+  // Draft (unsaved) canvases have no persisted id yet; Save creates the flow
+  // rather than updating one, and there is nothing runnable to run.
+  const isDraft = flowId === null;
+
+  // ── Canvas copilot + draft overlay (Phase 5c) ─────────────────────────────
+  // `draftGraph` is the current ACCEPTED draft (starts as the loaded graph),
+  // kept in sync with manual canvas edits via `onGraphChange`. A copilot
+  // proposal enters `preview`: the canvas re-seeds (bump `canvasVersion`) with
+  // the proposed graph plus ghosted removed nodes, painted diff-style. Accept
+  // commits the proposed graph into `draftGraph`; Reject reverts to the frozen
+  // base. NOTHING here persists — the canvas's own Save is the only gate.
+  const [copilotOpen, setCopilotOpen] = useState(initialCopilotSeed !== null);
+  const [draftGraph, setDraftGraph] = useState<WorkflowGraph>(graph);
+  const [preview, setPreview] = useState<{
+    proposal: WorkflowProposal;
+    base: WorkflowGraph;
+    addedNodeIds: Set<string>;
+    removedNodeIds: Set<string>;
+  } | null>(null);
+  const [canvasVersion, setCanvasVersion] = useState(0);
+
+  // Last-persisted graph, independent of canvas remounts (fixes a P1: the
+  // editable canvas seeds its own dirty baseline from whatever graph it's
+  // mounted with, so bumping `canvasVersion` on Accept — remounting the
+  // canvas with the just-accepted proposal as its "initial" graph — made an
+  // unsaved accepted proposal instantly read as clean; the accepted change
+  // was then lost on back/reload instead of gating behind the required Save.
+  // Only ever updated by a real Save (`handleSave` below), so a diff against
+  // it survives any number of accept/reject/preview remounts.
+  const persistedGraphRef = useRef<WorkflowGraph>(graph);
+
+  const handleGraphChange = useCallback(
+    (next: WorkflowGraph) => {
+      // Freeze the draft while a proposal is under review — the preview graph
+      // (with ghosts) must not overwrite the real draft.
+      if (preview) return;
+      setDraftGraph(next);
+    },
+    [preview]
+  );
+
+  const handleProposal = useCallback(
+    (proposal: WorkflowProposal) => {
+      const proposedGraph = proposal.graph as WorkflowGraph;
+      const d = diffGraphs(draftGraph, proposedGraph);
+      log('copilot proposal: added=%d removed=%d', d.addedNodeIds.size, d.removedNodeIds.size);
+      setPreview({
+        proposal,
+        base: draftGraph,
+        addedNodeIds: d.addedNodeIds,
+        removedNodeIds: d.removedNodeIds,
+      });
+      setCanvasVersion(v => v + 1);
+    },
+    [draftGraph]
+  );
+
+  const handleAcceptProposal = useCallback((proposal: WorkflowProposal) => {
+    log('copilot proposal accepted');
+    setDraftGraph(proposal.graph as WorkflowGraph);
+    setPreview(null);
+    setCanvasVersion(v => v + 1);
+  }, []);
+
+  const handleRejectProposal = useCallback(() => {
+    log('copilot proposal rejected');
+    setPreview(null);
+    setCanvasVersion(v => v + 1);
+  }, []);
+
+  // The graph the canvas renders: the proposed+ghosted preview while reviewing,
+  // else the accepted draft.
+  const editorGraph = useMemo(
+    () =>
+      preview
+        ? buildPreviewGraph(
+            preview.base,
+            preview.proposal.graph as WorkflowGraph,
+            preview.removedNodeIds
+          )
+        : draftGraph,
+    [preview, draftGraph]
+  );
+  const { nodes, edges } = useMemo(() => workflowGraphToXyflow(editorGraph), [editorGraph]);
+  const meta = useMemo(
+    () => ({ schema_version: graph.schema_version, id: flowId ?? undefined, name }),
+    [graph.schema_version, flowId, name]
+  );
+  const initialDirty = useMemo(
+    () => JSON.stringify(editorGraph) !== JSON.stringify(persistedGraphRef.current),
+    [editorGraph]
+  );
+
+  // Repair seed for the copilot: bind the run context to the CURRENT draft.
+  const copilotRepairSeed = useMemo<RepairPromptContext | null>(
+    () =>
+      initialCopilotSeed
+        ? {
+            runId: initialCopilotSeed.runId,
+            error: initialCopilotSeed.error,
+            failingNodeIds: initialCopilotSeed.failingNodeIds,
+            graph: draftGraph,
+          }
+        : null,
+    // Only seed once (on the initial draft) — a later draft edit must not
+    // re-fire the repair turn.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [initialCopilotSeed]
+  );
+
+  // Persist the live graph. A saved flow updates in place via `flows_update`; a
+  // draft is created via `flows_create` (the single persistence gate — an
+  // agent's `propose_workflow` never reaches this RPC), then we replace into
+  // the new flow's canonical `/flows/:id` canvas so further saves update it.
+  // Rejections propagate so the canvas surfaces the failure inline (and leaves
+  // the draft dirty).
+  const handleSave = useCallback(
+    async (next: WorkflowGraph) => {
+      if (isDraft) {
+        log(
+          'save: creating draft name=%s nodes=%d edges=%d',
+          name,
+          next.nodes.length,
+          next.edges.length
+        );
+        const created = await createFlow(name, next, requireApproval);
+        log('save: draft persisted as flow id=%s', created.id);
+        navigate(`/flows/${created.id}`, { replace: true });
+        return;
+      }
+      log('save: flow id=%s nodes=%d edges=%d', flowId, next.nodes.length, next.edges.length);
+      await updateFlow(flowId, { graph: next });
+      persistedGraphRef.current = next;
+      log('save: flow id=%s persisted', flowId);
+    },
+    [isDraft, flowId, name, requireApproval, navigate]
+  );
+
+  // Warn on hard tab close / reload while there are unsaved edits.
+  useEffect(() => {
+    if (!dirty) return;
+    const handler = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [dirty]);
+
+  // Run the *persisted* flow and hand its thread_id to the canvas so it can
+  // overlay live per-node status (Phase 3e). Runs the saved version — not the
+  // (possibly dirty) draft — matching the "Save is explicit, running is live"
+  // model. The durable run row + poller remain the source of truth.
+  const handleRun = useCallback(async () => {
+    if (flowId === null) return; // drafts aren't runnable until saved
+    setRunning(true);
+    setRunError(null);
+    try {
+      log('run: starting flow id=%s', flowId);
+      const result = await runFlow(flowId);
+      log('run: started flow id=%s thread_id=%s', flowId, result.thread_id);
+      setActiveRunId(result.thread_id);
+    } catch (err) {
+      const message = errorMessage(err);
+      log('run: failed id=%s err=%o', flowId, err);
+      setRunError(message);
+    } finally {
+      setRunning(false);
+    }
+  }, [flowId]);
+
+  const handleBack = useCallback(() => {
+    if (dirty) {
+      log('back: dirty — prompting for confirmation');
+      setLeaveConfirm(true);
+      return;
+    }
+    navigate('/flows');
+  }, [dirty, navigate]);
+
+  const backButton = (
+    <Button
+      type="button"
+      variant="tertiary"
+      size="xs"
+      iconOnly
+      data-testid="flow-canvas-back"
+      aria-label={t('flows.canvas.backToList')}
+      onClick={handleBack}>
+      <BackIcon />
+    </Button>
+  );
+
+  // A draft has nothing persisted to run yet — the canvas's Save (which creates
+  // the flow) is the only gate, so no Run affordance until it's saved.
+  const runButton = isDraft ? undefined : (
+    <Button
+      type="button"
+      variant="primary"
+      size="xs"
+      data-testid="flow-canvas-run"
+      disabled={running}
+      onClick={() => void handleRun()}>
+      {running ? t('flows.editor.running') : t('flows.editor.run')}
+    </Button>
+  );
+
+  const headerActions = (
+    <div className="flex items-center gap-2">
+      <Button
+        type="button"
+        variant={copilotOpen ? 'primary' : 'secondary'}
+        size="xs"
+        data-testid="flow-canvas-copilot-toggle"
+        aria-pressed={copilotOpen}
+        onClick={() => setCopilotOpen(open => !open)}>
+        {t('flows.copilot.open')}
+      </Button>
+      {runButton}
+    </div>
+  );
+
+  return (
+    <PanelPage
+      testId="flow-canvas-page"
+      title={name}
+      leading={backButton}
+      action={headerActions}
+      contentClassName="h-full p-0">
+      <div className="flex h-full w-full">
+        <div className="relative h-full flex-1">
+          <FlowCanvas
+            key={`canvas-${canvasVersion}`}
+            editable
+            nodes={nodes}
+            edges={edges}
+            meta={meta}
+            onSave={handleSave}
+            onDirtyChange={setDirty}
+            activeRunId={activeRunId}
+            onGraphChange={handleGraphChange}
+            addedNodeIds={preview?.addedNodeIds}
+            removedNodeIds={preview?.removedNodeIds}
+            saveDisabled={preview !== null}
+            initialDirty={initialDirty}
+          />
+
+          {runError && (
+            <div className="pointer-events-none absolute inset-x-3 top-3 z-20 flex justify-center">
+              <div
+                role="alert"
+                data-testid="flow-canvas-run-error"
+                className="pointer-events-auto rounded-xl border border-coral-200 bg-coral-50 px-3 py-2 text-xs text-coral-700 dark:border-coral-500/30 dark:bg-coral-500/10 dark:text-coral-300">
+                {t('flows.editor.runFailed')}: {runError}
+              </div>
+            </div>
+          )}
+
+          {leaveConfirm && (
+            <div
+              className="absolute inset-0 z-30 flex items-center justify-center bg-black/30 p-4"
+              data-testid="flow-leave-confirm">
+              <div className="w-full max-w-sm rounded-xl border border-line bg-surface p-4 shadow-xl">
+                <h2 className="text-sm font-semibold text-content">
+                  {t('flows.editor.leaveTitle')}
+                </h2>
+                <p className="mt-1 text-xs text-content-muted">{t('flows.editor.leaveBody')}</p>
+                <div className="mt-4 flex justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    data-testid="flow-leave-stay"
+                    onClick={() => setLeaveConfirm(false)}>
+                    {t('flows.editor.leaveStay')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    tone="danger"
+                    size="sm"
+                    data-testid="flow-leave-discard"
+                    onClick={() => {
+                      log('back: confirmed leave — discarding unsaved edits');
+                      navigate('/flows');
+                    }}>
+                    {t('flows.editor.leaveDiscard')}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {copilotOpen && (
+          <WorkflowCopilotPanel
+            graph={preview?.base ?? draftGraph}
+            onProposal={handleProposal}
+            onAccept={handleAcceptProposal}
+            onReject={handleRejectProposal}
+            onClose={() => setCopilotOpen(false)}
+            repairSeed={copilotRepairSeed}
+          />
+        )}
+      </div>
+    </PanelPage>
+  );
+}
+
 export default function FlowCanvasPage() {
   const { t } = useT();
   const navigate = useNavigate();
+  const location = useLocation();
   const { id } = useParams<{ id: string }>();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
+  // "Fix with agent" (Phase 5c) navigates here with a repair seed in
+  // `location.state` so the copilot opens preloaded with the failed run.
+  const copilotSeed = useMemo(() => asCopilotRepairSeed(location.state), [location.state]);
 
   useEffect(() => {
     // Guards a stale response from clobbering newer state: this effect
@@ -95,6 +487,24 @@ export default function FlowCanvasPage() {
     };
   }, [id]);
 
+  if (state.status === 'ready') {
+    // Keyed by flow id so switching flows cleanly re-seeds the editable canvas's
+    // controlled node/edge state (which only reads its props at mount).
+    const flow = state.flow;
+    return (
+      <FlowEditor
+        key={flow.id}
+        editorFlow={{
+          flowId: flow.id,
+          name: flow.name,
+          graph: flow.graph as WorkflowGraph,
+          requireApproval: flow.require_approval,
+        }}
+        initialCopilotSeed={copilotSeed}
+      />
+    );
+  }
+
   const backButton = (
     <Button
       type="button"
@@ -108,12 +518,10 @@ export default function FlowCanvasPage() {
     </Button>
   );
 
-  const title = state.status === 'ready' ? state.flow.name : t('flows.canvas.title');
-
   return (
     <PanelPage
       testId="flow-canvas-page"
-      title={title}
+      title={t('flows.canvas.title')}
       leading={backButton}
       contentClassName="h-full p-0">
       {state.status === 'loading' && (
@@ -135,13 +543,82 @@ export default function FlowCanvasPage() {
           </p>
         </div>
       )}
+    </PanelPage>
+  );
+}
 
-      {state.status === 'ready' &&
-        (() => {
-          const graph = state.flow.graph as WorkflowGraph;
-          const { nodes, edges } = workflowGraphToXyflow(graph);
-          return <FlowCanvas nodes={nodes} edges={edges} readonly />;
-        })()}
+/**
+ * FlowCanvasDraftPage (Phase 4e) — the editable Workflow Canvas hosting an
+ * UNSAVED draft handed in from the chat `WorkflowProposalCard` "Open in canvas"
+ * action, at `/flows/draft`. The candidate graph rides in `location.state`
+ * (ephemeral — see `lib/flows/canvasDraft.ts`); NOTHING is fetched or persisted
+ * on open. The canvas's own Save button remains the single persistence gate
+ * (it calls `flows_create` for a draft), so opening a draft never touches
+ * `flows_create`/`flows_update`. If there's no draft in state (e.g. a hard
+ * reload dropped it, or the route was hit directly), we show an empty state
+ * rather than a broken canvas.
+ */
+export function FlowCanvasDraftPage() {
+  const { t } = useT();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const draft = useMemo(() => asFlowCanvasDraftState(location.state), [location.state]);
+
+  // Non-fatal import warnings (Phase 4d) shown as dismissible toasts over the
+  // draft canvas. Seeded once from the draft state so unmapped n8n node types /
+  // untranslated expressions aren't silently lost on the way in.
+  const [toasts, setToasts] = useState<ToastNotification[]>(() =>
+    (draft?.importWarnings ?? []).map((message, i) => ({
+      id: `import-warning-${i}`,
+      type: 'warning',
+      title: t('flows.import.warningTitle'),
+      message,
+    }))
+  );
+  const removeToast = useCallback((id: string) => {
+    setToasts(prev => prev.filter(item => item.id !== id));
+  }, []);
+
+  if (draft) {
+    return (
+      <>
+        <FlowEditor
+          editorFlow={{
+            flowId: null,
+            name: draft.name,
+            graph: draft.graph,
+            requireApproval: draft.requireApproval,
+          }}
+        />
+        <ToastContainer notifications={toasts} onRemove={removeToast} />
+      </>
+    );
+  }
+
+  const backButton = (
+    <Button
+      type="button"
+      variant="tertiary"
+      size="xs"
+      iconOnly
+      data-testid="flow-canvas-back"
+      aria-label={t('flows.canvas.backToList')}
+      onClick={() => navigate('/flows')}>
+      <BackIcon />
+    </Button>
+  );
+
+  return (
+    <PanelPage
+      testId="flow-canvas-page"
+      title={t('flows.canvas.title')}
+      leading={backButton}
+      contentClassName="h-full p-0">
+      <div className="flex h-full items-center justify-center p-4">
+        <p className="text-sm text-content-muted" data-testid="flow-canvas-draft-missing">
+          {t('flows.canvas.draftMissing')}
+        </p>
+      </div>
     </PanelPage>
   );
 }

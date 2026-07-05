@@ -6,7 +6,7 @@
  * and the /skills/new page can rely on it.
  *
  * Covers:
- *  - submit calls workflowsApi.createWorkflow with the trimmed/normalised
+ *  - submit calls skillsApi.createWorkflow with the trimmed/normalised
  *    payload (CSVs split, optional fields omitted when empty).
  *  - onStateChange is called with validity + submitting flags so
  *    wrappers can sync their submit button's disabled state.
@@ -27,8 +27,8 @@ const hoisted = vi.hoisted(() => ({
   describeWorkflow: vi.fn(),
 }));
 
-vi.mock('../../../services/api/workflowsApi', () => ({
-  workflowsApi: {
+vi.mock('../../../services/api/skillsApi', () => ({
+  skillsApi: {
     createWorkflow: hoisted.createWorkflow,
     updateWorkflow: hoisted.updateWorkflow,
     describeWorkflow: hoisted.describeWorkflow,

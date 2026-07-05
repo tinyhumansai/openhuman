@@ -375,6 +375,170 @@ fn list_flow_runs_orders_newest_first_and_is_scoped_to_flow() {
     assert_eq!(runs_b[0].id, "run-b1");
 }
 
+// ── insert_duplicate_flow ─────────────────────────────────────────────────
+
+#[test]
+fn insert_duplicate_flow_makes_a_disabled_copy_with_new_id_and_same_graph() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    // Enabled source with require_approval + a distinctive graph name.
+    let mut graph = trigger_graph();
+    graph.name = "original-graph".to_string();
+    let source = create_flow(&config, "My Flow".to_string(), graph, true).unwrap();
+    assert!(source.enabled);
+    record_run(&config, &source.id, "completed").unwrap();
+    let source = get_flow(&config, &source.id).unwrap().unwrap();
+    assert!(source.last_status.is_some());
+
+    let copy = insert_duplicate_flow(&config, &source, "My Flow (copy)".to_string()).unwrap();
+
+    // New id, suffixed name, DISABLED, run history reset.
+    assert_ne!(copy.id, source.id);
+    assert_eq!(copy.name, "My Flow (copy)");
+    assert!(
+        !copy.enabled,
+        "duplicate must be disabled so it never fires"
+    );
+    assert!(copy.last_run_at.is_none());
+    assert!(copy.last_status.is_none());
+    // Same graph + require_approval carried over.
+    assert_eq!(copy.graph, source.graph);
+    assert_eq!(copy.graph.name, "original-graph");
+    assert!(copy.require_approval);
+
+    // Persisted and independent — both rows exist.
+    let reloaded = get_flow(&config, &copy.id).unwrap().unwrap();
+    assert!(!reloaded.enabled);
+    assert_eq!(reloaded.graph, source.graph);
+    assert_eq!(list_flows(&config).unwrap().len(), 2);
+}
+
+// ── prune_flow_runs ───────────────────────────────────────────────────────
+
+fn seed_run(config: &Config, flow_id: &str, id: &str, day: u32, status: &str) {
+    let started = format!("2026-01-{day:02}T00:00:00Z");
+    insert_flow_run(config, id, flow_id, id, &started).unwrap();
+    if status != "running" {
+        finish_flow_run(
+            config,
+            id,
+            status,
+            &format!("2026-01-{day:02}T00:00:05Z"),
+            &[],
+            &[],
+            None,
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn prune_flow_runs_keeps_newest_n_terminal_runs() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let flow = create_flow(&config, "demo".to_string(), trigger_graph(), false).unwrap();
+
+    // 5 completed runs on ascending days.
+    for i in 1..=5 {
+        seed_run(&config, &flow.id, &format!("run-{i}"), i, "completed");
+    }
+
+    let deleted = prune_flow_runs(&config, &flow.id, 2).unwrap();
+    assert_eq!(deleted, 3, "5 terminal runs, keep 2 => 3 pruned");
+
+    let remaining = list_flow_runs(&config, &flow.id, 100).unwrap();
+    let ids: Vec<_> = remaining.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(ids, vec!["run-5", "run-4"], "newest two survive");
+}
+
+#[test]
+fn prune_flow_runs_never_removes_pending_approval_run() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let flow = create_flow(&config, "demo".to_string(), trigger_graph(), false).unwrap();
+
+    // An OLD parked pending_approval run (day 1) plus newer completed runs.
+    seed_run(&config, &flow.id, "parked", 1, "pending_approval");
+    for i in 2..=5 {
+        seed_run(&config, &flow.id, &format!("run-{i}"), i, "completed");
+    }
+
+    // keep=1 would normally leave only the newest run; the parked one must
+    // still survive despite being the oldest and outside the newest-1 window.
+    let deleted = prune_flow_runs(&config, &flow.id, 1).unwrap();
+    let remaining = list_flow_runs(&config, &flow.id, 100).unwrap();
+    let ids: std::collections::HashSet<_> = remaining.iter().map(|r| r.id.as_str()).collect();
+    assert!(
+        ids.contains("parked"),
+        "a pending_approval run must never be pruned out from under a resume"
+    );
+    assert!(ids.contains("run-5"), "newest terminal run kept");
+    // Only terminal runs 2..4 were eligible; 5 kept by window => 3 deleted.
+    assert_eq!(deleted, 3);
+}
+
+#[test]
+fn prune_flow_runs_leaves_running_rows_alone() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let flow = create_flow(&config, "demo".to_string(), trigger_graph(), false).unwrap();
+
+    seed_run(&config, &flow.id, "live", 1, "running");
+    for i in 2..=4 {
+        seed_run(&config, &flow.id, &format!("run-{i}"), i, "completed");
+    }
+
+    prune_flow_runs(&config, &flow.id, 1).unwrap();
+    let remaining = list_flow_runs(&config, &flow.id, 100).unwrap();
+    let ids: std::collections::HashSet<_> = remaining.iter().map(|r| r.id.as_str()).collect();
+    assert!(ids.contains("live"), "a running run is never pruned");
+}
+
+#[test]
+fn insert_flow_run_auto_prunes_beyond_retention_cap() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let flow = create_flow(&config, "demo".to_string(), trigger_graph(), false).unwrap();
+
+    // Seed exactly MAX_FLOW_RUNS_PER_FLOW completed runs.
+    let cap = MAX_FLOW_RUNS_PER_FLOW;
+    for i in 0..cap {
+        let id = format!("run-{i:04}");
+        insert_flow_run(
+            &config,
+            &id,
+            &flow.id,
+            &id,
+            &format!("2026-01-01T00:00:{i:02}Z"),
+        )
+        .unwrap();
+        finish_flow_run(
+            &config,
+            &id,
+            "completed",
+            "2026-01-01T00:01:00Z",
+            &[],
+            &[],
+            None,
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        list_flow_runs(&config, &flow.id, cap * 2).unwrap().len(),
+        cap
+    );
+
+    // One more insert should trigger the retention prune, keeping <= cap.
+    let extra = "run-extra";
+    insert_flow_run(&config, extra, &flow.id, extra, "2026-01-02T00:00:00Z").unwrap();
+    let count = list_flow_runs(&config, &flow.id, cap * 2).unwrap().len();
+    assert!(
+        count <= cap,
+        "auto-prune should keep run count within cap ({count} > {cap})"
+    );
+}
+
 #[test]
 fn list_flow_runs_respects_limit() {
     let tmp = TempDir::new().unwrap();

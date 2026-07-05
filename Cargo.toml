@@ -47,7 +47,12 @@ tinyplace = "2.0"
 # `src/openhuman/tinyflows/` + the `flows::` domain. Pulls tinyagents 1.7 transitively
 # (same version openhuman already uses — no conflict). Published on crates.io
 # and patched below to the vendored submodule.
-tinyflows = "0.3"
+#
+# `mock` feature: enables `tinyflows::caps::mock::mock_capabilities()` — the
+# deterministic in-memory capability bundle the flows `dry_run_workflow` agent
+# tool (Phase 5b) runs a *draft* graph against so the workflow-builder agent can
+# self-verify a proposal without any real side effects (no real LLM/tool/HTTP/code).
+tinyflows = { version = "0.5", features = ["mock"] }
 # TinyJuice — host-agnostic TokenJuice compression engine. OpenHuman keeps
 # config/RPC/tool/runtime adapters in `src/openhuman/tokenjuice/` and patches
 # this dependency to the vendored submodule below.
