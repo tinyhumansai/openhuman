@@ -66,12 +66,29 @@ pub struct OrchestrationConfig {
     /// spawn per cycle. Default: `2`.
     #[serde(default = "default_subagent_concurrency")]
     pub subagent_concurrency: u32,
+
+    /// Cadence (minutes) of the `tinyplace` subconscious steering review — the
+    /// offline reflection that emits `STEERING_DIRECTIVE`s over the compressed
+    /// execution history. `None` (the default) means "use the heartbeat
+    /// interval", so the merged behaviour matches the pre-factory build where
+    /// the review ran once per memory tick. Env: `OPENHUMAN_ORCH_REVIEW_INTERVAL_MINUTES`.
+    #[serde(default)]
+    pub review_interval_minutes: Option<u32>,
 }
 
 impl OrchestrationConfig {
     /// The eviction threshold clamped to the spec's 0.8–0.9 guardrail band.
     pub fn effective_evict_threshold(&self) -> f32 {
         self.context_evict_threshold.clamp(0.8, 0.9)
+    }
+
+    /// The steering-review cadence in minutes: the explicit
+    /// `review_interval_minutes` when set, else the supplied heartbeat interval
+    /// (floored at 1 so it can never be a busy-loop).
+    pub fn effective_review_interval_minutes(&self, heartbeat_interval: u32) -> u32 {
+        self.review_interval_minutes
+            .unwrap_or(heartbeat_interval)
+            .max(1)
     }
 }
 
@@ -84,6 +101,7 @@ impl Default for OrchestrationConfig {
             message_window: default_message_window(),
             context_evict_threshold: default_evict_threshold(),
             subagent_concurrency: default_subagent_concurrency(),
+            review_interval_minutes: None,
         }
     }
 }

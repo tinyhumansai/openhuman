@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::openhuman::config::Config;
@@ -198,11 +199,47 @@ pub async fn run_orchestration_review(
     config: &Config,
     source_tick_id: &str,
 ) -> Result<bool, String> {
-    if !config.orchestration.enabled {
+    let Some(window) = load_review_window(config).await? else {
         return Ok(false);
+    };
+    let emitted = synthesize_and_persist(config, &window, source_tick_id).await?;
+    // The all-in-one wrapper advances the cursor itself (idle or emitted) to
+    // preserve the pre-split behaviour; the tinyplace profile instead advances
+    // it from its `commit`, so a superseded tick can't skip rows.
+    if let Some(newest) = &window.newest_reviewed {
+        let _ = store::with_connection(&config.workspace_dir, |conn| {
+            store::set_review_cursor(conn, newest)
+        });
+    }
+    Ok(emitted.is_some())
+}
+
+/// The unreviewed slice of orchestration history a steering review reflects
+/// over, plus the cursor token that pins exactly the window observed. Serde so
+/// it can ride the subconscious tick graph's checkpointed state.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ReviewWindow {
+    /// Compressed-history summaries new since the review cursor (oldest-first).
+    pub summaries: Vec<String>,
+    /// The cumulative world-diff mutation timeline (context, not the trigger).
+    pub mutations: Vec<String>,
+    /// Reasoning-cycle counter stamped on an emitted directive.
+    pub current_cycle: i64,
+    /// How many compressed rows this window folded (for `derived_from`).
+    pub compressed_count: usize,
+    /// Newest reviewed compressed-row `created_at` — the commit cursor. `None`
+    /// only on an empty window (which never produces a `Some(window)`).
+    pub newest_reviewed: Option<String>,
+}
+
+/// Stage 6 load half: the unreviewed compressed history + cumulative world-diff
+/// timeline. Self-gating — returns `None` (a clean quiet tick) when orchestration
+/// is disabled or there is nothing new since the review cursor.
+pub async fn load_review_window(config: &Config) -> Result<Option<ReviewWindow>, String> {
+    if !config.orchestration.enabled {
+        return Ok(None);
     }
 
-    // 1. Load unreviewed compressed history + the cumulative world-diff timeline.
     let (compressed, mutations, current_cycle) =
         store::with_connection(&config.workspace_dir, |conn| {
             let cursor = store::review_cursor(conn)?;
@@ -215,54 +252,57 @@ pub async fn run_orchestration_review(
 
     // Idempotence trigger: a review fires only on **new** compressed history
     // since the cursor. Compressed rows are written every cycle alongside the
-    // world diff, so this makes a re-tick with no new data a clean no-op while
-    // still handing the model the full cumulative world timeline for context.
+    // world diff, so a re-tick with no new data is a clean no-op while still
+    // handing the model the full cumulative world timeline for context.
     if compressed.is_empty() {
         log::debug!(target: LOG, "[orchestration] review.idle — no new compressed history");
-        return Ok(false);
+        return Ok(None);
     }
+
     let newest_reviewed = compressed.iter().map(|(c, _)| c.clone()).max();
-    let summaries: Vec<String> = compressed.iter().map(|(_, t)| t.clone()).collect();
+    Ok(Some(ReviewWindow {
+        summaries: compressed.iter().map(|(_, t)| t.clone()).collect(),
+        compressed_count: compressed.len(),
+        mutations,
+        current_cycle,
+        newest_reviewed,
+    }))
+}
 
-    // 2. Synthesize offline (tool-free chat, tainted origin). Retry once on a
-    //    contract violation; a clean NONE is a valid idle response.
-    let prompt = build_steering_prompt(&summaries, &mutations);
-    let parsed = synthesize_steering(config, &prompt, source_tick_id).await;
-
-    let Some(parsed) = parsed else {
-        // No directive this window (idle, NONE, or twice-failed). Advance the
-        // cursor so we don't reflect on the same rows forever — a transient model
-        // failure simply yields no directive for this batch.
-        if let Some(newest) = newest_reviewed {
-            let _ = store::with_connection(&config.workspace_dir, |conn| {
-                store::set_review_cursor(conn, &newest)
-            });
-        }
-        return Ok(false);
+/// Stage 6 synthesize half: reflect over `window` offline (tool-free chat,
+/// tainted origin) and, when a macro-trend warrants it, persist **one** steering
+/// directive (superseding the prior) + surface it in the local Subconscious
+/// window. Returns the new directive id, or `None` on a clean NONE / twice-failed.
+///
+/// Deliberately does **not** advance the review cursor — the caller owns that so
+/// a superseded tick cannot skip rows (the tinyplace profile advances it from
+/// `commit`).
+pub async fn synthesize_and_persist(
+    config: &Config,
+    window: &ReviewWindow,
+    source_tick_id: &str,
+) -> Result<Option<i64>, String> {
+    let prompt = build_steering_prompt(&window.summaries, &window.mutations);
+    let Some(parsed) = synthesize_steering(config, &prompt, source_tick_id).await else {
+        return Ok(None);
     };
 
-    // 3. Persist the directive (superseding the prior), advance the cursor, and
-    //    surface it in the local Subconscious chat window.
     let now = chrono::Utc::now().to_rfc3339();
     let derived_from = format!(
         "compressed_rows:{} world_mutations:{}",
-        compressed.len(),
-        mutations.len()
+        window.compressed_count,
+        window.mutations.len()
     );
     let directive_id = store::with_connection(&config.workspace_dir, |conn| {
-        let id = store::insert_steering_directive(
+        store::insert_steering_directive(
             conn,
             &parsed.text,
             &now,
             source_tick_id,
             parsed.expires_after_cycles,
-            current_cycle,
+            window.current_cycle,
             &derived_from,
-        )?;
-        if let Some(newest) = &newest_reviewed {
-            store::set_review_cursor(conn, newest)?;
-        }
-        Ok(id)
+        )
     })
     .map_err(|e| format!("review persist: {e}"))?;
 
@@ -272,7 +312,7 @@ pub async fn run_orchestration_review(
         "[orchestration] review.directive_emitted id={directive_id} expires_after={} derived={derived_from}",
         parsed.expires_after_cycles,
     );
-    Ok(true)
+    Ok(Some(directive_id))
 }
 
 /// Run the offline steering synthesis: a single tool-free chat on the
