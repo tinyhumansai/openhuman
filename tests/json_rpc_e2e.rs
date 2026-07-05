@@ -5556,6 +5556,103 @@ async fn json_rpc_screen_intelligence_capture_test_returns_stable_shape() {
 }
 
 #[tokio::test]
+async fn json_rpc_subconscious_status_exposes_instances_and_trigger_takes_kind() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // ── subconscious.status: legacy top-level fields + instances[] ──────────
+    let status = post_json_rpc(&rpc_base, 1101, "openhuman.subconscious_status", json!({})).await;
+    let result = assert_no_jsonrpc_error(&status, "subconscious_status");
+    let status_result = result.get("result").unwrap_or(result);
+
+    // Legacy flattened fields (backward compat) mirror the memory instance.
+    assert_eq!(
+        status_result.get("instance").and_then(Value::as_str),
+        Some("memory"),
+        "legacy top-level mirrors the memory instance: {status_result}"
+    );
+    assert!(
+        status_result.get("mode").and_then(Value::as_str).is_some(),
+        "expected top-level mode string: {status_result}"
+    );
+    assert!(
+        status_result
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .is_some(),
+        "expected top-level enabled bool: {status_result}"
+    );
+
+    // Additive: instances[] with at least the memory row, each tagged.
+    let instances = status_result
+        .get("instances")
+        .and_then(Value::as_array)
+        .expect("expected instances array");
+    assert!(
+        !instances.is_empty(),
+        "instances not empty: {status_result}"
+    );
+    assert!(
+        instances
+            .iter()
+            .any(|row| row.get("instance").and_then(Value::as_str) == Some("memory")),
+        "instances includes the memory row: {status_result}"
+    );
+
+    // ── subconscious.trigger: optional kind echoes back ─────────────────────
+    let trig = post_json_rpc(
+        &rpc_base,
+        1102,
+        "openhuman.subconscious_trigger",
+        json!({ "kind": "tinyplace" }),
+    )
+    .await;
+    let trig_result = assert_no_jsonrpc_error(&trig, "subconscious_trigger");
+    let trig_body = trig_result.get("result").unwrap_or(trig_result);
+    assert_eq!(
+        trig_body.get("triggered").and_then(Value::as_bool),
+        Some(true),
+        "trigger fire-and-forget acks: {trig_body}"
+    );
+    assert_eq!(
+        trig_body.get("kind").and_then(Value::as_str),
+        Some("tinyplace"),
+        "trigger echoes the requested kind: {trig_body}"
+    );
+
+    // An unknown kind is a clean JSON-RPC error, not a panic.
+    let bad = post_json_rpc(
+        &rpc_base,
+        1103,
+        "openhuman.subconscious_trigger",
+        json!({ "kind": "nope" }),
+    )
+    .await;
+    assert!(
+        bad.get("error").is_some(),
+        "unknown kind returns a JSON-RPC error: {bad}"
+    );
+
+    rpc_join.abort();
+    mock_join.abort();
+}
+
+#[tokio::test]
 async fn json_rpc_screen_intelligence_status_returns_stable_shape() {
     let _env_lock = json_rpc_e2e_env_lock();
     let tmp = tempdir().expect("tempdir");

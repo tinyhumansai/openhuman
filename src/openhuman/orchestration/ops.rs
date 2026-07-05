@@ -184,17 +184,24 @@ fn advance_cursor(config: &Config, agent_id: &str, session_id: &str, latest: i64
 }
 
 // ── Stage 6: subconscious orchestration review ──────────────────────────────
+//
+// The review is driven by the dedicated **`tinyplace` subconscious instance**
+// (`subconscious::profiles::tinyplace`), which ticks on its own cadence via the
+// heartbeat fan-out — it no longer piggybacks on the memory tick. That profile
+// calls [`load_review_window`] (observe) + [`synthesize_and_persist`] (reflect)
+// and advances the review cursor from its own `commit`. The all-in-one
+// [`run_orchestration_review`] wrapper below is retained for its unit tests.
 
-/// The subconscious tick's `orchestration_review` stage (stage 6): reflect over
-/// the orchestration layer's unreviewed compressed history + cumulative
-/// world-diff timeline and, if a macro-trend warrants it, emit **one** steering
-/// directive that later reasoning cycles inject into their prompt.
+/// Reflect over the orchestration layer's unreviewed compressed history +
+/// cumulative world-diff timeline and, if a macro-trend warrants it, emit **one**
+/// steering directive that later reasoning cycles inject into their prompt.
 ///
 /// Fully offline: a single **tool-free** provider chat on the `subconscious`
 /// route (structurally isolated — no channel/effect tools reachable). Self-gating
 /// (no-op when orchestration is disabled or there is nothing new to review) and
-/// idempotent (advances a review cursor only after a successful persist). Returns
-/// `Ok(true)` when a directive was emitted.
+/// idempotent (advances a review cursor after the persist). Returns `Ok(true)`
+/// when a directive was emitted. The live tick path uses the split
+/// `load_review_window` + `synthesize_and_persist` instead (see the stage note).
 pub async fn run_orchestration_review(
     config: &Config,
     source_tick_id: &str,
