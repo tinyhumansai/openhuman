@@ -1,9 +1,9 @@
 pub mod agent;
-pub mod engine;
 pub mod global;
 pub mod heartbeat;
 pub mod instance;
 pub mod profile;
+pub mod profiles;
 pub mod provider;
 mod schemas;
 pub mod session;
@@ -12,9 +12,14 @@ pub mod store;
 pub mod types;
 pub mod user_thread;
 
-pub use engine::SubconsciousEngine;
 pub use instance::SubconsciousInstance;
 pub use profile::{Observation, Reflection, SubconsciousProfile};
+pub use profiles::memory::memory_instance;
+
+/// Back-compat alias for the old single-engine type. The live `memory` world is
+/// now a [`SubconsciousInstance`] built via [`memory_instance`]; callers that
+/// held a `SubconsciousEngine` keep the same runtime type.
+pub type SubconsciousEngine = SubconsciousInstance;
 pub use schemas::{
     all_controller_schemas as all_subconscious_controller_schemas,
     all_registered_controllers as all_subconscious_registered_controllers,

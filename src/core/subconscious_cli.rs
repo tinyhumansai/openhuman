@@ -133,7 +133,7 @@ fn run_tick(args: &[String]) -> Result<()> {
 
         // Check provider availability
         if let Some(reason) =
-            crate::openhuman::subconscious::engine::subconscious_provider_unavailable_reason(
+            crate::openhuman::subconscious::provider::subconscious_provider_unavailable_reason(
                 &config,
             )
         {
@@ -143,7 +143,7 @@ fn run_tick(args: &[String]) -> Result<()> {
 
         // Create engine and run tick. The engine pulls its own memory_diff /
         // context state from the workspace — no memory client to pass in.
-        let engine = crate::openhuman::subconscious::SubconsciousEngine::new(&config);
+        let engine = crate::openhuman::subconscious::memory_instance(&config);
 
         eprintln!("[subconscious] running tick...");
         let result = engine
@@ -193,7 +193,7 @@ fn run_status(args: &[String]) -> Result<()> {
 
         let mode = config.heartbeat.effective_subconscious_mode();
         let provider_reason = if mode.is_enabled() {
-            crate::openhuman::subconscious::engine::subconscious_provider_unavailable_reason(
+            crate::openhuman::subconscious::provider::subconscious_provider_unavailable_reason(
                 &config,
             )
         } else {

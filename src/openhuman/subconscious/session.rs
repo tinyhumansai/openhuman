@@ -29,7 +29,7 @@ use crate::openhuman::config::Config;
 use crate::openhuman::memory_conversations::ConversationMessage;
 use crate::openhuman::security::AutonomyLevel;
 
-use super::engine::tick_origin_source;
+use super::profiles::memory::tick_origin_source;
 
 /// Reserved conversation thread backing the background orchestrator's
 /// internal reasoning. Distinct from the user-facing thread (slice 6).

@@ -73,7 +73,7 @@ fn handle_status(_params: Map<String, Value>) -> ControllerFuture {
         .ok();
 
         let provider_unavailable_reason = if hb.enabled && hb.inference_enabled {
-            super::engine::subconscious_provider_unavailable_reason(&config)
+            super::provider::subconscious_provider_unavailable_reason(&config)
         } else {
             None
         };

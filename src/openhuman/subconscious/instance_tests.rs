@@ -126,6 +126,44 @@ fn build(profile: Arc<FakeProfile>, workspace: &std::path::Path) -> Subconscious
     )
 }
 
+// ── Rate-cap circuit breaker state machine (TAURI-RUST-HXF) ─────────────
+
+#[test]
+fn instance_state_rate_cap_transitions() {
+    let mut state = InstanceState {
+        last_tick_at: 0.0,
+        total_ticks: 0,
+        consecutive_failures: 0,
+        provider_unavailable_reason: None,
+        rate_cap_halt_signature: None,
+    };
+    let prefix = "[subconscious:memory]";
+
+    // No halt armed → the tick proceeds (does not skip).
+    assert!(!state.should_skip_for_rate_cap_halt("memory|other:groq", prefix));
+
+    // A permanent rate-cap failure arms the halt + actionable reason.
+    state.arm_rate_cap_halt("memory|other:groq", prefix);
+    assert_eq!(
+        state.rate_cap_halt_signature.as_deref(),
+        Some("memory|other:groq")
+    );
+    assert_eq!(
+        state.provider_unavailable_reason.as_deref(),
+        Some(RATE_CAP_HALT_REASON)
+    );
+
+    // Same config still set → skip the doomed run, and count the skipped tick.
+    let before = state.total_ticks;
+    assert!(state.should_skip_for_rate_cap_halt("memory|other:groq", prefix));
+    assert_eq!(state.total_ticks, before + 1);
+
+    // User switched provider (signature changed) → clear halt + reason, resume.
+    assert!(!state.should_skip_for_rate_cap_halt("memory|cloud", prefix));
+    assert!(state.rate_cap_halt_signature.is_none());
+    assert!(state.provider_unavailable_reason.is_none());
+}
+
 #[tokio::test]
 async fn quiet_observation_commits_and_advances_without_reflecting() {
     let dir = tempfile::tempdir().unwrap();

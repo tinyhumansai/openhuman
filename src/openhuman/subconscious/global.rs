@@ -3,7 +3,7 @@
 //! Shared between the heartbeat background loop and RPC handlers
 //! so both see the same state and counters.
 
-use super::engine::SubconsciousEngine;
+use super::SubconsciousEngine;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use tokio::sync::Mutex;
@@ -34,7 +34,7 @@ pub async fn get_or_init_engine() -> Result<Arc<Mutex<Option<SubconsciousEngine>
         .await
         .map_err(|e| format!("load config: {e}"))?;
 
-    let engine = SubconsciousEngine::new(&config);
+    let engine = super::memory_instance(&config);
 
     let mut guard = lock.lock().await;
     if guard.is_none() {

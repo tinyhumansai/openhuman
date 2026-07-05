@@ -5,9 +5,8 @@
 //! Settings → AI → Advanced "Subconscious" governs the cloud/local tick model.
 //! The route resolution, the rate-cap circuit-breaker signature, and the two
 //! permanent-error classifiers (tool-capability, per-minute token cap) are
-//! therefore world-agnostic and live here so the legacy [`super::engine`] and
-//! the generic [`super::instance`] runner share one implementation instead of
-//! duplicating it.
+//! therefore world-agnostic and live here, shared by the generic
+//! [`super::instance`] runner and every [`super::profiles`] world.
 
 use crate::openhuman::config::Config;
 use crate::openhuman::credentials::{AuthService, APP_SESSION_PROVIDER};
@@ -147,3 +146,7 @@ pub(crate) fn is_tool_capability_error(msg: &str) -> bool {
     lower.contains("no endpoints found that support tool use")
         || lower.contains("does not support tools")
 }
+
+#[cfg(test)]
+#[path = "provider_tests.rs"]
+mod tests;

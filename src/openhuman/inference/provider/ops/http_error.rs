@@ -696,7 +696,7 @@ pub fn log_context_window_exceeded(
 /// [`crate::core::observability::is_provider_user_state_message`] (Sentry
 /// demotion of the `domain=agent` re-report) and the subconscious tick loop's
 /// permanent-rejection circuit breaker
-/// (`crate::openhuman::subconscious::engine`).
+/// (`crate::openhuman::subconscious::provider`).
 pub fn is_provider_rate_cap_exceeded_message(body: &str) -> bool {
     let lower = body.to_ascii_lowercase();
     lower.contains("request too large")
