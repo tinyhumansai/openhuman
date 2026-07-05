@@ -31,8 +31,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tinyagents::graph::{
-    ClosureStateReducer, Command, CompiledGraph, GraphBuilder, NodeContext, NodeResult,
-    SqliteCheckpointer,
+    Checkpointer, ClosureStateReducer, Command, CompiledGraph, GraphBuilder, NodeContext,
+    NodeResult, SqliteCheckpointer,
 };
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
@@ -363,13 +363,28 @@ impl SubconsciousInstance {
             SqliteCheckpointer::<SubconsciousState>::open(&checkpoint_db)
                 .map_err(|e| anyhow::anyhow!("open subconscious checkpoint store: {e}"))?,
         );
+        // Keep a handle for post-run GC. Each tick uses a unique thread id, so a
+        // *completed* tick's checkpoints are dead weight — ticks run every N
+        // minutes forever, so without pruning `graph_checkpoints.db` grows
+        // unboundedly (phase 6: adopt the checkpointer's existing retention
+        // primitive rather than adding one upstream).
+        let gc = Arc::clone(&checkpointer);
         let graph = graph
             .with_checkpointer(checkpointer)
             .with_event_sink(Arc::new(GraphTracingSink::new(thread_id.clone())));
         let exec = graph
-            .run_with_thread(thread_id, seed)
+            .run_with_thread(thread_id.clone(), seed)
             .await
             .map_err(|e| anyhow::anyhow!("subconscious graph run failed: {e}"))?;
+        // The run returned; resume value is spent. Drop this tick's thread so the
+        // checkpoint db stays bounded. Best-effort — a GC failure is not a tick
+        // failure.
+        if let Err(e) = gc.delete_thread(&thread_id).await {
+            debug!(
+                "{} checkpoint GC failed for {thread_id}: {e}",
+                self.log_prefix()
+            );
+        }
         Ok(exec.state)
     }
 

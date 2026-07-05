@@ -66,3 +66,18 @@ a small follow-up PR that deletes code.
    behavior tests green.
 4. Never point the openhuman submodule at an unmerged tinyagents branch on
    `main`-bound PRs.
+
+## 6.4 Confirmation findings (checked against the current vendored pin)
+
+Each candidate from §6.2 was checked against `vendor/tinyagents/src/graph/`:
+
+| # | Candidate | Status against the current pin |
+| --- | --- | --- |
+| 1 | Wall-clock graph deadline | **Gap confirmed.** Only a *per-node* timeout exists (`ExecutorConfig::node_timeout` → `TinyAgentsError::Timeout` in `compiled/executor.rs`) and `total_timeout`/`item_timeout` on `parallel`. There is no whole-run deadline on `run_with_thread`. Still a valid upstream PR. Openhuman keeps the outer `tokio::time::timeout(TICK_TIMEOUT, …)` for now. |
+| 2 | External cancel/supersede token | **Gap confirmed (primitive exists, not wired).** `harness::cancel::CancellationToken` exists and is honoured by `parallel` (`with_cancellation`), but the main `CompiledGraph` superstep loop (`compiled/executor.rs`) does not check it between supersteps. Upstream work is "thread the existing token into the graph executor", not a new primitive. Openhuman keeps the end-of-tick + `commit`-node generation check for now. |
+| 3 | Checkpoint GC / retention | **Already exists — adopted now.** `Checkpointer` already exposes `prune(thread_id, keep_last)` and `delete_thread(thread_id)` (default trait methods + sqlite/file impls, `checkpoint/mod.rs`). No upstream PR needed. `SubconsciousInstance::run_graph` now calls `delete_thread` on the tick's unique thread after the run returns, so `graph_checkpoints.db` stays bounded (test: `completed_ticks_leave_no_checkpoint_threads`). |
+
+Net: candidate #3 is done in-tree using an existing primitive; candidates #1
+and #2 remain genuine, independent follow-up PRs against
+`tinyhumansai/tinyagents` and do **not** block this plan — phase 1 already ships
+the outer timeout + end-of-tick supersede they would later replace.

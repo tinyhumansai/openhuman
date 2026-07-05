@@ -281,6 +281,35 @@ async fn permanent_rate_cap_error_arms_halt_then_config_change_resumes() {
 }
 
 #[tokio::test]
+async fn completed_ticks_leave_no_checkpoint_threads() {
+    // Phase 6: each tick uses a unique checkpoint thread; a completed tick GCs
+    // it, so the checkpoint db stays bounded no matter how many ticks run.
+    use tinyagents::graph::{Checkpointer, SqliteCheckpointer};
+
+    let dir = tempfile::tempdir().unwrap();
+    let profile = Arc::new(FakeProfile::new(
+        FakeProfile::changed(),
+        Ok(Reflection::Acted { response_chars: 1 }),
+    ));
+    let instance = build(profile.clone(), dir.path());
+
+    for _ in 0..3 {
+        instance
+            .run_tick_for_test(test_config(dir.path()))
+            .await
+            .unwrap();
+    }
+
+    let db = dir.path().join("subconscious").join("graph_checkpoints.db");
+    let cp = SqliteCheckpointer::<serde_json::Value>::open(&db).unwrap();
+    let threads = cp.list_threads().await.unwrap();
+    assert!(
+        threads.is_empty(),
+        "completed ticks pruned their threads, got {threads:?}"
+    );
+}
+
+#[tokio::test]
 async fn superseded_tick_discards_result_and_skips_commit() {
     let dir = tempfile::tempdir().unwrap();
     let profile = Arc::new(FakeProfile::new(
