@@ -122,6 +122,7 @@ set after login (`Memory` when `heartbeat.enabled`; `TinyPlace` when
 | 4 | [phase-4-factory-registry-rpc.md](phase-4-factory-registry-rpc.md) | Factory + registry lifecycle, heartbeat fan-out, per-instance RPC |
 | 5 | [phase-5-tests-and-docs.md](phase-5-tests-and-docs.md) | Test matrix, migration tests, README/docs updates, rollout |
 | 6 | [phase-6-tinyagents-reuse.md](phase-6-tinyagents-reuse.md) | TinyAgents graph reuse map + upstream PRs to `tinyhumansai/tinyagents` (deadline, cancel token, checkpoint GC) |
+| 7 | [phase-7-ui.md](phase-7-ui.md) | UI: both kinds visible + triggerable — instance cards in the Subconscious tab, steering header on the orchestration tab's Subconscious window |
 
 Each phase is a separately compilable, committable slice; phases 2 and 3 are
 pure extractions (no behavior change), which keeps the diffs reviewable and

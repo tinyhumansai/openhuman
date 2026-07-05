@@ -79,9 +79,9 @@ Backward-compatible extension of the `subconscious` namespace:
   instance's `status()` which takes only the small `state` mutex, never
   `tick_lock` — same as today.
 
-Frontend follow-up (separate slice, optional): Settings → Agent access
-already surfaces subconscious mode; a later PR can render the per-instance
-rows. Not a blocker for the Rust work.
+Frontend consumption of these fields is phase 7 (instance cards in the
+Subconscious tab, steering header in the TinyPlace Orchestration tab). Not a
+blocker for the Rust work — the additions are backward-compatible.
 
 ## 4.5 `about_app`
 

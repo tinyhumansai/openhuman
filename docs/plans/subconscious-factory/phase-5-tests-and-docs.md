@@ -58,7 +58,8 @@ the extraction phases (2, 3) inherit most coverage from ported tests.
   thresholds, or steering contract — those already implement the spec.
 - No new subconscious kinds beyond the two (the factory makes them cheap
   later; e.g. a `team` world or a `channels` world).
-- No frontend redesign — the Settings surface only gains data it may ignore.
+- No frontend redesign beyond phase 7's scoped additions (instance cards +
+  steering header) — no new pages, routes, or Redux slices.
 - The opt-in event-driven trigger pipeline (`subconscious_triggers` +
   `LongLivedSession`) keeps its current shape; folding it into a profile is a
   possible follow-up once the factory exists.
