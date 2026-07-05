@@ -918,7 +918,7 @@ mod tests {
     async fn message_append_injects_trace_id() {
         use crate::openhuman::agent::progress_tracing::TURN_TRACE_ID;
         use crate::openhuman::threads::ops;
-        use crate::openhuman::threads::schemas::CreateConversationThreadRequest;
+        use crate::openhuman::memory::CreateConversationThreadRequest;
 
         // Create a real thread so ops::message_append succeeds
         let req = CreateConversationThreadRequest {
@@ -926,7 +926,7 @@ mod tests {
             personality_id: None,
         };
         let created = ops::thread_create_new(req).await.unwrap().value;
-        let thread_id = created.id;
+        let thread_id = created.data.id;
 
         let tool_args = json!({
             "thread_id": thread_id,
@@ -946,7 +946,11 @@ mod tests {
             .await
             .expect("tool execution should succeed");
 
-        let outcome: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+        let content_str = match &result.content[0] {
+            crate::openhuman::workflows::types::ToolContent::Text { text } => text,
+            _ => panic!("Expected text content"),
+        };
+        let outcome: serde_json::Value = serde_json::from_str(content_str).unwrap();
         let meta = &outcome["extra_metadata"];
         assert_eq!(meta["traceId"].as_str(), Some("trace-abc-123"));
     }
