@@ -15,6 +15,7 @@ import {
   MASTER_CHAT_KEY,
   useOrchestrationChats,
 } from '../../lib/orchestration/useOrchestrationChats';
+import { subconsciousTrigger } from '../../utils/tauriCommands/subconscious';
 import Button from '../ui/Button';
 
 const debug = debugFactory('brain:tinyplace-orchestration');
@@ -96,7 +97,9 @@ function ChatListButton({
           </span>
         </span>
         <span className="mt-0.5 block truncate text-[11px] text-content-muted">
-          {chat.subtitle}
+          {chat.kind === 'subconscious'
+            ? t('tinyplaceOrchestration.subconsciousBadge')
+            : chat.subtitle}
         </span>
         <span className="mt-1 flex items-center gap-2">
           <span className="min-w-0 flex-1 truncate text-xs text-content-faint">{chat.preview}</span>
@@ -391,6 +394,17 @@ export default function TinyPlaceOrchestrationTab() {
   }, [directoryIdsKey]);
 
   const steeringText = status?.steering?.text?.trim() || null;
+  const [runningReview, setRunningReview] = useState(false);
+  const runSteeringReview = useCallback(async () => {
+    setRunningReview(true);
+    try {
+      await subconsciousTrigger('tinyplace');
+    } catch (err) {
+      debug('steering review trigger failed: %o', err);
+    } finally {
+      setRunningReview(false);
+    }
+  }, []);
   const isMasterSelected = selected?.id === MASTER_CHAT_KEY;
   // The composer is available for the Master chat and for any per-contact
   // session (session sends thread under that session id).
@@ -676,6 +690,46 @@ export default function TinyPlaceOrchestrationTab() {
             </span>
           ) : null}
         </div>
+
+        {/* Steering status header — the tinyplace subconscious instance's output. */}
+        {selected?.kind === 'subconscious' ? (
+          <div
+            data-testid="tinyplace-steering-header"
+            className="flex items-center justify-between gap-3 border-b border-line bg-amber-50/40 px-5 py-3 dark:bg-amber-500/5">
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-content">
+                {steeringText
+                  ? t('tinyplaceOrchestration.steeringHeader.current')
+                  : t('tinyplaceOrchestration.steeringHeader.none')}
+              </p>
+              {steeringText ? (
+                <p className="mt-0.5 truncate text-xs text-content-muted">{steeringText}</p>
+              ) : null}
+              <p className="mt-0.5 text-[11px] text-content-faint">
+                {status?.steering
+                  ? t('tinyplaceOrchestration.steeringHeader.expires').replace(
+                      '{n}',
+                      String(status.steering.expiresAfterCycles)
+                    )
+                  : ''}
+                {status?.lastTickAt
+                  ? `${status?.steering ? ' · ' : ''}${t(
+                      'tinyplaceOrchestration.steeringHeader.lastReview'
+                    )}: ${new Date(status.lastTickAt * 1000).toLocaleTimeString()}`
+                  : ''}
+              </p>
+            </div>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void runSteeringReview()}
+              disabled={runningReview}>
+              {runningReview
+                ? t('tinyplaceOrchestration.steeringHeader.running')
+                : t('tinyplaceOrchestration.steeringHeader.runReview')}
+            </Button>
+          </div>
+        ) : null}
 
         {sessionsState.status === 'loading' ? (
           <div className="flex flex-1 items-center justify-center text-sm text-content-muted">

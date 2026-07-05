@@ -40,6 +40,10 @@ vi.mock('../../services/socketService', () => {
 
 vi.mock('../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (k: string) => k }) }));
 
+vi.mock('../../utils/tauriCommands/subconscious', () => ({
+  subconsciousTrigger: vi.fn(async () => ({ result: { triggered: true }, logs: [] })),
+}));
+
 const sessionsListMock = vi.mocked(orchestrationClient.sessionsList);
 const sessionsCreateMock = vi.mocked(orchestrationClient.sessionsCreate);
 const messagesListMock = vi.mocked(orchestrationClient.messagesList);
@@ -132,6 +136,29 @@ describe('TinyPlaceOrchestrationTab', () => {
       },
       remote: { agentId: '@worker-pending', status: 'blocked' },
     });
+  });
+
+  it('steering header shows the directive and Run review triggers the tinyplace kind', async () => {
+    const { subconsciousTrigger } = await import('../../utils/tauriCommands/subconscious');
+    statusMock.mockResolvedValue({
+      steering: {
+        text: 'prioritize the billing migration',
+        createdAt: '2026-07-04T00:00:00.000Z',
+        expiresAfterCycles: 12,
+      },
+      lastTickAt: 1_700_000_000,
+    });
+
+    render(<TinyPlaceOrchestrationTab />);
+
+    // Open the pinned Subconscious window.
+    fireEvent.click(await screen.findByTestId('tinyplace-chat-subconscious'));
+
+    const header = await screen.findByTestId('tinyplace-steering-header');
+    expect(within(header).getByText('prioritize the billing migration')).toBeInTheDocument();
+
+    fireEvent.click(within(header).getByText('tinyplaceOrchestration.steeringHeader.runReview'));
+    await waitFor(() => expect(subconsciousTrigger).toHaveBeenCalledWith('tinyplace'));
   });
 
   it('renders pinned master and subconscious chats plus app sessions', async () => {

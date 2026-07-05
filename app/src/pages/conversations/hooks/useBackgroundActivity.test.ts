@@ -48,6 +48,7 @@ function fixtures() {
   });
   mockSubStatus.mockResolvedValue({
     result: {
+      instance: 'memory',
       enabled: true,
       mode: 'event_driven',
       provider_available: true,
