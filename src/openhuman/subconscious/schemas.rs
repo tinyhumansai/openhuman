@@ -67,9 +67,10 @@ fn handle_status(_params: Map<String, Value>) -> ControllerFuture {
         let config = load_config().await?;
         let hb = &config.heartbeat;
 
-        let last_tick_at =
-            store::with_connection(&config.workspace_dir, |conn| store::get_last_tick_at(conn))
-                .ok();
+        let last_tick_at = store::with_connection(&config.workspace_dir, |conn| {
+            store::get_last_tick_at(conn, "memory")
+        })
+        .ok();
 
         let provider_unavailable_reason = if hb.enabled && hb.inference_enabled {
             super::engine::subconscious_provider_unavailable_reason(&config)
@@ -78,6 +79,7 @@ fn handle_status(_params: Map<String, Value>) -> ControllerFuture {
         };
         let mode = hb.effective_subconscious_mode();
         let status = super::types::SubconsciousStatus {
+            instance: "memory".to_string(),
             enabled: mode.is_enabled(),
             mode: mode.as_str().to_string(),
             provider_available: provider_unavailable_reason.is_none(),

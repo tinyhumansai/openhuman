@@ -485,12 +485,12 @@ fn handle_status(_params: Map<String, Value>) -> ControllerFuture {
         .map_err(|e| format!("status: {e}"))?;
 
         // Last subconscious tick (best-effort — subconscious store is separate).
-        let last_tick_at = crate::openhuman::subconscious::store::with_connection(
-            &config.workspace_dir,
-            crate::openhuman::subconscious::store::get_last_tick_at,
-        )
-        .ok()
-        .filter(|v| *v > 0.0);
+        let last_tick_at =
+            crate::openhuman::subconscious::store::with_connection(&config.workspace_dir, |conn| {
+                crate::openhuman::subconscious::store::get_last_tick_at(conn, "memory")
+            })
+            .ok()
+            .filter(|v| *v > 0.0);
 
         to_json(OrchestrationStatus {
             steering,

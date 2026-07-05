@@ -160,7 +160,11 @@ fn run_tick(args: &[String]) -> Result<()> {
             // Print the world baseline the next tick will diff against.
             let baseline = crate::openhuman::subconscious::store::with_connection(
                 &config.workspace_dir,
-                crate::openhuman::subconscious::store::get_baseline_checkpoint_id,
+                |conn| {
+                    crate::openhuman::subconscious::store::get_baseline_checkpoint_id(
+                        conn, "memory",
+                    )
+                },
             )
             .unwrap_or(None);
             match baseline {
@@ -196,11 +200,11 @@ fn run_status(args: &[String]) -> Result<()> {
             None
         };
 
-        let last_tick = crate::openhuman::subconscious::store::with_connection(
-            &config.workspace_dir,
-            crate::openhuman::subconscious::store::get_last_tick_at,
-        )
-        .ok();
+        let last_tick =
+            crate::openhuman::subconscious::store::with_connection(&config.workspace_dir, |conn| {
+                crate::openhuman::subconscious::store::get_last_tick_at(conn, "memory")
+            })
+            .ok();
 
         let status = serde_json::json!({
             "mode": mode.as_str(),

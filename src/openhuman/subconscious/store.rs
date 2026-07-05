@@ -246,6 +246,27 @@ const SCHEMA_DDL: &str = "
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
     );
+
+    -- One-time key namespacing migration (subconscious-factory phase 1): the
+    -- single-engine keys become `memory:`-namespaced so a second world
+    -- (tinyplace, …) can keep its own `last_tick_at`/baseline without colliding.
+    -- Idempotent and old-version tolerant: guarded by NOT EXISTS so running
+    -- old→new→old never loses the value, and a no-op on a fresh DB (no legacy
+    -- rows). The tinyplace review cursor lives in the orchestration store, not
+    -- here — the profile owns it via `commit`.
+    UPDATE subconscious_state
+        SET key = 'memory:last_tick_at'
+        WHERE key = 'last_tick_at'
+          AND NOT EXISTS (
+              SELECT 1 FROM subconscious_state WHERE key = 'memory:last_tick_at'
+          );
+    UPDATE subconscious_state_text
+        SET key = 'memory:baseline_checkpoint_id'
+        WHERE key = 'baseline_checkpoint_id'
+          AND NOT EXISTS (
+              SELECT 1 FROM subconscious_state_text
+              WHERE key = 'memory:baseline_checkpoint_id'
+          );
 ";
 
 #[cfg(test)]
@@ -256,43 +277,57 @@ pub(crate) const SCHEMA_DDL_FOR_TESTS: &str = SCHEMA_DDL;
 const STATE_KEY_LAST_TICK_AT: &str = "last_tick_at";
 const STATE_KEY_BASELINE_CHECKPOINT_ID: &str = "baseline_checkpoint_id";
 
-pub fn get_last_tick_at(conn: &Connection) -> Result<f64> {
+/// Instance-namespaced state key: `"<instance>:<key>"` (e.g. `memory:last_tick_at`).
+/// One subconscious.db is shared across all worlds, so each instance prefixes
+/// its keys with its stable id to keep independent `last_tick_at`/baseline rows.
+fn namespaced(instance: &str, key: &str) -> String {
+    format!("{instance}:{key}")
+}
+
+pub fn get_last_tick_at(conn: &Connection, instance: &str) -> Result<f64> {
     let value: Option<f64> = conn
         .query_row(
             "SELECT value FROM subconscious_state WHERE key = ?1",
-            [STATE_KEY_LAST_TICK_AT],
+            [namespaced(instance, STATE_KEY_LAST_TICK_AT)],
             |row| row.get(0),
         )
         .optional()?;
     Ok(value.unwrap_or(0.0))
 }
 
-pub fn set_last_tick_at(conn: &Connection, value: f64) -> Result<()> {
+pub fn set_last_tick_at(conn: &Connection, instance: &str, value: f64) -> Result<()> {
     conn.execute(
         "INSERT OR REPLACE INTO subconscious_state (key, value) VALUES (?1, ?2)",
-        rusqlite::params![STATE_KEY_LAST_TICK_AT, value],
+        rusqlite::params![namespaced(instance, STATE_KEY_LAST_TICK_AT), value],
     )?;
     Ok(())
 }
 
 /// The memory_diff checkpoint the structured tick diffs against — i.e. the
 /// snapshot of "the agent's world" captured at the end of the previous tick.
-/// `None` until the first tick establishes a baseline.
-pub fn get_baseline_checkpoint_id(conn: &Connection) -> Result<Option<String>> {
+/// `None` until the first tick establishes a baseline. Namespaced per instance.
+pub fn get_baseline_checkpoint_id(conn: &Connection, instance: &str) -> Result<Option<String>> {
     let value: Option<String> = conn
         .query_row(
             "SELECT value FROM subconscious_state_text WHERE key = ?1",
-            [STATE_KEY_BASELINE_CHECKPOINT_ID],
+            [namespaced(instance, STATE_KEY_BASELINE_CHECKPOINT_ID)],
             |row| row.get(0),
         )
         .optional()?;
     Ok(value)
 }
 
-pub fn set_baseline_checkpoint_id(conn: &Connection, checkpoint_id: &str) -> Result<()> {
+pub fn set_baseline_checkpoint_id(
+    conn: &Connection,
+    instance: &str,
+    checkpoint_id: &str,
+) -> Result<()> {
     conn.execute(
         "INSERT OR REPLACE INTO subconscious_state_text (key, value) VALUES (?1, ?2)",
-        rusqlite::params![STATE_KEY_BASELINE_CHECKPOINT_ID, checkpoint_id],
+        rusqlite::params![
+            namespaced(instance, STATE_KEY_BASELINE_CHECKPOINT_ID),
+            checkpoint_id
+        ],
     )?;
     Ok(())
 }

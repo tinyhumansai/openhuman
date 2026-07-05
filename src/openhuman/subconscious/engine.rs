@@ -25,18 +25,27 @@
 //! forever. Individual tool calls within the agent turn are bounded by the agent
 //! harness's own iteration cap.
 
+use super::provider::{
+    evaluate_rate_cap_halt, is_permanent_rate_cap_error, is_tool_capability_error,
+    subconscious_provider_signature, RateCapHaltDecision, RATE_CAP_HALT_REASON,
+    TOOL_UNSUPPORTED_REASON,
+};
 use super::store;
 use super::types::{SubconsciousStatus, TickResult};
 use crate::openhuman::agent_orchestration::parent_context::with_root_parent;
 use crate::openhuman::config::schema::SubconsciousMode;
 use crate::openhuman::config::Config;
-use crate::openhuman::credentials::{AuthService, APP_SESSION_PROVIDER};
 use crate::openhuman::memory_diff::types::CrossSourceDiff;
 use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
+
+// Re-export so `super::engine::subconscious_provider_unavailable_reason` keeps
+// resolving for the RPC handler (`schemas.rs`) after the routing logic moved
+// into `provider.rs`.
+pub(crate) use super::provider::subconscious_provider_unavailable_reason;
 
 /// Hard timeout for a single subconscious tick (agent run).
 const TICK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
@@ -61,19 +70,6 @@ const SUBCONSCIOUS_TOOL_CATALOG: &str = "\
 - goals_edit: Revise an existing long-term goal.
 - spawn_async_subagent: Delegate deeper research or multi-step work.
 ";
-
-/// Actionable reason surfaced (via `SubconsciousStatus.provider_unavailable_reason`)
-/// when a subconscious tick fails because the configured chat model has no
-/// tool-use endpoint. The subconscious turn is inherently tool-bearing (it acts
-/// through tools), so a tool-incapable model can never satisfy a tick — this
-/// tells the user how to recover. See TAURI-RUST-ADC.
-const TOOL_UNSUPPORTED_REASON: &str = "The selected chat model has no tool-use endpoint, so Subconscious can't run. Pick a tool-capable model in Settings > AI.";
-
-/// Surfaced in [`SubconsciousStatus`] when the circuit breaker has halted ticks
-/// because the configured Subconscious model keeps rejecting requests with a
-/// permanent per-minute token cap (413/TPM). Actionable: the fix is the user's
-/// to make (a bigger model/tier), so the message points there.
-const RATE_CAP_HALT_REASON: &str = "Subconscious is paused: the selected model rejected the request because it exceeds your provider's per-minute token limit. Pick a higher-tier model or provider for Subconscious in Settings > AI > Advanced.";
 
 /// Pick the `TrustedAutomationSource` variant for a subconscious tick.
 ///
@@ -180,7 +176,9 @@ impl SubconsciousEngine {
         heartbeat: &crate::openhuman::config::HeartbeatConfig,
         workspace_dir: PathBuf,
     ) -> Self {
-        let last_tick_at = match store::with_connection(&workspace_dir, store::get_last_tick_at) {
+        let last_tick_at = match store::with_connection(&workspace_dir, |conn| {
+            store::get_last_tick_at(conn, "memory")
+        }) {
             Ok(v) => {
                 if v > 0.0 {
                     info!("[subconscious] resumed last_tick_at={v} from disk");
@@ -351,12 +349,13 @@ impl SubconsciousEngine {
         }
 
         // ── Stage 1: memory_diff — how did the agent's world change? ──────────
-        let baseline =
-            store::with_connection(&self.workspace_dir, store::get_baseline_checkpoint_id)
-                .unwrap_or_else(|e| {
-                    warn!("[subconscious] baseline load failed: {e}");
-                    None
-                });
+        let baseline = store::with_connection(&self.workspace_dir, |conn| {
+            store::get_baseline_checkpoint_id(conn, "memory")
+        })
+        .unwrap_or_else(|e| {
+            warn!("[subconscious] baseline load failed: {e}");
+            None
+        });
 
         let diff: Option<CrossSourceDiff> = match &baseline {
             Some(checkpoint_id) => match crate::openhuman::memory_diff::ops::diff_since_checkpoint(
@@ -543,7 +542,7 @@ impl SubconsciousEngine {
         {
             Ok(ckpt) => {
                 if let Err(e) = store::with_connection(&self.workspace_dir, |conn| {
-                    store::set_baseline_checkpoint_id(conn, &ckpt.id)
+                    store::set_baseline_checkpoint_id(conn, "memory", &ckpt.id)
                 }) {
                     warn!("[subconscious] failed to persist baseline checkpoint id: {e}");
                 } else {
@@ -558,6 +557,7 @@ impl SubconsciousEngine {
         let state = self.state.lock().await;
 
         SubconsciousStatus {
+            instance: "memory".to_string(),
             enabled: self.enabled,
             mode: self.mode.as_str().to_string(),
             provider_available: state.provider_unavailable_reason.is_none(),
@@ -729,126 +729,10 @@ fn render_world_diff(diff: &CrossSourceDiff) -> String {
     out
 }
 
-// ── Provider routing ────────────────────────────────────────────────────────
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum SubconsciousProviderRoute {
-    LocalOllama { model: String },
-    OpenHumanCloud,
-    Other(String),
-}
-
-pub(crate) fn subconscious_provider_unavailable_reason(config: &Config) -> Option<String> {
-    match resolve_subconscious_route(config) {
-        SubconsciousProviderRoute::LocalOllama { .. } => None,
-        SubconsciousProviderRoute::OpenHumanCloud => {
-            if crate::openhuman::scheduler_gate::is_signed_out() {
-                return Some(
-                    "Sign in to use the OpenHuman cloud Subconscious provider.".to_string(),
-                );
-            }
-
-            let state_dir = config
-                .config_path
-                .parent()
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| config.workspace_dir.clone());
-            let auth = AuthService::new(&state_dir, config.secrets.encrypt);
-            match auth.get_provider_bearer_token(APP_SESSION_PROVIDER, None) {
-                Ok(Some(token)) if !token.trim().is_empty() => None,
-                Ok(_) => Some(
-                    "Sign in or configure a local Subconscious provider in Settings > AI."
-                        .to_string(),
-                ),
-                Err(e) => Some(format!("Unable to read the OpenHuman session: {e}")),
-            }
-        }
-        SubconsciousProviderRoute::Other(_) => None,
-    }
-}
-
-fn resolve_subconscious_route(config: &Config) -> SubconsciousProviderRoute {
-    if let Some(model) = config.workload_local_model("subconscious") {
-        return SubconsciousProviderRoute::LocalOllama { model };
-    }
-
-    let raw = config
-        .subconscious_provider
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or("cloud");
-    let is_openhuman_cloud = raw.eq_ignore_ascii_case("cloud")
-        || raw.eq_ignore_ascii_case("openhuman")
-        || raw.to_ascii_lowercase().starts_with("openhuman:");
-    if is_openhuman_cloud {
-        SubconsciousProviderRoute::OpenHumanCloud
-    } else {
-        SubconsciousProviderRoute::Other(raw.to_string())
-    }
-}
-
-/// Stable identity of the Subconscious provider routing — the exact knobs a
-/// user changes in Settings > AI > Advanced to switch the tick model/provider.
-/// The rate-cap circuit breaker keys its halt on this so a permanent per-minute
-/// token-cap rejection stops re-firing while the SAME config is set, and
-/// auto-clears the moment the user picks a different model/provider/tier.
-fn subconscious_provider_signature(config: &Config) -> String {
-    match resolve_subconscious_route(config) {
-        SubconsciousProviderRoute::LocalOllama { model } => format!("local:{model}"),
-        SubconsciousProviderRoute::OpenHumanCloud => "cloud".to_string(),
-        SubconsciousProviderRoute::Other(raw) => format!("other:{raw}"),
-    }
-}
-
-/// Outcome of comparing an active rate-cap halt against the live provider
-/// signature at the start of a tick. Pure so it is unit-testable without
-/// spinning an engine/agent.
-#[derive(Debug, PartialEq, Eq)]
-enum RateCapHaltDecision {
-    /// A halt is set for the same signature still in config — skip the run.
-    Skip,
-    /// A halt is set but the signature changed — clear it and resume ticking.
-    Resume,
-    /// No halt in effect — run the tick normally.
-    Proceed,
-}
-
-/// Decide whether a tick should skip, resume, or proceed given the stored
-/// rate-cap halt signature (if any) and the live provider signature.
-fn evaluate_rate_cap_halt(halt_signature: Option<&str>, current: &str) -> RateCapHaltDecision {
-    match halt_signature {
-        Some(sig) if sig == current => RateCapHaltDecision::Skip,
-        Some(_) => RateCapHaltDecision::Resume,
-        None => RateCapHaltDecision::Proceed,
-    }
-}
-
-/// True when an agent-run error is a permanent per-minute token-cap rejection
-/// (413/TPM) — the request is larger than the provider account's per-minute
-/// budget, so retrying the same tick can never succeed. Delegates to the shared
-/// provider matcher (single source of truth with the Sentry classifier in
-/// `core::observability`) so the wording can't drift. TAURI-RUST-HXF.
-fn is_permanent_rate_cap_error(msg: &str) -> bool {
-    crate::openhuman::inference::provider::is_provider_rate_cap_exceeded_message(msg)
-}
-
-/// True when an agent-run error means the configured chat model can't do tool
-/// calls at all — a permanent, user-actionable condition (pick a tool-capable
-/// model). Matches both the direct-provider body (`<model> does not support
-/// tools`) and OpenRouter's router-level phrasing (`No endpoints found that
-/// support tool use`, TAURI-RUST-ADC). Kept narrow to tool capability so an
-/// unrelated provider error (auth, billing, rate-limit) is not misread as one.
-fn is_tool_capability_error(msg: &str) -> bool {
-    let lower = msg.to_ascii_lowercase();
-    lower.contains("no endpoints found that support tool use")
-        || lower.contains("does not support tools")
-}
-
 fn persist_last_tick_at(workspace_dir: &std::path::Path, tick_at: f64) {
-    if let Err(e) =
-        store::with_connection(workspace_dir, |conn| store::set_last_tick_at(conn, tick_at))
-    {
+    if let Err(e) = store::with_connection(workspace_dir, |conn| {
+        store::set_last_tick_at(conn, "memory", tick_at)
+    }) {
         warn!("[subconscious] failed to persist last_tick_at={tick_at}: {e}");
     }
 }
