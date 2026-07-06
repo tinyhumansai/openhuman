@@ -7,30 +7,6 @@ fn write(path: &Path, content: &str) {
     std::fs::write(path, content).unwrap();
 }
 
-struct EnvVarGuard {
-    key: &'static str,
-    previous: Option<std::ffi::OsString>,
-}
-
-impl EnvVarGuard {
-    fn set(key: &'static str, value: &str) -> Self {
-        let previous = std::env::var_os(key);
-        unsafe { std::env::set_var(key, value) };
-        Self { key, previous }
-    }
-}
-
-impl Drop for EnvVarGuard {
-    fn drop(&mut self) {
-        unsafe {
-            match &self.previous {
-                Some(value) => std::env::set_var(self.key, value),
-                None => std::env::remove_var(self.key),
-            }
-        }
-    }
-}
-
 /// Workspace-only variant of [`load_workflow_metadata`] used by tests that care only
 /// about project-scope semantics. The production [`load_workflow_metadata`] now
 /// consults `dirs::home_dir()`; in unit tests that would non-deterministically
@@ -1214,7 +1190,6 @@ async fn install_workflow_from_url_is_idempotent_when_skill_already_exists() {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    let _guard = EnvVarGuard::set("OPENHUMAN_SKILL_INSTALL_ALLOW_LOCAL_HTTP", "1");
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/SKILL.md"))
@@ -1231,15 +1206,23 @@ async fn install_workflow_from_url_is_idempotent_when_skill_already_exists() {
         timeout_secs: Some(5),
     };
 
-    let first =
-        install_workflow_from_url_with_home(workspace.path(), params.clone(), Some(home.path()))
-            .await
-            .unwrap();
+    // Pass the local-HTTP escape hatch as an explicit param — the env-var
+    // path is process-global and races other env-touching tests under
+    // parallel execution (#4567).
+    let first = install_workflow_from_url_with_home(
+        workspace.path(),
+        params.clone(),
+        Some(home.path()),
+        true,
+    )
+    .await
+    .unwrap();
     assert_eq!(first.new_skills, vec!["apple-notes"]);
 
-    let second = install_workflow_from_url_with_home(workspace.path(), params, Some(home.path()))
-        .await
-        .unwrap();
+    let second =
+        install_workflow_from_url_with_home(workspace.path(), params, Some(home.path()), true)
+            .await
+            .unwrap();
     assert!(second.new_skills.is_empty(), "{second:?}");
     assert!(second.stdout.contains("already installed"), "{second:?}");
 }
