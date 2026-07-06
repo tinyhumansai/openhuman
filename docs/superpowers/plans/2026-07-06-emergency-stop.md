@@ -1071,67 +1071,83 @@ git commit -m "feat(emergency): safetySlice tracks automation-halt state (#4255)
 - Create: `app/src/services/api/emergencyApi.test.ts`
 
 **Interfaces:**
-- Consumes: `callCoreRpc` from `coreRpcClient` (read `app/src/services/coreRpcClient.ts` for the exact export name — the approval client `app/src/services/api/approvalApi.ts` uses it; mirror it).
+- Consumes: `callCoreRpc` from `coreRpcClient`. **CONFIRMED signature (do not use positional args):** `callCoreRpc<T>({ method, params }): Promise<T>` — it takes a single **object** `{ method: string, params?: object }`. Mirror `app/src/services/api/approvalApi.ts`.
+- **CONFIRMED wire-shape:** RPCs that emit a diagnostic log return the CLI envelope `{ result, logs }`; log-less RPCs return a bare value. `emergency_stop`/`emergency_resume` use `RpcOutcome::single_log` (enveloped); `emergency_status` uses `RpcOutcome::new(_, vec![])` (bare). So the client MUST normalize both shapes with an `unwrapValue` helper — copy the one in `approvalApi.ts` (lines ~109-114) verbatim.
 - Produces: `emergencyStop(reason?: string): Promise<HaltState>`, `emergencyResume(): Promise<HaltState>`, `emergencyStatus(): Promise<HaltState>`.
 
-- [ ] **Step 1: Read `app/src/services/api/approvalApi.ts`** to copy the exact RPC-call idiom (function name, method-name convention `openhuman.<ns>_<fn>`, error handling).
+- [ ] **Step 1: Read `app/src/services/api/approvalApi.ts`** to copy the exact RPC-call idiom: the object-form `callCoreRpc({ method, params })`, the `unwrapValue<T>` helper, and method-name convention `openhuman.<ns>_<fn>`.
 
-- [ ] **Step 2: Write the failing test.** Create `emergencyApi.test.ts`, mocking the core RPC module the same way `approvalApi.test.ts` does (find and mirror it):
+- [ ] **Step 2: Write the failing test.** Create `emergencyApi.test.ts`. `callCoreRpc` is a **named export** of `../coreRpcClient` and is called with an object:
 
 ```ts
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const call = vi.fn();
-vi.mock('../coreRpcClient', () => ({ callCoreRpc: (...a: unknown[]) => call(...a) }));
+vi.mock('../coreRpcClient', () => ({ callCoreRpc: (arg: unknown) => call(arg) }));
 
 import { emergencyStop, emergencyResume, emergencyStatus } from './emergencyApi';
 
 beforeEach(() => call.mockReset());
 
 describe('emergencyApi', () => {
-  it('emergencyStop calls openhuman.emergency_stop with reason', async () => {
-    call.mockResolvedValue({ engaged: true });
+  it('emergencyStop calls openhuman.emergency_stop with reason and unwraps envelope', async () => {
+    call.mockResolvedValue({ result: { engaged: true, reason: 'user' }, logs: ['x'] });
     const r = await emergencyStop('user');
-    expect(call).toHaveBeenCalledWith('openhuman.emergency_stop', { reason: 'user' });
+    expect(call).toHaveBeenCalledWith({ method: 'openhuman.emergency_stop', params: { reason: 'user' } });
     expect(r.engaged).toBe(true);
+    expect(r.reason).toBe('user');
+  });
+  it('emergencyStop with no reason sends empty params', async () => {
+    call.mockResolvedValue({ result: { engaged: true }, logs: [] });
+    await emergencyStop();
+    expect(call).toHaveBeenCalledWith({ method: 'openhuman.emergency_stop', params: {} });
   });
   it('emergencyResume calls openhuman.emergency_resume', async () => {
-    call.mockResolvedValue({ engaged: false });
-    await emergencyResume();
-    expect(call).toHaveBeenCalledWith('openhuman.emergency_resume', {});
+    call.mockResolvedValue({ result: { engaged: false }, logs: ['x'] });
+    const r = await emergencyResume();
+    expect(call).toHaveBeenCalledWith({ method: 'openhuman.emergency_resume', params: {} });
+    expect(r.engaged).toBe(false);
   });
-  it('emergencyStatus calls openhuman.emergency_status', async () => {
+  it('emergencyStatus reads bare value (no envelope)', async () => {
     call.mockResolvedValue({ engaged: false });
-    await emergencyStatus();
-    expect(call).toHaveBeenCalledWith('openhuman.emergency_status', {});
+    const r = await emergencyStatus();
+    expect(call).toHaveBeenCalledWith({ method: 'openhuman.emergency_status', params: {} });
+    expect(r.engaged).toBe(false);
   });
 });
 ```
 
-(Adjust the mock path/exports to match what `approvalApi` actually imports.)
-
 - [ ] **Step 3: Run — verify fail.** `pnpm test app/src/services/api/emergencyApi.test.ts` → FAIL.
 
-- [ ] **Step 4: Implement `emergencyApi.ts`** mirroring `approvalApi.ts`:
+- [ ] **Step 4: Implement `emergencyApi.ts`** mirroring `approvalApi.ts` (object-form call + `unwrapValue`):
 
 ```ts
 import { callCoreRpc } from '../coreRpcClient';
 import type { HaltState } from '../../store/safetySlice';
 
+/** Normalize the CLI envelope `{ result, logs }` and bare-value shapes. */
+const unwrapValue = <T>(raw: unknown): T => {
+  if (raw && typeof raw === 'object' && 'result' in (raw as Record<string, unknown>)) {
+    return (raw as { result: T }).result;
+  }
+  return raw as T;
+};
+
 export async function emergencyStop(reason?: string): Promise<HaltState> {
-  return callCoreRpc<HaltState>('openhuman.emergency_stop', reason ? { reason } : {});
+  const raw = await callCoreRpc<unknown>({ method: 'openhuman.emergency_stop', params: reason ? { reason } : {} });
+  return unwrapValue<HaltState>(raw);
 }
 
 export async function emergencyResume(): Promise<HaltState> {
-  return callCoreRpc<HaltState>('openhuman.emergency_resume', {});
+  const raw = await callCoreRpc<unknown>({ method: 'openhuman.emergency_resume', params: {} });
+  return unwrapValue<HaltState>(raw);
 }
 
 export async function emergencyStatus(): Promise<HaltState> {
-  return callCoreRpc<HaltState>('openhuman.emergency_status', {});
+  const raw = await callCoreRpc<unknown>({ method: 'openhuman.emergency_status', params: {} });
+  return unwrapValue<HaltState>(raw);
 }
 ```
-
-(The `emergencyStop('user')` test expects `{ reason: 'user' }`; adjust the impl/test to agree — pass `{ reason }` when provided.)
 
 - [ ] **Step 5: Run tests.** PASS + `pnpm typecheck`.
 
@@ -1147,12 +1163,13 @@ git commit -m "feat(emergency): emergencyApi RPC client (#4255)"
 ## Task 13: i18n keys
 
 **Files:**
-- Modify: `app/src/lib/i18n/locales/en.ts` and every other locale file (`ar, bn, de, es, fr, hi, id, it, ko, pl, pt, ru, zh-CN`)
+- Modify: `app/src/lib/i18n/en.ts` and every other locale file at `app/src/lib/i18n/<locale>.ts` (`ar, bn, de, es, fr, hi, id, it, ko, pl, pt, ru, zh-CN`)
+- Check: `app/src/lib/i18n/types.ts` — if the translation key type is explicitly enumerated there, add the new keys to it (otherwise `pnpm typecheck` fails). The parity/coverage guard lives at `app/src/lib/i18n/__tests__/coverage.test.ts`.
 
 **Interfaces:**
 - Produces: keys `safety.emergencyStop`, `safety.resume`, `safety.haltedTitle`, `safety.haltedBody`, `safety.stopConfirm` (used by Task 14 components).
 
-- [ ] **Step 1: Add keys to `en.ts`** (match the file's nesting/style):
+- [ ] **Step 1: Read `app/src/lib/i18n/en.ts` and `types.ts`** to learn the nesting/key style (flat dotted keys vs nested objects) and whether keys are type-enumerated. Add keys to `en.ts` matching that exact style:
 
 ```ts
   safety: {
