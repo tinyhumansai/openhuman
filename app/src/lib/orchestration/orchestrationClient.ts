@@ -101,6 +101,49 @@ export interface OrchestrationMessageEvent {
   chatKind: string;
 }
 
+// ── Attention queue ─────────────────────────────────────────────────────────
+
+/** The kind of "needs you" signal, in descending urgency. */
+export type AttentionKind = 'approval' | 'needs-input' | 'unread';
+
+/** What the renderer should do when the user acts on an attention item. */
+export type AttentionAction =
+  | { type: 'approval'; requestId: string }
+  | { type: 'open-thread'; threadId: string }
+  | { type: 'open-run'; runId: string }
+  | { type: 'open-session'; sessionId: string };
+
+/** One actionable row in the attention queue. */
+export interface AttentionItem {
+  /** Stable list key (`<kind>:<source-id>`). */
+  id: string;
+  kind: AttentionKind;
+  /** The instance/source this concerns (request id / run id / session id). */
+  instanceId: string;
+  /** Short label (tool name / agent display name / session label). */
+  title: string;
+  /** One-line detail; absent for `unread` (use `count`). */
+  summary?: string;
+  /** Unread message count; present only for the `unread` kind. */
+  count?: number;
+  action: AttentionAction;
+  /** RFC3339 creation/activity time, when known. */
+  createdAt?: string;
+}
+
+/** Per-kind + total counts for badging the zone. */
+export interface AttentionCounts {
+  total: number;
+  approvals: number;
+  needsInput: number;
+  unread: number;
+}
+
+export interface AttentionQueue {
+  items: AttentionItem[];
+  counts: AttentionCounts;
+}
+
 // ── Internal helper ───────────────────────────────────────────────────────────
 
 function safeParseJson(s: string): unknown {
@@ -172,6 +215,12 @@ export const orchestrationClient = {
 
   /** Current orchestration status (active steering directive, tick timing). */
   status: () => call<OrchestrationStatus>('openhuman.orchestration_status', {}),
+
+  /**
+   * The aggregated "needs you" queue: pending tool approvals, agent runs
+   * awaiting input, and instances with unread messages, priority-ordered.
+   */
+  attention: () => call<AttentionQueue>('openhuman.orchestration_attention', {}),
 };
 
 export type OrchestrationClient = typeof orchestrationClient;
