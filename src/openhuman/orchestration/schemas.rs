@@ -28,6 +28,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schema_for("orchestration_send_master_message"),
         schema_for("orchestration_mark_read"),
         schema_for("orchestration_status"),
+        schema_for("orchestration_self_identity"),
+        schema_for("orchestration_relay_info"),
     ]
 }
 
@@ -56,6 +58,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schema_for("orchestration_status"),
             handler: handle_status,
+        },
+        RegisteredController {
+            schema: schema_for("orchestration_self_identity"),
+            handler: handle_self_identity,
+        },
+        RegisteredController {
+            schema: schema_for("orchestration_relay_info"),
+            handler: handle_relay_info,
         },
     ]
 }
@@ -120,6 +130,23 @@ fn schema_for(function: &str) -> ControllerSchema {
             inputs: vec![],
             outputs: vec![json_output("result", "OrchestrationStatus.")],
         },
+        "orchestration_self_identity" => ControllerSchema {
+            namespace: "orchestration",
+            function: "self_identity",
+            description: "This agent's own tiny.place identity + discoverability: agent id (address), reverse-resolved @handles, whether its directory card and Signal encryption key are published, and whether peers can therefore DM it. Composes the tinyplace signal/directory reads.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "result",
+                "{ agentId, handles: {username, primary}[], primaryHandle?, cardPublished, keyPublished, discoverable }.",
+            )],
+        },
+        "orchestration_relay_info" => ControllerSchema {
+            namespace: "orchestration",
+            function: "relay_info",
+            description: "The tiny.place relay endpoint the core is talking to, plus a coarse network label (staging | prod) for the renderer's relay badge.",
+            inputs: vec![],
+            outputs: vec![json_output("result", "{ baseUrl, network }.")],
+        },
         other => unreachable!("unknown orchestration schema: {other}"),
     }
 }
@@ -166,6 +193,39 @@ struct OrchestrationStatus {
     /// Most recent orchestration error, if any (short cause string, never a body).
     #[serde(skip_serializing_if = "Option::is_none")]
     last_error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HandleEntry {
+    username: String,
+    primary: bool,
+}
+
+/// This agent's own tiny.place identity and whether peers can reach it.
+///
+/// `discoverable` is the bottom line the UI cares about: a peer can DM this
+/// agent only if both its directory card AND its Signal encryption key are
+/// published. A fresh identity can accept contacts yet still be un-messageable
+/// until it registers a @handle (which is what publishes both), so the
+/// `SelfIdentityCard` surfaces the gap instead of leaving it a mystery 404.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SelfIdentity {
+    agent_id: String,
+    handles: Vec<HandleEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    primary_handle: Option<String>,
+    card_published: bool,
+    key_published: bool,
+    discoverable: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RelayInfo {
+    base_url: String,
+    network: String,
 }
 
 /// Resolve the `chat` param to a store session id. `master` / `subconscious` map
@@ -502,6 +562,142 @@ fn handle_status(_params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// Own tiny.place identity + discoverability, composed from the internal
+/// tinyplace signal/directory reads. Delegates like `send_master` does
+/// (`crate::openhuman::tinyplace::handle_tinyplace_*`), so there is no new
+/// tiny.place logic here — only aggregation into the shape the renderer needs.
+fn handle_self_identity(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        // 1. Key status → own agent id + whether the encryption key is published
+        //    to the directory and current. `encryptionKeyPublished` is false when
+        //    the card is missing OR the published key is stale (wrong wallet).
+        let key_status =
+            crate::openhuman::tinyplace::handle_tinyplace_signal_key_status(Map::new())
+                .await
+                .map_err(|e| format!("self_identity key_status: {e}"))?;
+        let agent_id = key_status
+            .get("agentId")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let key_published = key_status
+            .get("encryptionKeyPublished")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        log::debug!(
+            target: LOG,
+            "[orchestration_rpc] self_identity agent_id_len={} key_published={key_published}",
+            agent_id.len()
+        );
+
+        // 2. Reverse-resolve any @handles this wallet holds. Best-effort: a
+        //    handle-less identity is normal (and is exactly the un-messageable
+        //    case the card must flag), so a reverse miss is not an error.
+        let reverse = if agent_id.is_empty() {
+            None
+        } else {
+            let mut rev_params = Map::new();
+            rev_params.insert("cryptoId".to_string(), Value::from(agent_id.clone()));
+            match crate::openhuman::tinyplace::handle_tinyplace_directory_reverse(rev_params).await
+            {
+                Ok(reverse) => Some(reverse),
+                Err(e) => {
+                    log::debug!(target: LOG, "[orchestration_rpc] self_identity reverse miss: {e}");
+                    None
+                }
+            }
+        };
+
+        // 3. Directory card presence: get_agent(self) 404s when no card is
+        //    published. Ok → a card is live; Err → treat as unpublished.
+        let card_published = if agent_id.is_empty() {
+            false
+        } else {
+            let mut card_params = Map::new();
+            card_params.insert("agentId".to_string(), Value::from(agent_id.clone()));
+            crate::openhuman::tinyplace::handle_tinyplace_directory_get_agent(card_params)
+                .await
+                .is_ok()
+        };
+
+        let identity =
+            build_self_identity(agent_id, key_published, reverse.as_ref(), card_published);
+        log::debug!(
+            target: LOG,
+            "[orchestration_rpc] self_identity handles={} card_published={card_published} discoverable={}",
+            identity.handles.len(),
+            identity.discoverable
+        );
+        to_json(identity)
+    })
+}
+
+/// Pure composition of the three tinyplace reads into the renderer shape. Split
+/// out so the parsing/discoverability logic is unit-testable without a live
+/// tiny.place client (the handler above supplies the real reads).
+///
+/// `reverse` is the raw `directory_reverse` JSON (`{ identities: [...] }`), or
+/// `None` on a reverse miss. Discoverable = card live AND encryption key
+/// published + current — either gap leaves the agent un-messageable.
+fn build_self_identity(
+    agent_id: String,
+    key_published: bool,
+    reverse: Option<&Value>,
+    card_published: bool,
+) -> SelfIdentity {
+    let mut handles: Vec<HandleEntry> = Vec::new();
+    let mut primary_handle: Option<String> = None;
+    if let Some(idents) = reverse
+        .and_then(|r| r.get("identities"))
+        .and_then(Value::as_array)
+    {
+        for ident in idents {
+            let username = ident
+                .get("username")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let Some(username) = username else { continue };
+            let primary = ident
+                .get("primary")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if primary && primary_handle.is_none() {
+                primary_handle = Some(username.to_string());
+            }
+            handles.push(HandleEntry {
+                username: username.to_string(),
+                primary,
+            });
+        }
+    }
+    // Fall back to the first handle when none is flagged primary.
+    if primary_handle.is_none() {
+        primary_handle = handles.first().map(|h| h.username.clone());
+    }
+    SelfIdentity {
+        agent_id,
+        handles,
+        primary_handle,
+        card_published,
+        key_published,
+        discoverable: card_published && key_published,
+    }
+}
+
+/// Relay endpoint + network label for the renderer's relay badge. Reads only the
+/// configured base URL (no client build / wallet unlock), so it always resolves.
+fn handle_relay_info(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let (base_url, network) = crate::openhuman::tinyplace::ops::relay_endpoint();
+        log::debug!(target: LOG, "[orchestration_rpc] relay_info network={network}");
+        to_json(RelayInfo {
+            base_url,
+            network: network.to_string(),
+        })
+    })
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 async fn load_config(action: &str) -> Result<Config, String> {
@@ -559,8 +755,16 @@ mod tests {
     #[test]
     fn schemas_use_orchestration_namespace() {
         let schemas = all_controller_schemas();
-        assert_eq!(schemas.len(), 6);
+        assert_eq!(schemas.len(), 8);
         assert!(schemas.iter().all(|s| s.namespace == "orchestration"));
+        assert_eq!(
+            schema_for("orchestration_self_identity").function,
+            "self_identity"
+        );
+        assert_eq!(
+            schema_for("orchestration_relay_info").function,
+            "relay_info"
+        );
         assert_eq!(
             schema_for("orchestration_messages_list").function,
             "messages_list"
@@ -648,5 +852,46 @@ mod tests {
         let mut params = Map::new();
         params.insert("chat".to_string(), Value::String("  ".to_string()));
         assert!(required_param(&params, "chat").is_err());
+    }
+
+    #[test]
+    fn self_identity_marks_published_identity_discoverable() {
+        let reverse = serde_json::json!({
+            "identities": [
+                { "username": "  ", "primary": false },   // blank → skipped
+                { "username": "openhuman", "primary": false },
+                { "username": "oh_primary", "primary": true },
+            ]
+        });
+        let id = build_self_identity("addr123".to_string(), true, Some(&reverse), true);
+        assert_eq!(id.agent_id, "addr123");
+        assert_eq!(id.handles.len(), 2, "blank username skipped");
+        assert_eq!(id.primary_handle.as_deref(), Some("oh_primary"));
+        assert!(id.card_published && id.key_published && id.discoverable);
+    }
+
+    #[test]
+    fn self_identity_primary_falls_back_to_first_handle() {
+        let reverse = serde_json::json!({
+            "identities": [ { "username": "solo" } ] // no primary flag
+        });
+        let id = build_self_identity("addr".to_string(), true, Some(&reverse), true);
+        assert_eq!(id.primary_handle.as_deref(), Some("solo"));
+    }
+
+    #[test]
+    fn self_identity_undiscoverable_when_card_or_key_missing() {
+        // No reverse (handle-less), card present but key not published → the
+        // exact un-messageable case the SelfIdentityCard must flag.
+        let no_key = build_self_identity("addr".to_string(), false, None, true);
+        assert!(no_key.handles.is_empty());
+        assert!(no_key.primary_handle.is_none());
+        assert!(!no_key.discoverable, "key not published → not discoverable");
+
+        let no_card = build_self_identity("addr".to_string(), true, None, false);
+        assert!(
+            !no_card.discoverable,
+            "card not published → not discoverable"
+        );
     }
 }
