@@ -904,9 +904,9 @@ git commit -m "test(emergency): json-rpc e2e for stop/status/resume (#4255)"
 **Interfaces:**
 - Consumes: `DomainEvent::AutomationHalted/Resumed`; `WebChannelEvent` (read `src/core/socketio` for its fields — the approval bridge sets `event`, `client_id`, `thread_id`, `args`).
 
-- [ ] **Step 1: Read `WebChannelEvent`** to confirm how to emit a **broadcast** (not thread-scoped) event. Emergency halt is global. If `WebChannelEvent` requires `client_id`/`thread_id`, check how the socket server treats empty values, or look for a broadcast helper. If no broadcast primitive exists, emit with empty `client_id`/`thread_id` and have the frontend socket handler (Task 14) listen for the event name globally — confirm the socket server forwards non-thread events. Document the choice in a code comment.
+- [ ] **Step 1: Broadcast mechanism — CONFIRMED.** Emergency halt is global (not thread-scoped). `emit_web_channel_event` (src/core/socketio.rs:1409) delivers each event to the Socket.IO room named `event.client_id`, and **every** connected client auto-joins the `"system"` room (socketio.rs:438). So to broadcast to all clients, set `client_id: "system".to_string()` and leave `thread_id` empty — the emit code special-cases `client_id == "system"` for single-room delivery. **Do NOT use `..Default::default()` for `client_id`** (empty string → room `""` → reaches nobody). The frontend (Task 14) listens for the `automation_halt` event name globally.
 
-- [ ] **Step 2: Add the subscriber** in `event_bus.rs` (mirror `ApprovalSurfaceSubscriber`):
+- [ ] **Step 2: Add the subscriber** in `event_bus.rs` (mirror `ApprovalSurfaceSubscriber`), emitting to the `"system"` broadcast room:
 
 ```rust
 static AUTOMATION_HALT_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
@@ -933,6 +933,7 @@ impl EventHandler for AutomationHaltSubscriber {
             DomainEvent::AutomationHalted { reason, source } => {
                 publish_web_channel_event(WebChannelEvent {
                     event: "automation_halt".to_string(),
+                    client_id: "system".to_string(), // broadcast room — all clients auto-join it
                     args: Some(serde_json::json!({ "engaged": true, "reason": reason, "source": source })),
                     ..Default::default()
                 });
@@ -940,6 +941,7 @@ impl EventHandler for AutomationHaltSubscriber {
             DomainEvent::AutomationResumed { source } => {
                 publish_web_channel_event(WebChannelEvent {
                     event: "automation_halt".to_string(),
+                    client_id: "system".to_string(), // broadcast room — all clients auto-join it
                     args: Some(serde_json::json!({ "engaged": false, "source": source })),
                     ..Default::default()
                 });
