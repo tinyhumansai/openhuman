@@ -1019,14 +1019,13 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       await waitFor(() =>
         expect(threadApi.appendMessage).toHaveBeenCalledWith(
           't-interim',
-          expect.objectContaining({
-            content: 'Let me check your calendar first.',
-            sender: 'agent',
-          })
+          expect.objectContaining({ content: 'Let me check your calendar first.', sender: 'agent' })
         )
       );
       // …and cleared from the live preview so it isn't shown twice.
-      expect(store.getState().chatRuntime.streamingAssistantByThread['t-interim']?.content).toBe('');
+      expect(store.getState().chatRuntime.streamingAssistantByThread['t-interim']?.content).toBe(
+        ''
+      );
     });
 
     it('dedupes a re-delivered interim event by round', async () => {
