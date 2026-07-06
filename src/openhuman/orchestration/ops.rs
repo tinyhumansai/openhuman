@@ -1325,6 +1325,7 @@ mod tests {
             ("ops.rs", include_str!("ops.rs")),
             ("bus.rs", include_str!("bus.rs")),
             ("schemas.rs", include_str!("schemas.rs")),
+            ("attention.rs", include_str!("attention.rs")),
             ("graph/mod.rs", include_str!("graph/mod.rs")),
         ];
         // Forbidden substrings that would interpolate secret content into a log.
