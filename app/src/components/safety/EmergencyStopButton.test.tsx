@@ -33,7 +33,7 @@ describe('EmergencyStopButton', () => {
     expect(safetyState.halted).toBe(true);
   });
 
-  it('does NOT mark halted when emergencyStop throws (no false halt)', async () => {
+  it('does NOT mark halted when emergencyStop throws, and shows a visible error', async () => {
     stop.mockRejectedValueOnce(new Error('core unavailable'));
     const { store } = renderWithProviders(<EmergencyStopButton />);
     fireEvent.click(screen.getByRole('button', { name: /emergency stop/i }));
@@ -43,6 +43,8 @@ describe('EmergencyStopButton', () => {
     expect(safetyState.halted).toBe(false);
     // Button stays visible so the user can retry.
     expect(screen.queryByRole('button', { name: /emergency stop/i })).not.toBeNull();
+    // A visible, retryable error is surfaced so the operator knows it failed.
+    await waitFor(() => expect(screen.getByRole('alert')).toBeDefined());
   });
 
   it('renders nothing while already halted (banner Resume takes over)', () => {

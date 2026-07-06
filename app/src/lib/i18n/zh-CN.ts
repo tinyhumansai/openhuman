@@ -6518,6 +6518,7 @@ const messages: TranslationMap = {
 
   // Emergency stop (#4255)
   'safety.emergencyStop': '紧急停止',
+  'safety.stopFailed': '无法停止自动化，请重试。',
   'safety.resume': '恢复自动化',
   'safety.haltedTitle': '自动化已暂停',
   'safety.haltedBody': '所有桌面自动化已停止。准备好后请恢复。',

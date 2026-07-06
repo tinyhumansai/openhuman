@@ -2657,6 +2657,12 @@ pub async fn bootstrap_core_runtime(host_kind: crate::core::types::HostKind) {
     // unguarded standalone/CLI/Docker core would park a plan review that never
     // reaches the UI and dies at the gate TTL. Idempotent (Once-guarded).
     crate::openhuman::channels::providers::web::register_approval_surface_subscriber();
+    // Bridge emergency-stop halt/resume → the `automation_halt` broadcast on the
+    // same always-run boot path. `start_channels` (which also registers this)
+    // is skipped on a web-chat-only desktop with no listening integrations, so
+    // without this a halt/resume initiated from the CLI or another client would
+    // never reach the UI. Idempotent (Once-guarded). (#4255)
+    crate::openhuman::channels::providers::web::register_automation_halt_subscriber();
 
     if decision.install_gate {
         // Per-launch correlation token for the approval gate. This is

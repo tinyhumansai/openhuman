@@ -7017,6 +7017,7 @@ const messages: TranslationMap = {
 
   // Emergency stop (#4255)
   'safety.emergencyStop': 'Arresto di emergenza',
+  'safety.stopFailed': "Impossibile fermare l'automazione — riprova.",
   'safety.resume': "Riprendi l'automazione",
   'safety.haltedTitle': 'Automazione sospesa',
   'safety.haltedBody': "Tutta l'automazione del desktop è ferma. Riprendi quando sei pronto.",

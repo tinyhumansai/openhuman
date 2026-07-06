@@ -6892,6 +6892,7 @@ const messages: TranslationMap = {
 
   // Emergency stop (#4255)
   'safety.emergencyStop': 'জরুরি বন্ধ',
+  'safety.stopFailed': 'অটোমেশন থামানো যায়নি — আবার চেষ্টা করুন।',
   'safety.resume': 'অটোমেশন পুনরায় শুরু করুন',
   'safety.haltedTitle': 'অটোমেশন বন্ধ',
   'safety.haltedBody': 'সমস্ত ডেস্কটপ অটোমেশন বন্ধ করা হয়েছে। প্রস্তুত হলে পুনরায় শুরু করুন।',

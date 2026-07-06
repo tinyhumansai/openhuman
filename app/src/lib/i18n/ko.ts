@@ -6815,6 +6815,7 @@ const messages: TranslationMap = {
 
   // Emergency stop (#4255)
   'safety.emergencyStop': '긴급 정지',
+  'safety.stopFailed': '자동화를 중지할 수 없습니다 — 다시 시도하세요.',
   'safety.resume': '자동화 재개',
   'safety.haltedTitle': '자동화 중단됨',
   'safety.haltedBody': '모든 데스크톱 자동화가 중지되었습니다. 준비가 되면 재개하세요.',

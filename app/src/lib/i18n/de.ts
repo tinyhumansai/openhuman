@@ -7082,6 +7082,7 @@ const messages: TranslationMap = {
 
   // Emergency stop (#4255)
   'safety.emergencyStop': 'Notabschaltung',
+  'safety.stopFailed': 'Automatisierung konnte nicht gestoppt werden – bitte erneut versuchen.',
   'safety.resume': 'Automatisierung fortsetzen',
   'safety.haltedTitle': 'Automatisierung angehalten',
   'safety.haltedBody':

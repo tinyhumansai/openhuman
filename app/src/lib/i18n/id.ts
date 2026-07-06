@@ -6917,6 +6917,7 @@ const messages: TranslationMap = {
 
   // Emergency stop (#4255)
   'safety.emergencyStop': 'Hentikan darurat',
+  'safety.stopFailed': 'Tidak dapat menghentikan otomasi — coba lagi.',
   'safety.resume': 'Lanjutkan otomasi',
   'safety.haltedTitle': 'Otomasi dihentikan',
   'safety.haltedBody': 'Semua otomasi desktop dihentikan. Lanjutkan ketika Anda siap.',

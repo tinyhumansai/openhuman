@@ -7053,6 +7053,7 @@ const messages: TranslationMap = {
 
   // Emergency stop (#4255)
   'safety.emergencyStop': "Arrêt d'urgence",
+  'safety.stopFailed': "Impossible d'arrêter l'automatisation — réessayez.",
   'safety.resume': "Reprendre l'automatisation",
   'safety.haltedTitle': 'Automatisation suspendue',
   'safety.haltedBody':

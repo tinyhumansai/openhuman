@@ -7188,6 +7188,7 @@ const en: TranslationMap = {
 
   // Emergency stop (#4255)
   'safety.emergencyStop': 'Emergency stop',
+  'safety.stopFailed': 'Could not stop automation — try again.',
   'safety.resume': 'Resume automation',
   'safety.haltedTitle': 'Automation halted',
   'safety.haltedBody': 'All desktop automation is stopped. Resume when you are ready.',

@@ -6992,6 +6992,7 @@ const messages: TranslationMap = {
 
   // Emergency stop (#4255)
   'safety.emergencyStop': 'Awaryjne zatrzymanie',
+  'safety.stopFailed': 'Nie udało się zatrzymać automatyzacji — spróbuj ponownie.',
   'safety.resume': 'Wznów automatyzację',
   'safety.haltedTitle': 'Automatyzacja wstrzymana',
   'safety.haltedBody': 'Cała automatyzacja pulpitu jest zatrzymana. Wznów, gdy będziesz gotowy.',
