@@ -6995,7 +6995,6 @@ const messages: TranslationMap = {
   'safety.resume': 'Wznów automatyzację',
   'safety.haltedTitle': 'Automatyzacja wstrzymana',
   'safety.haltedBody': 'Cała automatyzacja pulpitu jest zatrzymana. Wznów, gdy będziesz gotowy.',
-
 };
 
 export default messages;

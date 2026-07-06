@@ -6521,7 +6521,6 @@ const messages: TranslationMap = {
   'safety.resume': '恢复自动化',
   'safety.haltedTitle': '自动化已暂停',
   'safety.haltedBody': '所有桌面自动化已停止。准备好后请恢复。',
-
 };
 
 export default messages;

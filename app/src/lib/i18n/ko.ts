@@ -6818,7 +6818,6 @@ const messages: TranslationMap = {
   'safety.resume': '자동화 재개',
   'safety.haltedTitle': '자동화 중단됨',
   'safety.haltedBody': '모든 데스크톱 자동화가 중지되었습니다. 준비가 되면 재개하세요.',
-
 };
 
 export default messages;

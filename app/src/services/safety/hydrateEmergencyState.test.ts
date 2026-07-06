@@ -1,4 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { hydrateEmergencyState } from './hydrateEmergencyState';
 
 // Mock emergencyApi before importing the module under test
 const emergencyStatusMock = vi.fn();
@@ -7,8 +9,6 @@ vi.mock('../api/emergencyApi', () => ({ emergencyStatus: () => emergencyStatusMo
 // Mock hydrateHalt action creator
 const hydrateHaltMock = vi.fn((x: unknown) => ({ type: 'safety/hydrateHalt', payload: x }));
 vi.mock('../../store/safetySlice', () => ({ hydrateHalt: (x: unknown) => hydrateHaltMock(x) }));
-
-import { hydrateEmergencyState } from './hydrateEmergencyState';
 
 describe('hydrateEmergencyState', () => {
   const dispatch = vi.fn();

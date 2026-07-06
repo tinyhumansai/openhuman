@@ -7084,8 +7084,8 @@ const messages: TranslationMap = {
   'safety.emergencyStop': 'Notabschaltung',
   'safety.resume': 'Automatisierung fortsetzen',
   'safety.haltedTitle': 'Automatisierung angehalten',
-  'safety.haltedBody': 'Alle Desktop-Automatisierungen sind gestoppt. Fortsetzen, wenn Sie bereit sind.',
-
+  'safety.haltedBody':
+    'Alle Desktop-Automatisierungen sind gestoppt. Fortsetzen, wenn Sie bereit sind.',
 };
 
 export default messages;

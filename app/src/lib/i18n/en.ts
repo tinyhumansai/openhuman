@@ -7191,7 +7191,6 @@ const en: TranslationMap = {
   'safety.resume': 'Resume automation',
   'safety.haltedTitle': 'Automation halted',
   'safety.haltedBody': 'All desktop automation is stopped. Resume when you are ready.',
-
 };
 
 export default en;

@@ -6969,8 +6969,8 @@ const messages: TranslationMap = {
   'safety.emergencyStop': 'Аварийная остановка',
   'safety.resume': 'Возобновить автоматизацию',
   'safety.haltedTitle': 'Автоматизация приостановлена',
-  'safety.haltedBody': 'Вся автоматизация рабочего стола остановлена. Возобновите, когда будете готовы.',
-
+  'safety.haltedBody':
+    'Вся автоматизация рабочего стола остановлена. Возобновите, когда будете готовы.',
 };
 
 export default messages;

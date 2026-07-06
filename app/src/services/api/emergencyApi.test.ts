@@ -1,9 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { emergencyResume, emergencyStatus, emergencyStop } from './emergencyApi';
 
 const call = vi.fn();
 vi.mock('../coreRpcClient', () => ({ callCoreRpc: (arg: unknown) => call(arg) }));
-
-import { emergencyStop, emergencyResume, emergencyStatus } from './emergencyApi';
 
 beforeEach(() => call.mockReset());
 
@@ -11,7 +11,10 @@ describe('emergencyApi', () => {
   it('emergencyStop calls openhuman.emergency_stop with reason and unwraps envelope', async () => {
     call.mockResolvedValue({ result: { engaged: true, reason: 'user' }, logs: ['x'] });
     const r = await emergencyStop('user');
-    expect(call).toHaveBeenCalledWith({ method: 'openhuman.emergency_stop', params: { reason: 'user' } });
+    expect(call).toHaveBeenCalledWith({
+      method: 'openhuman.emergency_stop',
+      params: { reason: 'user' },
+    });
     expect(r.engaged).toBe(true);
     expect(r.reason).toBe('user');
   });

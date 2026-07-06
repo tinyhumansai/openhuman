@@ -34,10 +34,10 @@ import notificationReducer from './notificationSlice';
 import personaReducer from './personaSlice';
 import providerSurfacesReducer from './providerSurfaceSlice';
 import { pttReducer } from './pttSlice';
+import safetyReducer from './safetySlice';
 import socketReducer from './socketSlice';
 import themeReducer from './themeSlice';
 import threadReducer from './threadSlice';
-import safetyReducer from './safetySlice';
 import userErrorsReducer from './userErrorsSlice';
 import { userScopedStorage } from './userScopedStorage';
 

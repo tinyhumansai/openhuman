@@ -1,5 +1,5 @@
-import { callCoreRpc } from '../coreRpcClient';
 import type { HaltState } from '../../store/safetySlice';
+import { callCoreRpc } from '../coreRpcClient';
 
 /** Normalize the CLI envelope `{ result, logs }` and bare-value shapes. */
 const unwrapValue = <T>(raw: unknown): T => {
@@ -10,7 +10,10 @@ const unwrapValue = <T>(raw: unknown): T => {
 };
 
 export async function emergencyStop(reason?: string): Promise<HaltState> {
-  const raw = await callCoreRpc<unknown>({ method: 'openhuman.emergency_stop', params: reason ? { reason } : {} });
+  const raw = await callCoreRpc<unknown>({
+    method: 'openhuman.emergency_stop',
+    params: reason ? { reason } : {},
+  });
   return unwrapValue<HaltState>(raw);
 }
 

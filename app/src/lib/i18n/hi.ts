@@ -6894,7 +6894,6 @@ const messages: TranslationMap = {
   'safety.resume': 'स्वचालन पुनः प्रारंभ करें',
   'safety.haltedTitle': 'स्वचालन रोका गया',
   'safety.haltedBody': 'सभी डेस्कटॉप स्वचालन रोक दिया गया है। तैयार होने पर पुनः प्रारंभ करें।',
-
 };
 
 export default messages;

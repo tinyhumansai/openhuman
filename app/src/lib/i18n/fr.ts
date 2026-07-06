@@ -7052,11 +7052,11 @@ const messages: TranslationMap = {
   'flows.canvas.renameLabel': 'Renommer le workflow',
 
   // Emergency stop (#4255)
-  'safety.emergencyStop': 'Arrêt d\'urgence',
-  'safety.resume': 'Reprendre l\'automatisation',
+  'safety.emergencyStop': "Arrêt d'urgence",
+  'safety.resume': "Reprendre l'automatisation",
   'safety.haltedTitle': 'Automatisation suspendue',
-  'safety.haltedBody': 'Toute l\'automatisation du bureau est arrêtée. Reprenez quand vous êtes prêt.',
-
+  'safety.haltedBody':
+    "Toute l'automatisation du bureau est arrêtée. Reprenez quand vous êtes prêt.",
 };
 
 export default messages;

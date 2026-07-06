@@ -1,7 +1,7 @@
 import type { Dispatch } from '@reduxjs/toolkit';
 
-import { emergencyStatus } from '../api/emergencyApi';
 import { hydrateHalt } from '../../store/safetySlice';
+import { emergencyStatus } from '../api/emergencyApi';
 
 /**
  * Fetches the authoritative halt state from the core and dispatches

@@ -6742,7 +6742,6 @@ const messages: TranslationMap = {
   'safety.resume': 'استئناف الأتمتة',
   'safety.haltedTitle': 'الأتمتة متوقفة',
   'safety.haltedBody': 'تم إيقاف جميع أتمتة سطح المكتب. استأنف عندما تكون مستعدًا.',
-
 };
 
 export default messages;

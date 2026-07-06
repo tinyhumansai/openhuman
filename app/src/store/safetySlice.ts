@@ -21,7 +21,12 @@ const safetySlice = createSlice({
   initialState,
   reducers: {
     setHalt(_state, action: PayloadAction<{ reason?: string; source?: string; since?: number }>) {
-      return { halted: true, reason: action.payload.reason, source: action.payload.source, since: action.payload.since };
+      return {
+        halted: true,
+        reason: action.payload.reason,
+        source: action.payload.source,
+        since: action.payload.since,
+      };
     },
     clearHalt() {
       return { halted: false };
