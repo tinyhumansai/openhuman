@@ -257,6 +257,8 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.title': 'Relay TinyPlace',
   'tinyplaceOrchestration.subtitle': 'Kanal agen tersemat dan chat sesi aplikasi',
   'tinyplaceOrchestration.refresh': 'Segarkan',
+  'tinyplaceOrchestration.newInstance': 'Instansi baru',
+  'tinyplaceOrchestration.newInstanceSoon': 'Segera hadir',
   'tinyplaceOrchestration.pinned': 'Tersemat',
   'tinyplaceOrchestration.sessions': 'Sesi',
   'tinyplaceOrchestration.contacts': 'Kontak',

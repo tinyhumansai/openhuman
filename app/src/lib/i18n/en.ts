@@ -4184,6 +4184,8 @@ const en: TranslationMap = {
   'tinyplaceOrchestration.title': 'TinyPlace relay',
   'tinyplaceOrchestration.subtitle': 'Pinned agent channels and app-session chats',
   'tinyplaceOrchestration.refresh': 'Refresh',
+  'tinyplaceOrchestration.newInstance': 'New instance',
+  'tinyplaceOrchestration.newInstanceSoon': 'Coming soon',
   'tinyplaceOrchestration.pinned': 'Pinned',
   'tinyplaceOrchestration.sessions': 'Sessions',
   'tinyplaceOrchestration.contacts': 'Contacts',

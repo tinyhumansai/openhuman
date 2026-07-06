@@ -256,6 +256,8 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.title': 'TinyPlace রিলে',
   'tinyplaceOrchestration.subtitle': 'পিন করা এজেন্ট চ্যানেল এবং অ্যাপ সেশন চ্যাট',
   'tinyplaceOrchestration.refresh': 'রিফ্রেশ',
+  'tinyplaceOrchestration.newInstance': 'নতুন ইনস্ট্যান্স',
+  'tinyplaceOrchestration.newInstanceSoon': 'শীঘ্রই আসছে',
   'tinyplaceOrchestration.pinned': 'পিন করা',
   'tinyplaceOrchestration.sessions': 'সেশন',
   'tinyplaceOrchestration.contacts': 'পরিচিতি',

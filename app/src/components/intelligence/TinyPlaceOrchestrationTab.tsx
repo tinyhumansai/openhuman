@@ -10,6 +10,8 @@ import {
 } from '../../lib/agentworld/invokeApiClient';
 import { useT } from '../../lib/i18n/I18nContext';
 import {
+  type AttentionAction,
+  type AttentionQueue,
   orchestrationClient,
   type RelayInfo,
   type SelfIdentity,
@@ -22,6 +24,7 @@ import {
 } from '../../lib/orchestration/useOrchestrationChats';
 import { subconsciousTrigger } from '../../utils/tauriCommands/subconscious';
 import Button from '../ui/Button';
+import AttentionQueueView from './AttentionQueue';
 import RelayBadge from './RelayBadge';
 import SelfIdentityCard from './SelfIdentityCard';
 
@@ -226,6 +229,10 @@ export default function TinyPlaceOrchestrationTab() {
   const [selfIdentity, setSelfIdentity] = useState<SelfIdentity | null>(null);
   const [identityLoading, setIdentityLoading] = useState(true);
   const [relayInfo, setRelayInfo] = useState<RelayInfo | null>(null);
+  // The aggregated "needs you" queue (approvals + blocked runs + unread). Read
+  // independently of chats so a failure leaves the zone empty, never the tab.
+  const [attentionQueue, setAttentionQueue] = useState<AttentionQueue | null>(null);
+  const [attentionLoading, setAttentionLoading] = useState(true);
   const mountedRef = useRef(true);
 
   const toggleContact = useCallback((address: string) => {
@@ -304,6 +311,34 @@ export default function TinyPlaceOrchestrationTab() {
     setIdentityLoading(false);
   }, []);
 
+  const loadAttention = useCallback(async () => {
+    debug('[tinyplace-orchestration] attention load entry');
+    try {
+      const queue = await orchestrationClient.attention();
+      if (!mountedRef.current) return;
+      debug('[tinyplace-orchestration] attention load ok total=%d', queue.counts.total);
+      setAttentionQueue(queue);
+    } catch (error) {
+      if (!mountedRef.current) return;
+      const message = error instanceof Error ? error.message : String(error);
+      debug('[tinyplace-orchestration] attention load error %s', message);
+    } finally {
+      if (mountedRef.current) setAttentionLoading(false);
+    }
+  }, []);
+
+  // Route an attention item to its target. Only orchestration sessions have an
+  // in-tab surface today; approvals/threads/runs live elsewhere (wired later).
+  const handleAttentionAction = useCallback(
+    (action: AttentionAction) => {
+      debug('[tinyplace-orchestration] attention action type=%s', action.type);
+      if (action.type === 'open-session') {
+        selectChat(action.sessionId);
+      }
+    },
+    [selectChat]
+  );
+
   const runPairingAction = useCallback(
     async (actionId: string, action: () => Promise<unknown>) => {
       debug('[tinyplace-orchestration] pairing action entry id=%s', actionId);
@@ -345,7 +380,8 @@ export default function TinyPlaceOrchestrationTab() {
     void refresh();
     void loadPairing();
     void loadIdentity();
-  }, [refresh, loadPairing, loadIdentity]);
+    void loadAttention();
+  }, [refresh, loadPairing, loadIdentity, loadAttention]);
 
   const submitComposer = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
@@ -367,12 +403,13 @@ export default function TinyPlaceOrchestrationTab() {
     const handle = window.setTimeout(() => {
       void loadPairing();
       void loadIdentity();
+      void loadAttention();
     }, 0);
     return () => {
       window.clearTimeout(handle);
       mountedRef.current = false;
     };
-  }, [loadPairing, loadIdentity]);
+  }, [loadPairing, loadIdentity, loadAttention]);
 
   const pinned = chats.filter(chat => chat.pinned);
   const sessions = chats
@@ -477,14 +514,25 @@ export default function TinyPlaceOrchestrationTab() {
                 {t('tinyplaceOrchestration.subtitle')}
               </p>
             </div>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={refreshAll}
-              aria-label={t('tinyplaceOrchestration.refresh')}
-              disabled={sessionsState.status === 'loading'}>
-              {t('tinyplaceOrchestration.refresh')}
-            </Button>
+            <div className="flex flex-none items-center gap-1.5">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={refreshAll}
+                aria-label={t('tinyplaceOrchestration.refresh')}
+                disabled={sessionsState.status === 'loading'}>
+                {t('tinyplaceOrchestration.refresh')}
+              </Button>
+              {/* Launch shell — external instance spawn is wired in a later PR. */}
+              <Button
+                variant="primary"
+                size="sm"
+                data-testid="tinyplace-new-instance"
+                disabled
+                title={t('tinyplaceOrchestration.newInstanceSoon')}>
+                {t('tinyplaceOrchestration.newInstance')}
+              </Button>
+            </div>
           </div>
           {steeringText ? (
             <div
@@ -499,6 +547,12 @@ export default function TinyPlaceOrchestrationTab() {
         </div>
 
         <SelfIdentityCard identity={selfIdentity} loading={identityLoading} />
+
+        <AttentionQueueView
+          queue={attentionQueue}
+          loading={attentionLoading}
+          onAction={handleAttentionAction}
+        />
 
         <section className="border-b border-line px-4 py-3">
           <form className="space-y-2" onSubmit={submitLink}>
