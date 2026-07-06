@@ -124,4 +124,43 @@ mod tests {
         assert_eq!(s.inputs[0].name, "reason");
         assert!(!s.inputs[0].required);
     }
+
+    #[test]
+    fn resume_status_and_unknown_schema_arms() {
+        assert_eq!(schemas("resume").function, "resume");
+        assert!(schemas("resume").inputs.is_empty());
+        assert_eq!(schemas("status").function, "status");
+        assert!(schemas("status").inputs.is_empty());
+        // The catch-all arm renders a placeholder rather than panicking.
+        assert_eq!(schemas("nope").function, "unknown");
+        assert_eq!(schemas("nope").outputs[0].name, "error");
+    }
+
+    fn json_engaged(v: &Value) -> bool {
+        // stop/resume emit a diagnostic log → enveloped `{result, logs}`;
+        // status has no log → bare value. Normalize both.
+        let obj = v.get("result").unwrap_or(v);
+        obj.get("engaged")
+            .and_then(|e| e.as_bool())
+            .unwrap_or(false)
+    }
+
+    #[tokio::test]
+    async fn handlers_drive_stop_status_resume() {
+        let _g = crate::openhuman::emergency_stop::state::EMERGENCY_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _reset = crate::openhuman::emergency_stop::state::ClearEmergencyOnDrop;
+
+        let mut params = Map::new();
+        params.insert("reason".into(), Value::String("verify".into()));
+        let stopped = handle_stop(params).await.expect("handle_stop ok");
+        assert!(json_engaged(&stopped));
+
+        let status = handle_status(Map::new()).await.expect("handle_status ok");
+        assert!(json_engaged(&status));
+
+        let resumed = handle_resume(Map::new()).await.expect("handle_resume ok");
+        assert!(!json_engaged(&resumed));
+    }
 }

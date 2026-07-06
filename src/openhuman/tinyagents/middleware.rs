@@ -925,6 +925,26 @@ impl ApprovalSecurityMiddleware {
     }
 }
 
+/// The fail-closed denial a halted external-effect tool call resolves to.
+/// Returns `Some(result)` iff the emergency stop is engaged, otherwise `None`.
+/// Extracted from `wrap_tool` so the deny path is unit-testable without
+/// constructing a full `RunContext`/`ToolHandler` runtime.
+fn emergency_halt_denial(call_id: String, name: String) -> Option<TaToolResult> {
+    if !crate::openhuman::emergency_stop::is_engaged_global() {
+        return None;
+    }
+    let reason = "Emergency stop is engaged — this action is blocked until you resume automation."
+        .to_string();
+    Some(TaToolResult {
+        call_id,
+        name,
+        content: reason.clone(),
+        raw: None,
+        error: Some(reason),
+        elapsed_ms: 0,
+    })
+}
+
 #[async_trait]
 impl ToolMiddleware<()> for ApprovalSecurityMiddleware {
     fn name(&self) -> &str {
@@ -944,17 +964,9 @@ impl ToolMiddleware<()> for ApprovalSecurityMiddleware {
         if self.has_external_effect(&call.name, &call.arguments) {
             // Emergency stop: refuse every external-effect tool while halted,
             // before touching the approval gate. Fail-closed.
-            if crate::openhuman::emergency_stop::is_engaged_global() {
-                let reason = "Emergency stop is engaged — this action is blocked until you resume automation.".to_string();
+            if let Some(denial) = emergency_halt_denial(call.id.clone(), call.name.clone()) {
                 tracing::warn!(tool = %call.name, "[tinyagents::mw] emergency stop engaged — refusing tool call");
-                return Ok(MiddlewareToolOutcome::Result(TaToolResult {
-                    call_id: call.id,
-                    name: call.name,
-                    content: reason.clone(),
-                    raw: None,
-                    error: Some(reason),
-                    elapsed_ms: 0,
-                }));
+                return Ok(MiddlewareToolOutcome::Result(denial));
             }
             if let Some(gate) = ApprovalGate::try_global() {
                 let summary = summarize_action(&call.name, &call.arguments);
@@ -3936,13 +3948,28 @@ mod tests {
         let _g = crate::openhuman::emergency_stop::state::EMERGENCY_TEST_GUARD
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        use crate::openhuman::emergency_stop::state::ClearEmergencyOnDrop;
         use crate::openhuman::emergency_stop::EmergencyStop;
         let stop = EmergencyStop::init_global();
+        // Panic-safe: always resets the process-global on drop, even on an
+        // assertion failure below, so a leaked engaged state can't poison
+        // later tests.
+        let _reset = ClearEmergencyOnDrop;
         stop.clear();
+
+        // Not halted → no denial, and the guard predicate is false.
         assert!(!crate::openhuman::emergency_stop::is_engaged_global());
+        assert!(emergency_halt_denial("c1".into(), "send".into()).is_none());
+
+        // Halted → the deny result is produced with the call's id/name and an
+        // error payload (this is the exact branch `wrap_tool` returns).
         stop.engage(Some("test".into()), "user", 0);
         assert!(crate::openhuman::emergency_stop::is_engaged_global());
-        stop.clear();
+        let denial =
+            emergency_halt_denial("c1".into(), "send".into()).expect("halted → denial produced");
+        assert_eq!(denial.call_id, "c1");
+        assert_eq!(denial.name, "send");
+        assert!(denial.error.is_some());
     }
 
     // ── MemoryProtocolMiddleware (issue #4116) ──────────────────────────────

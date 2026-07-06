@@ -323,12 +323,15 @@ mod tests {
 
     #[tokio::test]
     async fn input_action_blocked_while_emergency_engaged() {
-        use crate::openhuman::emergency_stop::state::EMERGENCY_TEST_GUARD;
+        use crate::openhuman::emergency_stop::state::{ClearEmergencyOnDrop, EMERGENCY_TEST_GUARD};
         use crate::openhuman::emergency_stop::EmergencyStop;
         let _g = EMERGENCY_TEST_GUARD
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let stop = EmergencyStop::init_global();
+        // Panic-safe cleanup: resets the process-global even if an assertion
+        // below panics, so a leaked engaged state can't poison later tests.
+        let _reset = ClearEmergencyOnDrop;
         stop.engage(Some("test".into()), "user", 0);
         let params = InputActionParams {
             action: "click".into(),
@@ -343,17 +346,17 @@ mod tests {
         assert!(!out.value.accepted);
         assert!(out.value.blocked);
         assert_eq!(out.value.reason.as_deref(), Some("emergency_stop"));
-        stop.clear();
     }
 
     #[tokio::test]
     async fn panic_stop_passes_even_while_emergency_engaged() {
-        use crate::openhuman::emergency_stop::state::EMERGENCY_TEST_GUARD;
+        use crate::openhuman::emergency_stop::state::{ClearEmergencyOnDrop, EMERGENCY_TEST_GUARD};
         use crate::openhuman::emergency_stop::EmergencyStop;
         let _g = EMERGENCY_TEST_GUARD
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let stop = EmergencyStop::init_global();
+        let _reset = ClearEmergencyOnDrop;
         stop.engage(None, "user", 0);
         let params = InputActionParams {
             action: "panic_stop".into(),
@@ -371,6 +374,5 @@ mod tests {
         if let Ok(outcome) = out {
             assert_ne!(outcome.value.reason.as_deref(), Some("emergency_stop"));
         }
-        stop.clear();
     }
 }

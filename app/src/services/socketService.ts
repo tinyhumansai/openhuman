@@ -473,7 +473,15 @@ class SocketService {
         socketWarn('automation_halt dropped — invalid payload shape');
         return;
       }
-      const engaged = typeof obj.engaged === 'boolean' ? obj.engaged : false;
+      // Fail closed: a kill-switch event must carry an explicit boolean
+      // `engaged`. An ambiguous payload (missing/non-boolean flag, e.g. `{}` or
+      // `{reason:'x'}`) is dropped rather than treated as `false`, so a
+      // malformed broadcast can never silently clear an active halt.
+      if (typeof obj.engaged !== 'boolean') {
+        socketWarn('automation_halt dropped — missing/invalid engaged flag');
+        return;
+      }
+      const engaged = obj.engaged;
       const reason = typeof obj.reason === 'string' ? obj.reason : undefined;
       const source = typeof obj.source === 'string' ? obj.source : undefined;
       socketLog(

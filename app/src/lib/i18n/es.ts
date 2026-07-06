@@ -7033,7 +7033,7 @@ const messages: TranslationMap = {
   'safety.resume': 'Reanudar automatización',
   'safety.haltedTitle': 'Automatización detenida',
   'safety.haltedBody':
-    'Toda la automatización de escritorio está detenida. Reanude cuando esté listo.',
+    'Toda la automatización de escritorio está detenida. Reanuda cuando estés listo.',
 };
 
 export default messages;

@@ -1198,6 +1198,22 @@ async fn json_rpc_config_update_browser_settings_persists_backend() {
 #[tokio::test]
 async fn json_rpc_emergency_stop_roundtrip_over_rpc() {
     let _env_lock = json_rpc_e2e_env_lock();
+
+    // Panic-safe cleanup: the switch is a process-global, so guarantee it is
+    // cleared even if an assertion below panics before the resume call — a
+    // leaked engaged state would fail-close unrelated tests in this binary.
+    struct ResumeOnDrop;
+    impl Drop for ResumeOnDrop {
+        fn drop(&mut self) {
+            if let Some(stop) =
+                openhuman_core::openhuman::emergency_stop::EmergencyStop::try_global()
+            {
+                stop.clear();
+            }
+        }
+    }
+    let _reset = ResumeOnDrop;
+
     let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
     let rpc_base = format!("http://{rpc_addr}");
 

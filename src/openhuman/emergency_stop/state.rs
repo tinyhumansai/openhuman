@@ -50,31 +50,37 @@ impl EmergencyStop {
     }
 
     /// Engage the halt. Idempotent — re-engaging refreshes reason/source/time.
+    ///
+    /// The `engaged` flag is written **inside** the `info` lock so the
+    /// (flag, info) pair transitions atomically for any reader that takes the
+    /// lock (`snapshot`). The lock-free `is_engaged()` fast path used by the
+    /// enforcement chokepoints reads the flag directly and is eventually
+    /// consistent, which is all a fail-closed guard needs.
     pub fn engage(&self, reason: Option<String>, source: &str, now_ms: u64) {
-        {
-            let mut guard = self.info.lock().unwrap_or_else(|e| e.into_inner());
-            *guard = Some(HaltInfo {
-                reason,
-                engaged_at_ms: now_ms,
-                source: source.to_string(),
-            });
-        }
+        let mut guard = self.info.lock().unwrap_or_else(|e| e.into_inner());
+        *guard = Some(HaltInfo {
+            reason,
+            engaged_at_ms: now_ms,
+            source: source.to_string(),
+        });
         self.engaged.store(true, Ordering::SeqCst);
     }
 
-    /// Clear the halt. Idempotent.
+    /// Clear the halt. Idempotent. Flag + info are cleared under one lock so
+    /// a concurrent `snapshot` never observes an inconsistent pair.
     pub fn clear(&self) {
-        self.engaged.store(false, Ordering::SeqCst);
         let mut guard = self.info.lock().unwrap_or_else(|e| e.into_inner());
         *guard = None;
+        self.engaged.store(false, Ordering::SeqCst);
     }
 
-    /// Current snapshot for RPC/UI.
+    /// Current snapshot for RPC/UI. Reads the flag under the `info` lock so the
+    /// returned (engaged, info) pair is always consistent with `engage`/`clear`.
     pub fn snapshot(&self) -> HaltState {
-        if !self.is_engaged() {
+        let guard = self.info.lock().unwrap_or_else(|e| e.into_inner());
+        if !self.engaged.load(Ordering::SeqCst) {
             return HaltState::default();
         }
-        let guard = self.info.lock().unwrap_or_else(|e| e.into_inner());
         match guard.as_ref() {
             Some(info) => HaltState {
                 engaged: true,
@@ -97,6 +103,21 @@ impl EmergencyStop {
 /// global-touching test must lock this before engaging/clearing the switch.
 #[cfg(test)]
 pub(crate) static EMERGENCY_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// RAII guard that clears the process-global switch on drop, so a test that
+/// panics mid-way (assertion failure / `unwrap`) can't leak an engaged state
+/// into a later test. Construct it right after `EmergencyStop::init_global()`.
+#[cfg(test)]
+pub(crate) struct ClearEmergencyOnDrop;
+
+#[cfg(test)]
+impl Drop for ClearEmergencyOnDrop {
+    fn drop(&mut self) {
+        if let Some(stop) = EmergencyStop::try_global() {
+            stop.clear();
+        }
+    }
+}
 
 /// Global convenience: is a switch installed AND engaged? False when no
 /// switch is installed (CLI/headless) so those paths are never blocked.

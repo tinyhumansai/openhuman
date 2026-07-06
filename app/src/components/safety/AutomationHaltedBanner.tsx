@@ -20,10 +20,12 @@ export function AutomationHaltedBanner() {
   const reason = useSelector(selectHaltReason);
 
   const onResume = useCallback(async () => {
+    console.debug('[emergency] resume requested (source=user)');
     try {
       await emergencyResume();
+      console.debug('[emergency] resume confirmed by core');
     } catch (err) {
-      console.error('[emergency] resume failed', err);
+      console.error('[emergency] resume failed — clearing halt locally anyway', err);
     } finally {
       dispatch(clearHalt());
     }

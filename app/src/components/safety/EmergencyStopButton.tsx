@@ -20,13 +20,21 @@ export function EmergencyStopButton() {
   const halted = useSelector(selectHalted);
 
   const handleClick = useCallback(async () => {
+    console.debug('[emergency] stop requested (source=user)');
     try {
       const state = await emergencyStop();
+      console.debug('[emergency] stop confirmed by core', {
+        engaged: state.engaged,
+        source: state.source,
+      });
       dispatch(setHalt({ reason: state.reason, source: state.source, since: state.engaged_at_ms }));
     } catch (err) {
-      // Fail-visible: reflect intent locally even when the core is unreachable.
-      dispatch(setHalt({ source: 'user' }));
-      console.error('[emergency] stop failed', err);
+      // Do NOT mark halted locally on failure: if the RPC did not succeed the
+      // core is not actually halted, and showing the halted banner would give a
+      // false sense of safety. Leave the button visible so the user can retry;
+      // a confirmed halt only surfaces from a successful response or the
+      // `automation_halt` broadcast.
+      console.error('[emergency] stop FAILED — core NOT halted, retry required', err);
     }
   }, [dispatch]);
 

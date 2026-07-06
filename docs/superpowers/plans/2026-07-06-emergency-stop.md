@@ -18,7 +18,7 @@
 - **Rust module shape** (AGENTS.md): `mod.rs` export-only; `types.rs` serde types; `state.rs` state; `ops.rs` logic returning `RpcOutcome<T>`; `schemas.rs` controllers. New functionality → dedicated subdirectory; no new root-level `*.rs`.
 - **RPC naming:** `openhuman.<namespace>_<function>` — here namespace `emergency`, functions `stop`/`resume`/`status`.
 - **Controller exposure:** register via `src/core/all.rs` registry, not branches in `cli.rs`/`jsonrpc.rs`.
-- **i18n:** all UI text through `useT()`; add keys to `app/src/lib/i18n/locales/en.ts` **and** real translations in every locale file (`ar, bn, de, es, fr, hi, id, it, ko, pl, pt, ru, zh-CN`). CI enforces parity (`pnpm i18n:check`).
+- **i18n:** all UI text through `useT()`; add keys to `app/src/lib/i18n/en.ts` **and** real translations in every sibling locale file (`app/src/lib/i18n/<locale>.ts` for `ar, bn, de, es, fr, hi, id, it, ko, pl, pt, ru, zh-CN`). CI enforces parity (`pnpm i18n:check`).
 - **Debug logging:** grep-friendly prefixes (`[emergency]`, `[rpc:emergency_*]`); log entry/exit, state transitions, errors; never log secrets/PII.
 - **Frontend:** no dynamic imports in `app/src`; use `invoke('core_rpc_relay', …)` via `coreRpcClient`; guard Tauri with `isTauri()`/try-catch.
 - **Rust checks:** `cargo check --manifest-path Cargo.toml` (add `GGML_NATIVE=OFF` on macOS Apple Silicon). Tests: `pnpm test:rust` or `bash scripts/test-rust-with-mock.sh --test <name>`; targeted lib tests: `cargo test --manifest-path Cargo.toml <filter>`.

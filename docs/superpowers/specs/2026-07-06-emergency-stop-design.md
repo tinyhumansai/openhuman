@@ -24,7 +24,7 @@ It is a **fail-closed kill switch**: while engaged, every automated real-world a
 - `src/openhuman/approval/` — `ApprovalGate` parks/denies external-effect tool calls, keeps a SQLite audit trail, fail-closed 10-min TTL. We reuse its pending-list + deny path for cascade-deny.
 - `src/openhuman/tinyagents/middleware.rs::wrap_tool` — every external-effect/dangerous tool call is already intercepted here (`has_external_effect`, `gate.intercept_audited`). This is our primary enforcement chokepoint.
 - `src/openhuman/screen_intelligence/` — `ops.rs::accessibility_input_action` dispatches clicks/typing to `input.rs`, which already has a per-session `panic_stop` action and session stop. This is our second chokepoint + the session-stop reuse.
-- `src/core/all.rs` controller registry + `src/openhuman/channels/providers/web.rs` `ApprovalSurfaceSubscriber` — the pattern for RPC registration and bridging domain events to a web-channel socket event.
+- `src/core/all.rs` controller registry + `src/openhuman/channels/providers/web/event_bus.rs` `ApprovalSurfaceSubscriber` — the pattern for RPC registration and bridging domain events to a web-channel socket event.
 
 ## Architecture
 

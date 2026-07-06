@@ -33,14 +33,16 @@ describe('EmergencyStopButton', () => {
     expect(safetyState.halted).toBe(true);
   });
 
-  it('dispatches halt locally if emergencyStop throws', async () => {
+  it('does NOT mark halted when emergencyStop throws (no false halt)', async () => {
     stop.mockRejectedValueOnce(new Error('core unavailable'));
     const { store } = renderWithProviders(<EmergencyStopButton />);
     fireEvent.click(screen.getByRole('button', { name: /emergency stop/i }));
-    await waitFor(() => {
-      const safetyState = (store.getState() as { safety: { halted: boolean } }).safety;
-      expect(safetyState.halted).toBe(true);
-    });
+    await waitFor(() => expect(stop).toHaveBeenCalled());
+    // The core did not confirm the halt, so the UI must not claim halted.
+    const safetyState = (store.getState() as { safety: { halted: boolean } }).safety;
+    expect(safetyState.halted).toBe(false);
+    // Button stays visible so the user can retry.
+    expect(screen.queryByRole('button', { name: /emergency stop/i })).not.toBeNull();
   });
 
   it('renders nothing while already halted (banner Resume takes over)', () => {

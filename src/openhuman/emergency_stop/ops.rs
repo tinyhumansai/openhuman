@@ -35,8 +35,15 @@ pub async fn emergency_stop(reason: Option<String>, source: &str) -> RpcOutcome<
         "[emergency] accessibility session stopped"
     );
 
-    // Best-effort: cascade-deny every pending approval so parked tool calls fail closed.
-    let denied = cascade_deny_pending();
+    // Best-effort: cascade-deny every pending approval so parked tool calls fail
+    // closed. `list_pending`/`decide` do synchronous SQLite I/O, so run them on a
+    // blocking thread rather than stalling a tokio worker.
+    let denied = tokio::task::spawn_blocking(cascade_deny_pending)
+        .await
+        .unwrap_or_else(|err| {
+            tracing::warn!(error = %err, "[emergency] cascade-deny task join failed");
+            0
+        });
     tracing::info!(denied, "[emergency] cascade-denied pending approvals");
 
     publish_global(DomainEvent::AutomationHalted {

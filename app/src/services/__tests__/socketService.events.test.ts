@@ -537,4 +537,29 @@ describe('socketService — automation_halt handler (#4255)', () => {
     expect(() => handlers['automation_halt']!(null)).not.toThrow();
     expect(storeMock.dispatch).not.toHaveBeenCalled();
   });
+
+  it('fails closed: an object without a boolean engaged is dropped (no clearHalt)', async () => {
+    const { handlers, mockSocket } = buildMockSocket();
+    vi.doMock('socket.io-client', () => ({ io: vi.fn(() => mockSocket) }));
+    getCoreRpcUrlMock.mockResolvedValue('http://127.0.0.1:7788/rpc');
+
+    vi.doMock('../../store/safetySlice', () => ({
+      setHalt: vi.fn((x: unknown) => ({ type: 'safety/setHalt', payload: x })),
+      clearHalt: vi.fn(() => ({ type: 'safety/clearHalt' })),
+    }));
+
+    const { socketService } = await import('../socketService');
+    socketService.connect('jwt-halt-ambiguous');
+
+    await pollUntil(() => expect(handlers['automation_halt']).toBeDefined());
+
+    storeMock.dispatch.mockClear();
+
+    // Ambiguous payloads (missing/non-boolean `engaged`) must NOT be treated as
+    // `engaged=false` — that would silently clear an active halt on a kill switch.
+    expect(() => handlers['automation_halt']!({})).not.toThrow();
+    expect(() => handlers['automation_halt']!({ reason: 'x' })).not.toThrow();
+    expect(() => handlers['automation_halt']!({ engaged: 'true' })).not.toThrow();
+    expect(storeMock.dispatch).not.toHaveBeenCalled();
+  });
 });
