@@ -1047,6 +1047,50 @@ mod tests {
     }
 
     #[test]
+    fn command_center_needs_input_surfaces_only_blocked_runs() {
+        use crate::openhuman::session_db::run_ledger::{
+            upsert_agent_run, AgentRunKind, AgentRunStatus, AgentRunUpsert,
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let config = Config {
+            workspace_dir: tmp.path().to_path_buf(),
+            ..Config::default()
+        };
+        let seed = |id: &str, status: AgentRunStatus| {
+            upsert_agent_run(
+                &config,
+                AgentRunUpsert {
+                    id: id.into(),
+                    kind: AgentRunKind::Subagent,
+                    parent_run_id: None,
+                    parent_thread_id: Some("thread-1".into()),
+                    agent_id: Some("researcher".into()),
+                    status,
+                    prompt_ref: None,
+                    worker_thread_id: None,
+                    task_board_id: None,
+                    task_card_id: None,
+                    checkpoint_path: None,
+                    checkpoint: None,
+                    summary: None,
+                    error: None,
+                    metadata: serde_json::json!({}),
+                    started_at: None,
+                    completed_at: None,
+                },
+            )
+            .unwrap();
+        };
+        // A blocked run and a working run — only the blocked one is attention-worthy.
+        seed("run-blocked", AgentRunStatus::AwaitingUser);
+        seed("run-working", AgentRunStatus::Running);
+
+        let signals = command_center_needs_input(&config);
+        assert_eq!(signals.len(), 1, "only the AwaitingUser run surfaces");
+        assert_eq!(signals[0].run_id, "run-blocked");
+    }
+
+    #[test]
     fn self_identity_marks_published_identity_discoverable() {
         let reverse = serde_json::json!({
             "identities": [
