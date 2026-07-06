@@ -615,10 +615,6 @@ fn handle_status(_params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-/// Cap on the command-center runs scanned for the `NeedsInput` bucket — the
-/// attention zone only needs the currently-blocked runs, not the full ledger.
-const ATTENTION_RUN_LIMIT: u32 = 100;
-
 fn handle_attention(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = load_config("attention").await?;
@@ -636,11 +632,21 @@ fn handle_attention(_params: Map<String, Value>) -> ControllerFuture {
         // 2. Agent runs blocked awaiting user input (command-center NeedsInput).
         //    Best-effort: a command-center read failure must not sink the whole
         //    queue — approvals + unread still surface.
-        let needs_input = command_center_needs_input(&config);
+        let needs_input = super::ops::command_center_needs_input(&config);
 
-        // 3. Per-instance unread (non-pinned orchestration sessions).
-        let unread = store::with_connection(&config.workspace_dir, gather_unread_signals)
-            .map_err(|e| format!("attention.unread: {e}"))?;
+        // 3. Per-instance unread (non-pinned orchestration sessions). Best-effort
+        //    like the command-center read: a transient local-DB hiccup must not
+        //    sink the approvals + needs-input signals that already resolved.
+        let unread = match store::with_connection(
+            &config.workspace_dir,
+            super::ops::gather_unread_signals,
+        ) {
+            Ok(unread) => unread,
+            Err(e) => {
+                log::warn!(target: LOG, "[orchestration_rpc] attention.unread_failed: {e}");
+                Vec::new()
+            }
+        };
 
         let queue = attention::assemble_attention(approvals, needs_input, unread);
         log::debug!(
@@ -653,45 +659,6 @@ fn handle_attention(_params: Map<String, Value>) -> ControllerFuture {
         );
         to_json(queue)
     })
-}
-
-/// Fetch the command-center `NeedsInput` bucket as neutral attention signals.
-/// Best-effort — a read error yields an empty vec (logged) so the rest of the
-/// attention queue still assembles. The view→signal mapping is the pure,
-/// unit-tested [`attention::needs_input_from_command_center`].
-fn command_center_needs_input(config: &Config) -> Vec<attention::NeedsInputSignal> {
-    use crate::openhuman::agent_orchestration::command_center::list_agent_work;
-    match list_agent_work(config, Some(ATTENTION_RUN_LIMIT)) {
-        Ok(view) => attention::needs_input_from_command_center(view),
-        Err(e) => {
-            log::warn!(target: LOG, "[orchestration_rpc] attention.command_center_failed: {e}");
-            Vec::new()
-        }
-    }
-}
-
-/// Gather unread attention signals from the orchestration store: every non-pinned
-/// session with a positive unread count. The pinned master/subconscious windows
-/// are excluded — they are not agent instances.
-fn gather_unread_signals(
-    conn: &rusqlite::Connection,
-) -> anyhow::Result<Vec<attention::UnreadSignal>> {
-    let mut out: Vec<attention::UnreadSignal> = Vec::new();
-    for session in store::list_sessions(conn)? {
-        if matches!(session.session_id.as_str(), "master" | "subconscious") {
-            continue;
-        }
-        let unread = store::unread_count(conn, &session.session_id)?;
-        if unread > 0 {
-            out.push(attention::UnreadSignal {
-                session_id: session.session_id,
-                label: session.label,
-                unread,
-                last_message_at: Some(session.last_message_at),
-            });
-        }
-    }
-    Ok(out)
 }
 
 /// Own tiny.place identity + discoverability, composed from the internal
@@ -964,57 +931,6 @@ mod tests {
         let preview = task_preview(&long);
         assert_eq!(preview.chars().count(), 80);
         assert!(preview.ends_with('…'));
-    }
-
-    #[test]
-    fn gather_unread_signals_skips_pinned_and_zero_unread() {
-        let tmp = tempfile::tempdir().unwrap();
-        let config = Config {
-            workspace_dir: tmp.path().to_path_buf(),
-            ..Config::default()
-        };
-        let sess = |id: &str, source: &str, label: Option<&str>, at: &str| OrchestrationSession {
-            session_id: id.into(),
-            agent_id: "@peer".into(),
-            source: source.into(),
-            label: label.map(str::to_string),
-            workspace: None,
-            last_seq: 1,
-            created_at: "2026-07-06T00:00:00Z".into(),
-            last_message_at: at.into(),
-        };
-        let message = |id: &str, session: &str, kind: ChatKind, at: &str| OrchestrationMessage {
-            id: id.into(),
-            agent_id: "@peer".into(),
-            session_id: session.into(),
-            chat_kind: kind,
-            role: "user".into(),
-            body: "hello".into(),
-            timestamp: at.into(),
-            seq: 1,
-        };
-
-        let signals = store::with_connection(&config.workspace_dir, |conn| {
-            // Non-pinned session with one unread message → surfaces.
-            store::upsert_session(conn, &sess("h-1", "claude", Some("Claude · audit"), "t1"))?;
-            store::insert_message(conn, &message("m1", "h-1", ChatKind::Session, "t1"))?;
-            // Pinned master with a message → excluded (not an agent instance).
-            store::upsert_session(conn, &sess("master", "core", None, "t2"))?;
-            store::insert_message(conn, &message("m2", "master", ChatKind::Master, "t2"))?;
-            // Non-pinned session with no messages → zero unread, dropped.
-            store::upsert_session(conn, &sess("h-quiet", "codex", None, "t0"))?;
-            gather_unread_signals(conn)
-        })
-        .unwrap();
-
-        assert_eq!(
-            signals.len(),
-            1,
-            "only the non-pinned unread session surfaces"
-        );
-        assert_eq!(signals[0].session_id, "h-1");
-        assert_eq!(signals[0].unread, 1);
-        assert_eq!(signals[0].label.as_deref(), Some("Claude · audit"));
     }
 
     #[test]
