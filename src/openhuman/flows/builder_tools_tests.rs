@@ -351,6 +351,273 @@ async fn dry_run_catches_unwired_required_composio_arg() {
     );
 }
 
+// ── dry_run_workflow: null-resolution check ─────────────────────────────────
+
+#[tokio::test]
+async fn dry_run_flags_tool_call_arg_null_resolved_from_unschemad_agent() {
+    // The `summarize` agent has no `output_parser.schema`, so (via the
+    // schema-aware mock agent) its structured output has no `channel` field —
+    // the exact "builds but does nothing" shape this check exists to catch.
+    let tool = DryRunWorkflowTool::new(
+        policy(AutonomyLevel::Supervised),
+        test_config(&TempDir::new().unwrap()),
+    );
+    let graph = json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "summarize", "kind": "agent", "name": "Summarize",
+              "config": { "agent_ref": "researcher", "prompt": "summarize" } },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "oh:noop",
+                "args": { "channel": "=nodes.summarize.item.json.channel" } } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "summarize" },
+            { "from_node": "summarize", "to_node": "post" }
+        ]
+    });
+
+    let result = tool.execute(json!({ "graph": graph })).await.unwrap();
+    assert!(!result.is_error, "{}", result.output());
+    let parsed: Value = serde_json::from_str(&result.output()).unwrap();
+    assert_eq!(
+        parsed["sandbox"], true,
+        "still labeled a sandbox result: {parsed}"
+    );
+    assert_eq!(
+        parsed["ok"], false,
+        "a null-resolved tool_call arg must fail the dry run: {parsed}"
+    );
+    let null_resolutions = parsed["null_resolutions"]
+        .as_array()
+        .expect("null_resolutions array");
+    assert_eq!(null_resolutions.len(), 1, "{parsed}");
+    assert_eq!(null_resolutions[0]["node_id"], "post");
+    assert_eq!(null_resolutions[0]["location"], "args.channel");
+    assert_eq!(
+        null_resolutions[0]["expression"],
+        "=nodes.summarize.item.json.channel"
+    );
+    assert!(
+        parsed["message"]
+            .as_str()
+            .unwrap()
+            .to_lowercase()
+            .contains("output_parser"),
+        "{parsed}"
+    );
+}
+
+#[tokio::test]
+async fn dry_run_passes_when_agent_schema_matches_tool_call_binding() {
+    // The FALSE-POSITIVE-PREVENTION case: `summarize` DOES declare a schema
+    // covering `channel`, and `post` binds exactly that field. Without the
+    // schema-aware mock agent (i.e. with the vendored `MockAgentRunner`, which
+    // always echoes `{ agent, request, connection }` regardless of schema)
+    // this would incorrectly fail — proving the mock is what makes the check
+    // accurate rather than perpetually red for correctly-built graphs.
+    let tool = DryRunWorkflowTool::new(
+        policy(AutonomyLevel::Supervised),
+        test_config(&TempDir::new().unwrap()),
+    );
+    let graph = json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "summarize", "kind": "agent", "name": "Summarize",
+              "config": { "agent_ref": "researcher", "prompt": "summarize",
+                "output_parser": { "schema": { "type": "object",
+                    "required": ["channel"],
+                    "properties": { "channel": { "type": "string" } } } } } },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "oh:noop",
+                "args": { "channel": "=nodes.summarize.item.json.channel" } } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "summarize" },
+            { "from_node": "summarize", "to_node": "post" }
+        ]
+    });
+
+    let result = tool.execute(json!({ "graph": graph })).await.unwrap();
+    assert!(!result.is_error, "{}", result.output());
+    let parsed: Value = serde_json::from_str(&result.output()).unwrap();
+    assert_eq!(
+        parsed["ok"], true,
+        "schema-aware mock must satisfy the declared schema: {parsed}"
+    );
+    assert!(
+        parsed["null_resolutions"].as_array().unwrap().is_empty(),
+        "{parsed}"
+    );
+}
+
+#[tokio::test]
+async fn dry_run_passes_when_tool_call_binds_to_upstream_tool_output() {
+    // A `tool_call` binding to another `tool_call`'s real output (not an
+    // agent at all) must not be affected by the agent-schema machinery above.
+    let tool = DryRunWorkflowTool::new(
+        policy(AutonomyLevel::Supervised),
+        test_config(&TempDir::new().unwrap()),
+    );
+    let graph = json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "lookup", "kind": "tool_call", "name": "Lookup",
+              "config": { "slug": "oh:lookup", "args": {} } },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "oh:noop",
+                "args": { "channel": "=nodes.lookup.item.json.tool" } } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "lookup" },
+            { "from_node": "lookup", "to_node": "post" }
+        ]
+    });
+
+    let result = tool.execute(json!({ "graph": graph })).await.unwrap();
+    assert!(!result.is_error, "{}", result.output());
+    let parsed: Value = serde_json::from_str(&result.output()).unwrap();
+    assert_eq!(parsed["ok"], true, "{parsed}");
+    assert!(
+        parsed["null_resolutions"].as_array().unwrap().is_empty(),
+        "{parsed}"
+    );
+}
+
+#[tokio::test]
+async fn dry_run_flags_tool_call_error_when_on_error_is_route() {
+    // `on_error: "route"` converts the preflight failure into a routed error
+    // ITEM so the SANDBOX RUN as a whole still completes (`Ok(outcome)`) —
+    // exactly the case the naive `null_resolutions`-only check would miss,
+    // because the failing node's diagnostics stay empty (the engine never
+    // got far enough to trace an `=`-expression before the preflight error).
+    // Seed the same schema as `dry_run_catches_unwired_required_composio_arg`
+    // (process-global cache; keep the arg list identical across tests).
+    let mut entries = std::collections::HashMap::new();
+    entries.insert(
+        "GMAIL_SEND_EMAIL".to_string(),
+        vec!["to".to_string(), "body".to_string()],
+    );
+    crate::openhuman::tinyflows::caps::seed_required_args_cache("gmail", entries);
+
+    let tool = DryRunWorkflowTool::new(
+        policy(AutonomyLevel::Supervised),
+        test_config(&TempDir::new().unwrap()),
+    );
+    let graph = json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Send email",
+              "config": { "slug": "GMAIL_SEND_EMAIL", "on_error": "route",
+                "args": { "to": "=item.email", "body": "hello" } } }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "post" } ]
+    });
+
+    // `to` misses (trigger input has no `email`) — a real run would fail the
+    // preflight; `on_error: "route"` must not let that slip through as `ok: true`.
+    let result = tool
+        .execute(json!({ "graph": graph, "input": {} }))
+        .await
+        .unwrap();
+    assert!(!result.is_error, "{}", result.output());
+    let parsed: Value = serde_json::from_str(&result.output()).unwrap();
+    assert_eq!(
+        parsed["ok"], false,
+        "on_error: route must not mask a real tool_call failure: {parsed}"
+    );
+    let node_errors = parsed["node_errors"].as_array().expect("node_errors array");
+    assert_eq!(node_errors.len(), 1, "{parsed}");
+    assert_eq!(node_errors[0]["node_id"], "post");
+    assert!(
+        node_errors[0]["error"].as_str().unwrap().contains("to"),
+        "error must name the missing field: {parsed}"
+    );
+}
+
+#[tokio::test]
+async fn dry_run_flags_tool_call_error_when_on_error_is_continue() {
+    // Same case as above, but `on_error: "continue"` — the other policy that
+    // converts a node failure into routed data instead of failing the run.
+    let mut entries = std::collections::HashMap::new();
+    entries.insert(
+        "GMAIL_SEND_EMAIL".to_string(),
+        vec!["to".to_string(), "body".to_string()],
+    );
+    crate::openhuman::tinyflows::caps::seed_required_args_cache("gmail", entries);
+
+    let tool = DryRunWorkflowTool::new(
+        policy(AutonomyLevel::Supervised),
+        test_config(&TempDir::new().unwrap()),
+    );
+    let graph = json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Send email",
+              "config": { "slug": "GMAIL_SEND_EMAIL", "on_error": "continue",
+                "args": { "to": "=item.email", "body": "hello" } } }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "post" } ]
+    });
+
+    let result = tool
+        .execute(json!({ "graph": graph, "input": {} }))
+        .await
+        .unwrap();
+    assert!(!result.is_error, "{}", result.output());
+    let parsed: Value = serde_json::from_str(&result.output()).unwrap();
+    assert_eq!(
+        parsed["ok"], false,
+        "on_error: continue must not mask a real tool_call failure: {parsed}"
+    );
+    assert_eq!(
+        parsed["node_errors"].as_array().unwrap().len(),
+        1,
+        "{parsed}"
+    );
+}
+
+#[tokio::test]
+async fn dry_run_passes_when_agent_enum_schema_binds_to_tool_call() {
+    // The agent declares an `enum`-constrained field; the schema-aware mock
+    // must synthesize an ALLOWED value (not a generic `""` placeholder, which
+    // would fail the vendored validator's `enum` check) so a correctly-built
+    // graph using an enum schema dry-runs green instead of false-positiving.
+    let tool = DryRunWorkflowTool::new(
+        policy(AutonomyLevel::Supervised),
+        test_config(&TempDir::new().unwrap()),
+    );
+    let graph = json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "triage", "kind": "agent", "name": "Triage",
+              "config": { "agent_ref": "researcher", "prompt": "triage this",
+                "output_parser": { "schema": { "type": "object",
+                    "required": ["priority"],
+                    "properties": {
+                        "priority": { "type": "string", "enum": ["urgent", "normal"] }
+                    } } } } },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "oh:noop",
+                "args": { "priority": "=nodes.triage.item.json.priority" } } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "triage" },
+            { "from_node": "triage", "to_node": "post" }
+        ]
+    });
+
+    let result = tool.execute(json!({ "graph": graph })).await.unwrap();
+    assert!(!result.is_error, "{}", result.output());
+    let parsed: Value = serde_json::from_str(&result.output()).unwrap();
+    assert_eq!(
+        parsed["ok"], true,
+        "enum-schema agent must dry-run green: {parsed}"
+    );
+    assert!(parsed["null_resolutions"].as_array().unwrap().is_empty());
+    assert!(parsed["node_errors"].as_array().unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn revise_workflow_warns_on_unwired_required_composio_arg() {
     let mut entries = std::collections::HashMap::new();
@@ -502,4 +769,96 @@ async fn save_workflow_rejects_invalid_graph_and_leaves_flow_intact() {
         1,
         "original graph must be untouched"
     );
+}
+
+// ── save_workflow: enforcing binding-resolvability gate ─────────────────────
+
+/// The proven live-failure shape (same as
+/// `tools_tests::propose_workflow_rejects_unschemad_agent_binding`): a
+/// `summarize` agent with no `output_parser.schema`, and a `notify` tool_call
+/// binding `args.channel` to its (unschemad, therefore unresolvable) output.
+fn unresolvable_binding_graph() -> Value {
+    json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "summarize", "kind": "agent", "name": "Summarize",
+              "config": { "agent_ref": "researcher", "prompt": "summarize" } },
+            { "id": "notify", "kind": "tool_call", "name": "Notify",
+              "config": { "slug": "SLACK_SEND_MESSAGE",
+                "args": { "channel": "=nodes.summarize.item.json.channel" } } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "summarize" },
+            { "from_node": "summarize", "to_node": "notify" }
+        ]
+    })
+}
+
+#[tokio::test]
+async fn save_workflow_rejects_unschemad_agent_binding() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let flow_id = seed_flow(&config, "Blank flow").await;
+    let tool = SaveWorkflowTool::new(config.clone());
+
+    let result = tool
+        .execute(json!({ "flow_id": flow_id, "graph": unresolvable_binding_graph() }))
+        .await
+        .unwrap();
+
+    assert!(result.is_error, "must be rejected: {}", result.output());
+    let output = result.output();
+    assert!(output.contains("notify"), "{output}");
+    assert!(output.contains("channel"), "{output}");
+    assert!(output.contains("summarize"), "{output}");
+    assert!(output.contains("output_parser.schema"), "{output}");
+
+    // The flow it tried to save onto must be untouched.
+    let saved = ops::flows_get(&config, &flow_id).await.unwrap().value;
+    assert_eq!(saved.name, "Blank flow");
+    assert_eq!(
+        saved.graph.nodes.len(),
+        1,
+        "original graph must be untouched"
+    );
+}
+
+#[tokio::test]
+async fn save_workflow_accepts_correctly_schemad_graph() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let flow_id = seed_flow(&config, "Blank flow").await;
+    let tool = SaveWorkflowTool::new(config.clone());
+
+    let graph = json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "summarize", "kind": "agent", "name": "Summarize",
+              "config": { "agent_ref": "researcher", "prompt": "summarize",
+                "output_parser": { "schema": { "type": "object",
+                    "required": ["channel"],
+                    "properties": { "channel": { "type": "string" } } } } } },
+            { "id": "notify", "kind": "tool_call", "name": "Notify",
+              "config": { "slug": "SLACK_SEND_MESSAGE",
+                "args": { "channel": "=nodes.summarize.item.json.channel" } } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "summarize" },
+            { "from_node": "summarize", "to_node": "notify" }
+        ]
+    });
+
+    let result = tool
+        .execute(json!({ "flow_id": flow_id, "graph": graph, "name": "Summarize and notify" }))
+        .await
+        .unwrap();
+
+    assert!(!result.is_error, "{}", result.output());
+    let parsed: Value = serde_json::from_str(&result.output()).unwrap();
+    assert_eq!(parsed["type"], "workflow_saved");
+    assert_eq!(parsed["node_count"], 3);
+
+    let saved = ops::flows_get(&config, &flow_id).await.unwrap().value;
+    assert_eq!(saved.name, "Summarize and notify");
+    assert_eq!(saved.graph.nodes.len(), 3);
 }

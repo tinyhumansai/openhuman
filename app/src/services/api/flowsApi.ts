@@ -49,7 +49,13 @@ const FLOW_RESUME_TIMEOUT_MS = 610_000;
 // ---------------------------------------------------------------------------
 
 /** Lifecycle status of a durable flow run. */
-export type FlowRunStatus = 'running' | 'completed' | 'pending_approval' | 'failed';
+export type FlowRunStatus =
+  | 'running'
+  | 'completed'
+  | 'completed_with_warnings'
+  | 'pending_approval'
+  | 'failed'
+  | 'cancelled';
 
 /** One reconstructed step of a persisted `FlowRun` (`src/openhuman/flows/types.rs::FlowRunStep`). */
 export interface FlowRunStep {

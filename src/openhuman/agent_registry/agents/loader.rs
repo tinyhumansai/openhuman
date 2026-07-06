@@ -733,10 +733,18 @@ mod tests {
                 // orchestrator must not mutate files or run commands; all
                 // modification is deferred to `run_code` / owning
                 // specialists where edits live next to build/test/verify.
-                for forbidden in ["shell", "edit", "file_write", "apply_patch"] {
+                for forbidden in [
+                    "shell",
+                    "edit",
+                    "file_write",
+                    "apply_patch",
+                    "curl",
+                    "storage_set_visibility",
+                    "storage_delete_file",
+                ] {
                     assert!(
                         !tools.iter().any(|t| t == forbidden),
-                        "orchestrator must NOT have write/exec tool `{forbidden}`"
+                        "orchestrator must NOT have write/exec/lifecycle tool `{forbidden}`"
                     );
                 }
                 // Basic READ-ONLY direct surface: quick lookups without
@@ -748,6 +756,7 @@ mod tests {
                     "list",
                     "web_search_tool",
                     "web_fetch",
+                    "http_request",
                 ] {
                     assert!(
                         tools.iter().any(|t| t == direct),
@@ -813,6 +822,35 @@ mod tests {
             def.effective_tokenjuice_compression(),
             AgentTokenjuiceCompression::Light
         );
+    }
+
+    #[test]
+    fn broad_agent_surfaces_expose_storage_transfer_not_lifecycle_tools() {
+        for id in ["code_executor", "integrations_agent", "orchestrator"] {
+            let def = find(id);
+            match &def.tools {
+                ToolScope::Named(tools) => {
+                    for required in [
+                        "storage_upload_file",
+                        "storage_download_file",
+                        "storage_list_files",
+                        "storage_get_link",
+                    ] {
+                        assert!(
+                            tools.iter().any(|t| t == required),
+                            "{id} must expose storage transfer tool `{required}`"
+                        );
+                    }
+                    for forbidden in ["storage_set_visibility", "storage_delete_file"] {
+                        assert!(
+                            !tools.iter().any(|t| t == forbidden),
+                            "{id} must not expose storage lifecycle tool `{forbidden}`"
+                        );
+                    }
+                }
+                ToolScope::Wildcard => panic!("{id} must have Named tool scope"),
+            }
+        }
     }
 
     #[test]
@@ -1478,7 +1516,7 @@ mod tests {
     fn orchestrator_does_not_get_curl() {
         // Per design: curl is a `Write` permission tool that writes
         // to the workspace. The orchestrator delegates rather than
-        // executing — code_executor / researcher own actual downloads.
+        // executing — code_executor / tools_agent own actual downloads.
         let def = find("orchestrator");
         if let ToolScope::Named(tools) = &def.tools {
             assert!(

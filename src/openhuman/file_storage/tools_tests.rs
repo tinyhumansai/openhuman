@@ -8,6 +8,7 @@ use super::{
     StorageGetLinkTool, StorageListFilesTool, StorageSetVisibilityTool, StorageUploadFileTool,
 };
 use crate::openhuman::integrations::IntegrationClient;
+use crate::openhuman::security::{AutonomyLevel, SecurityPolicy};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCategory};
 
 fn dummy_client() -> Arc<IntegrationClient> {
@@ -40,9 +41,9 @@ fn upload_tool_schema_and_metadata() {
 fn download_tool_schema_and_metadata() {
     let tool = StorageDownloadFileTool::new(dummy_client(), PathBuf::from("/tmp"));
     assert_eq!(tool.name(), "storage_download_file");
-    assert_eq!(tool.permission_level(), PermissionLevel::ReadOnly);
+    assert_eq!(tool.permission_level(), PermissionLevel::Write);
     assert_eq!(tool.category(), ToolCategory::Workflow);
-    assert!(!tool.external_effect());
+    assert!(tool.external_effect());
 
     let schema = tool.parameters_schema();
     assert_eq!(schema["required"], json!(["file_id"]));
@@ -65,8 +66,9 @@ fn list_tool_metadata() {
 fn get_link_tool_schema_and_metadata() {
     let tool = StorageGetLinkTool::new(dummy_client());
     assert_eq!(tool.name(), "storage_get_link");
-    assert_eq!(tool.permission_level(), PermissionLevel::ReadOnly);
+    assert_eq!(tool.permission_level(), PermissionLevel::Write);
     assert_eq!(tool.category(), ToolCategory::Workflow);
+    assert!(tool.external_effect());
 
     let schema = tool.parameters_schema();
     assert_eq!(schema["required"], json!(["file_id"]));
@@ -250,6 +252,65 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn client_for(server: &MockServer) -> Arc<IntegrationClient> {
     Arc::new(IntegrationClient::new(server.uri(), "tok".to_string()))
+}
+
+fn readonly_security() -> Arc<SecurityPolicy> {
+    Arc::new(SecurityPolicy {
+        autonomy: AutonomyLevel::ReadOnly,
+        ..SecurityPolicy::default()
+    })
+}
+
+#[tokio::test]
+async fn storage_transfer_tools_block_readonly_autonomy_before_network() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("a.txt"), b"hi").unwrap();
+
+    let upload = StorageUploadFileTool::new_with_security(
+        dummy_client(),
+        tmp.path().to_path_buf(),
+        readonly_security(),
+    );
+    let upload_res = upload.execute(json!({ "path": "a.txt" })).await.unwrap();
+    assert!(upload_res.is_error);
+    assert!(upload_res.output().contains("[policy-blocked]"));
+
+    let download = StorageDownloadFileTool::new_with_security(
+        dummy_client(),
+        tmp.path().to_path_buf(),
+        readonly_security(),
+    );
+    let download_res = download
+        .execute(json!({ "file_id": "file_123" }))
+        .await
+        .unwrap();
+    assert!(download_res.is_error);
+    assert!(download_res.output().contains("[policy-blocked]"));
+
+    let get_link = StorageGetLinkTool::new_with_security(dummy_client(), readonly_security());
+    let link_res = get_link
+        .execute(json!({ "file_id": "file_123" }))
+        .await
+        .unwrap();
+    assert!(link_res.is_error);
+    assert!(link_res.output().contains("[policy-blocked]"));
+
+    let set_visibility =
+        StorageSetVisibilityTool::new_with_security(dummy_client(), readonly_security());
+    let visibility_res = set_visibility
+        .execute(json!({ "file_id": "file_123", "visibility": "public" }))
+        .await
+        .unwrap();
+    assert!(visibility_res.is_error);
+    assert!(visibility_res.output().contains("[policy-blocked]"));
+
+    let delete = StorageDeleteFileTool::new_with_security(dummy_client(), readonly_security());
+    let delete_res = delete
+        .execute(json!({ "file_id": "file_123" }))
+        .await
+        .unwrap();
+    assert!(delete_res.is_error);
+    assert!(delete_res.output().contains("[policy-blocked]"));
 }
 
 #[tokio::test]

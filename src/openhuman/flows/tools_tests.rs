@@ -262,3 +262,46 @@ fn display_label_humanizes_the_tool_name() {
         Some("Propose Workflow")
     );
 }
+
+// ── enforcing binding-resolvability gate ────────────────────────────────────
+
+#[tokio::test]
+async fn propose_workflow_rejects_unschemad_agent_binding() {
+    // The proven live-failure graph: `summarize` has no `output_parser.schema`,
+    // so `post`'s `args.channel` binding is guaranteed to resolve null at
+    // runtime. Unlike the advisory dry-run check, propose_workflow must
+    // REJECT this outright rather than warn (warning_count would have been 0
+    // here — nothing stopped this from reaching save_workflow before).
+    let tmp = TempDir::new().unwrap();
+    let tool = ProposeWorkflowTool::new(test_config(&tmp));
+
+    let graph = json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "summarize", "kind": "agent", "name": "Summarize",
+              "config": { "agent_ref": "researcher", "prompt": "summarize" } },
+            { "id": "notify", "kind": "tool_call", "name": "Notify",
+              "config": { "slug": "SLACK_SEND_MESSAGE",
+                "args": { "channel": "=nodes.summarize.item.json.channel" } } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "summarize" },
+            { "from_node": "summarize", "to_node": "notify" }
+        ]
+    });
+
+    let result = tool
+        .execute(json!({ "name": "Summarize and notify", "graph": graph }))
+        .await
+        .unwrap();
+
+    assert!(result.is_error, "must be rejected: {}", result.output());
+    let output = result.output();
+    assert!(output.contains("notify"), "{output}");
+    assert!(output.contains("channel"), "{output}");
+    assert!(output.contains("summarize"), "{output}");
+    assert!(
+        output.contains("output_parser.schema"),
+        "must name the missing schema as the fix: {output}"
+    );
+}

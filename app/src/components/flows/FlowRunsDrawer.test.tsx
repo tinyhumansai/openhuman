@@ -28,20 +28,26 @@ vi.mock('./FlowRunInspectorDrawer', () => ({
   FLOW_RUN_STATUS_ACCENT: {
     running: 'accent-running',
     completed: 'accent-completed',
+    completed_with_warnings: 'accent-completed-with-warnings',
     pending_approval: 'accent-pending',
     failed: 'accent-failed',
+    cancelled: 'accent-cancelled',
   },
   FLOW_RUN_STATUS_DOT: {
     running: 'dot-running',
     completed: 'dot-completed',
+    completed_with_warnings: 'dot-completed-with-warnings',
     pending_approval: 'dot-pending',
     failed: 'dot-failed',
+    cancelled: 'dot-cancelled',
   },
   FLOW_RUN_STATUS_KEY: {
     running: 'flowRuns.status.running',
     completed: 'flowRuns.status.completed',
+    completed_with_warnings: 'flowRuns.status.completed_with_warnings',
     pending_approval: 'flowRuns.status.pending_approval',
     failed: 'flowRuns.status.failed',
+    cancelled: 'flowRuns.status.cancelled',
   },
   FlowRunInspectorDrawer: (props: { runId: string | null; onClose: () => void }) => {
     FlowRunInspectorDrawer(props);
@@ -107,6 +113,14 @@ describe('FlowRunsDrawer', () => {
     expect(screen.getByTestId('flow-run-row-run-1')).toBeInTheDocument();
     expect(screen.getByTestId('flow-run-row-run-2')).toBeInTheDocument();
     expect(screen.getByText('Runs for Daily digest')).toBeInTheDocument();
+  });
+
+  it('renders the amber pill for a run completed with warnings', async () => {
+    listFlowRuns.mockResolvedValue([makeRun({ id: 'run-1', status: 'completed_with_warnings' })]);
+    renderDrawer('flow-1', vi.fn());
+
+    const row = await screen.findByTestId('flow-run-row-run-1');
+    expect(row).toHaveTextContent('Completed with warnings');
   });
 
   it('falls back to a generic title when no flowName is given', async () => {

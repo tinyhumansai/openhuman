@@ -108,6 +108,18 @@ connected, `list_flow_connections` → build the `tool_call` node with the real
 3. **Build the graph** (see the model below).
 4. **Self-check with `dry_run_workflow`** on the draft — catch missing edges,
    wrong ports, unreachable nodes. Fix and re-run.
+
+   **Before you call `propose_workflow` / `save_workflow`, run this checklist —
+   a graph that compiles and dry-runs "green" can still do NOTHING at runtime
+   if a binding silently resolves to null:**
+   - Every `agent` node whose output a downstream
+     `=nodes.<agent_id>.item.json.<field>` binding reads MUST declare
+     `config.output_parser.schema` naming that field under `properties`. No
+     schema ⇒ the agent's item is `{text: "..."}` and the binding is null.
+   - If `dry_run_workflow` reports `"ok": false` with a `null_resolutions`
+     list, **fix every one** before proposing — add the missing schema, or
+     rewire the expression to a real upstream field. Don't propose/save a
+     graph `dry_run_workflow` flagged.
 5. **`propose_workflow`** (first draft) or **`revise_workflow`** (iterating on a
    prior draft — apply the change to the existing graph, don't regenerate from
    scratch). If validation fails, read the error, fix the graph, call again.
@@ -131,15 +143,18 @@ A `WorkflowGraph` is `{ name?, nodes: [...], edges: [...] }`.
    **If the agent's output feeds a `tool_call`, it MUST declare an output
    schema** — set `config.output_parser.schema` (a JSON Schema object) — so
    its emitted item is a structured object whose fields downstream nodes can
-   address (`=nodes.<agent_id>.item.<field>`). Without a schema the agent
-   emits `{text: "..."}` and `=item.to`-style bindings resolve to null.
+   address (`=nodes.<agent_id>.item.json.<field>` — see "the envelope" below).
+   Without a schema the agent emits `{text: "..."}` (no other fields) and any
+   `.item.json.<field>`-style binding to it resolves to null.
 3. **`tool_call`** — an action. Two flavours by `config.slug`:
    - **Composio app action** — `config.slug` = a real action slug (from
      `search_tool_catalog`, e.g. `GMAIL_SEND_EMAIL`) + `config.connection_ref`
      for the account. **Wire every REQUIRED arg in `config.args` from a named
      upstream node** — e.g. an email send needs `to`/`recipient_email`, usually
-     `"to": "=nodes.<upstream_id>.item.email"`. A required arg left unwired (or
-     whose expression misses) now fails BEFORE the provider call — both in
+     `"to": "=nodes.<upstream_id>.item.json.email"` (drop `.json` only if
+     `<upstream_id>` is a `code`/`transform`/`split_out`/`merge`/`trigger` node
+     — see "the envelope" below). A required arg left unwired (or whose
+     expression misses) now fails BEFORE the provider call — both in
      `dry_run_workflow` and in real runs — with an error naming the field.
    - **Native OpenHuman tool** — `config.slug` = `oh:<tool_name>` (e.g.
      `oh:web_search`) to call one of the assistant's own built-in tools (search,
@@ -177,15 +192,34 @@ The scope exposes:
 - `nodes` — **every completed node's output, keyed by node id**:
   `nodes.<id>.item` (first item) and `nodes.<id>.items` (all items). Use this
   to reference ANY upstream node — not just the immediate predecessor — and to
-  disambiguate a fan-in node's inputs. Dotted form: `"=nodes.fetch.item.email"`;
-  jq form: `"=.nodes[\"fetch\"].items[0].email"`. Ids (not names) are the key.
+  disambiguate a fan-in node's inputs. Ids (not names) are the key.
 
 Use expressions to thread data between steps (a `transform`'s `set`, an
 `agent`'s `prompt`, a `tool_call`'s `args`). Prefer `=nodes.<id>.…` for
 `tool_call` args so the binding survives graph re-wiring.
 
+**The envelope — `.item` vs. `.item.json`.** `agent`, `tool_call`, and
+`http_request` nodes wrap their result in a stable
+`{ json, text, raw }` envelope, so `nodes.<id>.item` for one of THOSE node
+kinds is that envelope, NOT the structured value itself:
+
+- Structured fields live under **`.json`** — `"=nodes.<id>.item.json.<field>"`
+  (jq: `"=.nodes[\"<id>\"].items[0].json.<field>"`).
+- Prose lives under **`.text`** — `"=nodes.<id>.item.text"`.
+- `code`, `transform`, `split_out`, `merge`, `output_parser`, `sub_workflow`,
+  and `trigger` nodes do **NOT** envelope — their output is addressed directly,
+  `"=nodes.<id>.item.<field>"`, same as the ungrouped `item`/`items` scope
+  entries above (which are always the raw predecessor value, envelope
+  included when the predecessor is one of the three enveloping kinds).
+
+**Getting this wrong is the single most common way a graph "builds" (compiles,
+dry-runs against echo mocks) but does nothing at runtime** — the expression
+resolves to `null` silently rather than erroring. `dry_run_workflow` catches a
+null-resolved `tool_call` arg and fails with `null_resolutions`; if you see
+one, check first whether the upstream node needs `.json.` inserted.
+
 **Worked example — agent → Gmail send.** The agent must declare a schema, and
-the tool_call wires each required arg from the agent BY ID:
+the tool_call wires each required arg from the agent BY ID, through `.json.`:
 
 ```json
 { "id": "extract", "kind": "agent", "config": {
@@ -195,13 +229,14 @@ the tool_call wires each required arg from the agent BY ID:
       "properties": { "email": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"} } } } } }
 { "id": "send", "kind": "tool_call", "config": {
     "slug": "GMAIL_SEND_EMAIL", "connection_ref": "composio:gmail:<conn_id>",
-    "args": { "to": "=nodes.extract.item.email",
-              "subject": "=nodes.extract.item.subject",
-              "body": "=nodes.extract.item.body" } } }
+    "args": { "to": "=nodes.extract.item.json.email",
+              "subject": "=nodes.extract.item.json.subject",
+              "body": "=nodes.extract.item.json.body" } } }
 ```
 
-Without the schema, `=nodes.extract.item.email` would be null (the agent's
-item would be `{text: ...}`) and the send would fail preflight naming `to`.
+Without the schema, `=nodes.extract.item.json.email` would be null (the
+agent's `.json` has no `email` key — it's just `{text: "...", ...}`) and
+`dry_run_workflow` would report it as a `null_resolutions` entry naming `to`.
 
 ### Trigger kinds — which ones actually fire
 

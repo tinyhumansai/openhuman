@@ -57,26 +57,38 @@ export const FLOW_RUN_STATUS_ACCENT: Record<FlowRunStatus, string> = {
     'border-ocean-200 bg-ocean-50 text-ocean-700 dark:border-ocean-500/30 dark:bg-ocean-500/10 dark:text-ocean-300',
   completed:
     'border-sage-200 bg-sage-50 text-sage-700 dark:border-sage-500/30 dark:bg-sage-500/10 dark:text-sage-300',
+  // Settled like `completed`, but at least one step had a `=`-binding that
+  // resolved to `null` (run honesty, PR2) — reuse `pending_approval`'s amber
+  // so "needs a look" reads consistently across statuses.
+  completed_with_warnings:
+    'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300',
   pending_approval:
     'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300',
   failed:
     'border-coral-200 bg-coral-50 text-coral-700 dark:border-coral-500/30 dark:bg-coral-500/10 dark:text-coral-300',
+  // Neutral treatment, matching `WorkflowRunDetail.tsx`'s `RUN_STATUS_ACCENT.cancelled`.
+  cancelled: 'border-line bg-surface-muted text-content-secondary',
 };
 
 /** Header status dot per run status — mirrors `PHASE_STATUS_DOT`. Exported, see above. */
 export const FLOW_RUN_STATUS_DOT: Record<FlowRunStatus, string> = {
   running: 'bg-ocean-500 animate-pulse',
   completed: 'bg-sage-500',
+  // Settled (no pulse) — the amber signals "worth a look", not "in progress".
+  completed_with_warnings: 'bg-amber-500',
   pending_approval: 'bg-amber-500 animate-pulse',
   failed: 'bg-coral-500',
+  cancelled: 'bg-surface-strong',
 };
 
 /** i18n key per run status. Exported, see above. */
 export const FLOW_RUN_STATUS_KEY: Record<FlowRunStatus, string> = {
   running: 'flowRuns.status.running',
   completed: 'flowRuns.status.completed',
+  completed_with_warnings: 'flowRuns.status.completed_with_warnings',
   pending_approval: 'flowRuns.status.pending_approval',
   failed: 'flowRuns.status.failed',
+  cancelled: 'flowRuns.status.cancelled',
 };
 
 function formatTimestamp(value: string | null | undefined): string | null {

@@ -23,7 +23,7 @@ use serde_json::{json, Value};
 use tinyflows::model::{Node, NodeKind, WorkflowGraph};
 
 use crate::openhuman::config::Config;
-use crate::openhuman::flows::ops::validate_and_migrate_graph;
+use crate::openhuman::flows::ops::{validate_and_migrate_graph, validate_binding_resolvability};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 
 /// Max characters kept for a `config_hint` before truncation, so a long
@@ -175,6 +175,25 @@ impl Tool for ProposeWorkflowTool {
                 )));
             }
         };
+
+        // Enforcing binding-resolvability gate (see
+        // `ops::validate_binding_resolvability`): reject outright — rather
+        // than merely warn — a `tool_call` binding that is guaranteed to
+        // resolve null (or the wrong value) at runtime, so the builder must
+        // fix the graph before it can even be proposed to the user.
+        let binding_errors = validate_binding_resolvability(&graph);
+        if !binding_errors.is_empty() {
+            tracing::debug!(
+                target: "flows",
+                %name,
+                error_count = binding_errors.len(),
+                "[flows] propose_workflow: binding-resolvability check rejected the graph"
+            );
+            return Ok(ToolResult::error(format!(
+                "{}\n\nFix these bindings and call propose_workflow again.",
+                binding_errors.join("\n\n")
+            )));
+        }
 
         let summary = build_summary(&graph);
         // Author-time warnings: unfired trigger kinds + unwired REQUIRED

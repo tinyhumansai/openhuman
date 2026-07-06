@@ -230,6 +230,26 @@ pub fn session_last_seq(
         .optional()?)
 }
 
+/// The most recent message body for a session — the roster task line's "current
+/// activity". Newest by timestamp then seq; `None` when the session has no
+/// messages yet. Body is decrypted plaintext (workspace-internal, like the rest
+/// of this store).
+pub fn latest_message_preview(
+    conn: &Connection,
+    agent_id: &str,
+    session_id: &str,
+) -> Result<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT body FROM messages
+               WHERE agent_id = ?1 AND session_id = ?2
+               ORDER BY timestamp DESC, seq DESC LIMIT 1",
+            params![agent_id, session_id],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
 /// List every persisted session row, newest activity first (stage-7 read surface).
 pub fn list_sessions(conn: &Connection) -> Result<Vec<OrchestrationSession>> {
     let mut stmt = conn.prepare(
@@ -743,6 +763,31 @@ mod tests {
             assert!(!insert_message(conn, &msg("m1", "@a", "h1", 1))?);
             assert!(message_exists(conn, "m1")?);
             assert_eq!(count_messages(conn, "@a", "h1")?, 1);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn latest_message_preview_returns_newest_or_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        with_connection(tmp.path(), |conn| {
+            upsert_session(conn, &session("@a", "h1", 1))?;
+            // No messages yet.
+            assert_eq!(latest_message_preview(conn, "@a", "h1")?, None);
+
+            // Same timestamp → newest is decided by seq DESC.
+            insert_message(conn, &msg("m1", "@a", "h1", 1))?;
+            let mut newer = msg("m2", "@a", "h1", 2);
+            newer.body = "later line".into();
+            insert_message(conn, &newer)?;
+            assert_eq!(
+                latest_message_preview(conn, "@a", "h1")?.as_deref(),
+                Some("later line")
+            );
+
+            // Scoped to (agent, session): a different session is not returned.
+            assert_eq!(latest_message_preview(conn, "@a", "other")?, None);
             Ok(())
         })
         .unwrap();

@@ -73,6 +73,7 @@ const PINNED_SESSIONS = [
     unread: 0,
     active: true,
     pinned: true,
+    status: 'idle' as const,
   },
   {
     sessionId: 'subconscious',
@@ -83,6 +84,7 @@ const PINNED_SESSIONS = [
     unread: 0,
     active: true,
     pinned: true,
+    status: 'idle' as const,
   },
 ];
 
@@ -100,6 +102,7 @@ describe('TinyPlaceOrchestrationTab', () => {
         unread: 0,
         active: true,
         pinned: false,
+        status: 'idle' as const,
       },
     });
     messagesListMock.mockResolvedValue({ messages: [] });
@@ -191,6 +194,7 @@ describe('TinyPlaceOrchestrationTab', () => {
           unread: 0,
           active: true,
           pinned: false,
+          status: 'idle' as const,
         },
       ],
     });
@@ -230,6 +234,7 @@ describe('TinyPlaceOrchestrationTab', () => {
           unread: 0,
           active: true,
           pinned: false,
+          status: 'idle' as const,
         },
       ],
     });
@@ -283,6 +288,7 @@ describe('TinyPlaceOrchestrationTab', () => {
           unread: 3,
           active: true,
           pinned: false,
+          status: 'idle' as const,
         },
       ],
     });
@@ -528,6 +534,7 @@ describe('TinyPlaceOrchestrationTab', () => {
           unread: 0,
           active: true,
           pinned: false,
+          status: 'idle' as const,
         },
       ],
     });

@@ -167,6 +167,25 @@ impl Tool for ReviseWorkflowTool {
             }
         };
 
+        // Enforcing binding-resolvability gate (see
+        // `ops::validate_binding_resolvability`): reject outright — rather
+        // than merely warn — a `tool_call` binding that is guaranteed to
+        // resolve null (or the wrong value) at runtime, so the builder must
+        // fix the graph before the revision can even be proposed.
+        let binding_errors = ops::validate_binding_resolvability(&graph);
+        if !binding_errors.is_empty() {
+            tracing::debug!(
+                target: "flows",
+                %name,
+                error_count = binding_errors.len(),
+                "[flows] revise_workflow: binding-resolvability check rejected the revised graph"
+            );
+            return Ok(ToolResult::error(format!(
+                "{}\n\nFix these bindings and call revise_workflow again.",
+                binding_errors.join("\n\n")
+            )));
+        }
+
         let summary = super::tools::build_summary(&graph);
         let mut warnings = ops::graph_trigger_warnings(&graph);
         // Author-time wiring check: unwired REQUIRED Composio args come back
@@ -718,6 +737,34 @@ impl Tool for ListAgentProfilesTool {
 /// so a Composio `tool_call` whose required arg is missing or `=`-resolved to
 /// null fails the dry run with the same actionable, field-naming error a real
 /// run would produce — the echo mocks alone would happily accept a null `to`.
+///
+/// **Null-resolution check (the "produces functionally-broken workflows" fix):**
+/// a required arg can be present *and non-Composio* (a native `oh:` tool, or a
+/// Composio arg the catalog has no cached schema for) and still be wired to a
+/// `=`-expression that silently resolves to `null` — the preflight above only
+/// catches a *missing/null Composio-required* arg, so a graph like that used to
+/// dry-run green and then do nothing at runtime. The run is driven through
+/// [`tinyflows::engine::run_with_observer`] with a [`CapturingObserver`] that
+/// records every node's [`ExecutionStep::diagnostics`](tinyflows::observability::ExecutionStep)
+/// — the `=`-expressions the vendored engine itself traced as null-resolved
+/// (see `tinyflows::expr::resolve_traced`). After the run settles, every
+/// diagnostic on a **`tool_call` node's `args.*` location** is collected; any
+/// hit fails the dry run with `ok: false` and the offending
+/// `{ node_id, location, expression }` list, rather than reporting `ok: true`
+/// for a graph that would silently no-op. Diagnostics on `agent`-node prompt
+/// expressions (or any non-`tool_call` node) are NOT fatal here — a null in
+/// prose is not execution-breaking the way a null tool arg is.
+///
+/// **`on_error: continue`/`route` does not mask a `tool_call` failure either.**
+/// Those policies convert an executor error (e.g. the required-arg preflight
+/// rejecting a null arg) into a routed error ITEM so the *run* still completes
+/// (`Ok(outcome)`) — the failing node's `ExecutionStep` carries an EMPTY
+/// `diagnostics` (the null check above would miss it) but its `status` is
+/// [`StepStatus::Error`](tinyflows::observability::StepStatus::Error). Every
+/// such `tool_call` step is collected into `node_errors`
+/// (`{ node_id, error }`, the error text read back out of the run's `output`
+/// state — see [`tool_call_error_message`]) and fails the dry run the same as
+/// a null resolution.
 pub struct DryRunWorkflowTool {
     security: Arc<SecurityPolicy>,
     config: Arc<Config>,
@@ -825,14 +872,16 @@ impl Tool for DryRunWorkflowTool {
             }
         };
 
-        // Wire the mock `AgentRunner` (echoes `agent_ref`/request/conn) so a
-        // draft with `agent` nodes exercises the agent-node path during the
-        // dry run instead of erroring on a missing capability — the plain
-        // `mock_capabilities()` leaves `agent: None`. No real agent turn fires;
-        // the mock runner is a deterministic echo, same contract as the other
-        // sandbox mocks.
+        // Wire the schema-aware mock `AgentRunner` so a draft with `agent`
+        // nodes exercises the agent-node path during the dry run instead of
+        // erroring on a missing capability — the plain `mock_capabilities()`
+        // leaves `agent: None`. No real agent turn fires; the mock runner is a
+        // deterministic echo, same contract as the other sandbox mocks, except
+        // it additionally honors `config.output_parser.schema` (see its doc)
+        // so the null-resolution check below doesn't false-positive on an
+        // agent node that correctly declared a schema.
         let mut caps = tinyflows::caps::mock::mock_capabilities_with_agent(
-            tinyflows::caps::mock::MockAgentRunner,
+            crate::openhuman::tinyflows::caps::SchemaAwareMockAgentRunner,
         );
         // Wiring preflight over the echo mocks (see the struct doc): required
         // Composio args must be present and non-null even in the sandbox.
@@ -840,7 +889,25 @@ impl Tool for DryRunWorkflowTool {
             config: self.config.clone(),
             inner: caps.tools.clone(),
         });
-        let run = tinyflows::engine::run(&compiled, input, &caps);
+
+        // Which node ids are `tool_call` nodes — the null-resolution check
+        // below is scoped to just these (see the struct doc: a null in an
+        // `agent`'s prompt is not execution-breaking the way a null tool arg
+        // is, so only `tool_call` diagnostics fail the dry run).
+        let tool_call_node_ids: std::collections::HashSet<&str> = graph
+            .nodes
+            .iter()
+            .filter(|node| node.kind == tinyflows::model::NodeKind::ToolCall)
+            .map(|node| node.id.as_str())
+            .collect();
+
+        // Capture every node's execution diagnostics (null-resolved
+        // `=`-expressions the engine itself traced — see
+        // `tinyflows::expr::resolve_traced`) as the sandbox run executes, so
+        // they can be inspected once the run settles.
+        let observer = Arc::new(CapturingObserver::default());
+        let observer_dyn: Arc<dyn tinyflows::observability::RunObserver> = observer.clone();
+        let run = tinyflows::engine::run_with_observer(&compiled, input, &caps, &observer_dyn);
         let outcome = match tokio::time::timeout(
             std::time::Duration::from_secs(DRY_RUN_TIMEOUT_SECS),
             run,
@@ -864,20 +931,158 @@ impl Tool for DryRunWorkflowTool {
             }
         };
 
+        // Collect every null-resolved `=`-expression that landed on a
+        // `tool_call` node's `args.*` config path — the class of binding
+        // mistake that "builds" (compiles, dry-runs against echo mocks) but
+        // does nothing at runtime because the wired field never had a value.
+        let null_resolutions: Vec<Value> = observer
+            .steps()
+            .iter()
+            .filter(|step| tool_call_node_ids.contains(step.node_id.as_str()))
+            .flat_map(|step| {
+                step.diagnostics.iter().filter_map(|diag| {
+                    (diag.location == "args" || diag.location.starts_with("args.")).then(|| {
+                        json!({
+                            "node_id": step.node_id,
+                            "location": diag.location,
+                            "expression": diag.expression,
+                        })
+                    })
+                })
+            })
+            .collect();
+
+        // Collect every `tool_call` node whose EXECUTOR errored (e.g. the
+        // Composio required-arg preflight rejecting a missing/null arg) —
+        // regardless of that node's `on_error` policy. A `"continue"`/`"route"`
+        // policy converts the failure into a routed error ITEM and the run
+        // still completes successfully (`Ok(outcome)`), so the naive
+        // `null_resolutions` check above misses it entirely: the failing
+        // node's `ExecutionStep` carries an EMPTY `diagnostics` (the engine
+        // never got far enough to trace an `=`-expression — see
+        // `tinyflows::engine`'s error-item path) even though the node
+        // genuinely failed. Only `"stop"` (the default) fails the whole run —
+        // and that's already caught above via `Ok(Err(e))` before this point,
+        // so every `StepStatus::Error` step reachable here is exactly the
+        // continue/route case. The error text itself isn't on the step (the
+        // engine only attaches it to the routed error item), so it's read
+        // back out of `outcome.output`.
+        let node_errors: Vec<Value> = observer
+            .steps()
+            .iter()
+            .filter(|step| {
+                tool_call_node_ids.contains(step.node_id.as_str())
+                    && matches!(step.status, tinyflows::observability::StepStatus::Error)
+            })
+            .map(|step| {
+                let error =
+                    tool_call_error_message(&outcome.output, &step.node_id).unwrap_or_else(|| {
+                        format!(
+                            "tool_call node '{}' failed during the sandbox run — its `on_error` \
+                             policy turned the failure into routed/continued data instead of \
+                             failing the whole dry run, but the underlying error still means the \
+                             node is broken.",
+                            step.node_id
+                        )
+                    });
+                json!({ "node_id": step.node_id, "error": error })
+            })
+            .collect();
+
         tracing::info!(
             target: "flows",
             node_count = graph.nodes.len(),
             pending_approvals = outcome.pending_approvals.len(),
+            null_resolution_count = null_resolutions.len(),
+            node_error_count = node_errors.len(),
             "[flows] dry_run_workflow: sandbox run finished"
         );
+
+        if !null_resolutions.is_empty() || !node_errors.is_empty() {
+            tracing::debug!(
+                target: "flows",
+                ?null_resolutions,
+                ?node_errors,
+                "[flows] dry_run_workflow: tool_call issue(s) found — failing the dry run"
+            );
+            return Ok(ToolResult::success(serde_json::to_string_pretty(&json!({
+                "sandbox": true,
+                "ok": false,
+                "null_resolutions": null_resolutions,
+                "node_errors": node_errors,
+                "message": "These tool_call args resolved to null, or a tool_call node failed \
+                    during the sandbox run (even one recovered via on_error: continue/route) — \
+                    wire null-resolved args from an upstream node's real output (give any agent \
+                    node an output_parser.schema so its fields are addressable), and fix or \
+                    rewire whatever tool_call node_errors names.",
+            }))?));
+        }
 
         Ok(ToolResult::success(serde_json::to_string_pretty(&json!({
             "sandbox": true,
             "ok": true,
             "output": outcome.output,
             "pending_approvals": outcome.pending_approvals,
+            "null_resolutions": null_resolutions,
+            "node_errors": node_errors,
             "note": "SANDBOX (mock) output — LLM/tool/HTTP/code nodes returned deterministic echoes; NO real side effects occurred. This checks wiring/routing only, not whether real integrations work.",
         }))?))
+    }
+}
+
+/// Best-effort extraction of the human-readable error message the engine
+/// recorded for a `tool_call` node whose `on_error` policy is `"continue"` or
+/// `"route"`. Such a node's failure is converted into an error ITEM on its
+/// output (`{ "error": { "message", "node" } }` — see `tinyflows::engine`'s
+/// `error_item`) rather than failing the whole run, so the message lives in
+/// the run's `output` state, not on the [`tinyflows::observability::ExecutionStep`]
+/// itself (whose `diagnostics` stays empty for an error step — see
+/// [`DryRunWorkflowTool::execute`]'s `node_errors` collection).
+fn tool_call_error_message(output: &Value, node_id: &str) -> Option<String> {
+    output
+        .get("nodes")?
+        .get(node_id)?
+        .get("items")?
+        .as_array()?
+        .iter()
+        .find_map(|item| {
+            item.get("json")?
+                .get("error")?
+                .get("message")?
+                .as_str()
+                .map(str::to_string)
+        })
+}
+
+/// A [`tinyflows::observability::RunObserver`] that captures every finished
+/// node's [`ExecutionStep`](tinyflows::observability::ExecutionStep) — in
+/// particular its `diagnostics` (null-resolved `=`-expressions the engine
+/// traced during that node's config resolution) — so [`DryRunWorkflowTool`]
+/// can inspect them once the sandbox run settles. See the struct's "Null-
+/// resolution check" doc for why this exists.
+#[derive(Default)]
+struct CapturingObserver {
+    steps: std::sync::Mutex<Vec<tinyflows::observability::ExecutionStep>>,
+}
+
+impl tinyflows::observability::RunObserver for CapturingObserver {
+    fn on_step_finish(&self, step: &tinyflows::observability::ExecutionStep) {
+        self.steps
+            .lock()
+            .expect("CapturingObserver steps mutex poisoned")
+            .push(step.clone());
+    }
+}
+
+impl CapturingObserver {
+    /// A snapshot of every step recorded so far (steps are pushed
+    /// synchronously from `on_step_finish`, so once the run's future resolves
+    /// every step it will ever record is already present).
+    fn steps(&self) -> Vec<tinyflows::observability::ExecutionStep> {
+        self.steps
+            .lock()
+            .expect("CapturingObserver steps mutex poisoned")
+            .clone()
     }
 }
 
@@ -990,6 +1195,41 @@ impl Tool for SaveWorkflowTool {
             .filter(|s| !s.is_empty())
             .map(str::to_string);
 
+        // Same migrate/validate + enforcing binding-resolvability gate as
+        // propose_workflow/revise_workflow, run HERE at the tool level (not
+        // inside `ops::flows_update`, which the UI/RPC also call for a
+        // human's own edits and which must stay permissive) — so an agent
+        // can never persist a graph with an unresolvable `tool_call` binding
+        // either. See `ops::validate_binding_resolvability`.
+        let graph = match validate_and_migrate_graph(graph_json.clone()) {
+            Ok(graph) => graph,
+            Err(e) => {
+                tracing::debug!(target: "flows", %flow_id, error = %e, "[flows] save_workflow: validation failed");
+                return Ok(ToolResult::error(format!(
+                    "Workflow graph is invalid: {e}. Fix the graph and call save_workflow again."
+                )));
+            }
+        };
+        let binding_errors = ops::validate_binding_resolvability(&graph);
+        if !binding_errors.is_empty() {
+            tracing::debug!(
+                target: "flows",
+                %flow_id,
+                error_count = binding_errors.len(),
+                "[flows] save_workflow: binding-resolvability check rejected the graph"
+            );
+            return Ok(ToolResult::error(format!(
+                "{}\n\nFix these bindings and call save_workflow again.",
+                binding_errors.join("\n\n")
+            )));
+        }
+        // Author-time warnings (unfired trigger kinds + unwired REQUIRED
+        // Composio args) were previously computed by propose/revise but never
+        // surfaced again at save time — add them here so the agent sees any
+        // non-fatal wiring gaps that remain in the final persisted graph.
+        let mut warnings = ops::graph_trigger_warnings(&graph);
+        warnings.extend(ops::graph_wiring_warnings(&self.config, &graph).await);
+
         tracing::info!(
             target: "flows",
             %flow_id,
@@ -1014,6 +1254,7 @@ impl Tool for SaveWorkflowTool {
                     "enabled": flow.enabled,
                     "require_approval": flow.require_approval,
                     "node_count": flow.graph.nodes.len(),
+                    "warnings": warnings,
                 }))?))
             }
             Err(e) => {
