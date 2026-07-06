@@ -41,8 +41,17 @@ impl AttentionKind {
 
 /// What the renderer should do when the user acts on an item. Tagged so the
 /// frontend can `switch` on `type` and carry exactly the id it needs.
+///
+/// `rename_all` only renames the variant tag; `rename_all_fields` is required to
+/// carry the struct-variant fields to camelCase (`requestId`, `threadId`, …) so
+/// the wire matches the `AttentionAction` union the TS client declares — without
+/// it the ids serialize snake_case and the renderer router reads `undefined`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(tag = "type", rename_all = "kebab-case")]
+#[serde(
+    tag = "type",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
 pub(crate) enum AttentionAction {
     /// Open the approval decision surface for `requestId`.
     Approval { request_id: String },
@@ -441,6 +450,48 @@ mod tests {
             }
         );
         assert_eq!(unread.title, "Codex");
+    }
+
+    #[test]
+    fn action_serializes_tagged_with_camelcase_id_fields() {
+        // The TS `AttentionAction` union reads `requestId`/`threadId`/`runId`/
+        // `sessionId`; the wire must match or the renderer router gets `undefined`.
+        let cases = [
+            (
+                AttentionAction::Approval {
+                    request_id: "r".into(),
+                },
+                "approval",
+                "requestId",
+            ),
+            (
+                AttentionAction::OpenThread {
+                    thread_id: "t".into(),
+                },
+                "open-thread",
+                "threadId",
+            ),
+            (
+                AttentionAction::OpenRun { run_id: "n".into() },
+                "open-run",
+                "runId",
+            ),
+            (
+                AttentionAction::OpenSession {
+                    session_id: "s".into(),
+                },
+                "open-session",
+                "sessionId",
+            ),
+        ];
+        for (action, tag, id_field) in cases {
+            let v = serde_json::to_value(&action).unwrap();
+            assert_eq!(v.get("type").and_then(|x| x.as_str()), Some(tag));
+            assert!(
+                v.get(id_field).is_some(),
+                "action {tag} must expose camelCase id field {id_field}, got {v}"
+            );
+        }
     }
 
     #[test]
