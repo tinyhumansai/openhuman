@@ -17,6 +17,7 @@ import {
 import { upsertChannelConnection } from '../store/channelConnectionsSlice';
 import { type CompanionStateChangedEvent, setCompanionState } from '../store/companionSlice';
 import { setBackend } from '../store/connectivitySlice';
+import { clearHalt, setHalt } from '../store/safetySlice';
 import { resetForUser, setSocketIdForUser, setStatusForUser } from '../store/socketSlice';
 import type { ChannelAuthMode, ChannelConnectionStatus, ChannelType } from '../types/channels';
 import { IS_DEV } from '../utils/config';
@@ -461,6 +462,31 @@ class SocketService {
         sourceDomain,
         provider,
       });
+    });
+
+    // Automation halt/resume broadcasts — core publishes this when emergency_stop
+    // or emergency_resume is called from any client (UI, CLI, cron) so all
+    // connected surfaces reflect the halt state without polling.
+    this.socket.on('automation_halt', (data: unknown) => {
+      const obj = data as Record<string, unknown> | null;
+      if (!obj || typeof obj !== 'object') {
+        socketWarn('automation_halt dropped — invalid payload shape');
+        return;
+      }
+      const engaged = typeof obj.engaged === 'boolean' ? obj.engaged : false;
+      const reason = typeof obj.reason === 'string' ? obj.reason : undefined;
+      const source = typeof obj.source === 'string' ? obj.source : undefined;
+      socketLog(
+        'automation_halt engaged=%s reason=%s source=%s',
+        engaged,
+        reason ?? 'none',
+        source ?? 'none'
+      );
+      if (engaged) {
+        store.dispatch(setHalt({ reason, source }));
+      } else {
+        store.dispatch(clearHalt());
+      }
     });
 
     // Backend Meet bot events — forwarded from core's DomainEvent bus

@@ -32,6 +32,8 @@ import PttHotkeyManager from './components/PttHotkeyManager';
 import SecurityBanner from './components/SecurityBanner';
 import SettingsModal from './components/settings/modal/SettingsModal';
 import { resolveSettingsOverlay } from './components/settings/modal/settingsOverlay';
+import { AutomationHaltedBanner } from './components/safety/AutomationHaltedBanner';
+import { EmergencyStopButton } from './components/safety/EmergencyStopButton';
 import GlobalUpsellBanner from './components/upsell/GlobalUpsellBanner';
 import UserErrorCenter from './components/userErrors/UserErrorCenter';
 import AppWalkthrough from './components/walkthrough/AppWalkthrough';
@@ -52,6 +54,7 @@ import CoreStateProvider, { useCoreState } from './providers/CoreStateProvider';
 import SocketProvider from './providers/SocketProvider';
 import ThemeProvider from './providers/ThemeProvider';
 import { trackPageView } from './services/analytics';
+import { emergencyStatus } from './services/api/emergencyApi';
 import { startCoreHealthMonitor, stopCoreHealthMonitor } from './services/coreHealthMonitor';
 import {
   startInternetStatusListener,
@@ -64,6 +67,7 @@ import {
 } from './services/webviewAccountService';
 import { persistor, store } from './store';
 import { setActiveAccount } from './store/accountsSlice';
+import { hydrateHalt } from './store/safetySlice';
 import { useAppDispatch, useAppSelector } from './store/hooks';
 import { AGENT_ACCOUNT_ID } from './utils/accountsFullscreen';
 import { DEV_FORCE_ONBOARDING } from './utils/config';
@@ -260,6 +264,23 @@ export function AppShellDesktop() {
   // the core is ready (once per boot). Extracted to a hook so it's testable.
   useNotchBootSync(isBootstrapping);
 
+  // Boot hydration: read the authoritative halt state from the core once on
+  // mount so the UI reflects any halt that was engaged before this window
+  // opened (e.g. another tab, CLI, or a crash-recovery scenario). Wrapped in
+  // try/catch so a degraded core never blanks the shell.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const status = await emergencyStatus();
+        dispatch(hydrateHalt(status));
+      } catch (err) {
+        console.warn('[emergency] status hydration failed', err);
+      }
+    })();
+    // Intentionally runs once on mount only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const navType = useNavigationType();
 
@@ -291,6 +312,9 @@ export function AppShellDesktop() {
 
   const content = (
     <div ref={scrollRef} className="relative h-full overflow-y-auto">
+      {/* Automation halt banner — renders at the top of the content area when
+          emergency stop is engaged. Always visible during automation sessions. */}
+      <AutomationHaltedBanner />
       <GlobalUpsellBanner />
       <AppRoutes location={baseLocation} />
       {activeProviderAccount && !accountsOverlayOpen && (
@@ -324,6 +348,15 @@ export function AppShellDesktop() {
             exhaustion). Mounted outside the routes so entries survive route
             changes and background-job completion. */}
         <UserErrorCenter />
+        {/* Emergency Stop — fixed-position safety button visible during active
+            automation. Only shown when the shell chrome is visible (i.e. the
+            user is authenticated and past onboarding). Positioned bottom-right
+            so it never overlaps the chat composer or main content. */}
+        {!chromeless && (
+          <div className="fixed bottom-6 right-6 z-50">
+            <EmergencyStopButton />
+          </div>
+        )}
         {/* Hidden Remotion-driven producer for the Meet camera. Mounts a
             640×480 JPEG frame stream to the Rust frame bus while a meet
             call is active; idle no-op otherwise. See
