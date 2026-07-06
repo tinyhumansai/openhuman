@@ -8,6 +8,8 @@
  * `onAction` callback that receives the item's {@link AttentionAction} — the
  * tab (layout-rewrite PR) routes it to the right surface.
  */
+import type { ReactElement } from 'react';
+
 import { useT } from '../../lib/i18n/I18nContext';
 import type {
   AttentionAction,
@@ -46,7 +48,7 @@ const KIND_TONE: Record<AttentionKind, { accent: string; chip: string }> = {
 export default function AttentionQueueItem({
   item,
   onAction,
-}: AttentionQueueItemProps): React.ReactElement {
+}: AttentionQueueItemProps): ReactElement {
   const { t } = useT();
   const tone = KIND_TONE[item.kind];
   // Approvals are decided ("Review"); everything else is navigated to ("Open").
