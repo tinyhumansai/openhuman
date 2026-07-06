@@ -30,6 +30,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schema_for("orchestration_mark_read"),
         schema_for("orchestration_status"),
         schema_for("orchestration_attention"),
+        schema_for("orchestration_self_identity"),
+        schema_for("orchestration_relay_info"),
     ]
 }
 
@@ -62,6 +64,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schema_for("orchestration_attention"),
             handler: handle_attention,
+        },
+        RegisteredController {
+            schema: schema_for("orchestration_self_identity"),
+            handler: handle_self_identity,
+        },
+        RegisteredController {
+            schema: schema_for("orchestration_relay_info"),
+            handler: handle_relay_info,
         },
     ]
 }
@@ -133,6 +143,23 @@ fn schema_for(function: &str) -> ControllerSchema {
             inputs: vec![],
             outputs: vec![json_output("result", "AttentionQueue { items: AttentionItem[], counts }.")],
         },
+        "orchestration_self_identity" => ControllerSchema {
+            namespace: "orchestration",
+            function: "self_identity",
+            description: "This agent's own tiny.place identity + discoverability: agent id (address), reverse-resolved @handles, whether its directory card and Signal encryption key are published, and whether peers can therefore DM it. Composes the tinyplace signal/directory reads.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "result",
+                "{ agentId, handles: {username, primary}[], primaryHandle?, cardPublished, keyPublished, discoverable }.",
+            )],
+        },
+        "orchestration_relay_info" => ControllerSchema {
+            namespace: "orchestration",
+            function: "relay_info",
+            description: "The tiny.place relay endpoint the core is talking to, plus a coarse network label (staging | prod) for the renderer's relay badge.",
+            inputs: vec![],
+            outputs: vec![json_output("result", "{ baseUrl, network }.")],
+        },
         other => unreachable!("unknown orchestration schema: {other}"),
     }
 }
@@ -188,6 +215,13 @@ struct OrchestrationStatus {
     /// Most recent orchestration error, if any (short cause string, never a body).
     #[serde(skip_serializing_if = "Option::is_none")]
     last_error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RelayInfo {
+    base_url: String,
+    network: String,
 }
 
 /// Resolve the `chat` param to a store session id. `master` / `subconscious` map
@@ -660,6 +694,93 @@ fn gather_unread_signals(
     Ok(out)
 }
 
+/// Own tiny.place identity + discoverability, composed from the internal
+/// tinyplace signal/directory reads. Delegates like `send_master` does
+/// (`crate::openhuman::tinyplace::handle_tinyplace_*`), so there is no new
+/// tiny.place logic here — only aggregation into the shape the renderer needs.
+fn handle_self_identity(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        // 1. Key status → own agent id + whether the encryption key is published
+        //    to the directory and current. `encryptionKeyPublished` is false when
+        //    the card is missing OR the published key is stale (wrong wallet).
+        let key_status =
+            crate::openhuman::tinyplace::handle_tinyplace_signal_key_status(Map::new())
+                .await
+                .map_err(|e| format!("self_identity key_status: {e}"))?;
+        let agent_id = key_status
+            .get("agentId")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let key_published = key_status
+            .get("encryptionKeyPublished")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        log::debug!(
+            target: LOG,
+            "[orchestration_rpc] self_identity agent_id_len={} key_published={key_published}",
+            agent_id.len()
+        );
+
+        // 2. Reverse-resolve any @handles this wallet holds. Best-effort: a
+        //    handle-less identity is normal (and is exactly the un-messageable
+        //    case the card must flag), so a reverse miss is not an error.
+        let reverse = if agent_id.is_empty() {
+            None
+        } else {
+            let mut rev_params = Map::new();
+            rev_params.insert("cryptoId".to_string(), Value::from(agent_id.clone()));
+            match crate::openhuman::tinyplace::handle_tinyplace_directory_reverse(rev_params).await
+            {
+                Ok(reverse) => Some(reverse),
+                Err(e) => {
+                    log::debug!(target: LOG, "[orchestration_rpc] self_identity reverse miss: {e}");
+                    None
+                }
+            }
+        };
+
+        // 3. Directory card presence: get_agent(self) 404s when no card is
+        //    published. Ok → a card is live; Err → treat as unpublished.
+        let card_published = if agent_id.is_empty() {
+            false
+        } else {
+            let mut card_params = Map::new();
+            card_params.insert("agentId".to_string(), Value::from(agent_id.clone()));
+            crate::openhuman::tinyplace::handle_tinyplace_directory_get_agent(card_params)
+                .await
+                .is_ok()
+        };
+
+        let identity = super::ops::build_self_identity(
+            agent_id,
+            key_published,
+            reverse.as_ref(),
+            card_published,
+        );
+        log::debug!(
+            target: LOG,
+            "[orchestration_rpc] self_identity handles={} card_published={card_published} discoverable={}",
+            identity.handles.len(),
+            identity.discoverable
+        );
+        to_json(identity)
+    })
+}
+
+/// Relay endpoint + network label for the renderer's relay badge. Reads only the
+/// configured base URL (no client build / wallet unlock), so it always resolves.
+fn handle_relay_info(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let (base_url, network) = crate::openhuman::tinyplace::ops::relay_endpoint();
+        log::debug!(target: LOG, "[orchestration_rpc] relay_info network={network}");
+        to_json(RelayInfo {
+            base_url,
+            network: network.to_string(),
+        })
+    })
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 async fn load_config(action: &str) -> Result<Config, String> {
@@ -717,9 +838,17 @@ mod tests {
     #[test]
     fn schemas_use_orchestration_namespace() {
         let schemas = all_controller_schemas();
-        assert_eq!(schemas.len(), 7);
+        assert_eq!(schemas.len(), 9);
         assert!(schemas.iter().all(|s| s.namespace == "orchestration"));
         assert_eq!(schema_for("orchestration_attention").function, "attention");
+        assert_eq!(
+            schema_for("orchestration_self_identity").function,
+            "self_identity"
+        );
+        assert_eq!(
+            schema_for("orchestration_relay_info").function,
+            "relay_info"
+        );
         assert_eq!(
             schema_for("orchestration_messages_list").function,
             "messages_list"

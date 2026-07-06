@@ -834,12 +834,135 @@ fn session_send_plaintext(session_id: &str, body: &str) -> anyhow::Result<String
     .map_err(|e| anyhow::anyhow!("envelope encode: {e}"))
 }
 
+// ── Self-identity composition (orchestration_self_identity read model) ────────
+
+/// One @handle this agent's wallet holds (reverse-resolved from the directory).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HandleEntry {
+    pub(crate) username: String,
+    pub(crate) primary: bool,
+}
+
+/// This agent's own tiny.place identity and whether peers can reach it.
+///
+/// `discoverable` is the bottom line the UI cares about: a peer can DM this
+/// agent only if both its directory card AND its Signal encryption key are
+/// published. A fresh identity can accept contacts yet still be un-messageable
+/// until it registers a @handle (which is what publishes both), so the
+/// `SelfIdentityCard` surfaces the gap instead of leaving it a mystery 404.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SelfIdentity {
+    pub(crate) agent_id: String,
+    pub(crate) handles: Vec<HandleEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) primary_handle: Option<String>,
+    pub(crate) card_published: bool,
+    pub(crate) key_published: bool,
+    pub(crate) discoverable: bool,
+}
+
+/// Pure composition of the three tinyplace reads into the renderer shape. Kept
+/// here (business logic) so the parsing/discoverability rules are unit-testable
+/// without a live tiny.place client; the `schemas` handler supplies the reads.
+///
+/// `reverse` is the raw `directory_reverse` JSON (`{ identities: [...] }`), or
+/// `None` on a reverse miss. Discoverable = card live AND encryption key
+/// published + current — either gap leaves the agent un-messageable.
+pub(crate) fn build_self_identity(
+    agent_id: String,
+    key_published: bool,
+    reverse: Option<&Value>,
+    card_published: bool,
+) -> SelfIdentity {
+    let mut handles: Vec<HandleEntry> = Vec::new();
+    let mut primary_handle: Option<String> = None;
+    if let Some(idents) = reverse
+        .and_then(|r| r.get("identities"))
+        .and_then(Value::as_array)
+    {
+        for ident in idents {
+            let username = ident
+                .get("username")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let Some(username) = username else { continue };
+            let primary = ident
+                .get("primary")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if primary && primary_handle.is_none() {
+                primary_handle = Some(username.to_string());
+            }
+            handles.push(HandleEntry {
+                username: username.to_string(),
+                primary,
+            });
+        }
+    }
+    // Fall back to the first handle when none is flagged primary.
+    if primary_handle.is_none() {
+        primary_handle = handles.first().map(|h| h.username.clone());
+    }
+    SelfIdentity {
+        agent_id,
+        handles,
+        primary_handle,
+        card_published,
+        key_published,
+        discoverable: card_published && key_published,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::openhuman::orchestration::types::OrchestrationMessage;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tinyagents::graph::checkpoint::Checkpointer;
+
+    #[test]
+    fn self_identity_marks_published_identity_discoverable() {
+        let reverse = serde_json::json!({
+            "identities": [
+                { "username": "  ", "primary": false },   // blank → skipped
+                { "username": "openhuman", "primary": false },
+                { "username": "oh_primary", "primary": true },
+            ]
+        });
+        let id = build_self_identity("addr123".to_string(), true, Some(&reverse), true);
+        assert_eq!(id.agent_id, "addr123");
+        assert_eq!(id.handles.len(), 2, "blank username skipped");
+        assert_eq!(id.primary_handle.as_deref(), Some("oh_primary"));
+        assert!(id.card_published && id.key_published && id.discoverable);
+    }
+
+    #[test]
+    fn self_identity_primary_falls_back_to_first_handle() {
+        let reverse = serde_json::json!({
+            "identities": [ { "username": "solo" } ] // no primary flag
+        });
+        let id = build_self_identity("addr".to_string(), true, Some(&reverse), true);
+        assert_eq!(id.primary_handle.as_deref(), Some("solo"));
+    }
+
+    #[test]
+    fn self_identity_undiscoverable_when_card_or_key_missing() {
+        // No reverse (handle-less), card present but key not published → the
+        // exact un-messageable case the SelfIdentityCard must flag.
+        let no_key = build_self_identity("addr".to_string(), false, None, true);
+        assert!(no_key.handles.is_empty());
+        assert!(no_key.primary_handle.is_none());
+        assert!(!no_key.discoverable, "key not published → not discoverable");
+
+        let no_card = build_self_identity("addr".to_string(), true, None, false);
+        assert!(
+            !no_card.discoverable,
+            "card not published → not discoverable"
+        );
+    }
     use tinyagents::graph::SqliteCheckpointer;
 
     fn test_config(tmp: &tempfile::TempDir) -> Config {

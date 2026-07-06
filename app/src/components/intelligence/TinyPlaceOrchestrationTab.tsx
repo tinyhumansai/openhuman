@@ -10,6 +10,11 @@ import {
 } from '../../lib/agentworld/invokeApiClient';
 import { useT } from '../../lib/i18n/I18nContext';
 import {
+  orchestrationClient,
+  type RelayInfo,
+  type SelfIdentity,
+} from '../../lib/orchestration/orchestrationClient';
+import {
   type ChatMessage,
   type ChatWindow,
   MASTER_CHAT_KEY,
@@ -17,6 +22,8 @@ import {
 } from '../../lib/orchestration/useOrchestrationChats';
 import { subconsciousTrigger } from '../../utils/tauriCommands/subconscious';
 import Button from '../ui/Button';
+import RelayBadge from './RelayBadge';
+import SelfIdentityCard from './SelfIdentityCard';
 
 const debug = debugFactory('brain:tinyplace-orchestration');
 
@@ -213,6 +220,12 @@ export default function TinyPlaceOrchestrationTab() {
   // Which contact rows are expanded to reveal their nested sessions.
   const [expandedContacts, setExpandedContacts] = useState<Record<string, boolean>>({});
   const [creatingSession, setCreatingSession] = useState<string | null>(null);
+  // Own tiny.place identity (discoverability) + the relay the core is on. Both
+  // best-effort: a failed read leaves the card/badge hidden rather than erroring
+  // the whole tab.
+  const [selfIdentity, setSelfIdentity] = useState<SelfIdentity | null>(null);
+  const [identityLoading, setIdentityLoading] = useState(true);
+  const [relayInfo, setRelayInfo] = useState<RelayInfo | null>(null);
   const mountedRef = useRef(true);
 
   const toggleContact = useCallback((address: string) => {
@@ -257,6 +270,40 @@ export default function TinyPlaceOrchestrationTab() {
     }
   }, []);
 
+  const loadIdentity = useCallback(async () => {
+    debug('[tinyplace-orchestration] identity load entry');
+    // Identity and relay are independent reads: selfIdentity() builds the
+    // tiny.place client from the wallet and can reject (locked/unconfigured
+    // wallet), but relayInfo() only reads the configured base URL and must
+    // stay visible regardless. Settle them separately so one failure never
+    // hides the other. Neither failure may break the chat surface.
+    const [identityResult, relayResult] = await Promise.allSettled([
+      orchestrationClient.selfIdentity(),
+      orchestrationClient.relayInfo(),
+    ]);
+    if (!mountedRef.current) return;
+    if (identityResult.status === 'fulfilled') {
+      debug(
+        '[tinyplace-orchestration] identity load ok discoverable=%s',
+        identityResult.value.discoverable
+      );
+      setSelfIdentity(identityResult.value);
+    } else {
+      const reason = identityResult.reason;
+      const message = reason instanceof Error ? reason.message : String(reason);
+      debug('[tinyplace-orchestration] identity load error %s', message);
+    }
+    if (relayResult.status === 'fulfilled') {
+      debug('[tinyplace-orchestration] relay load ok network=%s', relayResult.value.network);
+      setRelayInfo(relayResult.value);
+    } else {
+      const reason = relayResult.reason;
+      const message = reason instanceof Error ? reason.message : String(reason);
+      debug('[tinyplace-orchestration] relay load error %s', message);
+    }
+    setIdentityLoading(false);
+  }, []);
+
   const runPairingAction = useCallback(
     async (actionId: string, action: () => Promise<unknown>) => {
       debug('[tinyplace-orchestration] pairing action entry id=%s', actionId);
@@ -297,7 +344,8 @@ export default function TinyPlaceOrchestrationTab() {
   const refreshAll = useCallback(() => {
     void refresh();
     void loadPairing();
-  }, [refresh, loadPairing]);
+    void loadIdentity();
+  }, [refresh, loadPairing, loadIdentity]);
 
   const submitComposer = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
@@ -316,12 +364,15 @@ export default function TinyPlaceOrchestrationTab() {
 
   useEffect(() => {
     mountedRef.current = true;
-    const handle = window.setTimeout(() => void loadPairing(), 0);
+    const handle = window.setTimeout(() => {
+      void loadPairing();
+      void loadIdentity();
+    }, 0);
     return () => {
       window.clearTimeout(handle);
       mountedRef.current = false;
     };
-  }, [loadPairing]);
+  }, [loadPairing, loadIdentity]);
 
   const pinned = chats.filter(chat => chat.pinned);
   const sessions = chats
@@ -416,9 +467,12 @@ export default function TinyPlaceOrchestrationTab() {
         <div className="border-b border-line px-4 py-3">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <h3 className="truncate text-sm font-semibold text-content">
-                {t('tinyplaceOrchestration.title')}
-              </h3>
+              <div className="flex items-center gap-1.5">
+                <h3 className="truncate text-sm font-semibold text-content">
+                  {t('tinyplaceOrchestration.title')}
+                </h3>
+                <RelayBadge relay={relayInfo} />
+              </div>
               <p className="mt-0.5 truncate text-[11px] text-content-muted">
                 {t('tinyplaceOrchestration.subtitle')}
               </p>
@@ -443,6 +497,8 @@ export default function TinyPlaceOrchestrationTab() {
             </div>
           ) : null}
         </div>
+
+        <SelfIdentityCard identity={selfIdentity} loading={identityLoading} />
 
         <section className="border-b border-line px-4 py-3">
           <form className="space-y-2" onSubmit={submitLink}>

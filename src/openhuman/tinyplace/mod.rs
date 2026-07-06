@@ -29,7 +29,9 @@ pub(crate) mod agent;
 mod agent_tools;
 mod manifest;
 pub(crate) use manifest::{
-    acknowledge_message, decrypt_envelope, handle_tinyplace_signal_send_message,
+    acknowledge_message, decrypt_envelope, handle_tinyplace_directory_get_agent,
+    handle_tinyplace_directory_reverse, handle_tinyplace_signal_key_status,
+    handle_tinyplace_signal_send_message,
 };
 pub(crate) mod ops;
 mod payment;

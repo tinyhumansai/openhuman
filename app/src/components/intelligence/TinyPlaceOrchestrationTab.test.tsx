@@ -30,6 +30,8 @@ vi.mock('../../lib/orchestration/orchestrationClient', async importOriginal => {
       sendMasterMessage: vi.fn(),
       markRead: vi.fn(),
       status: vi.fn(),
+      selfIdentity: vi.fn(),
+      relayInfo: vi.fn(),
     },
   };
 });
@@ -50,6 +52,8 @@ const messagesListMock = vi.mocked(orchestrationClient.messagesList);
 const sendMasterMock = vi.mocked(orchestrationClient.sendMasterMessage);
 const markReadMock = vi.mocked(orchestrationClient.markRead);
 const statusMock = vi.mocked(orchestrationClient.status);
+const selfIdentityMock = vi.mocked(orchestrationClient.selfIdentity);
+const relayInfoMock = vi.mocked(orchestrationClient.relayInfo);
 
 const pairingListMock = vi.mocked(apiClient.orchestrationPairing.list);
 const pairingLinkMock = vi.mocked(apiClient.orchestrationPairing.linkSession);
@@ -105,6 +109,18 @@ describe('TinyPlaceOrchestrationTab', () => {
     sendMasterMock.mockResolvedValue({ ok: true, messageId: 'm-1' });
     markReadMock.mockResolvedValue({ ok: true });
     statusMock.mockResolvedValue({});
+    selfIdentityMock.mockResolvedValue({
+      agentId: '6wNaBJkatir4B86cw5ykHZWQ3xoNaKygX5vAU9MQbHSh',
+      handles: [{ username: 'openhuman', primary: true }],
+      primaryHandle: 'openhuman',
+      cardPublished: true,
+      keyPublished: true,
+      discoverable: true,
+    });
+    relayInfoMock.mockResolvedValue({
+      baseUrl: 'https://staging-api.tiny.place',
+      network: 'staging',
+    });
     pairingListMock.mockResolvedValue({
       records: [],
       contacts: { contacts: [] },
@@ -189,6 +205,19 @@ describe('TinyPlaceOrchestrationTab', () => {
     expect(await screen.findAllByText('tinyplaceOrchestration.master.title')).toHaveLength(2);
     expect(screen.getByText('tinyplaceOrchestration.subconscious.title')).toBeInTheDocument();
     expect(screen.getByText('OpenHuman app session')).toBeInTheDocument();
+  });
+
+  it('keeps the relay badge visible when identity discovery fails (locked wallet)', async () => {
+    // selfIdentity() builds the tiny.place client from the wallet and can reject;
+    // relayInfo() only reads the base URL and must stay visible regardless.
+    selfIdentityMock.mockRejectedValue(new Error('wallet locked'));
+
+    render(<TinyPlaceOrchestrationTab />);
+
+    const badge = await screen.findByTestId('tinyplace-relay-badge');
+    expect(badge).toHaveAttribute('data-network', 'staging');
+    // Identity read failed → its card must not render.
+    expect(screen.queryByTestId('tinyplace-self-identity')).not.toBeInTheDocument();
   });
 
   it('loads and renders messages for the opened chat', async () => {
