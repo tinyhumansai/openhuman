@@ -1,11 +1,14 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, fireEvent, waitFor, act } from '@testing-library/react';
-import { AutomationHaltedBanner } from './AutomationHaltedBanner';
-import { renderWithProviders } from '../../test/test-utils';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { setHalt } from '../../store/safetySlice';
+import { renderWithProviders } from '../../test/test-utils';
+import { AutomationHaltedBanner } from './AutomationHaltedBanner';
 
 const resume = vi.fn().mockResolvedValue({ engaged: false });
-vi.mock('../../services/api/emergencyApi', () => ({ emergencyResume: (...a: unknown[]) => resume(...a) }));
+vi.mock('../../services/api/emergencyApi', () => ({
+  emergencyResume: (...a: unknown[]) => resume(...a),
+}));
 
 beforeEach(() => resume.mockClear());
 
@@ -20,7 +23,9 @@ describe('AutomationHaltedBanner', () => {
       preloadedState: { safety: { halted: true } },
     });
     expect(screen.getByRole('alert')).toBeDefined();
-    expect(screen.getByRole('alert').getAttribute('data-analytics-id')).toBe('automation-halted-banner');
+    expect(screen.getByRole('alert').getAttribute('data-analytics-id')).toBe(
+      'automation-halted-banner'
+    );
     // safety state is engaged
     expect((store.getState() as { safety: { halted: boolean } }).safety.halted).toBe(true);
   });

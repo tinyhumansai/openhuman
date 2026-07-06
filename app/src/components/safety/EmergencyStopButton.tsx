@@ -22,9 +22,7 @@ export function EmergencyStopButton() {
   const handleClick = useCallback(async () => {
     try {
       const state = await emergencyStop();
-      dispatch(
-        setHalt({ reason: state.reason, source: state.source, since: state.engaged_at_ms })
-      );
+      dispatch(setHalt({ reason: state.reason, source: state.source, since: state.engaged_at_ms }));
     } catch (err) {
       // Fail-visible: reflect intent locally even when the core is unreachable.
       dispatch(setHalt({ source: 'user' }));

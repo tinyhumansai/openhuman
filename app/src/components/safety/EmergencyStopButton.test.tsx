@@ -1,11 +1,21 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, fireEvent, waitFor } from '@testing-library/react';
-import { EmergencyStopButton } from './EmergencyStopButton';
-import { renderWithProviders } from '../../test/test-utils';
-import { setHalt } from '../../store/safetySlice';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const stop = vi.fn().mockResolvedValue({ engaged: true, reason: undefined, source: undefined, engaged_at_ms: undefined });
-vi.mock('../../services/api/emergencyApi', () => ({ emergencyStop: (...a: unknown[]) => stop(...a) }));
+import { setHalt } from '../../store/safetySlice';
+import { renderWithProviders } from '../../test/test-utils';
+import { EmergencyStopButton } from './EmergencyStopButton';
+
+const stop = vi
+  .fn()
+  .mockResolvedValue({
+    engaged: true,
+    reason: undefined,
+    source: undefined,
+    engaged_at_ms: undefined,
+  });
+vi.mock('../../services/api/emergencyApi', () => ({
+  emergencyStop: (...a: unknown[]) => stop(...a),
+}));
 
 beforeEach(() => stop.mockClear());
 

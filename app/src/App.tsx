@@ -29,11 +29,11 @@ import SecretPromptDialog from './components/mcp-setup/SecretPromptDialog';
 import OpenhumanLinkModal from './components/OpenhumanLinkModal';
 import PersistRehydrationScreen from './components/PersistRehydrationScreen';
 import PttHotkeyManager from './components/PttHotkeyManager';
+import { AutomationHaltedBanner } from './components/safety/AutomationHaltedBanner';
+import { EmergencyStopButton } from './components/safety/EmergencyStopButton';
 import SecurityBanner from './components/SecurityBanner';
 import SettingsModal from './components/settings/modal/SettingsModal';
 import { resolveSettingsOverlay } from './components/settings/modal/settingsOverlay';
-import { AutomationHaltedBanner } from './components/safety/AutomationHaltedBanner';
-import { EmergencyStopButton } from './components/safety/EmergencyStopButton';
 import GlobalUpsellBanner from './components/upsell/GlobalUpsellBanner';
 import UserErrorCenter from './components/userErrors/UserErrorCenter';
 import AppWalkthrough from './components/walkthrough/AppWalkthrough';
@@ -54,12 +54,12 @@ import CoreStateProvider, { useCoreState } from './providers/CoreStateProvider';
 import SocketProvider from './providers/SocketProvider';
 import ThemeProvider from './providers/ThemeProvider';
 import { trackPageView } from './services/analytics';
-import { hydrateEmergencyState } from './services/safety/hydrateEmergencyState';
 import { startCoreHealthMonitor, stopCoreHealthMonitor } from './services/coreHealthMonitor';
 import {
   startInternetStatusListener,
   stopInternetStatusListener,
 } from './services/internetStatusListener';
+import { hydrateEmergencyState } from './services/safety/hydrateEmergencyState';
 import {
   hideWebviewAccount,
   startWebviewAccountService,
