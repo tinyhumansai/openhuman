@@ -197,32 +197,6 @@ struct OrchestrationStatus {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct HandleEntry {
-    username: String,
-    primary: bool,
-}
-
-/// This agent's own tiny.place identity and whether peers can reach it.
-///
-/// `discoverable` is the bottom line the UI cares about: a peer can DM this
-/// agent only if both its directory card AND its Signal encryption key are
-/// published. A fresh identity can accept contacts yet still be un-messageable
-/// until it registers a @handle (which is what publishes both), so the
-/// `SelfIdentityCard` surfaces the gap instead of leaving it a mystery 404.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SelfIdentity {
-    agent_id: String,
-    handles: Vec<HandleEntry>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    primary_handle: Option<String>,
-    card_published: bool,
-    key_published: bool,
-    discoverable: bool,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 struct RelayInfo {
     base_url: String,
     network: String,
@@ -620,8 +594,12 @@ fn handle_self_identity(_params: Map<String, Value>) -> ControllerFuture {
                 .is_ok()
         };
 
-        let identity =
-            build_self_identity(agent_id, key_published, reverse.as_ref(), card_published);
+        let identity = super::ops::build_self_identity(
+            agent_id,
+            key_published,
+            reverse.as_ref(),
+            card_published,
+        );
         log::debug!(
             target: LOG,
             "[orchestration_rpc] self_identity handles={} card_published={card_published} discoverable={}",
@@ -630,59 +608,6 @@ fn handle_self_identity(_params: Map<String, Value>) -> ControllerFuture {
         );
         to_json(identity)
     })
-}
-
-/// Pure composition of the three tinyplace reads into the renderer shape. Split
-/// out so the parsing/discoverability logic is unit-testable without a live
-/// tiny.place client (the handler above supplies the real reads).
-///
-/// `reverse` is the raw `directory_reverse` JSON (`{ identities: [...] }`), or
-/// `None` on a reverse miss. Discoverable = card live AND encryption key
-/// published + current — either gap leaves the agent un-messageable.
-fn build_self_identity(
-    agent_id: String,
-    key_published: bool,
-    reverse: Option<&Value>,
-    card_published: bool,
-) -> SelfIdentity {
-    let mut handles: Vec<HandleEntry> = Vec::new();
-    let mut primary_handle: Option<String> = None;
-    if let Some(idents) = reverse
-        .and_then(|r| r.get("identities"))
-        .and_then(Value::as_array)
-    {
-        for ident in idents {
-            let username = ident
-                .get("username")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|s| !s.is_empty());
-            let Some(username) = username else { continue };
-            let primary = ident
-                .get("primary")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            if primary && primary_handle.is_none() {
-                primary_handle = Some(username.to_string());
-            }
-            handles.push(HandleEntry {
-                username: username.to_string(),
-                primary,
-            });
-        }
-    }
-    // Fall back to the first handle when none is flagged primary.
-    if primary_handle.is_none() {
-        primary_handle = handles.first().map(|h| h.username.clone());
-    }
-    SelfIdentity {
-        agent_id,
-        handles,
-        primary_handle,
-        card_published,
-        key_published,
-        discoverable: card_published && key_published,
-    }
 }
 
 /// Relay endpoint + network label for the renderer's relay badge. Reads only the
@@ -852,46 +777,5 @@ mod tests {
         let mut params = Map::new();
         params.insert("chat".to_string(), Value::String("  ".to_string()));
         assert!(required_param(&params, "chat").is_err());
-    }
-
-    #[test]
-    fn self_identity_marks_published_identity_discoverable() {
-        let reverse = serde_json::json!({
-            "identities": [
-                { "username": "  ", "primary": false },   // blank → skipped
-                { "username": "openhuman", "primary": false },
-                { "username": "oh_primary", "primary": true },
-            ]
-        });
-        let id = build_self_identity("addr123".to_string(), true, Some(&reverse), true);
-        assert_eq!(id.agent_id, "addr123");
-        assert_eq!(id.handles.len(), 2, "blank username skipped");
-        assert_eq!(id.primary_handle.as_deref(), Some("oh_primary"));
-        assert!(id.card_published && id.key_published && id.discoverable);
-    }
-
-    #[test]
-    fn self_identity_primary_falls_back_to_first_handle() {
-        let reverse = serde_json::json!({
-            "identities": [ { "username": "solo" } ] // no primary flag
-        });
-        let id = build_self_identity("addr".to_string(), true, Some(&reverse), true);
-        assert_eq!(id.primary_handle.as_deref(), Some("solo"));
-    }
-
-    #[test]
-    fn self_identity_undiscoverable_when_card_or_key_missing() {
-        // No reverse (handle-less), card present but key not published → the
-        // exact un-messageable case the SelfIdentityCard must flag.
-        let no_key = build_self_identity("addr".to_string(), false, None, true);
-        assert!(no_key.handles.is_empty());
-        assert!(no_key.primary_handle.is_none());
-        assert!(!no_key.discoverable, "key not published → not discoverable");
-
-        let no_card = build_self_identity("addr".to_string(), true, None, false);
-        assert!(
-            !no_card.discoverable,
-            "card not published → not discoverable"
-        );
     }
 }
