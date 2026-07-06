@@ -229,13 +229,11 @@ describe('WorkflowCopilotPanel', () => {
     );
     expect(hookState.send).toHaveBeenCalledTimes(1);
     const arg = hookState.send.mock.calls[0][0];
-    // The user's description reads as their own first turn in the transcript,
-    // while the real prompt injects the blank graph + flow id and asks for the
-    // full build → dry-run → save arc onto the already-created flow.
+    // The user's description reads as their own first turn in the transcript;
+    // the structured build request carries the blank graph + flow id so the
+    // server's brief asks for a build → dry-run → propose arc (propose-only —
+    // see #4596; persistence still waits on Accept + Save).
     expect(arg.displayText).toBe('digest my Slack every morning');
-    // The user's description reads as their own first turn; the structured
-    // build request carries the blank graph + flow id so the server's brief
-    // asks for the full build → dry-run → save arc onto the created flow.
     expect(arg.request.mode).toBe('build');
     expect(arg.request.instruction).toBe('digest my Slack every morning');
     expect(arg.request.graph).toEqual(baseGraph);

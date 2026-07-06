@@ -153,10 +153,11 @@ export default function WorkflowCopilotPanel({
 
   // Auto-send the build turn once when opened from the prompt bar's
   // instant-create path: the user's description becomes the first user turn on
-  // this thread, and the prompt asks for the full build → dry-run → save arc
-  // against the just-created flow (its proposal still lands as the usual
-  // Accept/Reject diff preview). Falls back to a propose-only revise turn if
-  // the flow id is somehow missing (a draft canvas has nothing to save onto).
+  // this thread, and the prompt asks for the full build → dry-run → PROPOSE
+  // arc against the just-created flow. Persistence still stays behind the
+  // usual Accept + canvas Save; `mode: 'build'` intentionally does NOT save
+  // the graph (issue #4596 — a Reject used to leave the graph persisted).
+  // Falls back to a plain revise turn if the flow id is somehow missing.
   const buildSentRef = useRef(false);
   useEffect(() => {
     if (!buildSeed || buildSentRef.current) return;

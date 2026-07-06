@@ -7,12 +7,13 @@
 //! directly (like the Flow Scout), instead of the frontend crafting delegate
 //! strings and relying on the chat orchestrator to route them.
 //!
-//! Persistence contract, unchanged: `create`/`revise`/`repair` ask for a
-//! PROPOSAL only — saving stays behind the user's explicit action.
-//! [`BuildMode::Build`] is the instant-create path (the host has already made
-//! the blank flow), so its brief tells the agent to finish the job: build,
-//! dry-run, and `save_workflow` onto that flow id. Enabling/disabling a flow is
-//! never in scope here.
+//! Persistence contract: every mode is PROPOSE-ONLY — saving always stays
+//! behind the user's explicit action (the review card's Accept, then the
+//! canvas's own Save). [`BuildMode::Build`] is the instant-create path (the
+//! host already made the blank flow), so its brief injects that flow id as
+//! future-turn context but explicitly forbids `save_workflow` on this turn:
+//! rejecting the proposal must leave the flow's persisted graph untouched
+//! (see issue #4596). Enabling/disabling a flow is never in scope here.
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -29,7 +30,8 @@ pub enum BuildMode {
     /// Diagnose a failed run and propose a corrected graph.
     Repair,
     /// Instant-create: the flow already exists (blank), so build → dry-run →
-    /// `save_workflow` onto `flow_id`, end to end.
+    /// propose against `flow_id`. Persistence still waits on the user's
+    /// explicit Accept + Save; the agent must NOT `save_workflow` here.
     Build,
 }
 
@@ -66,11 +68,12 @@ pub struct BuilderRequest {
 impl BuilderRequest {
     /// Validates a builder-turn request before prompt rendering.
     ///
-    /// [`BuildMode::Build`] acts on an existing saved flow — its brief tells the
-    /// agent to `save_workflow` onto `flow_id`. A missing or blank `flow_id`
-    /// would otherwise render `The flow's id is ``.` into the brief and let the
-    /// agent save onto nothing, so reject it here (the RPC path deserializes
-    /// `BuilderRequest` directly, where only `mode` is required).
+    /// [`BuildMode::Build`] injects a `flow_id` as context for future turns
+    /// (the user may later ask the agent to save/test that flow). A missing or
+    /// blank `flow_id` would render `The flow's id is ``.` into the brief and
+    /// contradict the "instant-create flow already exists" framing, so reject
+    /// it here (the RPC path deserializes `BuilderRequest` directly, where
+    /// only `mode` is required).
     pub fn validate(&self) -> Result<(), String> {
         if self.mode == BuildMode::Build
             && self
@@ -96,10 +99,11 @@ const DIRECTIVE_REVISE: &str = "Revise this tinyflows automation and return the 
      disable anything. You may run_flow the SAVED flow to test it, but ONLY if I ask and only after you \
      confirm with me first.";
 
-const DIRECTIVE_BUILD_AND_SAVE: &str = "Build this tinyflows automation END-TO-END. The flow already exists \
-     (created blank just now) — design the graph, verify it with dry_run_workflow, return the workflow \
-     proposal, then SAVE it onto the flow id below with save_workflow. Do not enable or disable anything, and \
-     do not run_flow a real test unless I explicitly confirm first. Tell me what you saved when you are done.";
+const DIRECTIVE_BUILD_PROPOSE_ONLY: &str = "Build this tinyflows automation END-TO-END and return the workflow \
+     proposal. The flow already exists (created blank just now) — design the graph and verify it with \
+     dry_run_workflow, then return the proposal for me to review. Do NOT save_workflow in this turn: I will \
+     Accept the proposal explicitly and the canvas's Save persists it. Do not enable, disable, or run_flow \
+     anything unless I explicitly confirm first.";
 
 /// Serialize a graph compactly for injection as agent context.
 fn serialize_graph(graph: &Value) -> String {
@@ -142,9 +146,12 @@ pub fn render_prompt(req: &BuilderRequest) -> String {
         BuildMode::Build => {
             let flow_id = req.flow_id.as_deref().unwrap_or("");
             [
-                DIRECTIVE_BUILD_AND_SAVE,
+                DIRECTIVE_BUILD_PROPOSE_ONLY,
                 "",
-                &format!("The flow's id is `{flow_id}`. Its current (blank) graph is:"),
+                &format!(
+                    "The flow's id is `{flow_id}` (kept for future turns — do not save_workflow it here). \
+                     Its current (blank) graph is:"
+                ),
                 "```json",
                 &req.graph
                     .as_ref()
@@ -241,12 +248,37 @@ mod tests {
     }
 
     #[test]
-    fn build_asks_to_save_onto_flow_id() {
+    fn build_is_propose_only_and_injects_flow_id_as_context() {
+        // Regression for #4596: the instant-create build turn must NOT
+        // instruct the agent to `save_workflow`. Rejecting the proposal has
+        // to leave the created-blank flow's persisted graph untouched, so
+        // persistence stays behind the user's explicit Accept + Save. The
+        // flow id is still injected as context for future turns.
         let mut r = req(BuildMode::Build);
         r.flow_id = Some("flow_9".into());
         r.graph = Some(json!({ "nodes": [], "edges": [] }));
         let p = render_prompt(&r);
-        assert!(p.contains("save_workflow"));
+        // Positive: the new directive explicitly forbids save_workflow on
+        // this turn.
+        assert!(
+            p.contains("Do NOT save_workflow"),
+            "build directive must forbid save_workflow explicitly (#4596)"
+        );
+        // Negative: none of the old imperative-save phrasings survive
+        // (any of them would put us back in the auto-save bug).
+        for banned in [
+            "then SAVE",
+            "with save_workflow",
+            "SAVE it onto",
+            "save_workflow onto",
+        ] {
+            assert!(
+                !p.contains(banned),
+                "build directive must not carry auto-save phrasing `{banned}` (#4596)"
+            );
+        }
+        // Context is still injected so the user can later ask the agent to
+        // save/test that specific flow.
         assert!(p.contains("flow_9"));
         assert!(p.contains("END-TO-END"));
     }

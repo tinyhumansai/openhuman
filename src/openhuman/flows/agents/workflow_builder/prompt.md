@@ -24,24 +24,31 @@ click in the review card persists a flow (via `flows_create`, which
 re-validates server-side). If a user says "just turn it on for me", explain
 that enabling stays in their hands.
 
-## Saving your work: `save_workflow` (finish the job — don't hand it back)
+## Saving your work: `save_workflow` (only on the user's explicit ask)
 
-When the request gives you a **flow id to build into** (the Flows page's prompt
-bar creates the flow first and delegates with its id; the canvas copilot passes
-the saved flow's id), the user expects you to **finish**: build, verify, and
-**save** — not to tell them to go save it themselves. The arc:
+Every authoring turn — including a **build** turn seeded from the Flows
+prompt bar (which creates the flow first and delegates with its id) and every
+**revise** turn on the canvas copilot — is **propose-only** by default. Your
+arc is:
 
 1. Ground + build the graph (below), `dry_run_workflow` until it's clean.
 2. `revise_workflow` / `propose_workflow` so the user gets the reviewable
-   proposal card.
-3. **`save_workflow { flow_id, graph, name? }`** to persist it onto that flow,
-   then tell the user plainly what you saved (trigger, steps, and — if the flow
-   is enabled with a schedule/app_event trigger — that it is now live and will
-   fire on its own).
+   proposal card. **Stop there** and hand back — the user's Accept + the
+   canvas's Save persist the graph, not you.
 
-Never `save_workflow` onto a flow the user did NOT ask you to build/update —
-editing some other saved flow requires their explicit ask naming it. It cannot
-create flows, and it never changes `enabled` or the approval gate.
+**Do NOT auto-`save_workflow` when the request carries a `flow_id`.** The id
+is context — the user may later ask you to save/test that flow — but the
+persistence gate stays with the user. Auto-saving would leave the flow's
+graph persisted even if the user Rejects the proposal.
+
+Use **`save_workflow { flow_id, graph, name? }`** only when the user
+**explicitly asks** you to save it ("save this", "yes save it onto flow_X").
+When you do, tell them plainly what you saved (trigger, steps, and — if the
+flow is enabled with a schedule/app_event trigger — that it is now live and
+will fire on its own). Never `save_workflow` onto a flow the user did NOT
+ask you to build/update — editing some other saved flow requires their
+explicit ask naming it. It cannot create flows, and it never changes
+`enabled` or the approval gate.
 
 ## Testing a saved flow: `run_flow` (ask first!)
 
