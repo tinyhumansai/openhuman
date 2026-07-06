@@ -2181,6 +2181,47 @@ pub async fn flows_discover(
 /// the RPC block indefinitely.
 const FLOW_BUILD_TIMEOUT_SECS: u64 = 300;
 
+/// Tools stripped from the `workflow_builder` belt on the direct `flows_build`
+/// RPC path (issue #4593).
+///
+/// `flows_build` runs the builder under [`AgentTurnOrigin::Cli`] so the approval
+/// gate does not fail-closed in a headless/streamed run — but that same origin
+/// makes [`crate::openhuman::approval::ApprovalGate`] **auto-allow** every
+/// `external_effect` tool. The flows live-runner (`run_flow`,
+/// [`crate::openhuman::flows::tools`]'s `RunFlowTool`) executes a *live* saved
+/// flow (real Slack/Gmail/HTTP/code effects via [`flows_run`]), so a stray call
+/// during an authoring turn would fire it with no HITL confirmation. This path
+/// has no routable approval surface yet (the copilot stream carries only a
+/// broadcast `thread_id`, no per-user `client_id`), so rather than
+/// park-then-TTL-deny we make it **unreachable** here — matching `flows_build`'s
+/// contract that it "never enables or runs a flow". The tool stays available
+/// (and properly gated behind a real `WebChat` approval card) when
+/// `workflow_builder` is invoked as the `build_workflow` chat delegate.
+///
+/// `run_flow` is the live-runner on the belt today. The legacy `run_workflow`
+/// name (now the unrelated harness spawn tool) is listed too as belt-and-braces
+/// against a re-rename or the name ever leaking back onto this belt;
+/// `hide_tools` no-ops on a name that isn't present.
+const FLOWS_BUILD_HIDDEN_TOOLS: &[&str] = &["run_workflow", "run_flow"];
+
+/// Strip the live-run tool(s) in [`FLOWS_BUILD_HIDDEN_TOOLS`] from `agent`'s
+/// callable set for the direct `flows_build` RPC path.
+///
+/// Delegates to [`crate::openhuman::agent::Agent::hide_tools`], which removes
+/// the names from the builder's (already narrow) visible belt and rebuilds the
+/// session's `ToolPolicySession` so they resolve to `Deny` at the tool-call
+/// boundary — a hard execution guarantee even if the model requests the tool.
+/// The authoring tools (`propose`/`revise`/`save`/`dry_run`/reads) are all
+/// `external_effect() == false` and untouched, so the turn never fail-closes.
+fn restrict_builder_toolset(agent: &mut crate::openhuman::agent::Agent) {
+    tracing::debug!(
+        target: "flows",
+        hidden = ?FLOWS_BUILD_HIDDEN_TOOLS,
+        "[flows] flows_build: hiding live-run tools from builder belt"
+    );
+    agent.hide_tools(FLOWS_BUILD_HIDDEN_TOOLS);
+}
+
 /// Runs the `workflow_builder` agent for one authoring turn and returns its
 /// proposal, invoking it as a first-class backend agent (exactly like the Flow
 /// Scout `flows_discover`) rather than routing a hand-crafted delegate prompt
@@ -2226,6 +2267,14 @@ pub async fn flows_build(
     let mut agent = Agent::from_config_for_agent(config, "workflow_builder")
         .map_err(|e| format!("failed to build workflow_builder agent: {e:#}"))?;
     agent.set_agent_definition_name("workflow_builder".to_string());
+
+    // Strip the live-run tool(s) from the belt on this direct RPC path: under
+    // the `AgentTurnOrigin::Cli` origin below the approval gate auto-allows
+    // every external_effect tool, so `run_flow` could execute a live saved flow
+    // with no HITL confirmation (issue #4593). Restricting the visible set makes
+    // it `Deny` at the tool-call boundary; the authoring tools are untouched so
+    // the turn still runs headless without fail-closing.
+    restrict_builder_toolset(&mut agent);
 
     // When a chat thread is attached (the copilot pane), stream the builder turn
     // into it exactly like an interactive turn — text/tool deltas and the

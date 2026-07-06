@@ -2013,3 +2013,69 @@ fn finalize_terminal_status_no_error_when_clean() {
     assert_eq!(status, "completed");
     assert_eq!(error, None);
 }
+
+/// Regression for issue #4593: the `flows_build` builder turn runs under
+/// `AgentTurnOrigin::Cli`, which makes the `ApprovalGate` auto-allow every
+/// `external_effect` tool. The flows live-runner executes a *live* saved flow,
+/// so it must be unreachable on this path — `restrict_builder_toolset` drops it
+/// from the builder's callable belt while leaving the authoring tools in place
+/// so the turn still functions (never fail-closes).
+#[tokio::test]
+async fn flows_build_hides_the_live_run_tool_from_the_builder_belt() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    // Document WHY the live-runner must be hidden: running a saved flow fires
+    // real Slack/Gmail/HTTP/code effects, so it is an external-effect tool. This
+    // pins that invariant independently of belt name-resolution so the
+    // hide-list can't silently stop covering a live-run tool.
+    use crate::openhuman::tools::Tool as _;
+    let live_runner =
+        crate::openhuman::flows::tools::RunFlowTool::new(std::sync::Arc::new(config.clone()));
+    assert!(
+        live_runner.external_effect(),
+        "the flows live-runner must be external-effect for the #4593 concern to apply"
+    );
+
+    crate::openhuman::agent::harness::AgentDefinitionRegistry::init_global(&config.workspace_dir)
+        .expect("agent registry init");
+    let mut agent =
+        crate::openhuman::agent::Agent::from_config_for_agent(&config, "workflow_builder")
+            .expect("build workflow_builder agent");
+    agent.set_agent_definition_name("workflow_builder".to_string());
+
+    // Precondition: the builder advertises the live-run tool (`run_flow`) on its
+    // belt before restriction — the exact tool #4593 is about.
+    assert!(
+        agent.visible_tool_names_for_test().contains("run_flow"),
+        "precondition: workflow_builder belt should advertise the live-run tool `run_flow`; \
+         visible = {:?}",
+        agent.visible_tool_names_for_test()
+    );
+
+    restrict_builder_toolset(&mut agent);
+
+    // After restriction neither the current name nor the post-rename name is
+    // callable on the flows_build path — the hide-list covers both (#4593).
+    let visible = agent.visible_tool_names_for_test();
+    for hidden in ["run_workflow", "run_flow"] {
+        assert!(
+            !visible.contains(hidden),
+            "live-run tool `{hidden}` must be hidden on the flows_build path; visible = {visible:?}"
+        );
+    }
+    // Authoring / read tools stay reachable so the builder turn still works
+    // headlessly under the CLI origin (no fail-close).
+    for keep in [
+        "propose_workflow",
+        "revise_workflow",
+        "save_workflow",
+        "dry_run_workflow",
+        "list_flows",
+    ] {
+        assert!(
+            visible.contains(keep),
+            "authoring tool `{keep}` must remain visible after restriction; visible = {visible:?}"
+        );
+    }
+}

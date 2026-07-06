@@ -236,6 +236,37 @@ impl Agent {
         self.rebuild_tool_policy_session();
     }
 
+    /// Remove `names` from the main agent's callable set for this session,
+    /// leaving every other currently-visible tool untouched.
+    ///
+    /// The hidden names resolve to `Deny` at the tool-call boundary (via the
+    /// rebuilt [`ToolPolicySession`]), not merely absent from the prompt — a
+    /// hard execution guarantee even if the model requests the tool anyway.
+    ///
+    /// When the session currently has *no* visible-tool filter (empty set =
+    /// "all visible"), the filter is first seeded from every registered tool
+    /// spec so hiding actually **restricts** the set rather than no-opping into
+    /// the still-"all visible" empty state. Used by callers that need to drop a
+    /// specific dangerous tool from an otherwise-unchanged belt (e.g. the
+    /// `flows_build` builder path dropping the live-run `run_flow` tool).
+    ///
+    /// Caveat: because an empty set is the "all visible" sentinel, hiding *every*
+    /// remaining tool collapses back to "all visible". Callers use this to drop
+    /// a handful of tools from a much larger belt, where that can't happen.
+    pub fn hide_tools(&mut self, names: &[&str]) {
+        if self.visible_tool_names.is_empty() {
+            self.visible_tool_names = self
+                .tool_specs
+                .iter()
+                .map(|spec| spec.name.clone())
+                .collect();
+        }
+        for name in names {
+            self.visible_tool_names.remove(*name);
+        }
+        self.rebuild_tool_policy_session();
+    }
+
     pub(super) fn rebuild_tool_policy_session(&mut self) {
         self.tool_policy_session = ToolPolicyEngine::build_session(
             &self.agent_definition_name,
