@@ -132,6 +132,15 @@ struct SessionSummary {
     session_id: String,
     agent_id: String,
     source: String,
+    /// The emitting harness (claude/codex/gemini) when this is an external agent
+    /// instance; absent for the pinned master/subconscious/user-created windows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    harness_type: Option<String>,
+    /// Coarse instance status for the roster status dot (see `derive_status`).
+    status: String,
+    /// One-line current activity (latest message preview) for the roster.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current_task: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -196,14 +205,60 @@ fn is_active(last_message_at: &str) -> bool {
     }
 }
 
-fn summarize(session: OrchestrationSession, unread: i64, pinned: bool) -> SessionSummary {
+/// The harness provider for a session, when its `source` names one. Session
+/// windows persist the emitting harness (claude/codex/gemini) in `source` (see
+/// `ingest.rs`); the sentinel windows (master/subconscious/user_created/
+/// orchestration) carry no harness and yield `None`.
+fn harness_type_for(source: &str) -> Option<String> {
+    matches!(source, "claude" | "codex" | "gemini").then(|| source.to_string())
+}
+
+/// Coarse instance status for the roster dot, derived from activity. Peer
+/// instances carry no true run-state yet, so today an instance is `idle` when it
+/// has recent traffic and `stopped` otherwise. The richer
+/// running/waiting-approval/errored states are reserved for the attention-queue
+/// and run-state follow-ups; the renderer's `InstanceStatusDot` already models
+/// all five.
+fn derive_status(active: bool) -> &'static str {
+    if active {
+        "idle"
+    } else {
+        "stopped"
+    }
+}
+
+/// One-line, UTF-8-safe preview of a message body for the roster task line.
+/// Truncates on a char boundary and reserves room for the ellipsis so the result
+/// never exceeds `MAX` chars (avoids the byte-slice panics noted in the codebase).
+fn task_preview(body: &str) -> String {
+    const MAX: usize = 80;
+    let trimmed = body.trim();
+    if trimmed.chars().count() <= MAX {
+        return trimmed.to_string();
+    }
+    let mut out: String = trimmed.chars().take(MAX - 1).collect();
+    out.push('…');
+    out
+}
+
+fn summarize(
+    session: OrchestrationSession,
+    unread: i64,
+    pinned: bool,
+    current_task: Option<String>,
+) -> SessionSummary {
     let chat_kind = chat_kind_for_session(&session.session_id);
     let active = pinned || is_active(&session.last_message_at);
+    let harness_type = harness_type_for(&session.source);
+    let status = derive_status(active).to_string();
     SessionSummary {
         chat_kind: chat_kind.as_str().to_string(),
         active,
         unread,
         pinned,
+        harness_type,
+        status,
+        current_task,
         session_id: session.session_id,
         agent_id: session.agent_id,
         source: session.source,
@@ -231,7 +286,15 @@ fn handle_sessions_list(_params: Map<String, Value>) -> ControllerFuture {
                     _ => {}
                 }
                 let pinned = matches!(session.session_id.as_str(), "master" | "subconscious");
-                out.push(summarize(session, unread, pinned));
+                // Roster task line: latest message preview for real instance
+                // windows; the pinned windows don't need one.
+                let current_task = if pinned {
+                    None
+                } else {
+                    store::latest_message_preview(conn, &session.agent_id, &session.session_id)?
+                        .map(|body| task_preview(&body))
+                };
+                out.push(summarize(session, unread, pinned, current_task));
             }
             // Ensure the pinned windows always exist even before any traffic.
             if !have_master {
@@ -278,7 +341,7 @@ fn handle_sessions_create(params: Map<String, Value>) -> ControllerFuture {
         })
         .map_err(|e| format!("sessions_create: {e}"))?;
         super::bus::notify_orchestration_message(&agent_id, &session_id, "session");
-        to_json(serde_json::json!({ "session": summarize(session, 0, false) }))
+        to_json(serde_json::json!({ "session": summarize(session, 0, false, None) }))
     })
 }
 
@@ -287,6 +350,9 @@ fn pinned_placeholder(session_id: &str) -> SessionSummary {
         session_id: session_id.to_string(),
         agent_id: session_id.to_string(),
         source: "orchestration".to_string(),
+        harness_type: None,
+        status: derive_status(true).to_string(),
+        current_task: None,
         label: None,
         workspace: None,
         chat_kind: chat_kind_for_session(session_id).as_str().to_string(),
@@ -648,5 +714,58 @@ mod tests {
         let mut params = Map::new();
         params.insert("chat".to_string(), Value::String("  ".to_string()));
         assert!(required_param(&params, "chat").is_err());
+    }
+
+    #[test]
+    fn harness_type_only_for_known_providers() {
+        assert_eq!(harness_type_for("claude").as_deref(), Some("claude"));
+        assert_eq!(harness_type_for("codex").as_deref(), Some("codex"));
+        assert_eq!(harness_type_for("gemini").as_deref(), Some("gemini"));
+        // Sentinel / origin sources are not harnesses.
+        assert_eq!(harness_type_for("master"), None);
+        assert_eq!(harness_type_for("user_created"), None);
+        assert_eq!(harness_type_for("orchestration"), None);
+    }
+
+    #[test]
+    fn status_is_idle_when_active_else_stopped() {
+        assert_eq!(derive_status(true), "idle");
+        assert_eq!(derive_status(false), "stopped");
+    }
+
+    #[test]
+    fn task_preview_trims_and_caps_on_char_boundary() {
+        assert_eq!(task_preview("  hello  "), "hello");
+        // A multibyte string longer than the cap truncates with an ellipsis and
+        // never exceeds MAX chars (no mid-codepoint panic).
+        let long = "é".repeat(200);
+        let preview = task_preview(&long);
+        assert_eq!(preview.chars().count(), 80);
+        assert!(preview.ends_with('…'));
+    }
+
+    #[test]
+    fn summarize_derives_harness_status_and_carries_task() {
+        let session = OrchestrationSession {
+            session_id: "w1".to_string(),
+            agent_id: "@peer".to_string(),
+            source: "claude".to_string(),
+            label: None,
+            workspace: None,
+            last_seq: 3,
+            created_at: "2020-01-01T00:00:00Z".to_string(),
+            // Stale timestamp → not active → stopped.
+            last_message_at: "2020-01-01T00:00:00Z".to_string(),
+        };
+        let summary = summarize(session, 2, false, Some("drafting cards".to_string()));
+        assert_eq!(summary.harness_type.as_deref(), Some("claude"));
+        assert_eq!(summary.status, "stopped");
+        assert_eq!(summary.current_task.as_deref(), Some("drafting cards"));
+        assert!(!summary.active);
+
+        // A pinned window is always active → idle, and carries no harness/task.
+        let pinned = pinned_placeholder("master");
+        assert_eq!(pinned.status, "idle");
+        assert!(pinned.harness_type.is_none());
     }
 }
