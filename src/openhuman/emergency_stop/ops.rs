@@ -106,12 +106,13 @@ pub async fn emergency_status() -> RpcOutcome<HaltState> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    static TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    use crate::openhuman::emergency_stop::state::EMERGENCY_TEST_GUARD;
 
     #[tokio::test]
     async fn stop_sets_flag_and_status_reports_engaged() {
-        let _g = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = EMERGENCY_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let out = emergency_stop(Some("user".into()), "user").await;
         assert!(out.value.engaged);
         let status = emergency_status().await;
@@ -123,7 +124,9 @@ mod tests {
 
     #[tokio::test]
     async fn resume_clears_flag() {
-        let _g = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = EMERGENCY_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _ = emergency_stop(None, "user").await;
         let out = emergency_resume("user").await;
         assert!(!out.value.engaged);
@@ -132,7 +135,9 @@ mod tests {
 
     #[tokio::test]
     async fn stop_is_idempotent() {
-        let _g = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = EMERGENCY_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _ = emergency_stop(Some("a".into()), "user").await;
         let out = emergency_stop(Some("b".into()), "system").await;
         assert!(out.value.engaged);

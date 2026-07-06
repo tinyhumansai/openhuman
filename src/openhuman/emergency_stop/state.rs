@@ -90,6 +90,14 @@ impl EmergencyStop {
     }
 }
 
+/// Shared, crate-visible serialization guard for tests that touch the
+/// process-global `EmergencyStop`. Rust runs unit tests in parallel within a
+/// single test binary, so tests in `ops.rs`, the tinyagents middleware, and
+/// `screen_intelligence::ops` all mutate the SAME global and would race. Every
+/// global-touching test must lock this before engaging/clearing the switch.
+#[cfg(test)]
+pub(crate) static EMERGENCY_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Global convenience: is a switch installed AND engaged? False when no
 /// switch is installed (CLI/headless) so those paths are never blocked.
 pub fn is_engaged_global() -> bool {

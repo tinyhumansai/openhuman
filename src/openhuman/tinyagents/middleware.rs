@@ -942,6 +942,20 @@ impl ToolMiddleware<()> for ApprovalSecurityMiddleware {
         // approval await.
         let mut audit_id: Option<String> = None;
         if self.has_external_effect(&call.name, &call.arguments) {
+            // Emergency stop: refuse every external-effect tool while halted,
+            // before touching the approval gate. Fail-closed.
+            if crate::openhuman::emergency_stop::is_engaged_global() {
+                let reason = "Emergency stop is engaged — this action is blocked until you resume automation.".to_string();
+                tracing::warn!(tool = %call.name, "[tinyagents::mw] emergency stop engaged — refusing tool call");
+                return Ok(MiddlewareToolOutcome::Result(TaToolResult {
+                    call_id: call.id,
+                    name: call.name,
+                    content: reason.clone(),
+                    raw: None,
+                    error: Some(reason),
+                    elapsed_ms: 0,
+                }));
+            }
             if let Some(gate) = ApprovalGate::try_global() {
                 let summary = summarize_action(&call.name, &call.arguments);
                 let redacted = redact_args(&call.arguments);
@@ -3911,6 +3925,24 @@ mod tests {
         assert!(!mw.has_external_effect("read_file", &json!({})));
         // Unknown tool defaults to no external effect (nothing to gate).
         assert!(!mw.has_external_effect("missing", &json!({})));
+    }
+
+    /// Exercises the emergency-stop guard the middleware consults before the
+    /// approval gate. Constructing a full `RunContext`/`ToolHandler` to drive
+    /// `wrap_tool` end-to-end is heavy, so this asserts the exact global
+    /// predicate the guard branches on flips as the switch engages/clears.
+    #[test]
+    fn emergency_guard_blocks_when_engaged() {
+        let _g = crate::openhuman::emergency_stop::state::EMERGENCY_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        use crate::openhuman::emergency_stop::EmergencyStop;
+        let stop = EmergencyStop::init_global();
+        stop.clear();
+        assert!(!crate::openhuman::emergency_stop::is_engaged_global());
+        stop.engage(Some("test".into()), "user", 0);
+        assert!(crate::openhuman::emergency_stop::is_engaged_global());
+        stop.clear();
     }
 
     // ── MemoryProtocolMiddleware (issue #4116) ──────────────────────────────
