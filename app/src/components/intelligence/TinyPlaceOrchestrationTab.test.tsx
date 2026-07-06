@@ -203,6 +203,19 @@ describe('TinyPlaceOrchestrationTab', () => {
     expect(screen.getByText('OpenHuman app session')).toBeInTheDocument();
   });
 
+  it('keeps the relay badge visible when identity discovery fails (locked wallet)', async () => {
+    // selfIdentity() builds the tiny.place client from the wallet and can reject;
+    // relayInfo() only reads the base URL and must stay visible regardless.
+    selfIdentityMock.mockRejectedValue(new Error('wallet locked'));
+
+    render(<TinyPlaceOrchestrationTab />);
+
+    const badge = await screen.findByTestId('tinyplace-relay-badge');
+    expect(badge).toHaveAttribute('data-network', 'staging');
+    // Identity read failed → its card must not render.
+    expect(screen.queryByTestId('tinyplace-self-identity')).not.toBeInTheDocument();
+  });
+
   it('loads and renders messages for the opened chat', async () => {
     sessionsListMock.mockResolvedValue({
       sessions: [

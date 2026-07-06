@@ -272,28 +272,36 @@ export default function TinyPlaceOrchestrationTab() {
 
   const loadIdentity = useCallback(async () => {
     debug('[tinyplace-orchestration] identity load entry');
-    try {
-      const [identity, relay] = await Promise.all([
-        orchestrationClient.selfIdentity(),
-        orchestrationClient.relayInfo(),
-      ]);
-      if (!mountedRef.current) return;
+    // Identity and relay are independent reads: selfIdentity() builds the
+    // tiny.place client from the wallet and can reject (locked/unconfigured
+    // wallet), but relayInfo() only reads the configured base URL and must
+    // stay visible regardless. Settle them separately so one failure never
+    // hides the other. Neither failure may break the chat surface.
+    const [identityResult, relayResult] = await Promise.allSettled([
+      orchestrationClient.selfIdentity(),
+      orchestrationClient.relayInfo(),
+    ]);
+    if (!mountedRef.current) return;
+    if (identityResult.status === 'fulfilled') {
       debug(
-        '[tinyplace-orchestration] identity load exit discoverable=%s network=%s',
-        identity.discoverable,
-        relay.network
+        '[tinyplace-orchestration] identity load ok discoverable=%s',
+        identityResult.value.discoverable
       );
-      setSelfIdentity(identity);
-      setRelayInfo(relay);
-    } catch (error) {
-      if (!mountedRef.current) return;
-      // Identity/relay are informational; a read failure (locked wallet, offline
-      // relay) must not break the chat surface. Leave the card/badge hidden.
-      const message = error instanceof Error ? error.message : String(error);
+      setSelfIdentity(identityResult.value);
+    } else {
+      const reason = identityResult.reason;
+      const message = reason instanceof Error ? reason.message : String(reason);
       debug('[tinyplace-orchestration] identity load error %s', message);
-    } finally {
-      if (mountedRef.current) setIdentityLoading(false);
     }
+    if (relayResult.status === 'fulfilled') {
+      debug('[tinyplace-orchestration] relay load ok network=%s', relayResult.value.network);
+      setRelayInfo(relayResult.value);
+    } else {
+      const reason = relayResult.reason;
+      const message = reason instanceof Error ? reason.message : String(reason);
+      debug('[tinyplace-orchestration] relay load error %s', message);
+    }
+    setIdentityLoading(false);
   }, []);
 
   const runPairingAction = useCallback(
