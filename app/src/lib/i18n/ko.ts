@@ -6812,6 +6812,13 @@ const messages: TranslationMap = {
   'flows.delete.confirm': '삭제',
   'flows.delete.deleting': '삭제 중…',
   'flows.canvas.renameLabel': '워크플로 이름 바꾸기',
+
+  // Emergency stop (#4255)
+  'safety.emergencyStop': '긴급 정지',
+  'safety.resume': '자동화 재개',
+  'safety.haltedTitle': '자동화 중단됨',
+  'safety.haltedBody': '모든 데스크톱 자동화가 중지되었습니다. 준비가 되면 재개하세요.',
+  'safety.stopConfirm': '지금 모든 자동화를 중지하시겠습니까?',
 };
 
 export default messages;

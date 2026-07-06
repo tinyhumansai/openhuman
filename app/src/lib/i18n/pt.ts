@@ -7003,6 +7003,13 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Excluir',
   'flows.delete.deleting': 'Excluindo…',
   'flows.canvas.renameLabel': 'Renomear fluxo de trabalho',
+
+  // Emergency stop (#4255)
+  'safety.emergencyStop': 'Parada de emergência',
+  'safety.resume': 'Retomar automação',
+  'safety.haltedTitle': 'Automação pausada',
+  'safety.haltedBody': 'Toda a automação do desktop está parada. Retome quando estiver pronto.',
+  'safety.stopConfirm': 'Parar toda a automação agora?',
 };
 
 export default messages;

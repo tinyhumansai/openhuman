@@ -7079,6 +7079,13 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Löschen',
   'flows.delete.deleting': 'Wird gelöscht…',
   'flows.canvas.renameLabel': 'Workflow umbenennen',
+
+  // Emergency stop (#4255)
+  'safety.emergencyStop': 'Notabschaltung',
+  'safety.resume': 'Automatisierung fortsetzen',
+  'safety.haltedTitle': 'Automatisierung angehalten',
+  'safety.haltedBody': 'Alle Desktop-Automatisierungen sind gestoppt. Fortsetzen, wenn Sie bereit sind.',
+  'safety.stopConfirm': 'Alle Automatisierungen jetzt stoppen?',
 };
 
 export default messages;

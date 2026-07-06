@@ -7185,6 +7185,13 @@ const en: TranslationMap = {
     'Your AI provider has no API key set. Add one in provider settings to continue.',
   'userErrors.scope.chat': 'Chat',
   'userErrors.scope.cron': 'Scheduled job',
+
+  // Emergency stop (#4255)
+  'safety.emergencyStop': 'Emergency stop',
+  'safety.resume': 'Resume automation',
+  'safety.haltedTitle': 'Automation halted',
+  'safety.haltedBody': 'All desktop automation is stopped. Resume when you are ready.',
+  'safety.stopConfirm': 'Stop all automation now?',
 };
 
 export default en;
