@@ -84,6 +84,35 @@ export interface OrchestrationMessageEvent {
   chatKind: string;
 }
 
+/** One @handle this agent's wallet holds (reverse-resolved from the directory). */
+export interface SelfHandle {
+  username: string;
+  primary: boolean;
+}
+
+/**
+ * This agent's own tiny.place identity and whether peers can reach it.
+ *
+ * `discoverable` is the bottom line: a peer can DM this agent only when both its
+ * directory card (`cardPublished`) and its Signal encryption key (`keyPublished`)
+ * are live. A fresh identity can accept contacts yet stay un-messageable until it
+ * registers a @handle — the card surfaces that gap instead of a mystery 404.
+ */
+export interface SelfIdentity {
+  agentId: string;
+  handles: SelfHandle[];
+  primaryHandle?: string;
+  cardPublished: boolean;
+  keyPublished: boolean;
+  discoverable: boolean;
+}
+
+/** The relay endpoint the core talks to, plus a coarse network label. */
+export interface RelayInfo {
+  baseUrl: string;
+  network: 'staging' | 'prod';
+}
+
 // ── Internal helper ───────────────────────────────────────────────────────────
 
 function safeParseJson(s: string): unknown {
@@ -155,6 +184,16 @@ export const orchestrationClient = {
 
   /** Current orchestration status (active steering directive, tick timing). */
   status: () => call<OrchestrationStatus>('openhuman.orchestration_status', {}),
+
+  /**
+   * This agent's own tiny.place identity + discoverability (agent id, @handles,
+   * whether its directory card and Signal key are published, whether peers can
+   * DM it). Powers the SelfIdentityCard.
+   */
+  selfIdentity: () => call<SelfIdentity>('openhuman.orchestration_self_identity', {}),
+
+  /** The relay endpoint + network label the core is talking to (RelayBadge). */
+  relayInfo: () => call<RelayInfo>('openhuman.orchestration_relay_info', {}),
 };
 
 export type OrchestrationClient = typeof orchestrationClient;
