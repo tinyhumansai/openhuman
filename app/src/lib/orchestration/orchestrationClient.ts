@@ -20,10 +20,27 @@ export { PaymentRequiredError };
 
 export type OrchestrationChatKind = 'master' | 'subconscious' | 'session';
 
+/** External agent harness that emits a session (drives the roster grouping). */
+export type HarnessType = 'claude' | 'codex' | 'gemini';
+
+/**
+ * Coarse instance status for the roster dot. Peer instances carry no true
+ * run-state yet, so the core derives only `idle` / `stopped` today; the
+ * remaining states are modelled here (and by `InstanceStatusDot`) for the
+ * attention-queue and run-state follow-ups.
+ */
+export type InstanceStatus = 'running' | 'idle' | 'waiting-approval' | 'errored' | 'stopped';
+
 export interface SessionSummary {
   sessionId: string;
   agentId: string;
   source: string;
+  /** Emitting harness when this is an external instance; absent for master/subconscious/user-created. */
+  harnessType?: HarnessType;
+  /** Coarse status for the roster dot (see {@link InstanceStatus}). */
+  status: InstanceStatus;
+  /** One-line current activity (latest message preview) for the roster. */
+  currentTask?: string;
   label?: string;
   workspace?: string;
   chatKind: OrchestrationChatKind;
