@@ -53,7 +53,7 @@
 <p align="center">
  <img src="https://img.shields.io/badge/status-early%20beta-orange" alt="ابتدائی آزمائشی نسخہ" />
  <a href="https://github.com/tinyhumansai/openhuman/releases/latest"><img src="https://img.shields.io/github/v/release/tinyhumansai/openhuman?label=latest" alt="تازہ ترین نسخہ" /></a>
- <a href="https://github.com/tinyhumansai/openhuman/stargazers"><img src="https://img.shields.io/github/stars/tinyhumansai/openhuman?style=flat" alt="ستارے" /></a>
+ <a href="https://github.com/tinyhumansai/openhuman"><img src="https://img.shields.io/github/stars/tinyhumansai/openhuman?style=flat" alt="ستارے" /></a>
  <a href="../LICENSE"><img src="https://img.shields.io/github/license/tinyhumansai/openhuman" alt="لائسنس" /></a>
 </p>
 
