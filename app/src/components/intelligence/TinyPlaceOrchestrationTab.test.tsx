@@ -30,6 +30,8 @@ vi.mock('../../lib/orchestration/orchestrationClient', async importOriginal => {
       sendMasterMessage: vi.fn(),
       markRead: vi.fn(),
       status: vi.fn(),
+      selfIdentity: vi.fn(),
+      relayInfo: vi.fn(),
     },
   };
 });
@@ -50,6 +52,8 @@ const messagesListMock = vi.mocked(orchestrationClient.messagesList);
 const sendMasterMock = vi.mocked(orchestrationClient.sendMasterMessage);
 const markReadMock = vi.mocked(orchestrationClient.markRead);
 const statusMock = vi.mocked(orchestrationClient.status);
+const selfIdentityMock = vi.mocked(orchestrationClient.selfIdentity);
+const relayInfoMock = vi.mocked(orchestrationClient.relayInfo);
 
 const pairingListMock = vi.mocked(apiClient.orchestrationPairing.list);
 const pairingLinkMock = vi.mocked(apiClient.orchestrationPairing.linkSession);
@@ -102,6 +106,18 @@ describe('TinyPlaceOrchestrationTab', () => {
     sendMasterMock.mockResolvedValue({ ok: true, messageId: 'm-1' });
     markReadMock.mockResolvedValue({ ok: true });
     statusMock.mockResolvedValue({});
+    selfIdentityMock.mockResolvedValue({
+      agentId: '6wNaBJkatir4B86cw5ykHZWQ3xoNaKygX5vAU9MQbHSh',
+      handles: [{ username: 'openhuman', primary: true }],
+      primaryHandle: 'openhuman',
+      cardPublished: true,
+      keyPublished: true,
+      discoverable: true,
+    });
+    relayInfoMock.mockResolvedValue({
+      baseUrl: 'https://staging-api.tiny.place',
+      network: 'staging',
+    });
     pairingListMock.mockResolvedValue({
       records: [],
       contacts: { contacts: [] },
