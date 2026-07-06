@@ -40,6 +40,30 @@ pub fn register_approval_surface_subscriber() {
     }
 }
 
+static AUTOMATION_HALT_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
+
+/// Register the emergency-stop bridge: `AutomationHalted`/`AutomationResumed`
+/// (domain `system`) → the `automation_halt` socket event, broadcast to every
+/// client via the `"system"` room. Idempotent (OnceLock-guarded).
+pub fn register_automation_halt_subscriber() {
+    if AUTOMATION_HALT_HANDLE.get().is_some() {
+        return;
+    }
+    match crate::core::event_bus::subscribe_global(Arc::new(AutomationHaltSubscriber)) {
+        Some(handle) => {
+            let _ = AUTOMATION_HALT_HANDLE.set(handle);
+            log::info!(
+                "[web-channel] automation-halt subscriber registered (domain=system) — bridges AutomationHalted/AutomationResumed → automation_halt socket event"
+            );
+        }
+        None => {
+            log::warn!(
+                "[web-channel] failed to register automation-halt subscriber — bus not initialized"
+            );
+        }
+    }
+}
+
 static ARTIFACT_SURFACE_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
 
 pub fn register_artifact_surface_subscriber() {
@@ -294,6 +318,56 @@ impl EventHandler for ApprovalSurfaceSubscriber {
     }
 }
 
+struct AutomationHaltSubscriber;
+
+#[async_trait]
+impl EventHandler for AutomationHaltSubscriber {
+    fn name(&self) -> &str {
+        "channels::web::automation_halt"
+    }
+
+    fn domains(&self) -> Option<&[&str]> {
+        Some(&["system"])
+    }
+
+    async fn handle(&self, event: &DomainEvent) {
+        match event {
+            DomainEvent::AutomationHalted { reason, source } => {
+                log::info!(
+                    "[web-channel] automation-halt emitting automation_halt engaged=true source={source}"
+                );
+                publish_web_channel_event(WebChannelEvent {
+                    event: "automation_halt".to_string(),
+                    // Broadcast room: every connected client auto-joins "system".
+                    client_id: "system".to_string(),
+                    args: Some(serde_json::json!({
+                        "engaged": true,
+                        "reason": reason,
+                        "source": source,
+                    })),
+                    ..Default::default()
+                });
+            }
+            DomainEvent::AutomationResumed { source } => {
+                log::info!(
+                    "[web-channel] automation-halt emitting automation_halt engaged=false source={source}"
+                );
+                publish_web_channel_event(WebChannelEvent {
+                    event: "automation_halt".to_string(),
+                    // Broadcast room: every connected client auto-joins "system".
+                    client_id: "system".to_string(),
+                    args: Some(serde_json::json!({
+                        "engaged": false,
+                        "source": source,
+                    })),
+                    ..Default::default()
+                });
+            }
+            _ => {}
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -327,5 +401,21 @@ mod tests {
         // Both handles are alive — drop explicitly to show they're independent.
         drop(h1);
         drop(h2);
+    }
+
+    /// `register_automation_halt_subscriber` is OnceLock-guarded: after the bus
+    /// is initialised the first call installs the subscriber and subsequent
+    /// calls are no-ops (they must not panic or re-subscribe).
+    #[tokio::test]
+    async fn register_automation_halt_subscriber_is_idempotent() {
+        crate::core::event_bus::init_global(crate::core::event_bus::DEFAULT_CAPACITY);
+        register_automation_halt_subscriber();
+        assert!(
+            AUTOMATION_HALT_HANDLE.get().is_some(),
+            "first registration must install the subscriber handle"
+        );
+        // Second call is a no-op — must not panic.
+        register_automation_halt_subscriber();
+        assert!(AUTOMATION_HALT_HANDLE.get().is_some());
     }
 }

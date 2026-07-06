@@ -171,6 +171,11 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     // ArtifactFailed) as `artifact_ready` / `artifact_failed` web-channel
     // events so the frontend ArtifactCard can render in chat (#2779).
     crate::openhuman::channels::providers::web::register_artifact_surface_subscriber();
+    // Bridge emergency-stop halt/resume (AutomationHalted / AutomationResumed)
+    // to the `automation_halt` web-channel socket event, broadcast to every
+    // client via the "system" room, so the frontend kill-switch UI updates
+    // globally (#4255).
+    crate::openhuman::channels::providers::web::register_automation_halt_subscriber();
     // Spawn the per-toolkit provider periodic sync scheduler. This is
     // a thin tokio task that ticks every minute and dispatches into
     // any provider whose `sync_interval_secs` has elapsed for an
