@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { EmergencyStopButton } from './EmergencyStopButton';
 import { renderWithProviders } from '../../test/test-utils';
+import { setHalt } from '../../store/safetySlice';
 
 const stop = vi.fn().mockResolvedValue({ engaged: true, reason: undefined, source: undefined, engaged_at_ms: undefined });
 vi.mock('../../services/api/emergencyApi', () => ({ emergencyStop: (...a: unknown[]) => stop(...a) }));
@@ -30,5 +31,21 @@ describe('EmergencyStopButton', () => {
       const safetyState = (store.getState() as { safety: { halted: boolean } }).safety;
       expect(safetyState.halted).toBe(true);
     });
+  });
+
+  it('renders nothing while already halted (banner Resume takes over)', () => {
+    renderWithProviders(<EmergencyStopButton />, {
+      preloadedState: { safety: { halted: true, source: 'user' } },
+    });
+    expect(screen.queryByRole('button', { name: /emergency stop/i })).toBeNull();
+  });
+
+  it('hides itself when the store transitions to halted', async () => {
+    const { store } = renderWithProviders(<EmergencyStopButton />);
+    expect(screen.getByRole('button', { name: /emergency stop/i })).toBeDefined();
+    store.dispatch(setHalt({ source: 'user' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /emergency stop/i })).toBeNull()
+    );
   });
 });

@@ -340,12 +340,14 @@ export function AppShellDesktop() {
             exhaustion). Mounted outside the routes so entries survive route
             changes and background-job completion. */}
         <UserErrorCenter />
-        {/* Emergency Stop — fixed-position safety button visible during active
-            automation. Only shown when the shell chrome is visible (i.e. the
-            user is authenticated and past onboarding). Positioned bottom-right
-            so it never overlaps the chat composer or main content. */}
+        {/* Emergency Stop — persistent safety control pinned to the top-right,
+            clear of the chat composer (bottom) and the sidebar (left); the
+            macOS traffic lights sit top-left, so the top-right stays free. The
+            button hides itself while halted (the AutomationHaltedBanner's
+            Resume takes over). Only shown when the shell chrome is visible
+            (i.e. the user is authenticated and past onboarding). */}
         {!chromeless && (
-          <div className="fixed bottom-6 right-6 z-50">
+          <div className="fixed top-3 right-4 z-50">
             <EmergencyStopButton />
           </div>
         )}
