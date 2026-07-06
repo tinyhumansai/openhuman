@@ -158,6 +158,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::security::all_security_registered_controllers());
     // Interactive approval workflow (#1339 — gate external-effect tool calls)
     controllers.extend(crate::openhuman::approval::all_approval_registered_controllers());
+    // Emergency stop kill switch (#4255 — fail-closed halt for desktop automation)
+    controllers.extend(crate::openhuman::emergency_stop::all_emergency_registered_controllers());
     // Interactive plan-review gate — parks a live turn on a thread-scoped plan
     controllers.extend(crate::openhuman::plan_review::all_plan_review_registered_controllers());
     // Agent-generated artifact storage, retrieval, and lifecycle management
@@ -399,6 +401,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::keyring_consent::all_keyring_consent_controller_schemas());
     schemas.extend(crate::openhuman::security::all_security_controller_schemas());
     schemas.extend(crate::openhuman::approval::all_approval_controller_schemas());
+    schemas.extend(crate::openhuman::emergency_stop::all_emergency_controller_schemas());
     schemas.extend(crate::openhuman::plan_review::all_plan_review_controller_schemas());
     schemas.extend(crate::openhuman::artifacts::all_artifacts_controller_schemas());
     schemas.extend(crate::openhuman::heartbeat::all_heartbeat_controller_schemas());

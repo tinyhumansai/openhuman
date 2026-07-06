@@ -2670,6 +2670,7 @@ pub async fn bootstrap_core_runtime(host_kind: crate::core::types::HostKind) {
         let session_id = format!("session-{}", uuid::Uuid::new_v4());
         let _ =
             crate::openhuman::approval::ApprovalGate::init_global(cfg.clone(), session_id.clone());
+        crate::openhuman::emergency_stop::EmergencyStop::init_global();
         log::info!(
             "[runtime] approval gate installed (on by default; set OPENHUMAN_APPROVAL_GATE=0 to disable, session_id={session_id}) — \
              Prompt-class external-effect tool calls park for approval in interactive chat turns"
