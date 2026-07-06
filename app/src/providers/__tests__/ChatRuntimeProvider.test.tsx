@@ -989,6 +989,68 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       expect(streaming?.content).toBe('bbb');
     });
 
+    it('persists interim narration as a bubble and clears it from the live preview', async () => {
+      const listeners = renderProvider();
+
+      // Round-0 narration streams into the live preview…
+      act(() => {
+        listeners.onTextDelta?.({
+          thread_id: 't-interim',
+          request_id: 'r1',
+          round: 0,
+          delta: 'Let me check your calendar first.',
+        });
+      });
+      expect(store.getState().chatRuntime.streamingAssistantByThread['t-interim']?.content).toBe(
+        'Let me check your calendar first.'
+      );
+
+      // …then a tool call closes the round → interim flush.
+      act(() => {
+        listeners.onInterim?.({
+          thread_id: 't-interim',
+          request_id: 'r1',
+          round: 0,
+          full_response: 'Let me check your calendar first.',
+        });
+      });
+
+      // The narration is persisted as its own bubble…
+      await waitFor(() =>
+        expect(threadApi.appendMessage).toHaveBeenCalledWith(
+          't-interim',
+          expect.objectContaining({
+            content: 'Let me check your calendar first.',
+            sender: 'agent',
+          })
+        )
+      );
+      // …and cleared from the live preview so it isn't shown twice.
+      expect(store.getState().chatRuntime.streamingAssistantByThread['t-interim']?.content).toBe('');
+    });
+
+    it('dedupes a re-delivered interim event by round', async () => {
+      const listeners = renderProvider();
+
+      act(() => {
+        listeners.onInterim?.({
+          thread_id: 't-interim-dup',
+          request_id: 'r1',
+          round: 1,
+          full_response: 'Working on it now — pulling the data.',
+        });
+        // Reconnect/replay re-delivers the same round.
+        listeners.onInterim?.({
+          thread_id: 't-interim-dup',
+          request_id: 'r1',
+          round: 1,
+          full_response: 'Working on it now — pulling the data.',
+        });
+      });
+
+      await waitFor(() => expect(threadApi.appendMessage).toHaveBeenCalledTimes(1));
+    });
+
     it('sets inference status to thinking on inference_start and clears it on chat_done', () => {
       const listeners = renderProvider();
 
@@ -1353,6 +1415,52 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       // than synthesising a partial subagent row from incomplete data.
       const timeline = store.getState().chatRuntime.toolTimelineByThread[threadId] ?? [];
       expect(timeline).toHaveLength(0);
+    });
+
+    // Regression: the Flows canvas copilot delegates to the `workflow_builder`
+    // subagent, which can emit 50+ progress events. The progress channel is
+    // bounded and `try_send`s, so under that volume the `subagent_spawned`/
+    // `subagent_tool_call` events that create the timeline row can be dropped
+    // before `subagent_tool_result` arrives. Proposal extraction must not be
+    // gated on that timeline row existing, or the Accept/Reject
+    // `WorkflowProposalCard` silently never renders.
+    it('surfaces a workflow proposal from a delegated subagent even with no matching timeline row', () => {
+      const listeners = renderProvider();
+      const threadId = 'tsa-no-row';
+
+      act(() => {
+        listeners.onSubagentToolResult?.({
+          thread_id: threadId,
+          request_id: 'r1',
+          round: 1,
+          tool_name: 'revise_workflow',
+          skill_id: 'sub-missing',
+          tool_call_id: 'cc-1',
+          success: true,
+          output: JSON.stringify({
+            type: 'workflow_proposal',
+            name: 'Notify on new signup',
+            graph: { nodes: [], edges: [] },
+            require_approval: true,
+            summary: { trigger: 'signup.created', steps: [] },
+          }),
+          // No `subagent` block and no prior `onSubagentSpawned`/`onSubagentToolCall`
+          // — so no timeline row exists for this call, mirroring the drop.
+        });
+      });
+
+      // No timeline row was ever created for this call.
+      const timeline = store.getState().chatRuntime.toolTimelineByThread[threadId] ?? [];
+      expect(timeline).toHaveLength(0);
+
+      // The proposal still reaches the parent thread so the Accept/Reject
+      // card renders.
+      const proposal = store.getState().chatRuntime.pendingWorkflowProposalsByThread[threadId];
+      expect(proposal).toMatchObject({
+        name: 'Notify on new signup',
+        requireApproval: true,
+        summary: { trigger: 'signup.created' },
+      });
     });
   });
 

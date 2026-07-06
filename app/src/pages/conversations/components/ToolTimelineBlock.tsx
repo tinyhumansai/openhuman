@@ -354,6 +354,75 @@ function normalizeToolBody(value?: string): string | undefined {
 }
 
 /**
+ * Whether a timeline entry carries any unique body worth its own row — a
+ * sub-agent's live activity, a returned result, a prompt/detail bubble, or a
+ * structured failure. A row with none of these renders as a bare label + status
+ * and is therefore indistinguishable from any sibling with the same title, so it
+ * is safe to coalesce (see {@link coalesceTimelineEntries}). Mirrors the
+ * `expandable` predicate in the row renderer so the two never disagree.
+ */
+function entryHasUniqueBody(entry: ToolTimelineEntry): boolean {
+  const formatted = formatTimelineEntry(entry);
+  const detailContent = normalizeToolBody(formatted.detail) ?? normalizeToolBody(entry.argsBuffer);
+  const resultContent = normalizeToolBody(entry.result);
+  return (
+    detailContent != null ||
+    resultContent != null ||
+    entry.subagent != null ||
+    entry.failure != null
+  );
+}
+
+/** A rendered timeline row: a representative entry plus how many identical,
+ * body-less entries it stands in for (`count === 1` for an ordinary row). */
+interface CoalescedRow {
+  entry: ToolTimelineEntry;
+  count: number;
+}
+
+/**
+ * Collapse runs of consecutive, identical, body-less rows into a single row
+ * carrying an `×N` count. A retry loop (e.g. the orchestrator re-spawning the
+ * integrations agent 25×, each surfacing the same "Checking your connected app"
+ * label with no distinguishing detail) would otherwise flood the timeline with
+ * indistinguishable nodes. Only truly interchangeable rows merge: same title,
+ * same status, no unique body (result/detail/sub-agent/failure), and never the
+ * live `running` row — so no information is lost, only duplication.
+ */
+export function coalesceTimelineEntries(entries: ToolTimelineEntry[]): CoalescedRow[] {
+  const rows: CoalescedRow[] = [];
+  for (const entry of entries) {
+    const mergeable = entry.status !== 'running' && !entryHasUniqueBody(entry);
+    const previous = rows[rows.length - 1];
+    if (
+      mergeable &&
+      previous != null &&
+      previous.entry.status === entry.status &&
+      !entryHasUniqueBody(previous.entry) &&
+      previous.entry.status !== 'running' &&
+      formatTimelineEntry(previous.entry).title === formatTimelineEntry(entry).title
+    ) {
+      previous.count += 1;
+      continue;
+    }
+    rows.push({ entry, count: 1 });
+  }
+  return rows;
+}
+
+/** Compact "×N" badge appended to a coalesced row's label. */
+function RepeatCount({ count }: { count: number }) {
+  if (count <= 1) return null;
+  return (
+    <span
+      className="shrink-0 rounded-full bg-surface-subtle px-1.5 py-0.5 text-[10px] font-medium text-content-muted"
+      data-testid="timeline-repeat-count">
+      ×{count}
+    </span>
+  );
+}
+
+/**
  * Neutral surface tones for an expanded row's body (worker-thread card,
  * detail bubble, code block). Per the Figma "Agentic task insights"
  * design these read as plain light cards rather than status-coloured
@@ -438,10 +507,14 @@ export function ToolTimelineBlock({
 
   // The rows + the parent's streaming response — shared by both the collapsible
   // (in-flight) and static (settled) header layouts below.
+  // Coalesce runs of identical, body-less rows (e.g. a retry loop that spawns
+  // the same integrations step 25×) into single `×N` rows before rendering.
+  const rows = coalesceTimelineEntries(entries);
+
   const body = (
     <>
       <div className="text-sm text-content-faint">
-        {entries.map((entry, index) => {
+        {rows.map(({ entry, count }, index) => {
           const formatted = formatTimelineEntry(entry);
           const detailContent =
             normalizeToolBody(formatted.detail) ?? normalizeToolBody(entry.argsBuffer);
@@ -465,7 +538,7 @@ export function ToolTimelineBlock({
             <AgentTimelineRail
               key={entry.id}
               isFirst={index === 0}
-              isLast={index === entries.length - 1}>
+              isLast={index === rows.length - 1}>
               {compact ? (
                 // Collapsed step: the whole label is the link — "Run Code →"
                 // opens the full-run panel scoped to this step. A collapsed row
@@ -481,6 +554,7 @@ export function ToolTimelineBlock({
                       className={`text-[13px] font-medium ${nameTone.replace('animate-pulse ', '')} group-hover/details:underline`}>
                       {formatted.title}
                     </span>
+                    <RepeatCount count={count} />
                     <span className="text-[13px] font-medium text-primary-600 dark:text-primary-300">
                       →
                     </span>
@@ -540,8 +614,9 @@ export function ToolTimelineBlock({
                   ) : null}
                 </details>
               ) : (
-                <div className="flex items-center">
+                <div className="flex items-center gap-1.5">
                   <span className={`text-[13px] font-medium ${nameTone}`}>{formatted.title}</span>
+                  <RepeatCount count={count} />
                 </div>
               )}
             </AgentTimelineRail>
@@ -554,40 +629,19 @@ export function ToolTimelineBlock({
 
   // The group header is a static section label — the live "working" state is
   // conveyed by the pulsing agent-name rows, so it never repeats a "Working…"
-  // string. While the run is in flight the group is collapsible; once it
-  // settles the chevron/collapse is dropped and the header renders static —
-  // matching the finished sub-agent steps, which also drop their collapse when
-  // done.
-  if (!isRunning) {
-    return (
-      <div className="mb-2 px-1 py-0" data-testid="agent-task-insights">
-        <div className="mb-1.5 flex items-center">
-          {onViewWholeRun ? (
-            // Settled: the whole title is the link — "Agentic task insights →"
-            // opens the full-run panel (matches the collapsed step rows).
-            <button
-              type="button"
-              onClick={onViewWholeRun}
-              data-testid="view-process-source"
-              className="group/insights-link flex items-center gap-1.5 text-left">
-              <span className="text-[13px] font-medium text-content-muted group-hover/insights-link:underline">
-                {t('conversations.agentTaskInsights.title')}
-              </span>
-              <span className="text-[13px] font-medium text-primary-600 dark:text-primary-300">
-                →
-              </span>
-            </button>
-          ) : (
-            titleLabel
-          )}
-        </div>
-        {body}
-      </div>
-    );
-  }
+  // string. The group is always collapsible: while the run is in flight it is
+  // open so the live activity is visible; once it settles it collapses to a
+  // single-line opener by default so a finished run (which can be dozens of
+  // steps) never dominates the conversation — the rows stay one click away, and
+  // the whole-run side panel is still reachable via the header link. The full
+  // "Agent Process Source" panel forces every row open via `expandAllRows`.
+  const open = isRunning || expandAllRows;
 
   return (
-    <details open className="group/insights mb-2 px-1 py-0" data-testid="agent-task-insights">
+    <details
+      open={open}
+      className="group/insights mb-2 px-1 py-0"
+      data-testid="agent-task-insights">
       <summary className="mb-1.5 flex cursor-pointer list-none items-center gap-1.5 select-none marker:hidden">
         {titleLabel}
         <span className="text-[11px] text-content-faint transition-transform group-open/insights:rotate-90">

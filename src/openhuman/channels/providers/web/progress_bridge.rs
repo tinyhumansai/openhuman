@@ -18,6 +18,55 @@ use super::types::ChatRequestMetadata;
 /// genuine-disconnect error path (6 missed beats before the 120s window lapses).
 const INFERENCE_HEARTBEAT_SECS: u64 = 20;
 
+/// Minimum trimmed length for the parent agent's leading narration to be
+/// surfaced as its own interim chat bubble. Below this a stray "Ok." / "Sure."
+/// is left as transient streaming text rather than persisted as a message.
+const MIN_INTERIM_NARRATION_CHARS: usize = 24;
+
+/// Flush the parent agent's accumulated leading narration (streamed before a
+/// tool call in the current round) as an interim `chat_interim` event, so it
+/// persists as a chat bubble interleaved with the tool activity instead of
+/// vanishing when the turn settles. Clears `buffer` unconditionally; emits
+/// nothing for narration that is empty or too short to stand alone.
+fn flush_interim_narration(
+    buffer: &mut String,
+    round: u32,
+    client_id: &str,
+    thread_id: &str,
+    request_id: &str,
+) {
+    let text = std::mem::take(buffer);
+    let Some(narration) = interim_narration_text(&text) else {
+        return;
+    };
+    log::debug!(
+        "[web_channel][bridge] chat_interim round={} chars={} request_id={}",
+        round,
+        narration.chars().count(),
+        request_id,
+    );
+    publish_web_channel_event(WebChannelEvent {
+        event: "chat_interim".to_string(),
+        client_id: client_id.to_string(),
+        thread_id: thread_id.to_string(),
+        request_id: request_id.to_string(),
+        full_response: Some(narration),
+        round: Some(round),
+        ..Default::default()
+    });
+}
+
+/// The trimmed narration to surface as an interim bubble, or `None` when it is
+/// empty or shorter than [`MIN_INTERIM_NARRATION_CHARS`]. Pure so the threshold
+/// is unit-testable without the global event bus.
+fn interim_narration_text(buffer: &str) -> Option<String> {
+    let trimmed = buffer.trim();
+    if trimmed.chars().count() < MIN_INTERIM_NARRATION_CHARS {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
 /// Current wall-clock time as Unix-epoch milliseconds, used to stamp tracing
 /// spans (issue #3886). Saturates to `0` if the clock is before the epoch.
 fn unix_epoch_ms() -> u64 {
@@ -283,6 +332,13 @@ pub(crate) fn spawn_progress_bridge(
         );
         let mut round: u32 = 0;
         let mut parent_max_iterations: u32 = 0;
+        // Accumulates the parent agent's streamed narration for the current
+        // round. When a tool call closes the round, this leading narration is
+        // flushed as an interim chat bubble (`chat_interim`) so it persists in
+        // the thread instead of vanishing on settle — the final answer arrives
+        // separately via `deliver_response` and is never part of this buffer
+        // (it belongs to the terminal round, which ends with no tool call).
+        let mut pending_narration = String::new();
         let mut events_seen: u64 = 0;
         let mut parent_completed = false;
         let mut parent_tool_count: u64 = 0;
@@ -556,6 +612,16 @@ pub(crate) fn spawn_progress_bridge(
                     display_label,
                     display_detail,
                 } => {
+                    // The parent's leading narration for this round is complete
+                    // once it calls a tool — flush it as an interim bubble so it
+                    // persists interleaved with the tool activity.
+                    flush_interim_narration(
+                        &mut pending_narration,
+                        iteration,
+                        &client_id,
+                        &thread_id,
+                        &request_id,
+                    );
                     parent_tool_count += 1;
                     ledger_append_event(
                         &config,
@@ -1168,6 +1234,9 @@ pub(crate) fn spawn_progress_bridge(
                     });
                 }
                 AgentProgress::TextDelta { delta, iteration } => {
+                    // Buffer the round's narration so it can be flushed as an
+                    // interim bubble if a tool call closes this round.
+                    pending_narration.push_str(&delta);
                     publish_web_channel_event(WebChannelEvent {
                         event: "text_delta".to_string(),
                         client_id: client_id.clone(),
@@ -1389,7 +1458,26 @@ pub(crate) fn spawn_progress_bridge(
 
 #[cfg(test)]
 mod tests {
+    use super::interim_narration_text;
     use super::session_profile_user_attribution;
+
+    #[test]
+    fn interim_narration_skips_empty_and_trivial() {
+        assert_eq!(interim_narration_text(""), None);
+        assert_eq!(interim_narration_text("   \n  "), None);
+        // Below the min length → left as transient streaming text.
+        assert_eq!(interim_narration_text("Ok."), None);
+        assert_eq!(interim_narration_text("Sure, one sec"), None);
+    }
+
+    #[test]
+    fn interim_narration_surfaces_and_trims_substantial_text() {
+        let text = "  Let me check your calendar for conflicts first.  ";
+        assert_eq!(
+            interim_narration_text(text),
+            Some("Let me check your calendar for conflicts first.".to_string())
+        );
+    }
 
     #[test]
     fn session_profile_attribution_none_when_signed_out() {

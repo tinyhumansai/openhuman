@@ -23,7 +23,7 @@ use serde_json::{json, Value};
 use tinyflows::model::{Node, NodeKind, WorkflowGraph};
 
 use crate::openhuman::config::Config;
-use crate::openhuman::flows::ops::validate_and_migrate_graph;
+use crate::openhuman::flows::ops::{validate_and_migrate_graph, validate_binding_resolvability};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 
 /// Max characters kept for a `config_hint` before truncation, so a long
@@ -176,6 +176,25 @@ impl Tool for ProposeWorkflowTool {
             }
         };
 
+        // Enforcing binding-resolvability gate (see
+        // `ops::validate_binding_resolvability`): reject outright — rather
+        // than merely warn — a `tool_call` binding that is guaranteed to
+        // resolve null (or the wrong value) at runtime, so the builder must
+        // fix the graph before it can even be proposed to the user.
+        let binding_errors = validate_binding_resolvability(&graph);
+        if !binding_errors.is_empty() {
+            tracing::debug!(
+                target: "flows",
+                %name,
+                error_count = binding_errors.len(),
+                "[flows] propose_workflow: binding-resolvability check rejected the graph"
+            );
+            return Ok(ToolResult::error(format!(
+                "{}\n\nFix these bindings and call propose_workflow again.",
+                binding_errors.join("\n\n")
+            )));
+        }
+
         let summary = build_summary(&graph);
         // Author-time warnings: unfired trigger kinds + unwired REQUIRED
         // Composio args (see `ops::graph_wiring_warnings`) — surfaced on the
@@ -226,7 +245,15 @@ impl RunFlowTool {
 #[async_trait]
 impl Tool for RunFlowTool {
     fn name(&self) -> &str {
-        "run_workflow"
+        // NOTE: deliberately `run_flow`, not `run_workflow` — the latter
+        // name is already taken by the unrelated legacy skills-workflow
+        // runner (`crate::openhuman::agent::tools::run_workflow`,
+        // `RUN_WORKFLOW_TOOL_NAME`), which is registered in the same
+        // default tool registry (`tools::ops::all_tools_with_runtime`).
+        // Both tools were previously named identically, which
+        // `all_tools_default_registry_has_no_duplicate_tool_names` caught
+        // as a duplicate-tool-name registry bug.
+        "run_flow"
     }
 
     fn description(&self) -> &str {
@@ -265,21 +292,22 @@ impl Tool for RunFlowTool {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        let flow_id =
-            match args.get("flow_id").and_then(Value::as_str).map(str::trim) {
-                Some(id) if !id.is_empty() => id.to_string(),
-                _ => return Ok(ToolResult::error(
-                    "Missing 'flow_id' — run_workflow only works on a SAVED flow. Ask the user \
+        let flow_id = match args.get("flow_id").and_then(Value::as_str).map(str::trim) {
+            Some(id) if !id.is_empty() => id.to_string(),
+            _ => {
+                return Ok(ToolResult::error(
+                    "Missing 'flow_id' — run_flow only works on a SAVED flow. Ask the user \
                      to Save the workflow first, then run it by id."
                         .to_string(),
-                )),
-            };
+                ))
+            }
+        };
         let input = args.get("input").cloned().unwrap_or_else(|| json!({}));
 
         tracing::info!(
             target: "flows",
             %flow_id,
-            "[flows] run_workflow: agent-initiated test run starting"
+            "[flows] run_flow: agent-initiated test run starting"
         );
 
         match crate::openhuman::flows::ops::flows_run(
@@ -296,7 +324,7 @@ impl Tool for RunFlowTool {
                 "result": outcome.value,
             }))?)),
             Err(e) => {
-                tracing::debug!(target: "flows", %flow_id, error = %e, "[flows] run_workflow: failed");
+                tracing::debug!(target: "flows", %flow_id, error = %e, "[flows] run_flow: failed");
                 Ok(ToolResult::error(format!(
                     "Could not run flow '{flow_id}': {e}"
                 )))

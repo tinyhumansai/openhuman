@@ -108,6 +108,42 @@ describe('useFlowRunPoller', () => {
     expect(getFlowRun).toHaveBeenCalledTimes(1);
   });
 
+  it('stops polling once the run completes with warnings', async () => {
+    getFlowRun.mockResolvedValue(
+      makeRun({ status: 'completed_with_warnings', finished_at: '2026-01-01T00:01:00Z' })
+    );
+    const { result } = renderHook(() => useFlowRunPoller('thread-1'));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(result.current.run?.status).toBe('completed_with_warnings');
+    expect(getFlowRun).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(getFlowRun).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops polling once the run is cancelled', async () => {
+    getFlowRun.mockResolvedValue(
+      makeRun({ status: 'cancelled', finished_at: '2026-01-01T00:01:00Z' })
+    );
+    const { result } = renderHook(() => useFlowRunPoller('thread-1'));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(result.current.run?.status).toBe('cancelled');
+    expect(getFlowRun).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(getFlowRun).toHaveBeenCalledTimes(1);
+  });
+
   it('stops polling once the run fails', async () => {
     getFlowRun.mockResolvedValue(makeRun({ status: 'failed', error: 'boom' }));
     const { result } = renderHook(() => useFlowRunPoller('thread-1'));

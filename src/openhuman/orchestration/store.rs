@@ -106,10 +106,43 @@ pub fn with_connection<T>(
     }
     let conn = Connection::open(&db_path)
         .with_context(|| format!("open orchestration DB: {}", db_path.display()))?;
+    // Concurrent writers (the drain ingesting an inbound DM vs the graph's
+    // `send_dm` persisting a reply) each open their own connection. Wait for a
+    // held write lock instead of erroring `SQLITE_BUSY`; paired with the
+    // IMMEDIATE txn in the seq-allocating writers this serialises
+    // `MAX(seq)+1 → INSERT` so `seq` stays unique per `(agent_id, session_id)`.
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .context("set orchestration busy_timeout")?;
     conn.execute_batch(SCHEMA_DDL)
         .context("initialise orchestration schema")?;
     migrate(&conn).context("migrate orchestration schema")?;
     f(&conn)
+}
+
+/// Run `f` inside a single `BEGIN IMMEDIATE` transaction, rolling back on error.
+/// Use for read-then-write allocations (`MAX(seq)+1` then `INSERT`) so two
+/// concurrent writers on the same `(agent_id, session_id)` cannot read the same
+/// max and persist a duplicate `seq` (which would break the monotonic wake
+/// cursor). `IMMEDIATE` takes the write lock up front; the `busy_timeout` set in
+/// [`with_connection`] makes the loser wait for the holder to commit rather than
+/// fail.
+pub fn in_immediate_txn<T>(
+    conn: &Connection,
+    f: impl FnOnce(&Connection) -> Result<T>,
+) -> Result<T> {
+    conn.execute_batch("BEGIN IMMEDIATE")
+        .context("begin orchestration immediate txn")?;
+    match f(conn) {
+        Ok(value) => {
+            conn.execute_batch("COMMIT")
+                .context("commit orchestration txn")?;
+            Ok(value)
+        }
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(e)
+        }
+    }
 }
 
 /// One-time, `user_version`-gated migrations. Runs after the idempotent
@@ -211,6 +244,58 @@ pub fn count_messages(conn: &Connection, agent_id: &str, session_id: &str) -> Re
         params![agent_id, session_id],
         |row| row.get(0),
     )?)
+}
+
+/// The next monotonic per-session ingest ordinal: `MAX(seq) + 1` over the
+/// session's messages (`1` for the first message). Stamped at persist time so
+/// the wake idempotence cursor rides a strictly-increasing value instead of the
+/// harness `message.line`, which is unreliable (a wrapped Claude harness stamps
+/// `line = 0` on every DM, and a peer can reuse/reset it across harness sessions
+/// under one shared `wrapper_session_id`). Messages are append-only and
+/// deduped-by-id before persist, so this is strictly increasing. (#4583)
+pub fn next_session_seq(conn: &Connection, agent_id: &str, session_id: &str) -> Result<i64> {
+    Ok(conn.query_row(
+        "SELECT COALESCE(MAX(seq), 0) + 1 FROM messages WHERE agent_id = ?1 AND session_id = ?2",
+        params![agent_id, session_id],
+        |row| row.get(0),
+    )?)
+}
+
+/// The current `last_seq` for a session, or `None` if the session row does not
+/// exist yet. Used to detect a non-monotonic inbound `seq` before the upsert
+/// clamps it away via `MAX(...)`.
+pub fn session_last_seq(
+    conn: &Connection,
+    agent_id: &str,
+    session_id: &str,
+) -> Result<Option<i64>> {
+    Ok(conn
+        .query_row(
+            "SELECT last_seq FROM sessions WHERE agent_id = ?1 AND session_id = ?2",
+            params![agent_id, session_id],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
+/// The most recent message body for a session — the roster task line's "current
+/// activity". Newest by timestamp then seq; `None` when the session has no
+/// messages yet. Body is decrypted plaintext (workspace-internal, like the rest
+/// of this store).
+pub fn latest_message_preview(
+    conn: &Connection,
+    agent_id: &str,
+    session_id: &str,
+) -> Result<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT body FROM messages
+               WHERE agent_id = ?1 AND session_id = ?2
+               ORDER BY timestamp DESC, seq DESC LIMIT 1",
+            params![agent_id, session_id],
+            |row| row.get(0),
+        )
+        .optional()?)
 }
 
 /// List every persisted session row, newest activity first (stage-7 read surface).
@@ -732,6 +817,31 @@ mod tests {
     }
 
     #[test]
+    fn latest_message_preview_returns_newest_or_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        with_connection(tmp.path(), |conn| {
+            upsert_session(conn, &session("@a", "h1", 1))?;
+            // No messages yet.
+            assert_eq!(latest_message_preview(conn, "@a", "h1")?, None);
+
+            // Same timestamp → newest is decided by seq DESC.
+            insert_message(conn, &msg("m1", "@a", "h1", 1))?;
+            let mut newer = msg("m2", "@a", "h1", 2);
+            newer.body = "later line".into();
+            insert_message(conn, &newer)?;
+            assert_eq!(
+                latest_message_preview(conn, "@a", "h1")?.as_deref(),
+                Some("later line")
+            );
+
+            // Scoped to (agent, session): a different session is not returned.
+            assert_eq!(latest_message_preview(conn, "@a", "other")?, None);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn world_diff_is_append_only_with_monotonic_seq_and_idempotent_cycles() {
         let tmp = tempfile::tempdir().unwrap();
         with_connection(tmp.path(), |conn| {
@@ -988,5 +1098,45 @@ mod tests {
             Ok(())
         })
         .unwrap();
+    }
+
+    #[test]
+    fn in_immediate_txn_serialises_concurrent_seq_allocation() {
+        // Two writers on the same (agent, session) — the drain's inbound persist
+        // and the graph's send_dm reply persist — must not read the same
+        // MAX(seq) and duplicate it. Allocate + insert under `in_immediate_txn`
+        // from several threads and assert every seq is distinct and contiguous.
+        use std::sync::Arc;
+        let tmp = Arc::new(tempfile::tempdir().unwrap());
+        let n = 8usize;
+        let handles: Vec<_> = (0..n)
+            .map(|i| {
+                let tmp = Arc::clone(&tmp);
+                std::thread::spawn(move || {
+                    with_connection(tmp.path(), |c| {
+                        in_immediate_txn(c, |c| {
+                            let seq = next_session_seq(c, "@peer", "s1")?;
+                            insert_message(c, &msg(&format!("m{i}"), "@peer", "s1", seq))?;
+                            Ok(seq)
+                        })
+                    })
+                    .expect("txn ok")
+                })
+            })
+            .collect();
+        let mut seqs: Vec<i64> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        seqs.sort_unstable();
+        let mut unique = seqs.clone();
+        unique.dedup();
+        assert_eq!(
+            unique.len(),
+            n,
+            "concurrent seq allocation must not duplicate: {seqs:?}"
+        );
+        assert_eq!(
+            seqs,
+            (1..=n as i64).collect::<Vec<_>>(),
+            "seqs must be a contiguous 1..=n range"
+        );
     }
 }

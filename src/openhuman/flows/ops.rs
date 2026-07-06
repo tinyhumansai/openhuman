@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use serde_json::{json, Value};
-use tinyflows::model::{TriggerKind, WorkflowGraph};
+use tinyflows::model::{NodeKind, TriggerKind, WorkflowGraph};
 
 use crate::openhuman::agent::turn_origin::{with_origin, AgentTurnOrigin, TrustedAutomationSource};
 use crate::openhuman::config::Config;
@@ -203,13 +203,330 @@ pub(crate) async fn graph_wiring_warnings(config: &Config, graph: &WorkflowGraph
             );
             warnings.push(format!(
                 "Node '{}': required arg `{missing}` of `{slug}` is not wired — set \
-                 args.{missing}, e.g. \"=nodes.<upstream_id>.item.<field>\" (an agent feeding \
-                 this value needs an output schema so its fields are addressable).",
+                 args.{missing}, e.g. \"=nodes.<upstream_id>.item.json.<field>\" (an agent \
+                 feeding this value needs an output schema — `output_parser.schema` — so its \
+                 fields are addressable).",
                 node.id
             ));
         }
     }
     warnings
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Enforcing binding-resolvability gate
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `graph_wiring_warnings` (above) is advisory — it, and `dry_run_workflow`'s
+// null-resolution check (issue #4586), only WARN the author that a binding
+// resolves null. Neither is consulted by the builder before it proposes or
+// saves a graph, so a warned-about-but-ignored binding still ships. The
+// functions below are the HARD counterpart: `validate_binding_resolvability`
+// statically proves a `tool_call` node's `args` bindings are resolvable
+// *before* `propose_workflow`/`revise_workflow`/`save_workflow` accept the
+// graph at all (see their call sites), so the LLM builder is forced to fix
+// the wiring rather than merely being told about it.
+
+/// Node kinds whose real capability adapter wraps its structured output in
+/// the stable `{ json, text, raw }` envelope (`src/openhuman/tinyflows/caps.rs`):
+/// a binding into one of these must dereference `.item.json.<field>`, never
+/// `.item.<field>` directly — the latter reads the envelope wrapper itself
+/// (an object with `json`/`text`/`raw` keys), not the field inside it, and
+/// resolves `null` at runtime. Every other node kind (`code`, `transform`,
+/// `split_out`, `merge`, `output_parser`, `sub_workflow`, `trigger`,
+/// `condition`, `switch`) emits its item directly with no envelope, so no
+/// convention applies to a binding that targets one of them.
+const ENVELOPING_KINDS: &[NodeKind] = &[NodeKind::Agent, NodeKind::ToolCall, NodeKind::HttpRequest];
+
+/// Recursively collects every `=`-prefixed expression leaf in a config
+/// `Value` tree, paired with its dotted location (array elements as numeric
+/// segments, e.g. `"args.cc.0"`) — the same location convention as
+/// `tinyflows::expr::resolve_traced`. Unlike that function this never
+/// evaluates an expression against a scope; it only locates the leaves so
+/// [`validate_binding_resolvability`] can statically pattern-match them.
+fn collect_expressions(value: &Value) -> Vec<(String, String)> {
+    fn walk(value: &Value, location: &str, out: &mut Vec<(String, String)>) {
+        match value {
+            Value::Object(map) => {
+                for (k, v) in map {
+                    let child = if location.is_empty() {
+                        k.clone()
+                    } else {
+                        format!("{location}.{k}")
+                    };
+                    walk(v, &child, out);
+                }
+            }
+            Value::Array(items) => {
+                for (i, v) in items.iter().enumerate() {
+                    let child = if location.is_empty() {
+                        i.to_string()
+                    } else {
+                        format!("{location}.{i}")
+                    };
+                    walk(v, &child, out);
+                }
+            }
+            Value::String(s) if tinyflows::expr::is_expression(s) => {
+                out.push((location.to_string(), s.clone()));
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(value, "", &mut out);
+    out
+}
+
+/// Matches the dotted-path form of a node-output binding —
+/// `=nodes.<ref_id>.item[.json].<field>` — returning `(ref_id, has_json,
+/// field)`. `has_json` is `true` when the expression dereferenced the
+/// `{json,text,raw}` envelope wrapper (`.item.json.<field>`) rather than the
+/// item directly (`.item.<field>`).
+///
+/// Only the dotted-path form is recognized here — the equivalent jq form
+/// (e.g. `=.nodes["ref"].items[0].field`) is an arbitrary jq program, not a
+/// fixed grammar, so it is not statically pattern-matched; that form is still
+/// covered dynamically by `dry_run_workflow`'s null-resolution check (#4586),
+/// which actually evaluates the expression at run time.
+fn parse_node_binding(expr: &str) -> Option<(String, bool, String)> {
+    fn node_binding_regex() -> &'static regex::Regex {
+        static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+        RE.get_or_init(|| {
+            regex::Regex::new(
+                r"^=nodes\.([A-Za-z_][A-Za-z0-9_]*)\.item(?:\.(json))?\.([A-Za-z_][A-Za-z0-9_]*)",
+            )
+            .expect("static regex is valid")
+        })
+    }
+    let caps = node_binding_regex().captures(expr)?;
+    let ref_id = caps.get(1)?.as_str().to_string();
+    let has_json = caps.get(2).is_some();
+    let field = caps.get(3)?.as_str().to_string();
+    Some((ref_id, has_json, field))
+}
+
+/// Human-readable label for a [`NodeKind`], for
+/// [`validate_binding_resolvability`]'s envelope-violation message.
+fn node_kind_label(kind: &NodeKind) -> &'static str {
+    match kind {
+        NodeKind::Agent => "an agent",
+        NodeKind::ToolCall => "a tool_call",
+        NodeKind::HttpRequest => "an http_request",
+        _ => "a node",
+    }
+}
+
+/// jaq keywords/operators that read as valid jq syntax rather than natural-
+/// language prose; used by [`agent_prompt_looks_like_invalid_jq`]'s bareword
+/// scan so a genuine jq program (`if`/`then`/`else`/`end`, `and`/`or`,
+/// `reduce`/`foreach`, a `def`, …) is never mistaken for prose.
+const JQ_KEYWORDS: &[&str] = &[
+    "and", "or", "not", "if", "then", "elif", "else", "end", "as", "def", "reduce", "foreach",
+    "try", "catch", "import", "include", "label",
+];
+
+/// Best-effort detector for an agent-node `config.prompt` `=`-expression that
+/// is natural-language prose accidentally written in the `=`-binding
+/// convention, rather than a real jq program — the exact failure this check
+/// exists to catch: a builder writes something like `"=You are given an
+/// email: .item. Classify it…"`, which is not a valid jq program (jq's
+/// grammar has no rule for two bare identifiers in a row with nothing but
+/// whitespace between them — an operator or pipe is required), so
+/// `tinyflows::expr::evaluate` silently resolves it to `null` (its contract:
+/// "compile/run errors never panic, they yield `Value::Null`") and the agent
+/// turn then runs with an **empty prompt**.
+///
+/// `tinyflows` doesn't expose a compile-only jq check — `run_jq` is a private
+/// helper in `tinyflows::expr` and the module's evaluation contract is
+/// deliberately "never panics, malformed programs silently yield null" — so
+/// this is a conservative pattern match rather than a real compiler
+/// round-trip: quoted jq string literals are stripped first (so quoted prose
+/// inside a legitimate concatenation like `="Hi " + .item.name` is never
+/// scanned — this includes respecting a `\"` escape inside the string, so a
+/// quoted literal like `="Say \"hi\" to " + .item.name` doesn't desync the
+/// quote-toggle and leak its trailing prose into the bareword scan), then the
+/// remainder is scanned for **two or more consecutive** whitespace-separated
+/// barewords that are neither jq keywords nor path segments (`.foo`,
+/// `.foo.bar`) — a real jq program never juxtaposes two bare identifiers like
+/// that. Deliberately narrow (2+ in a row, not 1): a false negative here just
+/// leaves prose alone (nothing new was broken); a false positive would reject
+/// a legitimate author's graph.
+fn agent_prompt_looks_like_invalid_jq(expr_body: &str) -> bool {
+    let mut stripped = String::with_capacity(expr_body.len());
+    let mut in_str = false;
+    let mut chars = expr_body.chars();
+    while let Some(c) = chars.next() {
+        // An escaped char inside a jq string literal (`\"`, `\\`, `\n`, …) —
+        // consume both the backslash and the escaped char without toggling
+        // `in_str`, so an escaped quote never prematurely ends the string.
+        if in_str && c == '\\' {
+            chars.next();
+            continue;
+        }
+        if c == '"' {
+            in_str = !in_str;
+            continue;
+        }
+        if !in_str {
+            stripped.push(c);
+        }
+    }
+
+    let mut consecutive_bare_words = 0u32;
+    for tok in stripped.split_whitespace() {
+        let core = tok.trim_matches(|c: char| !c.is_ascii_alphabetic());
+        let is_bare_word = !core.is_empty()
+            && core.chars().all(|c| c.is_ascii_alphabetic())
+            && !tok.starts_with('.')
+            && !tok.contains('.')
+            && !JQ_KEYWORDS.contains(&core.to_ascii_lowercase().as_str());
+        if is_bare_word {
+            consecutive_bare_words += 1;
+            if consecutive_bare_words >= 2 {
+                return true;
+            }
+        } else {
+            consecutive_bare_words = 0;
+        }
+    }
+    false
+}
+
+/// Statically proves every `tool_call` node's `config.args` bindings are
+/// resolvable, rejecting the graph (a non-empty `Vec` = reject; empty =
+/// pass) when one is GUARANTEED to resolve `null` (or the wrong value) at
+/// runtime. See the [module section](self) header for why this exists
+/// alongside the advisory `graph_wiring_warnings`/`dry_run_workflow` checks.
+///
+/// Scoped to `tool_call` `args` for the field-addressability checks below —
+/// an `agent` node's free-text prompt has no static output schema to enforce
+/// a `nodes.<ref>.item.<field>` reference against, so a prose string that
+/// merely *mentions* such a path is left alone (degrades output quality, but
+/// doesn't break execution the way a `null` tool argument does). The ONE
+/// `agent`-prompt case this pass DOES reject is narrower and execution-
+/// breaking in its own right: `config.prompt` itself being a `=`-expression
+/// that reads as prose rather than a jq program (see
+/// [`agent_prompt_looks_like_invalid_jq`]) — that doesn't just degrade
+/// output, it guarantees `null`, i.e. an EMPTY prompt, exactly the
+/// `input_context` bug this whole gate was added to prevent (see the
+/// `flows/agents/workflow_builder/prompt.md` convention: `input_context`
+/// carries data, `prompt` stays a plain instruction).
+///
+/// For every `=nodes.<ref>.item[.json].<field>` binding found in a
+/// `tool_call`'s `args` (via [`collect_expressions`] + [`parse_node_binding`]):
+/// - a `<ref>` that doesn't resolve to a node in the graph is skipped — a
+///   dangling reference is already a `tinyflows::validate::validate`
+///   structural error, caught upstream of this pass.
+/// - a `<ref>` that IS an [`ENVELOPING_KINDS`] node and the expression used
+///   `.item.<field>` (no `.json`) is REJECTED: it dereferences the envelope
+///   wrapper, not the field inside it.
+/// - a `<ref>` that is an `agent` node is REJECTED unless it declares
+///   `config.output_parser.schema` with an object `properties` map
+///   containing `<field>` — the exact shape a real run's output-parser
+///   sub-port enforces; without it the agent's structured output has no
+///   addressable `<field>`.
+/// - a `<ref>` that is `tool_call`/`http_request` only gets the envelope
+///   check above — neither has a static output schema to check field
+///   membership against ahead of a real run.
+/// - any other referenced kind (`code`, `transform`, `split_out`, `merge`,
+///   `output_parser`, `sub_workflow`, `trigger`, `condition`, `switch`) has no
+///   schema or envelope convention to enforce and is accepted.
+pub(crate) fn validate_binding_resolvability(graph: &WorkflowGraph) -> Vec<String> {
+    let mut errors = Vec::new();
+
+    // Agent-prompt gate: reject a `prompt` that reads as prose written in the
+    // `=`-binding convention (see `agent_prompt_looks_like_invalid_jq`'s doc) —
+    // it is GUARANTEED to resolve `null`, handing the agent an empty prompt.
+    // A plain (non-`=`) prompt, or a real jq/dotted-path expression, is
+    // unaffected.
+    for node in &graph.nodes {
+        if node.kind != NodeKind::Agent {
+            continue;
+        }
+        // Both runtime paths (`build_completion_messages` and
+        // `node_request_to_prompt` in `tinyflows/caps.rs`) fall through to a
+        // non-empty `messages` array once `prompt` resolves to `null` — which
+        // is exactly what this bad `=`-expression prompt does. So a node that
+        // declares real `messages` never actually runs on the null prompt;
+        // rejecting the graph for it would be a false positive against a
+        // vestigial/unused legacy `prompt` field.
+        let messages_supply_the_turn = node
+            .config
+            .get("messages")
+            .and_then(Value::as_array)
+            .is_some_and(|entries| !entries.is_empty());
+        if messages_supply_the_turn {
+            continue;
+        }
+        let Some(prompt) = node.config.get("prompt").and_then(Value::as_str) else {
+            continue;
+        };
+        if !tinyflows::expr::is_expression(prompt) {
+            continue;
+        }
+        let body = prompt[1..].trim();
+        if agent_prompt_looks_like_invalid_jq(body) {
+            errors.push(format!(
+                "Node '{}': `prompt` (`{prompt}`) looks like natural-language text written as \
+                 a `=`-expression, not a valid jq program — it will resolve to `null` at \
+                 runtime, handing the agent an EMPTY prompt. Fix: feed upstream data through \
+                 `config.input_context` (e.g. `\"input_context\": \"=item\"`) and make `prompt` \
+                 a plain instruction with no leading `=`.",
+                node.id
+            ));
+        }
+    }
+
+    for node in &graph.nodes {
+        if node.kind != NodeKind::ToolCall {
+            continue;
+        }
+        let Some(args) = node.config.get("args") else {
+            continue;
+        };
+        for (location, expr) in collect_expressions(args) {
+            let Some((ref_id, has_json, field)) = parse_node_binding(&expr) else {
+                continue;
+            };
+            let Some(ref_node) = graph.node(&ref_id) else {
+                continue;
+            };
+
+            if ENVELOPING_KINDS.contains(&ref_node.kind) && !has_json {
+                errors.push(format!(
+                    "Node '{}': arg `{location}` (`{expr}`) uses `.item.{field}` on {} node \
+                     `{ref_id}`, but agent/tool_call/http_request nodes wrap output in {{json, \
+                     text, raw}} — use `=nodes.{ref_id}.item.json.{field}` instead.",
+                    node.id,
+                    node_kind_label(&ref_node.kind),
+                ));
+                continue;
+            }
+
+            if ref_node.kind == NodeKind::Agent {
+                let has_field = ref_node
+                    .config
+                    .get("output_parser")
+                    .and_then(|p| p.get("schema"))
+                    .filter(|s| !s.is_null())
+                    .and_then(|s| s.get("properties"))
+                    .and_then(Value::as_object)
+                    .is_some_and(|props| props.contains_key(&field));
+                if !has_field {
+                    errors.push(format!(
+                        "Node '{}': arg `{location}` (`{expr}`) binds to agent node `{ref_id}`, \
+                         which has no `output_parser.schema` declaring `{field}` — its \
+                         structured output has no addressable `{field}`, so this binding \
+                         resolves null at runtime. Fix: add `{field}` to node `{ref_id}`'s \
+                         output_parser.schema and bind via `=nodes.{ref_id}.item.json.{field}`.",
+                        node.id
+                    ));
+                }
+            }
+        }
+    }
+    errors
 }
 
 /// Validates a candidate graph without persisting it — the same
@@ -1067,19 +1384,16 @@ pub async fn flows_run(
     };
     let outcome = journaled.outcome;
 
-    let status = if outcome.pending_approvals.is_empty() {
-        "completed"
-    } else {
-        "pending_approval"
-    };
+    let settled = settle_steps(config, &thread_id, &outcome.output);
+    let (status, error) = finalize_terminal_status(&settled, &outcome.pending_approvals);
     store::record_run(config, flow_id, status).map_err(|e| e.to_string())?;
     finish_flow_run_row(
         config,
         &thread_id,
         status,
-        &settle_steps(config, &thread_id, &outcome.output),
+        &settled,
         &outcome.pending_approvals,
-        None,
+        error.as_deref(),
     );
     export_run_to_langfuse(
         config,
@@ -1269,19 +1583,16 @@ pub async fn flows_resume(
     };
     let outcome = journaled.outcome;
 
-    let status = if outcome.pending_approvals.is_empty() {
-        "completed"
-    } else {
-        "pending_approval"
-    };
+    let settled = settle_steps(config, thread_id, &outcome.output);
+    let (status, error) = finalize_terminal_status(&settled, &outcome.pending_approvals);
     store::record_run(config, flow_id, status).map_err(|e| e.to_string())?;
     finish_flow_run_row(
         config,
         thread_id,
         status,
-        &settle_steps(config, thread_id, &outcome.output),
+        &settled,
         &outcome.pending_approvals,
-        None,
+        error.as_deref(),
     );
     export_run_to_langfuse(
         config,
@@ -1412,14 +1723,19 @@ pub async fn sweep_expired_parked_runs(config: &Config) -> usize {
 ///   a `running` row whose task is gone): no live task exists to unwind, so
 ///   this settles the row terminally itself and drops the checkpoint.
 ///
-/// A run that is already terminal (`completed` / `failed` / `cancelled`) is a
-/// clear error, not a silent no-op.
+/// A run that is already terminal (`completed` / `completed_with_warnings` /
+/// `failed` / `cancelled`) is a clear error, not a silent no-op — otherwise a
+/// settled warning run could be overwritten as `"cancelled"`, corrupting the
+/// run-honesty status it already recorded.
 pub async fn flows_cancel_run(config: &Config, run_id: &str) -> Result<RpcOutcome<Value>, String> {
     let run = store::get_flow_run(config, run_id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("flow run '{run_id}' not found"))?;
 
-    if matches!(run.status.as_str(), "completed" | "failed" | "cancelled") {
+    if matches!(
+        run.status.as_str(),
+        "completed" | "completed_with_warnings" | "failed" | "cancelled"
+    ) {
         return Err(format!(
             "flow run '{run_id}' is already terminal (status: {}) — nothing to cancel",
             run.status
@@ -1610,6 +1926,70 @@ fn settle_steps(config: &Config, run_id: &str, output: &Value) -> Vec<FlowRunSte
         "[flows] settle_steps: merged live-observed steps with post-hoc reconstruction"
     );
     merged
+}
+
+/// Degrades a would-be `"completed"` status: `"failed"` if any settled step
+/// errored, `"completed_with_warnings"` if any carries null-resolution
+/// diagnostics, else `"completed"`.
+///
+/// Called only once the run has no `pending_approvals` left — precedence
+/// against that case is handled by the caller (`pending_approval` always
+/// wins over any of these).
+fn degrade_completed_status(steps: &[FlowRunStep]) -> &'static str {
+    if steps.iter().any(|s| s.status.as_deref() == Some("error")) {
+        return "failed";
+    }
+    if steps.iter().any(|s| !s.diagnostics.is_empty()) {
+        "completed_with_warnings"
+    } else {
+        "completed"
+    }
+}
+
+/// Names the node(s) whose step settled with `status == "error"` — the
+/// engine's `ExecutionStep` carries no error message of its own for a step
+/// that failed under an `on_error: "continue"`/`"route"` policy (it only
+/// fails the *run* future, and so gets an actual error string, when the
+/// policy is `"stop"`), so this is the best available detail for
+/// [`FlowRun::error`] when [`degrade_completed_status`] degrades to
+/// `"failed"` without an outer run-future `Err`.
+fn failed_step_error_summary(steps: &[FlowRunStep]) -> Option<String> {
+    let failed_nodes: Vec<&str> = steps
+        .iter()
+        .filter(|s| s.status.as_deref() == Some("error"))
+        .map(|s| s.node_id.as_str())
+        .collect();
+    if failed_nodes.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "node(s) failed after retries: {}",
+            failed_nodes.join(", ")
+        ))
+    }
+}
+
+/// Computes a settled run's terminal status and, when that status is
+/// `"failed"`, an accompanying error message — shared by `flows_run` and
+/// `flows_resume` so the two call sites can't drift on the
+/// `pending_approval` > `degrade_completed_status` precedence or forget to
+/// populate [`FlowRun::error`] (its doc contract: "Error message when
+/// `status == \"failed\"`") for a run that degraded via a settled step error
+/// rather than an outer run-future `Err`.
+fn finalize_terminal_status(
+    settled: &[FlowRunStep],
+    pending_approvals: &[String],
+) -> (&'static str, Option<String>) {
+    if !pending_approvals.is_empty() {
+        return ("pending_approval", None);
+    }
+    let status = degrade_completed_status(settled);
+    let error = if status == "failed" {
+        failed_step_error_summary(settled)
+    } else {
+        None
+    };
+    (status, error)
 }
 
 /// Milliseconds since the Unix epoch, for `CoreNotificationEvent::timestamp_ms`.

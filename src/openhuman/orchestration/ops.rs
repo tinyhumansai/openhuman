@@ -111,8 +111,46 @@ pub async fn schedule_wake(agent_id: String, session_id: String, chat_kind: Stri
             log::debug!(target: LOG, "[orchestration] wake.coalesced key={key} gen={gen}");
             return;
         }
-        if let Err(e) = invoke_orchestration_graph(&config, &agent_id, &session_id).await {
-            log::warn!(target: LOG, "[orchestration] wake.run_failed session={session_id}: {e}");
+        // Retry on failure with backoff. A graph-run error (e.g. a transient
+        // relay HTTP 400 / rate-limit / Signal-session hiccup on send_dm) leaves
+        // the idempotence cursor unmoved, but the wake is one-shot and the DM was
+        // already acked from the relay — so without this the message is orphaned
+        // in silence with nothing to re-trigger it. The graph checkpoints every
+        // super-step under `orchestration:<session>`, so a retry resumes from the
+        // last good boundary (execute/compress already cached) and just re-attempts
+        // the failed tail — cheap, no repeated LLM work. Bail if a newer wake
+        // supersedes this one; it will reprocess the same (or a wider) window.
+        const WAKE_RETRY_BACKOFF_MS: [u64; 3] = [5_000, 15_000, 45_000];
+        let mut attempt = 0usize;
+        loop {
+            match invoke_orchestration_graph(&config, &agent_id, &session_id).await {
+                Ok(()) => break,
+                Err(e) => {
+                    if attempt >= WAKE_RETRY_BACKOFF_MS.len() {
+                        log::warn!(
+                            target: LOG,
+                            "[orchestration] wake.run_failed session={session_id} gave up after {} attempts: {e}",
+                            attempt + 1,
+                        );
+                        break;
+                    }
+                    let backoff = WAKE_RETRY_BACKOFF_MS[attempt];
+                    attempt += 1;
+                    log::warn!(
+                        target: LOG,
+                        "[orchestration] wake.run_failed session={session_id} attempt={attempt}/{} retrying in {backoff}ms: {e}",
+                        WAKE_RETRY_BACKOFF_MS.len() + 1,
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff)).await;
+                    if !is_latest_generation(&key, gen) {
+                        log::debug!(
+                            target: LOG,
+                            "[orchestration] wake.retry_superseded key={key} gen={gen}"
+                        );
+                        break;
+                    }
+                }
+            }
         }
     });
 }
@@ -588,6 +626,82 @@ impl ProductionRuntime {
             .await
             .map_err(|e| anyhow::anyhow!("{agent_id} run: {e}"))
     }
+
+    /// Persist the agent's own outgoing reply into the orchestration store so it
+    /// surfaces in the chat window (`orchestration_messages_list`) alongside the
+    /// inbound DMs. Ingest only persists inbound messages, so without this the
+    /// agent's replies never appear in the UI. Best-effort: a store error is
+    /// logged, never fails the (already-sent) DM. Does not trigger a wake — the
+    /// wake fires only on ingest's `OrchestrationSessionMessage`, not this write.
+    fn persist_outgoing_reply(&self, body: &str) {
+        let chat_kind = match self.session_id.as_str() {
+            "master" => ChatKind::Master,
+            "subconscious" => ChatKind::Subconscious,
+            _ => ChatKind::Session,
+        };
+        let now = chrono::Utc::now().to_rfc3339();
+        let msg_id = format!("orch-reply:{}", uuid::Uuid::new_v4());
+        // Allocate the ordinal + write both rows in one IMMEDIATE txn so this
+        // reply persist can't race the drain's inbound persist on the same
+        // session and duplicate `seq` (see `store::in_immediate_txn`).
+        let result = store::with_connection(&self.config.workspace_dir, |c| {
+            store::in_immediate_txn(c, |c| {
+                let seq = store::next_session_seq(c, &self.agent_id, &self.session_id)?;
+                store::upsert_session(
+                    c,
+                    &OrchestrationSession {
+                        session_id: self.session_id.clone(),
+                        agent_id: self.agent_id.clone(),
+                        source: String::new(),
+                        label: None,
+                        workspace: None,
+                        // Do NOT advance the wake-driven `last_seq` for our own
+                        // outbound reply: the wake cursor only tracks inbound seqs,
+                        // so bumping it here would make `ingest_cursor_lag` (and
+                        // `orchestration.status`) falsely report pending work until
+                        // the next inbound DM. `upsert_session` clamps with
+                        // `MAX(..)`, so 0 refreshes `last_message_at` only.
+                        last_seq: 0,
+                        created_at: now.clone(),
+                        last_message_at: now.clone(),
+                    },
+                )?;
+                store::insert_message(
+                    c,
+                    &OrchestrationMessage {
+                        id: msg_id.clone(),
+                        agent_id: self.agent_id.clone(),
+                        session_id: self.session_id.clone(),
+                        chat_kind,
+                        role: "owner".to_string(),
+                        body: body.to_string(),
+                        timestamp: now.clone(),
+                        seq,
+                    },
+                )
+            })
+        });
+        match result {
+            Ok(_) => {
+                // Fan the reply out to the renderer socket so the chat window
+                // live-refetches it. Without this the row lands in the store but
+                // the UI (which only refetches on `orchestration:message`) never
+                // surfaces it. Mirrors the inbound path and the send_master RPC.
+                super::bus::notify_orchestration_message(
+                    &self.agent_id,
+                    &self.session_id,
+                    chat_kind.as_str(),
+                );
+            }
+            Err(e) => {
+                log::warn!(
+                    target: LOG,
+                    "[orchestration] persist_outgoing_reply failed session={}: {e}",
+                    self.session_id
+                );
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -599,8 +713,17 @@ impl OrchestrationRuntime for ProductionRuntime {
              macro-instructions for the reasoning core.",
             render_transcript(state),
         );
-        self.run_agent_turn("frontend_agent", "hint:chat", "frontend", prompt)
-            .await
+        // Prefer the `defer_to_orchestrator` / `reply_to_channel` argument the
+        // model actually passed over `run_single`'s trailing narration.
+        let (raw, decision) = super::tools::with_decision_capture(self.run_agent_turn(
+            "frontend_agent",
+            "hint:chat",
+            "frontend",
+            prompt,
+        ))
+        .await;
+        let raw = raw?;
+        Ok(decision.unwrap_or(raw))
     }
 
     async fn frontend_compile(&self, state: &OrchestrationState) -> anyhow::Result<String> {
@@ -612,8 +735,18 @@ impl OrchestrationRuntime for ProductionRuntime {
             render_transcript(state),
             reply,
         );
-        self.run_agent_turn("frontend_agent", "hint:chat", "frontend", prompt)
-            .await
+        // The finished reply is the `reply_to_channel` argument the model passed,
+        // NOT the trailing "Done — sent to the session" narration `run_single`
+        // returns. Fall back to the raw text only if no decision tool fired.
+        let (raw, decision) = super::tools::with_decision_capture(self.run_agent_turn(
+            "frontend_agent",
+            "hint:chat",
+            "frontend",
+            prompt,
+        ))
+        .await;
+        let raw = raw?;
+        Ok(decision.unwrap_or(raw))
     }
 
     async fn execute(&self, state: &OrchestrationState) -> anyhow::Result<ExecuteOutcome> {
@@ -811,8 +944,10 @@ impl OrchestrationRuntime for ProductionRuntime {
         params.insert("plaintext".to_string(), Value::from(plaintext));
         crate::openhuman::tinyplace::handle_tinyplace_signal_send_message(params)
             .await
-            .map(|_| ())
-            .map_err(|e| anyhow::anyhow!("signal send: {e}"))
+            .map_err(|e| anyhow::anyhow!("signal send: {e}"))?;
+        // Record our own reply in the chat model so it shows in the UI.
+        self.persist_outgoing_reply(body);
+        Ok(())
     }
 }
 
@@ -834,12 +969,302 @@ fn session_send_plaintext(session_id: &str, body: &str) -> anyhow::Result<String
     .map_err(|e| anyhow::anyhow!("envelope encode: {e}"))
 }
 
+// ── Self-identity composition (orchestration_self_identity read model) ────────
+
+/// One @handle this agent's wallet holds (reverse-resolved from the directory).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HandleEntry {
+    pub(crate) username: String,
+    pub(crate) primary: bool,
+}
+
+/// This agent's own tiny.place identity and whether peers can reach it.
+///
+/// `discoverable` is the bottom line the UI cares about: a peer can DM this
+/// agent only if both its directory card AND its Signal encryption key are
+/// published. A fresh identity can accept contacts yet still be un-messageable
+/// until it registers a @handle (which is what publishes both), so the
+/// `SelfIdentityCard` surfaces the gap instead of leaving it a mystery 404.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SelfIdentity {
+    pub(crate) agent_id: String,
+    pub(crate) handles: Vec<HandleEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) primary_handle: Option<String>,
+    pub(crate) card_published: bool,
+    pub(crate) key_published: bool,
+    pub(crate) discoverable: bool,
+}
+
+/// Pure composition of the three tinyplace reads into the renderer shape. Kept
+/// here (business logic) so the parsing/discoverability rules are unit-testable
+/// without a live tiny.place client; the `schemas` handler supplies the reads.
+///
+/// `reverse` is the raw `directory_reverse` JSON (`{ identities: [...] }`), or
+/// `None` on a reverse miss. Discoverable = card live AND encryption key
+/// published + current — either gap leaves the agent un-messageable.
+pub(crate) fn build_self_identity(
+    agent_id: String,
+    key_published: bool,
+    reverse: Option<&Value>,
+    card_published: bool,
+) -> SelfIdentity {
+    let mut handles: Vec<HandleEntry> = Vec::new();
+    let mut primary_handle: Option<String> = None;
+    if let Some(idents) = reverse
+        .and_then(|r| r.get("identities"))
+        .and_then(Value::as_array)
+    {
+        for ident in idents {
+            let username = ident
+                .get("username")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let Some(username) = username else { continue };
+            let primary = ident
+                .get("primary")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if primary && primary_handle.is_none() {
+                primary_handle = Some(username.to_string());
+            }
+            handles.push(HandleEntry {
+                username: username.to_string(),
+                primary,
+            });
+        }
+    }
+    // Fall back to the first handle when none is flagged primary.
+    if primary_handle.is_none() {
+        primary_handle = handles.first().map(|h| h.username.clone());
+    }
+    SelfIdentity {
+        agent_id,
+        handles,
+        primary_handle,
+        card_published,
+        key_published,
+        discoverable: card_published && key_published,
+    }
+}
+
+// ── Attention queue aggregation ─────────────────────────────────────────────
+//
+// The `orchestration_attention` handler in [`super::schemas`] awaits the async
+// approval gate itself, then delegates the two synchronous source reads below.
+// Both are best-effort: a source failure degrades to an empty bucket (logged)
+// so the surviving signals still surface. The neutral-signal → item mapping is
+// the pure, unit-tested code in [`super::attention`].
+
+/// Cap on the command-center runs scanned for the `NeedsInput` bucket — the
+/// attention zone only needs the currently-blocked runs, not the full ledger.
+const ATTENTION_RUN_LIMIT: u32 = 100;
+
+/// Fetch the command-center `NeedsInput` bucket as neutral attention signals.
+/// Best-effort — a read error yields an empty vec (logged) so the rest of the
+/// attention queue still assembles.
+///
+/// The ledger query is filtered to `AwaitingUser` runs so [`ATTENTION_RUN_LIMIT`]
+/// bounds *blocked* runs only. Fetching a global recent page then filtering (as
+/// `list_agent_work` does) would let an older still-blocked run be paged out by
+/// newer working/completed runs in a busy workspace, silently dropping it from
+/// the attention queue.
+pub(super) fn command_center_needs_input(
+    config: &Config,
+) -> Vec<super::attention::NeedsInputSignal> {
+    use crate::openhuman::agent_orchestration::command_center::build_view;
+    use crate::openhuman::session_db::run_ledger::{
+        list_agent_runs, AgentRunListRequest, AgentRunStatus,
+    };
+    let request = AgentRunListRequest {
+        status: Some(AgentRunStatus::AwaitingUser.as_str().to_string()),
+        kind: None,
+        parent_run_id: None,
+        parent_thread_id: None,
+        limit: Some(ATTENTION_RUN_LIMIT),
+        offset: None,
+    };
+    match list_agent_runs(config, &request) {
+        Ok(response) => {
+            super::attention::needs_input_from_command_center(build_view(response.runs))
+        }
+        Err(e) => {
+            log::warn!(target: LOG, "[orchestration_rpc] attention.command_center_failed: {e}");
+            Vec::new()
+        }
+    }
+}
+
+/// Gather unread attention signals from the orchestration store: every non-pinned
+/// session with a positive unread count. The pinned master/subconscious windows
+/// are excluded — they are not agent instances.
+pub(super) fn gather_unread_signals(
+    conn: &rusqlite::Connection,
+) -> anyhow::Result<Vec<super::attention::UnreadSignal>> {
+    let mut out: Vec<super::attention::UnreadSignal> = Vec::new();
+    for session in store::list_sessions(conn)? {
+        if matches!(session.session_id.as_str(), "master" | "subconscious") {
+            continue;
+        }
+        let unread = store::unread_count(conn, &session.session_id)?;
+        if unread > 0 {
+            out.push(super::attention::UnreadSignal {
+                session_id: session.session_id,
+                label: session.label,
+                unread,
+                last_message_at: Some(session.last_message_at),
+            });
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::openhuman::orchestration::types::OrchestrationMessage;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tinyagents::graph::checkpoint::Checkpointer;
+
+    #[test]
+    fn gather_unread_signals_skips_pinned_and_zero_unread() {
+        use super::super::types::ChatKind;
+        let tmp = tempfile::tempdir().unwrap();
+        let config = Config {
+            workspace_dir: tmp.path().to_path_buf(),
+            ..Config::default()
+        };
+        let sess = |id: &str, source: &str, label: Option<&str>, at: &str| OrchestrationSession {
+            session_id: id.into(),
+            agent_id: "@peer".into(),
+            source: source.into(),
+            label: label.map(str::to_string),
+            workspace: None,
+            last_seq: 1,
+            created_at: "2026-07-06T00:00:00Z".into(),
+            last_message_at: at.into(),
+        };
+        let message = |id: &str, session: &str, kind: ChatKind, at: &str| OrchestrationMessage {
+            id: id.into(),
+            agent_id: "@peer".into(),
+            session_id: session.into(),
+            chat_kind: kind,
+            role: "user".into(),
+            body: "hello".into(),
+            timestamp: at.into(),
+            seq: 1,
+        };
+
+        let signals = store::with_connection(&config.workspace_dir, |conn| {
+            // Non-pinned session with one unread message → surfaces.
+            store::upsert_session(conn, &sess("h-1", "claude", Some("Claude · audit"), "t1"))?;
+            store::insert_message(conn, &message("m1", "h-1", ChatKind::Session, "t1"))?;
+            // Pinned master with a message → excluded (not an agent instance).
+            store::upsert_session(conn, &sess("master", "core", None, "t2"))?;
+            store::insert_message(conn, &message("m2", "master", ChatKind::Master, "t2"))?;
+            // Non-pinned session with no messages → zero unread, dropped.
+            store::upsert_session(conn, &sess("h-quiet", "codex", None, "t0"))?;
+            gather_unread_signals(conn)
+        })
+        .unwrap();
+
+        assert_eq!(
+            signals.len(),
+            1,
+            "only the non-pinned unread session surfaces"
+        );
+        assert_eq!(signals[0].session_id, "h-1");
+        assert_eq!(signals[0].unread, 1);
+        assert_eq!(signals[0].label.as_deref(), Some("Claude · audit"));
+    }
+
+    #[test]
+    fn command_center_needs_input_surfaces_only_blocked_runs() {
+        use crate::openhuman::session_db::run_ledger::{
+            upsert_agent_run, AgentRunKind, AgentRunStatus, AgentRunUpsert,
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let config = Config {
+            workspace_dir: tmp.path().to_path_buf(),
+            ..Config::default()
+        };
+        let seed = |id: &str, status: AgentRunStatus| {
+            upsert_agent_run(
+                &config,
+                AgentRunUpsert {
+                    id: id.into(),
+                    kind: AgentRunKind::Subagent,
+                    parent_run_id: None,
+                    parent_thread_id: Some("thread-1".into()),
+                    agent_id: Some("researcher".into()),
+                    status,
+                    prompt_ref: None,
+                    worker_thread_id: None,
+                    task_board_id: None,
+                    task_card_id: None,
+                    checkpoint_path: None,
+                    checkpoint: None,
+                    summary: None,
+                    error: None,
+                    metadata: serde_json::json!({}),
+                    started_at: None,
+                    completed_at: None,
+                },
+            )
+            .unwrap();
+        };
+        // A blocked run and a working run — only the blocked one is attention-worthy.
+        seed("run-blocked", AgentRunStatus::AwaitingUser);
+        seed("run-working", AgentRunStatus::Running);
+
+        let signals = command_center_needs_input(&config);
+        assert_eq!(signals.len(), 1, "only the AwaitingUser run surfaces");
+        assert_eq!(signals[0].run_id, "run-blocked");
+    }
+
+    #[test]
+    fn self_identity_marks_published_identity_discoverable() {
+        let reverse = serde_json::json!({
+            "identities": [
+                { "username": "  ", "primary": false },   // blank → skipped
+                { "username": "openhuman", "primary": false },
+                { "username": "oh_primary", "primary": true },
+            ]
+        });
+        let id = build_self_identity("addr123".to_string(), true, Some(&reverse), true);
+        assert_eq!(id.agent_id, "addr123");
+        assert_eq!(id.handles.len(), 2, "blank username skipped");
+        assert_eq!(id.primary_handle.as_deref(), Some("oh_primary"));
+        assert!(id.card_published && id.key_published && id.discoverable);
+    }
+
+    #[test]
+    fn self_identity_primary_falls_back_to_first_handle() {
+        let reverse = serde_json::json!({
+            "identities": [ { "username": "solo" } ] // no primary flag
+        });
+        let id = build_self_identity("addr".to_string(), true, Some(&reverse), true);
+        assert_eq!(id.primary_handle.as_deref(), Some("solo"));
+    }
+
+    #[test]
+    fn self_identity_undiscoverable_when_card_or_key_missing() {
+        // No reverse (handle-less), card present but key not published → the
+        // exact un-messageable case the SelfIdentityCard must flag.
+        let no_key = build_self_identity("addr".to_string(), false, None, true);
+        assert!(no_key.handles.is_empty());
+        assert!(no_key.primary_handle.is_none());
+        assert!(!no_key.discoverable, "key not published → not discoverable");
+
+        let no_card = build_self_identity("addr".to_string(), true, None, false);
+        assert!(
+            !no_card.discoverable,
+            "card not published → not discoverable"
+        );
+    }
     use tinyagents::graph::SqliteCheckpointer;
 
     fn test_config(tmp: &tempfile::TempDir) -> Config {
@@ -1325,6 +1750,7 @@ mod tests {
             ("ops.rs", include_str!("ops.rs")),
             ("bus.rs", include_str!("bus.rs")),
             ("schemas.rs", include_str!("schemas.rs")),
+            ("attention.rs", include_str!("attention.rs")),
             ("graph/mod.rs", include_str!("graph/mod.rs")),
         ];
         // Forbidden substrings that would interpolate secret content into a log.

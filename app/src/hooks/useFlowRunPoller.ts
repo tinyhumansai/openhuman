@@ -13,6 +13,8 @@
  *
  * `pending_approval` is explicitly NOT terminal — a paused run still needs
  * live status so the drawer reflects an approval elsewhere resolving it.
+ * `completed_with_warnings` (run honesty, PR2) and `cancelled` are terminal,
+ * same as `completed`/`failed`.
  */
 import debug from 'debug';
 import { useEffect, useRef, useState } from 'react';
@@ -24,7 +26,12 @@ const log = debug('flows:poller');
 /** How often to poll a non-terminal run for progress. */
 const POLL_INTERVAL_MS = 2000;
 
-const TERMINAL = new Set<FlowRunStatus>(['completed', 'failed']);
+const TERMINAL = new Set<FlowRunStatus>([
+  'completed',
+  'completed_with_warnings',
+  'failed',
+  'cancelled',
+]);
 
 function isTerminal(run: FlowRun | null): boolean {
   return run !== null && TERMINAL.has(run.status);

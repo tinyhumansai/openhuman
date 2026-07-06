@@ -1,6 +1,7 @@
 use super::{
-    backend_api_body_shape, flatten_authed_error, key_bytes_from_string, parse_message_path,
-    sanitize_client_version, BackendApiError, BackendOAuthClient, BACKEND_API_BODY_SHAPE_MAX_BYTES,
+    backend_api_body_shape, flatten_authed_error, is_announcements_latest_path,
+    key_bytes_from_string, parse_message_path, sanitize_client_version, BackendApiError,
+    BackendOAuthClient, BACKEND_API_BODY_SHAPE_MAX_BYTES,
 };
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -359,6 +360,87 @@ async fn authed_json_surfaces_message_not_found_on_404() {
 }
 
 #[tokio::test]
+async fn authed_json_surfaces_announcement_not_found_on_404() {
+    // TAURI-RUST-HW0 / TAURI-RUST-KHX: 404 on `/announcements/latest` must
+    // surface a typed `BackendApiError::AnnouncementNotFound` (so the caller
+    // can degrade to `null`) instead of a generic non-2xx error.
+    let app = Router::new().route(
+        "/announcements/latest",
+        get(|| async { (axum::http::StatusCode::NOT_FOUND, "Not Found") }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base_url = format!("http://{addr}");
+    let client = BackendOAuthClient::new(&base_url).unwrap();
+
+    let err = client
+        .authed_json("mock-jwt", Method::GET, "/announcements/latest", None)
+        .await
+        .unwrap_err();
+    let typed = err.downcast_ref::<BackendApiError>().unwrap();
+    assert!(matches!(typed, BackendApiError::AnnouncementNotFound));
+}
+
+#[tokio::test]
+async fn authed_json_only_classifies_get_announcements_latest_as_not_found() {
+    // Defense-in-depth: a 404 on a *different* path must not be misclassified
+    // as AnnouncementNotFound just because it shares a prefix/suffix.
+    let app = Router::new().route(
+        "/announcements/latest/extra",
+        get(|| async { (axum::http::StatusCode::NOT_FOUND, "Not Found") }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base_url = format!("http://{addr}");
+    let client = BackendOAuthClient::new(&base_url).unwrap();
+
+    let err = client
+        .authed_json("mock-jwt", Method::GET, "/announcements/latest/extra", None)
+        .await
+        .unwrap_err();
+    assert!(err.downcast_ref::<BackendApiError>().is_none());
+}
+
+#[tokio::test]
+async fn authed_json_surfaces_announcement_not_found_with_base_path_prefix() {
+    // OPENHUMAN-TAURI-R7-style regression: a BACKEND_URL/path override that
+    // makes the resolved path `/api/v1/announcements/latest` must still
+    // classify as AnnouncementNotFound, not fall through to a generic error.
+    let app = Router::new().route(
+        "/api/v1/announcements/latest",
+        get(|| async { (axum::http::StatusCode::NOT_FOUND, "Not Found") }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base_url = format!("http://{addr}");
+    let client = BackendOAuthClient::new(&base_url).unwrap();
+
+    let err = client
+        .authed_json(
+            "mock-jwt",
+            Method::GET,
+            "/api/v1/announcements/latest",
+            None,
+        )
+        .await
+        .unwrap_err();
+    let typed = err.downcast_ref::<BackendApiError>().unwrap();
+    assert!(matches!(typed, BackendApiError::AnnouncementNotFound));
+}
+
+#[tokio::test]
 async fn authed_json_surfaces_unauthorized_on_401() {
     // OPENHUMAN-TAURI-4K8: 401 on any authed backend endpoint must surface a
     // typed `BackendApiError::Unauthorized` and NOT funnel into `report_error`.
@@ -582,6 +664,23 @@ fn flatten_authed_error_does_not_swallow_message_not_found() {
     );
 }
 
+#[test]
+fn flatten_authed_error_does_not_swallow_announcement_not_found() {
+    // `announcements::ops::get_latest_announcement` intercepts
+    // `AnnouncementNotFound` before it ever reaches `flatten_authed_error`, but
+    // this is defense-in-depth: if a future caller skips that interception,
+    // `flatten_authed_error` must still preserve the typed state's Display
+    // text rather than collapsing it into the session-expiry sentinel.
+    let err = anyhow::Error::new(BackendApiError::AnnouncementNotFound);
+    let flat = flatten_authed_error(err);
+
+    assert!(!flat.contains("SESSION_EXPIRED"), "must not map: {flat}");
+    assert!(
+        flat.contains("no announcement available"),
+        "display preserved: {flat}"
+    );
+}
+
 #[tokio::test]
 async fn authed_json_403_is_not_demoted_to_unauthorized() {
     // 403 (Forbidden) is a genuine authorization/permission problem — the
@@ -699,6 +798,34 @@ fn parse_message_path_non_message_path_returns_none() {
     assert_eq!(parse_message_path("/auth/profile"), None);
     assert_eq!(parse_message_path("/"), None);
     assert_eq!(parse_message_path(""), None);
+}
+
+#[test]
+fn is_announcements_latest_path_matches_canonical_form() {
+    assert!(is_announcements_latest_path("/announcements/latest"));
+}
+
+#[test]
+fn is_announcements_latest_path_tolerates_base_path_prefix() {
+    // Same OPENHUMAN-TAURI-R7 reasoning as parse_message_path: a BACKEND_URL
+    // override with a path prefix must not defeat the 404 classification.
+    assert!(is_announcements_latest_path("/api/v1/announcements/latest"));
+    assert!(is_announcements_latest_path("/v2/api/announcements/latest"));
+}
+
+#[test]
+fn is_announcements_latest_path_trailing_slash() {
+    assert!(is_announcements_latest_path("/announcements/latest/"));
+}
+
+#[test]
+fn is_announcements_latest_path_rejects_other_paths() {
+    assert!(!is_announcements_latest_path("/announcements/latest/extra"));
+    assert!(!is_announcements_latest_path("/announcements"));
+    assert!(!is_announcements_latest_path("/latest"));
+    assert!(!is_announcements_latest_path("/auth/profile"));
+    assert!(!is_announcements_latest_path("/"));
+    assert!(!is_announcements_latest_path(""));
 }
 
 // ── authed_json defense-in-depth: PATCH 404 with base-path prefix ───────────

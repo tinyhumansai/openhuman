@@ -13,6 +13,7 @@ import {
   type ChatDoneEvent,
   type ChatInferenceHeartbeatEvent,
   type ChatInferenceStartEvent,
+  type ChatInterimEvent,
   type ChatIterationStartEvent,
   type ChatPlanReviewRequestEvent,
   type ChatSegmentEvent,
@@ -922,6 +923,39 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         );
       },
       onSubagentToolResult: event => {
+        // Phase 5c: the Flows prompt bar / canvas copilot route to the
+        // `workflow_builder` specialist via delegation (`build_workflow`), so a
+        // `propose_workflow`/`revise_workflow` proposal is produced INSIDE the
+        // delegated worker and arrives here (not on `onToolResult`). This
+        // extraction must run BEFORE the timeline-entry guards below: under
+        // the workflow_builder subagent's heavy event volume, the progress
+        // channel (bounded, `try_send`) can drop earlier events, so the
+        // timeline row for this call may never have been created — gating
+        // proposal extraction on finding that row silently drops the
+        // proposal and the Accept/Reject card never renders (bug). The
+        // extraction only needs `tool_name`/`success`/`output`, all present
+        // directly on the event, with no timeline dependency. Surface it on
+        // the PARENT thread (`event.thread_id`, which the progress bridge
+        // always stamps with the parent request's thread, not the child's)
+        // so the same `WorkflowProposalCard` the direct-tool path uses
+        // renders it. Still validate-only — the card's explicit Save is the
+        // sole persistence gate.
+        const subagentProposal = maybeParseWorkflowProposalTool(
+          event.tool_name,
+          event.success,
+          event.output
+        );
+        if (subagentProposal) {
+          rtLog('workflow proposal parsed (delegated worker)', {
+            thread: event.thread_id,
+            tool: event.tool_name,
+            name: subagentProposal.name,
+          });
+          dispatch(
+            setWorkflowProposalForThread({ threadId: event.thread_id, proposal: subagentProposal })
+          );
+        }
+
         const taskId = event.subagent?.task_id ?? event.skill_id;
         const agentId = event.subagent?.agent_id;
         if (!agentId) return;
@@ -960,30 +994,6 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
             failure: event.success ? undefined : parseToolFailure(event.failure),
           })
         );
-
-        // Phase 5c: the Flows prompt bar / canvas copilot route to the
-        // `workflow_builder` specialist via delegation (`build_workflow`), so a
-        // `propose_workflow`/`revise_workflow` proposal is produced INSIDE the
-        // delegated worker and arrives here (not on `onToolResult`). Surface it
-        // on the PARENT thread (`event.thread_id`) so the same
-        // `WorkflowProposalCard` / copilot the direct-tool path uses renders it.
-        // Still validate-only — the card's explicit Save is the sole persistence
-        // gate.
-        const subagentProposal = maybeParseWorkflowProposalTool(
-          event.tool_name,
-          event.success,
-          event.output
-        );
-        if (subagentProposal) {
-          rtLog('workflow proposal parsed (delegated worker)', {
-            thread: event.thread_id,
-            tool: event.tool_name,
-            name: subagentProposal.name,
-          });
-          dispatch(
-            setWorkflowProposalForThread({ threadId: event.thread_id, proposal: subagentProposal })
-          );
-        }
       },
       onSubagentTextDelta: (event: ChatSubagentTextDeltaEvent) => {
         const taskId = event.subagent?.task_id;
@@ -1030,6 +1040,39 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
             extraMetadata: event.citations?.length ? { citations: event.citations } : undefined,
           })
         );
+      },
+      onInterim: (event: ChatInterimEvent) => {
+        // One interim per round — `round` is a stable per-turn dedup key that
+        // survives socket reconnect/replay (a re-delivered frame must not
+        // append the narration bubble twice).
+        const eventKey = `interim:${event.thread_id}:${event.request_id}:${event.round}`;
+        if (
+          !markChatEventSeen(eventKey, { threadId: event.thread_id, requestId: event.request_id })
+        )
+          return;
+        const content = event.full_response?.trim() ?? '';
+        if (!content) return;
+        // Persist this round's leading narration as its own interleaved bubble.
+        void dispatch(addInferenceResponse({ content, threadId: event.thread_id }));
+        // The narration has now become a bubble, so drop it from the live
+        // streaming preview (which accumulates across the whole turn under one
+        // request_id) — otherwise the same text lingers in the preview tail and
+        // reads as a duplicate for the full duration of the tool call. Reset
+        // synchronously so the next round's deltas start from an empty buffer.
+        const cr = store.getState().chatRuntime;
+        const existing = cr.streamingAssistantByThread[event.thread_id];
+        if (existing && existing.requestId === event.request_id) {
+          dispatch(
+            setStreamingAssistantForThread({
+              threadId: event.thread_id,
+              streaming: {
+                requestId: existing.requestId,
+                content: '',
+                thinking: existing.thinking,
+              },
+            })
+          );
+        }
       },
       onTextDelta: event => {
         const cr = store.getState().chatRuntime;

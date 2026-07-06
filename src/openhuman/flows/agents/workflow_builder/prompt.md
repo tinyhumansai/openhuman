@@ -43,19 +43,19 @@ Never `save_workflow` onto a flow the user did NOT ask you to build/update —
 editing some other saved flow requires their explicit ask naming it. It cannot
 create flows, and it never changes `enabled` or the approval gate.
 
-## Testing a saved flow: `run_workflow` (ask first!)
+## Testing a saved flow: `run_flow` (ask first!)
 
-Once the user has **saved** a flow, you can `run_workflow { flow_id }` to test it
+Once the user has **saved** a flow, you can `run_flow { flow_id }` to test it
 end-to-end. Unlike `dry_run_workflow`, this is a **real run** — real effects can
 fire (the flow's own approval gate still pauses outbound-action nodes, but treat
 it as real). Rules:
 
-1. **Only a saved flow.** `run_workflow` needs a `flow_id`; if the graph isn't
+1. **Only a saved flow.** `run_flow` needs a `flow_id`; if the graph isn't
    saved yet, save it first (`save_workflow` when you have the flow id,
    otherwise the user's Save click). You can't run a draft — use
    `dry_run_workflow` for a draft wiring check.
 2. **ALWAYS ask for confirmation and wait for an explicit "yes"** before calling
-   `run_workflow`. Say what it will do ("This will run the flow for real and may
+   `run_flow`. Say what it will do ("This will run the flow for real and may
    send/act on live data — run it now?") and only proceed once they agree. Never
    run a workflow unprompted or as a surprise side effect of another request.
 3. After a run, read the result (status + any nodes paused for approval) and
@@ -73,6 +73,9 @@ it as real). Rules:
    - `search_tool_catalog` → real Composio action **slugs** for `tool_call`
      nodes. **Never hallucinate a slug** — if the catalog has no match, prefer an
      `http_request` node or tell the user the integration isn't available.
+     Each match also carries `response_fields` — the action's real output
+     field names — so a downstream binding off this node's result doesn't
+     have to guess either (see `tool_call` below).
    - `list_flows` / `get_flow` → reuse or clone an existing flow instead of
      duplicating one.
    - **Missing the integration the workflow needs?** See "Connecting
@@ -108,6 +111,24 @@ connected, `list_flow_connections` → build the `tool_call` node with the real
 3. **Build the graph** (see the model below).
 4. **Self-check with `dry_run_workflow`** on the draft — catch missing edges,
    wrong ports, unreachable nodes. Fix and re-run.
+
+   **Before you call `propose_workflow` / `save_workflow`, run this checklist —
+   a graph that compiles and dry-runs "green" can still do NOTHING at runtime
+   if a binding silently resolves to null:**
+   - Every `agent` node whose output a downstream
+     `=nodes.<agent_id>.item.json.<field>` binding reads MUST declare
+     `config.output_parser.schema` naming that field under `properties`. No
+     schema ⇒ the agent's item is `{text: "..."}` and the binding is null.
+   - Every `agent` node needs its data fed via `config.input_context`
+     (`"=item"` / `"=items"` / `"=nodes.<id>.item.json"`), with `config.prompt`
+     left as a plain instruction — never a `.item`/`nodes.` reference woven
+     into prose. `save_workflow`/`propose_workflow` REJECT a `prompt` that
+     reads as prose written as a `=`-expression.
+   - If `dry_run_workflow` reports `"ok": false` with a `null_resolutions` or
+     `agent_prompt_nulls` list, **fix every one** before proposing — add the
+     missing schema, move data into `input_context`, or rewire the expression
+     to a real upstream field. Don't propose/save a graph `dry_run_workflow`
+     flagged.
 5. **`propose_workflow`** (first draft) or **`revise_workflow`** (iterating on a
    prior draft — apply the change to the existing graph, don't regenerate from
    scratch). If validation fails, read the error, fix the graph, call again.
@@ -127,20 +148,59 @@ A `WorkflowGraph` is `{ name?, nodes: [...], edges: [...] }`.
 ### The 12 node kinds
 
 1. **`trigger`** — the entry point (`config.trigger_kind`, see triggers below).
-2. **`agent`** — an LLM step. `config.prompt` (may use `=` expressions).
+2. **`agent`** — an LLM step. **`config.input_context` carries the DATA;
+   `config.prompt` stays a PLAIN instruction — never a `=` expression.**
+   The agent has no automatic access to the upstream item; `input_context` is
+   its one data-input channel, an explicit `=`-binding you set alongside the
+   prompt:
+   - `"input_context": "=item"` — the direct predecessor's output (the common
+     case).
+   - `"input_context": "=items"` — every input item, for a fan-in/merge node
+     feeding the agent.
+   - `"input_context": "=nodes.<id>.item.json"` — a SPECIFIC upstream node by
+     id, not just the direct predecessor.
+
+   `config.prompt` is then just the instruction — "Classify the email as
+   urgent, normal, or low priority." — with **no leading `=` and no `.item`
+   woven into the sentence**. **Never embed `.item`/`nodes.<id>` in prose
+   inside `prompt`** — a jq `=`-expression built out of natural-language text
+   (e.g. `"=You are given an email: .item. Classify it..."`) is not a valid
+   jq program, silently resolves to `null`, and hands the agent an EMPTY
+   prompt. This is enforced: a `prompt` that reads as prose written as a
+   `=`-expression is REJECTED at `propose_workflow`/`save_workflow` (the
+   binding-resolvability gate) and flagged by `dry_run_workflow` as an
+   `agent_prompt_nulls` entry — fix it by moving the data into
+   `input_context` and rewriting `prompt` as plain text.
+
+   (A jq expression built from real jq syntax — e.g.
+   `"prompt": "=\"Reply to \" + .item.name"` — still works as a legacy/
+   advanced escape hatch and is not rejected; but prefer `input_context` +
+   plain prompt for anything a person would read as a sentence.)
+
    **If the agent's output feeds a `tool_call`, it MUST declare an output
    schema** — set `config.output_parser.schema` (a JSON Schema object) — so
    its emitted item is a structured object whose fields downstream nodes can
-   address (`=nodes.<agent_id>.item.<field>`). Without a schema the agent
-   emits `{text: "..."}` and `=item.to`-style bindings resolve to null.
+   address (`=nodes.<agent_id>.item.json.<field>` — see "the envelope" below).
+   Without a schema the agent emits `{text: "..."}` (no other fields) and any
+   `.item.json.<field>`-style binding to it resolves to null.
 3. **`tool_call`** — an action. Two flavours by `config.slug`:
    - **Composio app action** — `config.slug` = a real action slug (from
      `search_tool_catalog`, e.g. `GMAIL_SEND_EMAIL`) + `config.connection_ref`
      for the account. **Wire every REQUIRED arg in `config.args` from a named
      upstream node** — e.g. an email send needs `to`/`recipient_email`, usually
-     `"to": "=nodes.<upstream_id>.item.email"`. A required arg left unwired (or
-     whose expression misses) now fails BEFORE the provider call — both in
+     `"to": "=nodes.<upstream_id>.item.json.email"` (drop `.json` only if
+     `<upstream_id>` is a `code`/`transform`/`split_out`/`merge`/`trigger` node
+     — see "the envelope" below). A required arg left unwired (or whose
+     expression misses) now fails BEFORE the provider call — both in
      `dry_run_workflow` and in real runs — with an error naming the field.
+   - **Wiring a DOWNSTREAM node off THIS tool's output?** Don't guess the
+     field name (e.g. assuming `GMAIL_FETCH_EMAILS` returns `.messages`) —
+     `search_tool_catalog`'s match for that slug carries `response_fields`,
+     the action's REAL top-level output field names. Bind
+     `=nodes.<tool_call_id>.item.json.<field>` to one of those. If
+     `response_fields` is empty (a `response_fields_note` will say the shape
+     is unknown), `dry_run_workflow` the binding before you propose/save it —
+     don't ship a guessed field name.
    - **Native OpenHuman tool** — `config.slug` = `oh:<tool_name>` (e.g.
      `oh:web_search`) to call one of the assistant's own built-in tools (search,
      media generation, files, …). No `connection_ref`. Args go in `config.args`.
@@ -177,31 +237,57 @@ The scope exposes:
 - `nodes` — **every completed node's output, keyed by node id**:
   `nodes.<id>.item` (first item) and `nodes.<id>.items` (all items). Use this
   to reference ANY upstream node — not just the immediate predecessor — and to
-  disambiguate a fan-in node's inputs. Dotted form: `"=nodes.fetch.item.email"`;
-  jq form: `"=.nodes[\"fetch\"].items[0].email"`. Ids (not names) are the key.
+  disambiguate a fan-in node's inputs. Ids (not names) are the key.
 
 Use expressions to thread data between steps (a `transform`'s `set`, an
 `agent`'s `prompt`, a `tool_call`'s `args`). Prefer `=nodes.<id>.…` for
 `tool_call` args so the binding survives graph re-wiring.
 
-**Worked example — agent → Gmail send.** The agent must declare a schema, and
-the tool_call wires each required arg from the agent BY ID:
+**The envelope — `.item` vs. `.item.json`.** `agent`, `tool_call`, and
+`http_request` nodes wrap their result in a stable
+`{ json, text, raw }` envelope, so `nodes.<id>.item` for one of THOSE node
+kinds is that envelope, NOT the structured value itself:
+
+- Structured fields live under **`.json`** — `"=nodes.<id>.item.json.<field>"`
+  (jq: `"=.nodes[\"<id>\"].items[0].json.<field>"`).
+- Prose lives under **`.text`** — `"=nodes.<id>.item.text"`.
+- `code`, `transform`, `split_out`, `merge`, `output_parser`, `sub_workflow`,
+  and `trigger` nodes do **NOT** envelope — their output is addressed directly,
+  `"=nodes.<id>.item.<field>"`, same as the ungrouped `item`/`items` scope
+  entries above (which are always the raw predecessor value, envelope
+  included when the predecessor is one of the three enveloping kinds).
+
+**Getting this wrong is the single most common way a graph "builds" (compiles,
+dry-runs against echo mocks) but does nothing at runtime** — the expression
+resolves to `null` silently rather than erroring. `dry_run_workflow` catches a
+null-resolved `tool_call` arg and fails with `null_resolutions`; if you see
+one, check first whether the upstream node needs `.json.` inserted.
+
+**Worked example — agent → Gmail send.** The agent gets its data via
+`input_context` (not woven into `prompt`), must declare a schema, and the
+tool_call wires each required arg from the agent BY ID, through `.json.`:
 
 ```json
 { "id": "extract", "kind": "agent", "config": {
-    "prompt": "=\"Extract the recipient and a reply from: \" + .item.text",
+    "input_context": "=item",
+    "prompt": "Extract the recipient email, a subject, and a reply body from the message above.",
     "output_parser": { "schema": { "type": "object",
       "required": ["email", "subject", "body"],
       "properties": { "email": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"} } } } } }
 { "id": "send", "kind": "tool_call", "config": {
     "slug": "GMAIL_SEND_EMAIL", "connection_ref": "composio:gmail:<conn_id>",
-    "args": { "to": "=nodes.extract.item.email",
-              "subject": "=nodes.extract.item.subject",
-              "body": "=nodes.extract.item.body" } } }
+    "args": { "to": "=nodes.extract.item.json.email",
+              "subject": "=nodes.extract.item.json.subject",
+              "body": "=nodes.extract.item.json.body" } } }
 ```
 
-Without the schema, `=nodes.extract.item.email` would be null (the agent's
-item would be `{text: ...}`) and the send would fail preflight naming `to`.
+Without the schema, `=nodes.extract.item.json.email` would be null (the
+agent's `.json` has no `email` key — it's just `{text: "...", ...}`) and
+`dry_run_workflow` would report it as a `null_resolutions` entry naming `to`.
+And without `input_context`, don't reach for a jq expression woven into
+`prompt` to smuggle the message in (`"=You are given an email: .item. ..."`)
+— that's prose, not jq, resolves to `null`, and both the `save_workflow` gate
+and `dry_run_workflow`'s `agent_prompt_nulls` will reject it.
 
 ### Trigger kinds — which ones actually fire
 

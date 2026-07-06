@@ -1021,52 +1021,20 @@ impl Agent {
         // entry. The registry is self-contained — it doesn't hold a
         // reference back into the tools Vec.
         let pformat_registry = crate::openhuman::agent::pformat::build_registry(&tools);
+        let dispatcher_kind =
+            resolve_dispatcher_kind(&dispatcher_choice, supports_native, agent_id);
         let tool_dispatcher: Box<dyn crate::openhuman::agent::dispatcher::ToolDispatcher> =
-            match dispatcher_choice.as_str() {
-                "native" => Box::new(NativeToolDispatcher),
-                "xml" => Box::new(XmlToolDispatcher),
-                "pformat" => Box::new(PFormatToolDispatcher::new(pformat_registry.clone())),
-                _ if supports_native => Box::new(NativeToolDispatcher),
-                // Default for text-only providers: P-Format. Flip the
-                // `agent.tool_dispatcher` config to `"xml"` to revert.
-                _ => Box::new(PFormatToolDispatcher::new(pformat_registry.clone())),
-            };
-
-        // Provider-side grammar decoders (e.g. Fireworks) compile every
-        // tool JSON schema into a grammar and index its rules with a
-        // uint16_t — max 65 535 rules. Large Composio toolkits (Notion,
-        // Salesforce, Gmail) produce per-action schemas dense enough
-        // that even 16–25 of them blow past that ceiling, regardless of
-        // how aggressively the fuzzy filter in `tool_filter.rs` narrows
-        // the list. When that happens the provider rejects the request
-        // with a 400 before any generation starts, so integrations_agent can
-        // never actually invoke the toolkit.
-        //
-        // Workaround: if we're building integrations_agent and the selected
-        // dispatcher would ship `tools: [...]` in the API payload
-        // (`should_send_tool_specs() == true`, i.e. native mode), swap
-        // to XML mode. XmlToolDispatcher puts the tool catalogue inside
-        // the system prompt as prose instead — the provider never
-        // compiles a grammar for it, so the rule-count ceiling stops
-        // mattering. Downside: slightly looser tool-call formatting
-        // than native; the existing `parse_tool_calls` recovers from
-        // stray formatting and the loop retries on malformed output.
-        let tool_dispatcher: Box<dyn crate::openhuman::agent::dispatcher::ToolDispatcher> =
-            if agent_id == "integrations_agent" && tool_dispatcher.should_send_tool_specs() {
-                log::info!(
-                    "[agent::builder] integrations_agent: overriding native tool dispatcher with \
-                     PFormatToolDispatcher (native mode hits provider grammar-rule limits on \
-                     large Composio toolkits; p-format keeps the in-prompt catalogue compact \
-                     and still parses JSON-in-tag fallbacks)"
-                );
-                Box::new(PFormatToolDispatcher::new(pformat_registry.clone()))
-            } else {
-                tool_dispatcher
+            match dispatcher_kind {
+                DispatcherKind::Native => Box::new(NativeToolDispatcher),
+                DispatcherKind::Xml => Box::new(XmlToolDispatcher),
+                DispatcherKind::PFormat => {
+                    Box::new(PFormatToolDispatcher::new(pformat_registry.clone()))
+                }
             };
 
         log::debug!(
             "[agent] tool dispatcher selected: choice={dispatcher_choice} agent_id={agent_id} \
-             sends_tool_specs={} default_text_format=pformat pformat_registry_entries={}",
+             kind={dispatcher_kind:?} sends_tool_specs={} pformat_registry_entries={}",
             tool_dispatcher.should_send_tool_specs(),
             pformat_registry.len()
         );
@@ -1239,6 +1207,50 @@ fn definition_disallows_tool(disallowed: &[String], name: &str) -> bool {
     })
 }
 
+/// Which tool-call dialect a session speaks to its provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DispatcherKind {
+    /// Provider-native structured function calling (JSON tool specs on the wire).
+    Native,
+    /// JSON-in-tag: `<tool_call>{"name":…,"arguments":{…}}</tool_call>` in text.
+    Xml,
+    /// Compact positional P-Format (`tool[a|b]`) — opt-in only.
+    PFormat,
+}
+
+/// Pick the tool-call dialect from the configured `agent.tool_dispatcher`
+/// choice, the provider's native-tool support, and the agent id.
+///
+/// `"auto"` (and any unrecognized value) resolves to native when the provider
+/// supports it, otherwise JSON-in-tag — **never** P-Format, which is opt-in
+/// (`"pformat"`) because its compact positional syntax mis-parses on some
+/// models.
+///
+/// `integrations_agent` is special-cased off native: provider-side grammar
+/// decoders (e.g. Fireworks) compile every JSON tool schema into a grammar
+/// indexed by a `uint16_t` (max 65 535 rules), and large Composio toolkits
+/// (Notion, Salesforce, Gmail) blow past that ceiling, so a native request is
+/// rejected with a 400 before any generation. Falling back to JSON-in-tag puts
+/// the catalogue in the prompt as prose, so no grammar is compiled.
+fn resolve_dispatcher_kind(
+    dispatcher_choice: &str,
+    supports_native: bool,
+    agent_id: &str,
+) -> DispatcherKind {
+    let base = match dispatcher_choice {
+        "native" => DispatcherKind::Native,
+        "xml" => DispatcherKind::Xml,
+        "pformat" => DispatcherKind::PFormat,
+        _ if supports_native => DispatcherKind::Native,
+        _ => DispatcherKind::Xml,
+    };
+    if agent_id == "integrations_agent" && base == DispatcherKind::Native {
+        DispatcherKind::Xml
+    } else {
+        base
+    }
+}
+
 /// Resolve the provider/workload role for a session build.
 ///
 /// The `subconscious` workload has two entry points and both must route here:
@@ -1270,6 +1282,7 @@ pub(crate) fn provider_role_for(agent_id: &str, default_model: Option<&str>) -> 
 #[cfg(test)]
 mod provider_role_tests {
     use super::provider_role_for;
+    use super::{resolve_dispatcher_kind, DispatcherKind};
 
     #[test]
     fn orchestrator_defaults_to_chat() {
@@ -1309,5 +1322,59 @@ mod provider_role_tests {
             "subconscious"
         );
         assert_eq!(provider_role_for(" subconscious ", None), "subconscious");
+    }
+
+    #[test]
+    fn auto_prefers_native_when_supported_never_pformat() {
+        assert_eq!(
+            resolve_dispatcher_kind("auto", true, "chat"),
+            DispatcherKind::Native
+        );
+        // Text-only provider defaults to JSON-in-tag, NOT P-Format.
+        assert_eq!(
+            resolve_dispatcher_kind("auto", false, "chat"),
+            DispatcherKind::Xml
+        );
+        // An unrecognized value behaves like "auto".
+        assert_eq!(
+            resolve_dispatcher_kind("bogus", false, "chat"),
+            DispatcherKind::Xml
+        );
+    }
+
+    #[test]
+    fn explicit_choices_are_honoured_including_opt_in_pformat() {
+        assert_eq!(
+            resolve_dispatcher_kind("native", false, "chat"),
+            DispatcherKind::Native
+        );
+        assert_eq!(
+            resolve_dispatcher_kind("xml", true, "chat"),
+            DispatcherKind::Xml
+        );
+        // P-Format is only ever selected when explicitly requested.
+        assert_eq!(
+            resolve_dispatcher_kind("pformat", true, "chat"),
+            DispatcherKind::PFormat
+        );
+    }
+
+    #[test]
+    fn integrations_agent_falls_off_native_to_json_in_tag() {
+        // Native would ship JSON tool specs and blow the provider grammar-rule
+        // ceiling on large Composio toolkits → force JSON-in-tag.
+        assert_eq!(
+            resolve_dispatcher_kind("auto", true, "integrations_agent"),
+            DispatcherKind::Xml
+        );
+        assert_eq!(
+            resolve_dispatcher_kind("native", true, "integrations_agent"),
+            DispatcherKind::Xml
+        );
+        // An explicit non-native choice is left untouched for that agent.
+        assert_eq!(
+            resolve_dispatcher_kind("pformat", true, "integrations_agent"),
+            DispatcherKind::PFormat
+        );
     }
 }

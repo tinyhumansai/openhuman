@@ -420,7 +420,7 @@ async fn preflight_fails_before_dispatch_naming_the_missing_field() {
     let msg = err.to_string();
     assert!(msg.contains("`to`"), "error must name the field: {msg}");
     assert!(
-        msg.contains("=nodes.<node_id>.item.<field>"),
+        msg.contains("=nodes.<node_id>.item.json.<field>"),
         "error must suggest the wiring fix: {msg}"
     );
     assert!(

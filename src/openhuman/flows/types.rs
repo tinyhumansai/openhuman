@@ -199,10 +199,15 @@ pub struct FlowRun {
     pub thread_id: String,
     /// Run status. Not an enum (kept a free-form `String` for forward-compat
     /// with statuses added by newer builds), but the vocabulary is fixed:
-    /// `"running"` | `"completed"` | `"pending_approval"` | `"failed"` |
-    /// `"cancelled"` (issue G4 — a run cancelled via `flows_cancel_run`, or a
-    /// parked `pending_approval` run swept by the TTL expiry). All of
-    /// `completed` / `failed` / `cancelled` are terminal.
+    /// `"running"` | `"completed"` | `"completed_with_warnings"` |
+    /// `"pending_approval"` | `"failed"` | `"cancelled"` (issue G4 — a run
+    /// cancelled via `flows_cancel_run`, or a parked `pending_approval` run
+    /// swept by the TTL expiry). `"completed_with_warnings"` (run honesty,
+    /// PR2) is a terminal status like `"completed"`, but at least one settled
+    /// [`FlowRunStep`] carries non-empty `diagnostics` (a `=`-binding that
+    /// resolved to `null`) even though no step outright errored. All of
+    /// `completed` / `completed_with_warnings` / `failed` / `cancelled` are
+    /// terminal.
     pub status: String,
     /// RFC3339 timestamp when the run started.
     pub started_at: String,

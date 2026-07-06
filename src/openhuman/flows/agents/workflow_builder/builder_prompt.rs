@@ -48,7 +48,7 @@ pub struct BuilderRequest {
     #[serde(default)]
     pub graph: Option<Value>,
     /// The saved flow's id (required for `build`; optional elsewhere so the
-    /// agent may `run_workflow` it to test after confirming).
+    /// agent may `run_flow` it to test after confirming).
     #[serde(default)]
     pub flow_id: Option<String>,
     /// The failed run id (== thread id) for `repair`, so the agent can
@@ -93,13 +93,13 @@ const DIRECTIVE_PROPOSE: &str =
 
 const DIRECTIVE_REVISE: &str = "Revise this tinyflows automation and return the revised proposal. Do not save \
      unless I explicitly ask you to (when I do, use save_workflow on the saved flow id), and never enable or \
-     disable anything. You may run_workflow the SAVED flow to test it, but ONLY if I ask and only after you \
+     disable anything. You may run_flow the SAVED flow to test it, but ONLY if I ask and only after you \
      confirm with me first.";
 
 const DIRECTIVE_BUILD_AND_SAVE: &str = "Build this tinyflows automation END-TO-END. The flow already exists \
      (created blank just now) — design the graph, verify it with dry_run_workflow, return the workflow \
      proposal, then SAVE it onto the flow id below with save_workflow. Do not enable or disable anything, and \
-     do not run_workflow a real test unless I explicitly confirm first. Tell me what you saved when you are done.";
+     do not run_flow a real test unless I explicitly confirm first. Tell me what you saved when you are done.";
 
 /// Serialize a graph compactly for injection as agent context.
 fn serialize_graph(graph: &Value) -> String {
@@ -131,7 +131,7 @@ pub fn render_prompt(req: &BuilderRequest) -> String {
                 lines.push(String::new());
                 lines.push(format!(
                     "This workflow is saved with flow id `{flow_id}` — if I ask you to run/test it, you \
-                     may run_workflow that id, but confirm with me first."
+                     may run_flow that id, but confirm with me first."
                 ));
             }
             lines.push(String::new());

@@ -641,6 +641,7 @@ fn render_tools_markdown_groups_by_toolkit_and_drops_schemas() {
                         },
                         "required": ["to", "subject", "body"],
                     })),
+                    output_parameters: None,
                 },
             },
             ComposioToolSchema {
@@ -653,6 +654,7 @@ fn render_tools_markdown_groups_by_toolkit_and_drops_schemas() {
                         "properties": { "title": {} },
                         "required": ["title"],
                     })),
+                    output_parameters: None,
                 },
             },
         ],
@@ -707,6 +709,7 @@ fn retain_connected_tools_drops_unconnected_toolkits_case_insensitively() {
                     name: "GMAIL_SEND_EMAIL".into(),
                     description: None,
                     parameters: None,
+                    output_parameters: None,
                 },
             },
             ComposioToolSchema {
@@ -715,6 +718,7 @@ fn retain_connected_tools_drops_unconnected_toolkits_case_insensitively() {
                     name: "NOTION_CREATE_PAGE".into(),
                     description: None,
                     parameters: None,
+                    output_parameters: None,
                 },
             },
             ComposioToolSchema {
@@ -723,6 +727,7 @@ fn retain_connected_tools_drops_unconnected_toolkits_case_insensitively() {
                     name: "GMAIL_LIST_THREADS".into(),
                     description: None,
                     parameters: None,
+                    output_parameters: None,
                 },
             },
         ],

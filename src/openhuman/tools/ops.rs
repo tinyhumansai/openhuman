@@ -285,7 +285,7 @@ pub fn all_tools_with_runtime(
         Box::new(GetFlowTool::new(config.clone())),
         Box::new(GetFlowRunTool::new(config.clone())),
         Box::new(ListFlowConnectionsTool::new(config.clone())),
-        Box::new(SearchToolCatalogTool::new()),
+        Box::new(SearchToolCatalogTool::new(config.clone())),
         // Ground an `agent` node's `agent_ref` in real registered agent-kind ids
         // (researcher / code_executor / …) — the agent analogue of
         // search_tool_catalog. Read-only.

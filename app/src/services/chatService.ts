@@ -137,6 +137,21 @@ export function segmentText(event: ChatSegmentEvent): string {
   return event.full_response;
 }
 
+/**
+ * The parent agent's leading narration for one round, flushed mid-turn when a
+ * tool/subagent call closes that round. Emitted (`chat_interim`) so the
+ * narration persists as its own interleaved chat bubble instead of vanishing
+ * when the turn settles. `round` is the 1-based iteration it belongs to and
+ * makes a stable per-turn dedup key (one interim per round).
+ */
+export interface ChatInterimEvent {
+  thread_id: string;
+  request_id: string;
+  /** Wire name is `full_response`; carries only this round's narration text. */
+  full_response: string;
+  round: number;
+}
+
 export interface ChatErrorEvent {
   thread_id: string;
   request_id?: string;
@@ -532,6 +547,7 @@ export interface ChatEventListeners {
   onSubagentTextDelta?: (event: ChatSubagentTextDeltaEvent) => void;
   onSubagentThinkingDelta?: (event: ChatSubagentThinkingDeltaEvent) => void;
   onSegment?: (event: ChatSegmentEvent) => void;
+  onInterim?: (event: ChatInterimEvent) => void;
   onTextDelta?: (event: ChatTextDeltaEvent) => void;
   onThinkingDelta?: (event: ChatThinkingDeltaEvent) => void;
   onToolArgsDelta?: (event: ChatToolArgsDeltaEvent) => void;
@@ -578,6 +594,7 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
     subagentTextDelta: 'subagent_text_delta',
     subagentThinkingDelta: 'subagent_thinking_delta',
     segment: 'chat_segment',
+    interim: 'chat_interim',
     textDelta: 'text_delta',
     thinkingDelta: 'thinking_delta',
     toolArgsDelta: 'tool_args_delta',
@@ -836,6 +853,22 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
     };
     socket.on(EVENTS.segment, cb);
     handlers.push([EVENTS.segment, cb]);
+  }
+
+  if (listeners.onInterim) {
+    const cb = (payload: unknown) => {
+      const e = payload as ChatInterimEvent;
+      chatLog(
+        '%s thread_id=%s request_id=%s round=%d',
+        EVENTS.interim,
+        e.thread_id,
+        e.request_id,
+        e.round
+      );
+      listeners.onInterim?.(e);
+    };
+    socket.on(EVENTS.interim, cb);
+    handlers.push([EVENTS.interim, cb]);
   }
 
   if (listeners.onTextDelta) {

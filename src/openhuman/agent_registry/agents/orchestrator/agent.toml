@@ -216,12 +216,21 @@ named = [
     "grep",
     "glob",
     "list",
-    # Quick web lookups. A single fact ("what's the capital of X", "latest
-    # version of Y") is one `web_search_tool` / `web_fetch` call — spawning
-    # the `research` worker for that is overkill. Multi-source crawls,
-    # comparisons, and doc digests still delegate to `research`.
+    # Quick web/API lookups. A single fact ("what's the capital of X", "latest
+    # version of Y") is one `web_search_tool` / `web_fetch` / `http_request`
+    # call — spawning the `research` worker for that is overkill. Multi-source
+    # crawls, comparisons, and doc digests still delegate to `research`.
     "web_search_tool",
     "web_fetch",
+    "http_request",
+    # Managed file-storage transfer surface for passing artifacts/attachments
+    # between chat, users, and workers. Storage lifecycle mutators
+    # (`storage_set_visibility`, `storage_delete_file`) stay out of the broad
+    # chat surface.
+    "storage_upload_file",
+    "storage_download_file",
+    "storage_list_files",
+    "storage_get_link",
     # NOTE: `spawn_worker_thread` is intentionally absent — the tool is
     # disabled pending a worker-thread UI (#1624) and is not registered, so
     # listing it here (and teaching it in prompt.md) only trained the model

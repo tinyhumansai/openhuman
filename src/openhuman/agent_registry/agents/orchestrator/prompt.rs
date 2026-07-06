@@ -102,8 +102,12 @@ fn render_installed_skills(skills: &[Workflow]) -> String {
          (name the skill and what you want done); it loads and runs the skill in an \
          isolated worker and returns only the result, plus a `## Handoff Plan` for any \
          step the worker couldn't perform — execute those steps yourself under the \
-         approval gate. Use `describe_workflow` for full details. Use \
-         `skill_registry_browse` / `skill_registry_search` to find and install new skills.\n\n",
+         approval gate. Use `describe_workflow` for full details on one of THESE \
+         installed skills (it only knows about entries in this list, not Flows \
+         automations — do not call it with a Flows `workflow_id`, it will error). Use \
+         `skill_registry_browse` / `skill_registry_search` to find and install new skills. \
+         For Flows automations (build/inspect/run a tinyflows workflow), use \
+         `build_workflow` / the workflow_builder delegate instead.\n\n",
     );
     for skill in skills {
         let id = if skill.dir_name.is_empty() {

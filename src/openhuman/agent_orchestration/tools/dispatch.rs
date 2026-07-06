@@ -213,6 +213,30 @@ pub(crate) async fn dispatch_subagent(
                     outcome.output.chars().count(),
                     outcome.iterations,
                 );
+                // Also send to the per-request progress sink (mirrors
+                // `spawn_subagent.rs`) so the web channel bridge emits
+                // `subagent_done` to the frontend. Without this the delegated
+                // subagent's timeline row (created on `SubagentSpawned` above)
+                // stays "running" forever — `publish_subagent_completed` only
+                // fires the internal DomainEvent bus, not the per-request
+                // progress channel the UI's timeline is driven from.
+                if let Some(progress) = current_parent().and_then(|p| p.on_progress.clone()) {
+                    let _ = progress
+                        .send(AgentProgress::SubagentCompleted {
+                            agent_id: outcome.agent_id.clone(),
+                            task_id: outcome.task_id.clone(),
+                            elapsed_ms: outcome.elapsed.as_millis() as u64,
+                            iterations: outcome.iterations as u32,
+                            output_chars: outcome.output.chars().count(),
+                            output: outcome.output.clone(),
+                            // Synchronous delegate dispatch has no worktree
+                            // isolation (that is a `spawn_subagent` concept).
+                            worktree_path: None,
+                            changed_files: Vec::new(),
+                            dirty_status: None,
+                        })
+                        .await;
+                }
                 log::info!(
                     "[agent] {} completed via {} iterations={} output_chars={}",
                     agent_id,
@@ -236,6 +260,24 @@ pub(crate) async fn dispatch_subagent(
                     outcome.output.chars().count(),
                     outcome.iterations,
                 );
+                // Same progress-sink mirror as the `Completed` arm above —
+                // an incomplete stop is still lifecycle-completed, so the
+                // timeline row must be released from "running" here too.
+                if let Some(progress) = current_parent().and_then(|p| p.on_progress.clone()) {
+                    let _ = progress
+                        .send(AgentProgress::SubagentCompleted {
+                            agent_id: outcome.agent_id.clone(),
+                            task_id: outcome.task_id.clone(),
+                            elapsed_ms: outcome.elapsed.as_millis() as u64,
+                            iterations: outcome.iterations as u32,
+                            output_chars: outcome.output.chars().count(),
+                            output: outcome.output.clone(),
+                            worktree_path: None,
+                            changed_files: Vec::new(),
+                            dirty_status: None,
+                        })
+                        .await;
+                }
                 log::info!(
                     "[agent] {} stopped incomplete via {} (task_id={}) iterations={} — \
                      returning partial-progress envelope, not a finished result",

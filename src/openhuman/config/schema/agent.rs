@@ -174,6 +174,13 @@ pub struct AgentConfig {
     /// Maximum number of tool calls to execute concurrently when `parallel_tools` is true.
     #[serde(default = "default_max_parallel_tools")]
     pub max_parallel_tools: usize,
+    /// How the agent formats tool calls to text-only providers.
+    /// - `"auto"` (default): native structured tool-calling when the provider
+    ///   supports it, otherwise JSON-in-tag (`<tool_call>{…}</tool_call>`).
+    /// - `"native"`: force provider-native structured tool calls.
+    /// - `"xml"`: force JSON-in-tag.
+    /// - `"pformat"`: force compact positional P-Format (`tool[a|b]`) — most
+    ///   token-efficient, but mis-parses on some models, so it is opt-in only.
     #[serde(default = "default_agent_tool_dispatcher")]
     pub tool_dispatcher: String,
     /// **Legacy** — maximum characters of memory context to inject per

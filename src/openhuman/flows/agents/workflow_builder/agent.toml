@@ -8,7 +8,7 @@ iteration_policy = "extended"
 max_result_chars = 12000
 # No sandbox filter needed: the belt is propose/read/dry-run plus two
 # explicitly-bounded writes (save_workflow onto an existing flow;
-# run_workflow of a saved flow behind a confirm-first prompt rule), and
+# run_flow of a saved flow behind a confirm-first prompt rule), and
 # dry_run_workflow runs against tinyflows MOCK capabilities (no real effects).
 sandbox_mode = "none"
 omit_identity = true
@@ -33,9 +33,11 @@ hint = "reasoning"
 # create or enable a flow, or perform a real integration action directly.
 # Composio access is limited to LISTING toolkits/connections and raising the
 # inline CONNECT card (an approval-gated OAuth hand-off).
-# `run_workflow` executes a flow the user has ALREADY saved to test it — a real
+# `run_flow` executes a flow the user has ALREADY saved to test it — a real
 # run, but the prompt requires asking the user to confirm first, and the flow's
-# own approval gate still pauses outbound-action nodes.
+# own approval gate still pauses outbound-action nodes. (Named `run_flow`, not
+# `run_workflow` — that name belongs to the unrelated legacy skills-workflow
+# runner tool, which is registered in the same default tool registry.)
 named = [
     "propose_workflow",
     "revise_workflow",
@@ -47,7 +49,7 @@ named = [
     "search_tool_catalog",
     "list_agent_profiles",
     "dry_run_workflow",
-    "run_workflow",
+    "run_flow",
     "composio_list_toolkits",
     "composio_list_connections",
     "composio_connect",

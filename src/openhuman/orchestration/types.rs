@@ -109,6 +109,19 @@ impl SessionEnvelopeV1 {
         envelope.is_valid_v1().then_some(envelope)
     }
 
+    /// The single per-pair session id to bucket an inbound message under. Every
+    /// message — whoever sent it — carries exactly one id: the shared conversation
+    /// id in `scope.wrapper_session_id`. Both peers put the SAME id there for a given
+    /// thread (the peer reuses it on reply), so it is the sole routing key. Falls
+    /// back to `harness_session_id` only for a legacy envelope that predates the
+    /// per-pair id.
+    pub fn session_key(&self) -> String {
+        if !self.scope.wrapper_session_id.is_empty() {
+            return self.scope.wrapper_session_id.clone();
+        }
+        self.scope.harness_session_id.clone()
+    }
+
     /// Build an outgoing v1 session envelope carrying `body` under `session_id`,
     /// so a compliant peer harness threads its reply under the same session.
     pub fn outgoing(session_id: &str, body: &str, message_id: &str, timestamp: &str) -> Self {
@@ -239,5 +252,23 @@ mod tests {
             r#"{"envelope_version":"tinyplace.harness.session.v1","scope":{"harness_session_id":""}}"#
         )
         .is_none());
+    }
+
+    #[test]
+    fn session_key_is_the_shared_wrapper_id_then_harness_fallback() {
+        // The single per-pair id lives in `wrapper_session_id`.
+        assert_eq!(
+            SessionEnvelopeV1::parse(SAMPLE).unwrap().session_key(),
+            "w1"
+        );
+        // Legacy envelope with no per-pair id: fall back to the harness id.
+        let env = SessionEnvelopeV1::parse(
+            r#"{
+                "envelope_version": "tinyplace.harness.session.v1",
+                "scope": { "harness_session_id": "h-only" }
+            }"#,
+        )
+        .expect("valid v1");
+        assert_eq!(env.session_key(), "h-only");
     }
 }

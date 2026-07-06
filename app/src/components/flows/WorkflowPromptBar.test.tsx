@@ -30,14 +30,30 @@ describe('WorkflowPromptBar', () => {
 
     await waitFor(() => expect(navigateMock).toHaveBeenCalledTimes(1));
     expect(createFlowMock).toHaveBeenCalledTimes(1);
-    const [name, graph] = createFlowMock.mock.calls[0];
+    const [name, graph, requireApproval] = createFlowMock.mock.calls[0];
     expect(name).toBe('digest my Slack every morning');
     // The created flow is the standard blank graph (single manual trigger).
     expect(graph.nodes).toHaveLength(1);
     expect(graph.nodes[0].kind).toBe('trigger');
+    // Parity with the proposal-card path: prompt-authored flows must default
+    // to requiring approval, matching WorkflowProposalCard's default.
+    expect(requireApproval).toBe(true);
     expect(navigateMock).toHaveBeenCalledWith('/flows/flow-1', {
       state: { copilotBuild: { description: 'digest my Slack every morning' } },
     });
+  });
+
+  it('defaults requireApproval to true so outbound side-effects need explicit approval', async () => {
+    render(<WorkflowPromptBar />);
+    fireEvent.change(screen.getByTestId('workflow-prompt-input'), {
+      target: { value: 'auto-reply to every gmail thread' },
+    });
+    fireEvent.click(screen.getByTestId('workflow-prompt-submit'));
+
+    await waitFor(() => expect(createFlowMock).toHaveBeenCalledTimes(1));
+    // Third positional arg must be `true` — flows_create's server default is
+    // `false`, so omitting it would silently disarm the approval gate.
+    expect(createFlowMock.mock.calls[0][2]).toBe(true);
   });
 
   it('submits on Enter (Shift+Enter reserved for newlines)', async () => {

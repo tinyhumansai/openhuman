@@ -13,10 +13,44 @@
 //! hook captures the tool name + argument. They carry no external effect — the
 //! actual DM send is the graph's `send_dm` node — so they stay `ReadOnly`.
 
+use std::future::Future;
+use std::sync::{Arc, Mutex};
+
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use crate::openhuman::tools::{Tool, ToolResult};
+
+tokio::task_local! {
+    /// Task-local capture of the front end's decision payload. The decision
+    /// tools echo their argument as a `ToolResult`, but the split-brain graph
+    /// needs the exact `text` / `instructions` the model passed — NOT the
+    /// trailing narration the agent loop returns after the tool call (which is
+    /// what `run_single` yields). Each decision tool records its payload here.
+    static DECISION_CAPTURE: Arc<Mutex<Option<String>>>;
+}
+
+/// Scope a front-end decision capture around one front-end agent turn `fut`,
+/// returning `(turn_output, captured_payload)`. `captured_payload` is the
+/// argument the model passed to `reply_to_channel` / `defer_to_orchestrator`
+/// (the authoritative channel response / macro-instructions), or `None` when the
+/// turn ended without calling a decision tool (caller falls back to the raw text).
+pub async fn with_decision_capture<F: Future>(fut: F) -> (F::Output, Option<String>) {
+    let cell = Arc::new(Mutex::new(None));
+    let out = DECISION_CAPTURE.scope(cell.clone(), Box::pin(fut)).await;
+    let captured = cell.lock().ok().and_then(|mut slot| slot.take());
+    (out, captured)
+}
+
+/// Record a front-end decision payload from a decision tool. Last write wins
+/// (the turn's terminal decision). No-op outside a [`with_decision_capture`] scope.
+fn record_decision(payload: &str) {
+    let _ = DECISION_CAPTURE.try_with(|cell| {
+        if let Ok(mut slot) = cell.lock() {
+            *slot = Some(payload.to_string());
+        }
+    });
+}
 
 /// `reply_to_channel` — the front end's pass-2 terminal decision.
 pub struct ReplyToChannelTool;
@@ -58,7 +92,10 @@ impl Tool for ReplyToChannelTool {
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         match required_str(&args, "text") {
-            Ok(text) => Ok(ToolResult::success(text)),
+            Ok(text) => {
+                record_decision(&text);
+                Ok(ToolResult::success(text))
+            }
             Err(e) => Ok(e),
         }
     }
@@ -91,7 +128,10 @@ impl Tool for DeferToOrchestratorTool {
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         match required_str(&args, "instructions") {
-            Ok(instructions) => Ok(ToolResult::success(instructions)),
+            Ok(instructions) => {
+                record_decision(&instructions);
+                Ok(ToolResult::success(instructions))
+            }
             Err(e) => Ok(e),
         }
     }
@@ -122,5 +162,31 @@ mod tests {
         assert!(ok.text().contains("research X"));
         let bad = t.execute(json!({})).await.unwrap();
         assert!(bad.is_error);
+    }
+
+    #[tokio::test]
+    async fn decision_capture_surfaces_tool_payload_not_turn_narration() {
+        // The runtime must send the `reply_to_channel` argument (the real reply),
+        // not the model's trailing "Done — sent to the session" narration that
+        // `run_single` returns. Reproduces the reply-plumbing bug.
+        let reply = ReplyToChannelTool;
+        let (turn_text, captured) = with_decision_capture(async {
+            let _ = reply
+                .execute(json!({"text": "the actual email summary"}))
+                .await
+                .unwrap();
+            "Done — the reply has been sent to the session".to_string()
+        })
+        .await;
+        assert_eq!(turn_text, "Done — the reply has been sent to the session");
+        assert_eq!(captured.as_deref(), Some("the actual email summary"));
+    }
+
+    #[tokio::test]
+    async fn decision_capture_is_none_without_a_decision_tool() {
+        let (turn_text, captured) =
+            with_decision_capture(async { "just narration".to_string() }).await;
+        assert_eq!(turn_text, "just narration");
+        assert_eq!(captured, None);
     }
 }

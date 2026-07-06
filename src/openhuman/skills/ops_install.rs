@@ -119,7 +119,9 @@ pub async fn install_workflow_from_url(
     params: InstallWorkflowFromUrlParams,
 ) -> Result<InstallWorkflowFromUrlOutcome, String> {
     let home = dirs::home_dir();
-    install_workflow_from_url_with_home(workspace_dir, params, home.as_deref()).await
+    let allow_local_http = read_allow_local_http_env();
+    install_workflow_from_url_with_home(workspace_dir, params, home.as_deref(), allow_local_http)
+        .await
 }
 
 pub(crate) fn should_report_install_fetch_status(status: reqwest::StatusCode) -> bool {
@@ -130,9 +132,10 @@ pub(crate) async fn install_workflow_from_url_with_home(
     workspace_dir: &Path,
     params: InstallWorkflowFromUrlParams,
     home: Option<&Path>,
+    allow_local_http: bool,
 ) -> Result<InstallWorkflowFromUrlOutcome, String> {
     let raw_url = params.url.trim().to_string();
-    validate_install_url(&raw_url)?;
+    validate_install_url_with_config(&raw_url, allow_local_http)?;
 
     let timeout_secs = params
         .timeout_secs
@@ -148,7 +151,7 @@ pub(crate) async fn install_workflow_from_url_with_home(
     // resolver may see different answers than ours. Closing that gap requires
     // pinning a `SocketAddr` and passing it to reqwest via a custom resolver,
     // tracked separately.
-    if !allow_local_http_install_url(&fetch_url) {
+    if !(allow_local_http && is_loopback_http_url(&fetch_url)) {
         validate_resolved_host(&fetch_url).await?;
     }
 
@@ -698,6 +701,19 @@ pub(crate) fn derive_install_slug(fm: &WorkflowFrontmatter) -> Result<String, St
 /// * IPv6 literals in loopback (::1), unspecified (::), unique-local
 ///   (fc00::/7), link-local (fe80::/10), or multicast (ff00::/8)
 pub fn validate_install_url(raw: &str) -> Result<(), String> {
+    validate_install_url_with_config(raw, read_allow_local_http_env())
+}
+
+/// Same as [`validate_install_url`] but takes an explicit `allow_local_http`
+/// flag instead of reading `OPENHUMAN_SKILL_INSTALL_ALLOW_LOCAL_HTTP` from the
+/// process environment. Callers below the public entry point should always use
+/// this variant — the env-var read in `validate_install_url` is racy across
+/// threads under the parallel test runner (#4567), and the escape hatch is
+/// only meaningful at a single boundary.
+pub(crate) fn validate_install_url_with_config(
+    raw: &str,
+    allow_local_http: bool,
+) -> Result<(), String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err("url must not be empty".to_string());
@@ -710,7 +726,7 @@ pub fn validate_install_url(raw: &str) -> Result<(), String> {
     }
     let parsed = url::Url::parse(trimmed).map_err(|e| format!("invalid url {trimmed:?}: {e}"))?;
     if parsed.scheme() != "https" {
-        if allow_local_http_install_url(trimmed) {
+        if allow_local_http && is_loopback_http_url(trimmed) {
             return Ok(());
         }
         return Err(format!(
@@ -732,10 +748,15 @@ pub fn validate_install_url(raw: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn allow_local_http_install_url(raw: &str) -> bool {
-    if std::env::var(ALLOW_LOCAL_HTTP_ENV).ok().as_deref() != Some("1") {
-        return false;
-    }
+/// Reads the local-HTTP install escape hatch env var. Kept as the single
+/// boundary point where env is inspected so downstream validation never
+/// touches process-global state — required to stop the parallel-test race
+/// described in #4567.
+fn read_allow_local_http_env() -> bool {
+    std::env::var(ALLOW_LOCAL_HTTP_ENV).ok().as_deref() == Some("1")
+}
+
+fn is_loopback_http_url(raw: &str) -> bool {
     let Ok(parsed) = url::Url::parse(raw) else {
         return false;
     };
@@ -907,15 +928,12 @@ mod install_fetch_tests {
     /// for both a 4xx (which is NOT reported to Sentry) and a 5xx (which is).
     /// Exercises both branches of the non-2xx handling; the report-suppression
     /// polarity itself is asserted by `is_skills_install_client_error_event` in
-    /// observability. Uses the local-HTTP install escape hatch so the loopback
-    /// mock passes URL validation.
+    /// observability. Passes the local-HTTP install escape hatch as an
+    /// explicit param so the loopback mock passes URL validation — the env-var
+    /// path is process-global and races with other env-touching tests under
+    /// parallel execution (#4567).
     #[tokio::test]
     async fn non_2xx_install_fetch_returns_err_for_4xx_and_5xx() {
-        let _env = crate::openhuman::config::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        std::env::set_var(ALLOW_LOCAL_HTTP_ENV, "1");
-
         let tmp = TempDir::new().unwrap();
 
         for status in [StatusCode::NOT_FOUND, StatusCode::INTERNAL_SERVER_ERROR] {
@@ -928,6 +946,7 @@ mod install_fetch_tests {
                     timeout_secs: Some(5),
                 },
                 None,
+                true,
             )
             .await
             .expect_err("a non-2xx fetch must return Err so the UI surfaces it");
@@ -936,7 +955,5 @@ mod install_fetch_tests {
                 "error must surface the status to the UI: {err}"
             );
         }
-
-        std::env::remove_var(ALLOW_LOCAL_HTTP_ENV);
     }
 }

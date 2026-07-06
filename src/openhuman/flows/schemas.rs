@@ -779,7 +779,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     name: "flow_id",
                     ty: TypeSchema::Option(Box::new(TypeSchema::String)),
                     comment: "Saved flow id — required for `build` (save target); optional \
-                              elsewhere (lets the agent run_workflow it to test, with confirmation).",
+                              elsewhere (lets the agent run_flow it to test, with confirmation).",
                     required: false,
                 },
                 FieldSchema {

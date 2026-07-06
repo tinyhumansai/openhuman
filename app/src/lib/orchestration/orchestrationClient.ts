@@ -20,10 +20,27 @@ export { PaymentRequiredError };
 
 export type OrchestrationChatKind = 'master' | 'subconscious' | 'session';
 
+/** External agent harness that emits a session (drives the roster grouping). */
+export type HarnessType = 'claude' | 'codex' | 'gemini';
+
+/**
+ * Coarse instance status for the roster dot. Peer instances carry no true
+ * run-state yet, so the core derives only `idle` / `stopped` today; the
+ * remaining states are modelled here (and by `InstanceStatusDot`) for the
+ * attention-queue and run-state follow-ups.
+ */
+export type InstanceStatus = 'running' | 'idle' | 'waiting-approval' | 'errored' | 'stopped';
+
 export interface SessionSummary {
   sessionId: string;
   agentId: string;
   source: string;
+  /** Emitting harness when this is an external instance; absent for master/subconscious/user-created. */
+  harnessType?: HarnessType;
+  /** Coarse status for the roster dot (see {@link InstanceStatus}). */
+  status: InstanceStatus;
+  /** One-line current activity (latest message preview) for the roster. */
+  currentTask?: string;
   label?: string;
   workspace?: string;
   chatKind: OrchestrationChatKind;
@@ -82,6 +99,78 @@ export interface OrchestrationMessageEvent {
   agentId: string;
   sessionId: string;
   chatKind: string;
+}
+
+// ── Attention queue ─────────────────────────────────────────────────────────
+
+/** The kind of "needs you" signal, in descending urgency. */
+export type AttentionKind = 'approval' | 'needs-input' | 'unread';
+
+/** What the renderer should do when the user acts on an attention item. */
+export type AttentionAction =
+  | { type: 'approval'; requestId: string }
+  | { type: 'open-thread'; threadId: string }
+  | { type: 'open-run'; runId: string }
+  | { type: 'open-session'; sessionId: string };
+
+/** One actionable row in the attention queue. */
+export interface AttentionItem {
+  /** Stable list key (`<kind>:<source-id>`). */
+  id: string;
+  kind: AttentionKind;
+  /** The instance/source this concerns (request id / run id / session id). */
+  instanceId: string;
+  /** Short label (tool name / agent display name / session label). */
+  title: string;
+  /** One-line detail; absent for `unread` (use `count`). */
+  summary?: string;
+  /** Unread message count; present only for the `unread` kind. */
+  count?: number;
+  action: AttentionAction;
+  /** RFC3339 creation/activity time, when known. */
+  createdAt?: string;
+}
+
+/** Per-kind + total counts for badging the zone. */
+export interface AttentionCounts {
+  total: number;
+  approvals: number;
+  needsInput: number;
+  unread: number;
+}
+
+export interface AttentionQueue {
+  items: AttentionItem[];
+  counts: AttentionCounts;
+}
+
+/** One @handle this agent's wallet holds (reverse-resolved from the directory). */
+export interface SelfHandle {
+  username: string;
+  primary: boolean;
+}
+
+/**
+ * This agent's own tiny.place identity and whether peers can reach it.
+ *
+ * `discoverable` is the bottom line: a peer can DM this agent only when both its
+ * directory card (`cardPublished`) and its Signal encryption key (`keyPublished`)
+ * are live. A fresh identity can accept contacts yet stay un-messageable until it
+ * registers a @handle — the card surfaces that gap instead of a mystery 404.
+ */
+export interface SelfIdentity {
+  agentId: string;
+  handles: SelfHandle[];
+  primaryHandle?: string;
+  cardPublished: boolean;
+  keyPublished: boolean;
+  discoverable: boolean;
+}
+
+/** The relay endpoint the core talks to, plus a coarse network label. */
+export interface RelayInfo {
+  baseUrl: string;
+  network: 'staging' | 'prod';
 }
 
 // ── Internal helper ───────────────────────────────────────────────────────────
@@ -155,6 +244,22 @@ export const orchestrationClient = {
 
   /** Current orchestration status (active steering directive, tick timing). */
   status: () => call<OrchestrationStatus>('openhuman.orchestration_status', {}),
+
+  /**
+   * The aggregated "needs you" queue: pending tool approvals, agent runs
+   * awaiting input, and instances with unread messages, priority-ordered.
+   */
+  attention: () => call<AttentionQueue>('openhuman.orchestration_attention', {}),
+
+  /**
+   * This agent's own tiny.place identity + discoverability (agent id, @handles,
+   * whether its directory card and Signal key are published, whether peers can
+   * DM it). Powers the SelfIdentityCard.
+   */
+  selfIdentity: () => call<SelfIdentity>('openhuman.orchestration_self_identity', {}),
+
+  /** The relay endpoint + network label the core is talking to (RelayBadge). */
+  relayInfo: () => call<RelayInfo>('openhuman.orchestration_relay_info', {}),
 };
 
 export type OrchestrationClient = typeof orchestrationClient;

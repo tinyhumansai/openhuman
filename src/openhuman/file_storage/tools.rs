@@ -22,6 +22,7 @@ use serde_json::{json, Value};
 
 use crate::openhuman::config::Config;
 use crate::openhuman::integrations::IntegrationClient;
+use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{
     PermissionLevel, Tool, ToolCallOptions, ToolCategory, ToolResult,
 };
@@ -214,19 +215,46 @@ fn file_path(file_id: &str, suffix: &str) -> String {
     format!("{FILES_PATH}/{file_id}{suffix}")
 }
 
+fn readonly_autonomy_block(security: &SecurityPolicy) -> Option<ToolResult> {
+    if security.can_act() {
+        None
+    } else {
+        Some(ToolResult::error(
+            "[policy-blocked] Action blocked: autonomy is read-only",
+        ))
+    }
+}
+
 // ── StorageUploadFileTool ───────────────────────────────────────────
 
 pub struct StorageUploadFileTool {
     client: Arc<IntegrationClient>,
     action_dir: PathBuf,
+    security: Arc<SecurityPolicy>,
 }
 
 impl StorageUploadFileTool {
     pub fn new(client: Arc<IntegrationClient>, action_dir: PathBuf) -> Self {
-        Self { client, action_dir }
+        Self::new_with_security(client, action_dir, Arc::new(SecurityPolicy::default()))
+    }
+
+    pub fn new_with_security(
+        client: Arc<IntegrationClient>,
+        action_dir: PathBuf,
+        security: Arc<SecurityPolicy>,
+    ) -> Self {
+        Self {
+            client,
+            action_dir,
+            security,
+        }
     }
 
     async fn run(&self, args: Value, action_dir: &Path) -> anyhow::Result<ToolResult> {
+        if let Some(blocked) = readonly_autonomy_block(&self.security) {
+            return Ok(blocked);
+        }
+
         let raw_path = match args.get("path").and_then(|v| v.as_str()) {
             Some(p) if !p.trim().is_empty() => p.trim(),
             _ => return Ok(ToolResult::error("path is required")),
@@ -384,14 +412,31 @@ impl Tool for StorageUploadFileTool {
 pub struct StorageDownloadFileTool {
     client: Arc<IntegrationClient>,
     action_dir: PathBuf,
+    security: Arc<SecurityPolicy>,
 }
 
 impl StorageDownloadFileTool {
     pub fn new(client: Arc<IntegrationClient>, action_dir: PathBuf) -> Self {
-        Self { client, action_dir }
+        Self::new_with_security(client, action_dir, Arc::new(SecurityPolicy::default()))
+    }
+
+    pub fn new_with_security(
+        client: Arc<IntegrationClient>,
+        action_dir: PathBuf,
+        security: Arc<SecurityPolicy>,
+    ) -> Self {
+        Self {
+            client,
+            action_dir,
+            security,
+        }
     }
 
     async fn run(&self, args: Value, action_dir: &Path) -> anyhow::Result<ToolResult> {
+        if let Some(blocked) = readonly_autonomy_block(&self.security) {
+            return Ok(blocked);
+        }
+
         let file_id = match validate_file_id(&args) {
             Ok(id) => id,
             Err(e) => return Ok(ToolResult::error(e)),
@@ -487,6 +532,14 @@ impl Tool for StorageDownloadFileTool {
         ToolCategory::Workflow
     }
 
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Write
+    }
+
+    fn external_effect(&self) -> bool {
+        true
+    }
+
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         self.run(args, &self.action_dir).await
     }
@@ -576,11 +629,19 @@ impl Tool for StorageListFilesTool {
 
 pub struct StorageGetLinkTool {
     client: Arc<IntegrationClient>,
+    security: Arc<SecurityPolicy>,
 }
 
 impl StorageGetLinkTool {
     pub fn new(client: Arc<IntegrationClient>) -> Self {
-        Self { client }
+        Self::new_with_security(client, Arc::new(SecurityPolicy::default()))
+    }
+
+    pub fn new_with_security(
+        client: Arc<IntegrationClient>,
+        security: Arc<SecurityPolicy>,
+    ) -> Self {
+        Self { client, security }
     }
 }
 
@@ -612,7 +673,19 @@ impl Tool for StorageGetLinkTool {
         ToolCategory::Workflow
     }
 
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Write
+    }
+
+    fn external_effect(&self) -> bool {
+        true
+    }
+
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        if let Some(blocked) = readonly_autonomy_block(&self.security) {
+            return Ok(blocked);
+        }
+
         let file_id = match validate_file_id(&args) {
             Ok(id) => id,
             Err(e) => return Ok(ToolResult::error(e)),
@@ -653,11 +726,19 @@ impl Tool for StorageGetLinkTool {
 
 pub struct StorageSetVisibilityTool {
     client: Arc<IntegrationClient>,
+    security: Arc<SecurityPolicy>,
 }
 
 impl StorageSetVisibilityTool {
     pub fn new(client: Arc<IntegrationClient>) -> Self {
-        Self { client }
+        Self::new_with_security(client, Arc::new(SecurityPolicy::default()))
+    }
+
+    pub fn new_with_security(
+        client: Arc<IntegrationClient>,
+        security: Arc<SecurityPolicy>,
+    ) -> Self {
+        Self { client, security }
     }
 }
 
@@ -697,6 +778,10 @@ impl Tool for StorageSetVisibilityTool {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        if let Some(blocked) = readonly_autonomy_block(&self.security) {
+            return Ok(blocked);
+        }
+
         let file_id = match validate_file_id(&args) {
             Ok(id) => id,
             Err(e) => return Ok(ToolResult::error(e)),
@@ -735,11 +820,19 @@ impl Tool for StorageSetVisibilityTool {
 
 pub struct StorageDeleteFileTool {
     client: Arc<IntegrationClient>,
+    security: Arc<SecurityPolicy>,
 }
 
 impl StorageDeleteFileTool {
     pub fn new(client: Arc<IntegrationClient>) -> Self {
-        Self { client }
+        Self::new_with_security(client, Arc::new(SecurityPolicy::default()))
+    }
+
+    pub fn new_with_security(
+        client: Arc<IntegrationClient>,
+        security: Arc<SecurityPolicy>,
+    ) -> Self {
+        Self { client, security }
     }
 }
 
@@ -777,6 +870,10 @@ impl Tool for StorageDeleteFileTool {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        if let Some(blocked) = readonly_autonomy_block(&self.security) {
+            return Ok(blocked);
+        }
+
         let file_id = match validate_file_id(&args) {
             Ok(id) => id,
             Err(e) => return Ok(ToolResult::error(e)),
@@ -811,19 +908,35 @@ pub fn build_file_storage_tools(root_config: &Config, action_dir: &Path) -> Vec<
     };
 
     let action_dir = action_dir.to_path_buf();
+    let security = Arc::new(SecurityPolicy::from_config(
+        &root_config.autonomy,
+        &root_config.workspace_dir,
+        &root_config.action_dir,
+    ));
     let tools: Vec<Box<dyn Tool>> = vec![
-        Box::new(StorageUploadFileTool::new(
+        Box::new(StorageUploadFileTool::new_with_security(
             Arc::clone(&client),
             action_dir.clone(),
+            Arc::clone(&security),
         )),
-        Box::new(StorageDownloadFileTool::new(
+        Box::new(StorageDownloadFileTool::new_with_security(
             Arc::clone(&client),
             action_dir,
+            Arc::clone(&security),
         )),
         Box::new(StorageListFilesTool::new(Arc::clone(&client))),
-        Box::new(StorageGetLinkTool::new(Arc::clone(&client))),
-        Box::new(StorageSetVisibilityTool::new(Arc::clone(&client))),
-        Box::new(StorageDeleteFileTool::new(Arc::clone(&client))),
+        Box::new(StorageGetLinkTool::new_with_security(
+            Arc::clone(&client),
+            Arc::clone(&security),
+        )),
+        Box::new(StorageSetVisibilityTool::new_with_security(
+            Arc::clone(&client),
+            Arc::clone(&security),
+        )),
+        Box::new(StorageDeleteFileTool::new_with_security(
+            Arc::clone(&client),
+            Arc::clone(&security),
+        )),
     ];
     tracing::debug!(
         "[file_storage] registered {} file-storage tools",

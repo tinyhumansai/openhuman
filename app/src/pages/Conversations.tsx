@@ -1807,7 +1807,6 @@ const Conversations = ({
             entries={selectedThreadToolTimeline}
             onViewDetails={openScopedDetail}
             onViewWholeRun={openWholeRunSource}
-            liveResponse={selectedStreamingAssistant?.content}
           />
         ) : (
           // Transcript-only turn: reasoning/narration was streamed but no tool
@@ -2560,8 +2559,7 @@ const Conversations = ({
                   replaces this via addInferenceResponse on chat_done. */}
             {selectedStreamingAssistant &&
               (selectedStreamingAssistant.thinking.length > 0 ||
-                (selectedStreamingAssistant.content.length > 0 &&
-                  (selectedThreadToolTimeline.length === 0 || hideAgentInsights))) && (
+                selectedStreamingAssistant.content.length > 0) && (
                 <div className="flex justify-start">
                   <div className="relative w-fit max-w-[75%]">
                     {selectedStreamingAssistant.thinking.length > 0 && (
@@ -2575,19 +2573,17 @@ const Conversations = ({
                         </pre>
                       </details>
                     )}
-                    {selectedStreamingAssistant.content.length > 0 &&
-                      (selectedThreadToolTimeline.length === 0 || hideAgentInsights) && (
-                        <div className="rounded-2xl rounded-bl-md px-3 py-1.5 bg-surface-strong/80 dark:bg-surface-muted text-content">
-                          <p className="text-xs text-content-secondary font-mono whitespace-pre-wrap break-words leading-snug">
-                            {selectedStreamingAssistant.content.length >
-                              STREAMING_PREVIEW_CHARS && (
-                              <span className="text-content-faint">…</span>
-                            )}
-                            {selectedStreamingAssistant.content.slice(-STREAMING_PREVIEW_CHARS)}
-                            <span className="inline-block w-1 h-3 ml-0.5 align-middle bg-primary-400 animate-pulse" />
-                          </p>
-                        </div>
-                      )}
+                    {selectedStreamingAssistant.content.length > 0 && (
+                      <div className="rounded-2xl rounded-bl-md px-3 py-1.5 bg-surface-strong/80 dark:bg-surface-muted text-content">
+                        <p className="text-xs text-content-secondary font-mono whitespace-pre-wrap break-words leading-snug">
+                          {selectedStreamingAssistant.content.length > STREAMING_PREVIEW_CHARS && (
+                            <span className="text-content-faint">…</span>
+                          )}
+                          {selectedStreamingAssistant.content.slice(-STREAMING_PREVIEW_CHARS)}
+                          <span className="inline-block w-1 h-3 ml-0.5 align-middle bg-primary-400 animate-pulse" />
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

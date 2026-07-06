@@ -13,6 +13,7 @@ use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::config::{rpc as config_rpc, Config};
 
+use super::attention;
 use super::store;
 use super::types::{ChatKind, OrchestrationMessage, OrchestrationSession, SessionEnvelopeV1};
 
@@ -28,6 +29,9 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schema_for("orchestration_send_master_message"),
         schema_for("orchestration_mark_read"),
         schema_for("orchestration_status"),
+        schema_for("orchestration_attention"),
+        schema_for("orchestration_self_identity"),
+        schema_for("orchestration_relay_info"),
     ]
 }
 
@@ -56,6 +60,18 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schema_for("orchestration_status"),
             handler: handle_status,
+        },
+        RegisteredController {
+            schema: schema_for("orchestration_attention"),
+            handler: handle_attention,
+        },
+        RegisteredController {
+            schema: schema_for("orchestration_self_identity"),
+            handler: handle_self_identity,
+        },
+        RegisteredController {
+            schema: schema_for("orchestration_relay_info"),
+            handler: handle_relay_info,
         },
     ]
 }
@@ -120,6 +136,30 @@ fn schema_for(function: &str) -> ControllerSchema {
             inputs: vec![],
             outputs: vec![json_output("result", "OrchestrationStatus.")],
         },
+        "orchestration_attention" => ControllerSchema {
+            namespace: "orchestration",
+            function: "attention",
+            description: "Aggregate the \"needs you\" signals across the hub — pending tool approvals, agent runs awaiting input, and instances with unread messages — into one priority-ordered queue.",
+            inputs: vec![],
+            outputs: vec![json_output("result", "AttentionQueue { items: AttentionItem[], counts }.")],
+        },
+        "orchestration_self_identity" => ControllerSchema {
+            namespace: "orchestration",
+            function: "self_identity",
+            description: "This agent's own tiny.place identity + discoverability: agent id (address), reverse-resolved @handles, whether its directory card and Signal encryption key are published, and whether peers can therefore DM it. Composes the tinyplace signal/directory reads.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "result",
+                "{ agentId, handles: {username, primary}[], primaryHandle?, cardPublished, keyPublished, discoverable }.",
+            )],
+        },
+        "orchestration_relay_info" => ControllerSchema {
+            namespace: "orchestration",
+            function: "relay_info",
+            description: "The tiny.place relay endpoint the core is talking to, plus a coarse network label (staging | prod) for the renderer's relay badge.",
+            inputs: vec![],
+            outputs: vec![json_output("result", "{ baseUrl, network }.")],
+        },
         other => unreachable!("unknown orchestration schema: {other}"),
     }
 }
@@ -132,6 +172,15 @@ struct SessionSummary {
     session_id: String,
     agent_id: String,
     source: String,
+    /// The emitting harness (claude/codex/gemini) when this is an external agent
+    /// instance; absent for the pinned master/subconscious/user-created windows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    harness_type: Option<String>,
+    /// Coarse instance status for the roster status dot (see `derive_status`).
+    status: String,
+    /// One-line current activity (latest message preview) for the roster.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current_task: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -168,6 +217,13 @@ struct OrchestrationStatus {
     last_error: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RelayInfo {
+    base_url: String,
+    network: String,
+}
+
 /// Resolve the `chat` param to a store session id. `master` / `subconscious` map
 /// to their pinned session ids; anything else is treated as a harness session id.
 fn chat_to_session_id(chat: &str) -> &str {
@@ -196,14 +252,60 @@ fn is_active(last_message_at: &str) -> bool {
     }
 }
 
-fn summarize(session: OrchestrationSession, unread: i64, pinned: bool) -> SessionSummary {
+/// The harness provider for a session, when its `source` names one. Session
+/// windows persist the emitting harness (claude/codex/gemini) in `source` (see
+/// `ingest.rs`); the sentinel windows (master/subconscious/user_created/
+/// orchestration) carry no harness and yield `None`.
+fn harness_type_for(source: &str) -> Option<String> {
+    matches!(source, "claude" | "codex" | "gemini").then(|| source.to_string())
+}
+
+/// Coarse instance status for the roster dot, derived from activity. Peer
+/// instances carry no true run-state yet, so today an instance is `idle` when it
+/// has recent traffic and `stopped` otherwise. The richer
+/// running/waiting-approval/errored states are reserved for the attention-queue
+/// and run-state follow-ups; the renderer's `InstanceStatusDot` already models
+/// all five.
+fn derive_status(active: bool) -> &'static str {
+    if active {
+        "idle"
+    } else {
+        "stopped"
+    }
+}
+
+/// One-line, UTF-8-safe preview of a message body for the roster task line.
+/// Truncates on a char boundary and reserves room for the ellipsis so the result
+/// never exceeds `MAX` chars (avoids the byte-slice panics noted in the codebase).
+fn task_preview(body: &str) -> String {
+    const MAX: usize = 80;
+    let trimmed = body.trim();
+    if trimmed.chars().count() <= MAX {
+        return trimmed.to_string();
+    }
+    let mut out: String = trimmed.chars().take(MAX - 1).collect();
+    out.push('…');
+    out
+}
+
+fn summarize(
+    session: OrchestrationSession,
+    unread: i64,
+    pinned: bool,
+    current_task: Option<String>,
+) -> SessionSummary {
     let chat_kind = chat_kind_for_session(&session.session_id);
     let active = pinned || is_active(&session.last_message_at);
+    let harness_type = harness_type_for(&session.source);
+    let status = derive_status(active).to_string();
     SessionSummary {
         chat_kind: chat_kind.as_str().to_string(),
         active,
         unread,
         pinned,
+        harness_type,
+        status,
+        current_task,
         session_id: session.session_id,
         agent_id: session.agent_id,
         source: session.source,
@@ -231,7 +333,15 @@ fn handle_sessions_list(_params: Map<String, Value>) -> ControllerFuture {
                     _ => {}
                 }
                 let pinned = matches!(session.session_id.as_str(), "master" | "subconscious");
-                out.push(summarize(session, unread, pinned));
+                // Roster task line: latest message preview for real instance
+                // windows; the pinned windows don't need one.
+                let current_task = if pinned {
+                    None
+                } else {
+                    store::latest_message_preview(conn, &session.agent_id, &session.session_id)?
+                        .map(|body| task_preview(&body))
+                };
+                out.push(summarize(session, unread, pinned, current_task));
             }
             // Ensure the pinned windows always exist even before any traffic.
             if !have_master {
@@ -278,7 +388,7 @@ fn handle_sessions_create(params: Map<String, Value>) -> ControllerFuture {
         })
         .map_err(|e| format!("sessions_create: {e}"))?;
         super::bus::notify_orchestration_message(&agent_id, &session_id, "session");
-        to_json(serde_json::json!({ "session": summarize(session, 0, false) }))
+        to_json(serde_json::json!({ "session": summarize(session, 0, false, None) }))
     })
 }
 
@@ -287,6 +397,9 @@ fn pinned_placeholder(session_id: &str) -> SessionSummary {
         session_id: session_id.to_string(),
         agent_id: session_id.to_string(),
         source: "orchestration".to_string(),
+        harness_type: None,
+        status: derive_status(true).to_string(),
+        current_task: None,
         label: None,
         workspace: None,
         chat_kind: chat_kind_for_session(session_id).as_str().to_string(),
@@ -502,6 +615,139 @@ fn handle_status(_params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_attention(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = load_config("attention").await?;
+
+        // 1. Pending tool approvals (global gate; empty when the gate is not
+        //    installed — never an error path). Mapping is the unit-tested pure
+        //    `attention::approval_signals`.
+        let approvals = attention::approval_signals(
+            crate::openhuman::approval::rpc::approval_list_pending()
+                .await
+                .map_err(|e| format!("attention.approvals: {e}"))?
+                .value,
+        );
+
+        // 2. Agent runs blocked awaiting user input (command-center NeedsInput).
+        //    Best-effort: a command-center read failure must not sink the whole
+        //    queue — approvals + unread still surface.
+        let needs_input = super::ops::command_center_needs_input(&config);
+
+        // 3. Per-instance unread (non-pinned orchestration sessions). Best-effort
+        //    like the command-center read: a transient local-DB hiccup must not
+        //    sink the approvals + needs-input signals that already resolved.
+        let unread = match store::with_connection(
+            &config.workspace_dir,
+            super::ops::gather_unread_signals,
+        ) {
+            Ok(unread) => unread,
+            Err(e) => {
+                log::warn!(target: LOG, "[orchestration_rpc] attention.unread_failed: {e}");
+                Vec::new()
+            }
+        };
+
+        let queue = attention::assemble_attention(approvals, needs_input, unread);
+        log::debug!(
+            target: LOG,
+            "[orchestration_rpc] attention.exit total={} approvals={} needs_input={} unread={}",
+            queue.counts.total,
+            queue.counts.approvals,
+            queue.counts.needs_input,
+            queue.counts.unread,
+        );
+        to_json(queue)
+    })
+}
+
+/// Own tiny.place identity + discoverability, composed from the internal
+/// tinyplace signal/directory reads. Delegates like `send_master` does
+/// (`crate::openhuman::tinyplace::handle_tinyplace_*`), so there is no new
+/// tiny.place logic here — only aggregation into the shape the renderer needs.
+fn handle_self_identity(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        // 1. Key status → own agent id + whether the encryption key is published
+        //    to the directory and current. `encryptionKeyPublished` is false when
+        //    the card is missing OR the published key is stale (wrong wallet).
+        let key_status =
+            crate::openhuman::tinyplace::handle_tinyplace_signal_key_status(Map::new())
+                .await
+                .map_err(|e| format!("self_identity key_status: {e}"))?;
+        let agent_id = key_status
+            .get("agentId")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let key_published = key_status
+            .get("encryptionKeyPublished")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        log::debug!(
+            target: LOG,
+            "[orchestration_rpc] self_identity agent_id_len={} key_published={key_published}",
+            agent_id.len()
+        );
+
+        // 2. Reverse-resolve any @handles this wallet holds. Best-effort: a
+        //    handle-less identity is normal (and is exactly the un-messageable
+        //    case the card must flag), so a reverse miss is not an error.
+        let reverse = if agent_id.is_empty() {
+            None
+        } else {
+            let mut rev_params = Map::new();
+            rev_params.insert("cryptoId".to_string(), Value::from(agent_id.clone()));
+            match crate::openhuman::tinyplace::handle_tinyplace_directory_reverse(rev_params).await
+            {
+                Ok(reverse) => Some(reverse),
+                Err(e) => {
+                    log::debug!(target: LOG, "[orchestration_rpc] self_identity reverse miss: {e}");
+                    None
+                }
+            }
+        };
+
+        // 3. Directory card presence: get_agent(self) 404s when no card is
+        //    published. Ok → a card is live; Err → treat as unpublished.
+        let card_published = if agent_id.is_empty() {
+            false
+        } else {
+            let mut card_params = Map::new();
+            card_params.insert("agentId".to_string(), Value::from(agent_id.clone()));
+            crate::openhuman::tinyplace::handle_tinyplace_directory_get_agent(card_params)
+                .await
+                .is_ok()
+        };
+
+        let identity = super::ops::build_self_identity(
+            agent_id,
+            key_published,
+            reverse.as_ref(),
+            card_published,
+        );
+        log::debug!(
+            target: LOG,
+            "[orchestration_rpc] self_identity handles={} card_published={card_published} discoverable={}",
+            identity.handles.len(),
+            identity.discoverable
+        );
+        to_json(identity)
+    })
+}
+
+/// Relay endpoint + network label for the renderer's relay badge. Reads only the
+/// configured base URL (no client build / wallet unlock), so it always resolves.
+fn handle_relay_info(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let (base_url, network) = crate::openhuman::tinyplace::ops::relay_endpoint();
+        log::debug!(target: LOG, "[orchestration_rpc] relay_info network={network}");
+        to_json(RelayInfo {
+            base_url,
+            network: network.to_string(),
+        })
+    })
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 async fn load_config(action: &str) -> Result<Config, String> {
@@ -559,8 +805,17 @@ mod tests {
     #[test]
     fn schemas_use_orchestration_namespace() {
         let schemas = all_controller_schemas();
-        assert_eq!(schemas.len(), 6);
+        assert_eq!(schemas.len(), 9);
         assert!(schemas.iter().all(|s| s.namespace == "orchestration"));
+        assert_eq!(schema_for("orchestration_attention").function, "attention");
+        assert_eq!(
+            schema_for("orchestration_self_identity").function,
+            "self_identity"
+        );
+        assert_eq!(
+            schema_for("orchestration_relay_info").function,
+            "relay_info"
+        );
         assert_eq!(
             schema_for("orchestration_messages_list").function,
             "messages_list"
@@ -648,5 +903,58 @@ mod tests {
         let mut params = Map::new();
         params.insert("chat".to_string(), Value::String("  ".to_string()));
         assert!(required_param(&params, "chat").is_err());
+    }
+
+    #[test]
+    fn harness_type_only_for_known_providers() {
+        assert_eq!(harness_type_for("claude").as_deref(), Some("claude"));
+        assert_eq!(harness_type_for("codex").as_deref(), Some("codex"));
+        assert_eq!(harness_type_for("gemini").as_deref(), Some("gemini"));
+        // Sentinel / origin sources are not harnesses.
+        assert_eq!(harness_type_for("master"), None);
+        assert_eq!(harness_type_for("user_created"), None);
+        assert_eq!(harness_type_for("orchestration"), None);
+    }
+
+    #[test]
+    fn status_is_idle_when_active_else_stopped() {
+        assert_eq!(derive_status(true), "idle");
+        assert_eq!(derive_status(false), "stopped");
+    }
+
+    #[test]
+    fn task_preview_trims_and_caps_on_char_boundary() {
+        assert_eq!(task_preview("  hello  "), "hello");
+        // A multibyte string longer than the cap truncates with an ellipsis and
+        // never exceeds MAX chars (no mid-codepoint panic).
+        let long = "é".repeat(200);
+        let preview = task_preview(&long);
+        assert_eq!(preview.chars().count(), 80);
+        assert!(preview.ends_with('…'));
+    }
+
+    #[test]
+    fn summarize_derives_harness_status_and_carries_task() {
+        let session = OrchestrationSession {
+            session_id: "w1".to_string(),
+            agent_id: "@peer".to_string(),
+            source: "claude".to_string(),
+            label: None,
+            workspace: None,
+            last_seq: 3,
+            created_at: "2020-01-01T00:00:00Z".to_string(),
+            // Stale timestamp → not active → stopped.
+            last_message_at: "2020-01-01T00:00:00Z".to_string(),
+        };
+        let summary = summarize(session, 2, false, Some("drafting cards".to_string()));
+        assert_eq!(summary.harness_type.as_deref(), Some("claude"));
+        assert_eq!(summary.status, "stopped");
+        assert_eq!(summary.current_task.as_deref(), Some("drafting cards"));
+        assert!(!summary.active);
+
+        // A pinned window is always active → idle, and carries no harness/task.
+        let pinned = pinned_placeholder("master");
+        assert_eq!(pinned.status, "idle");
+        assert!(pinned.harness_type.is_none());
     }
 }

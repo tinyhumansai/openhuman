@@ -201,6 +201,24 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      # The RPC-catalog drift-guard test (rpcMethods.test.ts) reads
+      # vendor/tinychannels/src/controllers/schemas.rs at test time. This lane
+      # otherwise checks out without submodules, so init just that one — not
+      # `submodules: recursive`, which would also pull the large tauri-cef fork
+      # this job never builds. Mirrors the same fix in test-reusable.yml's
+      # `unit-tests` job.
+      #
+      # `actions/checkout` scopes its own `safe.directory` config to a
+      # temporary HOME for the duration of the checkout step only — it does
+      # not persist into this container job's real HOME, so a bare `git`
+      # invocation in a later step hits "detected dubious ownership" here.
+      # Add the workspace as a safe directory ourselves before touching git.
+      - name: Init tinychannels submodule (drift-guard test reads its schemas)
+        if: needs.changes.outputs.frontend == 'true'
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git submodule update --init vendor/tinychannels
+
       - name: Cache pnpm store
         id: pnpm-cache
         if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.i18n == 'true'

@@ -1090,6 +1090,7 @@ pub(super) async fn direct_list_tools(
                 name: item.slug,
                 description: item.description,
                 parameters: item.input_parameters,
+                output_parameters: item.output_parameters,
             },
         })
         .collect();

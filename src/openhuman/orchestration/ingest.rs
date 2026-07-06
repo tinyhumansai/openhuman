@@ -42,6 +42,9 @@ fn is_dm_stream(kind: &str, stream_id: &str) -> bool {
 fn classify_message(plaintext: String, fallback_timestamp: &str) -> ClassifiedMessage {
     match SessionEnvelopeV1::parse(&plaintext) {
         Some(env) => {
+            // Compute the session key while `env` is still fully intact (before any
+            // field moves below), since `session_key` borrows `&env`.
+            let session_id = env.session_key();
             let label = (env.scope.scope_type == "folder").then(|| env.scope.key.clone());
             let workspace = (!env.scope.cwd.is_empty()).then(|| env.scope.cwd.clone());
             let timestamp = if env.message.timestamp.is_empty() {
@@ -51,7 +54,11 @@ fn classify_message(plaintext: String, fallback_timestamp: &str) -> ClassifiedMe
             };
             ClassifiedMessage {
                 chat_kind: ChatKind::Session,
-                session_id: env.scope.harness_session_id,
+                // Key on the single per-pair session id (the shared `wrapper_session_id`
+                // both peers put on every message for a thread), so a reply threads back
+                // into the same session. Falls back to `harness_session_id` for a legacy
+                // envelope with no per-pair id. See `SessionEnvelopeV1::session_key`.
+                session_id,
                 role: env.message.role,
                 source: env.harness.provider,
                 label,
@@ -85,32 +92,51 @@ fn persist_message(
     now: &str,
 ) -> Result<bool, String> {
     store::with_connection(workspace_dir, |c| {
-        store::upsert_session(
-            c,
-            &OrchestrationSession {
-                session_id: classified.session_id.clone(),
-                agent_id: agent_id.to_string(),
-                source: classified.source.clone(),
-                label: classified.label.clone(),
-                workspace: classified.workspace.clone(),
-                last_seq: classified.seq,
-                created_at: now.to_string(),
-                last_message_at: classified.timestamp.clone(),
-            },
-        )?;
-        store::insert_message(
-            c,
-            &OrchestrationMessage {
-                id: msg_id.to_string(),
-                agent_id: agent_id.to_string(),
-                session_id: classified.session_id.clone(),
-                chat_kind: classified.chat_kind,
-                role: classified.role.clone(),
-                body: classified.body.clone(),
-                timestamp: classified.timestamp.clone(),
-                seq: classified.seq,
-            },
-        )
+        // Wake idempotence keys on a per-session `seq` being monotonic, but the
+        // harness `message.line` we classify into `seq` is NOT reliable: a wrapped
+        // Claude harness stamps `line = 0` on every DM, and a peer reusing one
+        // `wrapper_session_id` across harness sessions can reset it. Under the
+        // shared per-pair session key that collapses every message into one
+        // session whose `last_seq`/wake cursor then pins at 0, so after the first
+        // message the graph is skipped and the DM is silently dropped (#4583).
+        //
+        // Fix: ignore the wire `line` for ordering and stamp a store-assigned,
+        // strictly-increasing per-(agent, session) ingest ordinal. Messages are
+        // append-only and deduped-by-id upstream, so `MAX(seq)+1` is monotonic and
+        // every genuinely-new DM advances `last_seq` past the cursor → wakes the graph.
+        //
+        // Allocate the ordinal and write both rows in one IMMEDIATE txn so a
+        // concurrent writer on the same session (the drain here vs the graph's
+        // `send_dm` reply persist) can't read the same `MAX(seq)` and duplicate it.
+        store::in_immediate_txn(c, |c| {
+            let ingest_seq = store::next_session_seq(c, agent_id, &classified.session_id)?;
+            store::upsert_session(
+                c,
+                &OrchestrationSession {
+                    session_id: classified.session_id.clone(),
+                    agent_id: agent_id.to_string(),
+                    source: classified.source.clone(),
+                    label: classified.label.clone(),
+                    workspace: classified.workspace.clone(),
+                    last_seq: ingest_seq,
+                    created_at: now.to_string(),
+                    last_message_at: classified.timestamp.clone(),
+                },
+            )?;
+            store::insert_message(
+                c,
+                &OrchestrationMessage {
+                    id: msg_id.to_string(),
+                    agent_id: agent_id.to_string(),
+                    session_id: classified.session_id.clone(),
+                    chat_kind: classified.chat_kind,
+                    role: classified.role.clone(),
+                    body: classified.body.clone(),
+                    timestamp: classified.timestamp.clone(),
+                    seq: ingest_seq,
+                },
+            )
+        })
     })
     .map_err(|e| format!("persist: {e}"))
 }
@@ -273,7 +299,7 @@ mod tests {
     fn classifies_harness_envelope_as_session() {
         let c = classify_message(ENVELOPE.to_string(), "2026-07-02T09:00:00Z");
         assert_eq!(c.chat_kind, ChatKind::Session);
-        assert_eq!(c.session_id, "h1");
+        assert_eq!(c.session_id, "w1"); // keyed on the shared per-pair wrapper_session_id
         assert_eq!(c.role, "user");
         assert_eq!(c.source, "codex");
         assert_eq!(c.label.as_deref(), Some("my-repo")); // folder scope → label
@@ -307,8 +333,46 @@ mod tests {
         assert!(persist_message(tmp.path(), "m2", "@peer", &master, "now").unwrap());
 
         store::with_connection(tmp.path(), |c| {
-            assert_eq!(store::count_messages(c, "@peer", "h1")?, 1);
+            assert_eq!(store::count_messages(c, "@peer", "w1")?, 1); // per-pair wrapper id
             assert_eq!(store::count_messages(c, "@peer", "master")?, 1);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn persist_stamps_monotonic_ingest_seq_so_line_zero_dms_still_wake() {
+        // Regression for the silent drop (#4583). A wrapped Claude harness stamps
+        // `line = 0` on EVERY DM, so pre-fix both messages classified to seq 0;
+        // under the shared wrapper-session key the wake cursor pinned at 0 and the
+        // second message was persisted + acked but never woke the graph (no reply).
+        // Persist must ignore the wire `line` and stamp a strictly-increasing
+        // per-(agent, session) ingest ordinal so `last_seq` advances past the cursor.
+        let tmp = tempfile::tempdir().unwrap();
+        let line_zero = || {
+            classify_message(
+                ENVELOPE.replace("\"line\": 7", "\"line\": 0"),
+                "2026-07-02T09:00:00Z",
+            )
+        };
+        let first = line_zero();
+        let second = line_zero();
+        assert_eq!(first.seq, 0); // wire line is 0 for both …
+        assert_eq!(second.seq, 0);
+
+        assert!(persist_message(tmp.path(), "mA", "@peer", &first, "now").unwrap());
+        assert!(persist_message(tmp.path(), "mB", "@peer", &second, "now").unwrap());
+
+        store::with_connection(tmp.path(), |c| {
+            // … but the persisted seqs are monotonic ingest ordinals 1 and 2, and
+            // last_seq advanced to 2 — so a wake cursor left at 1 sees new work.
+            assert_eq!(store::count_messages(c, "@peer", "w1")?, 2);
+            assert_eq!(store::session_last_seq(c, "@peer", "w1")?, Some(2));
+            let seqs: Vec<i64> = store::list_recent_messages(c, "@peer", "w1", 10)?
+                .iter()
+                .map(|m| m.seq)
+                .collect();
+            assert_eq!(seqs, vec![1, 2]);
             Ok(())
         })
         .unwrap();
