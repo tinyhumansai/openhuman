@@ -313,7 +313,7 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.identity.card': 'Karta katalogu',
   'tinyplaceOrchestration.identity.key': 'Klucz szyfrowania',
   'tinyplaceOrchestration.identity.published': 'Opublikowano',
-  'tinyplaceOrchestration.identity.notPublished': 'Nieopublikowano',
+  'tinyplaceOrchestration.identity.notPublished': 'Nie opublikowano',
   'brain.empty': 'Twój mózg jest na razie pusty — połącz źródło, aby zacząć budować pamięć.',
   'brain.error': 'Nie udało się załadować Twojego mózgu. Spróbuj ponownie.',
   'common.cancel': 'Anuluj',
