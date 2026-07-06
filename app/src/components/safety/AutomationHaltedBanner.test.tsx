@@ -20,7 +20,7 @@ describe('AutomationHaltedBanner', () => {
       preloadedState: { safety: { halted: true } },
     });
     expect(screen.getByRole('alert')).toBeDefined();
-    expect(screen.getByText('Automation halted')).toBeDefined();
+    expect(screen.getByRole('alert').getAttribute('data-analytics-id')).toBe('automation-halted-banner');
     // safety state is engaged
     expect((store.getState() as { safety: { halted: boolean } }).safety.halted).toBe(true);
   });

@@ -371,6 +371,7 @@ impl EventHandler for AutomationHaltSubscriber {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::event_bus::{DomainEvent, EventHandler};
 
     /// `fresh_approval_surface_subscription` returns `Some` when the global event bus has
     /// been initialised and `None` otherwise (bus not started).  It must never return `None`
@@ -401,6 +402,92 @@ mod tests {
         // Both handles are alive — drop explicitly to show they're independent.
         drop(h1);
         drop(h2);
+    }
+
+    /// `AutomationHaltSubscriber::handle` publishes a correctly-shaped
+    /// `WebChannelEvent` to the web-channel broadcast bus for both
+    /// `AutomationHalted` and `AutomationResumed` domain events.
+    ///
+    /// This test exercises the payload contract directly by calling `handle`
+    /// on a freshly-constructed `AutomationHaltSubscriber` and asserting the
+    /// event fields the socket bridge relies on:
+    /// - `event == "automation_halt"` (the wire event name)
+    /// - `client_id == "system"` (the broadcast room every client auto-joins)
+    /// - `args.engaged` toggled correctly
+    /// - `args.reason` and `args.source` echoed from the domain event
+    #[tokio::test]
+    async fn automation_halt_subscriber_handle_publishes_correct_payload() {
+        // Subscribe BEFORE calling handle so the broadcast receiver is created
+        // before any event is sent (broadcast channels only buffer messages
+        // sent AFTER the receiver subscribed).
+        let mut rx = subscribe_web_channel_events();
+
+        let sub = AutomationHaltSubscriber;
+
+        // --- AutomationHalted ---
+        sub.handle(&DomainEvent::AutomationHalted {
+            reason: Some("test".into()),
+            source: "user".into(),
+        })
+        .await;
+
+        let halted = rx
+            .try_recv()
+            .expect("AutomationHalted must publish a WebChannelEvent");
+        assert_eq!(
+            halted.event, "automation_halt",
+            "event name mismatch for halted"
+        );
+        assert_eq!(
+            halted.client_id, "system",
+            "automation_halt must broadcast via the 'system' room (critical: every client auto-joins this room)"
+        );
+        let args = halted
+            .args
+            .as_ref()
+            .expect("AutomationHalted args must be Some");
+        assert_eq!(
+            args["engaged"], true,
+            "AutomationHalted must set engaged=true"
+        );
+        assert_eq!(
+            args["reason"], "test",
+            "AutomationHalted must echo the reason"
+        );
+        assert_eq!(
+            args["source"], "user",
+            "AutomationHalted must echo the source"
+        );
+
+        // --- AutomationResumed ---
+        sub.handle(&DomainEvent::AutomationResumed {
+            source: "user".into(),
+        })
+        .await;
+
+        let resumed = rx
+            .try_recv()
+            .expect("AutomationResumed must publish a WebChannelEvent");
+        assert_eq!(
+            resumed.event, "automation_halt",
+            "event name mismatch for resumed"
+        );
+        assert_eq!(
+            resumed.client_id, "system",
+            "automation_halt (resumed) must broadcast via the 'system' room"
+        );
+        let args = resumed
+            .args
+            .as_ref()
+            .expect("AutomationResumed args must be Some");
+        assert_eq!(
+            args["engaged"], false,
+            "AutomationResumed must set engaged=false"
+        );
+        assert_eq!(
+            args["source"], "user",
+            "AutomationResumed must echo the source"
+        );
     }
 
     /// `register_automation_halt_subscriber` is OnceLock-guarded: after the bus

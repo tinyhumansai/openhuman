@@ -6920,7 +6920,7 @@ const messages: TranslationMap = {
   'safety.resume': 'Lanjutkan otomasi',
   'safety.haltedTitle': 'Otomasi dihentikan',
   'safety.haltedBody': 'Semua otomasi desktop dihentikan. Lanjutkan ketika Anda siap.',
-  'safety.stopConfirm': 'Hentikan semua otomasi sekarang?',
+
 };
 
 export default messages;

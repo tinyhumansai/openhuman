@@ -7056,7 +7056,7 @@ const messages: TranslationMap = {
   'safety.resume': 'Reprendre l\'automatisation',
   'safety.haltedTitle': 'Automatisation suspendue',
   'safety.haltedBody': 'Toute l\'automatisation du bureau est arrêtée. Reprenez quand vous êtes prêt.',
-  'safety.stopConfirm': 'Arrêter toute l\'automatisation maintenant ?',
+
 };
 
 export default messages;

@@ -15,15 +15,15 @@ export function EmergencyStopButton() {
   const { t } = useT();
   const dispatch = useDispatch();
 
-  const onClick = useCallback(async () => {
+  const handleClick = useCallback(async () => {
     try {
-      const state = await emergencyStop('user');
+      const state = await emergencyStop();
       dispatch(
         setHalt({ reason: state.reason, source: state.source, since: state.engaged_at_ms })
       );
     } catch (err) {
       // Fail-visible: reflect intent locally even when the core is unreachable.
-      dispatch(setHalt({ reason: 'user', source: 'user' }));
+      dispatch(setHalt({ source: 'user' }));
       console.error('[emergency] stop failed', err);
     }
   }, [dispatch]);
@@ -32,7 +32,7 @@ export function EmergencyStopButton() {
     <button
       type="button"
       data-analytics-id="emergency-stop"
-      onClick={onClick}
+      onClick={() => void handleClick()}
       className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium bg-[var(--color-coral-500,#e05c5c)] text-white hover:bg-[var(--color-coral-600,#c94f4f)] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-coral-500,#e05c5c)]"
       aria-label={t('safety.emergencyStop')}>
       {t('safety.emergencyStop')}

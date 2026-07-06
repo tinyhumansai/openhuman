@@ -7009,7 +7009,7 @@ const messages: TranslationMap = {
   'safety.resume': 'Retomar automação',
   'safety.haltedTitle': 'Automação pausada',
   'safety.haltedBody': 'Toda a automação do desktop está parada. Retome quando estiver pronto.',
-  'safety.stopConfirm': 'Parar toda a automação agora?',
+
 };
 
 export default messages;

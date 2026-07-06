@@ -452,3 +452,89 @@ describe('socketService — agent_meetings event handlers (lines 428-480)', () =
     expect(ingestRuntimeErrorSignalMock).not.toHaveBeenCalled();
   });
 });
+
+describe('socketService — automation_halt handler (#4255)', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    storeMock.dispatch.mockClear();
+    storeMock.getState.mockReturnValue({
+      thread: { selectedThreadId: null, activeThreadId: null },
+    });
+    getCoreRpcUrlMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('dispatches setHalt when automation_halt arrives with engaged=true', async () => {
+    const { handlers, mockSocket } = buildMockSocket();
+    vi.doMock('socket.io-client', () => ({ io: vi.fn(() => mockSocket) }));
+    getCoreRpcUrlMock.mockResolvedValue('http://127.0.0.1:7788/rpc');
+
+    // Mock safetySlice actions
+    const setHaltMock = vi.fn((x: unknown) => ({ type: 'safety/setHalt', payload: x }));
+    const clearHaltMock = vi.fn(() => ({ type: 'safety/clearHalt' }));
+    vi.doMock('../../store/safetySlice', () => ({
+      setHalt: (x: unknown) => setHaltMock(x),
+      clearHalt: () => clearHaltMock(),
+    }));
+
+    const { socketService } = await import('../socketService');
+    socketService.connect('jwt-halt-engaged');
+
+    await pollUntil(() => expect(handlers['automation_halt']).toBeDefined());
+
+    handlers['automation_halt']!({ engaged: true, reason: 'cli', source: 'cli' });
+
+    expect(storeMock.dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'safety/setHalt' })
+    );
+  });
+
+  it('dispatches clearHalt when automation_halt arrives with engaged=false', async () => {
+    const { handlers, mockSocket } = buildMockSocket();
+    vi.doMock('socket.io-client', () => ({ io: vi.fn(() => mockSocket) }));
+    getCoreRpcUrlMock.mockResolvedValue('http://127.0.0.1:7788/rpc');
+
+    const clearHaltMock = vi.fn(() => ({ type: 'safety/clearHalt' }));
+    vi.doMock('../../store/safetySlice', () => ({
+      setHalt: vi.fn((x: unknown) => ({ type: 'safety/setHalt', payload: x })),
+      clearHalt: () => clearHaltMock(),
+    }));
+
+    const { socketService } = await import('../socketService');
+    socketService.connect('jwt-halt-cleared');
+
+    await pollUntil(() => expect(handlers['automation_halt']).toBeDefined());
+
+    handlers['automation_halt']!({ engaged: false });
+
+    expect(storeMock.dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'safety/clearHalt' })
+    );
+  });
+
+  it('drops a malformed automation_halt payload without dispatching or throwing', async () => {
+    const { handlers, mockSocket } = buildMockSocket();
+    vi.doMock('socket.io-client', () => ({ io: vi.fn(() => mockSocket) }));
+    getCoreRpcUrlMock.mockResolvedValue('http://127.0.0.1:7788/rpc');
+
+    vi.doMock('../../store/safetySlice', () => ({
+      setHalt: vi.fn((x: unknown) => ({ type: 'safety/setHalt', payload: x })),
+      clearHalt: vi.fn(() => ({ type: 'safety/clearHalt' })),
+    }));
+
+    const { socketService } = await import('../socketService');
+    socketService.connect('jwt-halt-malformed');
+
+    await pollUntil(() => expect(handlers['automation_halt']).toBeDefined());
+
+    storeMock.dispatch.mockClear();
+
+    // Non-object payloads should be silently dropped.
+    expect(() => handlers['automation_halt']!('not-an-object')).not.toThrow();
+    expect(() => handlers['automation_halt']!(null)).not.toThrow();
+    expect(storeMock.dispatch).not.toHaveBeenCalled();
+  });
+});

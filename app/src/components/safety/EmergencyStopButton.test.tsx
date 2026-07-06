@@ -14,10 +14,10 @@ describe('EmergencyStopButton', () => {
     expect(screen.getByRole('button', { name: /emergency stop/i })).toBeDefined();
   });
 
-  it('calls emergencyStop and dispatches halt on click', async () => {
+  it('calls emergencyStop with no argument and dispatches halt on click', async () => {
     const { store } = renderWithProviders(<EmergencyStopButton />);
     fireEvent.click(screen.getByRole('button', { name: /emergency stop/i }));
-    await waitFor(() => expect(stop).toHaveBeenCalled());
+    await waitFor(() => expect(stop).toHaveBeenCalledWith());
     const safetyState = (store.getState() as { safety: { halted: boolean } }).safety;
     expect(safetyState.halted).toBe(true);
   });

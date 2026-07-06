@@ -6970,7 +6970,7 @@ const messages: TranslationMap = {
   'safety.resume': 'Возобновить автоматизацию',
   'safety.haltedTitle': 'Автоматизация приостановлена',
   'safety.haltedBody': 'Вся автоматизация рабочего стола остановлена. Возобновите, когда будете готовы.',
-  'safety.stopConfirm': 'Остановить всю автоматизацию сейчас?',
+
 };
 
 export default messages;

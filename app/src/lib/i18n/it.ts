@@ -7020,7 +7020,7 @@ const messages: TranslationMap = {
   'safety.resume': 'Riprendi l\'automazione',
   'safety.haltedTitle': 'Automazione sospesa',
   'safety.haltedBody': 'Tutta l\'automazione del desktop è ferma. Riprendi quando sei pronto.',
-  'safety.stopConfirm': 'Fermare tutta l\'automazione adesso?',
+
 };
 
 export default messages;

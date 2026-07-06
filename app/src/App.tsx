@@ -54,7 +54,7 @@ import CoreStateProvider, { useCoreState } from './providers/CoreStateProvider';
 import SocketProvider from './providers/SocketProvider';
 import ThemeProvider from './providers/ThemeProvider';
 import { trackPageView } from './services/analytics';
-import { emergencyStatus } from './services/api/emergencyApi';
+import { hydrateEmergencyState } from './services/safety/hydrateEmergencyState';
 import { startCoreHealthMonitor, stopCoreHealthMonitor } from './services/coreHealthMonitor';
 import {
   startInternetStatusListener,
@@ -67,7 +67,6 @@ import {
 } from './services/webviewAccountService';
 import { persistor, store } from './store';
 import { setActiveAccount } from './store/accountsSlice';
-import { hydrateHalt } from './store/safetySlice';
 import { useAppDispatch, useAppSelector } from './store/hooks';
 import { AGENT_ACCOUNT_ID } from './utils/accountsFullscreen';
 import { DEV_FORCE_ONBOARDING } from './utils/config';
@@ -266,17 +265,10 @@ export function AppShellDesktop() {
 
   // Boot hydration: read the authoritative halt state from the core once on
   // mount so the UI reflects any halt that was engaged before this window
-  // opened (e.g. another tab, CLI, or a crash-recovery scenario). Wrapped in
-  // try/catch so a degraded core never blanks the shell.
+  // opened (e.g. another tab, CLI, or a crash-recovery scenario). Errors are
+  // swallowed inside hydrateEmergencyState so a degraded core never blanks the shell.
   useEffect(() => {
-    void (async () => {
-      try {
-        const status = await emergencyStatus();
-        dispatch(hydrateHalt(status));
-      } catch (err) {
-        console.warn('[emergency] status hydration failed', err);
-      }
-    })();
+    void hydrateEmergencyState(dispatch);
     // Intentionally runs once on mount only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

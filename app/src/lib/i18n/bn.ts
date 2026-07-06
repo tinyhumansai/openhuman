@@ -6895,7 +6895,7 @@ const messages: TranslationMap = {
   'safety.resume': 'অটোমেশন পুনরায় শুরু করুন',
   'safety.haltedTitle': 'অটোমেশন বন্ধ',
   'safety.haltedBody': 'সমস্ত ডেস্কটপ অটোমেশন বন্ধ করা হয়েছে। প্রস্তুত হলে পুনরায় শুরু করুন।',
-  'safety.stopConfirm': 'এখন সমস্ত অটোমেশন বন্ধ করবেন?',
+
 };
 
 export default messages;
