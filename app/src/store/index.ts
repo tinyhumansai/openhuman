@@ -37,6 +37,7 @@ import { pttReducer } from './pttSlice';
 import socketReducer from './socketSlice';
 import themeReducer from './themeSlice';
 import threadReducer from './threadSlice';
+import safetyReducer from './safetySlice';
 import userErrorsReducer from './userErrorsSlice';
 import { userScopedStorage } from './userScopedStorage';
 
@@ -243,6 +244,7 @@ export const store = configureStore({
     // completion, resets on restart + user switch. Durable storage is a #3931
     // follow-up.
     userErrors: userErrorsReducer,
+    safety: safetyReducer,
   },
   middleware: getDefaultMiddleware => {
     const middleware = getDefaultMiddleware({
