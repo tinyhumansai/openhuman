@@ -10,6 +10,7 @@
 //! front-end agent package (`frontend_agent`), and the front-end decision tools
 //! (`tools`). The JSON-RPC read surface (`orchestration.*`) lands in stage 7.
 
+pub mod attention;
 pub mod bus;
 pub mod frontend_agent;
 pub mod graph;
