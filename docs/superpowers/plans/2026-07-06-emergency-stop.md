@@ -436,8 +436,10 @@ pub async fn emergency_stop(reason: Option<String>, source: &str) -> RpcOutcome<
     stop.engage(reason.clone(), source, now_ms());
 
     // Best-effort: stop the accessibility session so any in-flight click/type loop halts.
+    // CONFIRMED: `engine.disable(reason: Option<String>) -> SessionStatus` (engine.rs:150);
+    // `SessionStatus.active: bool` (types.rs:15).
     let a11y = crate::openhuman::screen_intelligence::global_engine()
-        .disable("emergency_stop".to_string())
+        .disable(Some("emergency_stop".to_string()))
         .await;
     tracing::info!(active = a11y.active, "[emergency] accessibility session stopped");
 
