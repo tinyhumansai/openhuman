@@ -766,11 +766,21 @@ fn handle_self_identity(_params: Map<String, Value>) -> ControllerFuture {
         } else {
             let mut rev_params = Map::new();
             rev_params.insert("cryptoId".to_string(), Value::from(agent_id.clone()));
-            match crate::openhuman::tinyplace::handle_tinyplace_directory_reverse(rev_params).await
+            // Bounded: a slow/degraded relay must degrade this to "no handle",
+            // never hang the whole card on "Loading identity…" forever.
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                crate::openhuman::tinyplace::handle_tinyplace_directory_reverse(rev_params),
+            )
+            .await
             {
-                Ok(reverse) => Some(reverse),
-                Err(e) => {
+                Ok(Ok(reverse)) => Some(reverse),
+                Ok(Err(e)) => {
                     log::debug!(target: LOG, "[orchestration_rpc] self_identity reverse miss: {e}");
+                    None
+                }
+                Err(_) => {
+                    log::warn!(target: LOG, "[orchestration_rpc] self_identity reverse timed out (relay slow)");
                     None
                 }
             }
@@ -783,9 +793,16 @@ fn handle_self_identity(_params: Map<String, Value>) -> ControllerFuture {
         } else {
             let mut card_params = Map::new();
             card_params.insert("agentId".to_string(), Value::from(agent_id.clone()));
-            crate::openhuman::tinyplace::handle_tinyplace_directory_get_agent(card_params)
-                .await
-                .is_ok()
+            // Bounded like the reverse lookup above: a stalled relay degrades to
+            // "card not published" rather than pinning the card on "Loading…".
+            matches!(
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    crate::openhuman::tinyplace::handle_tinyplace_directory_get_agent(card_params),
+                )
+                .await,
+                Ok(Ok(_))
+            )
         };
 
         let identity = super::ops::build_self_identity(

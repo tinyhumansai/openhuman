@@ -2985,8 +2985,16 @@ pub(crate) fn handle_tinyplace_signal_key_status(_params: Map<String, Value>) ->
         // AND does it match the current identity key? A stale key (from a
         // previous wallet) should show as NOT published so the user
         // re-registers.
-        let encryption_key_published = match client.directory.get_agent(&agent_id).await {
-            Ok(card) => {
+        // Bounded: once a card exists, fetching it hits the relay; a degraded
+        // relay must degrade this to "not published" (like the Err arm), never
+        // hang the caller (self_identity → the orchestration identity card).
+        let card_fetch = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            client.directory.get_agent(&agent_id),
+        )
+        .await;
+        let encryption_key_published = match card_fetch {
+            Ok(Ok(card)) => {
                 let published_key = card
                     .metadata
                     .as_ref()
@@ -3008,8 +3016,12 @@ pub(crate) fn handle_tinyplace_signal_key_status(_params: Map<String, Value>) ->
                 log::debug!("{LOG_PREFIX} signal_key_status encryption_key_published={matches}");
                 matches
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 log::warn!("{LOG_PREFIX} signal_key_status directory card fetch failed: {e}");
+                false
+            }
+            Err(_) => {
+                log::warn!("{LOG_PREFIX} signal_key_status directory card fetch timed out (relay slow)");
                 false
             }
         };
