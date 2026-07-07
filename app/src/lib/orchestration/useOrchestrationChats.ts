@@ -16,8 +16,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { socketService } from '../../services/socketService';
 import {
-  orchestrationClient,
   type HarnessEventKind,
+  orchestrationClient,
   type OrchestrationMessage,
   type OrchestrationMessageEvent,
   type OrchestrationStatus,

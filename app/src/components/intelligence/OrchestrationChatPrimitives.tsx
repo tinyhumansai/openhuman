@@ -149,7 +149,9 @@ export function MessageBubble({ message }: { message: ChatMessage }): ReactEleme
       {style.glyph ? (
         <span className={`mt-0.5 flex-none text-xs font-semibold ${style.dot}`}>{style.glyph}</span>
       ) : (
-        <div className={`mt-1.5 h-2 w-2 flex-none rounded-full ${style.dot.replace('text-', 'bg-')}`} />
+        <div
+          className={`mt-1.5 h-2 w-2 flex-none rounded-full ${style.dot.replace('text-', 'bg-')}`}
+        />
       )}
       <div
         className={`min-w-0 rounded-lg border border-line bg-surface px-3 py-2 shadow-soft ${style.accent}`}>

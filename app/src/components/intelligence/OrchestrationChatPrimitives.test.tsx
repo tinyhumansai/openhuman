@@ -86,7 +86,11 @@ describe('MessageBubble', () => {
   });
 
   it('renders a tool_result with the ↳ glyph', () => {
-    render(<MessageBubble message={message({ eventKind: 'tool_result', toolName: 'Bash', body: 'ok' })} />);
+    render(
+      <MessageBubble
+        message={message({ eventKind: 'tool_result', toolName: 'Bash', body: 'ok' })}
+      />
+    );
     expect(screen.getByText('↳')).toBeInTheDocument();
   });
 
