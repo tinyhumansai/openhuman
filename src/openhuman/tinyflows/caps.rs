@@ -198,6 +198,51 @@ fn escalated_origin_for_prompt(
     }
 }
 
+/// Pure decision core of the nested agent-node harness escalation (issue
+/// #4595): when the flow run's origin is a `Workflow { require_approval: false }`
+/// trust root, returns a clone with `require_approval` flipped to `true` so the
+/// [`ApprovalGate`](crate::openhuman::approval::ApprovalGate)'s pre-declared-
+/// action shortcut (`gate.rs::intercept_audited`, `Workflow { require_approval:
+/// false }` → `Allow` without prompt) does NOT apply to tool calls the nested
+/// harness picks at runtime.
+///
+/// **Why this is different from [`escalated_origin_for_prompt`].** That helper
+/// escalates a *single* flow-node acting tool dispatch when the tier decision
+/// is `Prompt`. This helper escalates the *entire nested harness turn*
+/// unconditionally, because the flow author never pre-declared which tools the
+/// referenced agent's LLM will pick — the graph only names the `agent_ref`, and
+/// the definition's `ToolScope` is the runtime pool. So the "trust root =
+/// static action" invariant that justifies the `intercept_audited` shortcut
+/// simply doesn't hold across the `Agent::run_single` boundary.
+///
+/// `Workflow { require_approval: true }` passes through unchanged (already
+/// user-forced HITL); other origins pass through unchanged (Cron / Web chat
+/// / etc. don't route through this call site today, but if they ever do the
+/// shortcut is safe or already covered by that origin's own gate branch).
+/// Split out as a free function over plain values so the escalation policy is
+/// unit-testable without a live `ApprovalGate`.
+fn escalated_origin_for_nested_harness(
+    origin: Option<crate::openhuman::agent::turn_origin::AgentTurnOrigin>,
+) -> Option<crate::openhuman::agent::turn_origin::AgentTurnOrigin> {
+    use crate::openhuman::agent::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
+
+    match origin {
+        Some(AgentTurnOrigin::TrustedAutomation {
+            job_id,
+            source:
+                TrustedAutomationSource::Workflow {
+                    require_approval: false,
+                },
+        }) => Some(AgentTurnOrigin::TrustedAutomation {
+            job_id,
+            source: TrustedAutomationSource::Workflow {
+                require_approval: true,
+            },
+        }),
+        _ => None,
+    }
+}
+
 /// Cap on the serialized `input_context` block size (bytes of the pretty-
 /// printed JSON) before truncation. Keeps a huge upstream payload (e.g. a
 /// large fan-in `=items` array) from blowing the completion's context window;
@@ -815,12 +860,45 @@ impl OpenHumanAgentRunner {
             "[flows] agent_runner: dispatching full harness turn"
         );
 
-        // No origin wrapper: the engine future already runs under the flow's
-        // Workflow origin, so the inner turn inherits the autonomy tier +
-        // approval gate; the definition's ToolScope/sandbox is the inner gate.
+        // Nested-harness HITL escalation (issue #4595): the engine future runs
+        // under the flow's Workflow origin, but the flow author only pre-
+        // declared `agent_ref` — not the concrete tools the harness LLM will
+        // pick from the definition's `ToolScope`. If we let the inner turn
+        // inherit a `Workflow { require_approval: false }` origin,
+        // `ApprovalGate::intercept_audited` treats it as a trust root and
+        // auto-`Allow`s external_effect tools (see
+        // `src/openhuman/approval/gate.rs` `Workflow { require_approval: false }`
+        // branch), which would let a scheduled / app-event flow reach out to
+        // Slack / email / desktop control with no HITL. We force
+        // `require_approval: true` around `run_single` so external_effect tools
+        // park for a real decision the same way flow acting nodes escalated by
+        // [`gate_call_for_tier`] do. Read-only tools (no `external_effect`)
+        // aren't gated by `intercept_audited` at all, so this doesn't add noise
+        // for pure-read nested agents.
+        //
         // Cancellation: the run_registry token aborts the engine future, and the
-        // inner turn drops with it.
-        let run = agent.run_single(&prompt);
+        // inner turn drops with it (task-local scope unwinds cleanly).
+        use crate::openhuman::agent::turn_origin;
+        let escalated_origin = escalated_origin_for_nested_harness(turn_origin::current());
+        if let Some(ref escalated) = escalated_origin {
+            tracing::debug!(
+                target: "flows",
+                agent_ref,
+                origin = ?escalated,
+                "[flows] agent_runner: escalating nested harness turn to Workflow{{require_approval:true}} \
+                 so external_effect tools park for HITL (issue #4595)"
+            );
+        }
+        let run: std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send>,
+        > = if let Some(escalated) = escalated_origin {
+            Box::pin(turn_origin::with_origin(
+                escalated,
+                agent.run_single(&prompt),
+            ))
+        } else {
+            Box::pin(agent.run_single(&prompt))
+        };
         let final_text =
             match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), run).await {
                 Ok(Ok(text)) => text,
@@ -3336,6 +3414,68 @@ mod tests {
     #[test]
     fn prompt_decision_does_not_escalate_without_a_workflow_origin() {
         assert!(escalated_origin_for_prompt(GateDecision::Prompt, None).is_none());
+    }
+
+    // ── Nested agent-node harness escalation (issue #4595) ─────────────────
+    //
+    // The `agent` node's harness turn runs the full agent tool loop, and the
+    // flow author never pre-declared the tool selection (only the `agent_ref`).
+    // So `escalated_origin_for_nested_harness` must escalate a default
+    // `Workflow { require_approval: false }` origin so
+    // `ApprovalGate::intercept_audited` can't apply its
+    // pre-declared-action `Allow` shortcut to tools the nested LLM picks at
+    // runtime.
+
+    /// A default `require_approval: false` workflow origin unconditionally
+    /// escalates: the nested harness's tool selection was not pre-declared, so
+    /// the trust-root shortcut in `ApprovalGate` must not apply. `job_id` is
+    /// preserved so the parked approval is still attributable to the flow run.
+    #[test]
+    fn nested_harness_escalates_default_workflow_origin_and_preserves_job_id() {
+        let escalated =
+            escalated_origin_for_nested_harness(Some(workflow_origin("flow-42", false)))
+                .expect("a default require_approval=false workflow must escalate");
+        match escalated {
+            AgentTurnOrigin::TrustedAutomation {
+                job_id,
+                source:
+                    TrustedAutomationSource::Workflow {
+                        require_approval: true,
+                    },
+            } => assert_eq!(job_id, "flow-42"),
+            other => panic!("expected escalated Workflow origin, got {other:?}"),
+        }
+    }
+
+    /// A flow that already opted into `require_approval: true` needs no
+    /// escalation — the parking branch already applies.
+    #[test]
+    fn nested_harness_does_not_re_escalate_already_gated_workflow() {
+        assert!(
+            escalated_origin_for_nested_harness(Some(workflow_origin("flow-42", true,))).is_none()
+        );
+    }
+
+    /// A non-Workflow origin (Cron, Cli, WebChat, Unknown, …) passes through
+    /// unchanged: their own gate branches already make the right decision.
+    #[test]
+    fn nested_harness_does_not_escalate_non_workflow_origin() {
+        assert!(
+            escalated_origin_for_nested_harness(Some(AgentTurnOrigin::TrustedAutomation {
+                job_id: "cron-1".into(),
+                source: TrustedAutomationSource::Cron,
+            }))
+            .is_none()
+        );
+        assert!(escalated_origin_for_nested_harness(Some(AgentTurnOrigin::Cli)).is_none());
+    }
+
+    /// No scoped origin (unlabelled caller) passes through: the gate maps it
+    /// to `Unknown` and fails closed on external_effect tools already, so we
+    /// don't invent an escalation.
+    #[test]
+    fn nested_harness_does_not_escalate_without_an_origin() {
+        assert!(escalated_origin_for_nested_harness(None).is_none());
     }
 
     // ── Phase 7: sub_workflow-by-id resolver ───────────────────────────────
