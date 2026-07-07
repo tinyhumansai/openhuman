@@ -544,6 +544,7 @@ fn handle_send_master_message(params: Map<String, Value>) -> ControllerFuture {
                         last_seq: seq,
                         created_at: now.clone(),
                         last_message_at: now.clone(),
+                        ..Default::default()
                     },
                 )?;
                 store::insert_message(
@@ -557,6 +558,7 @@ fn handle_send_master_message(params: Map<String, Value>) -> ControllerFuture {
                         body: body.clone(),
                         timestamp: now.clone(),
                         seq,
+                        ..Default::default()
                     },
                 )
             });

@@ -663,6 +663,7 @@ impl Tool for SendToAgentTool {
                     last_seq: seq,
                     created_at: now.clone(),
                     last_message_at: now.clone(),
+                    ..Default::default()
                 },
             )?;
             store::insert_message(
@@ -676,6 +677,7 @@ impl Tool for SendToAgentTool {
                     body: message.clone(),
                     timestamp: now.clone(),
                     seq,
+                    ..Default::default()
                 },
             )
         });
@@ -828,6 +830,7 @@ mod tests {
                 body: body.into(),
                 timestamp: ts.into(),
                 seq,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -845,6 +848,7 @@ mod tests {
                 last_seq: 0,
                 created_at: last_at.into(),
                 last_message_at: last_at.into(),
+                ..Default::default()
             },
         )
         .unwrap();
@@ -898,6 +902,7 @@ mod tests {
             last_seq: 0,
             created_at: "2026-07-02T00:01:00Z".into(),
             last_message_at: "2026-07-02T00:01:00Z".into(),
+            ..Default::default()
         };
         store::with_connection(&config.workspace_dir, |conn| {
             store::upsert_session(conn, &sess("@alice", "s-alice"))?;

@@ -348,6 +348,7 @@ fn thread_reply_to_origin(
                 last_seq: seq,
                 created_at: now.clone(),
                 last_message_at: now.clone(),
+                ..Default::default()
             },
         )?;
         store::insert_message(
@@ -361,6 +362,7 @@ fn thread_reply_to_origin(
                 body,
                 timestamp: now.clone(),
                 seq,
+                ..Default::default()
             },
         )
     });
@@ -445,6 +447,7 @@ async fn report_peer_reply_to_master(
                 last_seq: seq,
                 created_at: now.clone(),
                 last_message_at: now.clone(),
+                ..Default::default()
             },
         )?;
         store::insert_message(
@@ -458,6 +461,7 @@ async fn report_peer_reply_to_master(
                 body: report.to_string(),
                 timestamp: now.clone(),
                 seq,
+                ..Default::default()
             },
         )
     })
@@ -1278,6 +1282,7 @@ impl OrchestrationRuntime for ProductionRuntime {
                         last_seq: seq,
                         created_at: now.clone(),
                         last_message_at: now.clone(),
+                        ..Default::default()
                     },
                 )?;
                 store::insert_message(
@@ -1291,6 +1296,7 @@ impl OrchestrationRuntime for ProductionRuntime {
                         body: body_owned,
                         timestamp: now.clone(),
                         seq,
+                        ..Default::default()
                     },
                 )
             })
