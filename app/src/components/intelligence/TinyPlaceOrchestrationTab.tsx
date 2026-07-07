@@ -69,6 +69,10 @@ export default function TinyPlaceOrchestrationTab() {
   // the whole tab.
   const [selfIdentity, setSelfIdentity] = useState<SelfIdentity | null>(null);
   const [identityLoading, setIdentityLoading] = useState(true);
+  // "Make discoverable" remediation: publishes the directory card + Signal key
+  // when the identity card reports the agent is un-messageable.
+  const [publishingIdentity, setPublishingIdentity] = useState(false);
+  const [publishIdentityError, setPublishIdentityError] = useState<string | null>(null);
   const [relayInfo, setRelayInfo] = useState<RelayInfo | null>(null);
   // The aggregated "needs you" queue (approvals + blocked runs + unread). Read
   // independently of chats so a failure leaves the zone empty, never the tab.
@@ -150,6 +154,28 @@ export default function TinyPlaceOrchestrationTab() {
       debug('[tinyplace-orchestration] relay load error %s', message);
     }
     setIdentityLoading(false);
+  }, []);
+
+  // Publish (or refresh) the directory card + Signal key, then adopt the fresh
+  // identity the RPC echoes back so the card flips to "discoverable" without a
+  // separate reload. A failure surfaces on the card, not the whole tab.
+  const publishIdentity = useCallback(async () => {
+    debug('[tinyplace-orchestration] publish identity entry');
+    setPublishingIdentity(true);
+    setPublishIdentityError(null);
+    try {
+      const identity = await orchestrationClient.publishIdentity();
+      if (!mountedRef.current) return;
+      debug('[tinyplace-orchestration] publish identity ok discoverable=%s', identity.discoverable);
+      setSelfIdentity(identity);
+    } catch (error) {
+      if (!mountedRef.current) return;
+      const message = error instanceof Error ? error.message : String(error);
+      debug('[tinyplace-orchestration] publish identity error %s', message);
+      setPublishIdentityError(message);
+    } finally {
+      if (mountedRef.current) setPublishingIdentity(false);
+    }
   }, []);
 
   const loadAttention = useCallback(async () => {
@@ -348,6 +374,9 @@ export default function TinyPlaceOrchestrationTab() {
         steeringText={steeringText}
         selfIdentity={selfIdentity}
         identityLoading={identityLoading}
+        onPublishIdentity={publishIdentity}
+        publishingIdentity={publishingIdentity}
+        publishIdentityError={publishIdentityError}
         attentionQueue={attentionQueue}
         attentionLoading={attentionLoading}
         onAttentionAction={handleAttentionAction}

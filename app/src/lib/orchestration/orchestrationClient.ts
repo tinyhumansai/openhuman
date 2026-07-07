@@ -282,6 +282,15 @@ export const orchestrationClient = {
    */
   selfIdentity: () => call<SelfIdentity>('openhuman.orchestration_self_identity', {}),
 
+  /**
+   * Make this agent discoverable: publish (or refresh) its directory card + Signal
+   * encryption key for the wallet's current identity, then return the updated
+   * {@link SelfIdentity}. No @handle registration and no payment — it repairs the
+   * common "has an identity but card/key aren't published" gap that makes every
+   * inbound DM 404. Powers the SelfIdentityCard's "Make discoverable" action.
+   */
+  publishIdentity: () => call<SelfIdentity>('openhuman.orchestration_publish_identity', {}),
+
   /** The relay endpoint + network label the core is talking to (RelayBadge). */
   relayInfo: () => call<RelayInfo>('openhuman.orchestration_relay_info', {}),
 };

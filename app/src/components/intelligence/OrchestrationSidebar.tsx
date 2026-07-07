@@ -38,6 +38,9 @@ export interface OrchestrationSidebarProps {
   steeringText: string | null;
   selfIdentity: SelfIdentity | null;
   identityLoading: boolean;
+  onPublishIdentity: () => void;
+  publishingIdentity: boolean;
+  publishIdentityError: string | null;
   attentionQueue: AttentionQueue | null;
   attentionLoading: boolean;
   onAttentionAction: (action: AttentionAction) => void;
@@ -72,6 +75,9 @@ export default function OrchestrationSidebar({
   steeringText,
   selfIdentity,
   identityLoading,
+  onPublishIdentity,
+  publishingIdentity,
+  publishIdentityError,
   attentionQueue,
   attentionLoading,
   onAttentionAction,
@@ -146,7 +152,13 @@ export default function OrchestrationSidebar({
         ) : null}
       </div>
 
-      <SelfIdentityCard identity={selfIdentity} loading={identityLoading} />
+      <SelfIdentityCard
+        identity={selfIdentity}
+        loading={identityLoading}
+        onPublish={onPublishIdentity}
+        publishing={publishingIdentity}
+        publishError={publishIdentityError}
+      />
 
       <AttentionQueueView
         queue={attentionQueue}

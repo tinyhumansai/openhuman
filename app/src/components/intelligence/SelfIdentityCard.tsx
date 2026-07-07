@@ -20,6 +20,16 @@ import type { SelfIdentity } from '../../lib/orchestration/orchestrationClient';
 export interface SelfIdentityCardProps {
   identity: SelfIdentity | null;
   loading: boolean;
+  /**
+   * Publish (or refresh) this agent's directory card + Signal key so peers can
+   * DM it. Rendered only while undiscoverable. The parent owns the RPC + the
+   * identity refresh; the card just drives the button state.
+   */
+  onPublish?: () => void;
+  /** True while {@link onPublish} is in flight — disables the button. */
+  publishing?: boolean;
+  /** Non-null when the last publish attempt failed — surfaces under the button. */
+  publishError?: string | null;
 }
 
 function shortAddress(address: string): string {
@@ -30,6 +40,9 @@ function shortAddress(address: string): string {
 export default function SelfIdentityCard({
   identity,
   loading,
+  onPublish,
+  publishing,
+  publishError,
 }: SelfIdentityCardProps): React.ReactElement {
   const { t } = useT();
   const [copied, setCopied] = useState(false);
@@ -125,9 +138,30 @@ export default function SelfIdentityCard({
       </div>
 
       {!identity.discoverable ? (
-        <p className="mt-2 rounded-md bg-coral-50 px-2 py-1 text-[10px] text-coral-700 dark:bg-coral-500/10 dark:text-coral-300">
-          {t('tinyplaceOrchestration.identity.undiscoverableHint')}
-        </p>
+        <div className="mt-2 rounded-md bg-coral-50 px-2 py-1.5 dark:bg-coral-500/10">
+          <p className="text-[10px] text-coral-700 dark:text-coral-300">
+            {t('tinyplaceOrchestration.identity.undiscoverableHint')}
+          </p>
+          {onPublish ? (
+            <button
+              type="button"
+              data-testid="tinyplace-self-identity-publish"
+              onClick={onPublish}
+              disabled={publishing}
+              className="mt-1.5 inline-flex items-center rounded-md bg-coral-600 px-2 py-1 text-[11px] font-semibold text-white transition hover:bg-coral-700 disabled:opacity-50 dark:bg-coral-500 dark:hover:bg-coral-400">
+              {publishing
+                ? t('tinyplaceOrchestration.identity.publishing')
+                : t('tinyplaceOrchestration.identity.makeDiscoverable')}
+            </button>
+          ) : null}
+          {publishError ? (
+            <p
+              data-testid="tinyplace-self-identity-publish-error"
+              className="mt-1 text-[10px] text-coral-700 dark:text-coral-300">
+              {t('tinyplaceOrchestration.identity.publishFailed')}
+            </p>
+          ) : null}
+        </div>
       ) : null}
     </section>
   );

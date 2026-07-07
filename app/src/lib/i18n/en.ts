@@ -4234,7 +4234,10 @@ const en: TranslationMap = {
   'tinyplaceOrchestration.identity.discoverable': 'Discoverable',
   'tinyplaceOrchestration.identity.undiscoverable': 'Not discoverable',
   'tinyplaceOrchestration.identity.undiscoverableHint':
-    'Register a @handle so peers can message you.',
+    'Publish your directory card + encryption key so peers can message you.',
+  'tinyplaceOrchestration.identity.makeDiscoverable': 'Make discoverable',
+  'tinyplaceOrchestration.identity.publishing': 'Publishing…',
+  'tinyplaceOrchestration.identity.publishFailed': 'Publish failed — try again',
   'tinyplaceOrchestration.identity.card': 'Directory card',
   'tinyplaceOrchestration.identity.key': 'Encryption key',
   'tinyplaceOrchestration.identity.published': 'Published',
