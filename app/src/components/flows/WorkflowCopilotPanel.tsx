@@ -106,7 +106,7 @@ export default function WorkflowCopilotPanel({
     threadId,
     sending,
     proposal,
-    messages,
+    displayMessages,
     toolTimeline,
     liveResponse,
     error,
@@ -217,7 +217,7 @@ export default function WorkflowCopilotPanel({
   // `scrollTo` is optional-chained: jsdom (tests) doesn't implement it.
   useEffect(() => {
     scrollRef.current?.scrollTo?.({ top: scrollRef.current.scrollHeight });
-  }, [messages, sending, proposal, toolTimeline, liveResponse]);
+  }, [displayMessages, sending, proposal, toolTimeline, liveResponse]);
 
   const submit = useCallback(
     async (raw?: string) => {
@@ -267,7 +267,7 @@ export default function WorkflowCopilotPanel({
   const hasTimeline = toolTimeline.length > 0;
   const hasLiveText = liveResponse.trim().length > 0;
   const isEmpty =
-    messages.length === 0 && !proposal && !sending && !error && !hasTimeline && !hasLiveText;
+    displayMessages.length === 0 && !proposal && !sending && !error && !hasTimeline && !hasLiveText;
 
   return (
     <aside
@@ -298,8 +298,11 @@ export default function WorkflowCopilotPanel({
           </p>
         )}
 
-        {/* Conversation transcript: user turns right-aligned, agent turns left. */}
-        {messages.map(message =>
+        {/* Conversation transcript: user turns right-aligned, agent turns left.
+            Renders `displayMessages` (interim narration bubbles filtered out —
+            that narration already streams via the tool timeline / live text
+            below it double-renders it as a bubble too, see B4). */}
+        {displayMessages.map(message =>
           message.sender === 'user' ? (
             <div key={message.id} className="flex justify-end" data-testid="workflow-copilot-user">
               <div className="max-w-[85%] rounded-2xl bg-primary-500 px-3 py-1.5 text-sm text-content-inverted">

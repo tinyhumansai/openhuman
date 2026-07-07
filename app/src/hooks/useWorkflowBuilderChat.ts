@@ -23,19 +23,21 @@
  * a real flow id) may save onto an existing flow. Nothing here enables a flow.
  */
 import createDebug from 'debug';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { type BuilderTurnRequest, buildWorkflow } from '../services/api/flowsApi';
 import { store } from '../store';
 import {
   clearWorkflowProposalForThread,
+  fetchAndHydrateTurnHistory,
+  fetchAndHydrateTurnState,
   setWorkflowProposalForThread,
   type ToolTimelineEntry,
   type WorkflowProposal,
 } from '../store/chatRuntimeSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { selectSocketStatus } from '../store/socketSelectors';
-import { addMessageLocal, createNewThread } from '../store/threadSlice';
+import { addMessageLocal, createNewThread, loadThreadMessages } from '../store/threadSlice';
 import type { ThreadMessage } from '../types/thread';
 
 const log = createDebug('app:flows:builder-chat');
@@ -60,12 +62,24 @@ export interface UseWorkflowBuilderChat {
   /** The latest proposal the agent returned on this thread, or `null`. */
   proposal: WorkflowProposal | null;
   /**
-   * The dedicated thread's transcript (user + agent turns) so a caller can
-   * render the full conversation, not just the latest proposal. Empty until the
+   * The dedicated thread's FULL transcript (user + agent turns, including
+   * between-tool narration bubbles), so a caller that needs the complete
+   * history (e.g. persistence/rehydration) can still get it. Empty until the
    * first send. Sourced from the same `messagesByThreadId` store the main chat
    * transcript reads.
    */
   messages: ThreadMessage[];
+  /**
+   * `messages` filtered for RENDERING as chat bubbles: drops agent messages
+   * tagged `extraMetadata.isInterim` (the between-tool "Let me check…/Now let
+   * me build…" narration `ChatRuntimeProvider`'s `onInterim` persists) since
+   * that narration already renders live via `toolTimeline`/`liveResponse`
+   * below — showing it again as a bubble double-renders it. User messages and
+   * any non-interim agent message (the turn's terminal answer, including a
+   * clarifying question appended via the `assistantText` fallback in `send`)
+   * are always kept.
+   */
+  displayMessages: ThreadMessage[];
   /**
    * The dedicated thread's live tool timeline (streamed by `ChatRuntimeProvider`
    * as the builder turn runs) — bound straight into the shared
@@ -98,9 +112,13 @@ const EMPTY_MESSAGES: ThreadMessage[] = [];
 const EMPTY_TIMELINE: ToolTimelineEntry[] = [];
 
 /**
- * @param seedThreadId Optional existing thread to bind to instead of creating a
- *   fresh one — lets a caller reuse a thread across mounts (unused today; the
- *   prompt bar and copilot each start clean).
+ * @param seedThreadId Optional existing thread to bind to instead of creating
+ *   a fresh one — lets a caller reuse a thread across mounts. When present,
+ *   this hook rehydrates that thread's messages + turn state/history from the
+ *   core on mount (mirroring `Conversations.tsx`'s thread-switch effect) so a
+ *   persisted copilot thread (`workflowCopilotThreads.ts`) resumes its full
+ *   transcript after a reload instead of starting empty (issue: Copilot chat
+ *   not persistent).
  */
 export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflowBuilderChat {
   const dispatch = useAppDispatch();
@@ -132,6 +150,16 @@ export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflo
     [threadId, messagesByThreadId]
   );
 
+  // Render-layer filter: drop interim narration bubbles (already shown live
+  // via `toolTimeline`/`liveResponse`), keeping every user turn and every
+  // non-interim agent turn (the terminal answer for a round, including a
+  // clarifying question with no `isInterim` tag). `messages` itself stays the
+  // full set — rehydration (below) and any future persistence need it intact.
+  const displayMessages = useMemo(
+    () => messages.filter(m => m.sender === 'user' || !m.extraMetadata?.isInterim),
+    [messages]
+  );
+
   const toolTimeline = useMemo(
     () => (threadId ? (toolTimelineByThread[threadId] ?? EMPTY_TIMELINE) : EMPTY_TIMELINE),
     [threadId, toolTimelineByThread]
@@ -141,6 +169,22 @@ export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflo
     () => (threadId ? (streamingAssistantByThread[threadId]?.content ?? '') : ''),
     [threadId, streamingAssistantByThread]
   );
+
+  // Rehydrate a persisted thread's transcript + turn state/history from the
+  // core on mount. Messages ARE durable server-side (`threadApi.appendMessage`
+  // persists every turn) — redux-persist only whitelists `selectedThreadId`
+  // for the thread slice, so `messagesByThreadId` starts empty on a fresh app
+  // load and this thread's messages would otherwise never come back. Runs
+  // once per distinct `seedThreadId` (a caller like `WorkflowCopilotPanel`
+  // mounts with a stable seed per flow open, not on every internal `threadId`
+  // change from `send()` creating a fresh thread).
+  useEffect(() => {
+    if (!seedThreadId) return;
+    log('rehydrate: loading persisted messages + turn state/history thread=%s', seedThreadId);
+    void dispatch(loadThreadMessages(seedThreadId));
+    void dispatch(fetchAndHydrateTurnState(seedThreadId));
+    void dispatch(fetchAndHydrateTurnHistory(seedThreadId));
+  }, [seedThreadId, dispatch]);
 
   // The turn is a single request/response RPC (no streaming runtime), so
   // "sending" is simply whether that call is in flight.
@@ -261,6 +305,7 @@ export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflo
     sending,
     proposal,
     messages,
+    displayMessages,
     toolTimeline,
     liveResponse,
     error,

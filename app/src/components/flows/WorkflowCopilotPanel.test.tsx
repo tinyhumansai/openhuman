@@ -7,10 +7,20 @@ import WorkflowCopilotPanel from './WorkflowCopilotPanel';
 
 vi.mock('../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (key: string) => key }) }));
 
+interface MockMessage {
+  id: string;
+  content: string;
+  sender: 'user' | 'agent';
+  extraMetadata?: { isInterim?: boolean };
+}
+
 const hookState = vi.hoisted(() => ({
   sending: false,
   proposal: null as WorkflowProposal | null,
-  messages: [] as Array<{ id: string; content: string; sender: 'user' | 'agent' }>,
+  // Panel renders `displayMessages` (already interim-filtered upstream by
+  // `useWorkflowBuilderChat`) — kept separate from `messages` in these tests
+  // so a mismatch between the two proves the panel is reading the right field.
+  displayMessages: [] as MockMessage[],
   toolTimeline: [] as ToolTimelineEntry[],
   liveResponse: '',
   error: null as string | null,
@@ -41,7 +51,7 @@ describe('WorkflowCopilotPanel', () => {
   beforeEach(() => {
     hookState.sending = false;
     hookState.proposal = null;
-    hookState.messages = [];
+    hookState.displayMessages = [];
     hookState.toolTimeline = [];
     hookState.liveResponse = '';
     hookState.error = null;
@@ -136,7 +146,7 @@ describe('WorkflowCopilotPanel', () => {
   });
 
   it('renders the conversation transcript (user + agent turns)', () => {
-    hookState.messages = [
+    hookState.displayMessages = [
       { id: 'm1', content: 'add a Slack step', sender: 'user' },
       { id: 'm2', content: 'Done — proposed a Slack notification.', sender: 'agent' },
     ];
@@ -155,6 +165,41 @@ describe('WorkflowCopilotPanel', () => {
     );
     // With a transcript present, the empty-state hint is gone.
     expect(screen.queryByTestId('workflow-copilot-empty')).not.toBeInTheDocument();
+  });
+
+  it('does not render an isInterim agent message as a bubble, only the terminal one', () => {
+    // The panel only ever renders `displayMessages` — the same filtered set
+    // `useWorkflowBuilderChat` computes from the raw transcript (isInterim
+    // agent messages dropped since that narration already streams live via
+    // the tool timeline / live text). Mirror that filter here so this test
+    // documents (and would catch a regression in) the composition: an
+    // isInterim message must never reach the panel as a bubble, while the
+    // terminal (non-interim) answer still does.
+    const raw: MockMessage[] = [
+      { id: 'm1', content: 'build me a Slack digest', sender: 'user' },
+      {
+        id: 'm2',
+        content: 'Let me check your calendar first.',
+        sender: 'agent',
+        extraMetadata: { isInterim: true },
+      },
+      { id: 'm3', content: 'Done — proposed a Slack notification.', sender: 'agent' },
+    ];
+    hookState.displayMessages = raw.filter(m => m.sender === 'user' || !m.extraMetadata?.isInterim);
+
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+    expect(screen.queryByText('Let me check your calendar first.')).not.toBeInTheDocument();
+    expect(screen.getByTestId('workflow-copilot-agent')).toHaveTextContent(
+      'Done — proposed a Slack notification.'
+    );
   });
 
   it('renders the shared tool timeline + streaming reply during a builder turn', () => {
