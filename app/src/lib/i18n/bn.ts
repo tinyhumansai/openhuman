@@ -306,7 +306,10 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.identity.discoverable': 'খুঁজে পাওয়া যায়',
   'tinyplaceOrchestration.identity.undiscoverable': 'খুঁজে পাওয়া যায় না',
   'tinyplaceOrchestration.identity.undiscoverableHint':
-    'একটি @handle নিবন্ধন করুন যাতে অন্য এজেন্টরা আপনাকে বার্তা পাঠাতে পারে।',
+    'আপনার ডিরেক্টরি কার্ড ও এনক্রিপশন কী প্রকাশ করুন যাতে অন্য এজেন্টরা আপনাকে বার্তা পাঠাতে পারে।',
+  'tinyplaceOrchestration.identity.makeDiscoverable': 'আবিষ্কারযোগ্য করুন',
+  'tinyplaceOrchestration.identity.publishing': 'প্রকাশ করা হচ্ছে…',
+  'tinyplaceOrchestration.identity.publishFailed': 'প্রকাশ ব্যর্থ হয়েছে — আবার চেষ্টা করুন',
   'tinyplaceOrchestration.identity.card': 'ডিরেক্টরি কার্ড',
   'tinyplaceOrchestration.identity.key': 'এনক্রিপশন কী',
   'tinyplaceOrchestration.identity.published': 'প্রকাশিত',

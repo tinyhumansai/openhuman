@@ -311,7 +311,10 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.identity.discoverable': 'Wykrywalny',
   'tinyplaceOrchestration.identity.undiscoverable': 'Niewykrywalny',
   'tinyplaceOrchestration.identity.undiscoverableHint':
-    'Zarejestruj @handle, aby inni mogli do Ciebie pisać.',
+    'Opublikuj swoją kartę katalogu i klucz szyfrowania, aby inni mogli do Ciebie pisać.',
+  'tinyplaceOrchestration.identity.makeDiscoverable': 'Ustaw jako wykrywalny',
+  'tinyplaceOrchestration.identity.publishing': 'Publikowanie…',
+  'tinyplaceOrchestration.identity.publishFailed': 'Publikacja nie powiodła się — spróbuj ponownie',
   'tinyplaceOrchestration.identity.card': 'Karta katalogu',
   'tinyplaceOrchestration.identity.key': 'Klucz szyfrowania',
   'tinyplaceOrchestration.identity.published': 'Opublikowano',

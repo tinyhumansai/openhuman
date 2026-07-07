@@ -307,7 +307,10 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.identity.discoverable': 'Dapat ditemukan',
   'tinyplaceOrchestration.identity.undiscoverable': 'Tidak dapat ditemukan',
   'tinyplaceOrchestration.identity.undiscoverableHint':
-    'Daftarkan @handle agar rekan dapat mengirimi Anda pesan.',
+    'Terbitkan kartu direktori dan kunci enkripsi Anda agar rekan dapat mengirimi Anda pesan.',
+  'tinyplaceOrchestration.identity.makeDiscoverable': 'Jadikan dapat ditemukan',
+  'tinyplaceOrchestration.identity.publishing': 'Menerbitkan…',
+  'tinyplaceOrchestration.identity.publishFailed': 'Gagal menerbitkan — coba lagi',
   'tinyplaceOrchestration.identity.card': 'Kartu direktori',
   'tinyplaceOrchestration.identity.key': 'Kunci enkripsi',
   'tinyplaceOrchestration.identity.published': 'Diterbitkan',

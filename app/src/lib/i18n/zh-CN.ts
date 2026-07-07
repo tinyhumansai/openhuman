@@ -287,7 +287,10 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.identity.discoverable': '可被发现',
   'tinyplaceOrchestration.identity.undiscoverable': '不可被发现',
   'tinyplaceOrchestration.identity.undiscoverableHint':
-    '注册一个 @handle，以便其他代理可以给你发消息。',
+    '发布你的目录卡片和加密密钥，以便其他代理可以给你发消息。',
+  'tinyplaceOrchestration.identity.makeDiscoverable': '设为可被发现',
+  'tinyplaceOrchestration.identity.publishing': '正在发布…',
+  'tinyplaceOrchestration.identity.publishFailed': '发布失败 — 请重试',
   'tinyplaceOrchestration.identity.card': '目录卡片',
   'tinyplaceOrchestration.identity.key': '加密密钥',
   'tinyplaceOrchestration.identity.published': '已发布',

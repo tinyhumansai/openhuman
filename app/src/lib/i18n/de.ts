@@ -313,7 +313,11 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.identity.discoverable': 'Auffindbar',
   'tinyplaceOrchestration.identity.undiscoverable': 'Nicht auffindbar',
   'tinyplaceOrchestration.identity.undiscoverableHint':
-    'Registriere ein @handle, damit Peers dir schreiben können.',
+    'Veröffentliche deine Verzeichniskarte und deinen Verschlüsselungsschlüssel, damit Peers dir schreiben können.',
+  'tinyplaceOrchestration.identity.makeDiscoverable': 'Auffindbar machen',
+  'tinyplaceOrchestration.identity.publishing': 'Wird veröffentlicht…',
+  'tinyplaceOrchestration.identity.publishFailed':
+    'Veröffentlichung fehlgeschlagen — erneut versuchen',
   'tinyplaceOrchestration.identity.card': 'Verzeichniskarte',
   'tinyplaceOrchestration.identity.key': 'Verschlüsselungsschlüssel',
   'tinyplaceOrchestration.identity.published': 'Veröffentlicht',

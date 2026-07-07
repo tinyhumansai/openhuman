@@ -309,7 +309,10 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.identity.discoverable': 'Descobrível',
   'tinyplaceOrchestration.identity.undiscoverable': 'Não descobrível',
   'tinyplaceOrchestration.identity.undiscoverableHint':
-    'Registre um @handle para que outros agentes possam lhe enviar mensagens.',
+    'Publique seu cartão de diretório e sua chave de criptografia para que outros agentes possam lhe enviar mensagens.',
+  'tinyplaceOrchestration.identity.makeDiscoverable': 'Tornar descobrível',
+  'tinyplaceOrchestration.identity.publishing': 'Publicando…',
+  'tinyplaceOrchestration.identity.publishFailed': 'Falha ao publicar — tente novamente',
   'tinyplaceOrchestration.identity.card': 'Cartão de diretório',
   'tinyplaceOrchestration.identity.key': 'Chave de criptografia',
   'tinyplaceOrchestration.identity.published': 'Publicado',

@@ -299,7 +299,10 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.identity.discoverable': 'قابل للاكتشاف',
   'tinyplaceOrchestration.identity.undiscoverable': 'غير قابل للاكتشاف',
   'tinyplaceOrchestration.identity.undiscoverableHint':
-    'سجّل @handle حتى يتمكن الآخرون من مراسلتك.',
+    'انشر بطاقة الدليل ومفتاح التشفير حتى يتمكن الآخرون من مراسلتك.',
+  'tinyplaceOrchestration.identity.makeDiscoverable': 'اجعله قابلاً للاكتشاف',
+  'tinyplaceOrchestration.identity.publishing': 'جارٍ النشر…',
+  'tinyplaceOrchestration.identity.publishFailed': 'فشل النشر — أعد المحاولة',
   'tinyplaceOrchestration.identity.card': 'بطاقة الدليل',
   'tinyplaceOrchestration.identity.key': 'مفتاح التشفير',
   'tinyplaceOrchestration.identity.published': 'منشور',

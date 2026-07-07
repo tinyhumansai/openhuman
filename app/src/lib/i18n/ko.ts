@@ -303,7 +303,10 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.identity.discoverable': '검색 가능',
   'tinyplaceOrchestration.identity.undiscoverable': '검색 불가',
   'tinyplaceOrchestration.identity.undiscoverableHint':
-    '다른 에이전트가 메시지를 보낼 수 있도록 @handle을 등록하세요.',
+    '다른 에이전트가 메시지를 보낼 수 있도록 디렉터리 카드와 암호화 키를 게시하세요.',
+  'tinyplaceOrchestration.identity.makeDiscoverable': '검색 가능하게 만들기',
+  'tinyplaceOrchestration.identity.publishing': '게시 중…',
+  'tinyplaceOrchestration.identity.publishFailed': '게시 실패 — 다시 시도하세요',
   'tinyplaceOrchestration.identity.card': '디렉터리 카드',
   'tinyplaceOrchestration.identity.key': '암호화 키',
   'tinyplaceOrchestration.identity.published': '게시됨',
