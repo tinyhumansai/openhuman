@@ -329,5 +329,54 @@ describe('useWorkflowBuilderChat', () => {
         expect.objectContaining({ type: 'loadThreadMessages' })
       );
     });
+
+    it('does not rehydrate a thread this hook just created when seedThreadId echoes it back', async () => {
+      // Mirrors the real wiring: `WorkflowCopilotPanel` reports every
+      // `threadId` change back up via `onThreadIdChange`, and `FlowCanvasPage`
+      // re-passes that straight back in as `seedThreadId` on the next render.
+      // A first send() creates a fresh thread; the resulting re-render must
+      // NOT trigger a rehydrate for it — that would race the in-flight turn
+      // and `loadThreadMessages.fulfilled` would wipe the just-appended
+      // message(s) back out of the transcript.
+      const { result, rerender } = renderHook(
+        ({ seedThreadId }: { seedThreadId?: string | null }) =>
+          useWorkflowBuilderChat(seedThreadId),
+        { initialProps: { seedThreadId: undefined as string | null | undefined } }
+      );
+
+      await act(async () => {
+        await result.current.send({
+          displayText: 'hi',
+          request: { mode: 'create', instruction: 'x' },
+        });
+      });
+      expect(result.current.threadId).toBe('builder-1');
+
+      dispatch.mockClear();
+      rerender({ seedThreadId: 'builder-1' });
+
+      expect(dispatch).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'loadThreadMessages' })
+      );
+      expect(dispatch).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'fetchAndHydrateTurnState' })
+      );
+      expect(dispatch).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'fetchAndHydrateTurnHistory' })
+      );
+    });
+
+    it('still rehydrates a genuinely pre-existing seed thread this hook did not create', () => {
+      // A different thread id than any this hook instance created via
+      // send() — the normal "resume a persisted copilot thread on mount" case
+      // — must still rehydrate.
+      renderHook(() => useWorkflowBuilderChat('previously-persisted-thread'));
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'loadThreadMessages',
+          threadId: 'previously-persisted-thread',
+        })
+      );
+    });
   });
 });
