@@ -355,6 +355,8 @@ pub fn latest_message_preview(
         .query_row(
             "SELECT body FROM messages
                WHERE agent_id = ?1 AND session_id = ?2
+                 AND (event_kind IS NULL
+                      OR event_kind NOT IN ('status', 'lifecycle', 'unknown'))
                ORDER BY timestamp DESC, seq DESC LIMIT 1",
             params![agent_id, session_id],
             |row| row.get(0),
@@ -390,6 +392,8 @@ pub fn list_messages_by_session(
                 "SELECT id, agent_id, session_id, chat_kind, role, body, timestamp, seq,
                         event_kind, tool_name, call_id
                    FROM messages WHERE session_id = ?1 AND timestamp < ?2
+                     AND (event_kind IS NULL
+                          OR event_kind NOT IN ('status', 'lifecycle', 'unknown'))
                    ORDER BY timestamp DESC, seq DESC LIMIT ?3",
             )?;
             let rows = stmt
@@ -402,6 +406,8 @@ pub fn list_messages_by_session(
                 "SELECT id, agent_id, session_id, chat_kind, role, body, timestamp, seq,
                         event_kind, tool_name, call_id
                    FROM messages WHERE session_id = ?1
+                     AND (event_kind IS NULL
+                          OR event_kind NOT IN ('status', 'lifecycle', 'unknown'))
                    ORDER BY timestamp DESC, seq DESC LIMIT ?2",
             )?;
             let rows = stmt
@@ -455,7 +461,9 @@ fn map_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<OrchestrationSes
 pub fn unread_count(conn: &Connection, session_id: &str) -> Result<i64> {
     let cursor = kv_get(conn, &read_cursor_key(session_id))?.unwrap_or_default();
     Ok(conn.query_row(
-        "SELECT COUNT(*) FROM messages WHERE session_id = ?1 AND timestamp > ?2",
+        "SELECT COUNT(*) FROM messages WHERE session_id = ?1 AND timestamp > ?2
+             AND (event_kind IS NULL
+                  OR event_kind NOT IN ('status', 'lifecycle', 'unknown'))",
         params![session_id, cursor],
         |row| row.get(0),
     )?)
@@ -895,6 +903,52 @@ mod tests {
 
             // Scoped to (agent, session): a different session is not returned.
             assert_eq!(latest_message_preview(conn, "@a", "other")?, None);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn status_lifecycle_unknown_rows_are_hidden_from_thread_and_unread() {
+        let tmp = tempfile::tempdir().unwrap();
+        with_connection(tmp.path(), |conn| {
+            upsert_session(conn, &session("@a", "h1", 1))?;
+
+            // A v1 row (no event_kind) and typed content rows stay visible;
+            // status/lifecycle/unknown are persisted (for relay dedup) but must
+            // not surface in the thread or the unread count.
+            let mut plain = msg("v1", "@a", "h1", 1);
+            plain.timestamp = "2026-07-02T00:00:01Z".into();
+            insert_message(conn, &plain)?;
+
+            let mut call = msg("call", "@a", "h1", 2);
+            call.event_kind = Some("tool_call".into());
+            call.timestamp = "2026-07-02T00:00:02Z".into();
+            insert_message(conn, &call)?;
+
+            for (id, kind, seq) in [
+                ("st", "status", 3),
+                ("lc", "lifecycle", 4),
+                ("uk", "unknown", 5),
+            ] {
+                let mut hidden = msg(id, "@a", "h1", seq);
+                hidden.event_kind = Some(kind.into());
+                hidden.timestamp = format!("2026-07-02T00:00:0{seq}Z");
+                insert_message(conn, &hidden)?;
+            }
+
+            let thread = list_messages_by_session(conn, "h1", 50, None)?;
+            let ids: Vec<&str> = thread.iter().map(|m| m.id.as_str()).collect();
+            assert_eq!(ids, vec!["v1", "call"], "only v1 + typed content rows");
+
+            // Unread (cursor at 0) counts the two visible rows, not the 3 hidden.
+            assert_eq!(unread_count(conn, "h1")?, 2);
+
+            // Roster preview skips the hidden rows → newest visible is the call.
+            assert_eq!(
+                latest_message_preview(conn, "@a", "h1")?.as_deref(),
+                Some("hi"),
+            );
             Ok(())
         })
         .unwrap();
