@@ -260,17 +260,40 @@ fn harness_type_for(source: &str) -> Option<String> {
     matches!(source, "claude" | "codex" | "gemini").then(|| source.to_string())
 }
 
-/// Coarse instance status for the roster dot, derived from activity. Peer
-/// instances carry no true run-state yet, so today an instance is `idle` when it
-/// has recent traffic and `stopped` otherwise. The richer
-/// running/waiting-approval/errored states are reserved for the attention-queue
-/// and run-state follow-ups; the renderer's `InstanceStatusDot` already models
-/// all five.
-fn derive_status(active: bool) -> &'static str {
-    if active {
-        "idle"
-    } else {
-        "stopped"
+/// Coarse instance status for the roster dot. Reads the persisted v2 run-state
+/// (`status.state`) when present, mapping it to the renderer's five
+/// `InstanceStatus` values; falls back to recency for v1/legacy sessions that
+/// carry no run-state.
+///
+/// Staleness fallback: a `running`/`running_tool` session that has gone silent
+/// (no recent traffic → `active == false`) is reported `stopped`, so a crashed
+/// instance that never emitted a terminal `status` doesn't sit forever on a stuck
+/// green dot. `waiting_approval`/`errored`/`stopped`/`idle` are honoured as-is —
+/// they are already terminal/blocked states, not "silently alive" ones.
+fn derive_status(status_state: Option<&str>, active: bool) -> &'static str {
+    match status_state {
+        // Actively working — but downgrade to stopped if the session has gone
+        // silent (staleness fallback).
+        Some("running") | Some("running_tool") => {
+            if active {
+                "running"
+            } else {
+                "stopped"
+            }
+        }
+        Some("waiting_approval") => "waiting-approval",
+        Some("idle") => "idle",
+        Some("stopped") => "stopped",
+        Some("errored") => "errored",
+        // No persisted run-state (v1/legacy) or an unrecognised value → the
+        // original recency heuristic.
+        _ => {
+            if active {
+                "idle"
+            } else {
+                "stopped"
+            }
+        }
     }
 }
 
@@ -297,7 +320,7 @@ fn summarize(
     let chat_kind = chat_kind_for_session(&session.session_id);
     let active = pinned || is_active(&session.last_message_at);
     let harness_type = harness_type_for(&session.source);
-    let status = derive_status(active).to_string();
+    let status = derive_status(session.status_state.as_deref(), active).to_string();
     SessionSummary {
         chat_kind: chat_kind.as_str().to_string(),
         active,
@@ -333,13 +356,26 @@ fn handle_sessions_list(_params: Map<String, Value>) -> ControllerFuture {
                     _ => {}
                 }
                 let pinned = matches!(session.session_id.as_str(), "master" | "subconscious");
-                // Roster task line: latest message preview for real instance
-                // windows; the pinned windows don't need one.
+                // Roster task line: prefer the v2 `status.detail` (the harness's own
+                // current-activity line / active tool) when present; otherwise fall
+                // back to the latest message preview. Pinned windows carry neither.
                 let current_task = if pinned {
                     None
                 } else {
-                    store::latest_message_preview(conn, &session.agent_id, &session.session_id)?
-                        .map(|body| task_preview(&body))
+                    match session
+                        .current_detail
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|d| !d.is_empty())
+                    {
+                        Some(detail) => Some(task_preview(detail)),
+                        None => store::latest_message_preview(
+                            conn,
+                            &session.agent_id,
+                            &session.session_id,
+                        )?
+                        .map(|body| task_preview(&body)),
+                    }
                 };
                 out.push(summarize(session, unread, pinned, current_task));
             }
@@ -382,6 +418,7 @@ fn handle_sessions_create(params: Map<String, Value>) -> ControllerFuture {
             last_seq: 0,
             created_at: now.clone(),
             last_message_at: now.clone(),
+            ..Default::default()
         };
         store::with_connection(&config.workspace_dir, |conn| {
             store::upsert_session(conn, &session)
@@ -398,7 +435,7 @@ fn pinned_placeholder(session_id: &str) -> SessionSummary {
         agent_id: session_id.to_string(),
         source: "orchestration".to_string(),
         harness_type: None,
-        status: derive_status(true).to_string(),
+        status: derive_status(None, true).to_string(),
         current_task: None,
         label: None,
         workspace: None,
@@ -526,6 +563,7 @@ fn handle_send_master_message(params: Map<String, Value>) -> ControllerFuture {
                     last_seq: 0,
                     created_at: now.clone(),
                     last_message_at: now.clone(),
+                    ..Default::default()
                 },
             )?;
             store::insert_message(
@@ -539,6 +577,7 @@ fn handle_send_master_message(params: Map<String, Value>) -> ControllerFuture {
                     body: body.clone(),
                     timestamp: now.clone(),
                     seq: 0,
+                    ..Default::default()
                 },
             )
         });
@@ -854,6 +893,7 @@ mod tests {
             last_seq: 0,
             created_at: now.clone(),
             last_message_at: now,
+            ..Default::default()
         };
         let resolved = store::with_connection(&config.workspace_dir, |conn| {
             store::upsert_session(conn, &session)?;
@@ -917,9 +957,59 @@ mod tests {
     }
 
     #[test]
-    fn status_is_idle_when_active_else_stopped() {
-        assert_eq!(derive_status(true), "idle");
-        assert_eq!(derive_status(false), "stopped");
+    fn status_falls_back_to_recency_without_persisted_state() {
+        // v1/legacy sessions carry no run-state → the original recency heuristic.
+        assert_eq!(derive_status(None, true), "idle");
+        assert_eq!(derive_status(None, false), "stopped");
+        // An unrecognised persisted value also falls back to recency.
+        assert_eq!(derive_status(Some("weird"), true), "idle");
+    }
+
+    #[test]
+    fn status_maps_persisted_v2_run_state() {
+        assert_eq!(derive_status(Some("running"), true), "running");
+        assert_eq!(derive_status(Some("running_tool"), true), "running");
+        assert_eq!(
+            derive_status(Some("waiting_approval"), true),
+            "waiting-approval"
+        );
+        assert_eq!(derive_status(Some("idle"), true), "idle");
+        assert_eq!(derive_status(Some("stopped"), true), "stopped");
+        assert_eq!(derive_status(Some("errored"), true), "errored");
+        // waiting/errored are honoured even when the session has gone stale.
+        assert_eq!(derive_status(Some("errored"), false), "errored");
+        assert_eq!(
+            derive_status(Some("waiting_approval"), false),
+            "waiting-approval"
+        );
+    }
+
+    #[test]
+    fn status_staleness_downgrades_silent_running_to_stopped() {
+        // A `running` session that has gone silent (no recent traffic) must not
+        // sit on a stuck green dot — it downgrades to stopped.
+        assert_eq!(derive_status(Some("running"), false), "stopped");
+        assert_eq!(derive_status(Some("running_tool"), false), "stopped");
+    }
+
+    #[test]
+    fn summarize_reads_persisted_run_state_and_detail() {
+        let session = OrchestrationSession {
+            session_id: "w2".to_string(),
+            agent_id: "@peer".to_string(),
+            source: "claude".to_string(),
+            last_seq: 3,
+            created_at: "2020-01-01T00:00:00Z".to_string(),
+            // Recent enough to be "active".
+            last_message_at: chrono::Utc::now().to_rfc3339(),
+            status_state: Some("waiting_approval".to_string()),
+            current_detail: Some("approve rm -rf".to_string()),
+            ..Default::default()
+        };
+        // current_task is threaded from the handler (status.detail preferred there).
+        let summary = summarize(session, 0, false, Some("approve rm -rf".to_string()));
+        assert_eq!(summary.status, "waiting-approval");
+        assert_eq!(summary.current_task.as_deref(), Some("approve rm -rf"));
     }
 
     #[test]
@@ -945,6 +1035,7 @@ mod tests {
             created_at: "2020-01-01T00:00:00Z".to_string(),
             // Stale timestamp → not active → stopped.
             last_message_at: "2020-01-01T00:00:00Z".to_string(),
+            ..Default::default()
         };
         let summary = summarize(session, 2, false, Some("drafting cards".to_string()));
         assert_eq!(summary.harness_type.as_deref(), Some("claude"));
