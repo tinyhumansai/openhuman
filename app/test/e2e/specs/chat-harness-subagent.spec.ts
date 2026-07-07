@@ -10,12 +10,24 @@
  * to a sub-agent which runs the agent harness loop a level deeper —
  * which means the LLM gets hit at least once more for the sub-agent.
  *
+ * Scripting: `llmKeywordRules` (content-addressed, never depleted).
+ * A prior version of this spec used the `llmForcedResponses` FIFO but
+ * that queue drains one entry per `/chat/completions` regardless of who
+ * called (#4517): the sub-agent's own harness loop plus any ancillary
+ * summarisation/memory-prep call shifts responses out of order and the
+ * scripted final canary lands on the wrong turn (or never renders).
+ * Keyword rules route each call by a substring of its latest
+ * user/tool message, so extra calls that don't match any rule fall
+ * through to the mock's dynamic default — the scripted turns are never
+ * consumed by an off-turn caller.
+ *
  * What this spec scripts and verifies:
  *
- *   1. Configure `llmForcedResponses` with THREE responses in order:
- *        A) orchestrator turn — emits `research` tool_call
- *        B) researcher turn   — answers with a plain text finding
- *        C) orchestrator turn — final synthesis text (canary marker)
+ *   1. Configure `llmKeywordRules` with three rules keyed on
+ *      per-turn-unique tokens:
+ *        A) orchestrator turn (user PROMPT)   — emits `research` tool_call
+ *        B) researcher turn (delegate prompt) — plain text finding
+ *        C) orchestrator turn (tool result)   — final synthesis (canary)
  *
  *   2. Send the user prompt and watch the runtime:
  *        UI:
@@ -52,27 +64,41 @@ import { navigateViaHash } from '../helpers/shared-flows';
 import { getRequestLog, setMockBehavior, startMockServer, stopMockServer } from '../mock-server';
 
 const USER_ID = 'e2e-chat-harness-subagent';
-const PROMPT = 'Research the answer to life and tell me a marker phrase.';
+// Per-turn tokens chosen so pickProbeText's substring match routes each
+// call to exactly one rule regardless of any extra ancillary
+// tool/context/summary call the harness may issue on top of the three
+// happy-path turns.
+const PROMPT = 'Please delegate a llama-research task and return the marker.';
+const DELEGATE_PROMPT = 'Return the coded marker phrase.';
+const RESEARCHER_REPLY = 'The researcher trace signal is FORTY-TWO.';
 const CANARY_FINAL = 'subagent-canary-final-7afe2';
-const RESEARCHER_REPLY = 'The researcher answer is 42.';
 
-// Three forced responses, popped in order by the mock LLM streamer.
-const FORCED_RESPONSES = [
-  // 1. Orchestrator: emit a research tool call.
+// Content-addressed keyword rules — never depleted, immune to extra
+// ancillary /chat/completions calls (#4517).
+const KEYWORD_RULES = [
+  // Sub-agent turn — dispatch_subagent renders the arg as "Task:\n<arg>"
+  // (archetype_delegation.rs render_structured_handoff), so DELEGATE_PROMPT
+  // surfaces verbatim in the researcher's user message.
+  { keyword: 'coded marker phrase', content: RESEARCHER_REPLY },
+  // Orchestrator's post-delegation turn — the sub-agent's output is handed
+  // back as the `role: tool` message content
+  // (dispatch.rs `ToolResult::success(outcome.output)`).
+  { keyword: 'researcher trace signal', content: `Done. The result is: ${CANARY_FINAL}` },
+  // Orchestrator's initial turn — the fire-and-forget thread-title-gen
+  // call (threadSlice.ts, tools: None) sees the same probe, but
+  // chat_with_system consumes `content` and ignores unexpected tool_calls,
+  // so a delegation-triggering rule here is safe for both callers.
   {
-    content: '',
+    keyword: 'llama-research',
+    content: 'Delegating to researcher.',
     toolCalls: [
       {
         id: 'call_research_1',
         name: 'research',
-        arguments: JSON.stringify({ prompt: 'Tell me a marker phrase' }),
+        arguments: JSON.stringify({ prompt: DELEGATE_PROMPT }),
       },
     ],
   },
-  // 2. Researcher sub-agent: produces a text answer.
-  { content: RESEARCHER_REPLY },
-  // 3. Orchestrator final synthesis containing the canary.
-  { content: `Done. The result is: ${CANARY_FINAL}` },
 ];
 
 interface RuntimeSnapshot {
@@ -132,14 +158,14 @@ describe('Chat harness — orchestrator → subagent flow', () => {
       '[chat-harness-subagent] Disabled super context for deterministic scripted LLM calls'
     );
 
-    setMockBehavior('llmForcedResponses', JSON.stringify(FORCED_RESPONSES));
+    setMockBehavior('llmKeywordRules', JSON.stringify(KEYWORD_RULES));
     // Faster streaming for non-tool-call responses so this spec doesn't
     // need 30s of patience for three full streams.
     setMockBehavior('llmStreamChunkDelayMs', '10');
   });
 
   after(async () => {
-    setMockBehavior('llmForcedResponses', '');
+    setMockBehavior('llmKeywordRules', '');
     setMockBehavior('llmStreamChunkDelayMs', '');
     await stopMockServer();
   });
