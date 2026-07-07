@@ -3021,7 +3021,9 @@ pub(crate) fn handle_tinyplace_signal_key_status(_params: Map<String, Value>) ->
                 false
             }
             Err(_) => {
-                log::warn!("{LOG_PREFIX} signal_key_status directory card fetch timed out (relay slow)");
+                log::warn!(
+                    "{LOG_PREFIX} signal_key_status directory card fetch timed out (relay slow)"
+                );
                 false
             }
         };
