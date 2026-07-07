@@ -465,6 +465,7 @@ pub async fn record_subconscious_directive(config: &Config, directive_id: i64, t
                 last_seq: directive_id,
                 created_at: now.clone(),
                 last_message_at: now.clone(),
+                ..Default::default()
             },
         )?;
         store::insert_message(
@@ -478,6 +479,7 @@ pub async fn record_subconscious_directive(config: &Config, directive_id: i64, t
                 body: text.to_string(),
                 timestamp: now.clone(),
                 seq: directive_id,
+                ..Default::default()
             },
         )
     }) {
@@ -668,6 +670,7 @@ impl ProductionRuntime {
                         last_seq: 0,
                         created_at: now.clone(),
                         last_message_at: now.clone(),
+                        ..Default::default()
                     },
                 )?;
                 store::insert_message(
@@ -681,6 +684,7 @@ impl ProductionRuntime {
                         body: body.to_string(),
                         timestamp: now.clone(),
                         seq,
+                        ..Default::default()
                     },
                 )
             })
@@ -1150,6 +1154,7 @@ mod tests {
             last_seq: 1,
             created_at: "2026-07-06T00:00:00Z".into(),
             last_message_at: at.into(),
+            ..Default::default()
         };
         let message = |id: &str, session: &str, kind: ChatKind, at: &str| OrchestrationMessage {
             id: id.into(),
@@ -1160,6 +1165,7 @@ mod tests {
             body: "hello".into(),
             timestamp: at.into(),
             seq: 1,
+            ..Default::default()
         };
 
         let signals = store::with_connection(&config.workspace_dir, |conn| {
@@ -1300,6 +1306,7 @@ mod tests {
             body: "hello".into(),
             timestamp: format!("2026-07-02T00:00:{seq:02}Z"),
             seq,
+            ..Default::default()
         }
     }
 
@@ -1657,6 +1664,7 @@ mod tests {
                     last_seq: 1,
                     created_at: "now".into(),
                     last_message_at: "now".into(),
+                    ..Default::default()
                 },
             )?;
             store::insert_message(conn, &msg("h1", 1))?;
