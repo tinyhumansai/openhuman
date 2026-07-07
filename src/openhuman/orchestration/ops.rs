@@ -1130,6 +1130,27 @@ pub(super) fn gather_unread_signals(
     Ok(out)
 }
 
+/// Gather remote-approval attention signals from the orchestration store: every
+/// session whose persisted v2 run-state is `waiting_approval` (Phase 1 stamps
+/// this — plus the prompt in `current_detail` and the in-flight `active_call_id`
+/// — when a peer harness emits an `approval_request`). Mirrors
+/// [`gather_unread_signals`]: pure store read, the pure mapper
+/// [`super::attention::remote_approval_signals`] does the filtering.
+pub(super) fn gather_remote_approval_signals(
+    conn: &rusqlite::Connection,
+) -> anyhow::Result<Vec<super::attention::RemoteApprovalSignal>> {
+    let signals = super::attention::remote_approval_signals(store::list_sessions(conn)?);
+    for sig in &signals {
+        log::debug!(
+            target: LOG,
+            "[orchestration_rpc] attention.remote_approval session_id={} has_call={}",
+            sig.session_id,
+            sig.active_call_id.is_some(),
+        );
+    }
+    Ok(signals)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

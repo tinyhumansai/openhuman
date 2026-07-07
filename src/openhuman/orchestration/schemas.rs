@@ -139,7 +139,7 @@ fn schema_for(function: &str) -> ControllerSchema {
         "orchestration_attention" => ControllerSchema {
             namespace: "orchestration",
             function: "attention",
-            description: "Aggregate the \"needs you\" signals across the hub — pending tool approvals, agent runs awaiting input, and instances with unread messages — into one priority-ordered queue.",
+            description: "Aggregate the \"needs you\" signals across the hub — pending local tool approvals, remote sessions parked on an approval, agent runs awaiting input, and instances with unread messages — into one priority-ordered queue.",
             inputs: vec![],
             outputs: vec![json_output("result", "AttentionQueue { items: AttentionItem[], counts }.")],
         },
@@ -687,7 +687,22 @@ fn handle_attention(_params: Map<String, Value>) -> ControllerFuture {
             }
         };
 
-        let queue = attention::assemble_attention(approvals, needs_input, unread);
+        // 4. Remote agent sessions parked on a tool-approval decision (Phase 1's
+        //    persisted `waiting_approval` run-state). Best-effort like the unread
+        //    read: a transient local-DB hiccup must not sink the other sources.
+        //    These fold into the Approval kind (see `assemble_attention`).
+        let remote_approvals = match store::with_connection(
+            &config.workspace_dir,
+            super::ops::gather_remote_approval_signals,
+        ) {
+            Ok(remote_approvals) => remote_approvals,
+            Err(e) => {
+                log::warn!(target: LOG, "[orchestration_rpc] attention.remote_approvals_failed: {e}");
+                Vec::new()
+            }
+        };
+
+        let queue = attention::assemble_attention(approvals, needs_input, unread, remote_approvals);
         log::debug!(
             target: LOG,
             "[orchestration_rpc] attention.exit total={} approvals={} needs_input={} unread={}",
