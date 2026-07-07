@@ -32,6 +32,7 @@ vi.mock('../../lib/orchestration/orchestrationClient', async importOriginal => {
       status: vi.fn(),
       selfIdentity: vi.fn(),
       relayInfo: vi.fn(),
+      attention: vi.fn(),
     },
   };
 });
@@ -54,6 +55,7 @@ const markReadMock = vi.mocked(orchestrationClient.markRead);
 const statusMock = vi.mocked(orchestrationClient.status);
 const selfIdentityMock = vi.mocked(orchestrationClient.selfIdentity);
 const relayInfoMock = vi.mocked(orchestrationClient.relayInfo);
+const attentionMock = vi.mocked(orchestrationClient.attention);
 
 const pairingListMock = vi.mocked(apiClient.orchestrationPairing.list);
 const pairingLinkMock = vi.mocked(apiClient.orchestrationPairing.linkSession);
@@ -120,6 +122,10 @@ describe('TinyPlaceOrchestrationTab', () => {
     relayInfoMock.mockResolvedValue({
       baseUrl: 'https://staging-api.tiny.place',
       network: 'staging',
+    });
+    attentionMock.mockResolvedValue({
+      items: [],
+      counts: { total: 0, approvals: 0, needsInput: 0, unread: 0 },
     });
     pairingListMock.mockResolvedValue({
       records: [],
@@ -517,6 +523,54 @@ describe('TinyPlaceOrchestrationTab', () => {
     await waitFor(() =>
       expect(sessionsCreateMock).toHaveBeenCalledWith({ agentId: ACCEPTED_CONTACT_ADDRESS })
     );
+  });
+
+  it('renders the attention zone and routes an open-session item to that chat', async () => {
+    sessionsListMock.mockResolvedValue({
+      sessions: [
+        ...PINNED_SESSIONS,
+        {
+          sessionId: 'app-session-1',
+          agentId: '@worker-alpha',
+          source: 'openhuman-app',
+          label: 'OpenHuman app session',
+          chatKind: 'session',
+          lastMessageAt: '2026-07-01T12:02:00.000Z',
+          unread: 2,
+          active: true,
+          pinned: false,
+          status: 'idle' as const,
+        },
+      ],
+    });
+    attentionMock.mockResolvedValue({
+      items: [
+        {
+          id: 'unread:app-session-1',
+          kind: 'unread',
+          instanceId: 'app-session-1',
+          title: 'Worker Alpha',
+          count: 2,
+          action: { type: 'open-session', sessionId: 'app-session-1' },
+        },
+      ],
+      counts: { total: 1, approvals: 0, needsInput: 0, unread: 1 },
+    });
+
+    render(<TinyPlaceOrchestrationTab />);
+
+    // The zone surfaces the item; acting on it opens the target session.
+    await screen.findByTestId('attention-item-unread:app-session-1');
+    fireEvent.click(screen.getByTestId('attention-item-action'));
+
+    await waitFor(() => expect(markReadMock).toHaveBeenCalledWith('app-session-1'));
+  });
+
+  it('shows the New instance launch shell as a disabled affordance', async () => {
+    render(<TinyPlaceOrchestrationTab />);
+
+    const launch = await screen.findByTestId('tinyplace-new-instance');
+    expect(launch).toBeDisabled();
   });
 
   it('threads a composed message under the selected session', async () => {

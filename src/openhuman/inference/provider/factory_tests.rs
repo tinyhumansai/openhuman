@@ -2710,3 +2710,44 @@ fn enforce_local_only_inference_errors_on_external_when_local_only() {
     crate::openhuman::security::live_policy::reload_privacy(PrivacyMode::Standard)
         .expect("policy installed");
 }
+
+// ── Phase 1 (#4249): `create_chat_model` seam ──────────────────────────────
+// The crate `ChatModel` factory wraps the resolved `Provider` via
+// `ProviderModel` with zero behaviour change; a one-shot `invoke` must
+// round-trip through the underlying provider.
+#[tokio::test]
+async fn create_chat_model_wraps_provider_and_round_trips() {
+    use crate::openhuman::inference::provider::traits::Provider;
+    use async_trait::async_trait;
+    use std::sync::Arc;
+    use tinyagents::harness::message::Message;
+    use tinyagents::harness::model::{ChatModel, ModelRequest};
+
+    let _guard = crate::openhuman::inference::inference_test_guard();
+
+    struct CannedProvider;
+    #[async_trait]
+    impl Provider for CannedProvider {
+        async fn chat_with_system(
+            &self,
+            _system_prompt: Option<&str>,
+            message: &str,
+            _model: &str,
+            _temperature: f64,
+        ) -> anyhow::Result<String> {
+            Ok(format!("echo: {message}"))
+        }
+    }
+
+    // The factory consults this override under cfg(test), so `create_chat_model`
+    // resolves to the mock without needing configured cloud providers.
+    let _override = test_provider_override::install(Arc::new(CannedProvider));
+    let config = Config::default();
+
+    let model = create_chat_model("chat", &config, 0.3).expect("create_chat_model must build");
+    let response = model
+        .invoke(&(), ModelRequest::new(vec![Message::user("hi there")]))
+        .await
+        .expect("invoke must succeed");
+    assert_eq!(response.text(), "echo: hi there");
+}

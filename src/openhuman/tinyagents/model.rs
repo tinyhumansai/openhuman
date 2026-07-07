@@ -7,7 +7,6 @@
 //! translate the [`ChatResponse`] back into a harness [`ModelResponse`] —
 //! carrying through text, native tool calls, and token usage.
 
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -17,110 +16,15 @@ use tinyagents::harness::model::{
 };
 use tinyagents::harness::tool::{ToolCall as TaToolCall, ToolDelta};
 use tinyagents::harness::usage::Usage;
-use tokio::sync::mpsc::{Sender, UnboundedSender};
+use tokio::sync::mpsc::UnboundedSender;
 
 use super::abort_guard::AbortOnDrop;
-use super::observability::{IterationCursor, ProviderUsageCarry, SubagentScope, ToolNameMap};
-use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::inference::provider::thread_context::{current_thread_id, with_thread_id};
 use crate::openhuman::inference::provider::{
     current_route_slot, with_route_slot, ChatMessage, ChatRequest, ChatResponse, Provider,
-    ProviderDelta,
+    ProviderDelta, UsageInfo,
 };
 use crate::openhuman::tools::ToolSpec;
-
-/// Out-of-band forwarder for progress events that do not yet round-trip through
-/// tinyagents with OpenHuman parity: non-streaming post-hoc reasoning and the
-/// tool-call **start** marker (tool name).
-///
-/// Streaming reasoning now rides tinyagents' native `MessageDelta.reasoning`
-/// channel, and the incremental tool-call **argument** fragments ride the native
-/// `MessageDelta.tool_call` channel (crate `ToolDelta`); both are projected by
-/// [`OpenhumanEventBridge`](super::OpenhumanEventBridge). What remains here is
-/// the split the crate can't express: the crate `ToolDelta` has only
-/// `call_id`/`content` (no `tool_name`), so the tool-call **start** event — the
-/// empty-delta `ToolCallArgsDelta` that carries the tool name and opens the UI
-/// timeline row — is still emitted straight onto the progress sink, and the
-/// learned `call_id → tool_name` map is *shared* with the bridge (via
-/// [`ToolNameMap`]) so it can label the argument fragments it now projects off
-/// the crate stream. This forwarder also still emits non-streaming post-hoc
-/// reasoning (see [`ProviderModel::invoke`]). It shares the bridge's
-/// [`IterationCursor`] so each event is attributed to the right model call.
-/// Parent runs emit the top-level variants; child runs emit the `Subagent`
-/// counterpart for thinking. Tool-arg/start events have no child variant, so
-/// they ride the top-level event.
-#[derive(Clone)]
-pub(super) struct ThinkingForwarder {
-    sink: Sender<AgentProgress>,
-    scope: Option<SubagentScope>,
-    cursor: IterationCursor,
-    /// call_id → tool_name, learned from `ToolCallStart`. Shared with the
-    /// [`OpenhumanEventBridge`](super::OpenhumanEventBridge) so the streamed
-    /// argument fragments (which ride the crate `ToolDelta`, sans name) can be
-    /// labelled with the tool the UI shows.
-    tool_names: ToolNameMap,
-}
-
-impl ThinkingForwarder {
-    pub(super) fn new(
-        sink: Sender<AgentProgress>,
-        scope: Option<SubagentScope>,
-        cursor: IterationCursor,
-        tool_names: ToolNameMap,
-    ) -> Self {
-        Self {
-            sink,
-            scope,
-            cursor,
-            tool_names,
-        }
-    }
-
-    /// Best-effort, non-blocking emit of one reasoning chunk (drops on a full
-    /// channel, matching the streaming text path).
-    fn emit(&self, delta: String) {
-        if delta.is_empty() {
-            return;
-        }
-        let iteration = self.cursor.load(Ordering::SeqCst);
-        let progress = match &self.scope {
-            None => AgentProgress::ThinkingDelta { delta, iteration },
-            Some(s) => AgentProgress::SubagentThinkingDelta {
-                agent_id: s.agent_id.clone(),
-                task_id: s.task_id.clone(),
-                delta,
-                iteration,
-            },
-        };
-        let _ = self.sink.try_send(progress);
-    }
-
-    /// Record the tool name a streaming tool call starts with (into the map
-    /// shared with the bridge, so it can label the argument fragments it
-    /// projects off the crate stream), and emit the start marker — an
-    /// empty-delta `ToolCallArgsDelta` — so consumers see the call begin before
-    /// its arguments arrive (matching the legacy `ProviderDelta::ToolCallStart`
-    /// mapping). The crate `ToolDelta` has no `tool_name` field, so this half of
-    /// the tool-arg contract can't ride the crate stream and stays here.
-    fn note_tool_call(&self, call_id: String, tool_name: String) {
-        self.tool_names
-            .lock()
-            .unwrap()
-            .insert(call_id.clone(), tool_name.clone());
-        tracing::trace!(
-            call_id = call_id.as_str(),
-            tool_name = tool_name.as_str(),
-            child = self.scope.is_some(),
-            "[stream] tool-call start marker (name recorded for crate-stream arg fragments)"
-        );
-        let _ = self.sink.try_send(AgentProgress::ToolCallArgsDelta {
-            call_id,
-            tool_name,
-            delta: String::new(),
-            iteration: self.cursor.load(Ordering::SeqCst),
-        });
-    }
-}
 
 /// Translate a harness [`ModelRequest`] into openhuman's message list + tool
 /// specs (shared by the buffered and streaming paths).
@@ -245,13 +149,14 @@ fn response_to_model_response(
         content.push(block);
     }
     let usage = response.usage.as_ref().map(|u| {
-        // Carry the provider's cached-prefix input count through the crate
-        // `Usage` (it has a `cache_read_tokens` field) so downstream cost
-        // accounting can price it at the cached rate. `Usage::new` seeds
-        // input/output/total; set the cache field on top. (`charged_amount_usd`
-        // has no crate home; the event bridge estimates cost from token counts.)
+        // Carry every token breakdown the crate `Usage` can express so a
+        // standalone `invoke` is usage-faithful (gap G1): cache reads/writes and
+        // reasoning tokens all have crate homes as of tinyagents 1.7. `Usage::new`
+        // seeds input/output/total; set the detail fields on top.
         let mut usage = Usage::new(u.input_tokens, u.output_tokens);
         usage.cache_read_tokens = u.cached_input_tokens;
+        usage.cache_creation_tokens = u.cache_creation_tokens;
+        usage.reasoning_tokens = u.reasoning_tokens;
         usage
     });
     let finish_reason = if tool_calls.is_empty() {
@@ -268,9 +173,76 @@ fn response_to_model_response(
         },
         usage,
         finish_reason: Some(finish_reason.to_string()),
-        raw: None,
+        // The crate `Usage` has no field for the provider's **charged USD** or the
+        // model's **context window**, but `ModelResponse.raw` is exactly "raw
+        // provider metadata preserved for callers who need it" — so stash them
+        // there (gap G1). A standalone `invoke` then round-trips the OpenHuman
+        // managed backend's charged amount + window via
+        // [`usage_info_from_response`], no crate change required. Omitted when the
+        // provider reported neither (keeps non-managed responses byte-clean).
+        raw: openhuman_usage_meta_raw(response.usage.as_ref()),
         resolved_model: None,
     }
+}
+
+/// JSON key under which the model adapter stashes the provider-reported
+/// billing/context metadata that the crate [`Usage`] has no field for
+/// (gap G1). Consumed by [`usage_info_from_response`].
+const OPENHUMAN_USAGE_META_KEY: &str = "openhuman_usage_meta";
+
+/// The two host [`UsageInfo`] fields with no crate [`Usage`] home, ferried
+/// through [`ModelResponse::raw`] so a standalone `invoke` stays usage-faithful.
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+struct OpenhumanUsageMeta {
+    /// Provider-charged amount in USD (`UsageInfo::charged_amount_usd`).
+    #[serde(default)]
+    charged_amount_usd: f64,
+    /// Model context window in tokens (`UsageInfo::context_window`).
+    #[serde(default)]
+    context_window: u64,
+}
+
+/// Build the `ModelResponse.raw` value carrying charged-USD + context-window
+/// metadata, or `None` when the provider reported neither (so responses from
+/// providers that don't surface billing stay `raw: None`).
+fn openhuman_usage_meta_raw(usage: Option<&UsageInfo>) -> Option<serde_json::Value> {
+    let u = usage?;
+    if u.charged_amount_usd <= 0.0 && u.context_window == 0 {
+        return None;
+    }
+    let meta = OpenhumanUsageMeta {
+        charged_amount_usd: u.charged_amount_usd,
+        context_window: u.context_window,
+    };
+    Some(serde_json::json!({ OPENHUMAN_USAGE_META_KEY: meta }))
+}
+
+/// Reconstruct a host [`UsageInfo`] from a crate [`ModelResponse`], recovering
+/// the provider-charged USD + context window the adapter stashed in
+/// [`ModelResponse::raw`] (gap G1). Returns `None` when the response carried no
+/// usage at all.
+///
+/// This is the seam one-shot inference callers use once they move off
+/// `Box<dyn Provider>` (`chat` → `UsageInfo`) onto `Arc<dyn ChatModel>`
+/// (`invoke` → `ModelResponse`): the full host usage record — real token
+/// counts *and* backend-charged USD — survives the crossing.
+pub(crate) fn usage_info_from_response(response: &ModelResponse) -> Option<UsageInfo> {
+    let usage = response.usage.as_ref()?;
+    let meta = response
+        .raw
+        .as_ref()
+        .and_then(|v| v.get(OPENHUMAN_USAGE_META_KEY))
+        .and_then(|v| serde_json::from_value::<OpenhumanUsageMeta>(v.clone()).ok())
+        .unwrap_or_default();
+    Some(UsageInfo {
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        context_window: meta.context_window,
+        cached_input_tokens: usage.cache_read_tokens,
+        cache_creation_tokens: usage.cache_creation_tokens,
+        reasoning_tokens: usage.reasoning_tokens,
+        charged_amount_usd: meta.charged_amount_usd,
+    })
 }
 
 /// Forward one openhuman [`ProviderDelta`]. Visible text, reasoning, and
@@ -278,19 +250,17 @@ fn response_to_model_response(
 /// the [`OpenhumanEventBridge`](super::OpenhumanEventBridge) mirrors them as
 /// progress deltas from the crate stream alone): text/reasoning as
 /// [`MessageDelta`], and each argument fragment as
-/// [`ModelStreamItem::ToolCallDelta`] correlated by `call_id`. The crate
-/// `ToolDelta` has no `tool_name`, so the tool-call **start** marker (which
-/// carries the name and opens the UI timeline row) still rides the out-of-band
-/// [`ThinkingForwarder`]; it also records the name into the map shared with the
-/// bridge so the streamed fragments stay labelled. The model adapter still
-/// assembles the final native tool calls from the `Completed` response (the
-/// `StreamAccumulator` treats it as authoritative), so these fragments are
-/// progress-only — the UI can show the call being composed.
-fn forward_delta(
-    tx: &UnboundedSender<ModelStreamItem>,
-    thinking: Option<&ThinkingForwarder>,
-    delta: ProviderDelta,
-) {
+/// [`ModelStreamItem::ToolCallDelta`] correlated by `call_id`. The tool-call
+/// **start** marker now also rides the native stream: with the crate `ToolDelta`
+/// carrying an optional `tool_name` (G2), the call-opening delta is a
+/// `ToolCallDelta` with the name set and empty content, so the
+/// [`OpenhumanEventBridge`](super::OpenhumanEventBridge) records the name and
+/// opens the UI timeline row off the crate stream alone — no out-of-band
+/// forwarder. The model adapter still assembles the final native tool calls from
+/// the `Completed` response (the `StreamAccumulator` treats it as
+/// authoritative), so these fragments are progress-only — the UI can show the
+/// call being composed.
+fn forward_delta(tx: &UnboundedSender<ModelStreamItem>, delta: ProviderDelta) {
     match delta {
         ProviderDelta::TextDelta { delta } => {
             if !delta.is_empty() {
@@ -305,9 +275,19 @@ fn forward_delta(
             }
         }
         ProviderDelta::ToolCallStart { call_id, tool_name } => {
-            if let Some(forwarder) = thinking {
-                forwarder.note_tool_call(call_id, tool_name);
-            }
+            // Call-opening marker: name set, empty content. Rides the native
+            // crate stream (G2) so the bridge can label the call before its
+            // arguments arrive.
+            tracing::trace!(
+                call_id = call_id.as_str(),
+                tool_name = tool_name.as_str(),
+                "[stream] forwarding tool-call start onto crate ToolCallDelta"
+            );
+            let _ = tx.send(ModelStreamItem::ToolCallDelta(ToolDelta {
+                call_id,
+                content: String::new(),
+                tool_name: Some(tool_name),
+            }));
         }
         ProviderDelta::ToolCallArgsDelta { call_id, delta } => {
             if !delta.is_empty() {
@@ -319,6 +299,7 @@ fn forward_delta(
                 let _ = tx.send(ModelStreamItem::ToolCallDelta(ToolDelta {
                     call_id,
                     content: delta,
+                    tool_name: None,
                 }));
             }
         }
@@ -345,17 +326,8 @@ pub(super) struct ProviderModel {
     model: String,
     temperature: f64,
     max_tokens: Option<u32>,
-    /// When set, the adapter forwards tool-argument progress and post-hoc
-    /// non-streaming reasoning onto the progress sink.
-    thinking: Option<ThinkingForwarder>,
     /// Preserves the last original provider error for the runner to re-surface.
     error_slot: ProviderErrorSlot,
-    /// FIFO side-channel shared with the event bridge: on each successful chat
-    /// response the adapter pushes the provider `UsageInfo` (which carries the
-    /// backend-charged USD + context window + cache-creation/reasoning tokens
-    /// the crate `Usage` mapping drops), and the bridge pops it when recording
-    /// that call's usage — restoring charged-USD precedence (#4467, item 1).
-    usage_carry: ProviderUsageCarry,
     /// Capability profile derived from the wrapped provider (issue #4249,
     /// Phase 2): lets the crate validate a request against the model's actual
     /// capabilities (vision, tool calling, streaming, token limits) *before*
@@ -422,9 +394,7 @@ impl ProviderModel {
             model,
             temperature,
             max_tokens: None,
-            thinking: None,
             error_slot: Arc::new(Mutex::new(None)),
-            usage_carry: Arc::default(),
             profile,
         }
     }
@@ -433,14 +403,6 @@ impl ProviderModel {
     /// harness, so the runner can recover the typed provider error on failure).
     pub(super) fn error_slot(&self) -> ProviderErrorSlot {
         self.error_slot.clone()
-    }
-
-    /// Attach the shared provider-usage carry the event bridge drains, so the
-    /// backend-charged USD + context window this adapter observes reach the cost
-    /// accounting (#4467, item 1). Clone the same handle into the bridge.
-    pub(super) fn with_usage_carry(mut self, carry: ProviderUsageCarry) -> Self {
-        self.usage_carry = carry;
-        self
     }
 
     /// Cap the output tokens requested from the provider for every call.
@@ -479,13 +441,6 @@ impl ProviderModel {
         self.profile.reasoning = reasoning;
         self
     }
-
-    /// Forward provider thinking/tool-argument progress onto a progress sink via
-    /// `forwarder` (parent or sub-agent scoped). See [`ThinkingForwarder`].
-    pub(super) fn with_thinking(mut self, forwarder: ThinkingForwarder) -> Self {
-        self.thinking = Some(forwarder);
-        self
-    }
 }
 
 #[async_trait]
@@ -501,6 +456,12 @@ impl ChatModel<()> for ProviderModel {
     ) -> tinyagents::Result<ModelResponse> {
         let native = self.provider.supports_native_tools();
         let (messages, specs) = build_chat_inputs(&request, native);
+        // Honor a per-request temperature when the caller sets one (e.g. one-shot
+        // inference callers that reuse a single model across prompts of differing
+        // temperature), else fall back to the temperature pinned at construction.
+        // The agent-loop seam leaves `request.temperature` `None`, so the pinned
+        // value still governs every turn — behaviour-neutral for the harness path.
+        let temperature = request.temperature.unwrap_or(self.temperature);
         // Positional layouts for the text-mode P-Format fallback (issue #4465);
         // empty (and thus behaviour-neutral) when no tools are advertised.
         let pformat_registry = pformat_registry_from_request(&request);
@@ -512,7 +473,12 @@ impl ChatModel<()> for ProviderModel {
             // payload would defeat the opt-out and get rejected/ignored.
             tools: (native && !specs.is_empty()).then_some(&specs),
             stream: None,
-            max_tokens: self.max_tokens,
+            // Prefer a per-request output cap when the caller set one, else the
+            // cap pinned at construction. The agent-loop seam pins via
+            // `with_max_tokens` and leaves `request.max_tokens` `None`
+            // (openhuman never sets the crate `RunConfig.max_turn_output_tokens`),
+            // so the pinned cap still governs every turn.
+            max_tokens: request.max_tokens.or(self.max_tokens),
         };
 
         tracing::debug!(
@@ -524,7 +490,7 @@ impl ChatModel<()> for ProviderModel {
 
         let response = match self
             .provider
-            .chat(chat_request, &self.model, self.temperature)
+            .chat(chat_request, &self.model, temperature)
             .await
         {
             Ok(response) => {
@@ -570,27 +536,15 @@ impl ChatModel<()> for ProviderModel {
                 });
             }
         };
-        // Non-streaming path: surface any reasoning the provider returned as a
-        // single post-hoc thinking delta (it had no per-token channel to ride).
-        if let Some(forwarder) = &self.thinking {
-            if let Some(reasoning) = response
-                .reasoning_content
-                .as_ref()
-                .filter(|r| !r.is_empty())
-            {
-                forwarder.emit(reasoning.clone());
-            }
-        }
-        // Push this call's provider usage onto the shared carry so the event
-        // bridge records charged USD / context window with provider precedence
-        // (#4467, item 1). One push per successful response, matching the single
-        // `UsageRecorded` the crate emits for this call.
-        if let Some(u) = &response.usage {
-            self.usage_carry
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .push_back(u.clone());
-        }
+        // The buffered path is used only for unobserved turns (no progress sink):
+        // the seam sets `streaming = on_progress.is_some()`, so any post-hoc
+        // reasoning here would have nowhere to go. Observed turns take `stream()`,
+        // which forwards reasoning natively. Reasoning still rides the response as
+        // a typed thinking block (see `response_to_model_response`) for
+        // persistence/replay.
+        // Provider usage (charged USD / context window / cache-creation-reasoning)
+        // now reaches the event bridge via `UsageCarryMiddleware`, which reads it
+        // off the returned `ModelResponse` (G1) — the adapter no longer carries it.
         Ok(response_to_model_response(&response, &pformat_registry))
     }
 
@@ -611,14 +565,12 @@ impl ChatModel<()> for ProviderModel {
         let pformat_registry = pformat_registry_from_request(&request);
         let provider = self.provider.clone();
         let model = self.model.clone();
-        let temperature = self.temperature;
-        let max_tokens = self.max_tokens;
-        let thinking = self.thinking.clone();
+        // Per-request temperature when set (see `invoke`), else the pinned value;
+        // the agent-loop seam leaves it `None`, so streamed turns are unchanged.
+        let temperature = request.temperature.unwrap_or(self.temperature);
+        // Same precedence for the output cap (see `invoke`).
+        let max_tokens = request.max_tokens.or(self.max_tokens);
         let error_slot = self.error_slot.clone();
-        // Captured for the spawned producer (task-locals/`self` do not cross the
-        // spawn): the streaming path pushes provider usage onto the same carry
-        // the buffered path uses, so charged USD reaches the bridge (#4467, item 1).
-        let usage_carry = self.usage_carry.clone();
 
         let (item_tx, item_rx) = tokio::sync::mpsc::unbounded_channel::<ModelStreamItem>();
 
@@ -670,7 +622,7 @@ impl ChatModel<()> for ProviderModel {
                     maybe = delta_rx.recv() => {
                         if let Some(delta) = maybe {
                             streamed_thinking |= matches!(delta, ProviderDelta::ThinkingDelta { .. });
-                            forward_delta(&item_tx, thinking.as_ref(), delta);
+                            forward_delta(&item_tx, delta);
                         }
                     }
                     res = &mut chat_fut => break res,
@@ -679,7 +631,7 @@ impl ChatModel<()> for ProviderModel {
             // Drain any deltas that landed before the call returned.
             while let Ok(delta) = delta_rx.try_recv() {
                 streamed_thinking |= matches!(delta, ProviderDelta::ThinkingDelta { .. });
-                forward_delta(&item_tx, thinking.as_ref(), delta);
+                forward_delta(&item_tx, delta);
             }
 
             let terminal = match response {
@@ -707,15 +659,9 @@ impl ChatModel<()> for ProviderModel {
                             ));
                         }
                     }
-                    // Push provider usage onto the shared carry (#4467, item 1),
-                    // mirroring the buffered path — before building the terminal
-                    // item, so it is queued ahead of the crate `UsageRecorded`.
-                    if let Some(u) = &resp.usage {
-                        usage_carry
-                            .lock()
-                            .unwrap_or_else(|p| p.into_inner())
-                            .push_back(u.clone());
-                    }
+                    // Provider usage rides the `Completed` response's crate `Usage`
+                    // + raw (G1); `UsageCarryMiddleware` reads it off the folded
+                    // response for the bridge, so the adapter no longer pushes here.
                     ModelStreamItem::Completed(response_to_model_response(&resp, &pformat_registry))
                 }
                 Err(e) => {
@@ -763,5 +709,164 @@ impl ChatModel<()> for ProviderModel {
             rx.recv().await.map(|item| (item, (rx, guard)))
         });
         Ok(Box::pin(stream))
+    }
+}
+
+#[cfg(test)]
+mod g1_usage_tests {
+    //! Gap G1: a standalone `invoke` must stay usage-faithful — token
+    //! breakdowns ride the crate `Usage`, and the two host fields with no crate
+    //! home (charged USD + context window) ride `ModelResponse.raw` and
+    //! reconstruct exactly via [`usage_info_from_response`].
+    use super::*;
+
+    fn empty_registry() -> crate::openhuman::agent::pformat::PFormatRegistry {
+        crate::openhuman::agent::pformat::PFormatRegistry::default()
+    }
+
+    #[test]
+    fn usage_round_trips_charged_usd_and_all_token_breakdowns() {
+        let chat = ChatResponse {
+            text: Some("hi".to_string()),
+            tool_calls: Vec::new(),
+            usage: Some(UsageInfo {
+                input_tokens: 100,
+                output_tokens: 20,
+                context_window: 128_000,
+                cached_input_tokens: 40,
+                cache_creation_tokens: 10,
+                reasoning_tokens: 7,
+                charged_amount_usd: 0.0123,
+            }),
+            reasoning_content: None,
+        };
+        let model_response = response_to_model_response(&chat, &empty_registry());
+
+        // Crate Usage carries every token breakdown natively.
+        let usage = model_response.usage.expect("usage present");
+        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.output_tokens, 20);
+        assert_eq!(usage.cache_read_tokens, 40);
+        assert_eq!(usage.cache_creation_tokens, 10);
+        assert_eq!(usage.reasoning_tokens, 7);
+
+        // Charged USD + context window ride raw and reconstruct exactly.
+        let recovered = usage_info_from_response(&model_response).expect("usage info");
+        assert_eq!(recovered.input_tokens, 100);
+        assert_eq!(recovered.output_tokens, 20);
+        assert_eq!(recovered.context_window, 128_000);
+        assert_eq!(recovered.cached_input_tokens, 40);
+        assert_eq!(recovered.cache_creation_tokens, 10);
+        assert_eq!(recovered.reasoning_tokens, 7);
+        assert!((recovered.charged_amount_usd - 0.0123).abs() < 1e-9);
+    }
+
+    #[test]
+    fn no_billing_metadata_leaves_raw_clean() {
+        let chat = ChatResponse {
+            text: Some("hi".to_string()),
+            tool_calls: Vec::new(),
+            usage: Some(UsageInfo {
+                input_tokens: 5,
+                output_tokens: 3,
+                ..Default::default()
+            }),
+            reasoning_content: None,
+        };
+        let model_response = response_to_model_response(&chat, &empty_registry());
+        assert!(
+            model_response.raw.is_none(),
+            "no charged USD / window ⇒ raw stays None"
+        );
+        let recovered = usage_info_from_response(&model_response).expect("usage info");
+        assert_eq!(recovered.charged_amount_usd, 0.0);
+        assert_eq!(recovered.context_window, 0);
+        assert_eq!(recovered.input_tokens, 5);
+    }
+
+    #[test]
+    fn no_usage_reconstructs_to_none() {
+        let chat = ChatResponse {
+            text: Some("hi".to_string()),
+            tool_calls: Vec::new(),
+            usage: None,
+            reasoning_content: None,
+        };
+        let model_response = response_to_model_response(&chat, &empty_registry());
+        assert!(usage_info_from_response(&model_response).is_none());
+    }
+}
+
+#[cfg(test)]
+mod adapter_param_tests {
+    //! The adapter honors a per-request temperature / output cap when the caller
+    //! sets one (one-shot callers reuse a model across differing prompts), and
+    //! otherwise the value pinned at construction (the agent-loop seam path).
+    use super::*;
+    use tinyagents::harness::message::Message;
+
+    #[derive(Default)]
+    struct CaptureProvider {
+        seen: Arc<Mutex<Vec<(f64, Option<u32>)>>>,
+    }
+
+    #[async_trait]
+    impl Provider for CaptureProvider {
+        async fn chat_with_system(
+            &self,
+            _system_prompt: Option<&str>,
+            _message: &str,
+            _model: &str,
+            _temperature: f64,
+        ) -> anyhow::Result<String> {
+            unreachable!("chat() is overridden")
+        }
+
+        async fn chat(
+            &self,
+            request: ChatRequest<'_>,
+            _model: &str,
+            temperature: f64,
+        ) -> anyhow::Result<ChatResponse> {
+            self.seen
+                .lock()
+                .unwrap()
+                .push((temperature, request.max_tokens));
+            Ok(ChatResponse {
+                text: Some("ok".to_string()),
+                ..Default::default()
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn per_request_overrides_win_else_pinned() {
+        let seen: Arc<Mutex<Vec<(f64, Option<u32>)>>> = Arc::default();
+        let provider: Arc<dyn Provider> = Arc::new(CaptureProvider { seen: seen.clone() });
+        let model = ProviderModel::new(provider, "m", 0.7).with_max_tokens(100);
+
+        // Request carries its own temperature + cap → those win.
+        model
+            .invoke(
+                &(),
+                ModelRequest::new(vec![Message::user("x")])
+                    .with_temperature(0.1)
+                    .with_max_tokens(42),
+            )
+            .await
+            .unwrap();
+        // Request leaves both unset → pinned construction values apply.
+        model
+            .invoke(&(), ModelRequest::new(vec![Message::user("x")]))
+            .await
+            .unwrap();
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(
+            seen[0],
+            (0.1, Some(42)),
+            "per-request temperature + cap win"
+        );
+        assert_eq!(seen[1], (0.7, Some(100)), "unset falls back to pinned");
     }
 }

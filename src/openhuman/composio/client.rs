@@ -1066,7 +1066,15 @@ pub async fn direct_list_connections(
 /// the same model-callable shape backend-mode does. Downstream curated-
 /// whitelist filtering (`evaluate_tool_visibility` / `find_curated`)
 /// still applies at the `ops::composio_list_tools` layer.
-pub(super) async fn direct_list_tools(
+///
+/// `pub(crate)` (widened from `pub(super)`) so
+/// `tinyflows::caps::fetch_raw_toolkit_tools` can call this directly for
+/// the LIVE (uncurated) tool-contract catalog the Workflow builder grounds
+/// against — that caller deliberately bypasses `composio_list_tools`'s
+/// curated-whitelist filter (`filter_list_tools_response_for_direct`),
+/// which this function never applies itself; the filter is layered on by
+/// its `composio_list_tools` caller, not baked in here.
+pub(crate) async fn direct_list_tools(
     direct: &Arc<crate::openhuman::tools::ComposioTool>,
     toolkits: &[String],
     tags: Option<&[String]>,

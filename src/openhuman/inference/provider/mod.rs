@@ -45,7 +45,9 @@ pub use error_code::{
     is_backend_malformed_bad_request, is_managed_backend_envelope, managed_error_skips_sentry,
     BackendErrorCode,
 };
+pub(crate) use factory::chat_model_from_provider;
 pub use factory::{
+    create_chat_model, create_chat_model_from_string, create_chat_model_with_model_id,
     create_chat_provider, provider_for_role, role_for_model_tier, BYOK_INCOMPLETE_SENTINEL,
 };
 pub use ops::*;

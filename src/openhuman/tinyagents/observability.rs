@@ -600,36 +600,59 @@ impl EventListener for OpenhumanEventBridge {
                         }),
                     }
                 }
-                // Tool-call **argument** fragments now ride the crate stream
-                // (`MessageDelta.tool_call`) instead of the out-of-band
-                // `ThinkingForwarder`. Project them onto the same
-                // `ToolCallArgsDelta` the UI timeline consumes so the model can
-                // be shown composing the call before it executes. The crate
-                // `ToolDelta` carries no `tool_name`, so we recover it from the
-                // shared map the forwarder populated on the tool-call start
-                // event (empty until the start marker lands — matching the
-                // legacy forwarder's own default). There is no `Subagent*`
-                // tool-arg variant, and an UNSCOPED top-level `ToolCallArgsDelta`
-                // emitted from a child run would render the child's argument
-                // composition as the *parent's* own timeline activity (#4467,
-                // item 6). v0.58.7 dropped child arg fragments, so restore that:
-                // only a parent/top-level turn projects these fragments; a child
-                // run drops them (its Started/Completed rows already carry the
-                // final arguments under the `Subagent*` scope).
+                // Tool-call **start** + **argument** fragments both ride the crate
+                // stream (`MessageDelta.tool_call`) now — the out-of-band
+                // `ThinkingForwarder` is gone. The call-opening delta carries the
+                // tool name (crate `ToolDelta::tool_name`, G2) with empty content;
+                // argument fragments carry content with no name. We record the
+                // name on the opening delta so subsequent fragments can be
+                // labelled, and project both onto the `ToolCallArgsDelta` the UI
+                // timeline consumes so the model can be shown composing the call
+                // before it executes.
                 if let Some(tool_call) = &delta.tool_call {
-                    if self.scope.is_none() && !tool_call.content.is_empty() {
-                        let tool_name = self
-                            .tool_names
+                    // Record the tool name as soon as the call opens (matching the
+                    // legacy forwarder's `note_tool_call`), and emit the start
+                    // marker — an empty-delta `ToolCallArgsDelta` — top-level
+                    // regardless of scope, exactly as the forwarder did.
+                    if let Some(name) = tool_call.tool_name.as_deref().filter(|n| !n.is_empty()) {
+                        self.tool_names
                             .lock()
                             .unwrap()
-                            .get(&tool_call.call_id)
-                            .cloned()
-                            .unwrap_or_default();
+                            .insert(tool_call.call_id.clone(), name.to_string());
+                        if tool_call.content.is_empty() {
+                            self.send(AgentProgress::ToolCallArgsDelta {
+                                call_id: tool_call.call_id.clone(),
+                                tool_name: name.to_string(),
+                                delta: String::new(),
+                                iteration,
+                            });
+                        }
+                    }
+                    // Argument fragments are parent-only: there is no `Subagent*`
+                    // tool-arg variant, and an UNSCOPED top-level `ToolCallArgsDelta`
+                    // emitted from a child run would render the child's argument
+                    // composition as the *parent's* own timeline activity (#4467,
+                    // item 6; v0.58.7 dropped child arg fragments). A child run's
+                    // Started/Completed rows already carry the final arguments
+                    // under the `Subagent*` scope.
+                    if self.scope.is_none() && !tool_call.content.is_empty() {
+                        let tool_name = tool_call
+                            .tool_name
+                            .as_deref()
+                            .filter(|n| !n.is_empty())
+                            .map(str::to_string)
+                            .unwrap_or_else(|| {
+                                self.tool_names
+                                    .lock()
+                                    .unwrap()
+                                    .get(&tool_call.call_id)
+                                    .cloned()
+                                    .unwrap_or_default()
+                            });
                         tracing::trace!(
                             call_id = tool_call.call_id.as_str(),
                             tool_name = tool_name.as_str(),
                             len = tool_call.content.len(),
-                            child = self.scope.is_some(),
                             "[stream] projecting crate tool-arg fragment onto ToolCallArgsDelta"
                         );
                         self.send(AgentProgress::ToolCallArgsDelta {

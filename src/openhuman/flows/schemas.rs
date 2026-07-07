@@ -748,12 +748,13 @@ pub fn schemas(function: &str) -> ControllerSchema {
             description: "Run the workflow_builder agent for one authoring turn. `mode` selects \
                           create (first draft from `instruction`), revise (refine the injected \
                           `graph`), repair (diagnose a failed `run_id` and fix), or build \
-                          (instant-create: build + dry-run + save_workflow onto `flow_id`). The \
-                          server renders the agent's brief — the frontend no longer crafts prompts. \
-                          Returns `{ proposal, assistant_text, error }`, where `proposal` is the \
-                          `{ type: 'workflow_proposal', name, graph, require_approval, summary, \
-                          warnings }` the agent produced (or null). Only `build` may persist (via \
-                          save_workflow onto an existing flow); it never enables or runs a flow.",
+                          (instant-create: build + dry-run + propose against `flow_id`; \
+                          propose-only, see #4596). The server renders the agent's brief — the \
+                          frontend no longer crafts prompts. Returns `{ proposal, assistant_text, \
+                          error }`, where `proposal` is the `{ type: 'workflow_proposal', name, \
+                          graph, require_approval, summary, warnings }` the agent produced (or \
+                          null). No mode auto-persists a graph; save/enable/run stay behind the \
+                          user's explicit action.",
             inputs: vec![
                 FieldSchema {
                     name: "mode",

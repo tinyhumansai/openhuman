@@ -13,6 +13,11 @@ import type {
   PersistedTurnState,
   TaskBoard,
 } from '../types/turnState';
+import {
+  formatTimelineEntry,
+  isKnownClientTool,
+  promptFromArgsBuffer,
+} from '../utils/toolTimelineFormatting';
 import { resetUserScopedState } from './resetActions';
 
 const turnStateLog = debug('chatRuntime.turnState');
@@ -234,6 +239,48 @@ export function parseToolFailure(raw: unknown): ToolFailureExplanation | undefin
     causePlain,
     nextAction,
   };
+}
+
+/**
+ * Attach a human label/detail to a tool-timeline row. The server supplies a
+ * label/detail for dynamic Composio/MCP/integration tools the client can't know
+ * — trust it for those; for the fixed set of built-ins the client formatter
+ * (args-aware) stays authoritative. Pure — shared by the live reducers and any
+ * caller that materialises a row.
+ */
+function decorateEntry(entry: ToolTimelineEntry): ToolTimelineEntry {
+  const formatted = formatTimelineEntry(entry);
+  if (entry.displayName && !isKnownClientTool(entry.name)) {
+    return { ...entry, displayName: entry.displayName, detail: entry.detail ?? formatted.detail };
+  }
+  return { ...entry, displayName: formatted.title, detail: formatted.detail ?? entry.detail };
+}
+
+/**
+ * Find the parent `spawn_*`/`delegate_*` tool row a just-spawned subagent should
+ * collapse into, so the timeline shows one entry per delegation. Returns the
+ * source tool name, the delegation prompt, and the spawn row's id to remove.
+ * Pure — searches the round's running rows newest-first.
+ */
+export function findPendingDelegationContext(
+  entries: ToolTimelineEntry[],
+  round: number
+): { sourceToolName?: string; prompt?: string; spawnEntryId?: string } {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry.status !== 'running' || entry.round !== round) continue;
+    if (
+      ['spawn_subagent', 'spawn_async_subagent'].includes(entry.name) ||
+      entry.name.startsWith('delegate_')
+    ) {
+      return {
+        sourceToolName: entry.name,
+        prompt: entry.detail ?? promptFromArgsBuffer(entry.argsBuffer),
+        spawnEntryId: entry.id,
+      };
+    }
+  }
+  return {};
 }
 
 export interface ToolTimelineEntry {
@@ -566,6 +613,15 @@ interface ChatRuntimeState {
   parallelRequestThreads: Record<string, string>;
   toolTimelineByThread: Record<string, ToolTimelineEntry[]>;
   /**
+   * Per-turn tool timelines for *past* (settled) turns of a thread, keyed
+   * `threadId -> requestId -> entries`. Hydrated from `turn_state_history` on
+   * thread open so each past answer keeps its own process trail (Phase 4/5),
+   * instead of only the latest turn's live timeline in
+   * {@link toolTimelineByThread}. The live turn is intentionally excluded (its
+   * rows live in `toolTimelineByThread` and are driven by the socket stream).
+   */
+  turnTimelinesByThread: Record<string, Record<string, ToolTimelineEntry[]>>;
+  /**
    * Ordered narration/thinking/tool transcript per thread for the
    * "View processing" panel — the interleaved Hermes-style record. Hydrated
    * from the persisted turn-state snapshot (which is now KEPT on completion),
@@ -649,6 +705,7 @@ const initialState: ChatRuntimeState = {
   parallelStreamsByThread: {},
   parallelRequestThreads: {},
   toolTimelineByThread: {},
+  turnTimelinesByThread: {},
   processingByThread: {},
   taskBoardByThread: {},
   inferenceTurnLifecycleByThread: {},
@@ -980,6 +1037,17 @@ const chatRuntimeSlice = createSlice({
       delete state.toolTimelineByThread[action.payload.threadId];
       delete state.processingByThread[action.payload.threadId];
     },
+    /**
+     * Replace the hydrated past-turn timelines for a thread (Phase 5). The live
+     * turn's rows stay in {@link toolTimelineByThread}; this holds only the
+     * settled turns, keyed by their producing `requestId`.
+     */
+    setTurnTimelinesForThread: (
+      state,
+      action: PayloadAction<{ threadId: string; timelines: Record<string, ToolTimelineEntry[]> }>
+    ) => {
+      state.turnTimelinesByThread[action.payload.threadId] = action.payload.timelines;
+    },
     /** Reset the live processing transcript at the start of a fresh turn so a
      *  new turn's narration/steps don't append onto the previous turn's. */
     clearProcessingForThread: (state, action: PayloadAction<{ threadId: string }>) => {
@@ -1019,6 +1087,387 @@ const chatRuntimeSlice = createSlice({
       const list = (state.processingByThread[threadId] ??= []);
       if (list.some(i => i.kind === 'toolCall' && i.callId === callId)) return;
       list.push({ kind: 'toolCall', round, seq: list.length, callId });
+    },
+    /**
+     * Reducer-side merge for a `tool_call` socket event (Phase 3 — replaces the
+     * provider's `getState()` + find-row + full-array-rebuild). Upserts the row
+     * by `toolCallId` (falling back to a generated stable id), decorates its
+     * label/detail, and records the processing-transcript pointer in one pass.
+     */
+    toolCallReceived: (
+      state,
+      action: PayloadAction<{
+        threadId: string;
+        round: number;
+        toolName: string;
+        toolCallId?: string;
+        displayLabel?: string;
+        displayDetail?: string;
+      }>
+    ) => {
+      const { threadId, round, toolName, toolCallId, displayLabel, displayDetail } = action.payload;
+      const entries = (state.toolTimelineByThread[threadId] ??= []);
+      const existingIdx = toolCallId ? entries.findIndex(e => e.id === toolCallId) : -1;
+      // Stable row id, shared with the processing-transcript tool pointer so the
+      // panel can resolve the row by `callId`.
+      const rowId = toolCallId ?? `${threadId}:${round}:${entries.length}:${toolName}`;
+      if (existingIdx >= 0) {
+        const prev = entries[existingIdx];
+        entries[existingIdx] = decorateEntry({
+          ...prev,
+          name: toolName,
+          round,
+          status: 'running',
+          displayName: displayLabel ?? prev.displayName,
+          detail: displayDetail ?? prev.detail,
+        });
+      } else {
+        entries.push(
+          decorateEntry({
+            id: rowId,
+            name: toolName,
+            round,
+            status: 'running',
+            displayName: displayLabel,
+            detail: displayDetail,
+          })
+        );
+      }
+      // Fold the processing-transcript pointer (was a second dispatch).
+      const list = (state.processingByThread[threadId] ??= []);
+      if (!list.some(i => i.kind === 'toolCall' && i.callId === rowId)) {
+        list.push({ kind: 'toolCall', round, seq: list.length, callId: rowId });
+      }
+    },
+    /**
+     * Reducer-side merge for a `tool_result` socket event (Phase 3). Settles the
+     * matching row by `toolCallId`, else the newest still-running row with the
+     * same name+round. A no-op when no row matches (mirrors the provider's
+     * `changed` guard). `failure` is the raw socket payload, parsed here.
+     */
+    toolResultReceived: (
+      state,
+      action: PayloadAction<{
+        threadId: string;
+        round: number;
+        toolName: string;
+        toolCallId?: string;
+        success: boolean;
+        output?: string;
+        failure?: unknown;
+      }>
+    ) => {
+      const { threadId, round, toolName, toolCallId, success, output, failure } = action.payload;
+      const entries = state.toolTimelineByThread[threadId];
+      if (!entries || entries.length === 0) return;
+      const status: ToolTimelineEntryStatus = success ? 'success' : 'error';
+      // On failure, parse the optional structured explanation (#4254); a
+      // successful result clears any stale failure carried on the row.
+      const parsedFailure = success ? undefined : parseToolFailure(failure);
+      // The core forwards the (size-capped) tool result text on `output`; accept
+      // only non-empty payloads so a stub-less row stays `undefined`.
+      const result = output && output.length > 0 ? output : undefined;
+      if (toolCallId) {
+        const entry = entries.find(e => e.id === toolCallId);
+        if (entry) {
+          entry.status = status;
+          entry.failure = parsedFailure;
+          entry.result = result;
+          return;
+        }
+      }
+      for (let i = entries.length - 1; i >= 0; i -= 1) {
+        const entry = entries[i];
+        if (entry.status === 'running' && entry.name === toolName && entry.round === round) {
+          entry.status = status;
+          entry.failure = parsedFailure;
+          entry.result = result;
+          return;
+        }
+      }
+    },
+    /**
+     * Reducer-side merge for a `text_delta` / `thinking_delta` socket event
+     * (Phase 3 — replaces the provider's `getState()` + parallel-vs-primary
+     * routing). Forked (parallel) turns append into their own lane and skip the
+     * processing transcript; the primary turn appends to the streaming preview
+     * and coalesces a narration/thinking block into the live processing panel.
+     * A `requestId` change starts a fresh preview (drops the prior turn's tail).
+     */
+    streamDeltaReceived: (
+      state,
+      action: PayloadAction<{
+        threadId: string;
+        requestId: string;
+        round: number;
+        delta: string;
+        channel: 'content' | 'thinking';
+      }>
+    ) => {
+      const { threadId, requestId, round, delta, channel } = action.payload;
+      // A parallel (forked) turn streams into its own lane so it doesn't clobber
+      // the primary turn's stream on the same thread.
+      if (state.parallelRequestThreads[requestId] !== undefined) {
+        const lane = (state.parallelStreamsByThread[threadId] ??= {});
+        const prev = lane[requestId];
+        lane[requestId] = {
+          requestId,
+          content: channel === 'content' ? `${prev?.content ?? ''}${delta}` : (prev?.content ?? ''),
+          thinking:
+            channel === 'thinking' ? `${prev?.thinking ?? ''}${delta}` : (prev?.thinking ?? ''),
+        };
+        return;
+      }
+      const existing = state.streamingAssistantByThread[threadId];
+      const sameTurn = existing != null && existing.requestId === requestId;
+      const carryContent = sameTurn ? existing.content : '';
+      const carryThinking = sameTurn ? existing.thinking : '';
+      state.streamingAssistantByThread[threadId] = {
+        requestId,
+        content: channel === 'content' ? `${carryContent}${delta}` : carryContent,
+        thinking: channel === 'thinking' ? `${carryThinking}${delta}` : carryThinking,
+      };
+      // Live interleaved processing transcript so a mid-turn "View processing"
+      // isn't empty — coalesce into the trailing same-kind, same-round block.
+      if (!delta) return;
+      const kind = channel === 'content' ? 'narration' : 'thinking';
+      const list = (state.processingByThread[threadId] ??= []);
+      const last = list[list.length - 1];
+      if (last && last.kind === kind && last.round === round) {
+        last.text += delta;
+      } else {
+        list.push({ kind, round, seq: list.length, text: delta });
+      }
+    },
+    /**
+     * Reducer-side merge for a `tool_args_delta` socket event (Phase 3).
+     * Appends the streamed args to the matching row (by `toolCallId`, else the
+     * newest running row of the same name+round), or creates a running row when
+     * the args arrive before the tool-call event. Re-decorates each time.
+     */
+    toolArgsDeltaReceived: (
+      state,
+      action: PayloadAction<{
+        threadId: string;
+        round: number;
+        delta: string;
+        toolName?: string;
+        toolCallId?: string;
+      }>
+    ) => {
+      const { threadId, round, delta, toolName, toolCallId } = action.payload;
+      const entries = (state.toolTimelineByThread[threadId] ??= []);
+      let matchIdx = -1;
+      if (toolCallId) matchIdx = entries.findIndex(e => e.id === toolCallId);
+      if (matchIdx < 0 && toolName) {
+        matchIdx = entries.findIndex(
+          e => e.status === 'running' && e.name === toolName && e.round === round
+        );
+      }
+      if (matchIdx >= 0) {
+        const prev = entries[matchIdx];
+        entries[matchIdx] = decorateEntry({
+          ...prev,
+          argsBuffer: `${prev.argsBuffer ?? ''}${delta}`,
+          name: prev.name.length === 0 && toolName ? toolName : prev.name,
+        });
+      } else {
+        entries.push(
+          decorateEntry({
+            id: toolCallId ?? '',
+            name: toolName ?? '',
+            round,
+            status: 'running',
+            argsBuffer: delta,
+          })
+        );
+      }
+    },
+    /**
+     * Reducer-side merges for the sub-agent event family (Phase 3). Each locates
+     * the delegation's timeline row by its precomputed `rowId` and updates the
+     * nested `subagent` activity in place — no `getState()` / full-array rebuild
+     * in the provider.
+     */
+    subagentSpawned: (
+      state,
+      action: PayloadAction<{
+        threadId: string;
+        round: number;
+        rowId: string;
+        taskId: string;
+        agentId: string;
+        displayName?: string;
+        workerThreadId?: string;
+        mode?: string;
+        dedicatedThread?: boolean;
+      }>
+    ) => {
+      const {
+        threadId,
+        round,
+        rowId,
+        taskId,
+        agentId,
+        displayName,
+        workerThreadId,
+        mode,
+        dedicatedThread,
+      } = action.payload;
+      const entries = (state.toolTimelineByThread[threadId] ??= []);
+      // Idempotent: a socket redelivery must not append a second row with the
+      // same id (later updates find only the first). Not gated by the provider's
+      // event-seen map, so guard here.
+      if (entries.some(e => e.id === rowId)) return;
+      const pending = findPendingDelegationContext(entries, round);
+      // Collapse the parent spawn/delegate row into the subagent row so the
+      // timeline shows one entry per delegation.
+      if (pending.spawnEntryId) {
+        const spawnIdx = entries.findIndex(e => e.id === pending.spawnEntryId);
+        if (spawnIdx >= 0) entries.splice(spawnIdx, 1);
+      }
+      entries.push(
+        decorateEntry({
+          id: rowId,
+          name: `subagent:${agentId}`,
+          round,
+          status: 'running',
+          detail: pending.prompt,
+          sourceToolName: pending.sourceToolName,
+          subagent: {
+            taskId,
+            agentId,
+            displayName,
+            workerThreadId,
+            mode,
+            dedicatedThread,
+            prompt: pending.prompt,
+            toolCalls: [],
+            transcript: [],
+          },
+        })
+      );
+    },
+    subagentAwaitingUser: (state, action: PayloadAction<{ threadId: string; rowId: string }>) => {
+      const entry = state.toolTimelineByThread[action.payload.threadId]?.find(
+        e => e.id === action.payload.rowId && e.status === 'running'
+      );
+      if (!entry) return;
+      entry.status = 'awaiting_user';
+      if (entry.subagent) entry.subagent.status = 'awaiting_user';
+    },
+    subagentDone: (
+      state,
+      action: PayloadAction<{
+        threadId: string;
+        rowId: string;
+        success: boolean;
+        iterations?: number;
+        elapsedMs?: number;
+        outputChars?: number;
+        worktreePath?: string;
+        changedFiles?: string[];
+        isDirty?: boolean;
+      }>
+    ) => {
+      const {
+        threadId,
+        rowId,
+        success,
+        iterations,
+        elapsedMs,
+        outputChars,
+        worktreePath,
+        changedFiles,
+        isDirty,
+      } = action.payload;
+      // Settle a still-in-flight row: `running`, or `awaiting_user` (a subagent
+      // paused for input that then completes must not stay stuck at
+      // awaiting_user). Already-terminal rows are left as-is.
+      const entry = state.toolTimelineByThread[threadId]?.find(
+        e => e.id === rowId && (e.status === 'running' || e.status === 'awaiting_user')
+      );
+      if (!entry) return;
+      entry.status = success ? 'success' : 'error';
+      if (entry.subagent) {
+        const s = entry.subagent;
+        if (iterations !== undefined) s.iterations = iterations;
+        if (elapsedMs !== undefined) s.elapsedMs = elapsedMs;
+        if (outputChars !== undefined) s.outputChars = outputChars;
+        if (worktreePath !== undefined) s.worktreePath = worktreePath;
+        if (changedFiles !== undefined) s.changedFiles = changedFiles;
+        if (isDirty !== undefined) s.isDirty = isDirty;
+      }
+    },
+    subagentIterationStarted: (
+      state,
+      action: PayloadAction<{
+        threadId: string;
+        rowId: string;
+        childIteration?: number;
+        childMaxIterations?: number;
+      }>
+    ) => {
+      const { threadId, rowId, childIteration, childMaxIterations } = action.payload;
+      const entry = state.toolTimelineByThread[threadId]?.find(e => e.id === rowId);
+      if (!entry?.subagent) return;
+      if (childIteration !== undefined) entry.subagent.childIteration = childIteration;
+      if (childMaxIterations !== undefined) entry.subagent.childMaxIterations = childMaxIterations;
+    },
+    subagentToolCallReceived: (
+      state,
+      action: PayloadAction<{
+        threadId: string;
+        rowId: string;
+        callId: string;
+        toolName: string;
+        iteration?: number;
+        args?: unknown;
+        displayName?: string;
+        detail?: string;
+      }>
+    ) => {
+      const { threadId, rowId, callId, toolName, iteration, args, displayName, detail } =
+        action.payload;
+      const entry = state.toolTimelineByThread[threadId]?.find(e => e.id === rowId);
+      if (!entry?.subagent) return;
+      // De-dupe on call_id — a redelivered event must not append twice.
+      if (entry.subagent.toolCalls.some(c => c.callId === callId)) return;
+      entry.subagent.toolCalls.push({
+        callId,
+        toolName,
+        status: 'running',
+        iteration,
+        args,
+        displayName,
+        detail,
+      });
+    },
+    subagentToolResultReceived: (
+      state,
+      action: PayloadAction<{
+        threadId: string;
+        rowId: string;
+        callId: string;
+        success: boolean;
+        elapsedMs?: number;
+        outputChars?: number;
+        result?: string;
+        failure?: unknown;
+      }>
+    ) => {
+      const { threadId, rowId, callId, success, elapsedMs, outputChars, result, failure } =
+        action.payload;
+      const entry = state.toolTimelineByThread[threadId]?.find(e => e.id === rowId);
+      if (!entry?.subagent) return;
+      const call = entry.subagent.toolCalls.find(c => c.callId === callId);
+      if (!call) return;
+      call.status = success ? 'success' : 'error';
+      if (elapsedMs !== undefined) call.elapsedMs = elapsedMs;
+      if (outputChars !== undefined) call.outputChars = outputChars;
+      if (result !== undefined) call.result = result;
+      // A successful result clears any stale failure on the row.
+      call.failure = success ? undefined : parseToolFailure(failure);
     },
     /**
      * Optimistically mark a detached background sub-agent as cancelled after the
@@ -1391,6 +1840,7 @@ const chatRuntimeSlice = createSlice({
       state.parallelStreamsByThread = {};
       state.parallelRequestThreads = {};
       state.toolTimelineByThread = {};
+      state.turnTimelinesByThread = {};
       state.processingByThread = {};
       state.taskBoardByThread = {};
       state.inferenceTurnLifecycleByThread = {};
@@ -1617,6 +2067,17 @@ export const {
   clearParallelRequest,
   setToolTimelineForThread,
   clearToolTimelineForThread,
+  setTurnTimelinesForThread,
+  streamDeltaReceived,
+  subagentAwaitingUser,
+  subagentDone,
+  subagentIterationStarted,
+  subagentSpawned,
+  subagentToolCallReceived,
+  subagentToolResultReceived,
+  toolArgsDeltaReceived,
+  toolCallReceived,
+  toolResultReceived,
   clearProcessingForThread,
   appendProcessingProse,
   recordProcessingTool,
@@ -1690,6 +2151,43 @@ export const fetchAndHydrateTurnState = createAsyncThunk(
       return snapshot;
     } catch (error) {
       turnStateLog('fetch failed thread=%s err=%O', threadId, error);
+      return null;
+    }
+  }
+);
+
+/**
+ * Fetch the per-turn history for a thread and populate
+ * {@link ChatRuntimeState.turnTimelinesByThread} so each *past* answer renders
+ * its own process trail (Phase 5). Only settled turns (completed / interrupted)
+ * are stored — the live turn's rows are driven by the socket stream into
+ * `toolTimelineByThread`. Failures are swallowed: missing history must never
+ * block thread navigation.
+ */
+export const fetchAndHydrateTurnHistory = createAsyncThunk(
+  'chatRuntime/fetchAndHydrateTurnHistory',
+  async (threadId: string, { dispatch }) => {
+    try {
+      const history = await threadApi.getTurnStateHistory(threadId);
+      const timelines: Record<string, ToolTimelineEntry[]> = {};
+      // History is newest-first; the newest turn is the one `getTurnState`
+      // hydrates into `toolTimelineByThread` (rendered as the live/anchored
+      // "agent insights"), so skip it here to avoid rendering it twice — this
+      // field holds only the *older* settled turns.
+      for (const turn of history.slice(1)) {
+        if (turn.lifecycle !== 'completed' && turn.lifecycle !== 'interrupted') continue;
+        if (!turn.requestId || turn.toolTimeline.length === 0) continue;
+        timelines[turn.requestId] = turn.toolTimeline.map(toolTimelineFromPersisted);
+      }
+      turnStateLog(
+        'hydrated turn history thread=%s turns=%d',
+        threadId,
+        Object.keys(timelines).length
+      );
+      dispatch(setTurnTimelinesForThread({ threadId, timelines }));
+      return timelines;
+    } catch (error) {
+      turnStateLog('history fetch failed thread=%s err=%O', threadId, error);
       return null;
     }
   }

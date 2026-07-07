@@ -249,6 +249,8 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.title': 'مرحّل TinyPlace',
   'tinyplaceOrchestration.subtitle': 'قنوات الوكلاء المثبتة ودردشات جلسات التطبيق',
   'tinyplaceOrchestration.refresh': 'تحديث',
+  'tinyplaceOrchestration.newInstance': 'نسخة جديدة',
+  'tinyplaceOrchestration.newInstanceSoon': 'قريبًا',
   'tinyplaceOrchestration.pinned': 'مثبتة',
   'tinyplaceOrchestration.sessions': 'الجلسات',
   'tinyplaceOrchestration.contacts': 'جهات الاتصال',

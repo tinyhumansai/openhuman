@@ -7,12 +7,14 @@ use std::collections::BTreeMap;
 
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::config::Config;
-use crate::openhuman::inference::provider::traits::Provider;
 use crate::openhuman::memory_tree::tree_runtime::store;
 use crate::openhuman::memory_tree::tree_runtime::types::{
     derive_node_ids, derive_parent_id, estimate_tokens, level_from_node_id, NodeLevel, TreeNode,
     TreeStatus,
 };
+use std::sync::Arc;
+use tinyagents::harness::message::Message;
+use tinyagents::harness::model::{ChatModel, ModelRequest};
 
 const SUMMARIZATION_TEMP: f64 = 0.3;
 
@@ -32,8 +34,7 @@ const MAX_SUMMARY_CHARS: usize = 20_000 * 4;
 /// Returns the last hour leaf node created, or `None` if the buffer was empty.
 pub async fn run_summarization(
     config: &Config,
-    provider: &dyn Provider,
-    model: &str,
+    provider: &dyn ChatModel<()>,
     namespace: &str,
     _ts: DateTime<Utc>,
 ) -> Result<Option<TreeNode>> {
@@ -86,7 +87,6 @@ pub async fn run_summarization(
             NodeLevel::Hour.max_tokens(),
             "hour",
             hour_id,
-            model,
         )
         .await
         .context("summarize hour leaf")?;
@@ -147,7 +147,7 @@ pub async fn run_summarization(
     ] {
         for (node_id, node_level) in &all_propagation_ids {
             if *node_level == level && seen.insert(node_id.clone()) {
-                match propagate_node(config, provider, namespace, node_id, level, model).await {
+                match propagate_node(config, provider, namespace, node_id, level).await {
                     Ok(()) => propagated += 1,
                     Err(e) => {
                         log::warn!(
@@ -193,8 +193,7 @@ pub async fn run_summarization(
 /// Preserves buffered data that hasn't been summarized yet.
 pub async fn rebuild_tree(
     config: &Config,
-    provider: &dyn Provider,
-    model: &str,
+    provider: &dyn ChatModel<()>,
     namespace: &str,
 ) -> Result<TreeStatus> {
     tracing::debug!("[tree_summarizer] rebuilding tree for namespace '{namespace}'");
@@ -278,9 +277,7 @@ pub async fn rebuild_tree(
     let mut propagate = |id: &str, level: NodeLevel| {
         let node_id = id.to_string();
         async move {
-            if let Err(e) =
-                propagate_node(config, provider, namespace, &node_id, level, model).await
-            {
+            if let Err(e) = propagate_node(config, provider, namespace, &node_id, level).await {
                 log::warn!(
                     "[tree_summarizer] rebuild propagate failed (continuing) namespace='{namespace}' \
                      node={node_id} level={}: {e:#}",
@@ -338,11 +335,10 @@ pub async fn rebuild_tree(
 /// Re-summarize a single non-leaf node from its children.
 pub(crate) async fn propagate_node(
     config: &Config,
-    provider: &dyn Provider,
+    provider: &dyn ChatModel<()>,
     namespace: &str,
     node_id: &str,
     level: NodeLevel,
-    model: &str,
 ) -> Result<()> {
     let children = store::read_children(config, namespace, node_id)?;
     if children.is_empty() {
@@ -380,15 +376,7 @@ pub(crate) async fn propagate_node(
             combined_tokens,
             max_tokens
         );
-        summarize_to_limit(
-            provider,
-            &combined,
-            max_tokens,
-            level.as_str(),
-            node_id,
-            model,
-        )
-        .await?
+        summarize_to_limit(provider, &combined, max_tokens, level.as_str(), node_id).await?
     };
 
     let now = Utc::now();
@@ -429,12 +417,11 @@ pub(crate) async fn propagate_node(
 /// Summarize text to fit within a token limit using the LLM provider.
 /// Enforces a hard character limit on the response to prevent runaway output.
 async fn summarize_to_limit(
-    provider: &dyn Provider,
+    provider: &dyn ChatModel<()>,
     content: &str,
     max_tokens: u32,
     level_name: &str,
     node_id: &str,
-    model: &str,
 ) -> Result<String> {
     let max_chars = (max_tokens as usize) * 4;
     let system_prompt = format!(
@@ -449,11 +436,19 @@ async fn summarize_to_limit(
     );
 
     let response = provider
-        .chat_with_system(Some(&system_prompt), content, model, SUMMARIZATION_TEMP)
+        .invoke(
+            &(),
+            ModelRequest::new(vec![
+                Message::system(system_prompt),
+                Message::user(content.to_string()),
+            ])
+            .with_temperature(SUMMARIZATION_TEMP),
+        )
         .await
         .with_context(|| {
             format!("LLM summarization failed for node {node_id} (level={level_name})")
-        })?;
+        })?
+        .text();
 
     // Enforce hard character limit on LLM response (use the stricter of the two limits)
     let char_limit = max_chars.min(MAX_SUMMARY_CHARS);
@@ -587,7 +582,7 @@ fn collect_hour_leaves_recursive(
 ///
 /// This should be called once at application startup. The task runs
 /// indefinitely, sleeping until the next hour boundary.
-pub async fn run_hourly_loop(config: Config, provider: Box<dyn Provider>, model: String) {
+pub async fn run_hourly_loop(config: Config, provider: Arc<dyn ChatModel<()>>) {
     tracing::debug!("[tree_summarizer] hourly loop started");
 
     loop {
@@ -615,7 +610,7 @@ pub async fn run_hourly_loop(config: Config, provider: Box<dyn Provider>, model:
         let ts = Utc::now();
         let namespaces = discover_active_namespaces(&config);
         for ns in &namespaces {
-            match run_summarization(&config, provider.as_ref(), &model, ns, ts).await {
+            match run_summarization(&config, provider.as_ref(), ns, ts).await {
                 Ok(Some(node)) => {
                     tracing::debug!(
                         "[tree_summarizer] hourly job completed for '{}': node {} ({} tokens)",

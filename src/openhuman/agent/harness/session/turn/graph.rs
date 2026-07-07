@@ -89,10 +89,19 @@ pub(crate) async fn run_chat_turn_graph(graph: ChatTurnGraph) -> Result<Tinyagen
     } else {
         Some(graph.visible_tool_names)
     };
-    run_turn_via_tinyagents_shared(
+    // Build the turn's crate `ChatModel` set from the session provider; the seam
+    // entry is crate-native (issue #4249, Phase 5).
+    let provider_id = graph.provider.telemetry_provider_id();
+    let turn_models = crate::openhuman::tinyagents::build_turn_models(
         graph.provider,
         &graph.model,
         graph.temperature,
+        graph.context_window,
+    );
+    run_turn_via_tinyagents_shared(
+        turn_models,
+        provider_id,
+        &graph.model,
         graph.messages,
         vec![graph.tools],
         visible_tool_names,

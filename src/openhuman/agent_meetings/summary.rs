@@ -15,7 +15,9 @@ use serde::Deserialize;
 
 use crate::core::event_bus::BackendMeetTurn;
 use crate::openhuman::config::{AutoSummarizePolicy, Config};
-use crate::openhuman::inference::provider::create_chat_provider;
+use crate::openhuman::inference::provider::create_chat_model;
+use tinyagents::harness::message::Message;
+use tinyagents::harness::model::{ChatModel, ModelRequest};
 
 use super::types::{ActionItem, ActionItemKind, MeetingSummary};
 
@@ -142,13 +144,20 @@ pub async fn generate_meeting_summary(
     let config = Config::load_or_init()
         .await
         .map_err(|e| format!("config load failed: {e}"))?;
-    let (provider, model) = create_chat_provider(SUMMARIZATION_ROLE, &config)
+    let model = create_chat_model(SUMMARIZATION_ROLE, &config, 0.3)
         .map_err(|e| format!("summarisation provider init failed: {e}"))?;
 
-    let reply = provider
-        .chat_with_system(Some(SYSTEM_PROMPT), &transcript, &model, 0.3)
+    // One user turn under a fixed system prompt — the crate model interface's
+    // native shape. Equivalent to the former `chat_with_system` one-shot call.
+    let request = ModelRequest::new(vec![
+        Message::system(SYSTEM_PROMPT),
+        Message::user(transcript),
+    ]);
+    let reply = model
+        .invoke(&(), request)
         .await
-        .map_err(|e| format!("summarisation LLM call failed: {e}"))?;
+        .map_err(|e| format!("summarisation LLM call failed: {e}"))?
+        .text();
 
     let raw = parse_summary_json(&reply)
         .ok_or_else(|| "model reply did not contain parseable summary JSON".to_string())?;

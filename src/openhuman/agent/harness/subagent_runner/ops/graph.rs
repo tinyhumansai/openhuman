@@ -262,10 +262,19 @@ pub(super) async fn run_subagent_via_graph(
     // Capture native-tool support before `provider` is moved: the durable-history
     // append below serializes this turn's typed suffix with the matching dispatcher.
     let native_tools = provider.supports_native_tools();
-    let run_result = Box::pin(run_turn_via_tinyagents_shared(
+    // Build the child turn's crate `ChatModel` set from the resolved provider; the
+    // seam entry is crate-native (issue #4249, Phase 5).
+    let provider_id = provider.telemetry_provider_id();
+    let turn_models = crate::openhuman::tinyagents::build_turn_models(
         provider,
         model,
         temperature,
+        context_window,
+    );
+    let run_result = Box::pin(run_turn_via_tinyagents_shared(
+        turn_models,
+        provider_id,
+        model,
         dispatch_history,
         // Dynamic (per-spawn) tools first so a dynamic tool that intentionally
         // shadows a parent-registry tool of the same name is the one that

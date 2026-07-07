@@ -259,6 +259,8 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.title': 'Relais TinyPlace',
   'tinyplaceOrchestration.subtitle': "Canaux d'agents épinglés et chats de sessions app",
   'tinyplaceOrchestration.refresh': 'Actualiser',
+  'tinyplaceOrchestration.newInstance': 'Nouvelle instance',
+  'tinyplaceOrchestration.newInstanceSoon': 'Bientôt disponible',
   'tinyplaceOrchestration.pinned': 'Épinglés',
   'tinyplaceOrchestration.sessions': 'Sessions',
   'tinyplaceOrchestration.contacts': 'Contacts',

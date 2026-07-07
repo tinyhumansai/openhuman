@@ -3594,6 +3594,77 @@ async fn json_rpc_thread_turn_state_lifecycle() {
         Some(1)
     );
 
+    // Seed a second, later turn on the same thread — the per-turn ring keeps
+    // both instead of overwriting.
+    // Far-future started_at guarantees turn-2 is the newest (turn-1 was seeded
+    // with the real `now()`), so history ordering is deterministic.
+    let mut state2 = openhuman_core::openhuman::threads::turn_state::TurnState::started(
+        "thread-turn-1",
+        "req-turn-2",
+        25,
+        "2999-01-01T00:00:00Z",
+    );
+    state2.lifecycle = openhuman_core::openhuman::threads::turn_state::TurnLifecycle::Completed;
+    state2.updated_at = "2999-01-01T00:00:00Z".into();
+    openhuman_core::openhuman::threads::turn_state::store::put(workspace_dir.clone(), &state2)
+        .expect("seed snapshot 2");
+
+    // history → both turns, newest first.
+    let history = post_json_rpc(
+        &rpc_base,
+        9106,
+        "openhuman.threads_turn_state_history",
+        json!({ "thread_id": "thread-turn-1" }),
+    )
+    .await;
+    let history_outer = assert_no_jsonrpc_error(&history, "turn_state_history");
+    let turns = history_outer
+        .get("data")
+        .and_then(|d| d.get("turnStates"))
+        .and_then(serde_json::Value::as_array)
+        .expect("turnStates array");
+    assert_eq!(turns.len(), 2, "both turns retained");
+    assert_eq!(
+        turns[0]
+            .get("requestId")
+            .and_then(serde_json::Value::as_str),
+        Some("req-turn-2"),
+        "newest turn first"
+    );
+
+    // get_turn → the specific earlier turn.
+    let get_turn = post_json_rpc(
+        &rpc_base,
+        9107,
+        "openhuman.threads_turn_state_get_turn",
+        json!({ "thread_id": "thread-turn-1", "request_id": "req-turn-1" }),
+    )
+    .await;
+    let get_turn_outer = assert_no_jsonrpc_error(&get_turn, "turn_state_get_turn (present)");
+    assert_eq!(
+        get_turn_outer
+            .get("data")
+            .and_then(|d| d.get("turnState"))
+            .and_then(|t| t.get("requestId"))
+            .and_then(serde_json::Value::as_str),
+        Some("req-turn-1")
+    );
+
+    // get_turn for an unknown request → null.
+    let get_turn_missing = post_json_rpc(
+        &rpc_base,
+        9108,
+        "openhuman.threads_turn_state_get_turn",
+        json!({ "thread_id": "thread-turn-1", "request_id": "nope" }),
+    )
+    .await;
+    let missing_outer = assert_no_jsonrpc_error(&get_turn_missing, "turn_state_get_turn (absent)");
+    assert!(missing_outer
+        .get("data")
+        .and_then(|d| d.get("turnState"))
+        .map(|v| v.is_null())
+        .unwrap_or(true));
+
     // clear → cleared:true
     let cleared = post_json_rpc(
         &rpc_base,

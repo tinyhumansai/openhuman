@@ -286,6 +286,11 @@ pub fn all_tools_with_runtime(
         Box::new(GetFlowRunTool::new(config.clone())),
         Box::new(ListFlowConnectionsTool::new(config.clone())),
         Box::new(SearchToolCatalogTool::new(config.clone())),
+        // Full live contract (schemas, real required_args/output_fields,
+        // primary_array_path) for one action slug found via
+        // search_tool_catalog — the grounding step before WIRING a node's
+        // args/downstream bindings (systemic tool-contract fix, Part 1).
+        Box::new(GetToolContractTool::new(config.clone())),
         // Ground an `agent` node's `agent_ref` in real registered agent-kind ids
         // (researcher / code_executor / …) — the agent analogue of
         // search_tool_catalog. Read-only.
@@ -295,10 +300,10 @@ pub fn all_tools_with_runtime(
         // workflow-builder prompt requires it to ask the user for confirmation
         // first, and the flow's own approval gate still pauses outbound nodes.
         Box::new(RunFlowTool::new(config.clone())),
-        // Persist a built graph onto an EXISTING saved flow (Write). The one
-        // deliberate carve-out from the belt's propose-only origin: the Flows
-        // prompt bar creates the flow first and hands the agent its id, so the
-        // copilot can finish the "build → dry-run → save" arc itself. It can
+        // Persist a built graph onto an EXISTING saved flow (Write). Used only
+        // when the USER explicitly asks the agent to save; the seeded build
+        // turn from the Flows prompt bar is propose-only (see #4596) — Accept
+        // + the canvas's own Save persist the graph. The tool itself can
         // never create a flow or change enabled/require_approval.
         Box::new(SaveWorkflowTool::new(config.clone())),
         // Flow Scout discovery: the `flow_discovery` agent's terminal emit

@@ -25,7 +25,7 @@ use tinyflows::model::WorkflowGraph;
 
 use crate::openhuman::agent::harness::definition::SandboxMode;
 use crate::openhuman::composio::client::{
-    create_composio_client, direct_execute, ComposioClientKind,
+    create_composio_client, direct_execute, direct_list_tools, ComposioClientKind,
 };
 use crate::openhuman::config::{Config, HttpRequestConfig};
 use crate::openhuman::credentials::{HttpCredential, HttpCredentialsStore};
@@ -1108,17 +1108,35 @@ pub(crate) fn http_cred_name(conn: &str) -> Option<&str> {
 /// // unchanged (a connected-but-uncurated action on a cataloged toolkit is
 /// // still rejected — the catalog is the tighter allowlist there).
 ///
-/// Returns whether `slug` may be invoked as a flow `tool_call`, given (only when
-/// needed) the user's live connected-toolkit slug set.
+/// // (systemic tool-contract fix, PR2) Path B is now further tightened rather
+/// // than loosened: on top of the (0.3) connected-toolkit check, the SLUG
+/// // ITSELF must be a genuine action in that toolkit's LIVE Composio catalog
+/// // (`fetch_live_toolkit_catalog`) — previously any string sharing the
+/// // connected toolkit's prefix passed (e.g. a hallucinated/typo'd
+/// // `STRIPE_DOES_NOT_EXIST` for a connected `stripe`), with no per-user
+/// // read/write/admin scope check at all. Now: existence is broadened to the
+/// // real catalog (a real-but-uncurated action is allowed), but scope gating
+/// // is ADDED via [`classify_unknown`] — strictly narrower than before, never
+/// // looser.
 ///
-/// Split out from [`is_curated_flow_tool`] as a pure function so the two decision
-/// paths are unit-testable without a live Composio backend: `connected_toolkits`
-/// is `None` when the toolkit has a static catalog (the connected set is never
-/// consulted then) or when the connected set could not be fetched (fail-closed).
-async fn flow_tool_allowed(slug: &str, connected_toolkits: Option<&[String]>) -> bool {
+/// Returns whether `slug` may be invoked as a flow `tool_call`, given (only when
+/// needed) the user's live connected-toolkit slug set. `config` is only used by
+/// Path B's live-catalog fetch (fed through [`fetch_live_toolkit_catalog`],
+/// which is itself cached — a seeded test cache never touches the network).
+///
+/// Split out from [`is_curated_flow_tool`] as a (mostly) pure function so the
+/// two decision paths are unit-testable without a live Composio backend:
+/// `connected_toolkits` is `None` when the toolkit has a static catalog (the
+/// connected set is never consulted then) or when the connected set could not
+/// be fetched (fail-closed).
+async fn flow_tool_allowed(
+    config: &Config,
+    slug: &str,
+    connected_toolkits: Option<&[String]>,
+) -> bool {
     use crate::openhuman::memory_sync::composio::providers::{
-        catalog_for_toolkit, find_curated, get_provider, load_user_scope_or_default,
-        toolkit_from_slug,
+        catalog_for_toolkit, classify_unknown, find_curated, get_provider,
+        load_user_scope_or_default, toolkit_from_slug,
     };
 
     let Some(toolkit) = toolkit_from_slug(slug) else {
@@ -1142,19 +1160,47 @@ async fn flow_tool_allowed(slug: &str, connected_toolkits: Option<&[String]>) ->
         return allowed;
     }
 
-    // Path B (0.3): no static catalog — allow iff the user has a live ACTIVE
-    // Composio connection for this toolkit. Made-up toolkits are never connected.
-    match connected_toolkits {
-        Some(toolkits) => {
-            let connected = toolkits.iter().any(|t| t.eq_ignore_ascii_case(&toolkit));
-            tracing::debug!(target: "flows", %slug, %toolkit, connected, "[flows] tool_call curation: live connected-toolkit allowlist decision");
-            connected
-        }
+    // Path B: no static catalog. First, the (0.3) toolkit-level gate — allow
+    // only when the user has a live ACTIVE Composio connection for it. A
+    // made-up toolkit is never connected, so it rejects right here without
+    // ever reaching the live-catalog fetch below.
+    let connected = match connected_toolkits {
+        Some(toolkits) => toolkits.iter().any(|t| t.eq_ignore_ascii_case(&toolkit)),
         None => {
             tracing::warn!(target: "flows", %slug, %toolkit, "[flows] tool_call curation: reject — no static catalog and the connected-toolkit set was unavailable (fail-closed)");
             false
         }
+    };
+    if !connected {
+        tracing::debug!(target: "flows", %slug, %toolkit, "[flows] tool_call curation: reject — toolkit has no static catalog and is not connected");
+        return false;
     }
+
+    // Second, the (systemic tool-contract fix) slug-existence gate — the
+    // exact slug must be a genuine action in the toolkit's LIVE Composio
+    // catalog, not merely share its prefix. A fetch failure fails closed
+    // (never falls back to "any slug with the right prefix passes").
+    let Some(live_catalog) = fetch_live_toolkit_catalog(config, &toolkit).await else {
+        tracing::warn!(target: "flows", %slug, %toolkit, "[flows] tool_call curation: reject — connected but the live catalog fetch failed (fail-closed)");
+        return false;
+    };
+    if live_catalog
+        .iter()
+        .find(|c| c.slug.eq_ignore_ascii_case(slug))
+        .is_none()
+    {
+        tracing::debug!(target: "flows", %slug, %toolkit, "[flows] tool_call curation: reject — slug is not a real action in this toolkit's live catalog");
+        return false;
+    }
+
+    // Finally, scope-gate the same way a curated action is — via the
+    // classify_unknown heuristic (mirrors
+    // `providers::is_action_visible_with_pref`'s uncurated branch), which the
+    // pre-fix Path B never applied at all.
+    let pref = load_user_scope_or_default(&toolkit).await;
+    let allowed = pref.allows(classify_unknown(slug));
+    tracing::debug!(target: "flows", %slug, %toolkit, allowed, "[flows] tool_call curation: live catalog + scope decision");
+    allowed
 }
 
 /// Whether `slug`'s toolkit lacks a static curated catalog, i.e. the curation
@@ -1222,7 +1268,7 @@ async fn is_curated_flow_tool(config: &Config, slug: &str) -> bool {
     } else {
         None
     };
-    flow_tool_allowed(slug, connected.as_deref()).await
+    flow_tool_allowed(config, slug, connected.as_deref()).await
 }
 
 /// Finds the connected account a Composio `connection_id` refers to within a
@@ -1311,175 +1357,305 @@ pub struct OpenHumanTools {
 /// search / media generation / file / shell / etc. — the full toolset.
 pub(crate) const NATIVE_TOOL_PREFIX: &str = "oh:";
 
-/// Process-level cache for [`composio_required_args`]: toolkit → (uppercase
-/// action slug → required top-level arg names). One `list_tools` fetch per
-/// toolkit per process; schemas are effectively static within a session.
-static REQUIRED_ARGS_CACHE: std::sync::OnceLock<
-    std::sync::Mutex<
-        std::collections::HashMap<String, std::collections::HashMap<String, Vec<String>>>,
-    >,
+/// One Composio action's LIVE, ground-truth contract — the source of truth
+/// [Part 1 of the systemic tool-contract fix] grounds the Workflow builder
+/// against, replacing the old "guess a slug/arg/field/path and hope"
+/// authoring flow.
+///
+/// Everything on this type comes straight from Composio's own v3 `/tools`
+/// listing (`ComposioToolFunction` — `parameters`/`output_parameters`), never
+/// from OpenHuman's static curated catalog: `required_args`/`input_schema`
+/// are the action's real input contract, `output_fields`/`output_schema`/
+/// `primary_array_path` are its real output contract. `is_curated` is the
+/// ONE field that cross-references the static catalog — purely for ranking
+/// (curated matches first in `search_tool_catalog`), never for filtering:
+/// a real, uncurated action still produces a full `ToolContract`.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ToolContract {
+    /// The Composio action slug, e.g. `"GMAIL_SEND_EMAIL"`.
+    pub slug: String,
+    /// The lowercase toolkit slug this action belongs to, e.g. `"gmail"`.
+    pub toolkit: String,
+    /// Human-readable description shown to the model, when Composio
+    /// publishes one for this action.
+    pub description: Option<String>,
+    /// Required top-level input argument names (`input_schema`'s
+    /// `required` array). Empty when the action takes no required args —
+    /// NOT the same as "schema unknown" (there is no such state here: an
+    /// action always has SOME input schema, even if empty).
+    pub required_args: Vec<String>,
+    /// The action's full input JSON Schema, verbatim from Composio.
+    pub input_schema: Option<Value>,
+    /// Top-level output/response field names — empty when
+    /// [`Self::output_schema`] is `None` (unknown) OR when it's `Some` but
+    /// names no top-level properties; check `output_schema` to tell those
+    /// two apart.
+    pub output_fields: Vec<String>,
+    /// The action's full output JSON Schema, when Composio publishes one.
+    /// `None` means "unknown to this listing", not "empty" — mirrors
+    /// [`composio_response_fields`]'s long-standing contract.
+    pub output_schema: Option<Value>,
+    /// Dotted path (relative to the envelope's own `json` field — prefix
+    /// with `"json."` for a `split_out.path`, e.g. `"json.data.messages"`)
+    /// to the first array-typed property in [`Self::output_schema`], via
+    /// [`compute_primary_array_path`]. `None` when the output schema is
+    /// unknown or names no array property.
+    pub primary_array_path: Option<String>,
+    /// Whether this action is ALSO one of OpenHuman's hand-curated actions
+    /// for its toolkit (`catalog_for_toolkit` /
+    /// `ComposioProvider::curated_tools`) — ranking signal only; a `false`
+    /// here never hides a real action, it only sorts it after curated ones.
+    pub is_curated: bool,
+}
+
+/// Process-level cache backing [`fetch_live_toolkit_catalog`]: lowercase
+/// toolkit slug → every [`ToolContract`] the LIVE Composio catalog published
+/// for it. One fetch per toolkit per process — schemas are effectively
+/// static within a session.
+///
+/// Replaces the narrower `REQUIRED_ARGS_CACHE` / `RESPONSE_FIELDS_CACHE`
+/// pair (single-purpose, args-only / fields-only) that predated this fix:
+/// [`composio_required_args`] and [`composio_response_fields`] now both
+/// delegate to this one cache/fetch instead of each running its own
+/// independent `composio_list_tools` round trip.
+static LIVE_CATALOG_CACHE: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, Vec<ToolContract>>>,
 > = std::sync::OnceLock::new();
 
-/// Seeds the required-args cache for a toolkit — test hook so preflight
-/// behavior can be exercised without a live Composio backend.
+/// Seeds the live-catalog cache for a toolkit — test hook so preflight /
+/// search / contract-validation behavior can be exercised without a live
+/// Composio backend. Replaces the narrower `seed_required_args_cache` /
+/// `seed_response_fields_cache` test hooks this fix removes.
 #[cfg(test)]
-pub(crate) fn seed_required_args_cache(
-    toolkit: &str,
-    entries: std::collections::HashMap<String, Vec<String>>,
-) {
-    REQUIRED_ARGS_CACHE
+pub(crate) fn seed_live_catalog_cache(toolkit: &str, contracts: Vec<ToolContract>) {
+    LIVE_CATALOG_CACHE
         .get_or_init(Default::default)
         .lock()
-        .expect("required-args cache poisoned")
-        .insert(toolkit.to_string(), entries);
+        .expect("live catalog cache poisoned")
+        .insert(toolkit.trim().to_ascii_lowercase(), contracts);
+}
+
+/// Fetches a toolkit's tool schemas STRAIGHT from the Composio client,
+/// deliberately bypassing `composio::ops::composio_list_tools`'s curated-
+/// whitelist filter (Direct mode's `filter_list_tools_response_for_direct` —
+/// Backend mode's branch of `composio_list_tools` never filters at all, so
+/// this is behavior-identical to it there) — so [`fetch_live_toolkit_catalog`]
+/// grounds against the FULL live catalog (every real action, connected or
+/// not, curated or not), not the narrower curated subset the pre-fix
+/// `search_tool_catalog` searched.
+///
+/// - **Backend mode** calls [`crate::openhuman::composio::client::ComposioClient::list_tools`]
+///   directly — already unfiltered (`composio_list_tools`'s backend branch
+///   applies no filter either), so this is not a behavior change there.
+/// - **Direct mode** calls [`direct_list_tools`] directly instead of going
+///   through `composio_list_tools`'s direct branch, which DOES apply
+///   `filter_list_tools_response_for_direct` — that's the filter this
+///   function exists to skip. `direct_list_tools` itself never filters; the
+///   curation is layered on entirely by its `composio_list_tools` caller.
+///
+/// Returns `None` on any client-construction or network failure — callers
+/// degrade to "catalog unknown" rather than blocking.
+async fn fetch_raw_toolkit_tools(
+    config: &Config,
+    toolkit: &str,
+) -> Option<crate::openhuman::composio::types::ComposioToolsResponse> {
+    let kind = create_composio_client(config)
+        .map_err(|e| {
+            tracing::debug!(target: "flows", %toolkit, error = %e, "[flows] live catalog: composio client unavailable — skipping");
+            e
+        })
+        .ok()?;
+    match kind {
+        ComposioClientKind::Backend(client) => client
+            .list_tools(Some(&[toolkit.to_string()]), None)
+            .await
+            .map_err(|e| {
+                tracing::debug!(target: "flows", %toolkit, error = %e, "[flows] live catalog: backend fetch failed — skipping");
+                e
+            })
+            .ok(),
+        ComposioClientKind::Direct(tool) => direct_list_tools(&tool, &[toolkit.to_string()], None)
+            .await
+            .map_err(|e| {
+                tracing::debug!(target: "flows", %toolkit, error = %e, "[flows] live catalog: direct fetch failed — skipping");
+                e
+            })
+            .ok(),
+    }
+}
+
+/// Fetches (or returns the cached) FULL LIVE Composio catalog for one
+/// toolkit — every real action Composio publishes for it, mapped into
+/// [`ToolContract`]s — regardless of OpenHuman's curated whitelist or the
+/// user's connection state. This is the ground-truth source the Workflow
+/// builder's discovery (`search_tool_catalog`/`get_tool_contract`) and
+/// enforcement (`ops::validate_tool_contracts`) both consult.
+///
+/// Degrades gracefully when an action's listing carries no
+/// `output_parameters` (unknown to this crate, or genuinely unpublished by
+/// Composio for it) — `output_fields` is empty, `primary_array_path` is
+/// `None`, and `output_schema` stays `None` so callers can distinguish "no
+/// fields" from "schema unknown". Applies identically whether the listing
+/// came from Direct mode (which threads `output_parameters` through
+/// natively) or Backend mode (whatever its own proxy response carries under
+/// the same field — may legitimately be absent).
+///
+/// `None` when the fetch itself failed (no client, network error) —
+/// distinct from `Some(vec![])`, which means the toolkit is real but
+/// currently publishes zero actions.
+pub(crate) async fn fetch_live_toolkit_catalog(
+    config: &Config,
+    toolkit: &str,
+) -> Option<Vec<ToolContract>> {
+    use crate::openhuman::memory_sync::composio::providers::{
+        catalog_for_toolkit, find_curated, get_provider,
+    };
+
+    let key = toolkit.trim().to_ascii_lowercase();
+    if key.is_empty() {
+        return None;
+    }
+
+    if let Some(cached) = LIVE_CATALOG_CACHE
+        .get_or_init(Default::default)
+        .lock()
+        .ok()?
+        .get(&key)
+    {
+        return Some(cached.clone());
+    }
+
+    tracing::debug!(target: "flows", toolkit = %key, "[flows] live catalog: fetching (cache miss)");
+    let resp = fetch_raw_toolkit_tools(config, &key).await?;
+
+    let curated_catalog = get_provider(&key)
+        .and_then(|p| p.curated_tools())
+        .or_else(|| catalog_for_toolkit(&key));
+
+    let contracts: Vec<ToolContract> = resp
+        .tools
+        .iter()
+        .map(|tool| {
+            let slug = tool.function.name.clone();
+            let required_args = tool
+                .function
+                .parameters
+                .as_ref()
+                .and_then(|p| p.get("required"))
+                .and_then(Value::as_array)
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let output_fields =
+                response_fields_from_schema(tool.function.output_parameters.as_ref());
+            let primary_array_path =
+                compute_primary_array_path(tool.function.output_parameters.as_ref());
+            let is_curated = curated_catalog.is_some_and(|cat| find_curated(cat, &slug).is_some());
+            ToolContract {
+                slug,
+                toolkit: key.clone(),
+                description: tool.function.description.clone(),
+                required_args,
+                input_schema: tool.function.parameters.clone(),
+                output_fields,
+                output_schema: tool.function.output_parameters.clone(),
+                primary_array_path,
+                is_curated,
+            }
+        })
+        .collect();
+
+    if let Ok(mut cache) = LIVE_CATALOG_CACHE.get_or_init(Default::default).lock() {
+        cache.insert(key, contracts.clone());
+    }
+    Some(contracts)
+}
+
+/// Walks an output JSON Schema breadth-first for the first `type: "array"`
+/// property, returning its dotted path relative to the schema's own root
+/// (e.g. `"data.messages"` for a Gmail-list-shaped `{data: {messages:
+/// [...]}}` schema, or `"messages"` for a flatter `{messages: [...]}`
+/// schema). `None` when `schema` is absent or no array property is found at
+/// any depth.
+///
+/// Breadth-first (not depth-first): when a schema nests more than one array
+/// property, the SHALLOWEST one wins, since that is virtually always the one
+/// a `split_out` node should fan out over.
+pub(crate) fn compute_primary_array_path(schema: Option<&Value>) -> Option<String> {
+    let root = schema?;
+    let mut queue: std::collections::VecDeque<(String, &Value)> = std::collections::VecDeque::new();
+    queue.push_back((String::new(), root));
+
+    while let Some((path, node)) = queue.pop_front() {
+        let Some(props) = node.get("properties").and_then(Value::as_object) else {
+            continue;
+        };
+        // Check every property at THIS level for an array before descending
+        // to the next level — guarantees the shallowest match wins.
+        for (key, prop_schema) in props {
+            if prop_schema.get("type").and_then(Value::as_str) == Some("array") {
+                let prop_path = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{path}.{key}")
+                };
+                return Some(prop_path);
+            }
+        }
+        for (key, prop_schema) in props {
+            let prop_path = if path.is_empty() {
+                key.clone()
+            } else {
+                format!("{path}.{key}")
+            };
+            queue.push_back((prop_path, prop_schema));
+        }
+    }
+    None
 }
 
 /// Best-effort lookup of a Composio action's **required** top-level parameter
-/// names, from the toolkit's tool schemas (`parameters.required`).
+/// names — a thin projection over [`fetch_live_toolkit_catalog`]'s
+/// [`ToolContract`]s (this used to run its own independent
+/// `REQUIRED_ARGS_CACHE`-backed fetch; existing callers — the required-arg
+/// preflight, `graph_wiring_warnings` — keep this exact signature).
 ///
 /// Returns `None` when the schema is unavailable — unknown toolkit, client
-/// construction failure, or a failed/empty listing — so callers can skip the
-/// preflight rather than block execution on a catalog hiccup. Results are
-/// cached per toolkit for the life of the process.
+/// construction failure, a failed/empty listing, or the slug isn't present
+/// in the toolkit's live catalog — so callers can skip the preflight rather
+/// than block execution on a catalog hiccup.
 pub(crate) async fn composio_required_args(config: &Config, slug: &str) -> Option<Vec<String>> {
     let toolkit = crate::openhuman::memory_sync::composio::providers::toolkit_from_slug(slug)?;
-    let slug_key = slug.to_ascii_uppercase();
-
-    if let Some(by_slug) = REQUIRED_ARGS_CACHE
-        .get_or_init(Default::default)
-        .lock()
-        .ok()?
-        .get(&toolkit)
-    {
-        return by_slug.get(&slug_key).cloned();
-    }
-
-    tracing::debug!(target: "flows", %toolkit, %slug, "[flows] preflight: fetching tool schemas for toolkit");
-    let resp = crate::openhuman::composio::ops::composio_list_tools(
-        config,
-        Some(vec![toolkit.clone()]),
-        None,
-    )
-    .await
-    .map_err(|e| {
-        tracing::debug!(target: "flows", %toolkit, error = %e, "[flows] preflight: schema fetch failed — skipping check");
-        e
-    })
-    .ok()?;
-
-    let mut by_slug = std::collections::HashMap::new();
-    for tool in &resp.value.tools {
-        let required: Vec<String> = tool
-            .function
-            .parameters
-            .as_ref()
-            .and_then(|p| p.get("required"))
-            .and_then(Value::as_array)
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default();
-        by_slug.insert(tool.function.name.to_ascii_uppercase(), required);
-    }
-    let found = by_slug.get(&slug_key).cloned();
-    if let Ok(mut cache) = REQUIRED_ARGS_CACHE.get_or_init(Default::default).lock() {
-        cache.insert(toolkit, by_slug);
-    }
-    found
-}
-
-/// Process-level cache for [`composio_response_fields`]: toolkit → (uppercase
-/// action slug → top-level output/response field names). A sibling of
-/// [`REQUIRED_ARGS_CACHE`] — same keying and one-fetch-per-toolkit-per-process
-/// lifetime — but kept as its own `OnceLock` so seeding one cache in tests
-/// never leaks into the other.
-static RESPONSE_FIELDS_CACHE: std::sync::OnceLock<
-    std::sync::Mutex<
-        std::collections::HashMap<String, std::collections::HashMap<String, Vec<String>>>,
-    >,
-> = std::sync::OnceLock::new();
-
-/// Seeds the response-fields cache for a toolkit — test hook so
-/// `search_tool_catalog`'s grounding can be exercised without a live Composio
-/// backend. Mirrors [`seed_required_args_cache`].
-#[cfg(test)]
-pub(crate) fn seed_response_fields_cache(
-    toolkit: &str,
-    entries: std::collections::HashMap<String, Vec<String>>,
-) {
-    RESPONSE_FIELDS_CACHE
-        .get_or_init(Default::default)
-        .lock()
-        .expect("response-fields cache poisoned")
-        .insert(toolkit.to_string(), entries);
+    let contracts = fetch_live_toolkit_catalog(config, &toolkit).await?;
+    contracts
+        .iter()
+        .find(|c| c.slug.eq_ignore_ascii_case(slug))
+        .map(|c| c.required_args.clone())
 }
 
 /// Best-effort lookup of a Composio action's **response/output** top-level
-/// field names — the output-side analogue of [`composio_required_args`]'s
-/// input-side lookup, so `search_tool_catalog` can ground a downstream
-/// binding (`=nodes.<id>.item.json.<field>`) in a real field name instead of
-/// guessing one.
-///
-/// Source: Composio v3 `/tools` publishes an `output_parameters` JSON Schema
-/// per action alongside `input_parameters` — documented as "Schema
-/// definition of return values from the tool"
-/// (<https://docs.composio.dev/reference/api-reference/tools/getTools>).
-/// `direct_list_tools` (Composio Direct mode) threads that schema through as
-/// [`crate::openhuman::composio::types::ComposioToolFunction::output_parameters`].
-/// The backend-proxied path forwards whatever its own
-/// `/agent-integrations/composio/tools` response carries under the same
-/// field — opaque to this crate, so it may legitimately be absent there.
+/// field names — the output-side analogue of [`composio_required_args`],
+/// now a thin projection over [`fetch_live_toolkit_catalog`]'s
+/// [`ToolContract`]s (replaces the standalone `RESPONSE_FIELDS_CACHE`-backed
+/// fetch; `search_tool_catalog`'s grounding keeps this exact signature).
 ///
 /// Returns `None` when no output schema is known for the slug — unknown
-/// toolkit, client construction failure, a failed/empty listing, or an
-/// action whose listing doesn't publish `output_parameters` — so callers
-/// degrade to "output shape unknown" (e.g. suggest a dry-run) rather than
-/// blocking or guessing. `Some(vec![])` means the schema was found but names
-/// no top-level properties. Cached per toolkit for the life of the process.
+/// toolkit, client construction failure, a failed/empty listing, the slug
+/// isn't in the live catalog, or a real action whose listing doesn't
+/// publish `output_parameters` — so callers degrade to "output shape
+/// unknown" rather than blocking or guessing. `Some(vec![])` means the
+/// schema was found but names no top-level properties.
 pub(crate) async fn composio_response_fields(config: &Config, slug: &str) -> Option<Vec<String>> {
     let toolkit = crate::openhuman::memory_sync::composio::providers::toolkit_from_slug(slug)?;
-    let slug_key = slug.to_ascii_uppercase();
-
-    if let Some(by_slug) = RESPONSE_FIELDS_CACHE
-        .get_or_init(Default::default)
-        .lock()
-        .ok()?
-        .get(&toolkit)
-    {
-        return by_slug.get(&slug_key).cloned();
-    }
-
-    tracing::debug!(target: "flows", %toolkit, %slug, "[flows] catalog: fetching output schemas for toolkit");
-    let resp = crate::openhuman::composio::ops::composio_list_tools(
-        config,
-        Some(vec![toolkit.clone()]),
-        None,
-    )
-    .await
-    .map_err(|e| {
-        tracing::debug!(target: "flows", %toolkit, error = %e, "[flows] catalog: output-schema fetch failed — skipping");
-        e
-    })
-    .ok()?;
-
-    let mut by_slug = std::collections::HashMap::new();
-    for tool in &resp.value.tools {
-        // Only cache an entry when the listing actually published an output
-        // schema — an absent `output_parameters` must stay "unknown" (no
-        // entry, so lookups fall through to `None`) rather than collapsing
-        // into `Some(vec![])`, which would mean "schema present, no fields".
-        if let Some(schema) = tool.function.output_parameters.as_ref() {
-            let fields = response_fields_from_schema(Some(schema));
-            by_slug.insert(tool.function.name.to_ascii_uppercase(), fields);
-        }
-    }
-    let found = by_slug.get(&slug_key).cloned();
-    if let Ok(mut cache) = RESPONSE_FIELDS_CACHE.get_or_init(Default::default).lock() {
-        cache.insert(toolkit, by_slug);
-    }
-    found
+    let contracts = fetch_live_toolkit_catalog(config, &toolkit).await?;
+    let contract = contracts
+        .iter()
+        .find(|c| c.slug.eq_ignore_ascii_case(slug))?;
+    contract.output_schema.as_ref()?;
+    Some(contract.output_fields.clone())
 }
 
 /// Extracts top-level field names from a Composio `output_parameters` JSON
@@ -2750,22 +2926,32 @@ mod tests {
         use crate::openhuman::memory_sync::composio::providers::{
             catalog_for_toolkit, get_provider,
         };
+        let config = Config::default();
         // Precondition: `flowstestkit` is genuinely uncatalogued, so the decision
         // flows through the connected-set path (not the static curated path).
         assert!(catalog_for_toolkit("flowstestkit").is_none());
         assert!(get_provider("flowstestkit").is_none());
 
         // No connected set at all → fail-closed reject.
-        assert!(!flow_tool_allowed("FLOWSTESTKIT_DO_THING", None).await);
+        assert!(!flow_tool_allowed(&config, "FLOWSTESTKIT_DO_THING", None).await);
         // Connected set present but does not include this toolkit → reject.
-        assert!(!flow_tool_allowed("FLOWSTESTKIT_DO_THING", Some(&["gmail".to_string()])).await);
+        assert!(
+            !flow_tool_allowed(
+                &config,
+                "FLOWSTESTKIT_DO_THING",
+                Some(&["gmail".to_string()])
+            )
+            .await
+        );
         // A blank slug is always rejected.
-        assert!(!flow_tool_allowed("", Some(&["flowstestkit".to_string()])).await);
+        assert!(!flow_tool_allowed(&config, "", Some(&["flowstestkit".to_string()])).await);
     }
 
     /// A real Composio toolkit OpenHuman ships no static catalog for now PASSES
-    /// once the user has an ACTIVE connection for it (the TODO(0.3) fix) — the
-    /// exact same slug that rejects above.
+    /// once the user has an ACTIVE connection for it (the TODO(0.3) fix) AND
+    /// the slug is a genuine action in its LIVE catalog (systemic tool-contract
+    /// fix) — seeded here so the test never touches a live Composio backend.
+    /// The exact same slug rejects above without a connection.
     #[tokio::test]
     async fn connected_uncatalogued_toolkit_now_passes() {
         use crate::openhuman::memory_sync::composio::providers::{
@@ -2774,12 +2960,77 @@ mod tests {
         assert!(catalog_for_toolkit("flowstestkit").is_none());
         assert!(get_provider("flowstestkit").is_none());
 
+        let config = Config::default();
+        seed_live_catalog_cache(
+            "flowstestkit",
+            vec![ToolContract {
+                slug: "FLOWSTESTKIT_DO_THING".to_string(),
+                toolkit: "flowstestkit".to_string(),
+                description: None,
+                required_args: Vec::new(),
+                input_schema: None,
+                output_fields: Vec::new(),
+                output_schema: None,
+                primary_array_path: None,
+                is_curated: false,
+            }],
+        );
+
         assert!(
-            flow_tool_allowed("FLOWSTESTKIT_DO_THING", Some(&["flowstestkit".to_string()])).await
+            flow_tool_allowed(
+                &config,
+                "FLOWSTESTKIT_DO_THING",
+                Some(&["flowstestkit".to_string()])
+            )
+            .await
         );
         // Case-insensitive match on the toolkit slug.
         assert!(
-            flow_tool_allowed("FLOWSTESTKIT_DO_THING", Some(&["FlowsTestKit".to_string()])).await
+            flow_tool_allowed(
+                &config,
+                "FLOWSTESTKIT_DO_THING",
+                Some(&["FlowsTestKit".to_string()])
+            )
+            .await
+        );
+    }
+
+    /// A CONNECTED but uncatalogued toolkit still rejects a slug that shares
+    /// its prefix but isn't a genuine action in the LIVE catalog — the
+    /// systemic tool-contract fix's tightening: connection alone is no longer
+    /// sufficient, the slug itself must be real.
+    #[tokio::test]
+    async fn connected_uncatalogued_toolkit_rejects_a_hallucinated_slug() {
+        use crate::openhuman::memory_sync::composio::providers::{
+            catalog_for_toolkit, get_provider,
+        };
+        assert!(catalog_for_toolkit("flowstestkit").is_none());
+        assert!(get_provider("flowstestkit").is_none());
+
+        let config = Config::default();
+        seed_live_catalog_cache(
+            "flowstestkit",
+            vec![ToolContract {
+                slug: "FLOWSTESTKIT_DO_THING".to_string(),
+                toolkit: "flowstestkit".to_string(),
+                description: None,
+                required_args: Vec::new(),
+                input_schema: None,
+                output_fields: Vec::new(),
+                output_schema: None,
+                primary_array_path: None,
+                is_curated: false,
+            }],
+        );
+
+        assert!(
+            !flow_tool_allowed(
+                &config,
+                "FLOWSTESTKIT_MADE_UP_ACTION",
+                Some(&["flowstestkit".to_string()])
+            )
+            .await,
+            "a hallucinated slug for a connected-but-uncurated toolkit must still reject"
         );
     }
 
@@ -3218,5 +3469,205 @@ mod tests {
         assert!(response_fields_from_schema(None).is_empty());
         assert!(response_fields_from_schema(Some(&json!("not an object"))).is_empty());
         assert!(response_fields_from_schema(Some(&json!({}))).is_empty());
+    }
+
+    // ── compute_primary_array_path ──────────────────────────────────────────
+
+    #[test]
+    fn compute_primary_array_path_finds_a_top_level_array_property() {
+        let schema = json!({
+            "type": "object",
+            "properties": { "items": { "type": "array" }, "count": { "type": "integer" } }
+        });
+        assert_eq!(
+            compute_primary_array_path(Some(&schema)),
+            Some("items".to_string())
+        );
+    }
+
+    #[test]
+    fn compute_primary_array_path_finds_a_nested_array_property() {
+        // Gmail-shaped: the array lives two levels down, under `data.messages`.
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "object",
+                    "properties": {
+                        "messages": { "type": "array" },
+                        "nextPageToken": { "type": "string" }
+                    }
+                }
+            }
+        });
+        assert_eq!(
+            compute_primary_array_path(Some(&schema)),
+            Some("data.messages".to_string())
+        );
+    }
+
+    #[test]
+    fn compute_primary_array_path_prefers_the_shallowest_array() {
+        // A top-level array (`items`) must win over a deeper one
+        // (`data.nested`) even though `data` is declared first.
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "object",
+                    "properties": { "nested": { "type": "array" } }
+                },
+                "items": { "type": "array" }
+            }
+        });
+        assert_eq!(
+            compute_primary_array_path(Some(&schema)),
+            Some("items".to_string())
+        );
+    }
+
+    #[test]
+    fn compute_primary_array_path_none_when_absent_or_no_array_property() {
+        assert_eq!(compute_primary_array_path(None), None);
+        assert_eq!(
+            compute_primary_array_path(Some(&json!({ "type": "object" }))),
+            None
+        );
+        assert_eq!(
+            compute_primary_array_path(Some(
+                &json!({ "type": "object", "properties": { "id": { "type": "string" } } })
+            )),
+            None
+        );
+    }
+
+    // ── fetch_live_toolkit_catalog / composio_required_args /
+    //    composio_response_fields delegation ─────────────────────────────────
+
+    fn contract(
+        slug: &str,
+        toolkit: &str,
+        required: &[&str],
+        output_fields: &[&str],
+    ) -> ToolContract {
+        let output_schema = if output_fields.is_empty() {
+            None
+        } else {
+            Some(json!({
+                "type": "object",
+                "properties": output_fields
+                    .iter()
+                    .map(|f| (f.to_string(), json!({ "type": "string" })))
+                    .collect::<serde_json::Map<String, Value>>()
+            }))
+        };
+        ToolContract {
+            slug: slug.to_string(),
+            toolkit: toolkit.to_string(),
+            description: None,
+            required_args: required.iter().map(|s| s.to_string()).collect(),
+            input_schema: None,
+            output_fields: output_fields.iter().map(|s| s.to_string()).collect(),
+            output_schema,
+            primary_array_path: None,
+            is_curated: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn fetch_live_toolkit_catalog_returns_the_seeded_cache_without_a_network_call() {
+        let config = Config::default();
+        seed_live_catalog_cache(
+            "flowscatalogkit",
+            vec![contract(
+                "FLOWSCATALOGKIT_DO_THING",
+                "flowscatalogkit",
+                &["to"],
+                &["id", "threadId"],
+            )],
+        );
+
+        let catalog = fetch_live_toolkit_catalog(&config, "flowscatalogkit")
+            .await
+            .expect("seeded catalog must be returned without a network call");
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].slug, "FLOWSCATALOGKIT_DO_THING");
+
+        // Case/whitespace-insensitive on the toolkit key.
+        let same = fetch_live_toolkit_catalog(&config, "  FlowsCatalogKit  ")
+            .await
+            .expect("cache lookup is case/whitespace-insensitive");
+        assert_eq!(same.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn composio_required_args_and_response_fields_delegate_to_the_live_catalog() {
+        let config = Config::default();
+        seed_live_catalog_cache(
+            "flowsreqkit",
+            vec![contract(
+                "FLOWSREQKIT_SEND",
+                "flowsreqkit",
+                &["to", "body"],
+                &["id", "threadId"],
+            )],
+        );
+
+        assert_eq!(
+            composio_required_args(&config, "FLOWSREQKIT_SEND").await,
+            Some(vec!["to".to_string(), "body".to_string()])
+        );
+        assert_eq!(
+            composio_response_fields(&config, "FLOWSREQKIT_SEND").await,
+            Some(vec!["id".to_string(), "threadId".to_string()])
+        );
+
+        // An unknown slug within a known/seeded toolkit yields None (not a
+        // panic, not an empty-vec false positive).
+        assert_eq!(
+            composio_required_args(&config, "FLOWSREQKIT_UNKNOWN_ACTION").await,
+            None
+        );
+        assert_eq!(
+            composio_response_fields(&config, "FLOWSREQKIT_UNKNOWN_ACTION").await,
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn composio_response_fields_distinguishes_unknown_schema_from_empty_fields() {
+        let config = Config::default();
+
+        // Schema KNOWN but empty (`properties: {}`) → `Some(vec![])`.
+        seed_live_catalog_cache(
+            "flowsschemaempty",
+            vec![{
+                let mut c = contract("FLOWSSCHEMAEMPTY_ACTION", "flowsschemaempty", &[], &[]);
+                c.output_schema = Some(json!({ "type": "object", "properties": {} }));
+                c
+            }],
+        );
+        assert_eq!(
+            composio_response_fields(&config, "FLOWSSCHEMAEMPTY_ACTION").await,
+            Some(Vec::new()),
+            "schema known but empty must be Some(vec![]), not None"
+        );
+
+        // Schema UNKNOWN (`output_schema: None`, the degrade-gracefully case)
+        // → `None`, even though the slug itself is found in the catalog.
+        seed_live_catalog_cache(
+            "flowsschemaunknown",
+            vec![contract(
+                "FLOWSSCHEMAUNKNOWN_ACTION",
+                "flowsschemaunknown",
+                &[],
+                &[],
+            )],
+        );
+        assert_eq!(
+            composio_response_fields(&config, "FLOWSSCHEMAUNKNOWN_ACTION").await,
+            None,
+            "an action with no published output schema must be None, not Some(vec![])"
+        );
     }
 }

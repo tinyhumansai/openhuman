@@ -398,11 +398,13 @@ async fn synthesize_steering(
     use crate::openhuman::agent::turn_origin::{
         with_origin, AgentTurnOrigin, TrustedAutomationSource,
     };
-    use crate::openhuman::inference::provider::create_chat_provider;
+    use crate::openhuman::inference::provider::create_chat_model;
+    use tinyagents::harness::message::Message;
+    use tinyagents::harness::model::{ChatModel, ModelRequest};
 
     for attempt in 1..=2 {
-        let (provider, model) = match create_chat_provider("subconscious", config) {
-            Ok(pm) => pm,
+        let model = match create_chat_model("subconscious", config, 0.3) {
+            Ok(m) => m,
             Err(e) => {
                 log::warn!(target: LOG, "[orchestration] review.provider_unavailable: {e}");
                 return None;
@@ -412,11 +414,13 @@ async fn synthesize_steering(
             job_id: tick_id.to_string(),
             source: TrustedAutomationSource::SubconsciousTainted,
         };
-        match with_origin(
-            origin,
-            provider.chat_with_system(Some(STEERING_SYNTH_SYSTEM), prompt, &model, 0.3),
-        )
-        .await
+        let request = ModelRequest::new(vec![
+            Message::system(STEERING_SYNTH_SYSTEM),
+            Message::user(prompt),
+        ]);
+        match with_origin(origin, model.invoke(&(), request))
+            .await
+            .map(|response| response.text())
         {
             Ok(text) => {
                 if let Some(parsed) = parse_steering_output(&text) {

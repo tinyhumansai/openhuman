@@ -23,7 +23,9 @@ use serde_json::{json, Value};
 use tinyflows::model::{Node, NodeKind, WorkflowGraph};
 
 use crate::openhuman::config::Config;
-use crate::openhuman::flows::ops::{validate_and_migrate_graph, validate_binding_resolvability};
+use crate::openhuman::flows::ops::{
+    validate_and_migrate_graph, validate_binding_resolvability, validate_tool_contracts,
+};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 
 /// Max characters kept for a `config_hint` before truncation, so a long
@@ -192,6 +194,24 @@ impl Tool for ProposeWorkflowTool {
             return Ok(ToolResult::error(format!(
                 "{}\n\nFix these bindings and call propose_workflow again.",
                 binding_errors.join("\n\n")
+            )));
+        }
+
+        // Tool-contract enforcement gate (systemic tool-contract fix, Part 2):
+        // reject a `tool_call` node whose slug isn't a REAL action in the
+        // live Composio catalog, or whose real required args aren't all
+        // wired — before the user ever reviews the proposal.
+        let contract_errors = validate_tool_contracts(&self.config, &graph).await;
+        if !contract_errors.is_empty() {
+            tracing::debug!(
+                target: "flows",
+                %name,
+                error_count = contract_errors.len(),
+                "[flows] propose_workflow: tool-contract check rejected the graph"
+            );
+            return Ok(ToolResult::error(format!(
+                "{}\n\nFix these tool_call nodes and call propose_workflow again.",
+                contract_errors.join("\n\n")
             )));
         }
 

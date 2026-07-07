@@ -3,27 +3,67 @@ import debugFactory from 'debug';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
-import { type ChatSendError, chatSendError } from '../chat/chatSendError';
-import { checkPromptInjection, promptGuardMessage } from '../chat/promptInjectionGuard';
-import ApprovalRequestCard from '../components/chat/ApprovalRequestCard';
-import ArtifactCard from '../components/chat/ArtifactCard';
-import ChatComposer from '../components/chat/ChatComposer';
-import ChatFilesChip from '../components/chat/ChatFilesChip';
-import ChatNewWindowHero from '../components/chat/ChatNewWindowHero';
-import ComposerTokenStats from '../components/chat/ComposerTokenStats';
-import IntegrationConnectCard from '../components/chat/IntegrationConnectCard';
-import QueuedFollowups from '../components/chat/QueuedFollowups';
-import SuperContextToggle from '../components/chat/SuperContextToggle';
-import { whenSuperContextWriteSettled } from '../components/chat/superContextWrite';
-import WorkflowProposalCard from '../components/chat/WorkflowProposalCard';
-import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
-import { SidebarContent } from '../components/layout/shell/SidebarSlot';
-import { settingsNavState } from '../components/settings/modal/settingsOverlay';
-import UpsellBanner from '../components/upsell/UpsellBanner';
-import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDismissState';
-import MicComposer from '../features/human/MicComposer';
-import { useStickToBottom } from '../hooks/useStickToBottom';
-import { useUsageState } from '../hooks/useUsageState';
+import { type ChatSendError, chatSendError } from '../../chat/chatSendError';
+import { checkPromptInjection, promptGuardMessage } from '../../chat/promptInjectionGuard';
+import ApprovalRequestCard from '../../components/chat/ApprovalRequestCard';
+import ArtifactCard from '../../components/chat/ArtifactCard';
+import ChatComposer from '../../components/chat/ChatComposer';
+import ChatFilesChip from '../../components/chat/ChatFilesChip';
+import ChatNewWindowHero from '../../components/chat/ChatNewWindowHero';
+import ComposerTokenStats from '../../components/chat/ComposerTokenStats';
+import IntegrationConnectCard from '../../components/chat/IntegrationConnectCard';
+import QueuedFollowups from '../../components/chat/QueuedFollowups';
+import SuperContextToggle from '../../components/chat/SuperContextToggle';
+import { whenSuperContextWriteSettled } from '../../components/chat/superContextWrite';
+import WorkflowProposalCard from '../../components/chat/WorkflowProposalCard';
+import { ConfirmationModal } from '../../components/intelligence/ConfirmationModal';
+import { SidebarContent } from '../../components/layout/shell/SidebarSlot';
+import { settingsNavState } from '../../components/settings/modal/settingsOverlay';
+import UpsellBanner from '../../components/upsell/UpsellBanner';
+import { dismissBanner, shouldShowBanner } from '../../components/upsell/upsellDismissState';
+import {
+  AgentMessageBubble,
+  AgentMessageText,
+  BubbleMarkdown,
+} from '../../features/conversations/components/AgentMessageBubble';
+import { AgentProcessSourcePanel } from '../../features/conversations/components/AgentProcessSourcePanel';
+import {
+  BackgroundProcessesPanel,
+  selectBackgroundProcesses,
+} from '../../features/conversations/components/BackgroundProcessesPanel';
+import {
+  CitationChips,
+  type MessageCitation,
+} from '../../features/conversations/components/CitationChips';
+import { PlanReviewCard } from '../../features/conversations/components/PlanReviewCard';
+import { SubagentDrawer } from '../../features/conversations/components/SubagentDrawer';
+import {
+  ThreadGoalEditorPanel,
+  ThreadGoalFooterTrigger,
+  useThreadGoal,
+} from '../../features/conversations/components/ThreadGoalChip';
+import { ThreadTodoStrip } from '../../features/conversations/components/ThreadTodoStrip';
+import { ToolTimelineBlock } from '../../features/conversations/components/ToolTimelineBlock';
+import {
+  evaluateComposerSend,
+  getComposerBlockedSendFeedback,
+  handleComposerSlashCommand,
+} from '../../features/conversations/composerSendDecision';
+import { useMemorySyncActive } from '../../features/conversations/hooks/useBackgroundActivity';
+import {
+  type AgentBubblePosition,
+  buildAcceptedInlineCompletion,
+  formatRelativeTime,
+  formatResetTime,
+  getInlineCompletionSuffix,
+} from '../../features/conversations/utils/format';
+import {
+  GENERAL_TAB_VALUE,
+  isThreadVisibleInTab,
+} from '../../features/conversations/utils/threadFilter';
+import MicComposer from '../../features/human/MicComposer';
+import { useStickToBottom } from '../../hooks/useStickToBottom';
+import { useUsageState } from '../../hooks/useUsageState';
 import {
   type Attachment,
   ATTACHMENT_MAX_FILES,
@@ -32,33 +72,34 @@ import {
   imageMarkerCost,
   parseMessageImages,
   validateAndReadFile,
-} from '../lib/attachments';
-import { useT } from '../lib/i18n/I18nContext';
-import { trackEvent } from '../services/analytics';
-import { applyOpenRouterFreeModels } from '../services/api/openrouterFreeModels';
-import { subagentApi } from '../services/api/subagentApi';
-import { threadApi } from '../services/api/threadApi';
-import { fetchThreadTokenUsage } from '../services/api/threadUsageApi';
+} from '../../lib/attachments';
+import { useT } from '../../lib/i18n/I18nContext';
+import { trackEvent } from '../../services/analytics';
+import { applyOpenRouterFreeModels } from '../../services/api/openrouterFreeModels';
+import { subagentApi } from '../../services/api/subagentApi';
+import { threadApi } from '../../services/api/threadApi';
+import { fetchThreadTokenUsage } from '../../services/api/threadUsageApi';
 import {
   aiRegenerate,
   chatCancel,
   chatClearQueue,
   chatSend,
   useRustChat,
-} from '../services/chatService';
-import { callCoreRpc } from '../services/coreRpcClient';
+} from '../../services/chatService';
+import { callCoreRpc } from '../../services/coreRpcClient';
 import {
   loadAgentProfiles,
   selectActiveAgentProfileId,
   selectAgentProfile,
   selectAgentProfiles,
-} from '../store/agentProfileSlice';
+} from '../../store/agentProfileSlice';
 import {
   beginInferenceTurn,
   clearFollowupsForThread,
   clearRuntimeForThread,
   clearThreadSendPending,
   enqueueFollowup,
+  fetchAndHydrateTurnHistory,
   fetchAndHydrateTurnState,
   hydrateThreadUsage,
   markSubagentCancelled,
@@ -68,9 +109,9 @@ import {
   setTaskBoardForThread,
   setToolTimelineForThread,
   type ToolTimelineEntry,
-} from '../store/chatRuntimeSlice';
-import { useAppDispatch, useAppSelector } from '../store/hooks';
-import { selectSocketStatus } from '../store/socketSelectors';
+} from '../../store/chatRuntimeSlice';
+import { useAppDispatch, useAppSelector } from '../../store/hooks';
+import { selectSocketStatus } from '../../store/socketSelectors';
 import {
   addMessageLocal,
   clearThreadInferenceActive,
@@ -83,14 +124,14 @@ import {
   setSelectedThread,
   THREAD_NOT_FOUND_MESSAGE,
   updateThreadTitle,
-} from '../store/threadSlice';
-import type { ConfirmationModal as ConfirmationModalType } from '../types/intelligence';
-import type { ThreadMessage } from '../types/thread';
-import { splitAgentMessageIntoBubbles } from '../utils/agentMessageBubbles';
-import { chatThreadPath } from '../utils/chatRoutes';
-import { CHAT_ATTACHMENTS_ENABLED } from '../utils/config';
-import { BILLING_DASHBOARD_URL } from '../utils/links';
-import { openUrl } from '../utils/openUrl';
+} from '../../store/threadSlice';
+import type { ConfirmationModal as ConfirmationModalType } from '../../types/intelligence';
+import type { ThreadMessage } from '../../types/thread';
+import { splitAgentMessageIntoBubbles } from '../../utils/agentMessageBubbles';
+import { chatThreadPath } from '../../utils/chatRoutes';
+import { CHAT_ATTACHMENTS_ENABLED } from '../../utils/config';
+import { BILLING_DASHBOARD_URL } from '../../utils/links';
+import { openUrl } from '../../utils/openUrl';
 import {
   isTauri,
   notifyOverlaySttState,
@@ -99,42 +140,10 @@ import {
   openhumanVoiceStatus,
   openhumanVoiceTranscribeBytes,
   openhumanVoiceTts,
-} from '../utils/tauriCommands';
-import { formatTimelineEntry } from '../utils/toolTimelineFormatting';
-import {
-  AgentMessageBubble,
-  AgentMessageText,
-  BubbleMarkdown,
-} from './conversations/components/AgentMessageBubble';
-import { AgentProcessSourcePanel } from './conversations/components/AgentProcessSourcePanel';
-import {
-  BackgroundProcessesPanel,
-  selectBackgroundProcesses,
-} from './conversations/components/BackgroundProcessesPanel';
-import { CitationChips, type MessageCitation } from './conversations/components/CitationChips';
-import { PlanReviewCard } from './conversations/components/PlanReviewCard';
-import { SubagentDrawer } from './conversations/components/SubagentDrawer';
-import {
-  ThreadGoalEditorPanel,
-  ThreadGoalFooterTrigger,
-  useThreadGoal,
-} from './conversations/components/ThreadGoalChip';
-import { ThreadTodoStrip } from './conversations/components/ThreadTodoStrip';
-import { ToolTimelineBlock } from './conversations/components/ToolTimelineBlock';
-import {
-  evaluateComposerSend,
-  getComposerBlockedSendFeedback,
-  handleComposerSlashCommand,
-} from './conversations/composerSendDecision';
-import { useMemorySyncActive } from './conversations/hooks/useBackgroundActivity';
-import {
-  type AgentBubblePosition,
-  buildAcceptedInlineCompletion,
-  formatRelativeTime,
-  formatResetTime,
-  getInlineCompletionSuffix,
-} from './conversations/utils/format';
-import { GENERAL_TAB_VALUE, isThreadVisibleInTab } from './conversations/utils/threadFilter';
+} from '../../utils/tauriCommands';
+import { formatTimelineEntry } from '../../utils/toolTimelineFormatting';
+import { ThreadList } from './threadList/ThreadList';
+import { buildThreadTimeline } from './timeline/selectors';
 
 const CHAT_MODEL_HINT = 'hint:chat';
 /** Maximum trailing characters rendered in the live-streaming assistant
@@ -222,6 +231,10 @@ const EMPTY_ACTIVE_THREADS: Record<string, true> = {};
 // Stable empty reference for the queued-follow-ups map, so the selector keeps
 // the same identity when the slice field is absent (narrow test stores).
 const EMPTY_QUEUED_FOLLOWUPS: Record<string, QueuedFollowup[]> = {};
+
+// Stable empty reference for the per-thread past-turn timelines map, so the
+// derived value keeps the same identity when the slice field is absent.
+const EMPTY_TURN_TIMELINES: Record<string, ToolTimelineEntry[]> = {};
 
 export function isComposerInteractionBlocked(args: {
   /** Whether the *currently selected* thread has an in-flight inference turn. */
@@ -380,6 +393,7 @@ const Conversations = ({
   // behaviour stays intact.
   const uiLocale = useAppSelector(state => state.locale?.current ?? 'en');
   const toolTimelineByThread = useAppSelector(state => state.chatRuntime.toolTimelineByThread);
+  const turnTimelinesByThread = useAppSelector(state => state.chatRuntime.turnTimelinesByThread);
   const processingByThread = useAppSelector(state => state.chatRuntime.processingByThread);
   const taskBoardByThread = useAppSelector(state => state.chatRuntime.taskBoardByThread);
   const inferenceStatusByThread = useAppSelector(
@@ -723,6 +737,8 @@ const Conversations = ({
     if (selectedThreadId) {
       void dispatch(loadThreadMessages(selectedThreadId));
       void dispatch(fetchAndHydrateTurnState(selectedThreadId));
+      // Per-turn history: each past answer's own process trail (Phase 5).
+      void dispatch(fetchAndHydrateTurnHistory(selectedThreadId));
       void threadApi
         .getTaskBoard(selectedThreadId)
         .then(board => {
@@ -1667,6 +1683,50 @@ const Conversations = ({
   const latestVisibleAgentMessage = [...visibleMessages]
     .reverse()
     .find(msg => msg.sender === 'agent');
+  // Message list sourced from the unified timeline projection — the single
+  // source of render order (see `docs/plans/conversations-timeline-refactor.md`
+  // Phase 2). With the streaming/tool inputs omitted the projection yields
+  // exactly the visible messages in order; the tool-timeline block and streaming
+  // previews stay anchored inline below, so the rendered DOM is unchanged. This
+  // routes the live render loop through the projection ahead of the per-turn
+  // grouping in Phase 5.
+  const timelineMessages = useMemo(
+    () =>
+      buildThreadTimeline({
+        threadId: selectedThreadId ?? '',
+        messages: visibleMessages,
+        toolTimeline: [],
+        streaming: null,
+        parallelStreams: [],
+        hideAgentInsights: false,
+      })
+        .map(item => ('message' in item ? item.message : null))
+        .filter((message): message is ThreadMessage => message !== null),
+    [selectedThreadId, visibleMessages]
+  );
+  // Past-turn tool timelines (Phase 5): map the first assistant message of each
+  // older settled turn to that turn's timeline, so each past answer renders its
+  // own collapsed process trail above it. The latest turn is excluded upstream
+  // (it renders as the live "agent insights" anchor), so there is no double
+  // render. Empty for legacy messages without a `requestId`.
+  const selectedThreadTurnTimelines = selectedThreadId
+    ? (turnTimelinesByThread[selectedThreadId] ?? EMPTY_TURN_TIMELINES)
+    : EMPTY_TURN_TIMELINES;
+  const pastTurnAnchors = useMemo(() => {
+    const anchors: Record<string, ToolTimelineEntry[]> = {};
+    const seen = new Set<string>();
+    for (const msg of timelineMessages) {
+      if (msg.sender !== 'agent') continue;
+      const requestId = msg.extraMetadata?.requestId;
+      if (typeof requestId !== 'string' || seen.has(requestId)) continue;
+      const entries = selectedThreadTurnTimelines[requestId];
+      if (entries && entries.length > 0) {
+        anchors[msg.id] = entries;
+        seen.add(requestId);
+      }
+    }
+    return anchors;
+  }, [timelineMessages, selectedThreadTurnTimelines]);
   const activeSubagentTimelineEntry = selectedThreadToolTimeline.find(
     entry => entry.status === 'running' && entry.name.startsWith('subagent:')
   );
@@ -1922,223 +1982,58 @@ const Conversations = ({
   // Thread list (left pane). Rendered through `TwoPanelLayout` below in page
   // mode; the embedded `variant="sidebar"` mode shows no thread list at all.
   const threadSidebar = (
-    // Card background / rounded corners come from TwoPanelLayout's pane styling.
-    <div className="h-full flex flex-col">
-      {/* Thread search — flush full-width input, mirrors the settings search. */}
-      <div className="relative border-b border-line-subtle">
-        <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-content-faint">
-          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z"
-            />
-          </svg>
-        </span>
-        <input
-          type="text"
-          value={threadSearch}
-          onChange={e => setThreadSearch(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Escape' && threadSearch) {
-              e.preventDefault();
-              setThreadSearch('');
+    <ThreadList
+      threads={visibleThreads}
+      selectedThreadId={selectedThreadId ?? null}
+      search={threadSearch}
+      onSearchChange={setThreadSearch}
+      onCreateThread={() => void handleCreateNewThread()}
+      onSelectThread={id => {
+        dispatch(setSelectedThread(id));
+        void dispatch(loadThreadMessages(id));
+        if (shouldSyncChatRoute) {
+          navigate(chatThreadPath(id));
+        }
+      }}
+      resolveTitle={resolveThreadDisplayTitle}
+      onRequestDelete={thread =>
+        setDeleteModal({
+          isOpen: true,
+          title: t('chat.deleteThread'),
+          message: t('chat.deleteThreadConfirm').replace(
+            '{title}',
+            thread.title || t('chat.untitledThread')
+          ),
+          confirmText: t('common.delete'),
+          cancelText: t('common.cancel'),
+          destructive: true,
+          onConfirm: () => {
+            if (shouldSyncChatRoute && routeThreadId === thread.id) {
+              navigate('/chat', { replace: true });
             }
-          }}
-          placeholder={t('chat.searchThreads')}
-          aria-label={t('chat.searchThreads')}
-          data-testid="chat-thread-search-input"
-          className="w-full border-0 bg-transparent py-2.5 pl-10 pr-10 text-sm text-content placeholder:text-stone-400 focus:outline-none focus:ring-0 dark:placeholder:text-neutral-500"
-        />
-        {threadSearch && (
-          <button
-            type="button"
-            onClick={() => setThreadSearch('')}
-            aria-label={t('settings.settingsSearch.clear')}
-            data-testid="chat-thread-search-clear"
-            className="absolute inset-y-0 right-2 flex items-center px-1 text-content-faint hover:text-content-secondary">
-            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
-          </button>
-        )}
-      </div>
-      {/* New conversation — a subtle, centered thread-style row (not a loud
-          button), below the search and above the thread list. */}
-      <button
-        type="button"
-        data-testid="new-thread-button"
-        data-analytics-id="chat-sidebar-new-thread"
-        onClick={() => void handleCreateNewThread()}
-        title={t('chat.newThreadShortcut')}
-        className="group w-full cursor-pointer border-b border-line-subtle/60 opacity-50 px-3 py-2 transition-colors hover:bg-surface-hover dark:border-line/60">
-        <div className="flex items-center justify-center gap-1.5">
-          <svg
-            className="h-3.5 w-3.5 flex-shrink-0 text-content-muted"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
-          <span className="truncate text-xs text-content-secondary">
-            {t('chat.newConversation')}
-          </span>
-        </div>
-      </button>
-      <div className="flex-1 overflow-y-auto">
-        {visibleThreads.length === 0 ? (
-          <p className="px-4 py-6 text-xs text-content-faint text-center">{t('chat.noThreads')}</p>
-        ) : (
-          visibleThreads.map(thread => (
-            <div
-              key={thread.id}
-              data-testid={`thread-row-${thread.id}`}
-              data-analytics-id="chat-sidebar-thread-row"
-              role="button"
-              tabIndex={0}
-              onClick={() => {
-                dispatch(setSelectedThread(thread.id));
-                void dispatch(loadThreadMessages(thread.id));
-                if (shouldSyncChatRoute) {
-                  navigate(chatThreadPath(thread.id));
-                }
-              }}
-              onKeyDown={e => {
-                if (e.target !== e.currentTarget) return;
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  dispatch(setSelectedThread(thread.id));
-                  void dispatch(loadThreadMessages(thread.id));
-                  if (shouldSyncChatRoute) {
-                    navigate(chatThreadPath(thread.id));
-                  }
-                }
-              }}
-              className={`w-full text-left px-3 py-1.5 border-b border-line-subtle/60 dark:border-line/60 transition-colors group cursor-pointer ${
-                selectedThreadId === thread.id
-                  ? 'bg-primary-50 dark:bg-primary-900/30 border-l-2 border-l-primary-500'
-                  : 'hover:bg-surface-hover'
-              }`}>
-              <div className="flex items-center justify-between">
-                {editingThreadId === thread.id ? (
-                  <input
-                    ref={editTitleInputRef}
-                    value={editTitleValue}
-                    onClick={e => e.stopPropagation()}
-                    onChange={e => setEditTitleValue(e.target.value)}
-                    onKeyDown={e => {
-                      e.stopPropagation();
-                      // Ignore the Enter that confirms an IME composition
-                      // candidate (CJK input) so it doesn't prematurely commit.
-                      if (isImeCompositionKeyEvent(e)) return;
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleCommitTitle(thread.id);
-                      } else if (e.key === 'Escape') {
-                        // Escape is an explicit cancel — suppress the commit the
-                        // ensuing blur would otherwise fire.
-                        ignoreNextTitleBlurRef.current = true;
-                        setEditingThreadId(null);
-                      }
-                    }}
-                    onBlur={() => {
-                      if (ignoreNextTitleBlurRef.current) {
-                        ignoreNextTitleBlurRef.current = false;
-                        return;
-                      }
-                      handleCommitTitle(thread.id);
-                    }}
-                    aria-label={t('chat.editThreadTitle')}
-                    data-testid={`thread-title-input-${thread.id}`}
-                    className="h-5 min-w-0 flex-1 border-b border-primary-400 bg-transparent py-0 text-xs font-medium leading-none text-content-secondary outline-none"
-                    autoFocus
-                  />
-                ) : (
-                  <p
-                    className={`text-xs truncate flex-1 ${
-                      selectedThreadId === thread.id
-                        ? 'font-medium text-primary-700 dark:text-primary-200'
-                        : 'text-content-secondary'
-                    }`}>
-                    {resolveThreadDisplayTitle(thread.id)}
-                  </p>
-                )}
-                <button
-                  type="button"
-                  data-analytics-id="chat-sidebar-edit-thread-title"
-                  onClick={e => {
-                    e.stopPropagation();
-                    handleStartEditTitle(thread.id);
-                  }}
-                  aria-label={t('chat.editThreadTitle')}
-                  title={t('chat.editThreadTitle')}
-                  className="ml-2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-surface-strong dark:bg-surface-muted dark:hover:bg-surface-muted text-content-faint hover:text-primary-500 transition-all flex-shrink-0">
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
-                    />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  data-analytics-id="chat-sidebar-delete-thread"
-                  onClick={e => {
-                    e.stopPropagation();
-                    setDeleteModal({
-                      isOpen: true,
-                      title: t('chat.deleteThread'),
-                      message: t('chat.deleteThreadConfirm').replace(
-                        '{title}',
-                        thread.title || t('chat.untitledThread')
-                      ),
-                      confirmText: t('common.delete'),
-                      cancelText: t('common.cancel'),
-                      destructive: true,
-                      onConfirm: () => {
-                        if (shouldSyncChatRoute && routeThreadId === thread.id) {
-                          navigate('/chat', { replace: true });
-                        }
-                        void dispatch(deleteThread(thread.id));
-                      },
-                      onCancel: () => {},
-                    });
-                  }}
-                  className="ml-2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-surface-strong dark:bg-surface-muted dark:hover:bg-surface-muted text-content-faint hover:text-coral-500 transition-all flex-shrink-0"
-                  title={t('chat.deleteThread')}>
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M6 18L18 6M6 6l12 12"
-                    />
-                  </svg>
-                </button>
-              </div>
-              {/* <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-[10px] text-content-faint">
-                      {formatRelativeTime(thread.lastMessageAt)}
-                    </span>
-                    {thread.messageCount > 0 && (
-                      <span className="text-[10px] text-content-faint">
-                        {thread.messageCount} msg{thread.messageCount !== 1 ? 's' : ''}
-                      </span>
-                    )}
-                  </div> */}
-            </div>
-          ))
-        )}
-      </div>
-    </div>
+            void dispatch(deleteThread(thread.id));
+          },
+          onCancel: () => {},
+        })
+      }
+      editingThreadId={editingThreadId}
+      editTitleValue={editTitleValue}
+      editTitleInputRef={editTitleInputRef}
+      onEditTitleValueChange={setEditTitleValue}
+      onStartEditTitle={handleStartEditTitle}
+      onCommitTitle={handleCommitTitle}
+      onCancelEditTitle={() => {
+        ignoreNextTitleBlurRef.current = true;
+        setEditingThreadId(null);
+      }}
+      onBlurTitle={id => {
+        if (ignoreNextTitleBlurRef.current) {
+          ignoreNextTitleBlurRef.current = false;
+          return;
+        }
+        handleCommitTitle(id);
+      }}
+    />
   );
 
   // Main chat area (right pane): header, message list, composer.
@@ -2208,7 +2103,7 @@ const Conversations = ({
             // queued-followups panel and other dynamic footer content never
             // overlap the last message (#4268).
             style={!isSidebar ? { paddingBottom: composerFooterHeight + 16 } : undefined}>
-            {visibleMessages.map(msg => {
+            {timelineMessages.map(msg => {
               const isAgentTextMode = msg.sender === 'agent' && agentMessageViewMode === 'text';
               // Parsed once per message: for current messages (extraMetadata
               // present, or agent messages) msg.content already has no markers,
@@ -2217,8 +2112,16 @@ const Conversations = ({
               // what keeps the marker text out of both the rendered bubble and
               // the copy-to-clipboard action.
               const parsedContent = parseMessageImages(msg.content ?? '');
+              const pastTurnEntries = pastTurnAnchors[msg.id];
               return (
                 <Fragment key={msg.id}>
+                  {/* Past-turn process trail (Phase 5): each older settled turn's
+                      tool timeline, collapsed, above the answer it produced. */}
+                  {pastTurnEntries ? (
+                    <div data-testid="past-turn-insights">
+                      <ToolTimelineBlock entries={pastTurnEntries} />
+                    </div>
+                  ) : null}
                   <div>
                     <div
                       className={`group/msg flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -3299,4 +3202,4 @@ export default Conversations;
  * Embeddable variant — same component, page layout (floating centered
  * card). Mounted inside /accounts when the Agent entry is selected.
  */
-export const AgentChatPanel = () => <Conversations variant="page" />;
+export const ConversationsPage = () => <Conversations variant="page" />;

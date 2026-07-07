@@ -1823,6 +1823,298 @@ fn binding_to_agent_with_matching_schema_is_accepted() {
     );
 }
 
+// ── validate_tool_contracts (systemic tool-contract fix, Part 2) ───────────
+//
+// The live-catalog cache is process-global (`LIVE_CATALOG_CACHE`) — every
+// test below seeds the exact toolkit it needs via `seed_live_catalog_cache`
+// so none of this touches a live Composio backend.
+
+use crate::openhuman::tinyflows::caps::{seed_live_catalog_cache, ToolContract};
+
+fn seeded_slack_send_contract() -> ToolContract {
+    ToolContract {
+        slug: "SLACK_SEND_MESSAGE".to_string(),
+        toolkit: "slack".to_string(),
+        description: None,
+        required_args: vec!["channel".to_string(), "text".to_string()],
+        input_schema: None,
+        output_fields: vec!["ts".to_string(), "channel".to_string()],
+        output_schema: Some(json!({
+            "type": "object",
+            "properties": { "ts": {"type": "string"}, "channel": {"type": "string"} }
+        })),
+        primary_array_path: None,
+        // `slack` ships a static curated catalog (`catalog_for_toolkit`), so
+        // `validate_tool_contracts` now enforces the same curated-only bar
+        // `flow_tool_allowed`'s Path A does at runtime (Codex feedback on
+        // this PR) — this fixture models a real curated Slack action, not
+        // an uncurated one, since these tests exercise the required-arg /
+        // hallucinated-slug checks rather than the curation gate itself.
+        is_curated: true,
+    }
+}
+
+#[tokio::test]
+async fn validate_tool_contracts_rejects_a_hallucinated_slug() {
+    seed_live_catalog_cache("slack", vec![seeded_slack_send_contract()]);
+    let config = Config::default();
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "SLACK_POST_MESSAGE_TO_CHANNEL",
+                "args": { "channel": "#general", "text": "hi" } } }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "post" } ]
+    }));
+    let errors = validate_tool_contracts(&config, &g).await;
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("post"), "{}", errors[0]);
+    assert!(
+        errors[0].contains("SLACK_POST_MESSAGE_TO_CHANNEL"),
+        "{}",
+        errors[0]
+    );
+    assert!(errors[0].contains("search_tool_catalog"), "{}", errors[0]);
+}
+
+#[tokio::test]
+async fn validate_tool_contracts_rejects_a_missing_required_arg() {
+    seed_live_catalog_cache("slack", vec![seeded_slack_send_contract()]);
+    let config = Config::default();
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "SLACK_SEND_MESSAGE",
+                "args": { "channel": "#general" } } }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "post" } ]
+    }));
+    let errors = validate_tool_contracts(&config, &g).await;
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("`text`"), "{}", errors[0]);
+    assert!(errors[0].contains("get_tool_contract"), "{}", errors[0]);
+}
+
+#[tokio::test]
+async fn validate_tool_contracts_passes_a_fully_wired_real_slug() {
+    seed_live_catalog_cache("slack", vec![seeded_slack_send_contract()]);
+    let config = Config::default();
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "SLACK_SEND_MESSAGE",
+                "args": { "channel": "#general", "text": "hi" } } }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "post" } ]
+    }));
+    let errors = validate_tool_contracts(&config, &g).await;
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
+/// (Codex feedback on this PR) `notion` ships a static curated catalog
+/// (`catalog_for_toolkit`), so at RUNTIME `flow_tool_allowed`'s Path A
+/// hard-rejects any slug `find_curated` doesn't recognize — even a real,
+/// live action. Without this check, a real-but-uncurated action for a
+/// statically-catalogued toolkit would pass authoring/save here and then
+/// fail every single run as "tool not permitted". Uses its own toolkit key
+/// (`notion`, not `slack`/`gmail`) since it seeds different `is_curated`
+/// content than every other test sharing those keys.
+#[tokio::test]
+async fn validate_tool_contracts_rejects_a_real_but_uncurated_action_on_a_statically_catalogued_toolkit(
+) {
+    seed_live_catalog_cache(
+        "notion",
+        vec![ToolContract {
+            slug: "NOTION_UNCURATED_ACTION".to_string(),
+            toolkit: "notion".to_string(),
+            description: None,
+            required_args: vec![],
+            input_schema: None,
+            output_fields: vec![],
+            output_schema: None,
+            primary_array_path: None,
+            // Real (a live catalog fetch found it), but NOT one of
+            // OpenHuman's curated Notion actions.
+            is_curated: false,
+        }],
+    );
+    let config = Config::default();
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "NOTION_UNCURATED_ACTION", "args": {} } }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "post" } ]
+    }));
+    let errors = validate_tool_contracts(&config, &g).await;
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0].contains("NOTION_UNCURATED_ACTION"),
+        "{}",
+        errors[0]
+    );
+    assert!(errors[0].contains("curated"), "{}", errors[0]);
+}
+
+#[tokio::test]
+async fn validate_tool_contracts_skips_expression_derived_and_native_slugs() {
+    let config = Config::default();
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "dynamic", "kind": "tool_call", "name": "Dynamic",
+              "config": { "slug": "=item.tool", "args": {} } },
+            { "id": "native", "kind": "tool_call", "name": "Native",
+              "config": { "slug": "oh:web_search", "args": {} } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "dynamic" },
+            { "from_node": "t", "to_node": "native" }
+        ]
+    }));
+    let errors = validate_tool_contracts(&config, &g).await;
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
+#[tokio::test]
+async fn validate_tool_contracts_skips_rather_than_rejects_when_the_catalog_is_unreachable() {
+    // No seed for this toolkit and no live backend configured — the fetch
+    // fails, and the node must be SKIPPED (never false-rejected).
+    let config = Config::default();
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "SOMEUNSEEDEDTOOLKIT_DO_THING", "args": {} } }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "post" } ]
+    }));
+    let errors = validate_tool_contracts(&config, &g).await;
+    assert!(
+        errors.is_empty(),
+        "a live-catalog fetch failure must skip, not reject: {errors:?}"
+    );
+}
+
+// ── graph_wiring_warnings: required-arg advisory + output-field/split_out.path
+//    advisories (Part 2c/2d) ────────────────────────────────────────────────
+
+/// `graph_wiring_warnings`'s own required-arg check, exercised DIRECTLY
+/// (rather than through `revise_workflow`/`save_workflow`, where the newer
+/// `validate_tool_contracts` hard-rejects the identical condition first —
+/// see `revise_workflow_rejects_a_missing_required_composio_arg` in
+/// `builder_tools_tests.rs`). Keeps this advisory code path covered for any
+/// caller that consults `graph_wiring_warnings` without also running the
+/// hard gate first.
+#[tokio::test]
+async fn graph_wiring_warnings_flags_a_missing_required_arg() {
+    seed_live_catalog_cache("slack", vec![seeded_slack_send_contract()]);
+    let config = Config::default();
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "SLACK_SEND_MESSAGE",
+                "args": { "channel": "#general" } } }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "post" } ]
+    }));
+    let warnings = graph_wiring_warnings(&config, &g).await;
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("`text`") && w.contains("post")),
+        "{warnings:?}"
+    );
+}
+
+#[tokio::test]
+async fn graph_wiring_warnings_flags_a_downstream_field_not_in_output_fields() {
+    seed_live_catalog_cache("slack", vec![seeded_slack_send_contract()]);
+    let config = Config::default();
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "SLACK_SEND_MESSAGE",
+                "args": { "channel": "#general", "text": "hi" } } },
+            { "id": "xform", "kind": "transform", "name": "Log",
+              // Reads a field that isn't in SLACK_SEND_MESSAGE's real
+              // output_fields (`ts`/`channel`) — must WARN, not reject.
+              "config": { "set": { "note": "=nodes.post.item.json.not_a_real_field" } } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "post" },
+            { "from_node": "post", "to_node": "xform" }
+        ]
+    }));
+    let warnings = graph_wiring_warnings(&config, &g).await;
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("not_a_real_field") && w.contains("post")),
+        "{warnings:?}"
+    );
+}
+
+#[tokio::test]
+async fn graph_wiring_warnings_is_silent_when_the_downstream_field_is_real() {
+    seed_live_catalog_cache("slack", vec![seeded_slack_send_contract()]);
+    let config = Config::default();
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "SLACK_SEND_MESSAGE",
+                "args": { "channel": "#general", "text": "hi" } } },
+            { "id": "xform", "kind": "transform", "name": "Log",
+              "config": { "set": { "note": "=nodes.post.item.json.ts" } } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "post" },
+            { "from_node": "post", "to_node": "xform" }
+        ]
+    }));
+    let warnings = graph_wiring_warnings(&config, &g).await;
+    assert!(
+        !warnings.iter().any(|w| w.contains("not in")),
+        "a real output field must not warn: {warnings:?}"
+    );
+}
+
+#[tokio::test]
+async fn graph_wiring_warnings_suggests_the_real_split_out_path() {
+    let mut contract = seeded_slack_send_contract();
+    contract.slug = "SLACKFANOUT_SEND_MESSAGE".to_string();
+    contract.toolkit = "slackfanout".to_string();
+    contract.primary_array_path = Some("data.messages".to_string());
+    seed_live_catalog_cache("slackfanout", vec![contract]);
+    let config = Config::default();
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "SLACKFANOUT_SEND_MESSAGE",
+                "args": { "channel": "#general", "text": "hi" } } },
+            { "id": "split", "kind": "split_out", "name": "Split",
+              "config": { "path": "items" } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "post" },
+            { "from_node": "post", "to_node": "split" }
+        ]
+    }));
+    let warnings = graph_wiring_warnings(&config, &g).await;
+    assert!(
+        warnings.iter().any(|w| w.contains("json.data.messages")),
+        "{warnings:?}"
+    );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // degrade_completed_status (PR2 — run honesty)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2145,4 +2437,70 @@ fn finalize_terminal_status_no_error_when_clean() {
     let (status, error) = finalize_terminal_status(&steps, &[]);
     assert_eq!(status, "completed");
     assert_eq!(error, None);
+}
+
+/// Regression for issue #4593: the `flows_build` builder turn runs under
+/// `AgentTurnOrigin::Cli`, which makes the `ApprovalGate` auto-allow every
+/// `external_effect` tool. The flows live-runner executes a *live* saved flow,
+/// so it must be unreachable on this path — `restrict_builder_toolset` drops it
+/// from the builder's callable belt while leaving the authoring tools in place
+/// so the turn still functions (never fail-closes).
+#[tokio::test]
+async fn flows_build_hides_the_live_run_tool_from_the_builder_belt() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    // Document WHY the live-runner must be hidden: running a saved flow fires
+    // real Slack/Gmail/HTTP/code effects, so it is an external-effect tool. This
+    // pins that invariant independently of belt name-resolution so the
+    // hide-list can't silently stop covering a live-run tool.
+    use crate::openhuman::tools::Tool as _;
+    let live_runner =
+        crate::openhuman::flows::tools::RunFlowTool::new(std::sync::Arc::new(config.clone()));
+    assert!(
+        live_runner.external_effect(),
+        "the flows live-runner must be external-effect for the #4593 concern to apply"
+    );
+
+    crate::openhuman::agent::harness::AgentDefinitionRegistry::init_global(&config.workspace_dir)
+        .expect("agent registry init");
+    let mut agent =
+        crate::openhuman::agent::Agent::from_config_for_agent(&config, "workflow_builder")
+            .expect("build workflow_builder agent");
+    agent.set_agent_definition_name("workflow_builder".to_string());
+
+    // Precondition: the builder advertises the live-run tool (`run_flow`) on its
+    // belt before restriction — the exact tool #4593 is about.
+    assert!(
+        agent.visible_tool_names_for_test().contains("run_flow"),
+        "precondition: workflow_builder belt should advertise the live-run tool `run_flow`; \
+         visible = {:?}",
+        agent.visible_tool_names_for_test()
+    );
+
+    restrict_builder_toolset(&mut agent);
+
+    // After restriction neither the current name nor the post-rename name is
+    // callable on the flows_build path — the hide-list covers both (#4593).
+    let visible = agent.visible_tool_names_for_test();
+    for hidden in ["run_workflow", "run_flow"] {
+        assert!(
+            !visible.contains(hidden),
+            "live-run tool `{hidden}` must be hidden on the flows_build path; visible = {visible:?}"
+        );
+    }
+    // Authoring / read tools stay reachable so the builder turn still works
+    // headlessly under the CLI origin (no fail-close).
+    for keep in [
+        "propose_workflow",
+        "revise_workflow",
+        "save_workflow",
+        "dry_run_workflow",
+        "list_flows",
+    ] {
+        assert!(
+            visible.contains(keep),
+            "authoring tool `{keep}` must remain visible after restriction; visible = {visible:?}"
+        );
+    }
 }

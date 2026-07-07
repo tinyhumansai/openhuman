@@ -106,10 +106,19 @@ pub(crate) async fn run_channel_turn_via_graph(
         context_window,
         "[channel:graph] routing channel turn through tinyagents harness"
     );
-    let outcome = run_turn_via_tinyagents_shared(
+    // Build the turn's crate `ChatModel` set from the resolved provider; the seam
+    // entry is crate-native (issue #4249, Phase 5).
+    let provider_id = provider.telemetry_provider_id();
+    let turn_models = crate::openhuman::tinyagents::build_turn_models(
         provider,
         model,
         temperature,
+        context_window,
+    );
+    let outcome = run_turn_via_tinyagents_shared(
+        turn_models,
+        provider_id,
+        model,
         prepared,
         vec![extra_arc, tools_registry],
         allowed,

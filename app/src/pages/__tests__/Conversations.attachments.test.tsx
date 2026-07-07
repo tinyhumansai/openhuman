@@ -251,7 +251,7 @@ async function renderWithSelectedThread() {
     socket: socketState('connected'),
   });
 
-  const { default: Conversations } = await import('../Conversations');
+  const { default: Conversations } = await import('../../features/conversations/Conversations');
 
   render(
     <Provider store={store}>
@@ -591,7 +591,7 @@ describe('Conversations — attachment feature', () => {
       socket: socketState('connected'),
     });
 
-    const { default: Conversations } = await import('../Conversations');
+    const { default: Conversations } = await import('../../features/conversations/Conversations');
 
     render(
       <Provider store={store}>
@@ -644,7 +644,7 @@ describe('Conversations — attachment feature', () => {
       socket: socketState('connected'),
     });
 
-    const { default: Conversations } = await import('../Conversations');
+    const { default: Conversations } = await import('../../features/conversations/Conversations');
 
     render(
       <Provider store={store}>
@@ -697,7 +697,7 @@ describe('Conversations — attachment feature', () => {
       socket: socketState('connected'),
     });
 
-    const { default: Conversations } = await import('../Conversations');
+    const { default: Conversations } = await import('../../features/conversations/Conversations');
 
     render(
       <Provider store={store}>
@@ -752,7 +752,7 @@ describe('Conversations — attachment feature', () => {
       socket: socketState('connected'),
     });
 
-    const { default: Conversations } = await import('../Conversations');
+    const { default: Conversations } = await import('../../features/conversations/Conversations');
 
     render(
       <Provider store={store}>

@@ -397,22 +397,51 @@ fn missing_required_args_flags_absent_and_null() {
     assert!(super::caps::missing_required_args(&required, &full).is_empty());
 }
 
+/// Minimal seeded [`ToolContract`](super::caps::ToolContract) for the tests
+/// below — only `required_args` matters for the preflight, so every other
+/// field is left at its "unknown" default.
+fn seeded_required_args_contract(
+    slug: &str,
+    toolkit: &str,
+    required: &[&str],
+) -> super::caps::ToolContract {
+    super::caps::ToolContract {
+        slug: slug.to_string(),
+        toolkit: toolkit.to_string(),
+        description: None,
+        required_args: required.iter().map(|s| s.to_string()).collect(),
+        input_schema: None,
+        output_fields: Vec::new(),
+        output_schema: None,
+        primary_array_path: None,
+        is_curated: false,
+    }
+}
+
 #[tokio::test]
 async fn preflight_fails_before_dispatch_naming_the_missing_field() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
-    // Seed the schema cache so no live Composio backend is needed.
-    let mut entries = std::collections::HashMap::new();
-    entries.insert(
-        "GMAIL_SEND_EMAIL".to_string(),
-        vec!["to".to_string(), "subject".to_string(), "body".to_string()],
+    // Seed the schema cache so no live Composio backend is needed. Uses its
+    // own toolkit/slug (never `"gmail"`) — the process-global
+    // `LIVE_CATALOG_CACHE` is shared with every `#[tokio::test]` in this
+    // file, and `preflight_invoker_gates_the_mock_tool_path` below seeds a
+    // DIFFERENT required-args list under the same slug; under parallel
+    // execution one test could overwrite the other's cache entry between
+    // seed and assert, making both flaky.
+    super::caps::seed_live_catalog_cache(
+        "preflightfailtest",
+        vec![seeded_required_args_contract(
+            "PREFLIGHTFAILTEST_SEND_EMAIL",
+            "preflightfailtest",
+            &["to", "subject", "body"],
+        )],
     );
-    super::caps::seed_required_args_cache("gmail", entries);
 
     // `to` resolved to null (the classic mis-wired agent → tool_call case).
     let err = super::caps::preflight_composio_args(
         &config,
-        "GMAIL_SEND_EMAIL",
+        "PREFLIGHTFAILTEST_SEND_EMAIL",
         &json!({ "to": null, "subject": "hi", "body": "text" }),
     )
     .await
@@ -431,7 +460,7 @@ async fn preflight_fails_before_dispatch_naming_the_missing_field() {
     // Fully-wired args pass.
     super::caps::preflight_composio_args(
         &config,
-        "GMAIL_SEND_EMAIL",
+        "PREFLIGHTFAILTEST_SEND_EMAIL",
         &json!({ "to": "a@b.com", "subject": "hi", "body": "text" }),
     )
     .await
@@ -455,9 +484,17 @@ async fn preflight_invoker_gates_the_mock_tool_path() {
 
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let mut entries = std::collections::HashMap::new();
-    entries.insert("GMAIL_SEND_EMAIL".to_string(), vec!["to".to_string()]);
-    super::caps::seed_required_args_cache("gmail", entries);
+    // Own toolkit/slug (never `"gmail"`) — see the comment in
+    // `preflight_fails_before_dispatch_naming_the_missing_field` above for
+    // why sharing the `"gmail"` cache key across parallel tests is flaky.
+    super::caps::seed_live_catalog_cache(
+        "preflightgatetest",
+        vec![seeded_required_args_contract(
+            "PREFLIGHTGATETEST_SEND_EMAIL",
+            "preflightgatetest",
+            &["to"],
+        )],
+    );
 
     let mock = tinyflows::caps::mock::mock_capabilities();
     let invoker = super::caps::PreflightToolInvoker {
@@ -468,17 +505,21 @@ async fn preflight_invoker_gates_the_mock_tool_path() {
     // Unwired required arg: fails with the named field even though the inner
     // mock would echo anything.
     let err = invoker
-        .invoke("GMAIL_SEND_EMAIL", json!({ "to": null }), None)
+        .invoke("PREFLIGHTGATETEST_SEND_EMAIL", json!({ "to": null }), None)
         .await
         .expect_err("dry-run preflight must catch the unwired arg");
     assert!(err.to_string().contains("`to`"));
 
     // Wired arg: delegates to the mock echo.
     let ok = invoker
-        .invoke("GMAIL_SEND_EMAIL", json!({ "to": "a@b.com" }), None)
+        .invoke(
+            "PREFLIGHTGATETEST_SEND_EMAIL",
+            json!({ "to": "a@b.com" }),
+            None,
+        )
         .await
         .expect("wired arg passes through to the mock");
-    assert_eq!(ok["tool"], "GMAIL_SEND_EMAIL");
+    assert_eq!(ok["tool"], "PREFLIGHTGATETEST_SEND_EMAIL");
 
     // Native `oh:` slugs bypass the Composio preflight (no Composio schema).
     // The mock echoes them unchecked.

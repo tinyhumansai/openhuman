@@ -237,6 +237,8 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.title': 'TinyPlace 中继',
   'tinyplaceOrchestration.subtitle': '固定的代理频道和应用会话聊天',
   'tinyplaceOrchestration.refresh': '刷新',
+  'tinyplaceOrchestration.newInstance': '新建实例',
+  'tinyplaceOrchestration.newInstanceSoon': '即将推出',
   'tinyplaceOrchestration.pinned': '固定',
   'tinyplaceOrchestration.sessions': '会话',
   'tinyplaceOrchestration.contacts': '联系人',

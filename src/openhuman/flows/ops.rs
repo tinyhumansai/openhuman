@@ -210,6 +210,170 @@ pub(crate) async fn graph_wiring_warnings(config: &Config, graph: &WorkflowGraph
             ));
         }
     }
+
+    warnings.extend(graph_output_field_warnings(config, graph).await);
+    warnings.extend(graph_split_out_path_warnings(config, graph).await);
+    warnings
+}
+
+/// Author-time WARN (systemic tool-contract fix, Part 2c): any
+/// `=nodes.<id>.item.json.<field>` binding — anywhere in the graph, not just
+/// `tool_call` args — whose `<id>` names a `tool_call` node calling a REAL
+/// Composio action with a KNOWN live output schema, but whose `<field>` is
+/// not one of that action's real `output_fields`. Advisory, not fatal: a
+/// binding to an unknown field could still resolve to something useful at
+/// runtime for an action whose output schema is incomplete, so this warns
+/// rather than rejects — mirroring `graph_wiring_warnings`'s existing
+/// required-arg warnings.
+///
+/// Skipped entirely when the referenced action's output schema is
+/// **unknown** (`ToolContract::output_schema` is `None`) — there is nothing
+/// real to check the field against, so warning would just be noise (or a
+/// false positive for a still-legitimate binding). Also skipped for a
+/// binding that dereferences `.item.<field>` without `.json` on an
+/// enveloping node — that shape is already a HARD reject in
+/// [`validate_binding_resolvability`], not a warning here.
+async fn graph_output_field_warnings(config: &Config, graph: &WorkflowGraph) -> Vec<String> {
+    use crate::openhuman::memory_sync::composio::providers::toolkit_from_slug;
+    use crate::openhuman::tinyflows::caps::fetch_live_toolkit_catalog;
+
+    let mut warnings = Vec::new();
+    for node in &graph.nodes {
+        for (location, expr) in collect_expressions(&node.config) {
+            let Some((ref_id, has_json, field)) = parse_node_binding(&expr) else {
+                continue;
+            };
+            if !has_json {
+                continue;
+            }
+            let Some(ref_node) = graph.node(&ref_id) else {
+                continue;
+            };
+            if ref_node.kind != NodeKind::ToolCall {
+                continue;
+            }
+            let Some(ref_slug) = ref_node.config.get("slug").and_then(Value::as_str) else {
+                continue;
+            };
+            if ref_slug.starts_with('=') || ref_slug.starts_with("oh:") {
+                continue;
+            }
+            let Some(ref_toolkit) = toolkit_from_slug(ref_slug) else {
+                continue;
+            };
+            let Some(catalog) = fetch_live_toolkit_catalog(config, &ref_toolkit).await else {
+                continue;
+            };
+            let Some(contract) = catalog
+                .iter()
+                .find(|c| c.slug.eq_ignore_ascii_case(ref_slug))
+            else {
+                continue;
+            };
+            // Output schema unknown — nothing real to check `field` against.
+            if contract.output_schema.is_none() {
+                continue;
+            }
+            if !contract.output_fields.iter().any(|f| f == &field) {
+                tracing::warn!(
+                    target: "flows",
+                    node = %node.id,
+                    %location,
+                    ref_node = %ref_id,
+                    ref_slug,
+                    %field,
+                    output_fields = ?contract.output_fields,
+                    "[flows] wiring check: downstream binding reads a field not in the tool's real output_fields"
+                );
+                warnings.push(format!(
+                    "Node '{}': binding `{location}` (`{expr}`) reads field `{field}` off \
+                     tool_call `{ref_id}` (`{ref_slug}`), but that is not one of its real \
+                     output fields ({}) — call get_tool_contract {{ slug: \"{ref_slug}\" }} to \
+                     see the real output field names.",
+                    node.id,
+                    contract.output_fields.join(", "),
+                ));
+            }
+        }
+    }
+    warnings
+}
+
+/// Author-time WARN/suggest (systemic tool-contract fix, Part 2d): a
+/// `split_out` node whose direct predecessor is a `tool_call` calling a REAL
+/// Composio action with a KNOWN `primary_array_path` (see
+/// [`crate::openhuman::tinyflows::caps::compute_primary_array_path`]), but
+/// whose configured `config.path` doesn't match the `json.<primary_array_path>`
+/// convention (dereferencing the `{json,text,raw}` envelope's own `json`
+/// field, then the action's real array property). Advisory: a mismatched
+/// path degrades the fan-out (or silently produces one item instead of many)
+/// rather than crashing, so this suggests the real path instead of rejecting.
+///
+/// Skipped when the predecessor's action has no known `primary_array_path`
+/// (nothing to suggest), or when `split_out`'s predecessor isn't a
+/// `tool_call` at all (no envelope/array-path convention applies).
+async fn graph_split_out_path_warnings(config: &Config, graph: &WorkflowGraph) -> Vec<String> {
+    use crate::openhuman::memory_sync::composio::providers::toolkit_from_slug;
+    use crate::openhuman::tinyflows::caps::fetch_live_toolkit_catalog;
+
+    let mut warnings = Vec::new();
+    for node in &graph.nodes {
+        if node.kind != NodeKind::SplitOut {
+            continue;
+        }
+        let configured_path = node.config.get("path").and_then(Value::as_str);
+
+        for edge in graph.edges.iter().filter(|e| e.to_node == node.id) {
+            let Some(pred) = graph.node(&edge.from_node) else {
+                continue;
+            };
+            if pred.kind != NodeKind::ToolCall {
+                continue;
+            }
+            let Some(pred_slug) = pred.config.get("slug").and_then(Value::as_str) else {
+                continue;
+            };
+            if pred_slug.starts_with('=') || pred_slug.starts_with("oh:") {
+                continue;
+            }
+            let Some(pred_toolkit) = toolkit_from_slug(pred_slug) else {
+                continue;
+            };
+            let Some(catalog) = fetch_live_toolkit_catalog(config, &pred_toolkit).await else {
+                continue;
+            };
+            let Some(contract) = catalog
+                .iter()
+                .find(|c| c.slug.eq_ignore_ascii_case(pred_slug))
+            else {
+                continue;
+            };
+            let Some(primary) = contract.primary_array_path.as_deref() else {
+                continue;
+            };
+            let expected = format!("json.{primary}");
+            if configured_path != Some(expected.as_str()) {
+                tracing::warn!(
+                    target: "flows",
+                    node = %node.id,
+                    predecessor = %pred.id,
+                    pred_slug,
+                    configured_path,
+                    %expected,
+                    "[flows] wiring check: split_out.path does not match the predecessor tool's real array path"
+                );
+                let configured_display = configured_path
+                    .map(|p| format!("\"{p}\""))
+                    .unwrap_or_else(|| "unset".to_string());
+                warnings.push(format!(
+                    "Node '{}': split_out.path is {configured_display} but its predecessor \
+                     tool_call `{}` (`{pred_slug}`) wraps its real array at `{expected}` — set \
+                     config.path to \"{expected}\" to fan out over the actual response list.",
+                    node.id, pred.id,
+                ));
+            }
+        }
+    }
     warnings
 }
 
@@ -524,6 +688,156 @@ pub(crate) fn validate_binding_resolvability(graph: &WorkflowGraph) -> Vec<Strin
                     ));
                 }
             }
+        }
+    }
+    errors
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool-contract enforcement gate (systemic tool-contract fix, Part 2)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `validate_binding_resolvability` (above) statically proves a binding's
+// SHAPE is sound (envelope dereference, agent output schema). It has no
+// opinion on whether a `tool_call` node's `slug` is a REAL Composio action,
+// or whether the args it wires cover that action's REAL required set — a
+// builder could pass a hallucinated slug (`SLACK_POST_MESSAGE_TO_CHANNEL`,
+// which 404s at runtime) or omit a genuinely required arg, and
+// `validate_binding_resolvability` would have nothing to say about either.
+// [`validate_tool_contracts`] is that missing HARD gate, grounded in
+// [`crate::openhuman::tinyflows::caps::fetch_live_toolkit_catalog`] — the
+// FULL LIVE Composio catalog, not the static curated subset.
+
+/// Statically proves every `tool_call` node's `config.slug` is a REAL action
+/// in the LIVE Composio catalog for its toolkit, and that every one of that
+/// action's REAL required args is present (non-null) in `config.args` —
+/// rejecting the graph (a non-empty `Vec` = reject; empty = pass) when
+/// either check fails. Wired into `propose_workflow` / `revise_workflow` /
+/// `save_workflow` alongside [`validate_binding_resolvability`].
+///
+/// Skipped for a `slug` that is `=`-derived (resolved from upstream/trigger
+/// data at runtime — nothing to check statically) or a native `oh:` tool (no
+/// Composio contract at all).
+///
+/// **Best-effort on catalog availability, not on catalog CONTENT**: when the
+/// live-catalog fetch itself fails (no backend session, network error) the
+/// node is SKIPPED with a debug log — never rejected — because a
+/// hallucinated slug can only be confirmed hallucinated once the real
+/// catalog was actually reachable; `graph_wiring_warnings`'s
+/// `composio_required_args` checks share this exact contract. Once the
+/// catalog IS reachable, though, both checks below are HARD: an unreal slug
+/// or a missing required arg rejects the graph outright, unlike the
+/// advisory output-field/`split_out.path` WARNs in `graph_wiring_warnings`
+/// (Part 2c/2d) — those degrade gracefully because a binding to an unknown
+/// field can't be proven wrong, whereas a nonexistent slug or a missing
+/// required arg are both provably broken.
+pub(crate) async fn validate_tool_contracts(config: &Config, graph: &WorkflowGraph) -> Vec<String> {
+    use crate::openhuman::memory_sync::composio::providers::{
+        catalog_for_toolkit, get_provider, toolkit_from_slug,
+    };
+    use crate::openhuman::tinyflows::caps::{fetch_live_toolkit_catalog, missing_required_args};
+
+    let mut errors = Vec::new();
+    for node in &graph.nodes {
+        if node.kind != NodeKind::ToolCall {
+            continue;
+        }
+        let Some(slug) = node.config.get("slug").and_then(Value::as_str) else {
+            continue;
+        };
+        // `=`-derived slugs resolve from upstream/trigger data at runtime —
+        // nothing to check statically. Native `oh:` tools have no Composio
+        // contract.
+        if slug.starts_with('=') || slug.starts_with("oh:") {
+            continue;
+        }
+        let Some(toolkit) = toolkit_from_slug(slug) else {
+            continue;
+        };
+        let Some(catalog) = fetch_live_toolkit_catalog(config, &toolkit).await else {
+            tracing::debug!(
+                target: "flows",
+                node = %node.id,
+                %slug,
+                %toolkit,
+                "[flows] tool-contract check: live catalog fetch failed — skipping (best-effort, never false-rejects)"
+            );
+            continue;
+        };
+
+        let Some(contract) = catalog.iter().find(|c| c.slug.eq_ignore_ascii_case(slug)) else {
+            tracing::warn!(
+                target: "flows",
+                node = %node.id,
+                %slug,
+                %toolkit,
+                "[flows] tool-contract check: slug is not a real action in the live catalog — rejecting"
+            );
+            errors.push(format!(
+                "Node '{}': `{slug}` is not a real action in the `{toolkit}` toolkit's live \
+                 Composio catalog — use search_tool_catalog {{ query: ..., toolkit: \"{toolkit}\" \
+                 }} to find a real action slug.",
+                node.id
+            ));
+            continue;
+        };
+
+        // Mirror `flow_tool_allowed`'s Path A: a toolkit OpenHuman ships a
+        // static curated catalog for is a hard curated-only allowlist at
+        // RUNTIME — `find_curated` rejects any slug that isn't one of the
+        // curated actions, regardless of whether it's a real live action.
+        // `search_tool_catalog`/`get_tool_contract` deliberately surface
+        // real-but-uncurated actions too (ranking signal only, never
+        // hidden — see `ToolContract::is_curated`'s doc), so without this
+        // check a graph could pass authoring/save with a real-but-uncurated
+        // action on a curated toolkit and then fail every run with "tool
+        // not permitted". Hold authoring to the same bar the runtime gate
+        // enforces instead of loosening the runtime gate.
+        let has_static_catalog = get_provider(&toolkit)
+            .and_then(|p| p.curated_tools())
+            .or_else(|| catalog_for_toolkit(&toolkit))
+            .is_some();
+        if has_static_catalog && !contract.is_curated {
+            tracing::warn!(
+                target: "flows",
+                node = %node.id,
+                %slug,
+                %toolkit,
+                "[flows] tool-contract check: slug is real but not curated for a statically-catalogued toolkit — rejecting to match the runtime allowlist"
+            );
+            errors.push(format!(
+                "Node '{}': `{slug}` is a real `{toolkit}` action but not one of OpenHuman's \
+                 curated actions for `{toolkit}` — the runtime tool gate only allows curated \
+                 actions for toolkits with a curated catalog, so this would be rejected on \
+                 every run. Use search_tool_catalog {{ query: ..., toolkit: \"{toolkit}\" }} and \
+                 pick a result with `featured: true`.",
+                node.id
+            ));
+            continue;
+        }
+
+        let args = node.config.get("args").cloned().unwrap_or(Value::Null);
+        let missing = missing_required_args(&contract.required_args, &args);
+        if !missing.is_empty() {
+            tracing::warn!(
+                target: "flows",
+                node = %node.id,
+                %slug,
+                ?missing,
+                "[flows] tool-contract check: required arg(s) missing or null — rejecting"
+            );
+            let list = missing
+                .iter()
+                .map(|m| format!("`{m}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            errors.push(format!(
+                "Node '{}': tool_call `{slug}` is missing required arg(s) {list} — wire each \
+                 from an upstream node's output, e.g. \"{}\": \
+                 \"=nodes.<node_id>.item.json.<field>\" (call get_tool_contract {{ slug: \
+                 \"{slug}\" }} for the exact required_args list).",
+                node.id, missing[0]
+            ));
         }
     }
     errors
@@ -2310,6 +2624,47 @@ pub async fn flows_discover(
 /// the RPC block indefinitely.
 const FLOW_BUILD_TIMEOUT_SECS: u64 = 300;
 
+/// Tools stripped from the `workflow_builder` belt on the direct `flows_build`
+/// RPC path (issue #4593).
+///
+/// `flows_build` runs the builder under [`AgentTurnOrigin::Cli`] so the approval
+/// gate does not fail-closed in a headless/streamed run — but that same origin
+/// makes [`crate::openhuman::approval::ApprovalGate`] **auto-allow** every
+/// `external_effect` tool. The flows live-runner (`run_flow`,
+/// [`crate::openhuman::flows::tools`]'s `RunFlowTool`) executes a *live* saved
+/// flow (real Slack/Gmail/HTTP/code effects via [`flows_run`]), so a stray call
+/// during an authoring turn would fire it with no HITL confirmation. This path
+/// has no routable approval surface yet (the copilot stream carries only a
+/// broadcast `thread_id`, no per-user `client_id`), so rather than
+/// park-then-TTL-deny we make it **unreachable** here — matching `flows_build`'s
+/// contract that it "never enables or runs a flow". The tool stays available
+/// (and properly gated behind a real `WebChat` approval card) when
+/// `workflow_builder` is invoked as the `build_workflow` chat delegate.
+///
+/// `run_flow` is the live-runner on the belt today. The legacy `run_workflow`
+/// name (now the unrelated harness spawn tool) is listed too as belt-and-braces
+/// against a re-rename or the name ever leaking back onto this belt;
+/// `hide_tools` no-ops on a name that isn't present.
+const FLOWS_BUILD_HIDDEN_TOOLS: &[&str] = &["run_workflow", "run_flow"];
+
+/// Strip the live-run tool(s) in [`FLOWS_BUILD_HIDDEN_TOOLS`] from `agent`'s
+/// callable set for the direct `flows_build` RPC path.
+///
+/// Delegates to [`crate::openhuman::agent::Agent::hide_tools`], which removes
+/// the names from the builder's (already narrow) visible belt and rebuilds the
+/// session's `ToolPolicySession` so they resolve to `Deny` at the tool-call
+/// boundary — a hard execution guarantee even if the model requests the tool.
+/// The authoring tools (`propose`/`revise`/`save`/`dry_run`/reads) are all
+/// `external_effect() == false` and untouched, so the turn never fail-closes.
+fn restrict_builder_toolset(agent: &mut crate::openhuman::agent::Agent) {
+    tracing::debug!(
+        target: "flows",
+        hidden = ?FLOWS_BUILD_HIDDEN_TOOLS,
+        "[flows] flows_build: hiding live-run tools from builder belt"
+    );
+    agent.hide_tools(FLOWS_BUILD_HIDDEN_TOOLS);
+}
+
 /// Runs the `workflow_builder` agent for one authoring turn and returns its
 /// proposal, invoking it as a first-class backend agent (exactly like the Flow
 /// Scout `flows_discover`) rather than routing a hand-crafted delegate prompt
@@ -2355,6 +2710,14 @@ pub async fn flows_build(
     let mut agent = Agent::from_config_for_agent(config, "workflow_builder")
         .map_err(|e| format!("failed to build workflow_builder agent: {e:#}"))?;
     agent.set_agent_definition_name("workflow_builder".to_string());
+
+    // Strip the live-run tool(s) from the belt on this direct RPC path: under
+    // the `AgentTurnOrigin::Cli` origin below the approval gate auto-allows
+    // every external_effect tool, so `run_flow` could execute a live saved flow
+    // with no HITL confirmation (issue #4593). Restricting the visible set makes
+    // it `Deny` at the tool-call boundary; the authoring tools are untouched so
+    // the turn still runs headless without fail-closing.
+    restrict_builder_toolset(&mut agent);
 
     // When a chat thread is attached (the copilot pane), stream the builder turn
     // into it exactly like an interactive turn — text/tool deltas and the

@@ -11,7 +11,8 @@
 //! | [`GetFlowTool`]         | `None`                  | read: fetch a saved flow's graph          |
 //! | [`GetFlowRunTool`]      | `None`                  | read: fetch a run's steps                 |
 //! | [`ListFlowConnectionsTool`] | `None`              | read: connection refs (ids/names only)    |
-//! | [`SearchToolCatalogTool`]   | `None`              | read: real Composio tool slugs            |
+//! | [`SearchToolCatalogTool`]   | `None`              | read: real Composio tool slugs (live catalog) |
+//! | [`GetToolContractTool`]     | `None`              | read: one action's FULL live contract     |
 //! | [`ListAgentProfilesTool`]   | `None`              | read: selectable agent kinds (`agent_ref`)|
 //! | [`DryRunWorkflowTool`]  | `Execute` (tier-gated)  | run a *draft* against MOCK capabilities   |
 //! | [`SaveWorkflowTool`]    | `Write`                 | persist a graph onto an EXISTING flow     |
@@ -183,6 +184,23 @@ impl Tool for ReviseWorkflowTool {
             return Ok(ToolResult::error(format!(
                 "{}\n\nFix these bindings and call revise_workflow again.",
                 binding_errors.join("\n\n")
+            )));
+        }
+
+        // Tool-contract enforcement gate (systemic tool-contract fix, Part 2):
+        // reject a `tool_call` node whose slug isn't a REAL action in the
+        // live Composio catalog, or whose real required args aren't all wired.
+        let contract_errors = ops::validate_tool_contracts(&self.config, &graph).await;
+        if !contract_errors.is_empty() {
+            tracing::debug!(
+                target: "flows",
+                %name,
+                error_count = contract_errors.len(),
+                "[flows] revise_workflow: tool-contract check rejected the revised graph"
+            );
+            return Ok(ToolResult::error(format!(
+                "{}\n\nFix these tool_call nodes and call revise_workflow again.",
+                contract_errors.join("\n\n")
             )));
         }
 
@@ -495,18 +513,23 @@ impl Tool for ListFlowConnectionsTool {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// search_tool_catalog — read-only: real Composio tool slugs
+// search_tool_catalog — read-only: real Composio tool slugs from the FULL
+// LIVE catalog (systemic tool-contract fix, Part 1)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// `search_tool_catalog`: search OpenHuman's curated Composio catalog for REAL
-/// action slugs so `tool_call` nodes are grounded in slugs that actually exist
-/// (rather than a hallucinated slug that fails the save-time curation gate).
+/// `search_tool_catalog`: search the FULL LIVE Composio catalog — every real
+/// action for a named app, connected or not, curated or not — so `tool_call`
+/// nodes are grounded in slugs that actually exist (rather than a hallucinated
+/// slug that fails the save-time [`crate::openhuman::flows::ops::validate_tool_contracts`]
+/// gate).
 ///
-/// Also grounds the OUTPUT side: each result carries a best-effort
-/// `response_fields` list — the action's real top-level response field names
-/// (see [`crate::openhuman::tinyflows::caps::composio_response_fields`]) — so
-/// a downstream binding (`=nodes.<id>.item.json.<field>`) can be wired to a
-/// field that actually exists instead of a guessed one.
+/// Also grounds the OUTPUT side: each result carries the action's real
+/// `output_fields` (top-level response field names) and — when known — a
+/// `primary_array_path`, so a downstream binding
+/// (`=nodes.<id>.item.json.<field>`) or a `split_out.path` can be wired to a
+/// real field/path instead of a guessed one. Call
+/// [`GetToolContractTool`]/`get_tool_contract` for the FULL contract (schemas
+/// included) before wiring a match's args.
 pub struct SearchToolCatalogTool {
     config: Arc<Config>,
 }
@@ -520,17 +543,30 @@ impl SearchToolCatalogTool {
 /// Cap on returned matches so a broad query can't flood the agent's context.
 const MAX_CATALOG_RESULTS: usize = 40;
 
-/// Search the curated catalog for action slugs whose slug (or toolkit) matches
-/// every whitespace-separated term in `query` (case-insensitive AND). When
-/// `toolkit` is set, only that toolkit's catalog is scanned. Pure — no I/O.
-pub(crate) fn search_curated_catalog(
+/// Search the FULL LIVE Composio catalog (via
+/// [`crate::openhuman::tinyflows::caps::fetch_live_toolkit_catalog`]) for
+/// actions whose slug or description matches every whitespace-separated term
+/// in `query` (case-insensitive AND). When `toolkit` is set, only that
+/// toolkit is scanned — this is how the builder can search ANY named app
+/// (connected or not) rather than only the toolkits already
+/// [`agent_ready_toolkits`](crate::openhuman::memory_sync::composio::providers::agent_ready_toolkits);
+/// with no `toolkit` filter, the search is scoped to that agent-ready set (a
+/// bare keyword query with no app named would otherwise have to fan out to
+/// every toolkit Composio knows about).
+///
+/// Curated matches (`is_curated`) are ranked first (a stable sort, so ties
+/// preserve fetch order) — never filtered out; a real, uncurated action is
+/// just as valid a result, only ranked after the curated ones. A toolkit
+/// whose live-catalog fetch fails (no backend session, network error)
+/// contributes zero results rather than erroring the whole search.
+pub(crate) async fn search_live_catalog(
+    config: &Config,
     query: &str,
     toolkit_filter: Option<&str>,
     limit: usize,
 ) -> Vec<Value> {
-    use crate::openhuman::memory_sync::composio::providers::{
-        agent_ready_toolkits, catalog_for_toolkit,
-    };
+    use crate::openhuman::memory_sync::composio::providers::agent_ready_toolkits;
+    use crate::openhuman::tinyflows::caps::fetch_live_toolkit_catalog;
 
     let terms: Vec<String> = query
         .split_whitespace()
@@ -545,31 +581,55 @@ pub(crate) fn search_curated_catalog(
             .collect(),
     };
 
-    let mut out = Vec::new();
-    for toolkit in toolkits {
-        let Some(catalog) = catalog_for_toolkit(&toolkit) else {
-            continue;
-        };
-        for tool in catalog {
+    // Fetch every candidate toolkit's live catalog concurrently — a bare
+    // keyword query (no `toolkit` filter) fans out across every agent-ready
+    // toolkit, and fetching them one at a time would pay for each one's
+    // round trip back-to-back (the per-toolkit cache only helps repeats).
+    let fetched: Vec<(
+        String,
+        Option<Vec<crate::openhuman::tinyflows::caps::ToolContract>>,
+    )> = futures::future::join_all(toolkits.into_iter().map(|toolkit| async move {
+        let catalog = fetch_live_toolkit_catalog(config, &toolkit).await;
+        (toolkit, catalog)
+    }))
+    .await;
+
+    let mut matches: Vec<(bool, Value)> = Vec::new();
+    for (toolkit, catalog) in fetched {
+        let Some(catalog) = catalog else { continue };
+        for tool in &catalog {
             let slug_lc = tool.slug.to_ascii_lowercase();
-            // Every term must match either the slug or the toolkit name.
-            let matches = terms
-                .iter()
-                .all(|term| slug_lc.contains(term) || toolkit.contains(term));
-            if !matches {
+            let desc_lc = tool
+                .description
+                .as_deref()
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let is_match = terms.iter().all(|term| {
+                slug_lc.contains(term) || toolkit.contains(term) || desc_lc.contains(term)
+            });
+            if !is_match {
                 continue;
             }
-            out.push(json!({
-                "slug": tool.slug,
-                "toolkit": toolkit,
-                "scope": tool.scope.as_str(),
-            }));
-            if out.len() >= limit {
-                return out;
-            }
+            matches.push((
+                tool.is_curated,
+                json!({
+                    "slug": tool.slug,
+                    "toolkit": toolkit,
+                    "description": tool.description,
+                    "required_args": tool.required_args,
+                    "output_fields": tool.output_fields,
+                    "primary_array_path": tool.primary_array_path,
+                    "featured": tool.is_curated,
+                }),
+            ));
         }
     }
-    out
+
+    // Curated (`featured`) results first; stable sort preserves fetch order
+    // within each group.
+    matches.sort_by_key(|(is_curated, _)| std::cmp::Reverse(*is_curated));
+    matches.truncate(limit);
+    matches.into_iter().map(|(_, v)| v).collect()
 }
 
 #[async_trait]
@@ -579,17 +639,19 @@ impl Tool for SearchToolCatalogTool {
     }
 
     fn description(&self) -> &str {
-        "Search the curated Composio tool catalog for REAL action slugs to use on \
-         `tool_call` nodes. Read-only. Query by keyword (e.g. 'send email', \
-         'slack message'); optionally scope to one `toolkit` (e.g. 'gmail'). \
-         Returns matching { slug, toolkit, scope, response_fields } entries. \
-         ALWAYS ground a tool_call node's `slug` in a real result here — do not \
-         invent slugs. `response_fields` names the action's REAL top-level \
-         output field names (from Composio's own schema) — use THOSE, not a \
-         guess, when a downstream node reads this tool's output via \
-         `=nodes.<id>.item.json.<field>`. When `response_fields` is empty a \
-         `response_fields_note` explains the output shape is unknown — \
-         dry_run_workflow the binding to verify it resolves before proposing."
+        "Search the FULL LIVE Composio catalog for REAL action slugs to use on `tool_call` \
+         nodes — every action for a named app, whether or not the user has connected it yet \
+         and whether or not it's one of OpenHuman's hand-curated actions. Read-only. Query by \
+         keyword (e.g. 'send email', 'slack message'); optionally scope to one `toolkit` (e.g. \
+         'gmail', or any Composio app name) to search that app specifically. Returns matching \
+         { slug, toolkit, description, required_args, output_fields, primary_array_path, \
+         featured } entries, curated (`featured: true`) matches ranked first. ALWAYS ground a \
+         tool_call node's `slug` in a real result here — never invent one. Before wiring a \
+         match's args or a downstream binding, call get_tool_contract { slug } for the FULL \
+         contract (exact required_args, full input/output JSON Schema) — this search result is \
+         enough to FIND the right slug, get_tool_contract is what grounds the WIRING. If the \
+         app isn't connected yet, you can still build the node and use composio_connect (or \
+         tell the user) — the flow will prompt for the connection at run time."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -598,11 +660,11 @@ impl Tool for SearchToolCatalogTool {
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Keywords to match against tool slugs (case-insensitive; all terms must match)."
+                    "description": "Keywords to match against tool slugs/descriptions (case-insensitive; all terms must match)."
                 },
                 "toolkit": {
                     "type": "string",
-                    "description": "Optional toolkit slug to scope the search (e.g. 'gmail', 'slack')."
+                    "description": "Optional toolkit/app slug to scope the search (e.g. 'gmail', 'slack', or any named Composio app — connected or not)."
                 }
             },
             "required": ["query"],
@@ -628,64 +690,118 @@ impl Tool for SearchToolCatalogTool {
             target: "flows",
             %query,
             toolkit = toolkit.unwrap_or("(any)"),
-            "[flows] search_tool_catalog: searching curated Composio catalog (read-only)"
+            "[flows] search_tool_catalog: searching the FULL LIVE Composio catalog (read-only)"
         );
-        let mut results = search_curated_catalog(&query, toolkit, MAX_CATALOG_RESULTS);
-
-        // Resolve each *distinct* slug's output fields concurrently rather
-        // than awaiting one `composio_response_fields` call per matched
-        // result in sequence — a broad query spanning several toolkits would
-        // otherwise pay for their catalog round trips back-to-back (the
-        // per-toolkit cache only helps repeat lookups, not the first one).
-        let mut unique_slugs: Vec<String> = results
-            .iter()
-            .filter_map(|r| r.get("slug").and_then(Value::as_str).map(str::to_string))
-            .collect();
-        unique_slugs.sort();
-        unique_slugs.dedup();
-        let fetched = futures::future::join_all(unique_slugs.into_iter().map(|slug| {
-            let config = self.config.clone();
-            async move {
-                let fields =
-                    crate::openhuman::tinyflows::caps::composio_response_fields(&config, &slug)
-                        .await;
-                (slug, fields)
-            }
-        }))
-        .await;
-        let response_fields_by_slug: std::collections::HashMap<String, Option<Vec<String>>> =
-            fetched.into_iter().collect();
-
-        for result in &mut results {
-            let Some(slug) = result
-                .get("slug")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-            else {
-                continue;
-            };
-            let response_fields = response_fields_by_slug.get(&slug).cloned().flatten();
-            let Value::Object(map) = result else {
-                continue;
-            };
-            match response_fields {
-                Some(fields) => {
-                    map.insert("response_fields".to_string(), json!(fields));
-                }
-                None => {
-                    map.insert("response_fields".to_string(), json!(Vec::<String>::new()));
-                    map.insert(
-                        "response_fields_note".to_string(),
-                        json!("output shape unknown — dry-run to verify the binding resolves"),
-                    );
-                }
-            }
-        }
+        let results = search_live_catalog(&self.config, &query, toolkit, MAX_CATALOG_RESULTS).await;
         Ok(ToolResult::success(serde_json::to_string_pretty(&json!({
             "query": query,
             "count": results.len(),
             "results": results,
         }))?))
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// get_tool_contract — read-only: the FULL live contract for one action slug
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `get_tool_contract`: fetch the FULL live [`ToolContract`](crate::openhuman::tinyflows::caps::ToolContract)
+/// for one Composio action slug — the grounding step the builder MUST take
+/// before wiring a `search_tool_catalog` match's args or a downstream
+/// binding/`split_out.path` off it. Where `search_tool_catalog` is for
+/// FINDING a real slug, this is for WIRING it correctly: exact
+/// `required_args` (wire every one), the full `input_schema`/`output_schema`,
+/// and `primary_array_path` (prefixed `json.` for a `split_out.path`).
+pub struct GetToolContractTool {
+    config: Arc<Config>,
+}
+
+impl GetToolContractTool {
+    pub fn new(config: Arc<Config>) -> Self {
+        Self { config }
+    }
+}
+
+#[async_trait]
+impl Tool for GetToolContractTool {
+    fn name(&self) -> &str {
+        "get_tool_contract"
+    }
+
+    fn description(&self) -> &str {
+        "Fetch the FULL live contract for one Composio action slug (found via \
+         search_tool_catalog) before wiring it into a tool_call node. Read-only. Returns { \
+         slug, toolkit, description, required_args, input_schema, output_fields, \
+         output_schema, primary_array_path, is_curated }. Use `required_args` for EVERY arg \
+         you must wire in config.args; use `output_fields` for a downstream \
+         `=nodes.<id>.item.json.<field>` binding — never guess a field name; use \
+         `primary_array_path` (prefixed with `json.`, e.g. \"json.data.messages\") verbatim as \
+         a downstream split_out.path when you need to fan out over this action's result list. \
+         Call this for every real slug right before you wire its args — search_tool_catalog's \
+         summary is enough to find the slug, this is what grounds the wiring."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "slug": {
+                    "type": "string",
+                    "description": "The exact Composio action slug, e.g. 'GMAIL_SEND_EMAIL' (from search_tool_catalog)."
+                }
+            },
+            "required": ["slug"],
+            "additionalProperties": false
+        })
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::None
+    }
+
+    fn external_effect(&self) -> bool {
+        false
+    }
+
+    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        let slug = match args.get("slug").and_then(Value::as_str).map(str::trim) {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => return Ok(ToolResult::error("Missing 'slug' parameter".to_string())),
+        };
+        let Some(toolkit) =
+            crate::openhuman::memory_sync::composio::providers::toolkit_from_slug(&slug)
+        else {
+            return Ok(ToolResult::error(format!(
+                "Could not extract a toolkit from slug '{slug}' — it must look like \
+                 '<TOOLKIT>_<ACTION>' (e.g. 'GMAIL_SEND_EMAIL')."
+            )));
+        };
+
+        tracing::debug!(
+            target: "flows",
+            %slug,
+            %toolkit,
+            "[flows] get_tool_contract: fetching the live contract (read-only)"
+        );
+
+        let Some(catalog) =
+            crate::openhuman::tinyflows::caps::fetch_live_toolkit_catalog(&self.config, &toolkit)
+                .await
+        else {
+            return Ok(ToolResult::error(format!(
+                "Could not fetch the live Composio catalog for toolkit '{toolkit}' (no backend \
+                 session, or a transient failure) — try again, or use search_tool_catalog to \
+                 confirm the toolkit is reachable."
+            )));
+        };
+
+        match catalog.iter().find(|c| c.slug.eq_ignore_ascii_case(&slug)) {
+            Some(contract) => Ok(ToolResult::success(serde_json::to_string_pretty(contract)?)),
+            None => Ok(ToolResult::error(format!(
+                "'{slug}' is not a real action in the '{toolkit}' toolkit's live catalog — use \
+                 search_tool_catalog to find a real slug."
+            ))),
+        }
     }
 }
 
@@ -1337,6 +1453,23 @@ impl Tool for SaveWorkflowTool {
             return Ok(ToolResult::error(format!(
                 "{}\n\nFix these bindings and call save_workflow again.",
                 binding_errors.join("\n\n")
+            )));
+        }
+        // Tool-contract enforcement gate (systemic tool-contract fix, Part 2):
+        // reject a `tool_call` node whose slug isn't a REAL action in the
+        // live Composio catalog, or whose real required args aren't all
+        // wired — before the graph is ever persisted.
+        let contract_errors = ops::validate_tool_contracts(&self.config, &graph).await;
+        if !contract_errors.is_empty() {
+            tracing::debug!(
+                target: "flows",
+                %flow_id,
+                error_count = contract_errors.len(),
+                "[flows] save_workflow: tool-contract check rejected the graph"
+            );
+            return Ok(ToolResult::error(format!(
+                "{}\n\nFix these tool_call nodes and call save_workflow again.",
+                contract_errors.join("\n\n")
             )));
         }
         // Author-time warnings (unfired trigger kinds + unwired REQUIRED

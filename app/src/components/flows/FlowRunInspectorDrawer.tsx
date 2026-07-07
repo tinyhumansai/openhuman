@@ -4,7 +4,7 @@
  *
  * Right-side drawer showing a single durable `tinyflows` run's status + step
  * timeline, opened from the "View run" action on {@link FlowApprovalCard}.
- * Drawer chrome mirrors `pages/conversations/components/SubagentDrawer.tsx`
+ * Drawer chrome mirrors `features/conversations/components/SubagentDrawer.tsx`
  * (fixed overlay + backdrop-click-to-close + Escape-to-close) so it renders
  * as a fixed overlay regardless of where the parent mounts it in the DOM.
  *
@@ -18,7 +18,7 @@
  * + collapsible output, not a graduated status timeline. Status-dot/pill
  * visual language borrows from `components/intelligence/WorkflowRunDetail.tsx`
  * (`RUN_STATUS_ACCENT`/`PHASE_STATUS_DOT`) and
- * `pages/conversations/components/ToolTimelineBlock.tsx` (`StatusTag`) —
+ * `features/conversations/components/ToolTimelineBlock.tsx` (`StatusTag`) —
  * dots, not progress bars (project rule).
  */
 import debug from 'debug';

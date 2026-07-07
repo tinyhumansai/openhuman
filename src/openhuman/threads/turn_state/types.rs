@@ -335,12 +335,22 @@ pub struct GetTurnStateResponse {
     pub turn_state: Option<TurnState>,
 }
 
-/// Response payload for `openhuman.threads_turn_state_list`.
+/// Response payload for `openhuman.threads_turn_state_list` and
+/// `openhuman.threads_turn_state_history`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListTurnStatesResponse {
     pub turn_states: Vec<TurnState>,
     pub count: usize,
+}
+
+/// Request payload for `openhuman.threads_turn_state_get_turn` — a specific
+/// turn of a thread, identified by its producing request id.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GetTurnStateForRequestRequest {
+    pub thread_id: String,
+    pub request_id: String,
 }
 
 /// Request payload for `openhuman.threads_turn_state_clear`.

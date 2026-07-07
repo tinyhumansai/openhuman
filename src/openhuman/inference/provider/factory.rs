@@ -41,6 +41,8 @@ use crate::openhuman::inference::provider::openai_codex::{
 use crate::openhuman::inference::provider::openhuman_backend::OpenHumanBackendProvider;
 use crate::openhuman::inference::provider::traits::Provider;
 use crate::openhuman::inference::provider::ProviderRuntimeOptions;
+use std::sync::Arc;
+use tinyagents::harness::model::ChatModel;
 
 /// Sentinel meaning "use the OpenHuman backend session JWT".
 pub const PROVIDER_OPENHUMAN: &str = "openhuman";
@@ -888,6 +890,75 @@ pub fn create_chat_provider_from_string(
             .map(|e| e.slug.as_str())
             .collect::<Vec<_>>()
             .join(", ")
+    )
+}
+
+/// Build an `Arc<dyn ChatModel>` for the given workload role.
+///
+/// Phase 1 of the tinyagents inference migration (#4249): the crate
+/// [`ChatModel`] is the model interface the harness and one-shot inference
+/// callers target. Today this wraps the existing openhuman [`Provider`] stack
+/// via [`ProviderModel`](crate::openhuman::tinyagents::model) — a **zero
+/// behaviour change** shim — so callers can move off `Box<dyn Provider>`
+/// incrementally while the provider stack is dismantled underneath. `temperature`
+/// is pinned onto the returned model because the crate model interface bakes
+/// sampling into the model rather than the per-call request.
+pub fn create_chat_model(
+    role: &str,
+    config: &Config,
+    temperature: f64,
+) -> anyhow::Result<Arc<dyn ChatModel<()>>> {
+    Ok(create_chat_model_with_model_id(role, config, temperature)?.0)
+}
+
+/// Like [`create_chat_model`], but also returns the resolved model id.
+///
+/// One-shot callers that persist or log the concrete model (e.g. the memory
+/// summarise audit) need the id the role resolved to; the plain
+/// [`create_chat_model`] drops it.
+pub fn create_chat_model_with_model_id(
+    role: &str,
+    config: &Config,
+    temperature: f64,
+) -> anyhow::Result<(Arc<dyn ChatModel<()>>, String)> {
+    let (provider, model) = create_chat_provider(role, config)?;
+    let chat = chat_model_from_provider(provider, model.clone(), temperature);
+    Ok((chat, model))
+}
+
+/// Build an `Arc<dyn ChatModel>` from an explicit provider string and config.
+///
+/// The [`ChatModel`] counterpart of [`create_chat_provider_from_string`]; see
+/// [`create_chat_model`] for the migration rationale.
+pub fn create_chat_model_from_string(
+    role: &str,
+    provider: &str,
+    config: &Config,
+    temperature: f64,
+) -> anyhow::Result<Arc<dyn ChatModel<()>>> {
+    let (provider, model) = create_chat_provider_from_string(role, provider, config)?;
+    Ok(chat_model_from_provider(provider, model, temperature))
+}
+
+/// Wrap an owned [`Provider`] as an `Arc<dyn ChatModel>` pinned to
+/// `model`/`temperature`.
+///
+/// The single seam where a boxed provider becomes the crate model interface.
+/// As consumers migrate off `Box<dyn Provider>` this stays the conversion point,
+/// shrinking toward the Phase 1 exit criterion (`ProviderModel` constructed in
+/// exactly one place) and, ultimately, the `Provider` trait's deletion in
+/// Phase 4. Exposed `pub(crate)` so a caller that must build a specific provider
+/// itself (e.g. the LinkedIn enrichment path, which deliberately forces the
+/// managed backend) can still hand back a `ChatModel` without naming the trait.
+pub(crate) fn chat_model_from_provider(
+    provider: Box<dyn Provider>,
+    model: String,
+    temperature: f64,
+) -> Arc<dyn ChatModel<()>> {
+    crate::openhuman::tinyagents::model::provider_chat_model(
+        Arc::from(provider),
+        model,
+        temperature,
     )
 }
 

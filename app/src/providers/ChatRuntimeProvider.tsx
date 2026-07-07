@@ -29,7 +29,6 @@ import {
 } from '../services/chatService';
 import { store } from '../store';
 import {
-  appendProcessingProse,
   appendSubagentStreamDelta,
   bumpInferenceHeartbeatForThread,
   clearInferenceStatusForThread,
@@ -42,20 +41,25 @@ import {
   markInferenceTurnStreaming,
   parseToolFailure,
   recordChatTurnUsage,
-  recordProcessingTool,
   recordSubagentTranscriptTool,
   resolveSubagentTranscriptTool,
   setInferenceStatusForThread,
-  setParallelStream,
   setPendingApprovalForThread,
   setPendingPlanReviewForThread,
   setStreamingAssistantForThread,
   setTaskBoardForThread,
   setToolTimelineForThread,
   setWorkflowProposalForThread,
-  type StreamingAssistantState,
-  type ToolTimelineEntry,
-  type ToolTimelineEntryStatus,
+  streamDeltaReceived,
+  subagentAwaitingUser,
+  subagentDone,
+  subagentIterationStarted,
+  subagentSpawned,
+  subagentToolCallReceived,
+  subagentToolResultReceived,
+  toolArgsDeltaReceived,
+  toolCallReceived,
+  toolResultReceived,
   upsertArtifactFailedForThread,
   upsertArtifactInProgressForThread,
   upsertArtifactReadyForThread,
@@ -73,11 +77,6 @@ import {
   setSelectedThread,
 } from '../store/threadSlice';
 import { IS_PROD } from '../utils/config';
-import {
-  formatTimelineEntry,
-  isKnownClientTool,
-  promptFromArgsBuffer,
-} from '../utils/toolTimelineFormatting';
 
 const logChatRuntime = debug('openhuman:chat-runtime');
 const USER_FACING_AGENT_ERROR_MESSAGE =
@@ -207,7 +206,13 @@ function hasCompleteSegmentDelivery(
 }
 
 function chatDoneExtraMetadata(event: ChatDoneEvent): Record<string, unknown> | undefined {
-  return event.citations?.length ? { citations: event.citations } : undefined;
+  // Stamp the producing turn's request id so the final answer can be grouped
+  // with its per-turn process trail (Phase 4 anchoring, Option B — see the
+  // companion plan). `citations` is merged in when present.
+  const meta: Record<string, unknown> = {};
+  if (event.citations?.length) meta.citations = event.citations;
+  if (event.request_id) meta.requestId = event.request_id;
+  return Object.keys(meta).length > 0 ? meta : undefined;
 }
 
 /**
@@ -325,27 +330,6 @@ function parseWorkflowProposal(output: string): WorkflowProposal | null {
     requireApproval: obj.require_approval !== false,
     summary: { trigger: typeof summary.trigger === 'string' ? summary.trigger : '', steps },
   };
-}
-
-export function findPendingDelegationContext(
-  entries: ToolTimelineEntry[],
-  round: number
-): { sourceToolName?: string; prompt?: string; spawnEntryId?: string } {
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry.status !== 'running' || entry.round !== round) continue;
-    if (
-      ['spawn_subagent', 'spawn_async_subagent'].includes(entry.name) ||
-      entry.name.startsWith('delegate_')
-    ) {
-      return {
-        sourceToolName: entry.name,
-        prompt: entry.detail ?? promptFromArgsBuffer(entry.argsBuffer),
-        spawnEntryId: entry.id,
-      };
-    }
-  }
-  return {};
 }
 
 const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
@@ -480,22 +464,6 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     if (socketStatus !== 'connected') return;
 
-    const decorateEntry = (entry: ToolTimelineEntry): ToolTimelineEntry => {
-      const formatted = formatTimelineEntry(entry);
-      // The server now attaches a human label/detail for dynamic
-      // Composio/MCP/integration tools the client can't know. Trust it for
-      // those; for the fixed set of built-ins the client formatter labels
-      // well (with args-aware detail), the client label stays authoritative.
-      if (entry.displayName && !isKnownClientTool(entry.name)) {
-        return {
-          ...entry,
-          displayName: entry.displayName,
-          detail: entry.detail ?? formatted.detail,
-        };
-      }
-      return { ...entry, displayName: formatted.title, detail: formatted.detail ?? entry.detail };
-    };
-
     // When a turn ends, any follow-ups the user queued behind it are about to be
     // dispatched by the backend as fresh turns. Nothing else persists their
     // prompt — the web channel never writes user messages; the composer does
@@ -616,44 +584,17 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         // forked turns that share a thread_id keep independent chains (#4288).
         skillLatencyRef.current.noteToolCall(segmentDeliveryKey(event.thread_id, event.request_id));
 
-        const existing = store.getState().chatRuntime.toolTimelineByThread[event.thread_id] ?? [];
-        const existingIdx = event.tool_call_id
-          ? existing.findIndex(entry => entry.id === event.tool_call_id)
-          : -1;
-
-        // Stable row id, shared with the processing-transcript tool pointer so
-        // the panel can resolve the row by `callId`.
-        const rowId =
-          event.tool_call_id ??
-          `${event.thread_id}:${event.round}:${existing.length}:${event.tool_name}`;
-
-        let entries: ToolTimelineEntry[];
-        if (existingIdx >= 0) {
-          entries = [...existing];
-          entries[existingIdx] = decorateEntry({
-            ...entries[existingIdx],
-            name: event.tool_name,
-            round: event.round,
-            status: 'running',
-            displayName: event.tool_display_label ?? entries[existingIdx].displayName,
-            detail: event.tool_display_detail ?? entries[existingIdx].detail,
-          });
-        } else {
-          entries = [
-            ...existing,
-            decorateEntry({
-              id: rowId,
-              name: event.tool_name,
-              round: event.round,
-              status: 'running',
-              displayName: event.tool_display_label,
-              detail: event.tool_display_detail,
-            }),
-          ];
-        }
-        dispatch(setToolTimelineForThread({ threadId: event.thread_id, entries }));
+        // Merge + processing-pointer are now a single reducer (Phase 3) — no
+        // getState()/full-array rebuild in the provider.
         dispatch(
-          recordProcessingTool({ threadId: event.thread_id, round: event.round, callId: rowId })
+          toolCallReceived({
+            threadId: event.thread_id,
+            round: event.round,
+            toolName: event.tool_name,
+            toolCallId: event.tool_call_id,
+            displayLabel: event.tool_display_label,
+            displayDetail: event.tool_display_detail,
+          })
         );
       },
       onToolResult: (event: ChatToolResultEvent) => {
@@ -663,59 +604,19 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         )
           return;
 
-        // On failure, parse the optional structured explanation (#4254) once so
-        // both the id-match and name/round-fallback paths can attach it. A
-        // successful result clears any stale failure carried on the row.
-        const failure = event.success ? undefined : parseToolFailure(event.failure);
-
-        const existing = store.getState().chatRuntime.toolTimelineByThread[event.thread_id] ?? [];
-        if (existing.length > 0) {
-          const nextEntries = [...existing];
-          let changed = false;
-
-          // The core forwards the (size-capped) tool result text on `output`;
-          // keep it on the row so the timeline can show what the tool
-          // returned. Older cores sent a metadata stub here — accept only
-          // non-empty payloads so a stub-less row stays `undefined`.
-          const result = event.output && event.output.length > 0 ? event.output : undefined;
-
-          if (event.tool_call_id) {
-            const idx = nextEntries.findIndex(entry => entry.id === event.tool_call_id);
-            if (idx >= 0) {
-              nextEntries[idx] = {
-                ...nextEntries[idx],
-                status: event.success ? 'success' : 'error',
-                failure,
-                result,
-              };
-              changed = true;
-            }
-          }
-
-          if (!changed) {
-            for (let i = nextEntries.length - 1; i >= 0; i -= 1) {
-              const entry = nextEntries[i];
-              if (
-                entry.status === 'running' &&
-                entry.name === event.tool_name &&
-                entry.round === event.round
-              ) {
-                nextEntries[i] = {
-                  ...entry,
-                  status: event.success ? 'success' : 'error',
-                  failure,
-                  result,
-                };
-                changed = true;
-                break;
-              }
-            }
-          }
-
-          if (changed) {
-            dispatch(setToolTimelineForThread({ threadId: event.thread_id, entries: nextEntries }));
-          }
-        }
+        // Settle the matching row in the reducer (Phase 3) — no getState() /
+        // full-array rebuild. A no-op when no row matches.
+        dispatch(
+          toolResultReceived({
+            threadId: event.thread_id,
+            round: event.round,
+            toolName: event.tool_name,
+            toolCallId: event.tool_call_id,
+            success: event.success,
+            output: event.output,
+            failure: event.failure,
+          })
+        );
 
         // Agent-first Workflow authoring (issue B4): a completed
         // `propose_workflow` call carries a `workflow_proposal` JSON payload
@@ -761,88 +662,47 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           })
         );
 
-        const existing = store.getState().chatRuntime.toolTimelineByThread[event.thread_id] ?? [];
-        const pendingContext = findPendingDelegationContext(existing, event.round);
-        // Collapse the parent's `spawn_subagent`/`spawn_async_subagent`/`delegate_*` tool-call row into
-        // the subagent row so the timeline shows ONE entry per delegation
-        // instead of "Research" (the tool call) + "Researching" (the child).
-        // The tool call's prompt is carried onto the subagent as the parent's
-        // delegation message, which the drawer renders as the opening turn.
-        const base = pendingContext.spawnEntryId
-          ? existing.filter(e => e.id !== pendingContext.spawnEntryId)
-          : existing;
+        // Collapse the parent spawn/delegate row into the subagent row (one
+        // entry per delegation) — merge now lives in the reducer (Phase 3).
         dispatch(
-          setToolTimelineForThread({
+          subagentSpawned({
             threadId: event.thread_id,
-            entries: [
-              ...base,
-              decorateEntry({
-                id: `${event.thread_id}:subagent:${event.skill_id}:${event.tool_name}`,
-                name: `subagent:${event.tool_name}`,
-                round: event.round,
-                status: 'running',
-                detail: pendingContext.prompt,
-                sourceToolName: pendingContext.sourceToolName,
-                subagent: {
-                  taskId: event.skill_id,
-                  agentId: event.tool_name,
-                  displayName: event.subagent?.display_name,
-                  workerThreadId: event.subagent?.worker_thread_id,
-                  mode: event.subagent?.mode,
-                  dedicatedThread: event.subagent?.dedicated_thread,
-                  prompt: pendingContext.prompt,
-                  toolCalls: [],
-                  transcript: [],
-                },
-              }),
-            ],
+            round: event.round,
+            rowId: `${event.thread_id}:subagent:${event.skill_id}:${event.tool_name}`,
+            taskId: event.skill_id,
+            agentId: event.tool_name,
+            displayName: event.subagent?.display_name,
+            workerThreadId: event.subagent?.worker_thread_id,
+            mode: event.subagent?.mode,
+            dedicatedThread: event.subagent?.dedicated_thread,
           })
         );
       },
       onSubagentAwaitingUser: (event: ChatSubagentDoneEvent) => {
-        const subagentRowId = `${event.thread_id}:subagent:${event.skill_id}:${event.tool_name}`;
-        const existing = store.getState().chatRuntime.toolTimelineByThread[event.thread_id] ?? [];
-        if (existing.length > 0) {
-          const entries = existing.map(entry => {
-            if (entry.id !== subagentRowId || entry.status !== 'running') return entry;
-            return decorateEntry({
-              ...entry,
-              status: 'awaiting_user' as ToolTimelineEntryStatus,
-              subagent: entry.subagent
-                ? { ...entry.subagent, status: 'awaiting_user' }
-                : entry.subagent,
-            });
-          });
-          dispatch(setToolTimelineForThread({ threadId: event.thread_id, entries }));
-        }
+        dispatch(
+          subagentAwaitingUser({
+            threadId: event.thread_id,
+            rowId: `${event.thread_id}:subagent:${event.skill_id}:${event.tool_name}`,
+          })
+        );
       },
       onSubagentDone: (event: ChatSubagentDoneEvent) => {
-        const subagentRowId = `${event.thread_id}:subagent:${event.skill_id}:${event.tool_name}`;
-        const existing = store.getState().chatRuntime.toolTimelineByThread[event.thread_id] ?? [];
-        if (existing.length > 0) {
-          const entries = existing.map(entry => {
-            if (entry.id !== subagentRowId || entry.status !== 'running') return entry;
-            return decorateEntry({
-              ...entry,
-              status: (event.success ? 'success' : 'error') as ToolTimelineEntryStatus,
-              subagent: entry.subagent
-                ? {
-                    ...entry.subagent,
-                    iterations: event.subagent?.iterations ?? entry.subagent.iterations,
-                    elapsedMs: event.subagent?.elapsed_ms ?? entry.subagent.elapsedMs,
-                    outputChars: event.subagent?.output_chars ?? entry.subagent.outputChars,
-                    // Worktree isolation metadata (#3376) — present only for
-                    // workers that ran with `isolation = "worktree"`. Drives the
-                    // inline worktree row's open/diff/remove affordances.
-                    worktreePath: event.subagent?.worktree_path ?? entry.subagent.worktreePath,
-                    changedFiles: event.subagent?.changed_files ?? entry.subagent.changedFiles,
-                    isDirty: event.subagent?.dirty_status ?? entry.subagent.isDirty,
-                  }
-                : entry.subagent,
-            });
-          });
-          dispatch(setToolTimelineForThread({ threadId: event.thread_id, entries }));
-        }
+        // Worktree isolation metadata (#3376) — present only for workers that ran
+        // with `isolation = "worktree"`; drives the inline worktree row's
+        // open/diff/remove affordances. Undefined fields leave the row untouched.
+        dispatch(
+          subagentDone({
+            threadId: event.thread_id,
+            rowId: `${event.thread_id}:subagent:${event.skill_id}:${event.tool_name}`,
+            success: event.success,
+            iterations: event.subagent?.iterations,
+            elapsedMs: event.subagent?.elapsed_ms,
+            outputChars: event.subagent?.output_chars,
+            worktreePath: event.subagent?.worktree_path,
+            changedFiles: event.subagent?.changed_files,
+            isDirty: event.subagent?.dirty_status,
+          })
+        );
 
         const current = store.getState().chatRuntime.inferenceStatusByThread[event.thread_id];
         if (!current) return;
@@ -856,59 +716,35 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
       onSubagentIterationStart: event => {
         const taskId = event.subagent?.task_id ?? event.skill_id;
         const agentId = event.subagent?.agent_id ?? event.tool_name;
-        const rowId = `${event.thread_id}:subagent:${taskId}:${agentId}`;
-        const existing = store.getState().chatRuntime.toolTimelineByThread[event.thread_id] ?? [];
-        const idx = existing.findIndex(entry => entry.id === rowId);
-        if (idx < 0) return;
-        const entry = existing[idx];
-        if (!entry.subagent) return;
-        const next = [...existing];
-        next[idx] = {
-          ...entry,
-          subagent: {
-            ...entry.subagent,
-            childIteration: event.subagent?.child_iteration ?? entry.subagent.childIteration,
-            childMaxIterations:
-              event.subagent?.child_max_iterations ?? entry.subagent.childMaxIterations,
-          },
-        };
-        dispatch(setToolTimelineForThread({ threadId: event.thread_id, entries: next }));
+        dispatch(
+          subagentIterationStarted({
+            threadId: event.thread_id,
+            rowId: `${event.thread_id}:subagent:${taskId}:${agentId}`,
+            childIteration: event.subagent?.child_iteration,
+            childMaxIterations: event.subagent?.child_max_iterations,
+          })
+        );
       },
       onSubagentToolCall: event => {
         const taskId = event.subagent?.task_id ?? event.skill_id;
         const agentId = event.subagent?.agent_id;
         if (!agentId) return;
         const rowId = `${event.thread_id}:subagent:${taskId}:${agentId}`;
-        const existing = store.getState().chatRuntime.toolTimelineByThread[event.thread_id] ?? [];
-        const idx = existing.findIndex(entry => entry.id === rowId);
-        if (idx < 0) return;
-        const entry = existing[idx];
-        if (!entry.subagent) return;
-        // De-dupe on call_id — the same call should not append twice if
-        // the socket layer redelivers (e.g. on reconnect during a run).
-        if (entry.subagent.toolCalls.some(c => c.callId === event.tool_call_id)) return;
-        const next = [...existing];
-        next[idx] = {
-          ...entry,
-          subagent: {
-            ...entry.subagent,
-            toolCalls: [
-              ...entry.subagent.toolCalls,
-              {
-                callId: event.tool_call_id,
-                toolName: event.tool_name,
-                status: 'running',
-                iteration: event.subagent?.child_iteration,
-                args: event.args,
-                displayName: event.tool_display_label,
-                detail: event.tool_display_detail,
-              },
-            ],
-          },
-        };
-        dispatch(setToolTimelineForThread({ threadId: event.thread_id, entries: next }));
-        // Mirror the call into the ordered transcript so the drawer renders
-        // it right after the text that triggered it (chronological view).
+        // Reducer owns the toolCalls upsert (dedup on call_id) — no getState().
+        dispatch(
+          subagentToolCallReceived({
+            threadId: event.thread_id,
+            rowId,
+            callId: event.tool_call_id,
+            toolName: event.tool_name,
+            iteration: event.subagent?.child_iteration,
+            args: event.args,
+            displayName: event.tool_display_label,
+            detail: event.tool_display_detail,
+          })
+        );
+        // Mirror the call into the ordered transcript so the drawer renders it
+        // right after the text that triggered it (self-guarded / self-deduped).
         dispatch(
           recordSubagentTranscriptTool({
             threadId: event.thread_id,
@@ -960,28 +796,19 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         const agentId = event.subagent?.agent_id;
         if (!agentId) return;
         const rowId = `${event.thread_id}:subagent:${taskId}:${agentId}`;
-        const existing = store.getState().chatRuntime.toolTimelineByThread[event.thread_id] ?? [];
-        const idx = existing.findIndex(entry => entry.id === rowId);
-        if (idx < 0) return;
-        const entry = existing[idx];
-        if (!entry.subagent) return;
-        const callIdx = entry.subagent.toolCalls.findIndex(c => c.callId === event.tool_call_id);
-        if (callIdx < 0) return;
-        const updatedCalls = [...entry.subagent.toolCalls];
-        updatedCalls[callIdx] = {
-          ...updatedCalls[callIdx],
-          status: event.success ? 'success' : 'error',
-          elapsedMs: event.subagent?.elapsed_ms ?? updatedCalls[callIdx].elapsedMs,
-          outputChars: event.subagent?.output_chars ?? updatedCalls[callIdx].outputChars,
-          result: event.output ?? updatedCalls[callIdx].result,
-          // Carry the structured failure so the child row keeps its "why / next"
-          // copy live instead of losing it until a snapshot reload (#4459). A
-          // successful result clears any stale failure on the row.
-          failure: event.success ? undefined : parseToolFailure(event.failure),
-        };
-        const next = [...existing];
-        next[idx] = { ...entry, subagent: { ...entry.subagent, toolCalls: updatedCalls } };
-        dispatch(setToolTimelineForThread({ threadId: event.thread_id, entries: next }));
+        // Reducer owns the nested toolCall settle (no-op if the call is absent).
+        dispatch(
+          subagentToolResultReceived({
+            threadId: event.thread_id,
+            rowId,
+            callId: event.tool_call_id,
+            success: event.success,
+            elapsedMs: event.subagent?.elapsed_ms,
+            outputChars: event.subagent?.output_chars,
+            result: event.output,
+            failure: event.failure,
+          })
+        );
         dispatch(
           resolveSubagentTranscriptTool({
             threadId: event.thread_id,
@@ -1037,7 +864,14 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           addInferenceResponse({
             content,
             threadId: event.thread_id,
-            extraMetadata: event.citations?.length ? { citations: event.citations } : undefined,
+            // Stamp the producing turn's request id so the timeline projection
+            // can group this answer with its per-turn process trail (Phase 4
+            // anchoring, Option B — see the companion plan). `citations` is
+            // merged in when present.
+            extraMetadata: {
+              ...(event.citations?.length ? { citations: event.citations } : {}),
+              ...(event.request_id ? { requestId: event.request_id } : {}),
+            },
           })
         );
       },
@@ -1052,8 +886,15 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           return;
         const content = event.full_response?.trim() ?? '';
         if (!content) return;
-        // Persist this round's leading narration as its own interleaved bubble.
-        void dispatch(addInferenceResponse({ content, threadId: event.thread_id }));
+        // Persist this round's leading narration as its own interleaved bubble,
+        // stamped with the producing turn's request id (Phase 4 anchoring).
+        void dispatch(
+          addInferenceResponse({
+            content,
+            threadId: event.thread_id,
+            extraMetadata: event.request_id ? { requestId: event.request_id } : undefined,
+          })
+        );
         // The narration has now become a bubble, so drop it from the live
         // streaming preview (which accumulates across the whole turn under one
         // request_id) — otherwise the same text lingers in the preview tail and
@@ -1075,123 +916,40 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         }
       },
       onTextDelta: event => {
-        const cr = store.getState().chatRuntime;
-        // A parallel (forked) turn streams into its own lane so it doesn't
-        // clobber the primary turn's stream on the same thread.
-        if (cr.parallelRequestThreads[event.request_id] !== undefined) {
-          const prev = cr.parallelStreamsByThread[event.thread_id]?.[event.request_id];
-          dispatch(
-            setParallelStream({
-              threadId: event.thread_id,
-              streaming: {
-                requestId: event.request_id,
-                content: `${prev?.content ?? ''}${event.delta}`,
-                thinking: prev?.thinking ?? '',
-              },
-            })
-          );
-          return;
-        }
-        const existing = cr.streamingAssistantByThread[event.thread_id];
-        let streaming: StreamingAssistantState;
-        if (existing && existing.requestId !== event.request_id) {
-          streaming = { requestId: event.request_id, content: event.delta, thinking: '' };
-        } else {
-          streaming = {
-            requestId: event.request_id,
-            content: `${existing?.content ?? ''}${event.delta}`,
-            thinking: existing?.thinking ?? '',
-          };
-        }
-        dispatch(setStreamingAssistantForThread({ threadId: event.thread_id, streaming }));
-        // Build the live interleaved processing transcript so a mid-turn
-        // "View processing" isn't empty (the persisted one lands on settle).
+        // Parallel-vs-primary routing + processing transcript now live in the
+        // reducer (Phase 3) — no getState() in the provider.
         dispatch(
-          appendProcessingProse({
+          streamDeltaReceived({
             threadId: event.thread_id,
-            kind: 'narration',
+            requestId: event.request_id,
             round: event.round,
             delta: event.delta,
+            channel: 'content',
           })
         );
       },
       onThinkingDelta: event => {
-        const cr = store.getState().chatRuntime;
-        if (cr.parallelRequestThreads[event.request_id] !== undefined) {
-          const prev = cr.parallelStreamsByThread[event.thread_id]?.[event.request_id];
-          dispatch(
-            setParallelStream({
-              threadId: event.thread_id,
-              streaming: {
-                requestId: event.request_id,
-                content: prev?.content ?? '',
-                thinking: `${prev?.thinking ?? ''}${event.delta}`,
-              },
-            })
-          );
-          return;
-        }
-        const existing = cr.streamingAssistantByThread[event.thread_id];
-        let streaming: StreamingAssistantState;
-        if (existing && existing.requestId !== event.request_id) {
-          streaming = { requestId: event.request_id, content: '', thinking: event.delta };
-        } else {
-          streaming = {
-            requestId: event.request_id,
-            content: existing?.content ?? '',
-            thinking: `${existing?.thinking ?? ''}${event.delta}`,
-          };
-        }
-        dispatch(setStreamingAssistantForThread({ threadId: event.thread_id, streaming }));
         dispatch(
-          appendProcessingProse({
+          streamDeltaReceived({
             threadId: event.thread_id,
-            kind: 'thinking',
+            requestId: event.request_id,
             round: event.round,
             delta: event.delta,
+            channel: 'thinking',
           })
         );
       },
       onToolArgsDelta: event => {
-        const cr = store.getState().chatRuntime;
-        const existing = cr.toolTimelineByThread[event.thread_id] ?? [];
-        let matchIdx = -1;
-        if (event.tool_call_id) {
-          matchIdx = existing.findIndex(entry => entry.id === event.tool_call_id);
-        }
-        if (matchIdx < 0 && event.tool_name) {
-          matchIdx = existing.findIndex(
-            entry =>
-              entry.status === 'running' &&
-              entry.name === event.tool_name &&
-              entry.round === event.round
-          );
-        }
-
-        let entries: ToolTimelineEntry[];
-        if (matchIdx >= 0) {
-          entries = [...existing];
-          entries[matchIdx] = decorateEntry({
-            ...entries[matchIdx],
-            argsBuffer: `${entries[matchIdx].argsBuffer ?? ''}${event.delta}`,
-            name:
-              entries[matchIdx].name.length === 0 && event.tool_name
-                ? event.tool_name
-                : entries[matchIdx].name,
-          });
-        } else {
-          entries = [
-            ...existing,
-            decorateEntry({
-              id: event.tool_call_id,
-              name: event.tool_name ?? '',
-              round: event.round,
-              status: 'running',
-              argsBuffer: event.delta,
-            }),
-          ];
-        }
-        dispatch(setToolTimelineForThread({ threadId: event.thread_id, entries }));
+        // Match + append + decorate now live in the reducer (Phase 3).
+        dispatch(
+          toolArgsDeltaReceived({
+            threadId: event.thread_id,
+            round: event.round,
+            delta: event.delta,
+            toolName: event.tool_name,
+            toolCallId: event.tool_call_id,
+          })
+        );
       },
       onTaskBoardUpdated: (event: ChatTaskBoardUpdatedEvent) => {
         if (!event.task_board) return;
@@ -1215,7 +973,14 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
               request: event.request_id,
             });
             await dispatch(
-              addInferenceResponse({ content: event.full_response, threadId: targetThreadId })
+              addInferenceResponse({
+                content: event.full_response,
+                threadId: targetThreadId,
+                // Stamp the producing turn's request id when present (Phase 4
+                // anchoring); proactive events may omit it, in which case the
+                // message falls back to the legacy single-anchor turn.
+                extraMetadata: event.request_id ? { requestId: event.request_id } : undefined,
+              })
             );
           } catch (error) {
             rtLog('proactive_dispatch_failed', {

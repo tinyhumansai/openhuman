@@ -9,13 +9,14 @@ import { store } from '../../store';
 import {
   clearAllChatRuntime,
   enqueueFollowup,
+  findPendingDelegationContext,
   registerParallelRequest,
   resetSessionTokenUsage,
   setPendingPlanReviewForThread,
 } from '../../store/chatRuntimeSlice';
 import { setStatusForUser } from '../../store/socketSlice';
 import { clearAllThreads, loadThreads, setSelectedThread } from '../../store/threadSlice';
-import ChatRuntimeProvider, { findPendingDelegationContext } from '../ChatRuntimeProvider';
+import ChatRuntimeProvider from '../ChatRuntimeProvider';
 
 vi.mock('../../services/chatService', async () => {
   const actual = await vi.importActual<typeof chatService>('../../services/chatService');
@@ -571,6 +572,34 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
         )
       );
       expect(store.getState().chatRuntime.queuedFollowupsByThread['t-fup']).toBeUndefined();
+    });
+
+    it('stamps the assistant answer with the producing turn requestId on chat_done', async () => {
+      const listeners = renderProvider();
+
+      await act(async () => {
+        listeners.onDone?.({
+          thread_id: 't-rid',
+          request_id: 'req-abc',
+          full_response: 'the answer',
+          rounds_used: 1,
+          total_input_tokens: 1,
+          total_output_tokens: 1,
+        });
+      });
+
+      // The persisted answer carries requestId in extraMetadata so the timeline
+      // projection can group it with its per-turn process trail (Phase 4).
+      await waitFor(() =>
+        expect(threadApi.appendMessage).toHaveBeenCalledWith(
+          't-rid',
+          expect.objectContaining({
+            content: 'the answer',
+            sender: 'agent',
+            extraMetadata: expect.objectContaining({ requestId: 'req-abc' }),
+          })
+        )
+      );
     });
 
     it('processes tool_call for different rounds as distinct events', () => {

@@ -33,7 +33,8 @@ use tinyagents::harness::summarization::{
     estimate_tokens, CompressionProvenance, SummarizationPolicy, Summarizer, SummaryRecord,
 };
 
-use crate::openhuman::inference::provider::Provider;
+use tinyagents::harness::message::Message as HarnessMessage;
+use tinyagents::harness::model::{ChatModel, ModelRequest};
 
 /// Fraction of the model's context window at which summarization fires.
 ///
@@ -47,29 +48,25 @@ const SUMMARIZE_THRESHOLD_FRACTION: f64 = 0.90;
 const SUMMARIZE_KEEP_LAST: usize = 8;
 
 /// An LLM-backed [`Summarizer`] that condenses a slice of harness [`TaMessage`]s
-/// into a single system summary via an openhuman [`Provider`] chat call.
+/// into a single system summary via a crate [`ChatModel`] call.
 ///
-/// Wraps the **same** provider + model the turn is already running on, so the
-/// summary is produced by the active model (a cheaper summarizer model can be
-/// threaded later if compaction on the main model proves expensive — the legacy
-/// `ContextConfig::summarizer_model` hook).
+/// Wraps the **same** model the turn is already running on (its id/temperature
+/// baked in), so the summary is produced by the active model (a cheaper
+/// summarizer model can be threaded later if compaction on the main model proves
+/// expensive — the legacy `ContextConfig::summarizer_model` hook).
 pub(super) struct ProviderModelSummarizer {
-    provider: Arc<dyn Provider>,
-    model: String,
-    temperature: f64,
+    model: Arc<dyn ChatModel<()>>,
+    /// Model id, kept for logging/provenance only (the id rides the wrapped
+    /// [`ChatModel`]).
+    model_id: String,
 }
 
 impl ProviderModelSummarizer {
-    /// Build a summarizer over `provider`/`model` at `temperature`.
-    pub(super) fn new(
-        provider: Arc<dyn Provider>,
-        model: impl Into<String>,
-        temperature: f64,
-    ) -> Self {
+    /// Build a summarizer over `model` (its id/temperature pinned).
+    pub(super) fn new(model: Arc<dyn ChatModel<()>>, model_id: impl Into<String>) -> Self {
         Self {
-            provider,
-            model: model.into(),
-            temperature,
+            model,
+            model_id: model_id.into(),
         }
     }
 }
@@ -107,25 +104,25 @@ impl Summarizer for ProviderModelSummarizer {
             .join("\n");
 
         tracing::info!(
-            model = %self.model,
+            model = %self.model_id,
             head_messages = messages.len(),
             approx_input_tokens = original_token_estimate,
             "[tinyagents::summarize] dispatching context-window summary"
         );
 
+        let request = ModelRequest::new(vec![
+            HarnessMessage::system(SUMMARIZER_SYSTEM_PROMPT),
+            HarnessMessage::user(transcript),
+        ]);
         let summary = self
-            .provider
-            .chat_with_system(
-                Some(SUMMARIZER_SYSTEM_PROMPT),
-                &transcript,
-                &self.model,
-                self.temperature,
-            )
+            .model
+            .invoke(&(), request)
             .await
             .map_err(|e| {
-                tracing::warn!(error = %e, "[tinyagents::summarize] summarizer provider call failed");
-                TinyAgentsError::Model(format!("summarizer provider call failed: {e}"))
-            })?;
+                tracing::warn!(error = %e, "[tinyagents::summarize] summarizer model call failed");
+                TinyAgentsError::Model(format!("summarizer model call failed: {e}"))
+            })?
+            .text();
 
         let summary = summary.trim();
         if summary.is_empty() {
@@ -138,7 +135,7 @@ impl Summarizer for ProviderModelSummarizer {
         let summary_token_estimate = estimate_tokens(&body);
 
         tracing::info!(
-            model = %self.model,
+            model = %self.model_id,
             summary_tokens = summary_token_estimate,
             freed_tokens = original_token_estimate.saturating_sub(summary_token_estimate),
             "[tinyagents::summarize] context-window summary complete"
@@ -152,7 +149,7 @@ impl Summarizer for ProviderModelSummarizer {
                 summary_token_estimate,
                 reason: format!(
                     "ProviderModelSummarizer via {} (LLM compaction at {:.0}% of context window)",
-                    self.model,
+                    self.model_id,
                     SUMMARIZE_THRESHOLD_FRACTION * 100.0
                 ),
             },

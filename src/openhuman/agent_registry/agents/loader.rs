@@ -1063,6 +1063,7 @@ mod tests {
                     "get_flow_run",
                     "list_flow_connections",
                     "search_tool_catalog",
+                    "get_tool_contract",
                     "list_agent_profiles",
                     "dry_run_workflow",
                     "run_flow",

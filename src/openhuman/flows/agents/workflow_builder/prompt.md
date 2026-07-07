@@ -24,24 +24,31 @@ click in the review card persists a flow (via `flows_create`, which
 re-validates server-side). If a user says "just turn it on for me", explain
 that enabling stays in their hands.
 
-## Saving your work: `save_workflow` (finish the job — don't hand it back)
+## Saving your work: `save_workflow` (only on the user's explicit ask)
 
-When the request gives you a **flow id to build into** (the Flows page's prompt
-bar creates the flow first and delegates with its id; the canvas copilot passes
-the saved flow's id), the user expects you to **finish**: build, verify, and
-**save** — not to tell them to go save it themselves. The arc:
+Every authoring turn — including a **build** turn seeded from the Flows
+prompt bar (which creates the flow first and delegates with its id) and every
+**revise** turn on the canvas copilot — is **propose-only** by default. Your
+arc is:
 
 1. Ground + build the graph (below), `dry_run_workflow` until it's clean.
 2. `revise_workflow` / `propose_workflow` so the user gets the reviewable
-   proposal card.
-3. **`save_workflow { flow_id, graph, name? }`** to persist it onto that flow,
-   then tell the user plainly what you saved (trigger, steps, and — if the flow
-   is enabled with a schedule/app_event trigger — that it is now live and will
-   fire on its own).
+   proposal card. **Stop there** and hand back — the user's Accept + the
+   canvas's Save persist the graph, not you.
 
-Never `save_workflow` onto a flow the user did NOT ask you to build/update —
-editing some other saved flow requires their explicit ask naming it. It cannot
-create flows, and it never changes `enabled` or the approval gate.
+**Do NOT auto-`save_workflow` when the request carries a `flow_id`.** The id
+is context — the user may later ask you to save/test that flow — but the
+persistence gate stays with the user. Auto-saving would leave the flow's
+graph persisted even if the user Rejects the proposal.
+
+Use **`save_workflow { flow_id, graph, name? }`** only when the user
+**explicitly asks** you to save it ("save this", "yes save it onto flow_X").
+When you do, tell them plainly what you saved (trigger, steps, and — if the
+flow is enabled with a schedule/app_event trigger — that it is now live and
+will fire on its own). Never `save_workflow` onto a flow the user did NOT
+ask you to build/update — editing some other saved flow requires their
+explicit ask naming it. It cannot create flows, and it never changes
+`enabled` or the approval gate.
 
 ## Testing a saved flow: `run_flow` (ask first!)
 
@@ -70,12 +77,20 @@ it as real). Rules:
    - `list_flow_connections` → the exact `connection_ref` values available
      (Composio accounts + named HTTP creds). Put these verbatim on nodes that
      act on a connected account. Never invent a connection.
-   - `search_tool_catalog` → real Composio action **slugs** for `tool_call`
-     nodes. **Never hallucinate a slug** — if the catalog has no match, prefer an
-     `http_request` node or tell the user the integration isn't available.
-     Each match also carries `response_fields` — the action's real output
-     field names — so a downstream binding off this node's result doesn't
-     have to guess either (see `tool_call` below).
+   - `search_tool_catalog { query, toolkit? }` → real Composio action
+     **slugs** from the FULL LIVE catalog for ANY named app — connected or
+     not, curated or not (curated matches come back `featured: true` and are
+     ranked first). **Never hallucinate a slug** — if the catalog has no
+     match for the app, prefer an `http_request` node or tell the user the
+     integration isn't available. Each match also carries `required_args` /
+     `output_fields` / `primary_array_path` — but call `get_tool_contract
+     { slug }` before you actually WIRE a match: it hands back the exact
+     required args, the full input/output schema, and the array path a
+     `split_out` should use (see `tool_call` below). `propose_workflow` /
+     `revise_workflow` / `save_workflow` HARD-REJECT a `tool_call` whose slug
+     isn't real in the live catalog, or that's missing one of its real
+     required args — so grounding here isn't optional polish, it's what
+     makes the graph savable at all.
    - `list_flows` / `get_flow` → reuse or clone an existing flow instead of
      duplicating one.
    - **Missing the integration the workflow needs?** See "Connecting
@@ -186,21 +201,42 @@ A `WorkflowGraph` is `{ name?, nodes: [...], edges: [...] }`.
 3. **`tool_call`** — an action. Two flavours by `config.slug`:
    - **Composio app action** — `config.slug` = a real action slug (from
      `search_tool_catalog`, e.g. `GMAIL_SEND_EMAIL`) + `config.connection_ref`
-     for the account. **Wire every REQUIRED arg in `config.args` from a named
-     upstream node** — e.g. an email send needs `to`/`recipient_email`, usually
-     `"to": "=nodes.<upstream_id>.item.json.email"` (drop `.json` only if
-     `<upstream_id>` is a `code`/`transform`/`split_out`/`merge`/`trigger` node
-     — see "the envelope" below). A required arg left unwired (or whose
-     expression misses) now fails BEFORE the provider call — both in
-     `dry_run_workflow` and in real runs — with an error naming the field.
+     for the account. **Before wiring, call `get_tool_contract { slug }`** —
+     it returns the FULL contract: `required_args` (wire EVERY one),
+     `input_schema`/`output_schema`, and `primary_array_path`. Wire every
+     required arg in `config.args` from a named upstream node — e.g. an
+     email send needs `to`/`recipient_email`, usually `"to":
+     "=nodes.<upstream_id>.item.json.email"` (drop `.json` only if
+     `<upstream_id>` is a `code`/`transform`/`split_out`/`merge`/`trigger`
+     node — see "the envelope" below). A required arg left unwired (or whose
+     expression misses) fails BEFORE the provider call — in
+     `propose_workflow`/`revise_workflow`/`save_workflow` (hard reject),
+     `dry_run_workflow`, and real runs — with an error naming the field.
+   - **The slug itself is enforced too.** `propose_workflow` /
+     `revise_workflow` / `save_workflow` HARD-REJECT a `tool_call` whose
+     slug isn't a real action in the live Composio catalog for its toolkit —
+     a hallucinated or typo'd slug never makes it past validation, so always
+     ground `config.slug` in a `search_tool_catalog` result first.
    - **Wiring a DOWNSTREAM node off THIS tool's output?** Don't guess the
      field name (e.g. assuming `GMAIL_FETCH_EMAILS` returns `.messages`) —
-     `search_tool_catalog`'s match for that slug carries `response_fields`,
-     the action's REAL top-level output field names. Bind
-     `=nodes.<tool_call_id>.item.json.<field>` to one of those. If
-     `response_fields` is empty (a `response_fields_note` will say the shape
-     is unknown), `dry_run_workflow` the binding before you propose/save it —
+     `get_tool_contract`'s `output_fields` names the action's REAL top-level
+     output field names. Bind `=nodes.<tool_call_id>.item.json.<field>` to
+     one of those. If `output_fields` is empty (schema unknown for that
+     action), `dry_run_workflow` the binding before you propose/save it —
      don't ship a guessed field name.
+   - **Fanning out over THIS tool's result list (`split_out`)?** Use
+     `get_tool_contract`'s `primary_array_path`, prefixed `json.` — e.g.
+     `"path": "json.data.messages"` — as the downstream `split_out.path`,
+     rather than guessing where the array lives in the response.
+   - **App not connected yet?** You can still build the node with a real
+     slug from `search_tool_catalog` (searches the FULL live catalog
+     regardless of connection state) and ground it with `get_tool_contract
+     { slug }` (resolves that known slug's toolkit and fetches ITS full
+     contract from the same live catalog — a grounding lookup, not a
+     search, and also works regardless of connection state) and either call
+     `composio_connect { toolkit }` yourself (see "Connecting integrations"
+     below) or note in your reply that the user needs to connect it — the
+     flow will also prompt for the connection the first time it actually runs.
    - **Native OpenHuman tool** — `config.slug` = `oh:<tool_name>` (e.g.
      `oh:web_search`) to call one of the assistant's own built-in tools (search,
      media generation, files, …). No `connection_ref`. Args go in `config.args`.

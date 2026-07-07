@@ -88,12 +88,6 @@ pub(super) fn build_route_models(
     provider: &Arc<dyn Provider>,
     temperature: f64,
     skip_model: &str,
-    max_output_tokens: Option<u32>,
-    // Shared provider-usage carry (#4467): fallback route models must drain the
-    // SAME carry the bridge reads, or a successful fallback call never feeds its
-    // backend-charged USD / context-window / cache-creation-reasoning breakdown
-    // to the cost surfaces (it would fall back to a catalogue estimate).
-    usage_carry: &super::observability::ProviderUsageCarry,
 ) -> Vec<RouteModel> {
     let mut out = Vec::new();
     for &tier in WORKLOAD_ROUTE_TIERS {
@@ -113,11 +107,14 @@ pub(super) fn build_route_models(
         }
         let mut model = ProviderModel::new(provider.clone(), tier, temperature)
             .with_vision(vision)
-            .with_reasoning(reasoning)
-            .with_usage_carry(usage_carry.clone());
-        if let Some(cap) = max_output_tokens {
-            model = model.with_max_tokens(cap);
-        }
+            .with_reasoning(reasoning);
+        // Provider usage (incl. fallback-route calls) reaches the cost bridge via
+        // `UsageCarryMiddleware`, which reads it off each response — so route
+        // models no longer carry the usage side-channel.
+        // The per-turn output cap now rides `RunConfig.max_turn_output_tokens`
+        // (Phase 5 groundwork): the loop stamps it onto every `ModelRequest`, so
+        // route models no longer bake it in — they carry only model identity +
+        // capability profile.
         if let Some(window) = window.filter(|w| *w > 0) {
             model = model.with_context_window(window);
         }
@@ -314,6 +311,58 @@ impl ModelMiddleware<()> for FallbackObserverMiddleware {
                     to: resolved.name.clone(),
                 });
             }
+        }
+        Ok(MiddlewareModelOutcome::from(response))
+    }
+}
+
+/// Around-model middleware that feeds the cost event bridge (issue #4249,
+/// Phase 5): after the real model call, it reads the full host [`UsageInfo`] off
+/// the returned [`ModelResponse`] — token breakdowns from the crate `Usage`,
+/// backend-charged USD + context window from the G1 `raw` passthrough
+/// ([`usage_info_from_response`](super::model::usage_info_from_response)) — and
+/// pushes it onto the shared [`ProviderUsageCarry`](super::observability::ProviderUsageCarry)
+/// the [`OpenhumanEventBridge`](super::OpenhumanEventBridge) drains on
+/// `UsageRecorded`.
+///
+/// This replaces the per-[`ProviderModel`] usage push (buffered + streamed), so
+/// the adapter — and every projected route model — carries only model identity +
+/// capability profile. It wraps the whole retry/fallback core, so it fires
+/// exactly once per logical model call (matching the single `UsageRecorded` the
+/// crate emits), for both the buffered and streamed paths (the streamed response
+/// is folded back to a `ModelResponse` with usage + raw intact). Push happens
+/// after the call returns, before the loop emits `UsageRecorded`, preserving the
+/// FIFO ordering the bridge relies on.
+pub(super) struct UsageCarryMiddleware {
+    carry: super::observability::ProviderUsageCarry,
+}
+
+impl UsageCarryMiddleware {
+    pub(super) fn new(carry: super::observability::ProviderUsageCarry) -> Self {
+        Self { carry }
+    }
+}
+
+#[async_trait]
+impl ModelMiddleware<()> for UsageCarryMiddleware {
+    fn name(&self) -> &str {
+        "openhuman.usage_carry"
+    }
+
+    async fn wrap_model(
+        &self,
+        ctx: &mut RunContext<()>,
+        state: &(),
+        request: ModelRequest,
+        next: ModelHandler<'_, (), ()>,
+    ) -> tinyagents::Result<MiddlewareModelOutcome> {
+        let outcome = next.run(ctx, state, request).await?;
+        let response = outcome.into_response();
+        if let Some(usage) = super::model::usage_info_from_response(&response) {
+            self.carry
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push_back(usage);
         }
         Ok(MiddlewareModelOutcome::from(response))
     }

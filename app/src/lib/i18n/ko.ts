@@ -253,6 +253,8 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.title': 'TinyPlace 릴레이',
   'tinyplaceOrchestration.subtitle': '고정된 에이전트 채널과 앱 세션 채팅',
   'tinyplaceOrchestration.refresh': '새로 고침',
+  'tinyplaceOrchestration.newInstance': '새 인스턴스',
+  'tinyplaceOrchestration.newInstanceSoon': '곧 제공 예정',
   'tinyplaceOrchestration.pinned': '고정됨',
   'tinyplaceOrchestration.sessions': '세션',
   'tinyplaceOrchestration.contacts': '연락처',
