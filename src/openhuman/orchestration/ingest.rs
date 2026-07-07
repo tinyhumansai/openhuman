@@ -98,6 +98,11 @@ struct ClassifiedMessage {
     /// session-state events (`status`/`lifecycle`/`unknown`) do NOT, so a status
     /// ping never spuriously wakes the front-end graph.
     advances_seq: bool,
+    /// True only for an authoritative `status` snapshot, which OWNS the session's
+    /// run-state columns and must be able to CLEAR `current_detail`/`active_call_id`
+    /// (e.g. `running_tool` → `idle`). Content events leave this false so the
+    /// COALESCE upsert preserves the last status instead of wiping it.
+    authoritative_status: bool,
 }
 
 /// True for streams that carry ciphertext DM envelopes worth ingesting.
@@ -155,6 +160,7 @@ fn classify_message(plaintext: String, fallback_timestamp: &str) -> ClassifiedMe
         status_detail: None,
         active_call_id: None,
         advances_seq: true,
+        authoritative_status: false,
     }
 }
 
@@ -191,6 +197,7 @@ fn classify_v1(env: SessionEnvelopeV1, fallback_timestamp: &str) -> ClassifiedMe
         status_detail: None,
         active_call_id: None,
         advances_seq: true,
+        authoritative_status: false,
     }
 }
 
@@ -248,6 +255,9 @@ fn classify_v2(env: SessionEnvelopeV2, fallback_timestamp: &str) -> ClassifiedMe
             b.status_detail = non_empty(p.detail);
             b.active_call_id = p.active_call_id.and_then(non_empty);
             b.advances_seq = false;
+            // Authoritative run-state snapshot: it may CLEAR detail/active_call_id
+            // (running_tool → idle), so persistence overwrites rather than COALESCEs.
+            b.authoritative_status = true;
         }
         HarnessEventKind::Lifecycle(p) => {
             b.body = p.phase.clone();
@@ -266,6 +276,9 @@ fn classify_v2(env: SessionEnvelopeV2, fallback_timestamp: &str) -> ClassifiedMe
             // Preserve the raw payload as the body so nothing is silently lost.
             b.body = serde_json::to_string(&p.raw).unwrap_or_default();
             b.advances_seq = false;
+            // Persist as the literal `unknown` (not the raw wire kind) so the store
+            // readers keep a forward/garbled event out of the thread + unread count.
+            b.kind_override = Some("unknown");
         }
     }
 
@@ -285,13 +298,14 @@ fn classify_v2(env: SessionEnvelopeV2, fallback_timestamp: &str) -> ClassifiedMe
         seq,
         body: b.body,
         timestamp,
-        event_kind: Some(kind_str),
+        event_kind: Some(b.kind_override.map(str::to_string).unwrap_or(kind_str)),
         tool_name: b.tool_name,
         call_id: b.call_id,
         status_state: b.status_state,
         status_detail: b.status_detail,
         active_call_id: b.active_call_id,
         advances_seq: b.advances_seq,
+        authoritative_status: b.authoritative_status,
     }
 }
 
@@ -306,6 +320,11 @@ struct V2Body {
     status_detail: Option<String>,
     active_call_id: Option<String>,
     advances_seq: bool,
+    authoritative_status: bool,
+    /// Overrides the persisted `event_kind` for a forward/garbled kind that
+    /// `decoded()` folded to `Unknown`: stored as the literal `"unknown"` so the
+    /// store readers keep it out of the thread instead of leaking the raw kind.
+    kind_override: Option<&'static str>,
 }
 
 impl Default for V2Body {
@@ -319,6 +338,8 @@ impl Default for V2Body {
             status_detail: None,
             active_call_id: None,
             advances_seq: true,
+            authoritative_status: false,
+            kind_override: None,
         }
     }
 }
@@ -382,6 +403,19 @@ fn persist_message(
                     active_call_id: classified.active_call_id.clone(),
                 },
             )?;
+            // An authoritative `status` snapshot OWNS the run-state columns and may
+            // CLEAR them (running_tool → idle); the COALESCE upsert above can't, so
+            // overwrite them directly. Content events skip this and keep COALESCE.
+            if classified.authoritative_status {
+                store::apply_run_state(
+                    c,
+                    agent_id,
+                    &classified.session_id,
+                    classified.status_state.as_deref(),
+                    classified.status_detail.as_deref(),
+                    classified.active_call_id.as_deref(),
+                )?;
+            }
             let landed = store::insert_message(
                 c,
                 &OrchestrationMessage {
@@ -760,6 +794,10 @@ mod tests {
         assert_eq!(st.status_detail.as_deref(), Some("compiling"));
         assert_eq!(st.active_call_id.as_deref(), Some("c1"));
         assert!(!st.advances_seq, "status must not advance the wake ordinal");
+        assert!(
+            st.authoritative_status,
+            "a status snapshot owns the run-state columns (may clear them)"
+        );
 
         // approval_request → drives waiting_approval, keeps advancing (owner must act).
         let ar = classify_message(
@@ -774,6 +812,10 @@ mod tests {
         assert_eq!(ar.status_state.as_deref(), Some("waiting_approval"));
         assert_eq!(ar.tool_name.as_deref(), Some("rm"));
         assert!(ar.advances_seq);
+        assert!(
+            !ar.authoritative_status,
+            "approval sets status_state but is not a run-state snapshot (COALESCE)"
+        );
 
         // error → errored run-state + body is the message.
         let er = classify_message(
@@ -796,12 +838,14 @@ mod tests {
         assert_eq!(lc.status_state.as_deref(), Some("stopped"));
         assert!(!lc.advances_seq);
 
-        // unknown → dropped from the wake path, raw preserved as body.
+        // unknown → dropped from the wake path, raw preserved as body. The raw
+        // wire kind ("teleport") is normalized to the literal "unknown" so store
+        // readers keep it out of the thread instead of leaking a forward kind.
         let uk = classify_message(
             v2_env("teleport", r#"{ "flux": 1 }"#, "w2", "agent"),
             "2026-07-05T09:00:00Z",
         );
-        assert_eq!(uk.event_kind.as_deref(), Some("teleport"));
+        assert_eq!(uk.event_kind.as_deref(), Some("unknown"));
         assert!(!uk.advances_seq);
         assert!(uk.body.contains("flux"));
     }
@@ -870,6 +914,85 @@ mod tests {
                 .find(|m| m.event_kind.as_deref() == Some("status"))
                 .expect("status row persisted");
             assert_eq!(status_row.seq, 0);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn a_later_status_snapshot_clears_stale_detail_and_active_call_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        // running_tool: detail + active_call_id populated.
+        let running = classify_message(
+            v2_env(
+                "status",
+                r#"{ "state": "running_tool", "detail": "compiling", "active_call_id": "c1" }"#,
+                "w2",
+                "agent",
+            ),
+            "2026-07-05T09:00:00Z",
+        );
+        assert!(persist_message(tmp.path(), "s1", "@peer", &running, "now").unwrap());
+        store::with_connection(tmp.path(), |c| {
+            let s = store::load_session(c, "@peer", "w2")?.expect("session");
+            assert_eq!(s.current_detail.as_deref(), Some("compiling"));
+            assert_eq!(s.active_call_id.as_deref(), Some("c1"));
+            Ok(())
+        })
+        .unwrap();
+
+        // idle: the harness went quiet — detail + active_call_id are absent. The
+        // authoritative snapshot must CLEAR them, not keep the stale "compiling"/c1
+        // (the COALESCE upsert alone would preserve them — the bug this fixes).
+        let idle = classify_message(
+            v2_env("status", r#"{ "state": "idle" }"#, "w2", "agent"),
+            "2026-07-05T09:01:00Z",
+        );
+        assert!(persist_message(tmp.path(), "s2", "@peer", &idle, "now").unwrap());
+        store::with_connection(tmp.path(), |c| {
+            let s = store::load_session(c, "@peer", "w2")?.expect("session");
+            assert_eq!(s.status_state.as_deref(), Some("idle"));
+            assert_eq!(s.current_detail, None, "stale detail must be cleared");
+            assert_eq!(
+                s.active_call_id, None,
+                "stale active_call_id must be cleared"
+            );
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn a_content_event_never_wipes_a_live_status() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Establish a live run-state via a status snapshot.
+        let running = classify_message(
+            v2_env(
+                "status",
+                r#"{ "state": "running_tool", "detail": "compiling", "active_call_id": "c1" }"#,
+                "w2",
+                "agent",
+            ),
+            "2026-07-05T09:00:00Z",
+        );
+        assert!(persist_message(tmp.path(), "s1", "@peer", &running, "now").unwrap());
+        // A content event (agent_message) carries no run-state — it must COALESCE,
+        // preserving the live status rather than nulling it.
+        let msg = classify_message(
+            v2_env(
+                "agent_message",
+                r#"{ "text": "still going" }"#,
+                "w2",
+                "agent",
+            ),
+            "2026-07-05T09:00:30Z",
+        );
+        assert!(persist_message(tmp.path(), "m1", "@peer", &msg, "now").unwrap());
+        store::with_connection(tmp.path(), |c| {
+            let s = store::load_session(c, "@peer", "w2")?.expect("session");
+            assert_eq!(s.status_state.as_deref(), Some("running_tool"));
+            assert_eq!(s.current_detail.as_deref(), Some("compiling"));
+            assert_eq!(s.active_call_id.as_deref(), Some("c1"));
             Ok(())
         })
         .unwrap();

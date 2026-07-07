@@ -277,6 +277,36 @@ pub fn upsert_session(conn: &Connection, s: &OrchestrationSession) -> Result<()>
     Ok(())
 }
 
+/// Overwrite a session's v2 run-state columns from an authoritative `status`
+/// snapshot. `upsert_session` COALESCEs these so a content event (which carries
+/// no run-state) never wipes the last status; a `status` event, by contrast, OWNS
+/// them and must be able to CLEAR `current_detail`/`active_call_id` on a
+/// `running_tool` → `idle` transition. The row already exists (the ingest path
+/// runs `upsert_session` first), so this is a plain UPDATE that SETs — not
+/// coalesces — all three, letting `None` clear a stale value.
+pub fn apply_run_state(
+    conn: &Connection,
+    agent_id: &str,
+    session_id: &str,
+    status_state: Option<&str>,
+    current_detail: Option<&str>,
+    active_call_id: Option<&str>,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE sessions
+            SET status_state = ?3, current_detail = ?4, active_call_id = ?5
+          WHERE agent_id = ?1 AND session_id = ?2",
+        params![
+            agent_id,
+            session_id,
+            status_state,
+            current_detail,
+            active_call_id
+        ],
+    )?;
+    Ok(())
+}
+
 /// Insert a message, idempotent by relay id. Returns true if a new row landed.
 pub fn insert_message(conn: &Connection, m: &OrchestrationMessage) -> Result<bool> {
     let changed = conn.execute(
