@@ -804,28 +804,42 @@ fn handle_self_identity(_params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-/// Make this agent discoverable, then echo back the refreshed identity.
+/// Make this agent fully messageable, then echo back the refreshed identity.
 ///
-/// The `SelfIdentityCard` shows *why* peers can't DM this agent (no directory
-/// card and/or no published Signal key) but had no remediation — the user was
-/// left to go register a @handle elsewhere even when the wallet already holds
-/// one. This wraps the single-call publish primitive
-/// (`signal_register_encryption_key`, which upserts the directory card — minting
-/// a minimal one if none exists — and writes the encryption key into its
-/// metadata) and then re-reads `self_identity` so the card flips to
-/// "discoverable" without a manual refresh.
+/// The `SelfIdentityCard` shows *why* peers can't DM this agent but had no
+/// remediation — the user was left to go register a @handle elsewhere even when
+/// the wallet already holds one. Two publishes are needed for a peer to actually
+/// deliver a first DM, and this does both:
 ///
-/// No @handle registration and no payment: this only publishes presence for the
+/// 1. **Directory card + encryption key** (`signal_register_encryption_key`):
+///    upserts the directory card (minting a minimal one if none exists) and
+///    writes the wallet's encryption key into its metadata, so peers can *resolve*
+///    this address.
+/// 2. **X3DH prekey bundle** (`signal_provision`): generates a signed pre-key +
+///    one-time pre-keys and uploads them to `/keys/<addr>/bundle`, so peers can
+///    *initiate* a Signal session. Without this, resolution succeeds but the very
+///    first DM 404s on the bundle fetch — "discoverable" would be a lie. This is
+///    the step the old card-only publish missed.
+///
+/// Then re-reads `self_identity` so the card flips to "discoverable" in place. No
+/// @handle registration and no payment: this only publishes presence for the
 /// identity the wallet already has. Registering a brand-new paid handle stays in
 /// the tiny.place registry surface.
 fn handle_publish_identity(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         log::debug!(target: LOG, "[orchestration_rpc] publish_identity entry");
+        // 1. Directory card + encryption key → resolvable.
         crate::openhuman::tinyplace::handle_tinyplace_signal_register_encryption_key(Map::new())
             .await
-            .map_err(|e| format!("publish_identity: {e}"))?;
-        // Re-read discoverability from the directory so the renderer gets the
-        // post-publish truth (card + key now live), not an optimistic guess.
+            .map_err(|e| format!("publish_identity card: {e}"))?;
+        // 2. X3DH prekey bundle → a peer can initiate the first DM. A peer that
+        //    resolves the card but finds no bundle 404s on `/keys/<addr>/bundle`,
+        //    so this is required for real messageability, not optional polish.
+        crate::openhuman::tinyplace::handle_tinyplace_signal_provision(Map::new())
+            .await
+            .map_err(|e| format!("publish_identity prekeys: {e}"))?;
+        // 3. Re-read discoverability from the directory so the renderer gets the
+        //    post-publish truth (card + key now live), not an optimistic guess.
         handle_self_identity(Map::new()).await
     })
 }
