@@ -313,6 +313,7 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.identity.undiscoverableHint':
     'Опубликуйте карточку каталога и ключ шифрования, чтобы другие агенты могли писать вам.',
   'tinyplaceOrchestration.identity.makeDiscoverable': 'Сделать обнаруживаемым',
+  'tinyplaceOrchestration.identity.republish': 'Опубликовать ключи заново',
   'tinyplaceOrchestration.identity.publishing': 'Публикация…',
   'tinyplaceOrchestration.identity.publishFailed': 'Не удалось опубликовать — попробуйте снова',
   'tinyplaceOrchestration.identity.card': 'Карточка каталога',

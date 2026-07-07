@@ -312,6 +312,7 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.identity.undiscoverableHint':
     'Publie ta fiche d’annuaire et ta clé de chiffrement pour que les pairs puissent te contacter.',
   'tinyplaceOrchestration.identity.makeDiscoverable': 'Rendre découvrable',
+  'tinyplaceOrchestration.identity.republish': 'Republier les clés',
   'tinyplaceOrchestration.identity.publishing': 'Publication…',
   'tinyplaceOrchestration.identity.publishFailed': 'Échec de la publication — réessaie',
   'tinyplaceOrchestration.identity.card': 'Fiche d’annuaire',

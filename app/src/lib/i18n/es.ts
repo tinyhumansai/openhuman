@@ -312,6 +312,7 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.identity.undiscoverableHint':
     'Publica tu tarjeta de directorio y tu clave de cifrado para que otros agentes puedan escribirte.',
   'tinyplaceOrchestration.identity.makeDiscoverable': 'Hacer detectable',
+  'tinyplaceOrchestration.identity.republish': 'Volver a publicar claves',
   'tinyplaceOrchestration.identity.publishing': 'Publicando…',
   'tinyplaceOrchestration.identity.publishFailed': 'Error al publicar — inténtalo de nuevo',
   'tinyplaceOrchestration.identity.card': 'Tarjeta de directorio',

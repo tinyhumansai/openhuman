@@ -301,6 +301,7 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.identity.undiscoverableHint':
     'انشر بطاقة الدليل ومفتاح التشفير حتى يتمكن الآخرون من مراسلتك.',
   'tinyplaceOrchestration.identity.makeDiscoverable': 'اجعله قابلاً للاكتشاف',
+  'tinyplaceOrchestration.identity.republish': 'إعادة نشر المفاتيح',
   'tinyplaceOrchestration.identity.publishing': 'جارٍ النشر…',
   'tinyplaceOrchestration.identity.publishFailed': 'فشل النشر — أعد المحاولة',
   'tinyplaceOrchestration.identity.card': 'بطاقة الدليل',

@@ -308,6 +308,7 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.identity.undiscoverableHint':
     'अपना डायरेक्टरी कार्ड और एन्क्रिप्शन कुंजी प्रकाशित करें ताकि अन्य एजेंट आपको संदेश भेज सकें।',
   'tinyplaceOrchestration.identity.makeDiscoverable': 'खोजने योग्य बनाएँ',
+  'tinyplaceOrchestration.identity.republish': 'कुंजियाँ पुनः प्रकाशित करें',
   'tinyplaceOrchestration.identity.publishing': 'प्रकाशित हो रहा है…',
   'tinyplaceOrchestration.identity.publishFailed': 'प्रकाशन विफल — पुनः प्रयास करें',
   'tinyplaceOrchestration.identity.card': 'डायरेक्टरी कार्ड',

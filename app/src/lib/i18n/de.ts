@@ -315,6 +315,7 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.identity.undiscoverableHint':
     'Veröffentliche deine Verzeichniskarte und deinen Verschlüsselungsschlüssel, damit Peers dir schreiben können.',
   'tinyplaceOrchestration.identity.makeDiscoverable': 'Auffindbar machen',
+  'tinyplaceOrchestration.identity.republish': 'Schlüssel neu veröffentlichen',
   'tinyplaceOrchestration.identity.publishing': 'Wird veröffentlicht…',
   'tinyplaceOrchestration.identity.publishFailed':
     'Veröffentlichung fehlgeschlagen — erneut versuchen',

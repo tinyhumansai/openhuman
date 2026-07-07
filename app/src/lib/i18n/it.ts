@@ -312,6 +312,7 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.identity.undiscoverableHint':
     'Pubblica la tua scheda directory e la tua chiave di crittografia così altri agenti possono scriverti.',
   'tinyplaceOrchestration.identity.makeDiscoverable': 'Rendi rilevabile',
+  'tinyplaceOrchestration.identity.republish': 'Ripubblica chiavi',
   'tinyplaceOrchestration.identity.publishing': 'Pubblicazione…',
   'tinyplaceOrchestration.identity.publishFailed': 'Pubblicazione non riuscita — riprova',
   'tinyplaceOrchestration.identity.card': 'Scheda directory',
