@@ -1,8 +1,8 @@
 import { useCallback, useState } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { emergencyStop } from '../../services/api/emergencyApi';
+import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { selectHalted, setHalt } from '../../store/safetySlice';
 
 /**
@@ -19,8 +19,8 @@ import { selectHalted, setHalt } from '../../store/safetySlice';
  */
 export function EmergencyStopButton() {
   const { t } = useT();
-  const dispatch = useDispatch();
-  const halted = useSelector(selectHalted);
+  const dispatch = useAppDispatch();
+  const halted = useAppSelector(selectHalted);
   const [failed, setFailed] = useState(false);
 
   const handleClick = useCallback(async () => {

@@ -41,6 +41,9 @@ const safetySlice = createSlice({
 });
 
 export const { setHalt, clearHalt, hydrateHalt } = safetySlice.actions;
-export const selectHalted = (state: { safety: SafetyState }) => state.safety.halted;
-export const selectHaltReason = (state: { safety: SafetyState }) => state.safety.reason;
+// Defensive reads: some App-shell tests mock the store with a partial state that
+// omits the `safety` slice. Optional chaining keeps the kill-switch UI from
+// crashing the shell in that case (halted → false, no banner).
+export const selectHalted = (state: { safety?: SafetyState }) => state.safety?.halted ?? false;
+export const selectHaltReason = (state: { safety?: SafetyState }) => state.safety?.reason;
 export default safetySlice.reducer;

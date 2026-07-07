@@ -1,8 +1,8 @@
 import { useCallback } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { emergencyResume } from '../../services/api/emergencyApi';
+import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { clearHalt, selectHalted, selectHaltReason } from '../../store/safetySlice';
 
 /**
@@ -15,9 +15,9 @@ import { clearHalt, selectHalted, selectHaltReason } from '../../store/safetySli
  */
 export function AutomationHaltedBanner() {
   const { t } = useT();
-  const dispatch = useDispatch();
-  const halted = useSelector(selectHalted);
-  const reason = useSelector(selectHaltReason);
+  const dispatch = useAppDispatch();
+  const halted = useAppSelector(selectHalted);
+  const reason = useAppSelector(selectHaltReason);
 
   const onResume = useCallback(async () => {
     console.debug('[emergency] resume requested (source=user)');
