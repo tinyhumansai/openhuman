@@ -16,6 +16,19 @@ const approval: AttentionItem = {
   createdAt: '2026-07-06T10:00:00Z',
 };
 
+// A REMOTE agent session parked on an approval: same `approval` kind as a local
+// gate approval, but its action opens the orchestration chat window instead of
+// the local approval surface.
+const remoteApproval: AttentionItem = {
+  id: 'remote-approval:h-remote',
+  kind: 'approval',
+  instanceId: 'h-remote',
+  title: 'Claude · deploy',
+  summary: 'approve `rm -rf build/`',
+  action: { type: 'open-session', sessionId: 'h-remote' },
+  createdAt: '2026-07-06T12:00:00Z',
+};
+
 const needsInput: AttentionItem = {
   id: 'needs-input:run-1',
   kind: 'needs-input',
@@ -48,6 +61,21 @@ describe('AttentionQueueItem', () => {
     expect(action).toHaveTextContent('tinyplaceOrchestration.attention.review');
     fireEvent.click(action);
     expect(onAction).toHaveBeenCalledWith({ type: 'approval', requestId: 'req-1' });
+  });
+
+  it('renders a remote approval (approval kind) whose action opens its session', () => {
+    const onAction = vi.fn();
+    render(<AttentionQueueItem item={remoteApproval} onAction={onAction} />);
+    const row = screen.getByTestId('attention-item-remote-approval:h-remote');
+    expect(row).toHaveAttribute('data-kind', 'approval');
+    // Approval kind → the amber "Review" verb, and the summary is shown.
+    expect(screen.getByText('Claude · deploy')).toBeInTheDocument();
+    expect(screen.getByText('approve `rm -rf build/`')).toBeInTheDocument();
+    const action = screen.getByTestId('attention-item-action');
+    expect(action).toHaveTextContent('tinyplaceOrchestration.attention.review');
+    // Clicking routes the open-session action so the tab opens the chat window.
+    fireEvent.click(action);
+    expect(onAction).toHaveBeenCalledWith({ type: 'open-session', sessionId: 'h-remote' });
   });
 
   it('renders a needs-input row with the Open action carrying its thread', () => {
