@@ -80,7 +80,16 @@ async function listCronJobs(): Promise<Array<{ id: string; name: string; schedul
  * The `openhuman.cron_add` RPC requires either a `command` (shell job) or a
  * `prompt` (agent job); with neither, it defaults to shell and rejects with
  * `"'command' is required for shell jobs"`. This oracle seeds an agent job
- * because the harness scenarios exercise agent-style scheduled reminders. */
+ * because the harness scenarios exercise agent-style scheduled reminders.
+ *
+ * `cron_add` has no way to seed a job disabled (the RPC hard-codes
+ * `enabled: true` for agent jobs; see `src/openhuman/cron/schemas.rs:359`).
+ * Since scenarios seed schedules like `0 9 * * *` and `0 10 * * 5`, a run
+ * that crosses one of those times would otherwise let the scheduler fire
+ * the oracle job during a later scenario — consuming mock LLM responses
+ * and adding stray request-log entries. Immediately disable the job via
+ * `cron_update` so the seed stays inert; the CR2.3 / CR2.4 flows still
+ * exercise update/remove against a real stored job. */
 async function createCronJobOracle(params: {
   name: string;
   schedule: string;
@@ -99,6 +108,17 @@ async function createCronJobOracle(params: {
   const result = (out.result as { result?: unknown } | undefined)?.result ?? out.result;
   const id = (result as { id?: string })?.id ?? null;
   console.log(`${LOG_PREFIX} oracle cron_add: name=${params.name}, id=${id}`);
+  if (id) {
+    const disable = await callOpenhumanRpc('openhuman.cron_update', {
+      job_id: id,
+      patch: { enabled: false },
+    });
+    if (!disable.ok) {
+      console.warn(`${LOG_PREFIX} cron_update disable oracle failed: ${JSON.stringify(disable)}`);
+    } else {
+      console.log(`${LOG_PREFIX} oracle cron disabled: id=${id}`);
+    }
+  }
   return id;
 }
 
