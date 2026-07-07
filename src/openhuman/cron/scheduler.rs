@@ -958,7 +958,11 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<
             // and provider URLs are appropriate; it must NOT reach the
             // user-visible notification body.
             let user_message = classify_agent_anyhow_for_user(&e);
-            (false, user_message.to_string(), Some(e.to_string()))
+            // Preserve the FULL anyhow chain (`{:#}`), not just the top-level
+            // message: the loopback-unreachable classifier and the observability
+            // pipeline key on the transport cause (`… tcp connect error: Connection
+            // refused (os error N)`), which a bare `to_string()` drops.
+            (false, user_message.to_string(), Some(format!("{e:#}")))
         }
     }
 }

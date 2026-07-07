@@ -669,9 +669,19 @@ async fn dry_run_flags_tool_call_error_when_on_error_is_route() {
             { "id": "t", "kind": "trigger", "name": "Manual" },
             { "id": "post", "kind": "tool_call", "name": "Send email",
               "config": { "slug": "GMAIL_SEND_EMAIL", "on_error": "route",
-                "args": { "to": "=item.email", "body": "hello" } } }
+                "args": { "to": "=item.email", "body": "hello" } } },
+            // `on_error: "route"` requires an `error`-port edge — the graph
+            // validator (tinyflows) rejects a routing node with no recovery
+            // branch. A noop recovery node keeps the graph valid so the dry-run
+            // can still flag `post`'s unresolved-arg failure (the point of this
+            // test) instead of failing graph validation first.
+            { "id": "recover", "kind": "tool_call", "name": "Recover",
+              "config": { "slug": "oh:noop", "args": {} } }
         ],
-        "edges": [ { "from_node": "t", "to_node": "post" } ]
+        "edges": [
+            { "from_node": "t", "to_node": "post" },
+            { "from_node": "post", "from_port": "error", "to_node": "recover" }
+        ]
     });
 
     // `to` misses (trigger input has no `email`) — a real run would fail the
