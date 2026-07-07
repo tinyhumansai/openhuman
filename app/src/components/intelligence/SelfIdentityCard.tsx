@@ -137,6 +137,28 @@ export default function SelfIdentityCard({
         </span>
       </div>
 
+      {identity.discoverable && onPublish ? (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            data-testid="tinyplace-self-identity-republish"
+            onClick={onPublish}
+            disabled={publishing}
+            className="inline-flex items-center rounded-md border border-line px-2 py-0.5 text-[10px] font-medium text-content-muted transition hover:bg-surface-hover disabled:opacity-50">
+            {publishing
+              ? t('tinyplaceOrchestration.identity.publishing')
+              : t('tinyplaceOrchestration.identity.republish')}
+          </button>
+          {publishError ? (
+            <span
+              data-testid="tinyplace-self-identity-republish-error"
+              className="text-[10px] text-coral-600 dark:text-coral-300">
+              {t('tinyplaceOrchestration.identity.publishFailed')}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
       {!identity.discoverable ? (
         <div className="mt-2 rounded-md bg-coral-50 px-2 py-1.5 dark:bg-coral-500/10">
           <p className="text-[10px] text-coral-700 dark:text-coral-300">

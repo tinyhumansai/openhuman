@@ -101,9 +101,18 @@ describe('SelfIdentityCard', () => {
     );
   });
 
-  it('shows no publish button once discoverable', () => {
+  it('shows no "make discoverable" button once discoverable', () => {
     render(<SelfIdentityCard identity={discoverable} loading={false} onPublish={vi.fn()} />);
     expect(screen.queryByTestId('tinyplace-self-identity-publish')).toBeNull();
+  });
+
+  it('offers a "Republish keys" action while discoverable that fires onPublish', () => {
+    const onPublish = vi.fn();
+    render(<SelfIdentityCard identity={discoverable} loading={false} onPublish={onPublish} />);
+    const btn = screen.getByTestId('tinyplace-self-identity-republish');
+    expect(btn).toHaveTextContent('tinyplaceOrchestration.identity.republish');
+    fireEvent.click(btn);
+    expect(onPublish).toHaveBeenCalledTimes(1);
   });
 
   it('omits the publish button when no onPublish handler is provided', () => {
