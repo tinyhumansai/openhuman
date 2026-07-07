@@ -31,6 +31,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schema_for("orchestration_status"),
         schema_for("orchestration_attention"),
         schema_for("orchestration_self_identity"),
+        schema_for("orchestration_publish_identity"),
         schema_for("orchestration_relay_info"),
     ]
 }
@@ -68,6 +69,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schema_for("orchestration_self_identity"),
             handler: handle_self_identity,
+        },
+        RegisteredController {
+            schema: schema_for("orchestration_publish_identity"),
+            handler: handle_publish_identity,
         },
         RegisteredController {
             schema: schema_for("orchestration_relay_info"),
@@ -147,6 +152,16 @@ fn schema_for(function: &str) -> ControllerSchema {
             namespace: "orchestration",
             function: "self_identity",
             description: "This agent's own tiny.place identity + discoverability: agent id (address), reverse-resolved @handles, whether its directory card and Signal encryption key are published, and whether peers can therefore DM it. Composes the tinyplace signal/directory reads.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "result",
+                "{ agentId, handles: {username, primary}[], primaryHandle?, cardPublished, keyPublished, discoverable }.",
+            )],
+        },
+        "orchestration_publish_identity" => ControllerSchema {
+            namespace: "orchestration",
+            function: "publish_identity",
+            description: "Make this agent discoverable: publish (or refresh) its directory card and Signal encryption key for the current wallet identity, then return the updated self-identity. No @handle registration or payment — repairs the common \"has identity but card/key unpublished\" gap that makes inbound DMs 404. Returns the same shape as self_identity.",
             inputs: vec![],
             outputs: vec![json_output(
                 "result",
@@ -789,6 +804,32 @@ fn handle_self_identity(_params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// Make this agent discoverable, then echo back the refreshed identity.
+///
+/// The `SelfIdentityCard` shows *why* peers can't DM this agent (no directory
+/// card and/or no published Signal key) but had no remediation — the user was
+/// left to go register a @handle elsewhere even when the wallet already holds
+/// one. This wraps the single-call publish primitive
+/// (`signal_register_encryption_key`, which upserts the directory card — minting
+/// a minimal one if none exists — and writes the encryption key into its
+/// metadata) and then re-reads `self_identity` so the card flips to
+/// "discoverable" without a manual refresh.
+///
+/// No @handle registration and no payment: this only publishes presence for the
+/// identity the wallet already has. Registering a brand-new paid handle stays in
+/// the tiny.place registry surface.
+fn handle_publish_identity(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        log::debug!(target: LOG, "[orchestration_rpc] publish_identity entry");
+        crate::openhuman::tinyplace::handle_tinyplace_signal_register_encryption_key(Map::new())
+            .await
+            .map_err(|e| format!("publish_identity: {e}"))?;
+        // Re-read discoverability from the directory so the renderer gets the
+        // post-publish truth (card + key now live), not an optimistic guess.
+        handle_self_identity(Map::new()).await
+    })
+}
+
 /// Relay endpoint + network label for the renderer's relay badge. Reads only the
 /// configured base URL (no client build / wallet unlock), so it always resolves.
 fn handle_relay_info(_params: Map<String, Value>) -> ControllerFuture {
@@ -859,13 +900,22 @@ mod tests {
     #[test]
     fn schemas_use_orchestration_namespace() {
         let schemas = all_controller_schemas();
-        assert_eq!(schemas.len(), 9);
+        assert_eq!(schemas.len(), 10);
         assert!(schemas.iter().all(|s| s.namespace == "orchestration"));
         assert_eq!(schema_for("orchestration_attention").function, "attention");
         assert_eq!(
             schema_for("orchestration_self_identity").function,
             "self_identity"
         );
+        assert_eq!(
+            schema_for("orchestration_publish_identity").function,
+            "publish_identity"
+        );
+        // The publish-identity remediation must be wired into the live registry,
+        // not just describable — otherwise the SelfIdentityCard button 404s.
+        assert!(all_registered_controllers()
+            .iter()
+            .any(|c| c.schema.function == "publish_identity"));
         assert_eq!(
             schema_for("orchestration_relay_info").function,
             "relay_info"
