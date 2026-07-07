@@ -15,7 +15,9 @@ use crate::openhuman::config::{rpc as config_rpc, Config};
 
 use super::attention;
 use super::store;
-use super::types::{ChatKind, OrchestrationMessage, OrchestrationSession, SessionEnvelopeV1};
+use super::types::{
+    ChatKind, OrchestrationMessage, OrchestrationSession, SessionEnvelopeV1, LOCAL_MASTER_AGENT,
+};
 
 /// Active-window: a session is "active" if it saw traffic within this many ms.
 const ACTIVE_WINDOW_MS: i64 = 45 * 60 * 1000;
@@ -516,6 +518,69 @@ fn handle_send_master_message(params: Map<String, Value>) -> ControllerFuture {
             .map(str::trim)
             .filter(|s| !s.is_empty() && *s != "master" && *s != "subconscious")
             .map(str::to_string);
+
+        // W2 — "ask OpenHuman locally". No recipient AND no session id means the
+        // human is asking the OpenHuman agent itself via the Master chat (not
+        // steering an external peer). Route the question into OpenHuman's OWN
+        // reasoning graph: persist it in the Master window + wake the reasoning
+        // core locally — NO outbound peer DM, no recipient required. The core
+        // answers (using its history/read tools and, if it needs a real external
+        // agent, `orchestration_send_to_agent` + W7 threading) and its reply lands
+        // back in this Master window. This is the human↔OpenHuman channel; peer
+        // steering still works by passing an explicit `recipient`/`sessionId`.
+        if explicit.is_none() && session_id.is_none() {
+            let now = chrono::Utc::now().to_rfc3339();
+            let message_id = format!("master-ask:{now}");
+            let persisted = store::with_connection(&config.workspace_dir, |conn| {
+                let seq = store::next_session_seq(conn, LOCAL_MASTER_AGENT, "master")?;
+                store::upsert_session(
+                    conn,
+                    &OrchestrationSession {
+                        session_id: "master".to_string(),
+                        agent_id: LOCAL_MASTER_AGENT.to_string(),
+                        source: "master".to_string(),
+                        label: None,
+                        workspace: None,
+                        last_seq: seq,
+                        created_at: now.clone(),
+                        last_message_at: now.clone(),
+                    },
+                )?;
+                store::insert_message(
+                    conn,
+                    &OrchestrationMessage {
+                        id: message_id.clone(),
+                        agent_id: LOCAL_MASTER_AGENT.to_string(),
+                        session_id: "master".to_string(),
+                        chat_kind: ChatKind::Master,
+                        role: "user".to_string(),
+                        body: body.clone(),
+                        timestamp: now.clone(),
+                        seq,
+                    },
+                )
+            });
+            if let Err(e) = persisted {
+                return Err(format!("master ask persist: {e}"));
+            }
+            // Fan to the renderer so the question shows immediately …
+            super::bus::notify_orchestration_message(
+                LOCAL_MASTER_AGENT,
+                "master",
+                ChatKind::Master.as_str(),
+            );
+            // … and publish the domain event so the wake subscriber schedules the
+            // reasoning graph (notify alone only reaches the socket, not the wake).
+            crate::core::event_bus::publish_global(
+                crate::core::event_bus::DomainEvent::OrchestrationSessionMessage {
+                    agent_id: LOCAL_MASTER_AGENT.to_string(),
+                    session_id: "master".to_string(),
+                    chat_kind: ChatKind::Master.as_str().to_string(),
+                },
+            );
+            log::debug!(target: LOG, "[orchestration_rpc] master_ask.local id={message_id}");
+            return to_json(serde_json::json!({ "ok": true, "messageId": message_id }));
+        }
 
         // Resolve the recipient: explicit wins; otherwise the session's contact
         // (session mode) or the latest Master peer (master mode).

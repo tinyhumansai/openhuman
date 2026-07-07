@@ -150,6 +150,12 @@ pub fn build_orchestration_graph(
             let runtime = runtime.clone();
             async move {
                 let pass = s.pass + 1;
+                // Local Master chat (human ↔ OpenHuman itself): the A2A front-end
+                // triage does NOT run — the human talks straight to the reasoning
+                // core (OpenHuman). We feed the core a direct human-facing directive
+                // on the way in and use its answer verbatim on the way out.
+                let is_local_master = s.counterpart_agent_id
+                    == crate::openhuman::orchestration::types::LOCAL_MASTER_AGENT;
 
                 // Defensive terminate: a response already exists (re-entry / resume).
                 if s.channel_response.is_some() {
@@ -180,12 +186,19 @@ pub fn build_orchestration_graph(
                     ));
                 }
 
-                // Pass 2: reasoning replied → compile the channel response.
+                // Pass 2: reasoning replied → compile the channel response. For a
+                // local master cycle, skip the A2A "compile" and use the core's
+                // answer verbatim (it already phrased it for the human).
                 if s.agent_reply.is_some() {
-                    let body = runtime.frontend_compile(&s).await.map_err(graph_err)?;
+                    let body = if is_local_master {
+                        s.agent_reply.clone().unwrap_or_default()
+                    } else {
+                        runtime.frontend_compile(&s).await.map_err(graph_err)?
+                    };
                     tracing::debug!(
                         target: LOG, session_id = %s.session_id, node = "frontend", pass,
-                        route = "send_dm", reason = "reply_ready", "[orchestration] node.route",
+                        route = "send_dm", reason = "reply_ready", local = is_local_master,
+                        "[orchestration] node.route",
                     );
                     return Ok(NodeResult::Command(
                         Command::default()
@@ -196,11 +209,19 @@ pub fn build_orchestration_graph(
                     ));
                 }
 
-                // Pass 1: raw traffic → macro-instructions, hand down to the core.
-                let instructions = runtime.frontend_instruct(&s).await.map_err(graph_err)?;
+                // Pass 1: hand down to the core. For a local master cycle there is
+                // no A2A front-end triage — the `execute` node runs `master_agent`
+                // (its human-facing system prompt carries the framing + tool guide),
+                // so we only need a light directive here, not `frontend_instruct`.
+                let instructions = if is_local_master {
+                    "Answer your human's latest message in the conversation below.".to_string()
+                } else {
+                    runtime.frontend_instruct(&s).await.map_err(graph_err)?
+                };
                 tracing::debug!(
                     target: LOG, session_id = %s.session_id, node = "frontend", pass,
-                    route = "execute", reason = "first_pass", "[orchestration] node.route",
+                    route = "execute", reason = "first_pass", local = is_local_master,
+                    "[orchestration] node.route",
                 );
                 Ok(NodeResult::Command(
                     Command::default()
@@ -347,7 +368,8 @@ pub fn build_orchestration_graph(
 }
 
 /// Drive one wake cycle for `state.session_id`, checkpointing every super-step
-/// boundary under thread `orchestration:<session_id>`. Returns the terminal state.
+/// boundary under thread `orchestration:<counterpart>:<session_id>`. Returns the
+/// terminal state.
 pub async fn run_orchestration_graph(
     config: Arc<Config>,
     runtime: Arc<dyn OrchestrationRuntime>,
@@ -355,7 +377,17 @@ pub async fn run_orchestration_graph(
 ) -> anyhow::Result<OrchestrationState> {
     let max = config.orchestration.max_supersteps;
     let threshold = config.orchestration.effective_evict_threshold();
-    let thread_id = format!("orchestration:{}", state.session_id);
+    // Scope the checkpoint thread by (counterpart, session) — the same key the
+    // store uses for sessions — so two peers that share a session id (a legacy
+    // `harness_session_id` fallback collision) never resume from each other's
+    // checkpoint. Migration seam: a cycle checkpointed under the old
+    // `orchestration:<session_id>` key that only resumes AFTER this upgrade starts
+    // a fresh thread — one extra in-flight cycle at the boundary (Beta, gated by
+    // `[orchestration]`), the same worst case as the `cycle_id` format change.
+    let thread_id = format!(
+        "orchestration:{}:{}",
+        state.counterpart_agent_id, state.session_id
+    );
     let label = thread_id.clone();
     // `SqlRunLedgerCheckpointer` was retired in favor of the crate's own
     // `SqliteCheckpointer` (see `agent_orchestration/delegation.rs`); mirrors

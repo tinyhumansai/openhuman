@@ -509,6 +509,23 @@ pub fn session_agent_id(conn: &Connection, session_id: &str) -> Result<Option<St
     .map_err(Into::into)
 }
 
+/// The most recent non-pinned session id for a peer agent, if any — the thread to
+/// reuse when OpenHuman initiates an outbound ask to that peer, so the peer's
+/// reply threads back into the same session (shared `wrapper_session_id` model,
+/// #227/#4582). Newest by `last_message_at`. Returns `None` when there is no
+/// existing thread with the peer (caller mints a fresh session id).
+pub fn latest_session_for_agent(conn: &Connection, agent_id: &str) -> Result<Option<String>> {
+    conn.query_row(
+        "SELECT session_id FROM sessions
+           WHERE agent_id = ?1 AND session_id NOT IN ('master', 'subconscious')
+           ORDER BY last_message_at DESC LIMIT 1",
+        params![agent_id],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
 fn read_cursor_key(session_id: &str) -> String {
     format!("read:{session_id}")
 }
@@ -834,6 +851,67 @@ pub fn kv_set(conn: &Connection, key: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+/// Delete a `kv` value (no-op if absent).
+pub fn kv_delete(conn: &Connection, key: &str) -> Result<()> {
+    conn.execute("DELETE FROM kv WHERE k = ?1", params![key])?;
+    Ok(())
+}
+
+// ── Outbound-ask correlation (Master chat, W7) ───────────────────────────────
+//
+// When OpenHuman DMs a peer on the user's behalf (`orchestration_send_to_agent`),
+// we record a ONE-SHOT pending ask keyed by the outbound session id, mapping it
+// to the window the ask originated from (usually `master`). When the peer's reply
+// lands under that session id (shared `wrapper_session_id`), the wake path threads
+// the answer back into the origin window instead of auto-replying to the peer.
+//
+// This is a pragmatic 1:1 request/response correlation: it assumes the next
+// inbound message on the ask session is the answer. A robust many-in-flight
+// correlation needs an explicit envelope `inReplyTo` (tracked as F3 / #4583's
+// follow-ups); until then this covers the common single-ask case.
+
+/// Scope the pending-ask key by BOTH the answering peer and the session id.
+/// Sessions/checkpoints are keyed by `(agent, session)`, and legacy wrapper
+/// session ids can collide across peers (see the F2 checkpoint fix); keying by
+/// session id alone would let a *different* peer's inbound on a shared legacy
+/// session id consume the ask and misroute the reply.
+fn pending_ask_key(peer_agent_id: &str, ask_session_id: &str) -> String {
+    format!("pending_ask:{peer_agent_id}:{ask_session_id}")
+}
+
+/// Record a one-shot pending outbound ask: `(peer_agent_id, ask_session_id)` →
+/// `origin_session_id`.
+pub fn set_pending_ask(
+    conn: &Connection,
+    peer_agent_id: &str,
+    ask_session_id: &str,
+    origin_session_id: &str,
+) -> Result<()> {
+    kv_set(
+        conn,
+        &pending_ask_key(peer_agent_id, ask_session_id),
+        origin_session_id,
+    )
+}
+
+/// The origin window for a pending ask on `(peer_agent_id, ask_session_id)`.
+pub fn pending_ask_origin(
+    conn: &Connection,
+    peer_agent_id: &str,
+    ask_session_id: &str,
+) -> Result<Option<String>> {
+    kv_get(conn, &pending_ask_key(peer_agent_id, ask_session_id))
+}
+
+/// Clear a pending ask once its answer has been threaded back (one-shot).
+pub fn clear_pending_ask(
+    conn: &Connection,
+    peer_agent_id: &str,
+    ask_session_id: &str,
+) -> Result<()> {
+    kv_delete(conn, &pending_ask_key(peer_agent_id, ask_session_id))
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::types::ChatKind;
@@ -1099,6 +1177,67 @@ mod tests {
             master.chat_kind = ChatKind::Master;
             insert_message(conn, &master)?;
             assert_eq!(latest_master_peer(conn)?.as_deref(), Some("@owner-agent"));
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn latest_session_for_agent_reuses_newest_thread_and_ignores_pinned() {
+        let tmp = tempfile::tempdir().unwrap();
+        with_connection(tmp.path(), |conn| {
+            // No thread with the peer yet → caller mints a fresh id.
+            assert!(latest_session_for_agent(conn, "@peer")?.is_none());
+
+            // Two threads with the peer; the newest by last_message_at wins.
+            let mut old = session("@peer", "s-old", 1);
+            old.last_message_at = "2026-07-02T00:01:00Z".into();
+            upsert_session(conn, &old)?;
+            let mut new = session("@peer", "s-new", 1);
+            new.last_message_at = "2026-07-02T00:09:00Z".into();
+            upsert_session(conn, &new)?;
+            assert_eq!(
+                latest_session_for_agent(conn, "@peer")?.as_deref(),
+                Some("s-new")
+            );
+
+            // A pinned window for the same agent id must never be reused.
+            let mut pinned = session("@peer", "master", 1);
+            pinned.last_message_at = "2026-07-02T23:00:00Z".into();
+            upsert_session(conn, &pinned)?;
+            assert_eq!(
+                latest_session_for_agent(conn, "@peer")?.as_deref(),
+                Some("s-new"),
+                "pinned window excluded despite newer timestamp"
+            );
+
+            // Scoped by agent: a different peer has no thread.
+            assert!(latest_session_for_agent(conn, "@other")?.is_none());
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn pending_ask_correlation_is_one_shot() {
+        let tmp = tempfile::tempdir().unwrap();
+        with_connection(tmp.path(), |conn| {
+            // Nothing pending initially.
+            assert!(pending_ask_origin(conn, "peer-a", "s-ask")?.is_none());
+            // Record an ask to `peer-a` on session `s-ask` from the master window.
+            set_pending_ask(conn, "peer-a", "s-ask", "master")?;
+            assert_eq!(
+                pending_ask_origin(conn, "peer-a", "s-ask")?.as_deref(),
+                Some("master")
+            );
+            // Scoped by (agent, session) — same session id under a DIFFERENT peer
+            // must not satisfy the ask (legacy session-id collision guard).
+            assert!(pending_ask_origin(conn, "peer-b", "s-ask")?.is_none());
+            // A different session under the same peer is also unaffected.
+            assert!(pending_ask_origin(conn, "peer-a", "s-other")?.is_none());
+            // Clearing consumes it (one-shot).
+            clear_pending_ask(conn, "peer-a", "s-ask")?;
+            assert!(pending_ask_origin(conn, "peer-a", "s-ask")?.is_none());
             Ok(())
         })
         .unwrap();

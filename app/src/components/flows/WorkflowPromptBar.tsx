@@ -44,13 +44,14 @@ export default function WorkflowPromptBar({ variant = 'compact', autoFocus = fal
     const name = deriveWorkflowName(trimmed, t('flows.page.newWorkflow'));
     log('submit: creating flow name=%s', name);
     try {
-      // Safe default: prompt-authored flows require approval so outbound
-      // Slack/Gmail/HTTP/code nodes cannot fire unattended. Omitting this
-      // arg would fall back to the server default of `false`.
+      // Prompt-authored flows default to NOT requiring approval — a
+      // Run-button/scheduled run has no chat context, so a parked approval
+      // card can't surface and the run would deadlock. The user can still
+      // turn approval on per-flow afterwards.
       const flow = await createFlow(
         name,
         createBlankWorkflowGraph(name, t('flows.nodeKind.trigger')),
-        true
+        false
       );
       log('submit: created id=%s — opening canvas with build seed', flow.id);
       navigate(`/flows/${flow.id}`, { state: { copilotBuild: { description: trimmed } } });

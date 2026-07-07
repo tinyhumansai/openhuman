@@ -172,3 +172,88 @@ export function describeCron(expr: string): string {
   const time = formatTime(spec.hour, spec.minute);
   return daysPhrase === 'every day' ? `Every day at ${time}` : `At ${time} on ${daysPhrase}`;
 }
+
+/**
+ * The tagged shapes a trigger node's `config.schedule` can hold. The flows
+ * engine's `crate::openhuman::cron::Schedule` (an internally-tagged enum,
+ * `#[serde(tag = "kind")]`) is what `flows::tools` and the workflow-builder
+ * agent actually write today — `{kind:"cron",expr,tz?,active_hours?}` /
+ * `{kind:"at",at}` / `{kind:"every",every_ms}`. A bare cron string (what the
+ * visual builder above compiles to, and what the bundled flow templates use)
+ * is also accepted — the Rust side's custom `Deserialize` treats it as
+ * shorthand for `Cron{expr}`.
+ */
+export type ScheduleValue =
+  | string
+  | { kind?: string; expr?: string; tz?: string; at?: string; every_ms?: number }
+  | null
+  | undefined;
+
+/**
+ * Pull the bare cron expression out of a schedule value, if it has one (a
+ * plain string, or a `{kind:"cron", expr}` object). Returns `null` for the
+ * `at` / `every` shapes and anything unset — those aren't cron-shaped, so the
+ * visual/advanced cron builder can't edit them.
+ */
+export function scheduleCronExpr(value: unknown): string | null {
+  if (typeof value === 'string') return value;
+  if (value && typeof value === 'object') {
+    const expr = (value as Record<string, unknown>).expr;
+    if (typeof expr === 'string') return expr;
+  }
+  return null;
+}
+
+const MINUTE_MS = 60_000;
+const HOUR_MS = 3_600_000;
+const DAY_MS = 86_400_000;
+
+/** Human phrase for a `{kind:"every", every_ms}` interval — formats the raw
+ * millisecond count into minutes/hours/days, whichever divides evenly
+ * ("Every 30m", "Every hour", "Daily (every 24h)"). Falls back to seconds for
+ * anything finer-grained than a minute. */
+export function describeEveryMs(everyMs: number): string {
+  if (!Number.isFinite(everyMs) || everyMs <= 0) return 'Invalid interval';
+  if (everyMs % DAY_MS === 0) {
+    const days = everyMs / DAY_MS;
+    return days === 1 ? 'Daily (every 24h)' : `Every ${days} days`;
+  }
+  if (everyMs % HOUR_MS === 0) {
+    const hours = everyMs / HOUR_MS;
+    return hours === 1 ? 'Every hour' : `Every ${hours}h`;
+  }
+  if (everyMs % MINUTE_MS === 0) {
+    const minutes = everyMs / MINUTE_MS;
+    return minutes === 1 ? 'Every minute' : `Every ${minutes}m`;
+  }
+  const seconds = Math.round(everyMs / 1000);
+  return seconds === 1 ? 'Every second' : `Every ${seconds}s`;
+}
+
+/**
+ * Plain-language summary of a trigger's `schedule` config value, across every
+ * shape it can actually hold (see {@link ScheduleValue}). This is the single
+ * place that decides "No schedule set" vs. a real summary — callers should
+ * never re-derive it from just the cron string, or a valid `every`/`at`
+ * schedule reads as unset (the canvas trigger-node bug this guards against).
+ */
+export function describeSchedule(value: unknown): string {
+  if (typeof value === 'string') return describeCron(value);
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    const kind = typeof obj.kind === 'string' ? obj.kind : undefined;
+
+    if (kind === 'every' && typeof obj.every_ms === 'number') {
+      return describeEveryMs(obj.every_ms);
+    }
+    if (kind === 'at' && typeof obj.at === 'string') {
+      const date = new Date(obj.at);
+      return Number.isNaN(date.getTime())
+        ? `Once at ${obj.at}`
+        : `Once at ${date.toLocaleString()}`;
+    }
+    // `{kind:"cron", expr}` (or an untagged object that merely carries `expr`).
+    if (typeof obj.expr === 'string') return describeCron(obj.expr);
+  }
+  return describeCron(''); // 'No schedule set'
+}

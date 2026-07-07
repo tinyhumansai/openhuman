@@ -15,6 +15,22 @@ describe('describeNode', () => {
     expect(describeNode('trigger', { trigger_kind: 'manual' })).toBe('Runs on demand');
   });
 
+  it('describes a schedule trigger stored as a tagged `{kind:"every"}` schedule', () => {
+    // Regression: the engine writes `config.schedule` as a tagged object
+    // (`{kind:"every", every_ms}`), not a bare cron string — the summary must
+    // not fall through to "No schedule set" for that real, configured shape.
+    const summary = describeNode('trigger', {
+      trigger_kind: 'schedule',
+      schedule: { kind: 'every', every_ms: 86_400_000 },
+    });
+    expect(summary).not.toBe('No schedule set');
+    expect(summary).toContain('24h');
+  });
+
+  it('still shows "No schedule set" for a genuinely unconfigured schedule trigger', () => {
+    expect(describeNode('trigger', { trigger_kind: 'schedule' })).toBe('No schedule set');
+  });
+
   it('describes an http_request from method + url', () => {
     expect(describeNode('http_request', { method: 'POST', url: 'https://api.x.com/v1' })).toBe(
       'POST https://api.x.com/v1'

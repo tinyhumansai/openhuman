@@ -6,7 +6,16 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { buildCron, type CronSpec, DEFAULT_CRON_SPEC, describeCron, parseCron } from './cron';
+import {
+  buildCron,
+  type CronSpec,
+  DEFAULT_CRON_SPEC,
+  describeCron,
+  describeEveryMs,
+  describeSchedule,
+  parseCron,
+  scheduleCronExpr,
+} from './cron';
 
 function spec(overrides: Partial<CronSpec>): CronSpec {
   return { ...DEFAULT_CRON_SPEC, ...overrides };
@@ -88,5 +97,68 @@ describe('describeCron', () => {
   it('falls back for custom / empty expressions', () => {
     expect(describeCron('0 9 1 * *')).toBe('Custom schedule (0 9 1 * *)');
     expect(describeCron('')).toBe('No schedule set');
+  });
+});
+
+describe('describeEveryMs', () => {
+  it('formats even day/hour/minute intervals', () => {
+    expect(describeEveryMs(86_400_000)).toContain('24h');
+    expect(describeEveryMs(86_400_000)).toContain('Daily');
+    expect(describeEveryMs(2 * 86_400_000)).toBe('Every 2 days');
+    expect(describeEveryMs(3_600_000)).toBe('Every hour');
+    expect(describeEveryMs(4 * 3_600_000)).toBe('Every 4h');
+    expect(describeEveryMs(30 * 60_000)).toBe('Every 30m');
+    expect(describeEveryMs(60_000)).toBe('Every minute');
+  });
+
+  it('falls back to seconds for sub-minute intervals', () => {
+    expect(describeEveryMs(15_000)).toBe('Every 15s');
+  });
+
+  it('reports an invalid interval for non-positive values', () => {
+    expect(describeEveryMs(0)).toBe('Invalid interval');
+    expect(describeEveryMs(-5)).toBe('Invalid interval');
+  });
+});
+
+describe('scheduleCronExpr', () => {
+  it('passes a bare cron string through unchanged', () => {
+    expect(scheduleCronExpr('*/5 * * * *')).toBe('*/5 * * * *');
+  });
+
+  it('extracts expr from a tagged cron schedule object', () => {
+    expect(scheduleCronExpr({ kind: 'cron', expr: '0 9 * * *' })).toBe('0 9 * * *');
+  });
+
+  it('returns null for every/at shapes and unset schedules', () => {
+    expect(scheduleCronExpr({ kind: 'every', every_ms: 86_400_000 })).toBeNull();
+    expect(scheduleCronExpr({ kind: 'at', at: '2026-01-01T00:00:00Z' })).toBeNull();
+    expect(scheduleCronExpr(undefined)).toBeNull();
+    expect(scheduleCronExpr(null)).toBeNull();
+  });
+});
+
+describe('describeSchedule', () => {
+  it('describes a bare cron string the same as describeCron', () => {
+    expect(describeSchedule('*/5 * * * 3')).toBe('Every 5 minutes on Wed');
+  });
+
+  it('describes a tagged cron schedule object', () => {
+    expect(describeSchedule({ kind: 'cron', expr: '30 9 * * *' })).toBe('Every day at 09:30');
+  });
+
+  it('describes an "every" schedule — the shape that used to render as unset', () => {
+    expect(describeSchedule({ kind: 'every', every_ms: 86_400_000 })).toContain('24h');
+  });
+
+  it('describes an "at" schedule', () => {
+    const result = describeSchedule({ kind: 'at', at: '2026-01-01T09:00:00Z' });
+    expect(result).toContain('Once at');
+  });
+
+  it('falls back to "No schedule set" for unset/unrecognized schedules', () => {
+    expect(describeSchedule(undefined)).toBe('No schedule set');
+    expect(describeSchedule(null)).toBe('No schedule set');
+    expect(describeSchedule({})).toBe('No schedule set');
   });
 });

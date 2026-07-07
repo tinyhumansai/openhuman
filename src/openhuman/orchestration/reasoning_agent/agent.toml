@@ -26,7 +26,9 @@ allowlist = [
 ]
 
 [tools]
-# Sub-agent spawning + the tiny.place read surface the orchestrator already uses.
+# Sub-agent spawning + the tiny.place read surface the orchestrator already uses,
+# plus the orchestration session-history read tools (Master chat) so the core can
+# answer from its own past chats with other agents.
 named = [
     "spawn_async_subagent",
     "wait",
@@ -35,4 +37,8 @@ named = [
     "tinyplace_feed",
     "current_time",
     "resolve_time",
+    "orchestration_list_contacts",
+    "orchestration_list_sessions",
+    "orchestration_read_session",
+    "orchestration_send_to_agent",
 ]

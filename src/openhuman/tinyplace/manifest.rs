@@ -3038,6 +3038,67 @@ pub(crate) fn handle_tinyplace_signal_key_status(_params: Map<String, Value>) ->
     })
 }
 
+/// Idempotently make this agent **discoverable** so peers can encrypt replies to
+/// it — the precondition for the orchestration receive loop. Mirrors the two
+/// manual UI actions (Messaging → "Set up encryption keys" + "Make
+/// discoverable") but runs automatically: provision pre-keys if missing, then
+/// publish the encryption (identity) key to the directory card if not already
+/// advertised.
+///
+/// Returns `Ok(true)` once the agent is confirmed discoverable
+/// (`encryptionKeyPublished`), `Ok(false)` if a publish step was attempted but
+/// the status could not yet be confirmed, and `Err` when prerequisites are
+/// missing (e.g. wallet locked → no signer). Callers retry on `Ok(false)`/`Err`.
+///
+/// Cheap on the steady state: when keys are already provisioned and published it
+/// performs only the status probe and returns without mutating anything.
+pub async fn ensure_signal_keys_published() -> Result<bool, String> {
+    // 1. Probe current readiness. This requires a signer (unlocked wallet); it
+    //    surfaces as an Err the caller retries on.
+    let status = handle_tinyplace_signal_key_status(Map::new()).await?;
+    let keys_ready = status
+        .get("hasActiveSignedPreKey")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        && status
+            .get("localPreKeyCount")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            > 0;
+    let published = status
+        .get("encryptionKeyPublished")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    if keys_ready && published {
+        log::debug!("{LOG_PREFIX} ensure_signal_keys_published: already discoverable");
+        return Ok(true);
+    }
+
+    // 2. Provision pre-keys if missing (signed pre-key + one-time pre-keys).
+    if !keys_ready {
+        log::info!("{LOG_PREFIX} ensure_signal_keys_published: provisioning pre-keys");
+        handle_tinyplace_signal_provision(Map::new()).await?;
+    }
+
+    // 3. Advertise the encryption (identity) key on the directory card so peers
+    //    can resolve the prekey bundle and encrypt to this agent.
+    if !published {
+        log::info!("{LOG_PREFIX} ensure_signal_keys_published: publishing encryption key");
+        handle_tinyplace_signal_register_encryption_key(Map::new()).await?;
+    }
+
+    // 4. Re-probe so the caller can confirm the agent is now discoverable and
+    //    stop retrying.
+    let after = handle_tinyplace_signal_key_status(Map::new()).await?;
+    let now_published = after
+        .get("encryptionKeyPublished")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    log::info!("{LOG_PREFIX} ensure_signal_keys_published: done published={now_published}");
+    Ok(now_published)
+}
+
 // ── Signal messaging helpers ──────────────────────────────────────────────────
 
 /// Decode a base64-encoded 32-byte value.

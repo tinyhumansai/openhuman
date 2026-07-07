@@ -15,6 +15,8 @@ pub mod bus;
 pub mod frontend_agent;
 pub mod graph;
 pub mod ingest;
+pub mod master_agent;
+pub mod master_reporter;
 pub mod ops;
 pub mod reasoning_agent;
 pub mod schemas;

@@ -112,7 +112,7 @@ async fn missing_graph_is_an_error() {
 }
 
 #[tokio::test]
-async fn omitted_require_approval_defaults_true_in_result() {
+async fn omitted_require_approval_defaults_false_in_result() {
     let tmp = TempDir::new().unwrap();
     let tool = ProposeWorkflowTool::new(test_config(&tmp));
 
@@ -122,7 +122,7 @@ async fn omitted_require_approval_defaults_true_in_result() {
         .unwrap();
 
     let parsed: Value = serde_json::from_str(&result.output()).unwrap();
-    assert_eq!(parsed["require_approval"], true);
+    assert_eq!(parsed["require_approval"], false);
 }
 
 #[tokio::test]
@@ -137,6 +137,20 @@ async fn explicit_require_approval_false_is_respected() {
 
     let parsed: Value = serde_json::from_str(&result.output()).unwrap();
     assert_eq!(parsed["require_approval"], false);
+}
+
+#[tokio::test]
+async fn explicit_require_approval_true_is_respected() {
+    let tmp = TempDir::new().unwrap();
+    let tool = ProposeWorkflowTool::new(test_config(&tmp));
+
+    let result = tool
+        .execute(json!({ "name": "demo", "graph": valid_graph(), "require_approval": true }))
+        .await
+        .unwrap();
+
+    let parsed: Value = serde_json::from_str(&result.output()).unwrap();
+    assert_eq!(parsed["require_approval"], true);
 }
 
 #[tokio::test]

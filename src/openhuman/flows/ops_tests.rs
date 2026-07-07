@@ -2000,6 +2000,156 @@ async fn validate_tool_contracts_skips_rather_than_rejects_when_the_catalog_is_u
     );
 }
 
+// ── validate_tool_contracts: arg-NAME validation against the input schema
+//    (B13 — a misnamed/unsupported field, e.g. `text` instead of
+//    `markdown_text` for `SLACK_SEND_MESSAGE`, used to sail through
+//    `missing_required_args` because SOME value was present, just under the
+//    wrong key) ────────────────────────────────────────────────────────────
+
+/// `SLACK_SEND_MESSAGE` with a real `input_schema` naming `channel` and
+/// `markdown_text` — models the live bug this fixes: `markdown_text` is the
+/// real field, `text` is not.
+fn seeded_slack_send_message_contract_with_schema() -> ToolContract {
+    ToolContract {
+        slug: "SLACK_SEND_MESSAGE".to_string(),
+        toolkit: "slack".to_string(),
+        description: None,
+        required_args: vec![],
+        input_schema: Some(json!({
+            "type": "object",
+            "properties": {
+                "channel": { "type": "string" },
+                "markdown_text": { "type": "string" }
+            }
+        })),
+        output_fields: vec![],
+        output_schema: None,
+        primary_array_path: None,
+        is_curated: true,
+    }
+}
+
+#[tokio::test]
+async fn validate_tool_contracts_rejects_an_arg_name_not_in_the_input_schema() {
+    seed_live_catalog_cache(
+        "slack",
+        vec![seeded_slack_send_message_contract_with_schema()],
+    );
+    let config = Config::default();
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "SLACK_SEND_MESSAGE",
+                "args": { "channel": "#general", "text": "hi" } } }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "post" } ]
+    }));
+    let errors = validate_tool_contracts(&config, &g).await;
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("post"), "{}", errors[0]);
+    assert!(errors[0].contains("`text`"), "{}", errors[0]);
+    assert!(errors[0].contains("markdown_text"), "{}", errors[0]);
+    assert!(errors[0].contains("get_tool_contract"), "{}", errors[0]);
+}
+
+#[tokio::test]
+async fn validate_tool_contracts_passes_the_real_arg_name_from_the_input_schema() {
+    seed_live_catalog_cache(
+        "slack",
+        vec![seeded_slack_send_message_contract_with_schema()],
+    );
+    let config = Config::default();
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "SLACK_SEND_MESSAGE",
+                "args": { "channel": "#general", "markdown_text": "hi" } } }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "post" } ]
+    }));
+    let errors = validate_tool_contracts(&config, &g).await;
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
+/// Uses its own cache key/toolkit (never `"slack"`/`"gmail"`) since the
+/// arg-name check must behave identically no matter which slug it's
+/// exercised against, and a dedicated, unregistered toolkit sidesteps both
+/// the process-global `LIVE_CATALOG_CACHE` sharing risk the other
+/// `validate_tool_contracts` tests accept AND the static curated-catalog
+/// gate (this toolkit has none, so `is_curated` is irrelevant here).
+#[tokio::test]
+async fn validate_tool_contracts_skips_arg_name_check_when_input_schema_is_unknown() {
+    seed_live_catalog_cache(
+        "argschemaunknown",
+        vec![ToolContract {
+            slug: "ARGSCHEMAUNKNOWN_DO_THING".to_string(),
+            toolkit: "argschemaunknown".to_string(),
+            description: None,
+            required_args: vec![],
+            input_schema: None,
+            output_fields: vec![],
+            output_schema: None,
+            primary_array_path: None,
+            is_curated: false,
+        }],
+    );
+    let config = Config::default();
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "ARGSCHEMAUNKNOWN_DO_THING",
+                "args": { "totally_made_up_field": "hi" } } }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "post" } ]
+    }));
+    let errors = validate_tool_contracts(&config, &g).await;
+    assert!(
+        errors.is_empty(),
+        "an unknown input_schema must skip the arg-name check, never reject: {errors:?}"
+    );
+}
+
+#[tokio::test]
+async fn validate_tool_contracts_allows_arbitrary_arg_names_when_schema_permits_additional_properties(
+) {
+    seed_live_catalog_cache(
+        "argschemaadditional",
+        vec![ToolContract {
+            slug: "ARGSCHEMAADDITIONAL_DO_THING".to_string(),
+            toolkit: "argschemaadditional".to_string(),
+            description: None,
+            required_args: vec![],
+            input_schema: Some(json!({
+                "type": "object",
+                "properties": { "channel": { "type": "string" } },
+                "additionalProperties": true
+            })),
+            output_fields: vec![],
+            output_schema: None,
+            primary_array_path: None,
+            is_curated: false,
+        }],
+    );
+    let config = Config::default();
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "ARGSCHEMAADDITIONAL_DO_THING",
+                "args": { "channel": "#general", "any_extra_field": "hi" } } }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "post" } ]
+    }));
+    let errors = validate_tool_contracts(&config, &g).await;
+    assert!(
+        errors.is_empty(),
+        "additionalProperties: true must allow arbitrary arg names: {errors:?}"
+    );
+}
+
 // ── graph_wiring_warnings: required-arg advisory + output-field/split_out.path
 //    advisories (Part 2c/2d) ────────────────────────────────────────────────
 
@@ -2043,9 +2193,11 @@ async fn graph_wiring_warnings_flags_a_downstream_field_not_in_output_fields() {
               "config": { "slug": "SLACK_SEND_MESSAGE",
                 "args": { "channel": "#general", "text": "hi" } } },
             { "id": "xform", "kind": "transform", "name": "Log",
-              // Reads a field that isn't in SLACK_SEND_MESSAGE's real
-              // output_fields (`ts`/`channel`) — must WARN, not reject.
-              "config": { "set": { "note": "=nodes.post.item.json.not_a_real_field" } } }
+              // Correctly `data.`-prefixed (a real tool_call's payload is
+              // always nested under `data`), but the field itself isn't in
+              // SLACK_SEND_MESSAGE's real output_fields (`ts`/`channel`) —
+              // must WARN, not reject.
+              "config": { "set": { "note": "=nodes.post.item.json.data.not_a_real_field" } } }
         ],
         "edges": [
             { "from_node": "t", "to_node": "post" },
@@ -2072,7 +2224,9 @@ async fn graph_wiring_warnings_is_silent_when_the_downstream_field_is_real() {
               "config": { "slug": "SLACK_SEND_MESSAGE",
                 "args": { "channel": "#general", "text": "hi" } } },
             { "id": "xform", "kind": "transform", "name": "Log",
-              "config": { "set": { "note": "=nodes.post.item.json.ts" } } }
+              // `data.ts` — correctly dereferences the Composio execute
+              // envelope's `data` wrapper before the real field name.
+              "config": { "set": { "note": "=nodes.post.item.json.data.ts" } } }
         ],
         "edges": [
             { "from_node": "t", "to_node": "post" },
@@ -2083,6 +2237,106 @@ async fn graph_wiring_warnings_is_silent_when_the_downstream_field_is_real() {
     assert!(
         !warnings.iter().any(|w| w.contains("not in")),
         "a real output field must not warn: {warnings:?}"
+    );
+}
+
+/// B1 regression test: the exact "hollow run" bug. Before this fix, a
+/// binding like `=nodes.post.item.json.ts` (a REAL field name, but missing
+/// the `data.` segment every Composio `tool_call`'s runtime output wraps its
+/// payload in) was silently accepted here — it looks like a legitimate
+/// binding to a known output field, but resolves `null` at runtime because
+/// the real value lives one level deeper, under `data`. This must now WARN.
+#[tokio::test]
+async fn graph_wiring_warnings_flags_a_downstream_binding_missing_the_data_prefix() {
+    seed_live_catalog_cache("slack", vec![seeded_slack_send_contract()]);
+    let config = Config::default();
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "SLACK_SEND_MESSAGE",
+                "args": { "channel": "#general", "text": "hi" } } },
+            { "id": "xform", "kind": "transform", "name": "Log",
+              // `ts` IS a real SLACK_SEND_MESSAGE output field — but without
+              // the `data.` prefix this is GUARANTEED to resolve null.
+              "config": { "set": { "note": "=nodes.post.item.json.ts" } } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "post" },
+            { "from_node": "post", "to_node": "xform" }
+        ]
+    }));
+    let warnings = graph_wiring_warnings(&config, &g).await;
+    assert!(
+        warnings.iter().any(|w| w.contains("item.json.data.ts")
+            && w.contains("post")
+            && w.contains("wraps its payload in `data`")),
+        "{warnings:?}"
+    );
+}
+
+/// Codex feedback on this PR: a binding to the WHOLE payload
+/// (`=nodes.post.item.json.data`, e.g. wiring an agent's `input_context` off
+/// the entire tool_call result) must NOT be flagged as "missing the `data.`
+/// segment" — it already IS the `data` field, there's nothing to strip a
+/// prefix off of. Before this fix the code suggested rewiring to the
+/// nonsense `item.json.data.data`.
+#[tokio::test]
+async fn graph_wiring_warnings_is_silent_for_a_whole_payload_binding() {
+    seed_live_catalog_cache("slack", vec![seeded_slack_send_contract()]);
+    let config = Config::default();
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "SLACK_SEND_MESSAGE",
+                "args": { "channel": "#general", "text": "hi" } } },
+            { "id": "xform", "kind": "transform", "name": "Log",
+              "config": { "set": { "note": "=nodes.post.item.json.data" } } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "post" },
+            { "from_node": "post", "to_node": "xform" }
+        ]
+    }));
+    assert!(
+        graph_wiring_warnings(&config, &g).await.is_empty(),
+        "{:?}",
+        graph_wiring_warnings(&config, &g).await
+    );
+}
+
+/// Codex feedback on this PR: `ComposioExecuteResponse`'s OTHER top-level
+/// envelope fields (`successful`, `error`, `costUsd`, `markdownFormatted`)
+/// live alongside `data`, not inside it — a binding straight to one of
+/// these is real and legitimate. Before this fix the code flagged
+/// `.item.json.successful` / `.item.json.error` as missing the `data.`
+/// segment and suggested the nonsense `item.json.data.successful`.
+#[tokio::test]
+async fn graph_wiring_warnings_is_silent_for_composio_envelope_metadata_fields() {
+    seed_live_catalog_cache("slack", vec![seeded_slack_send_contract()]);
+    let config = Config::default();
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "SLACK_SEND_MESSAGE",
+                "args": { "channel": "#general", "text": "hi" } } },
+            { "id": "xform", "kind": "transform", "name": "Log",
+              "config": { "set": {
+                "ok": "=nodes.post.item.json.successful",
+                "err": "=nodes.post.item.json.error"
+              } } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "post" },
+            { "from_node": "post", "to_node": "xform" }
+        ]
+    }));
+    assert!(
+        graph_wiring_warnings(&config, &g).await.is_empty(),
+        "{:?}",
+        graph_wiring_warnings(&config, &g).await
     );
 }
 

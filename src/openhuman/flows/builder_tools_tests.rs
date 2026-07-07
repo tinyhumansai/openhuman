@@ -58,6 +58,40 @@ async fn revise_workflow_validates_and_returns_revision_proposal() {
 }
 
 #[tokio::test]
+async fn revise_workflow_omitted_require_approval_defaults_false() {
+    let tmp = TempDir::new().unwrap();
+    let tool = ReviseWorkflowTool::new(test_config(&tmp));
+
+    let result = tool
+        .execute(json!({ "name": "Revised flow", "graph": valid_graph() }))
+        .await
+        .unwrap();
+
+    assert!(!result.is_error, "{}", result.output());
+    let parsed: Value = serde_json::from_str(&result.output()).unwrap();
+    assert_eq!(parsed["require_approval"], false);
+}
+
+#[tokio::test]
+async fn revise_workflow_explicit_require_approval_true_is_respected() {
+    let tmp = TempDir::new().unwrap();
+    let tool = ReviseWorkflowTool::new(test_config(&tmp));
+
+    let result = tool
+        .execute(json!({
+            "name": "Revised flow",
+            "graph": valid_graph(),
+            "require_approval": true
+        }))
+        .await
+        .unwrap();
+
+    assert!(!result.is_error, "{}", result.output());
+    let parsed: Value = serde_json::from_str(&result.output()).unwrap();
+    assert_eq!(parsed["require_approval"], true);
+}
+
+#[tokio::test]
 async fn revise_workflow_rejects_invalid_graph() {
     let tmp = TempDir::new().unwrap();
     let tool = ReviseWorkflowTool::new(test_config(&tmp));
@@ -658,6 +692,15 @@ async fn dry_run_flags_tool_call_error_when_on_error_is_route() {
     // got far enough to trace an `=`-expression before the preflight error).
     // Seed the same schema as `dry_run_catches_unwired_required_composio_arg`
     // (process-global cache; keep the arg list identical across tests).
+    //
+    // The graph must give `post`'s `error` port a real destination: vendored
+    // tinyflows' author-time `validate()` (added alongside per-node error
+    // handling — a graph with `on_error: "route"` but no outgoing `error`-port
+    // edge is now rejected up front, since a route with nowhere to go is
+    // always a dead-end) would otherwise reject this graph before the sandbox
+    // run ever starts, which is a different failure mode than the one this
+    // test targets. `recover` is a no-op sink, same convention as
+    // `dry_run_passes_when_tool_call_binds_to_upstream_tool_output` above.
     seed_live_catalog_cache("gmail", vec![seeded_gmail_send_contract()]);
 
     let tool = DryRunWorkflowTool::new(
@@ -669,9 +712,14 @@ async fn dry_run_flags_tool_call_error_when_on_error_is_route() {
             { "id": "t", "kind": "trigger", "name": "Manual" },
             { "id": "post", "kind": "tool_call", "name": "Send email",
               "config": { "slug": "GMAIL_SEND_EMAIL", "on_error": "route",
-                "args": { "to": "=item.email", "body": "hello" } } }
+                "args": { "to": "=item.email", "body": "hello" } } },
+            { "id": "recover", "kind": "tool_call", "name": "Recover",
+              "config": { "slug": "oh:noop", "args": {} } }
         ],
-        "edges": [ { "from_node": "t", "to_node": "post" } ]
+        "edges": [
+            { "from_node": "t", "to_node": "post" },
+            { "from_node": "post", "from_port": "error", "to_node": "recover" }
+        ]
     });
 
     // `to` misses (trigger input has no `email`) — a real run would fail the
@@ -825,6 +873,49 @@ async fn dry_run_flags_null_resolved_agent_prompt() {
 }
 
 #[tokio::test]
+async fn dry_run_flags_null_resolved_agent_input_context() {
+    // The B7 counterpart to `dry_run_flags_null_resolved_agent_prompt`:
+    // `input_context` has been the agent's primary upstream-data channel
+    // since #4590, so a null-resolved `input_context` is just as
+    // execution-breaking as a null `prompt` — the agent runs with no
+    // upstream data at all. Must fail the dry run the same way.
+    let tool = DryRunWorkflowTool::new(
+        policy(AutonomyLevel::Supervised),
+        test_config(&TempDir::new().unwrap()),
+    );
+    let graph = json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "classify", "kind": "agent", "name": "Classify",
+              "config": { "prompt": "Classify the email as urgent, normal, or low priority.",
+                "input_context": "=nodes.missing.item.json.body" } }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "classify" } ]
+    });
+
+    let result = tool.execute(json!({ "graph": graph })).await.unwrap();
+    assert!(!result.is_error, "{}", result.output());
+    let parsed: Value = serde_json::from_str(&result.output()).unwrap();
+    assert_eq!(
+        parsed["ok"], false,
+        "a null-resolved agent input_context must fail the dry run: {parsed}"
+    );
+    let agent_input_context_nulls = parsed["agent_input_context_nulls"]
+        .as_array()
+        .expect("agent_input_context_nulls array");
+    assert_eq!(agent_input_context_nulls.len(), 1, "{parsed}");
+    assert_eq!(agent_input_context_nulls[0]["node_id"], "classify");
+    assert_eq!(agent_input_context_nulls[0]["location"], "input_context");
+    assert!(
+        agent_input_context_nulls[0]["suggestion"]
+            .as_str()
+            .unwrap()
+            .contains("upstream"),
+        "{parsed}"
+    );
+}
+
+#[tokio::test]
 async fn dry_run_passes_when_agent_uses_input_context_instead_of_prompt_expression() {
     // The FALSE-POSITIVE-PREVENTION case: the same data need, wired the
     // correct way — `input_context` carries the upstream item, `prompt`
@@ -849,6 +940,13 @@ async fn dry_run_passes_when_agent_uses_input_context_instead_of_prompt_expressi
     assert_eq!(parsed["ok"], true, "{parsed}");
     assert!(
         parsed["agent_prompt_nulls"].as_array().unwrap().is_empty(),
+        "{parsed}"
+    );
+    assert!(
+        parsed["agent_input_context_nulls"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
         "{parsed}"
     );
 }
