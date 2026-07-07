@@ -15,7 +15,19 @@
  * is wrapped in try/catch — private-mode / quota errors degrade to a no-op
  * (the copilot just starts a fresh thread on the next open) rather than
  * throwing.
+ *
+ * Keys are namespaced by the active user id (`${userId}:copilot-thread:<flow>`),
+ * the same `${userId}:` convention `userScopedStorage`/`clearAllAppData` use for
+ * every other per-user localStorage blob (#900, #983). Without this an
+ * identity flip (or a "clear my data" on account B that only purges B's
+ * `${userId}:*` keys) would leave account A's thread id readable by whoever
+ * opens the same flow/draft next, pointing them at A's builder thread instead
+ * of starting fresh. `getActiveUserId()` is synchronous (primed at boot by
+ * `main.tsx`), so this stays a plain sync read/write unlike the async
+ * redux-persist storage contract in `userScopedStorage.ts`.
  */
+import { getActiveUserId } from '../../store/userScopedStorage';
+
 const STORAGE_PREFIX = 'copilot-thread:';
 
 /** Cache key for a flow: its persisted id, or `'draft'` for an unsaved draft. */
@@ -24,7 +36,9 @@ export function copilotThreadKey(flowId: string | null): string {
 }
 
 function storageKey(flowId: string | null): string {
-  return `${STORAGE_PREFIX}${copilotThreadKey(flowId)}`;
+  const userId = getActiveUserId();
+  const scope = userId ? `${userId}:` : '';
+  return `${scope}${STORAGE_PREFIX}${copilotThreadKey(flowId)}`;
 }
 
 export function getCopilotThreadId(flowId: string | null): string | null {

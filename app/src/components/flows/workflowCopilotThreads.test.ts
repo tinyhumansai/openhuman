@@ -1,10 +1,18 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { copilotThreadKey, getCopilotThreadId, setCopilotThreadId } from './workflowCopilotThreads';
+
+// Controllable active-user id so tests can exercise the `${userId}:` scoping
+// (#900/#983 convention) without pulling in the real module's boot-priming.
+const userScopedState = vi.hoisted(() => ({ activeUserId: null as string | null }));
+vi.mock('../../store/userScopedStorage', () => ({
+  getActiveUserId: () => userScopedState.activeUserId,
+}));
 
 describe('workflowCopilotThreads', () => {
   beforeEach(() => {
     window.localStorage.clear();
+    userScopedState.activeUserId = null;
   });
 
   it('returns null for a flow that has never been set', () => {
@@ -64,5 +72,38 @@ describe('workflowCopilotThreads', () => {
     } finally {
       window.localStorage.getItem = original;
     }
+  });
+
+  describe('user scoping (#900/#983 convention)', () => {
+    it('namespaces the storage key with the active user id', () => {
+      userScopedState.activeUserId = 'user-a';
+      setCopilotThreadId('flow-1', 'thread-abc');
+      expect(
+        window.localStorage.getItem(`user-a:copilot-thread:${copilotThreadKey('flow-1')}`)
+      ).toBe('thread-abc');
+    });
+
+    it("keeps two users' thread ids for the same flow isolated", () => {
+      userScopedState.activeUserId = 'user-a';
+      setCopilotThreadId('flow-1', 'thread-a');
+
+      userScopedState.activeUserId = 'user-b';
+      setCopilotThreadId('flow-1', 'thread-b');
+      expect(getCopilotThreadId('flow-1')).toBe('thread-b');
+
+      // Switching back to user-a must not see user-b's thread id — an
+      // identity flip (or a "clear my data" scoped to one user's `${userId}:*`
+      // keys) must never leak or destroy the other user's mapping.
+      userScopedState.activeUserId = 'user-a';
+      expect(getCopilotThreadId('flow-1')).toBe('thread-a');
+    });
+
+    it('falls back to an unscoped key when no user is active yet (pre-login)', () => {
+      userScopedState.activeUserId = null;
+      setCopilotThreadId('flow-1', 'thread-abc');
+      expect(window.localStorage.getItem(`copilot-thread:${copilotThreadKey('flow-1')}`)).toBe(
+        'thread-abc'
+      );
+    });
   });
 });
