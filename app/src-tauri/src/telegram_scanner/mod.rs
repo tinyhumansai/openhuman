@@ -21,6 +21,7 @@
 //! Only built with the `cef` feature — wry has no remote-debugging port.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -37,6 +38,21 @@ mod idb;
 /// How often we walk IDB. Tune down for faster iteration during dev; the
 /// walk itself is bounded by per-store record caps in `idb.rs`.
 const IDB_SCAN_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Max concurrent `memory_doc_ingest` POSTs during a bulk-history drain. A large
+/// Telegram account is hundreds of peers; firing them all at once saturated the
+/// single local core RPC (`127.0.0.1:7788`) and starved interactive UI calls
+/// (`threads_messages_list`, …) — issue #4714. Keep only a few in flight.
+const MAX_CONCURRENT_INGESTS: usize = 3;
+/// Small pause between launching bulk writes, leaving the single local core RPC
+/// server headroom to serve interactive UI calls between ingests.
+const INGEST_PACE: Duration = Duration::from_millis(50);
+/// True while a bulk-history drain is in flight. The IDB scan loop re-emits the
+/// FULL peer set every `IDB_SCAN_INTERVAL` (30s), but a drain of a large account
+/// takes far longer than that; without this guard each cycle would stack a fresh
+/// flood on top of the previous one. We skip launching a new drain while one is
+/// running — the next cycle re-emits everything once it finishes (issue #4714).
+static INGEST_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
 /// Spawn a per-account CDP poller. Caller is expected to guard against
 /// double-spawning via `ScannerRegistry`.
@@ -169,6 +185,7 @@ fn emit_and_persist<R: Runtime>(app: &AppHandle<R>, account_id: &str, harvest: &
     }
 
     let mut emitted = 0usize;
+    let mut pending: Vec<Value> = Vec::new();
     for (peer_id, group) in groups {
         let mut rows = group.rows;
         rows.sort_by_key(|r| r.get("date").and_then(|v| v.as_i64()).unwrap_or(0));
@@ -220,14 +237,79 @@ fn emit_and_persist<R: Runtime>(app: &AppHandle<R>, account_id: &str, harvest: &
         } else {
             emitted += 1;
         }
+        pending.push(payload);
+    }
+    log::info!("[tg][{}] emitted {} peer doc(s)", account_id, emitted);
+
+    if pending.is_empty() {
+        return;
+    }
+    // Back-pressure the bulk ingest (issue #4714): a large account is hundreds of
+    // peers and the scan loop re-emits the full set every 30s. Skip if a previous
+    // drain is still running so cycles can't stack, then drain with bounded
+    // concurrency + pacing so interactive UI RPCs are never starved.
+    if INGEST_IN_FLIGHT
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        log::info!(
+            "[tg][{}] bulk ingest already in flight; skipping {} doc(s) this cycle",
+            account_id,
+            pending.len()
+        );
+        return;
+    }
+    let acct = account_id.to_string();
+    tokio::spawn(async move {
+        drain_ingests(&acct, pending).await;
+        INGEST_IN_FLIGHT.store(false, Ordering::SeqCst);
+    });
+}
+
+/// Drain `payloads` to `openhuman.memory_doc_ingest` with bounded concurrency
+/// and pacing, so a bulk Telegram history import cannot monopolize the single
+/// local core RPC (issue #4714).
+async fn drain_ingests(account_id: &str, payloads: Vec<Value>) {
+    let total = payloads.len();
+    bounded_drain(payloads, MAX_CONCURRENT_INGESTS, INGEST_PACE, |payload| {
         let acct = account_id.to_string();
-        tokio::spawn(async move {
+        async move {
             if let Err(e) = post_memory_doc_ingest(&acct, &payload).await {
                 log::warn!("[tg][{}] memory write failed: {}", acct, e);
             }
+        }
+    })
+    .await;
+    log::info!("[tg][{}] bulk ingest drained {} doc(s)", account_id, total);
+}
+
+/// Run `op(item)` for every item with at most `max_concurrency` futures in
+/// flight and a `pace` pause between launches. Bounds a burst of work so it
+/// can't monopolize a shared resource (here, the single local core RPC).
+/// Extracted so the concurrency bound is unit-testable without a live server.
+async fn bounded_drain<T, F, Fut>(items: Vec<T>, max_concurrency: usize, pace: Duration, op: F)
+where
+    T: Send + 'static,
+    F: Fn(T) -> Fut,
+    Fut: std::future::Future<Output = ()> + Send + 'static,
+{
+    let sem = Arc::new(tokio::sync::Semaphore::new(max_concurrency.max(1)));
+    let mut set = tokio::task::JoinSet::new();
+    for item in items {
+        // Block until a permit frees, capping the number of in-flight writes.
+        let Ok(permit) = Arc::clone(&sem).acquire_owned().await else {
+            break;
+        };
+        let fut = op(item);
+        set.spawn(async move {
+            let _permit = permit;
+            fut.await;
         });
+        if !pace.is_zero() {
+            sleep(pace).await;
+        }
     }
-    log::info!("[tg][{}] emitted {} peer doc(s)", account_id, emitted);
+    while set.join_next().await.is_some() {}
 }
 
 /// Unix seconds → UTC `YYYY-MM-DD` (Howard Hinnant civil-from-days).
@@ -585,6 +667,39 @@ mod tests {
         for task in tasks {
             assert_cancelled(task).await;
         }
+    }
+
+    #[tokio::test]
+    async fn bounded_drain_caps_concurrency_and_runs_every_item() {
+        use std::sync::atomic::AtomicUsize;
+
+        let inflight = Arc::new(AtomicUsize::new(0));
+        let max_seen = Arc::new(AtomicUsize::new(0));
+        let done = Arc::new(AtomicUsize::new(0));
+        let (inflight_c, max_c, done_c) = (inflight.clone(), max_seen.clone(), done.clone());
+
+        let items: Vec<u32> = (0..20).collect();
+        bounded_drain(items, 3, Duration::from_millis(0), move |_item| {
+            let (inflight, max_seen, done) = (inflight_c.clone(), max_c.clone(), done_c.clone());
+            async move {
+                let cur = inflight.fetch_add(1, Ordering::SeqCst) + 1;
+                max_seen.fetch_max(cur, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                inflight.fetch_sub(1, Ordering::SeqCst);
+                done.fetch_add(1, Ordering::SeqCst);
+            }
+        })
+        .await;
+
+        assert_eq!(done.load(Ordering::SeqCst), 20, "every item must run");
+        let peak = max_seen.load(Ordering::SeqCst);
+        assert!(peak >= 2, "work should actually overlap (peak {peak})");
+        assert!(peak <= 3, "concurrency must stay bounded to 3 (peak {peak})");
+        assert_eq!(
+            inflight.load(Ordering::SeqCst),
+            0,
+            "no in-flight tasks should leak"
+        );
     }
 
     #[tokio::test]

@@ -284,6 +284,18 @@ const RESOURCE_CATALOG: &[PromptResource] = &[
         content: include_str!("../orchestration/reasoning_agent/prompt.md"),
     },
     PromptResource {
+        uri: "openhuman://prompts/agents/master_agent",
+        name: "master_agent",
+        description: "Human-facing worker for the Master chat: OpenHuman talking directly to its human, orchestrating other agents on their behalf.",
+        content: include_str!("../orchestration/master_agent/prompt.md"),
+    },
+    PromptResource {
+        uri: "openhuman://prompts/agents/master_reporter",
+        name: "master_reporter",
+        description: "Tool-free relay that reports an external agent's reply back into the Master chat as OpenHuman's own message.",
+        content: include_str!("../orchestration/master_reporter/prompt.md"),
+    },
+    PromptResource {
         uri: "openhuman://prompts/agents/skill_setup",
         name: "skill_setup",
         description: "Worker that guides skill installation and backend configuration.",

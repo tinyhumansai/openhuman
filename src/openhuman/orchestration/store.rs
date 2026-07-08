@@ -18,6 +18,9 @@ const SCHEMA_DDL: &str = "
     -- `status_state`/`current_detail`/`active_call_id` carry the v2 harness
     -- run-state (`status.state`/`status.detail`/`status.active_call_id`). Nullable
     -- and additive: a v1/legacy store gets them via `migrate` (existing rows NULL).
+    -- `title`/`model`/`handle`/`repo`/`branch`/`capabilities` carry the v2
+    -- `session_info` enrichment (`capabilities` is a JSON array of kind strings).
+    -- Also nullable/additive — `migrate` backfills them on an older store.
     CREATE TABLE IF NOT EXISTS sessions (
         session_id      TEXT NOT NULL,
         agent_id        TEXT NOT NULL,
@@ -30,6 +33,12 @@ const SCHEMA_DDL: &str = "
         status_state    TEXT,
         current_detail  TEXT,
         active_call_id  TEXT,
+        title           TEXT,
+        model           TEXT,
+        handle          TEXT,
+        repo            TEXT,
+        branch          TEXT,
+        capabilities    TEXT,
         PRIMARY KEY (agent_id, session_id)
     );
 
@@ -228,6 +237,17 @@ fn migrate(conn: &Connection) -> Result<()> {
     add_column_if_missing(conn, "messages", "event_kind", "TEXT")?;
     add_column_if_missing(conn, "messages", "tool_name", "TEXT")?;
     add_column_if_missing(conn, "messages", "call_id", "TEXT")?;
+
+    // v2 `session_info` enrichment columns (spec §4). Same per-column,
+    // freshness-independent guard as the run-state block above: a fresh DB has
+    // them from SCHEMA_DDL (no-op); a pre-session_info store gains them here with
+    // existing rows defaulting NULL. `capabilities` holds a JSON array of kinds.
+    add_column_if_missing(conn, "sessions", "title", "TEXT")?;
+    add_column_if_missing(conn, "sessions", "model", "TEXT")?;
+    add_column_if_missing(conn, "sessions", "handle", "TEXT")?;
+    add_column_if_missing(conn, "sessions", "repo", "TEXT")?;
+    add_column_if_missing(conn, "sessions", "branch", "TEXT")?;
+    add_column_if_missing(conn, "sessions", "capabilities", "TEXT")?;
     Ok(())
 }
 
@@ -243,13 +263,20 @@ pub fn message_exists(conn: &Connection, id: &str) -> Result<bool> {
         .is_some())
 }
 
-/// Insert or update the session row (keyed by agent + session).
+/// Insert or update the session row (keyed by agent + session). The
+/// `session_info` enrichment columns COALESCE like the run-state ones, so an
+/// ordinary event (which carries none) never wipes a prior intro's metadata, and
+/// a later `session_info` (`resumed=true`) refreshes rather than duplicates.
+/// `capabilities` is stored as a JSON array; an empty list encodes to NULL so it
+/// COALESCEs to "no change" instead of clobbering a prior non-empty list.
 pub fn upsert_session(conn: &Connection, s: &OrchestrationSession) -> Result<()> {
+    let capabilities = encode_capabilities(&s.capabilities);
     conn.execute(
         "INSERT INTO sessions
            (session_id, agent_id, source, label, workspace, last_seq, created_at, last_message_at,
-            status_state, current_detail, active_call_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            status_state, current_detail, active_call_id,
+            title, model, handle, repo, branch, capabilities)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
          ON CONFLICT(agent_id, session_id) DO UPDATE SET
            last_seq = MAX(sessions.last_seq, excluded.last_seq),
            last_message_at = excluded.last_message_at,
@@ -259,7 +286,15 @@ pub fn upsert_session(conn: &Connection, s: &OrchestrationSession) -> Result<()>
            -- never wipes the last status; a fresh `status` event overwrites them.
            status_state = COALESCE(excluded.status_state, sessions.status_state),
            current_detail = COALESCE(excluded.current_detail, sessions.current_detail),
-           active_call_id = COALESCE(excluded.active_call_id, sessions.active_call_id)",
+           active_call_id = COALESCE(excluded.active_call_id, sessions.active_call_id),
+           -- session_info enrichment: COALESCE so non-session_info events preserve
+           -- the last intro's metadata, and a `resumed=true` re-intro refreshes it.
+           title = COALESCE(excluded.title, sessions.title),
+           model = COALESCE(excluded.model, sessions.model),
+           handle = COALESCE(excluded.handle, sessions.handle),
+           repo = COALESCE(excluded.repo, sessions.repo),
+           branch = COALESCE(excluded.branch, sessions.branch),
+           capabilities = COALESCE(excluded.capabilities, sessions.capabilities)",
         params![
             s.session_id,
             s.agent_id,
@@ -272,9 +307,35 @@ pub fn upsert_session(conn: &Connection, s: &OrchestrationSession) -> Result<()>
             s.status_state,
             s.current_detail,
             s.active_call_id,
+            s.title,
+            s.model,
+            s.handle,
+            s.repo,
+            s.branch,
+            capabilities,
         ],
     )?;
     Ok(())
+}
+
+/// Encode `session_info.capabilities` for the `sessions.capabilities` TEXT column:
+/// a JSON array, or `None` for an empty list so the COALESCE upsert treats it as
+/// "no update" (a content/status event carries no capabilities and must not wipe
+/// a prior intro's list).
+fn encode_capabilities(capabilities: &[String]) -> Option<String> {
+    if capabilities.is_empty() {
+        return None;
+    }
+    // A `Vec<String>` always serialises, but fall back to NULL rather than
+    // failing the whole upsert on the impossible error path.
+    serde_json::to_string(capabilities).ok()
+}
+
+/// Decode the `sessions.capabilities` JSON array back into a `Vec<String>`. A
+/// NULL/absent or malformed value reads as an empty list (never an error).
+fn decode_capabilities(raw: Option<String>) -> Vec<String> {
+    raw.and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
 }
 
 /// Overwrite a session's v2 run-state columns from an authoritative `status`
@@ -386,7 +447,7 @@ pub fn latest_message_preview(
             "SELECT body FROM messages
                WHERE agent_id = ?1 AND session_id = ?2
                  AND (event_kind IS NULL
-                      OR event_kind NOT IN ('status', 'lifecycle', 'unknown'))
+                      OR event_kind NOT IN ('status', 'lifecycle', 'unknown', 'session_info'))
                ORDER BY timestamp DESC, seq DESC LIMIT 1",
             params![agent_id, session_id],
             |row| row.get(0),
@@ -398,7 +459,8 @@ pub fn latest_message_preview(
 pub fn list_sessions(conn: &Connection) -> Result<Vec<OrchestrationSession>> {
     let mut stmt = conn.prepare(
         "SELECT session_id, agent_id, source, label, workspace, last_seq, created_at, last_message_at,
-                status_state, current_detail, active_call_id
+                status_state, current_detail, active_call_id,
+                title, model, handle, repo, branch, capabilities
            FROM sessions ORDER BY last_message_at DESC",
     )?;
     let rows = stmt
@@ -423,7 +485,7 @@ pub fn list_messages_by_session(
                         event_kind, tool_name, call_id
                    FROM messages WHERE session_id = ?1 AND timestamp < ?2
                      AND (event_kind IS NULL
-                          OR event_kind NOT IN ('status', 'lifecycle', 'unknown'))
+                          OR event_kind NOT IN ('status', 'lifecycle', 'unknown', 'session_info'))
                    ORDER BY timestamp DESC, seq DESC LIMIT ?3",
             )?;
             let rows = stmt
@@ -437,7 +499,7 @@ pub fn list_messages_by_session(
                         event_kind, tool_name, call_id
                    FROM messages WHERE session_id = ?1
                      AND (event_kind IS NULL
-                          OR event_kind NOT IN ('status', 'lifecycle', 'unknown'))
+                          OR event_kind NOT IN ('status', 'lifecycle', 'unknown', 'session_info'))
                    ORDER BY timestamp DESC, seq DESC LIMIT ?2",
             )?;
             let rows = stmt
@@ -484,6 +546,12 @@ fn map_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<OrchestrationSes
         status_state: row.get(8)?,
         current_detail: row.get(9)?,
         active_call_id: row.get(10)?,
+        title: row.get(11)?,
+        model: row.get(12)?,
+        handle: row.get(13)?,
+        repo: row.get(14)?,
+        branch: row.get(15)?,
+        capabilities: decode_capabilities(row.get(16)?),
     })
 }
 
@@ -493,7 +561,7 @@ pub fn unread_count(conn: &Connection, session_id: &str) -> Result<i64> {
     Ok(conn.query_row(
         "SELECT COUNT(*) FROM messages WHERE session_id = ?1 AND timestamp > ?2
              AND (event_kind IS NULL
-                  OR event_kind NOT IN ('status', 'lifecycle', 'unknown'))",
+                  OR event_kind NOT IN ('status', 'lifecycle', 'unknown', 'session_info'))",
         params![session_id, cursor],
         |row| row.get(0),
     )?)
@@ -598,7 +666,8 @@ pub fn load_session(
 ) -> Result<Option<OrchestrationSession>> {
     conn.query_row(
         "SELECT session_id, agent_id, source, label, workspace, last_seq, created_at, last_message_at,
-                status_state, current_detail, active_call_id
+                status_state, current_detail, active_call_id,
+                title, model, handle, repo, branch, capabilities
            FROM sessions WHERE agent_id = ?1 AND session_id = ?2",
         params![agent_id, session_id],
         map_session_row,
@@ -1017,14 +1086,65 @@ mod tests {
     }
 
     #[test]
+    fn capabilities_codec_round_trips_and_is_null_safe() {
+        // Non-empty → JSON array; decodes back identically.
+        let caps = vec!["agent_message".to_string(), "tool_call".to_string()];
+        let encoded = encode_capabilities(&caps).expect("non-empty encodes");
+        assert_eq!(encoded, r#"["agent_message","tool_call"]"#);
+        assert_eq!(decode_capabilities(Some(encoded)), caps);
+
+        // Empty → NULL (so the COALESCE upsert treats it as "no update").
+        assert_eq!(encode_capabilities(&[]), None);
+
+        // NULL / malformed decode to an empty list, never an error.
+        assert!(decode_capabilities(None).is_empty());
+        assert!(decode_capabilities(Some("not json".into())).is_empty());
+    }
+
+    #[test]
+    fn session_info_enrichment_persists_and_coalesces_across_upserts() {
+        let tmp = tempfile::tempdir().unwrap();
+        with_connection(tmp.path(), |conn| {
+            // First upsert carries the full intro.
+            let intro = OrchestrationSession {
+                title: Some("Intro".into()),
+                model: Some("opus".into()),
+                handle: Some("@alice".into()),
+                repo: Some("org/myrepo".into()),
+                branch: Some("feat/x".into()),
+                capabilities: vec!["agent_message".into()],
+                ..session("@a", "h1", 0)
+            };
+            upsert_session(conn, &intro)?;
+            let loaded = load_session(conn, "@a", "h1")?.expect("session");
+            assert_eq!(loaded.title.as_deref(), Some("Intro"));
+            assert_eq!(loaded.capabilities, vec!["agent_message".to_string()]);
+
+            // A subsequent upsert with NO enrichment (e.g. a content event) must
+            // COALESCE — the intro metadata survives.
+            upsert_session(conn, &session("@a", "h1", 1))?;
+            let after = load_session(conn, "@a", "h1")?.expect("session");
+            assert_eq!(
+                after.title.as_deref(),
+                Some("Intro"),
+                "title survives a bare upsert"
+            );
+            assert_eq!(after.model.as_deref(), Some("opus"));
+            assert_eq!(after.capabilities, vec!["agent_message".to_string()]);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn status_lifecycle_unknown_rows_are_hidden_from_thread_and_unread() {
         let tmp = tempfile::tempdir().unwrap();
         with_connection(tmp.path(), |conn| {
             upsert_session(conn, &session("@a", "h1", 1))?;
 
             // A v1 row (no event_kind) and typed content rows stay visible;
-            // status/lifecycle/unknown are persisted (for relay dedup) but must
-            // not surface in the thread or the unread count.
+            // status/lifecycle/unknown/session_info are persisted (for relay dedup)
+            // but must not surface in the thread or the unread count.
             let mut plain = msg("v1", "@a", "h1", 1);
             plain.timestamp = "2026-07-02T00:00:01Z".into();
             insert_message(conn, &plain)?;
@@ -1038,6 +1158,7 @@ mod tests {
                 ("st", "status", 3),
                 ("lc", "lifecycle", 4),
                 ("uk", "unknown", 5),
+                ("si", "session_info", 6),
             ] {
                 let mut hidden = msg(id, "@a", "h1", seq);
                 hidden.event_kind = Some(kind.into());
@@ -1049,7 +1170,7 @@ mod tests {
             let ids: Vec<&str> = thread.iter().map(|m| m.id.as_str()).collect();
             assert_eq!(ids, vec!["v1", "call"], "only v1 + typed content rows");
 
-            // Unread (cursor at 0) counts the two visible rows, not the 3 hidden.
+            // Unread (cursor at 0) counts the two visible rows, not the 4 hidden.
             assert_eq!(unread_count(conn, "h1")?, 2);
 
             // Roster preview skips the hidden rows → newest visible is the call.

@@ -175,6 +175,10 @@ pub const SESSION_ENVELOPE_VERSION_V2: &str = "tinyplace.harness.session.v2";
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "payload", rename_all = "snake_case")]
 pub enum HarnessEventKind {
+    /// `session_info` — the session intro/announce, emitted once a wrapped agent
+    /// session is initialised (spec §2). Enrichment, not a prerequisite: a session
+    /// is lazy-created on the first event of any kind regardless.
+    SessionInfo(SessionInfoPayload),
     UserPrompt(UserPromptPayload),
     AgentMessage(TextPayload),
     AgentThinking(TextPayload),
@@ -187,6 +191,46 @@ pub enum HarnessEventKind {
     /// `unknown` wire kind (`{ "raw": any }`) OR any forward-incompatible kind we
     /// cannot decode — folded here rather than hard-failing the parse.
     Unknown(UnknownPayload),
+}
+
+/// `session_info` payload — the session intro/announce (spec §2b). Thin: the
+/// provider / cwd / session-ids ride on the envelope frame, so this carries only
+/// what the frame lacks (identity confirmation, capabilities, UI metadata). Field
+/// names are byte-identical to the TS `SessionInfoPayload` emitter (spec §2a).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct SessionInfoPayload {
+    /// base58 wallet identity — confirms `envelope.from`.
+    #[serde(default)]
+    pub agent_address: String,
+    /// `@handle`, if registered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<String>,
+    /// Human-friendly session title for the UI header.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// git remote/slug, if in a repo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    /// git branch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// Active model (may also ride on `event.model`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// plugin/CLI version — compat gating.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness_version: Option<String>,
+    /// Advertised event kinds (subset of the wire `kind` strings) this session
+    /// will emit — feature-gates the UI.
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    /// `false` = fresh spawn, `true` = reconnect/resume (drives idempotent upsert
+    /// rather than a duplicate record).
+    #[serde(default)]
+    pub resumed: bool,
+    /// ISO-8601 session start.
+    #[serde(default)]
+    pub started_at: String,
 }
 
 /// `user_prompt` payload.
@@ -433,6 +477,28 @@ pub struct OrchestrationSession {
     /// v2 `status.active_call_id` — the in-flight tool call while running a tool.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_call_id: Option<String>,
+    // ── session_info enrichment (spec §4) ────────────────────────────────────
+    // Populated from a `session_info` event; `None`/empty until one arrives (a
+    // session is lazy-created on the first event of any kind regardless).
+    /// `session_info.title` — human-friendly session title for the UI header.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// `session_info.model` — the active model advertised at session start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// `session_info.handle` — the agent's `@handle`, if registered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<String>,
+    /// `session_info.repo` — git remote/slug the session runs in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    /// `session_info.branch` — git branch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// `session_info.capabilities` — advertised event kinds, for feature-gating
+    /// the UI. Empty for v1/legacy sessions and until a `session_info` arrives.
+    #[serde(default)]
+    pub capabilities: Vec<String>,
 }
 
 /// A single persisted message. `body` is DECRYPTED plaintext and therefore
@@ -661,6 +727,82 @@ mod tests {
             Unknown(p) => assert_eq!(p.raw["x"], 1),
             other => panic!("expected unknown, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn v2_decodes_session_info_and_round_trips_wire_field_names() {
+        let wire = v2_wire(
+            "session_info",
+            r#"{ "agent_address": "ELQUJvq27tYx", "handle": "@alice",
+                 "title": "myrepo · feat/x", "repo": "org/myrepo", "branch": "feat/x",
+                 "model": "claude-opus-4-8", "harness_version": "1.4.2",
+                 "capabilities": ["agent_message", "tool_call"],
+                 "resumed": false, "started_at": "2026-07-08T00:00:00Z" }"#,
+        );
+        let env = SessionEnvelopeV2::parse(&wire).expect("valid v2");
+        let decoded = env.event.decoded();
+        let expected = SessionInfoPayload {
+            agent_address: "ELQUJvq27tYx".into(),
+            handle: Some("@alice".into()),
+            title: Some("myrepo · feat/x".into()),
+            repo: Some("org/myrepo".into()),
+            branch: Some("feat/x".into()),
+            model: Some("claude-opus-4-8".into()),
+            harness_version: Some("1.4.2".into()),
+            capabilities: vec!["agent_message".into(), "tool_call".into()],
+            resumed: false,
+            started_at: "2026-07-08T00:00:00Z".into(),
+        };
+        assert_eq!(decoded, HarnessEventKind::SessionInfo(expected.clone()));
+
+        // Re-encode the adjacently-tagged kind and decode again: a full round-trip
+        // proves the `kind`/`payload` framing survives serialize → deserialize.
+        let reencoded = serde_json::to_string(&HarnessEventKind::SessionInfo(expected.clone()))
+            .expect("encode kind");
+        let back: HarnessEventKind = serde_json::from_str(&reencoded).expect("decode kind");
+        assert_eq!(back, HarnessEventKind::SessionInfo(expected.clone()));
+
+        // The payload's wire field names must be byte-identical to the TS emitter
+        // (spec §2a): snake_case keys, optionals present only when set.
+        let payload_json = serde_json::to_value(&expected).unwrap();
+        for key in [
+            "agent_address",
+            "handle",
+            "title",
+            "repo",
+            "branch",
+            "model",
+            "harness_version",
+            "capabilities",
+            "resumed",
+            "started_at",
+        ] {
+            assert!(payload_json.get(key).is_some(), "missing wire key `{key}`");
+        }
+
+        // Optionals are omitted when absent (`skip_serializing_if`), and defaults
+        // fill missing wire fields so a thin `session_info` never fails to decode.
+        let minimal =
+            SessionEnvelopeV2::parse(&v2_wire("session_info", r#"{ "agent_address": "X" }"#))
+                .expect("valid v2");
+        match minimal.event.decoded() {
+            HarnessEventKind::SessionInfo(p) => {
+                assert_eq!(p.agent_address, "X");
+                assert_eq!(p.handle, None);
+                assert!(p.capabilities.is_empty());
+                assert!(!p.resumed);
+            }
+            other => panic!("expected session_info, got {other:?}"),
+        }
+        let minimal_json = serde_json::to_value(SessionInfoPayload {
+            agent_address: "X".into(),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(
+            minimal_json.get("handle").is_none(),
+            "unset optionals must be skipped on the wire"
+        );
     }
 
     #[test]
