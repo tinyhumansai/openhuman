@@ -199,10 +199,9 @@ impl PythonHarnessScriptRunner {
         cancel: &CancellationToken,
     ) -> Result<ScriptRunOutcome, HarnessScriptError> {
         let stdin = child.stdin.take();
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| HarnessScriptError::MalformedMessage("child stdout unavailable".into()))?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            HarnessScriptError::MalformedMessage("child stdout unavailable".into())
+        })?;
         let stderr = child.stderr.take();
 
         // Drain stderr concurrently so a chatty child can't deadlock on a full
@@ -360,9 +359,7 @@ where
 }
 
 /// Await the stderr drain task, tolerating a panicked/cancelled join.
-async fn collect_stderr(
-    task: tokio::task::JoinHandle<(String, bool)>,
-) -> (String, bool) {
+async fn collect_stderr(task: tokio::task::JoinHandle<(String, bool)>) -> (String, bool) {
     match tokio::time::timeout(Duration::from_secs(2), task).await {
         Ok(Ok(pair)) => pair,
         _ => (String::new(), false),

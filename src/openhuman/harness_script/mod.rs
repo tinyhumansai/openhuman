@@ -20,9 +20,7 @@ pub mod protocol;
 pub mod runner;
 
 pub use protocol::{ScriptLimits, PROTOCOL_VERSION};
-pub use runner::{
-    HarnessScriptError, PythonHarnessScriptRunner, ScriptRunOutcome, ScriptRunSpec,
-};
+pub use runner::{HarnessScriptError, PythonHarnessScriptRunner, ScriptRunOutcome, ScriptRunSpec};
 
 #[cfg(test)]
 #[path = "runner_tests.rs"]
