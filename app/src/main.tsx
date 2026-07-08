@@ -16,7 +16,9 @@ import { setStoreForApiClient } from './services/apiClient';
 import { primeActiveUserId } from './store/userScopedStorage';
 import './styles/code-highlight.css';
 import './styles/theme.css';
+import { resolveActiveUserBootstrap } from './utils/bootstrapActiveUser';
 import { APP_VERSION } from './utils/config';
+import { getStoredCoreMode } from './utils/configPersistence';
 import { setupDesktopDeepLinkListener } from './utils/desktopDeepLinkListener';
 import { missingHashRedirectTarget } from './utils/hashRouterBootstrap';
 import { getActiveUserIdFromCore } from './utils/tauriCommands';
@@ -103,14 +105,16 @@ function bootRender() {
   root.render(<React.StrictMode>{tree}</React.StrictMode>);
 }
 
-// The mascot and notch windows live in native WKWebViews (no Tauri IPC), so
-// `getActiveUserIdFromCore()` would just reject after a roundtrip and
-// delay first paint for nothing. Skip the bootstrap entirely in those
-// paths — neither UI reads user-scoped storage.
-const activeUserBootstrap =
-  isMascotWindow || isNotchWindow
-    ? Promise.resolve<string | null>(null)
-    : getActiveUserIdFromCore();
+// Decide which source (Rust IPC vs preserved localStorage seed) primes
+// `userScopedStorage` at boot. Cloud mode and standalone native windows
+// both fall through to `primeActiveUserId(null)`, which preserves whatever
+// `setActiveUserId(...)` wrote in a prior session — see
+// `resolveActiveUserBootstrap` for the full rationale (#4545, #900).
+const activeUserBootstrap = resolveActiveUserBootstrap({
+  isStandaloneNativeWindow: isMascotWindow || isNotchWindow,
+  coreMode: getStoredCoreMode(),
+  getActiveUserIdFromCore,
+});
 
 activeUserBootstrap
   .then(id => primeActiveUserId(id))

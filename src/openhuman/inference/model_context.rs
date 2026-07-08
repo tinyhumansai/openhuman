@@ -40,11 +40,15 @@ const TIER_LOCAL_CONTEXT: u64 = 8_192;
 /// instead, so we never reject a request against a guessed window the real
 /// loaded `n_ctx` would have accepted (Codex P1 review on PR #3771).
 const CONSERVATIVE_LOCAL_CONTEXT_FLOOR: u64 = 4_096;
-/// Summarization tier. `summarization-v1` resolves to a long-context flash
-/// model (currently DeepSeek v4 flash, ~1M tokens). `extract_from_result`
-/// uses this window to single-shot whole oversized payloads instead of
-/// chunking, so it must reflect the real backing model's capacity.
-const TIER_SUMMARIZATION_CONTEXT: u64 = 1_000_000;
+/// DeepSeek v4 Flash window (~1M tokens) — the shared backing for every managed
+/// "flash" tier: `chat-v1`, its legacy alias `reasoning-quick-v1`, and
+/// `summarization-v1`. Kept as a single constant so these tiers can't drift
+/// apart again (issue #4706: `chat-v1` was pinned at `TIER_STANDARD_CONTEXT`
+/// (128K) while `summarization-v1` was 1M, even though both resolve to DeepSeek
+/// v4 Flash in the backend model registry). `extract_from_result` also relies on
+/// this window to single-shot whole oversized payloads instead of chunking, so
+/// it must reflect the real backing model's capacity.
+const TIER_FLASH_CONTEXT: u64 = 1_000_000;
 
 /// Resolve the context window (in tokens) for a model id or OpenHuman tier alias.
 ///
@@ -125,11 +129,15 @@ fn tier_context_window(model: &str) -> Option<u64> {
     match model {
         MODEL_REASONING_V1 => Some(TIER_REASONING_CONTEXT),
         MODEL_AGENTIC_V1 | MODEL_CODING_V1 => Some(TIER_LARGE_CONTEXT),
-        "summarization-v1" => Some(TIER_SUMMARIZATION_CONTEXT),
+        "summarization-v1" => Some(TIER_FLASH_CONTEXT),
         // Burst tier advertises a 128k window on the managed backend. Matched on
         // the `burst-v1` alias before any substring fallbacks below.
         MODEL_BURST_V1 => Some(TIER_STANDARD_CONTEXT),
-        MODEL_CHAT_V1 | MODEL_REASONING_QUICK_V1 | "chat" => Some(TIER_STANDARD_CONTEXT),
+        // `chat-v1` (and its legacy alias `reasoning-quick-v1`) are backed by
+        // DeepSeek v4 Flash — the same ~1M model as `summarization-v1`, not a
+        // 128K model (issue #4706). Share `TIER_FLASH_CONTEXT` so the three
+        // flash tiers stay in lockstep.
+        MODEL_CHAT_V1 | MODEL_REASONING_QUICK_V1 | "chat" => Some(TIER_FLASH_CONTEXT),
         m if m.starts_with("gemma") || m.contains(":1b") || m.contains("270m") => {
             Some(TIER_LOCAL_CONTEXT)
         }
@@ -279,19 +287,28 @@ mod tests {
     fn tier_aliases_resolve() {
         assert_eq!(context_window_for_model("reasoning-v1"), Some(1_000_000));
         assert_eq!(context_window_for_model("agentic-v1"), Some(200_000));
-        assert_eq!(context_window_for_model("chat-v1"), Some(128_000));
+        // chat-v1 is backed by DeepSeek v4 Flash (~1M), the same model as
+        // summarization-v1 — not a 128K model (issue #4706).
+        assert_eq!(context_window_for_model("chat-v1"), Some(1_000_000));
         // Burst tier — 128k on the managed backend. Matched on the alias, not
         // the local-gemma 8k substring arm.
         assert_eq!(context_window_for_model("burst-v1"), Some(128_000));
+        // reasoning-quick-v1 is the legacy alias of chat-v1 (backend renamed it
+        // 2026-05), so it resolves to the same ~1M flash window.
         assert_eq!(
             context_window_for_model("reasoning-quick-v1"),
-            Some(128_000)
+            Some(1_000_000)
         );
         // summarization-v1 maps to a ~1M-token flash model so the extractor can
         // single-shot whole oversized payloads.
         assert_eq!(
             context_window_for_model("summarization-v1"),
             Some(1_000_000)
+        );
+        // The three flash-backed tiers share one window and must not drift.
+        assert_eq!(
+            context_window_for_model("chat-v1"),
+            context_window_for_model("summarization-v1")
         );
     }
 

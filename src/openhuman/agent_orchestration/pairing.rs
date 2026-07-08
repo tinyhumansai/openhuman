@@ -4,7 +4,7 @@
 //! local consent record for orchestration sessions that are allowed to exchange
 //! 1:1 encrypted envelopes.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
@@ -15,6 +15,7 @@ use tokio::sync::Mutex;
 
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::config::Config;
+use crate::openhuman::orchestration::ingest::resolve_linked_id;
 use crate::openhuman::tinyplace::ops::{global_state as tinyplace_state, map_err};
 
 const LOG_TARGET: &str = "orchestration_pairing";
@@ -327,9 +328,129 @@ pub(crate) async fn linked_agent_ids(workspace_dir: &Path) -> std::collections::
             .collect(),
         Err(e) => {
             log::warn!(target: LOG_TARGET, "[orchestration_pairing] linked_agent_ids read failed: {e}");
-            std::collections::HashSet::new()
+            HashSet::new()
         }
     }
+}
+
+/// Poll the tiny.place incoming contact-request queue and auto-accept every
+/// request whose requester is already a linked (paired) agent — and ONLY those.
+/// A request from an agent that is not in the local linked set is deliberately
+/// left **pending** for the human to decide: generic auto-accept stays off,
+/// because accepting a contact is a trust decision (the relay's own rule is
+/// "never auto-accept"). The one exception is the user's *own* already-paired
+/// agents.
+///
+/// Why this is the delivery gate: tiny.place's relay DROPS any DM to a peer that
+/// has not accepted a contact request, so a wrapped agent that re-establishes
+/// contact (a fresh daemon or reconnect that re-sends its one `contact_add`, or a
+/// relay-side contact reset) is otherwise blocked behind a pending request — its
+/// session intro (`session_info`) and entire session stream never arrive.
+/// Auto-accepting linked agents opens that gate for them only. (A *rotated* key is
+/// a different Ed25519 identity, so it is NOT in the linked set and its request is
+/// correctly left pending for the human.)
+///
+/// No per-cycle churn: accepting moves the relay edge from `pending` → `accepted`,
+/// and `/contacts/requests` only lists *pending* requests, so an accepted
+/// requester drops out of `incoming` and is not re-selected next pass. We also
+/// accept under the **canonical** linked id (see [`requesters_to_auto_accept`]),
+/// so a base64-form request can't slip past a base58 stored id and re-fire.
+///
+/// Fail-closed: [`linked_agent_ids`] returns an **empty** set on any pairing-store
+/// read error, so a read failure auto-accepts NOTHING (every request is left
+/// pending) rather than opening the gate. Returns the number of requests accepted
+/// this pass.
+pub async fn auto_accept_linked_contact_requests(config: &Config) -> Result<usize, String> {
+    let linked = linked_agent_ids(&config.workspace_dir).await;
+    // An empty linked set can match nothing — this is also the fail-closed
+    // read-error case — so skip the network round-trip entirely.
+    if linked.is_empty() {
+        return Ok(0);
+    }
+    let client = tinyplace_state().client().await?;
+    // `limit=100` caps one scan (consistent with `list()`); a linked requester
+    // beyond the 100th *pending* request waits until earlier ones clear. Fine at
+    // expected volumes — a paired fleet is small — revisit with pagination if not.
+    let requests: Value = client
+        .http()
+        .get_agent_auth::<Value>(
+            "/contacts/requests",
+            &[("limit".to_string(), "100".to_string())],
+        )
+        .await
+        .map_err(map_err)?;
+    let to_accept = requesters_to_auto_accept(&incoming_pending_requesters(&requests), &linked);
+    log::debug!(
+        target: LOG_TARGET,
+        "[orchestration_pairing] auto_accept.scan linked={} accept={}",
+        linked.len(),
+        to_accept.len()
+    );
+    let mut accepted = 0usize;
+    for agent_id in to_accept {
+        match accept_request(config, &agent_id).await {
+            Ok(_) => {
+                accepted += 1;
+                log::info!(
+                    target: LOG_TARGET,
+                    "[orchestration_pairing] auto_accept.linked agent_id={agent_id}"
+                );
+            }
+            Err(e) => log::warn!(
+                target: LOG_TARGET,
+                "[orchestration_pairing] auto_accept.failed agent_id={agent_id}: {e}"
+            ),
+        }
+    }
+    Ok(accepted)
+}
+
+/// Requester agent id of every *pending incoming* contact request in a raw
+/// `/contacts/requests` response. For an incoming request the counterpart is the
+/// requester: prefer the top-level `agentId`, falling back to `contact.requester`
+/// (the relay does not always populate `agentId`). Mirrors the frontend
+/// `contactAddress` resolution in `orchestrationTabHelpers.ts`. Pure — no IO — so
+/// the parse is unit-testable without a live client.
+fn incoming_pending_requesters(requests: &Value) -> Vec<String> {
+    let Some(incoming) = requests.get("incoming").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    incoming
+        .iter()
+        .filter(|view| view.get("status").and_then(Value::as_str) == Some("pending"))
+        .filter_map(request_view_requester)
+        .collect()
+}
+
+/// The counterpart (requester) address of a single incoming contact-request view.
+fn request_view_requester(view: &Value) -> Option<String> {
+    if let Some(id) = view.get("agentId").and_then(Value::as_str) {
+        let trimmed = id.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    view.get("contact")
+        .and_then(|contact| contact.get("requester"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|requester| !requester.is_empty())
+        .map(str::to_string)
+}
+
+/// Decide which incoming requesters to auto-accept: exactly those already in the
+/// linked-agent set. Requesters not linked are intentionally left for the human.
+///
+/// Returns each match's **canonical linked id** (via [`resolve_linked_id`]), NOT
+/// the raw wire id — so a request that carries the base64 form of a key stored as
+/// base58 is accepted/persisted under the existing base58 record rather than
+/// spawning a duplicate `Linked` record for the same identity. Pure — the trust
+/// gate is unit-testable without any network or store IO.
+fn requesters_to_auto_accept(incoming: &[String], linked: &HashSet<String>) -> Vec<String> {
+    incoming
+        .iter()
+        .filter_map(|id| resolve_linked_id(id, linked))
+        .collect()
 }
 
 async fn save_store(workspace_dir: &Path, store: &PairingStore) -> Result<(), String> {
@@ -481,6 +602,129 @@ mod tests {
         assert_eq!(store.records.len(), 1);
         assert_eq!(store.records[0].status, PairingStatus::Linked);
         assert_eq!(store.records[0].source, PairingSource::ApprovedRequest);
+    }
+
+    // ── Auto-accept gate (O2) ────────────────────────────────────────────────
+
+    // A real base58 pairing-store address and the base64 Ed25519 key of the SAME
+    // 32-byte identity (as seen on the wire), reused from the ingest matcher test.
+    const LINKED_BASE58: &str = "7jr5FKYETssD6T1MCzsR4aT4dnjjyJCE2SANYYX1R5vm";
+    const LINKED_BASE64: &str = "ZCAAuA+2GVoRrT08Gt8JUVnxnISTelSxnDuyScze334=";
+    const UNLINKED_BASE58: &str = "De6RHrMj6eDqX1WBTXk11sks4WXHMaqEX9A6oQ3ZEmsg";
+
+    #[test]
+    fn auto_accept_gate_accepts_linked_but_leaves_others_pending() {
+        let linked: HashSet<String> = [LINKED_BASE58.to_string()].into_iter().collect();
+
+        // (1) A linked requester is selected for auto-accept.
+        assert_eq!(
+            requesters_to_auto_accept(&[LINKED_BASE58.to_string()], &linked),
+            vec![LINKED_BASE58.to_string()]
+        );
+
+        // (2) A non-linked requester is left pending (never selected).
+        assert!(
+            requesters_to_auto_accept(&[UNLINKED_BASE58.to_string()], &linked).is_empty(),
+            "an unlinked requester must be left pending for the human"
+        );
+
+        // Mixed batch: only the linked id is accepted, order preserved.
+        assert_eq!(
+            requesters_to_auto_accept(
+                &[
+                    UNLINKED_BASE58.to_string(),
+                    LINKED_BASE58.to_string(),
+                    UNLINKED_BASE58.to_string(),
+                ],
+                &linked,
+            ),
+            vec![LINKED_BASE58.to_string()]
+        );
+    }
+
+    #[test]
+    fn auto_accept_gate_unifies_and_canonicalizes_base58_and_base64() {
+        // The pairing store keeps the base58 address; a contact request may carry
+        // the base64 Ed25519 key. Both are the same identity, so the linked
+        // agent's request must still be accepted (the shared matcher unifies the
+        // two encodings) — otherwise the e2e intro gate stays shut. Crucially the
+        // gate returns the CANONICAL base58 stored id, not the raw base64 wire id,
+        // so accepting under it reuses the existing record instead of persisting a
+        // duplicate `Linked` row for the same identity.
+        let linked: HashSet<String> = [LINKED_BASE58.to_string()].into_iter().collect();
+        assert_eq!(
+            requesters_to_auto_accept(&[LINKED_BASE64.to_string()], &linked),
+            vec![LINKED_BASE58.to_string()],
+            "must canonicalize the base64 wire id to the stored base58 id"
+        );
+    }
+
+    #[test]
+    fn auto_accept_gate_accepts_nothing_with_empty_linked_set() {
+        // linked_agent_ids() fails closed to an empty set on any store read error;
+        // with no linked agents the gate must accept nothing (every request stays
+        // pending) rather than opening the contact gate wide.
+        let empty = HashSet::new();
+        assert!(
+            requesters_to_auto_accept(&[LINKED_BASE58.to_string()], &empty).is_empty(),
+            "an empty (fail-closed) linked set must auto-accept nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn auto_accept_fails_closed_on_unreadable_pairing_store() {
+        // The read-error path end-to-end (minus network): a corrupt pairing store
+        // makes linked_agent_ids() fail closed to an empty set, so the gate cannot
+        // auto-accept even a would-be-linked requester.
+        let tmp = tempfile::tempdir().unwrap();
+        let path = store_path(tmp.path());
+        tokio::fs::create_dir_all(path.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&path, b"{ this is not valid json")
+            .await
+            .unwrap();
+
+        let linked = linked_agent_ids(tmp.path()).await;
+        assert!(
+            linked.is_empty(),
+            "a corrupt pairing store must fail closed to an empty linked set"
+        );
+        assert!(
+            requesters_to_auto_accept(&[LINKED_BASE58.to_string()], &linked).is_empty(),
+            "no auto-accept when the linked set is fail-closed empty"
+        );
+    }
+
+    #[test]
+    fn incoming_pending_requesters_filters_and_resolves_requester() {
+        // Pending incoming only; `agentId` preferred, else `contact.requester`;
+        // accepted requests and outgoing requests are ignored.
+        let requests = serde_json::json!({
+            "incoming": [
+                { "agentId": "AAA", "status": "pending", "direction": "incoming",
+                  "contact": { "requester": "AAA", "addressee": "me", "status": "pending" } },
+                // agentId blank → fall back to contact.requester.
+                { "agentId": "", "status": "pending", "direction": "incoming",
+                  "contact": { "requester": "BBB", "addressee": "me", "status": "pending" } },
+                // already accepted → skipped.
+                { "agentId": "CCC", "status": "accepted", "direction": "incoming",
+                  "contact": { "requester": "CCC", "addressee": "me", "status": "accepted" } },
+            ],
+            "outgoing": [
+                // outgoing is never a request to accept.
+                { "agentId": "DDD", "status": "pending", "direction": "outgoing",
+                  "contact": { "requester": "me", "addressee": "DDD", "status": "pending" } },
+            ],
+        });
+        assert_eq!(
+            incoming_pending_requesters(&requests),
+            vec!["AAA".to_string(), "BBB".to_string()]
+        );
+
+        // Missing/empty `incoming` → nothing, no panic.
+        assert!(incoming_pending_requesters(&serde_json::json!({})).is_empty());
+        assert!(incoming_pending_requesters(&serde_json::json!({ "incoming": [] })).is_empty());
     }
 
     #[tokio::test]

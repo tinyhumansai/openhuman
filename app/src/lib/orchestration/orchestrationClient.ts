@@ -46,6 +46,8 @@ export interface SessionSummary {
   chatKind: OrchestrationChatKind;
   lastMessageAt: string;
   unread: number;
+  /** Total persisted messages in the session; `0` for pinned/new windows. */
+  messageCount?: number;
   active: boolean;
   pinned: boolean;
 }
@@ -83,6 +85,12 @@ export interface OrchestrationMessage {
   toolName?: string;
   /** Correlation id shared by a tool_call and its tool_result. */
   callId?: string;
+  /** tool_result outcome: whether the tool call succeeded. Absent off tool_result. */
+  ok?: boolean;
+  /** tool_result: the harness flagged the result as an error. */
+  isError?: boolean;
+  /** tool_result: process exit code when the tool was a command. */
+  exitCode?: number;
 }
 
 export interface OrchestrationSteering {

@@ -211,6 +211,21 @@ pub fn start_message_drain_supervisor() {
                     ),
                 }
             }
+            // Auto-accept contact requests from already-linked agents FIRST, so a
+            // paired wrapped-agent that re-established contact is unblocked before
+            // this same cycle drains its mailbox. Non-linked requesters are left
+            // pending for the human (accepting a contact is a trust decision).
+            match crate::openhuman::agent_orchestration::pairing::auto_accept_linked_contact_requests(
+                &config,
+            )
+            .await
+            {
+                Ok(n) if n > 0 => {
+                    log::info!(target: LOG, "[orchestration] auto-accepted {n} linked contact request(s)")
+                }
+                Ok(_) => {}
+                Err(e) => log::debug!(target: LOG, "[orchestration] auto-accept error: {e}"),
+            }
             match super::ingest::drain_mailbox_once(&config).await {
                 Ok(n) if n > 0 => {
                     log::debug!(target: LOG, "[orchestration] drain: examined {n} envelope(s)")
