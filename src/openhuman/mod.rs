@@ -53,6 +53,7 @@ pub mod file_state;
 pub mod file_storage;
 pub mod flows;
 pub mod harness_init;
+pub mod harness_script;
 pub mod health;
 pub mod heartbeat;
 pub mod http_host;
