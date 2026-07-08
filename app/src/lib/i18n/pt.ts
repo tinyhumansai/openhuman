@@ -1592,6 +1592,12 @@ const messages: TranslationMap = {
   'mcp.catalog.searchAria': 'Pesquisar catálogo de servidores MCP',
   'mcp.catalog.searchPlaceholder': 'Pesquisar servidores MCP...',
   'mcp.catalog.loadFailed': 'Falha ao carregar o catálogo',
+  'mcp.registry.error.notFound':
+    'Servidor não encontrado no registro. Confira o nome do servidor e tente novamente, navegue pelos servidores MCP disponíveis ou adicione o servidor manualmente por URL.',
+  'mcp.registry.error.network':
+    'Não foi possível acessar o registro MCP. Verifique sua conexão e tente novamente, ou adicione o servidor manualmente por URL.',
+  'mcp.registry.error.unavailable':
+    'O registro MCP está indisponível no momento. Tente novamente mais tarde, navegue pelos servidores MCP disponíveis ou adicione o servidor manualmente por URL.',
   'mcp.catalog.noResults': 'Nenhum servidor encontrado.',
   'mcp.catalog.noResultsFor': 'Nenhum servidor encontrado para "{query}".',
   'mcp.catalog.loadMore': 'Carregar mais',

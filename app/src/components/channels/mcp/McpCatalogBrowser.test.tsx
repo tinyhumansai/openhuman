@@ -143,8 +143,10 @@ describe('McpCatalogBrowser', () => {
     expect(screen.queryByRole('button', { name: 'Install' })).not.toBeInTheDocument();
   });
 
-  it('shows error state when search fails', async () => {
-    mockRegistrySearch.mockRejectedValue(new Error('Network error'));
+  it('shows friendly guidance when search fails', async () => {
+    mockRegistrySearch.mockRejectedValue(
+      new Error('MCP official registry returned HTTP 500: {"detail":"upstream down"}')
+    );
     render(<McpCatalogBrowser onSelectInstall={() => {}} />);
 
     await act(async () => {
@@ -152,6 +154,8 @@ describe('McpCatalogBrowser', () => {
     });
     vi.useRealTimers();
 
-    await waitFor(() => screen.getByText('Network error'));
+    await waitFor(() => screen.getByText(/The MCP registry is unavailable right now/));
+    expect(screen.getByText(/browse available MCP servers/)).toBeInTheDocument();
+    expect(screen.queryByText(/"detail":"upstream down"/)).not.toBeInTheDocument();
   });
 });

@@ -98,6 +98,22 @@ describe('InstallDialog', () => {
     expect(screen.getByText('SECRET_TOKEN')).toBeInTheDocument();
   });
 
+  it('shows friendly guidance instead of raw registry 404 JSON when detail load fails', async () => {
+    mockRegistryGet.mockRejectedValue(
+      new Error(
+        'MCP official registry GET unreal-mcp returned HTTP 404 Not Found: {"title":"Not Found","status":404,"detail":"Server not found"}'
+      )
+    );
+    render(<InstallDialog qualifiedName="unreal-mcp" onSuccess={() => {}} onCancel={() => {}} />);
+
+    await waitFor(() => screen.getByText(/Server not found in registry/));
+
+    expect(screen.getByText(/browse available MCP servers/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Browse catalog' })).toBeInTheDocument();
+    expect(screen.queryByText(/"title":"Not Found"/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/HTTP 404/)).not.toBeInTheDocument();
+  });
+
   it('renders env key inputs after clicking configure', async () => {
     mockRegistryGet.mockResolvedValue(DETAIL);
     render(

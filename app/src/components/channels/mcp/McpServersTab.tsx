@@ -17,6 +17,7 @@ import InstallDialog from './InstallDialog';
 import InstalledServerDetail from './InstalledServerDetail';
 import McpConnectionHealthToolbar from './McpConnectionHealthToolbar';
 import McpInventoryPanel from './McpInventoryPanel';
+import { mcpRegistryErrorMessage } from './mcpRegistryErrorMessage';
 import { deriveAuthor } from './McpServerCard';
 import type { ConnStatus, InstalledServer, ServerStatus, SmitheryServer } from './types';
 
@@ -272,7 +273,7 @@ const McpServersTab = () => {
   const [catalogTotalPages, setCatalogTotalPages] = useState(1);
   // Set when a registry fetch fails so the Registry view shows an error state
   // (with retry) instead of silently falling back to an empty/stale catalog.
-  const [catalogError, setCatalogError] = useState(false);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
 
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -317,18 +318,18 @@ const McpServersTab = () => {
         );
         setCatalogPage(result.page);
         setCatalogTotalPages(result.total_pages);
-        setCatalogError(false);
+        setCatalogError(null);
       } catch (err) {
         if (seq !== requestSeqRef.current) return;
         log('catalog fetch error: %o', err);
         // A fresh (non-append) fetch that fails leaves no usable rows — surface
         // the error. A failed "load more" keeps the rows already shown.
-        if (!append) setCatalogError(true);
+        if (!append) setCatalogError(mcpRegistryErrorMessage(err, t, 'mcp.catalog.loadFailed'));
       } finally {
         if (seq === requestSeqRef.current) setCatalogLoading(false);
       }
     },
-    []
+    [t]
   );
 
   useEffect(() => {
@@ -739,7 +740,7 @@ const McpServersTab = () => {
           <div
             data-testid="mcp-catalog-error"
             className="py-8 text-center text-sm text-coral-700 dark:text-coral-300 space-y-2">
-            <p>{t('mcp.catalog.loadFailed')}</p>
+            <p>{catalogError}</p>
             <Button
               variant="tertiary"
               size="xs"

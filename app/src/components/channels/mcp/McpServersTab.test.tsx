@@ -520,7 +520,9 @@ describe('McpServersTab', () => {
     mockInstalledList.mockResolvedValue([]);
     mockStatus.mockResolvedValue([]);
     // First catalog fetch fails → error state; retry succeeds → rows render.
-    mockRegistrySearch.mockRejectedValueOnce(new Error('registry down'));
+    mockRegistrySearch.mockRejectedValueOnce(
+      new Error('MCP official registry returned HTTP 500: {"detail":"registry down"}')
+    );
     mockRegistrySearch.mockResolvedValue({
       servers: [{ qualified_name: 'a/srv', display_name: 'Recovered Srv', is_deployed: false }],
       page: 1,
@@ -532,7 +534,9 @@ describe('McpServersTab', () => {
 
     // Error surfaces instead of a silent empty state.
     const errorBox = await screen.findByTestId('mcp-catalog-error');
-    expect(errorBox).toHaveTextContent('Failed to load catalog');
+    expect(errorBox).toHaveTextContent('The MCP registry is unavailable right now');
+    expect(errorBox).toHaveTextContent('browse available MCP servers');
+    expect(errorBox).not.toHaveTextContent('"detail":"registry down"');
     expect(screen.queryByTestId('mcp-catalog-empty')).not.toBeInTheDocument();
 
     // Retry re-fetches and renders the recovered catalog.

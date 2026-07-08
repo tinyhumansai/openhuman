@@ -1474,6 +1474,12 @@ const messages: TranslationMap = {
   'mcp.catalog.searchAria': '搜索锻造目录',
   'mcp.catalog.searchPlaceholder': '搜索锻造目录...',
   'mcp.catalog.loadFailed': '加载目录失败',
+  'mcp.registry.error.notFound':
+    '在注册表中找不到该服务器。请检查服务器名称后重试，也可以浏览可用的 MCP 服务器，或通过 URL 手动添加服务器。',
+  'mcp.registry.error.network':
+    '无法连接到 MCP 注册表。请检查网络连接后重试，或通过 URL 手动添加服务器。',
+  'mcp.registry.error.unavailable':
+    'MCP 注册表暂时不可用。请稍后重试，也可以浏览可用的 MCP 服务器，或通过 URL 手动添加服务器。',
   'mcp.catalog.noResults': '未找到服务器。',
   'mcp.catalog.noResultsFor': '找不到“{query}”的服务器。',
   'mcp.catalog.loadMore': '加载更多',

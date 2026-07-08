@@ -1553,6 +1553,12 @@ const messages: TranslationMap = {
   'mcp.catalog.searchAria': 'स्मिथेरी कैटलॉग खोजें',
   'mcp.catalog.searchPlaceholder': 'स्मिथरी कैटलॉग खोजें...',
   'mcp.catalog.loadFailed': 'कैटलॉग लोड करने में विफल',
+  'mcp.registry.error.notFound':
+    'रजिस्ट्री में सर्वर नहीं मिला। सर्वर का नाम जांचकर फिर कोशिश करें, उपलब्ध MCP सर्वर ब्राउज करें, या URL से सर्वर को मैन्युअल रूप से जोड़ें।',
+  'mcp.registry.error.network':
+    'MCP रजिस्ट्री तक नहीं पहुंचा जा सका। अपना कनेक्शन जांचकर फिर कोशिश करें, या URL से सर्वर को मैन्युअल रूप से जोड़ें।',
+  'mcp.registry.error.unavailable':
+    'MCP रजिस्ट्री अभी उपलब्ध नहीं है। बाद में फिर कोशिश करें, उपलब्ध MCP सर्वर ब्राउज करें, या URL से सर्वर को मैन्युअल रूप से जोड़ें।',
   'mcp.catalog.noResults': 'कोई सर्वर नहीं मिला.',
   'mcp.catalog.noResultsFor': '"{query}" के लिए कोई सर्वर नहीं मिला।',
   'mcp.catalog.loadMore': 'और अधिक लोड करें',

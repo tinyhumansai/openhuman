@@ -1529,6 +1529,12 @@ const messages: TranslationMap = {
   'mcp.catalog.searchAria': 'البحث في كتالوج الحدادة',
   'mcp.catalog.searchPlaceholder': 'البحث في كتالوج الحدادة...',
   'mcp.catalog.loadFailed': 'فشل تحميل الكتالوج',
+  'mcp.registry.error.notFound':
+    'لم يتم العثور على الخادم في السجل. تحقق من اسم الخادم وحاول مرة أخرى، أو تصفح خوادم MCP المتاحة، أو أضف الخادم يدويا عبر URL.',
+  'mcp.registry.error.network':
+    'تعذر الوصول إلى سجل MCP. تحقق من اتصالك وحاول مرة أخرى، أو أضف الخادم يدويا عبر URL.',
+  'mcp.registry.error.unavailable':
+    'سجل MCP غير متاح حاليا. حاول لاحقا، أو تصفح خوادم MCP المتاحة، أو أضف الخادم يدويا عبر URL.',
   'mcp.catalog.noResults': 'لم يتم العثور على خوادم.',
   'mcp.catalog.noResultsFor': 'لم يتم العثور على خوادم لـ "{query}".',
   'mcp.catalog.loadMore': 'تحميل المزيد',

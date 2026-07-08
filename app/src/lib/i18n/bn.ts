@@ -1555,6 +1555,12 @@ const messages: TranslationMap = {
   'mcp.catalog.searchAria': 'MCP সার্ভার ক্যাটালগ অনুসন্ধান',
   'mcp.catalog.searchPlaceholder': 'MCP সার্ভার অনুসন্ধান করুন...',
   'mcp.catalog.loadFailed': 'ক্যাটালগ করতে ব্যর্থ হয়েছে',
+  'mcp.registry.error.notFound':
+    'রেজিস্ট্রিতে সার্ভারটি পাওয়া যায়নি। সার্ভারের নাম পরীক্ষা করে আবার চেষ্টা করুন, উপলব্ধ MCP সার্ভার ব্রাউজ করুন, অথবা URL দিয়ে সার্ভারটি ম্যানুয়ালি যোগ করুন।',
+  'mcp.registry.error.network':
+    'MCP রেজিস্ট্রিতে পৌঁছানো যায়নি। আপনার সংযোগ পরীক্ষা করে আবার চেষ্টা করুন, অথবা URL দিয়ে সার্ভারটি ম্যানুয়ালি যোগ করুন।',
+  'mcp.registry.error.unavailable':
+    'MCP রেজিস্ট্রি এখন উপলব্ধ নয়। পরে আবার চেষ্টা করুন, উপলব্ধ MCP সার্ভার ব্রাউজ করুন, অথবা URL দিয়ে সার্ভারটি ম্যানুয়ালি যোগ করুন।',
   'mcp.catalog.noResults': 'কোনো সার্ভার পাওয়া যায়নি।',
   'mcp.catalog.noResultsFor': '"{query}" এর জন্য কোনো সার্ভার পাওয়া যায়নি।',
   'mcp.catalog.loadMore': 'আরও লোড করুন',

@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { McpRegistryUserError } from './mcpRegistryErrors';
+
 const mockCallCoreRpc = vi.fn();
 
 vi.mock('../coreRpcClient', () => ({
@@ -39,6 +41,34 @@ describe('mcpClientsApi', () => {
         params: {},
       });
     });
+
+    it('normalizes raw registry search outages before they reach the UI', async () => {
+      mockCallCoreRpc.mockRejectedValueOnce(
+        new Error('MCP official registry returned HTTP 500: {"detail":"upstream exploded"}')
+      );
+
+      const { mcpClientsApi } = await import('./mcpClientsApi');
+
+      try {
+        await mcpClientsApi.registrySearch({ query: 'github' });
+        throw new Error('expected registrySearch to reject');
+      } catch (err) {
+        expect(err).toBeInstanceOf(McpRegistryUserError);
+        expect(err).toMatchObject({ kind: 'unavailable' });
+        expect((err as Error).message).toContain('The MCP registry is unavailable right now');
+        expect((err as Error).message).not.toContain('{"detail"');
+      }
+    });
+
+    it('normalizes registry transport failures to network guidance', async () => {
+      mockCallCoreRpc.mockRejectedValueOnce(new Error('Failed to fetch'));
+
+      const { mcpClientsApi } = await import('./mcpClientsApi');
+
+      await expect(mcpClientsApi.registrySearch({ query: 'github' })).rejects.toMatchObject({
+        kind: 'network',
+      });
+    });
   });
 
   describe('registryGet', () => {
@@ -59,6 +89,27 @@ describe('mcpClientsApi', () => {
         params: { qualified_name: 'test/server' },
       });
       expect(result).toEqual(serverDetail);
+    });
+
+    it('normalizes raw registry 404 JSON before detail errors reach the UI', async () => {
+      mockCallCoreRpc.mockRejectedValueOnce(
+        new Error(
+          'MCP official registry GET unreal-mcp returned HTTP 404 Not Found: {"title":"Not Found","status":404,"detail":"Server not found"}'
+        )
+      );
+
+      const { mcpClientsApi } = await import('./mcpClientsApi');
+
+      try {
+        await mcpClientsApi.registryGet('unreal-mcp');
+        throw new Error('expected registryGet to reject');
+      } catch (err) {
+        expect(err).toBeInstanceOf(McpRegistryUserError);
+        expect(err).toMatchObject({ kind: 'not_found' });
+        expect((err as Error).message).toContain('Server not found in registry');
+        expect((err as Error).message).not.toContain('"title"');
+        expect((err as McpRegistryUserError).rawMessage).toContain('HTTP 404');
+      }
     });
   });
 

@@ -15,6 +15,7 @@ import type {
   SmitheryServerDetail,
 } from '../../components/channels/mcp/types';
 import { callCoreRpc } from '../coreRpcClient';
+import { normalizeMcpRegistryError } from './mcpRegistryErrors';
 
 const log = debug('mcp-clients:api');
 
@@ -113,23 +114,31 @@ export const mcpClientsApi = {
     page_size?: number;
   }): Promise<RegistrySearchResult> => {
     log('registry_search params=%o', params);
-    const result = await callCoreRpc<RegistrySearchResult>({
-      method: 'openhuman.mcp_clients_registry_search',
-      params,
-    });
-    log('registry_search result: %d servers', result.servers?.length ?? 0);
-    return result;
+    try {
+      const result = await callCoreRpc<RegistrySearchResult>({
+        method: 'openhuman.mcp_clients_registry_search',
+        params,
+      });
+      log('registry_search result: %d servers', result.servers?.length ?? 0);
+      return result;
+    } catch (err) {
+      throw normalizeMcpRegistryError(err);
+    }
   },
 
   /** Fetch full detail for a single Smithery server. */
   registryGet: async (qualified_name: string): Promise<SmitheryServerDetail> => {
     log('registry_get qualified_name=%s', qualified_name);
-    const result = await callCoreRpc<RegistryGetResult>({
-      method: 'openhuman.mcp_clients_registry_get',
-      params: { qualified_name },
-    });
-    log('registry_get returned server=%s', result.server?.qualified_name);
-    return result.server;
+    try {
+      const result = await callCoreRpc<RegistryGetResult>({
+        method: 'openhuman.mcp_clients_registry_get',
+        params: { qualified_name },
+      });
+      log('registry_get returned server=%s', result.server?.qualified_name);
+      return result.server;
+    } catch (err) {
+      throw normalizeMcpRegistryError(err);
+    }
   },
 
   /**

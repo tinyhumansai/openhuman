@@ -1793,6 +1793,12 @@ const en: TranslationMap = {
   'mcp.catalog.searchAria': 'Search MCP server catalog',
   'mcp.catalog.searchPlaceholder': 'Search MCP servers...',
   'mcp.catalog.loadFailed': 'Failed to load catalog',
+  'mcp.registry.error.notFound':
+    'Server not found in registry. Check the server name and try again, browse available MCP servers, or add the server manually by URL.',
+  'mcp.registry.error.network':
+    'Could not reach the MCP registry. Check your connection and try again, or add the server manually by URL.',
+  'mcp.registry.error.unavailable':
+    'The MCP registry is unavailable right now. Try again later, browse available MCP servers, or add the server manually by URL.',
   'mcp.catalog.noResults': 'No servers found.',
   'mcp.catalog.noResultsFor': 'No servers found for "{query}".',
   'mcp.catalog.loadMore': 'Load more',

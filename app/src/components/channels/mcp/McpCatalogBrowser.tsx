@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { mcpClientsApi } from '../../../services/api/mcpClientsApi';
 import Button from '../../ui/Button';
+import { mcpRegistryErrorMessage } from './mcpRegistryErrorMessage';
 import McpServerCard from './McpServerCard';
 import type { SmitheryServer } from './types';
 
@@ -57,7 +58,7 @@ const McpCatalogBrowser = ({ onSelectInstall }: McpCatalogBrowserProps) => {
         log('loaded %d servers (append=%s)', incoming.length, append);
       } catch (err) {
         if (seq !== requestSeqRef.current) return;
-        const msg = err instanceof Error ? err.message : t('mcp.catalog.loadFailed');
+        const msg = mcpRegistryErrorMessage(err, t, 'mcp.catalog.loadFailed');
         log('catalog fetch error: %s', msg);
         setError(msg);
       } finally {

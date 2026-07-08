@@ -1589,6 +1589,12 @@ const messages: TranslationMap = {
   'mcp.catalog.searchAria': 'Cerca nel catalogo della fucina',
   'mcp.catalog.searchPlaceholder': 'Cerca nel catalogo della fucina...',
   'mcp.catalog.loadFailed': 'Impossibile caricare il catalogo',
+  'mcp.registry.error.notFound':
+    'Server non trovato nel registro. Controlla il nome del server e riprova, sfoglia i server MCP disponibili o aggiungi il server manualmente tramite URL.',
+  'mcp.registry.error.network':
+    'Impossibile raggiungere il registro MCP. Controlla la connessione e riprova, oppure aggiungi il server manualmente tramite URL.',
+  'mcp.registry.error.unavailable':
+    'Il registro MCP non è disponibile al momento. Riprova più tardi, sfoglia i server MCP disponibili o aggiungi il server manualmente tramite URL.',
   'mcp.catalog.noResults': 'Nessun server trovato.',
   'mcp.catalog.noResultsFor': 'Nessun server trovato per "{query}".',
   'mcp.catalog.loadMore': 'Carica altro',

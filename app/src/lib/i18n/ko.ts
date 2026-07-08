@@ -1548,6 +1548,12 @@ const messages: TranslationMap = {
   'mcp.catalog.searchAria': 'MCP 서버 카탈로그 검색',
   'mcp.catalog.searchPlaceholder': 'MCP 서버 카탈로그 검색...',
   'mcp.catalog.loadFailed': '카탈로그를 로드하지 못했습니다.',
+  'mcp.registry.error.notFound':
+    '레지스트리에서 서버를 찾을 수 없습니다. 서버 이름을 확인한 뒤 다시 시도하거나, 사용 가능한 MCP 서버를 찾아보거나, URL로 서버를 직접 추가하세요.',
+  'mcp.registry.error.network':
+    'MCP 레지스트리에 연결할 수 없습니다. 연결을 확인한 뒤 다시 시도하거나, URL로 서버를 직접 추가하세요.',
+  'mcp.registry.error.unavailable':
+    '현재 MCP 레지스트리를 사용할 수 없습니다. 나중에 다시 시도하거나, 사용 가능한 MCP 서버를 찾아보거나, URL로 서버를 직접 추가하세요.',
   'mcp.catalog.noResults': '서버를 찾을 수 없습니다.',
   'mcp.catalog.noResultsFor': '"{query}"에 대한 서버를 찾을 수 없습니다.',
   'mcp.catalog.loadMore': '추가 로드',
