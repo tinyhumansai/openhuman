@@ -14,7 +14,7 @@ pub use mirror::TurnStateMirror;
 
 pub use store::TurnStateStore;
 pub use types::{
-    ClearTurnStateRequest, ClearTurnStateResponse, GetTurnStateRequest, GetTurnStateResponse,
-    ListTurnStatesResponse, SubagentActivity, SubagentToolCall, ToolTimelineEntry,
-    ToolTimelineStatus, TurnLifecycle, TurnPhase, TurnState,
+    ClearTurnStateRequest, ClearTurnStateResponse, GetTurnStateForRequestRequest,
+    GetTurnStateRequest, GetTurnStateResponse, ListTurnStatesResponse, SubagentActivity,
+    SubagentToolCall, ToolTimelineEntry, ToolTimelineStatus, TurnLifecycle, TurnPhase, TurnState,
 };

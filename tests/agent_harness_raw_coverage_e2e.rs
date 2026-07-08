@@ -179,6 +179,8 @@ fn usage_with_cached(input_tokens: u64, output_tokens: u64, cached_input_tokens:
         output_tokens,
         context_window: 8_192,
         cached_input_tokens,
+        cache_creation_tokens: 0,
+        reasoning_tokens: 0,
         charged_amount_usd: 0.001,
     }
 }
@@ -282,6 +284,7 @@ fn parent_context(workspace: PathBuf, provider: Arc<ScriptedProvider>) -> Parent
         model_name: "coverage-model".to_string(),
         temperature: 0.0,
         workspace_dir: workspace,
+        workspace_descriptor: None,
         memory: Arc::new(StubMemory),
         agent_config: agent_config(),
         workflows: Arc::new(Vec::new()),

@@ -80,12 +80,12 @@ The module has focused Rust tests for:
 Future runtime PRs should add provider-specific execution tests next to the
 runtime adapter, not in the hosted contract module.
 
-## Media generation (GMI) — image & video tools
+## Media generation (GMI): image and video tools
 
 Separate from the high-level `image_generation` contract above, the
 `src/openhuman/media_generation/` domain ships **wired, executing** tools that
 generate images and video through the OpenHuman backend's `media_generation`
-provider (GMI Cloud — Seedream, SeedEdit, Seedance, Veo).
+provider (GMI Cloud: Seedream, SeedEdit, Seedance, Veo).
 
 | Tool | Purpose | Permission | Output |
 | --- | --- | --- | --- |
@@ -108,9 +108,9 @@ How it works:
 Two specialist sub-agents wrap these tools and are reachable from the
 orchestrator via delegation:
 
-- **`image_agent`** (`delegate_create_image`) — owns prompt craft, model
-  selection, and saving generated images. Rides the multimodal `vision-v1` tier
-  so it can inspect what it produces.
-- **`video_agent`** (`delegate_create_video`) — owns text-to-video and
-  image-to-video; sets expectations that generation can take minutes and blocks
-  until the clip is saved.
+- **`image_agent`** (`delegate_create_image`) owns prompt craft, model
+  selection, and saving generated images. It rides the multimodal `vision-v1`
+  tier so it can inspect what it produces.
+- **`video_agent`** (`delegate_create_video`) owns text-to-video and
+  image-to-video. It sets expectations that generation can take minutes and
+  blocks until the clip is saved.

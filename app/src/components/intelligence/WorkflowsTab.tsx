@@ -4,8 +4,8 @@
  *
  * The Intelligence page's "Workflows" tab — the single home for installed
  * workflows (the unified primitive: a goal + the procedure to reach it,
- * authored as SKILL.md bundles and served by the `workflows_*` JSON-RPC via
- * `workflowsApi`).
+ * authored as SKILL.md bundles and served by the `skills_*` JSON-RPC via
+ * `skillsApi`).
  *
  * Owns the full workflow surface that used to live on the Connections page:
  *   - lists discovered workflows as cards,
@@ -21,7 +21,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { useT } from '../../lib/i18n/I18nContext';
-import { workflowsApi, type WorkflowSummary } from '../../services/api/workflowsApi';
+import { skillsApi, type WorkflowSummary } from '../../services/api/skillsApi';
 import type { ToastNotification } from '../../types/intelligence';
 import SettingsPanel from '../settings/layout/SettingsPanel';
 import CreateSkillModal from '../skills/CreateSkillModal';
@@ -63,7 +63,7 @@ export default function WorkflowsTab({ asSettingsPanel = false }: WorkflowsTabPr
 
   const refresh = useCallback(async (): Promise<WorkflowSummary[]> => {
     try {
-      const list = await workflowsApi.listWorkflows();
+      const list = await skillsApi.listWorkflows();
       log('listWorkflows ok count=%d', list.length);
       setLoadError(null);
       setWorkflows(list);

@@ -5,7 +5,8 @@
 //! fast (all single-row CRUD or small aggregates).
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Result as SqlResult};
@@ -16,50 +17,86 @@ use crate::openhuman::people::types::{Handle, Interaction, Person, PersonId};
 
 pub type ConnHandle = Arc<Mutex<Connection>>;
 
-/// Process-global handle to the `PeopleStore`. Controller handlers are
-/// free functions with no `&self`, so they fetch the store via `get()`
-/// — seeded once at startup with `init`. Absent at test time; tests
-/// construct stores directly and call `rpc::*` helpers instead of going
-/// through the schema adapters.
-static GLOBAL: tokio::sync::OnceCell<Arc<PeopleStore>> = tokio::sync::OnceCell::const_new();
-
-pub async fn init(store: Arc<PeopleStore>) -> Result<(), &'static str> {
-    GLOBAL
-        .set(store)
-        .map_err(|_| "people store already initialised")
+/// Process-global handle to the `PeopleStore`, tagged with the workspace it is
+/// bound to. Controller handlers are free functions with no `&self`, so they
+/// fetch the store via `get()`. Seeded at core boot and re-bound on active-user
+/// switch via [`init_from_workspace`]. Absent at test time unless a test seeds
+/// it; most tests construct stores directly with `open_in_memory`.
+#[derive(Clone)]
+struct GlobalPeopleStore {
+    workspace_dir: PathBuf,
+    store: Arc<PeopleStore>,
 }
 
-/// Seed the process-global store from a workspace directory, opening the
-/// on-disk db at `<workspace>/people/people.db` (schema migrations run on
-/// open). Idempotent: a second call — or a concurrent boot path — is a no-op
-/// that returns the already-seeded store rather than erroring.
+type GlobalStoreSlot = RwLock<Option<GlobalPeopleStore>>;
+
+static GLOBAL: OnceLock<GlobalStoreSlot> = OnceLock::new();
+
+fn global_slot() -> &'static GlobalStoreSlot {
+    GLOBAL.get_or_init(GlobalStoreSlot::default)
+}
+
+/// Initialise or re-bind the process-global people store from a workspace
+/// directory, opening `<workspace>/people/people.db` (schema migrations run on
+/// open).
 ///
-/// Wired into core boot (`src/core/jsonrpc.rs`) alongside `memory::global` and
-/// `whatsapp_data::global`. Without this seed the global stays empty and every
-/// people controller / `people_*` tool fails with "people store not
-/// initialised" (Sentry TAURI-RUST-8NM).
-pub async fn init_from_workspace(
-    workspace_dir: &std::path::Path,
-) -> Result<Arc<PeopleStore>, String> {
-    if let Some(existing) = GLOBAL.get() {
-        log::debug!("[people:store] already initialised");
-        return Ok(existing.clone());
+/// Mirrors [`crate::openhuman::memory::global::init`]: safe to call repeatedly.
+/// A call for the **same** workspace returns the existing store; a call for a
+/// **different** workspace replaces the global handle so a post-login
+/// active-user switch (or `restart_core_process`, which restarts the embedded
+/// core in the same Tauri process) does not keep people controllers/tools
+/// reading and writing the pre-login (or a previous user's) workspace.
+///
+/// Wired into core boot (`src/core/jsonrpc.rs`) and the active-user rebind
+/// sites (`credentials::ops`, `app_state::ops`) alongside `memory::global`.
+/// Without the boot seed every people controller / `people_*` tool fails with
+/// "people store not initialised" (Sentry TAURI-RUST-8NM); without the rebind
+/// they'd write the wrong workspace after login (#4378).
+pub fn init_from_workspace(workspace_dir: &Path) -> Result<Arc<PeopleStore>, String> {
+    let slot = global_slot();
+    if let Some(existing) = slot
+        .read()
+        .map_err(|e| format!("[people:store] read lock poisoned: {e}"))?
+        .as_ref()
+    {
+        if existing.workspace_dir == workspace_dir {
+            log::debug!("[people:store] already initialised for current workspace");
+            return Ok(Arc::clone(&existing.store));
+        }
     }
+
     let db_path = workspace_dir.join("people").join("people.db");
     let store = Arc::new(
         PeopleStore::open_at(&db_path).map_err(|e| format!("people store open failed: {e}"))?,
     );
-    // Race-resolve: another caller may have seeded while we were opening.
-    match GLOBAL.set(store.clone()) {
-        Ok(()) => Ok(store),
-        Err(_) => Ok(GLOBAL.get().cloned().unwrap_or(store)),
+
+    let mut guard = slot
+        .write()
+        .map_err(|e| format!("[people:store] write lock poisoned: {e}"))?;
+    // Re-check under the write lock: a concurrent caller may have seeded the
+    // same workspace while we were opening — reuse theirs. A different-workspace
+    // entry is replaced (rebind).
+    if let Some(existing) = guard.as_ref() {
+        if existing.workspace_dir == workspace_dir {
+            return Ok(Arc::clone(&existing.store));
+        }
     }
+    log::info!(
+        "[people:store] bound store workspace={}",
+        workspace_dir.display()
+    );
+    *guard = Some(GlobalPeopleStore {
+        workspace_dir: workspace_dir.to_path_buf(),
+        store: Arc::clone(&store),
+    });
+    Ok(store)
 }
 
 pub fn get() -> Result<Arc<PeopleStore>, &'static str> {
-    GLOBAL
-        .get()
-        .cloned()
+    global_slot()
+        .read()
+        .ok()
+        .and_then(|guard| guard.as_ref().map(|entry| Arc::clone(&entry.store)))
         .ok_or("people store not initialised — core startup hasn't completed")
 }
 

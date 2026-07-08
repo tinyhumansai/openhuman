@@ -102,6 +102,20 @@ impl Config {
             }
         }
 
+        if let Some(raw) = env.get("OPENHUMAN_ORCH_REVIEW_INTERVAL_MINUTES") {
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() {
+                match trimmed.parse::<u32>() {
+                    Ok(mins) => self.orchestration.review_interval_minutes = Some(mins),
+                    Err(_) => tracing::warn!(
+                        env = "OPENHUMAN_ORCH_REVIEW_INTERVAL_MINUTES",
+                        value = %raw,
+                        "invalid tinyplace review interval ignored; expected an unsigned integer (minutes)"
+                    ),
+                }
+            }
+        }
+
         if let Some(language) = env.get("OPENHUMAN_OUTPUT_LANGUAGE") {
             let language = language.trim();
             if !language.is_empty() {
@@ -528,6 +542,21 @@ impl Config {
             match normalized.as_str() {
                 "1" | "true" | "yes" | "on" => self.observability.analytics_enabled = true,
                 "0" | "false" | "no" | "off" => self.observability.analytics_enabled = false,
+                _ => {}
+            }
+        }
+
+        // Opt-in: export prompt/reply content on trace spans (default off — a
+        // deliberate PII reversal). Token/cost export is unaffected by this flag.
+        if let Some(flag) = env.get("OPENHUMAN_AGENT_TRACING_CAPTURE_CONTENT") {
+            let normalized = flag.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => {
+                    self.observability.agent_tracing.capture_content = true
+                }
+                "0" | "false" | "no" | "off" => {
+                    self.observability.agent_tracing.capture_content = false
+                }
                 _ => {}
             }
         }

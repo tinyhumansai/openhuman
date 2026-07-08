@@ -102,6 +102,11 @@ pub struct OpenAiCompatibleProvider {
     /// Used for profile-aware context window resolution and diagnostics.
     pub(crate) local_provider_kind:
         Option<crate::openhuman::inference::local::profile::LocalProviderKind>,
+    /// Per-chunk stream inactivity window for the native streaming path
+    /// (`stream_native_chat`, #4269). Defaults to
+    /// [`compatible_timeout::stream_idle_timeout`]; tests inject a small value
+    /// via [`OpenAiCompatibleProvider::with_stream_idle_timeout`].
+    stream_idle_timeout: std::time::Duration,
 }
 
 /// How the provider expects the API key to be sent.
@@ -210,6 +215,7 @@ impl OpenAiCompatibleProvider {
             vision: true,
             ollama_num_ctx: None,
             local_provider_kind: None,
+            stream_idle_timeout: compatible_timeout::stream_idle_timeout(),
         }
     }
 
@@ -219,6 +225,15 @@ impl OpenAiCompatibleProvider {
     /// `tools` parameter.
     pub fn with_native_tool_calling(mut self, enabled: bool) -> Self {
         self.native_tool_calling = enabled;
+        self
+    }
+
+    /// Test-only: shrink the stream inactivity watchdog window (#4269) so
+    /// stalled-stream and wedged-consumer behaviour can be exercised without
+    /// waiting the production default (90s).
+    #[cfg(test)]
+    pub(crate) fn with_stream_idle_timeout(mut self, window: std::time::Duration) -> Self {
+        self.stream_idle_timeout = window;
         self
     }
 

@@ -153,17 +153,18 @@ fn grounding_contract_requires_exact_numeric_evidence() {
         .build(&ctx)
         .unwrap();
 
-    assert!(rendered.contains("Preserve numeric evidence exactly"));
-    assert!(rendered.contains(
-        "numbers, counts, sizes, dates, timestamps, durations, currencies, percentages, quotas, and ids"
-    ));
-    assert!(rendered.contains(
-        "copy the exact value from the observed tool result, user message, or cited memory"
-    ));
-    assert!(rendered.contains("Do not round, convert units, rewrite relative times"));
-    assert!(rendered.contains(
-        "If sources disagree, name the discrepancy instead of choosing a plausible value"
-    ));
+    // WORDING LOCK (deliberate, plan.md §3): pin ONE representative clause of
+    // the numeric-evidence grounding rule so a copy edit that silently drops
+    // the "preserve numbers exactly" guidance trips review — rather than five
+    // verbatim prose substrings that break on any harmless rewording. The
+    // *structural* guarantee (the grounding contract is appended on every build
+    // path) is covered behaviourally by
+    // grounding_contract_appended_to_every_build_path. Update this string only
+    // on a deliberate rewrite of GROUNDING_BODY.
+    assert!(
+        rendered.contains("Preserve numeric evidence exactly"),
+        "numeric-evidence grounding clause missing from the built prompt"
+    );
 }
 
 #[test]
@@ -204,13 +205,27 @@ fn identity_section_creates_missing_workspace_files() {
             "expected workspace file to be created: {file}"
         );
     }
+    // Seeded SOUL.md must equal the checked-in template verbatim (plan.md §3):
+    // compare against the embedded template rather than pinning brand-voice
+    // prose here — a missing file is seeded straight from
+    // default_workspace_file_content, which is this same `include_str!`.
     let soul = std::fs::read_to_string(workspace.join("SOUL.md")).unwrap();
-    assert!(
-        soul.starts_with("# OpenHuman"),
-        "SOUL.md should be seeded from src/openhuman/agent/prompts/SOUL.md"
+    assert_eq!(
+        soul,
+        include_str!("SOUL.md"),
+        "seeded SOUL.md must be the checked-in template verbatim"
     );
-    // #3604: the brand-voice guardrail must ship in the seeded soul so the
-    // agent defends the product constructively instead of validating FUD.
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[test]
+fn soul_template_carries_brand_voice_guardrail() {
+    // BRAND-VOICE LOCK (#3604, plan.md §3): a narrow, deliberately-labeled
+    // wording pin on the *source* SOUL.md template — the constructive-defense
+    // guardrail must survive edits so the agent defends the product instead of
+    // validating FUD. Update only on an intentional brand-voice change.
+    let soul = include_str!("SOUL.md");
     assert!(
         soul.contains("## When OpenHuman is criticized"),
         "SOUL.md must carry the brand-voice section (#3604)"
@@ -219,8 +234,6 @@ fn identity_section_creates_missing_workspace_files() {
         soul.contains("Don't validate FUD"),
         "SOUL.md brand-voice section must keep the do-not-validate-FUD directive (#3604)"
     );
-
-    let _ = std::fs::remove_dir_all(workspace);
 }
 
 #[test]

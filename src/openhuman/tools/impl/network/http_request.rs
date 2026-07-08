@@ -1,7 +1,7 @@
 use super::url_guard::{normalize_allowed_domains, validate_url_with_dns_check};
 use crate::openhuman::config::HttpRequestConfig;
-use crate::openhuman::security::SecurityPolicy;
-use crate::openhuman::tools::traits::{Tool, ToolResult};
+use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
 use base64::engine::Engine as _;
 use serde_json::json;
@@ -320,6 +320,17 @@ impl Tool for HttpRequestTool {
             },
             "required": ["url"]
         })
+    }
+
+    /// Rich HTTP semantics (methods, headers, request bodies, and x402 retry)
+    /// are the same Network-class risk as `curl`: read-only autonomy is blocked
+    /// in `execute`, and supervised/full tiers route through ApprovalGate.
+    fn external_effect_with_args(&self, _args: &serde_json::Value) -> bool {
+        self.security.gate_decision(CommandClass::Network) == GateDecision::Prompt
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Write
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {

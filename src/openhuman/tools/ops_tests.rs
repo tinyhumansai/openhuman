@@ -2,7 +2,7 @@ use super::*;
 use crate::openhuman::config::{BrowserConfig, Config, MemoryConfig};
 use crate::openhuman::credentials::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
 use crate::openhuman::security::AuditLogger;
-use crate::openhuman::workflows::types::ToolContent;
+use crate::openhuman::skills::types::ToolContent;
 use tempfile::TempDir;
 
 #[path = "../integrations/test_support.rs"]
@@ -437,6 +437,8 @@ fn all_tools_default_registry_contains_expected_baseline_surface() {
             "spawn_subagent",
             "spawn_async_subagent",
             "spawn_parallel_agents",
+            "ask_user_clarification",
+            "read_workspace_state",
             "wait",
             "wait_loop",
             "todo",
@@ -1506,7 +1508,8 @@ async fn all_tools_executes_stock_and_twilio_family_against_fake_backend() {
 /// Every acting tool gates on `can_act()` and returns its own read-only refusal
 /// string. Each of those must carry [`POLICY_BLOCKED_MARKER`] so the agent
 /// harness recognizes the block as a hard reject and halts on a verbatim repeat
-/// (see `agent::harness::tool_loop::hard_reject_kind`). This pins every tool's
+/// (see the marker detection in
+/// `tinyagents::middleware::RepeatedToolFailureMiddleware`). This pins every tool's
 /// literal to the marker const — drift between them fails here rather than
 /// silently letting the agent grind on a doomed call. Args are the minimum
 /// needed to reach the `can_act()` check in each tool.

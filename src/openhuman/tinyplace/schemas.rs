@@ -2013,9 +2013,10 @@ fn schema_signal_register_encryption_key() -> ControllerSchema {
     ControllerSchema {
         namespace: "tinyplace",
         function: "signal_register_encryption_key",
-        description: "Publish the user's Signal X25519 identity public key on their directory \
-             card (metadata.encryptionPublicKey). Makes the user discoverable for \
-             encrypted DMs. Reads the key from the local Signal store — no params needed.",
+        description: "Publish the user's Ed25519 identity key (the addressable cryptoId, where \
+             the Signal prekey bundle + mailbox live) on their directory card \
+             (metadata.encryptionPublicKey). Peers derive the X25519 DH key from the bundle \
+             themselves. Makes the user discoverable for encrypted DMs. No params needed.",
         inputs: vec![],
         outputs: vec![json_output(
             "result",

@@ -13,8 +13,10 @@ use async_trait::async_trait;
 
 use crate::openhuman::config::{Config, DEFAULT_CLOUD_LLM_MODEL};
 use crate::openhuman::inference::provider::{
-    create_chat_provider, provider_for_role, ChatMessage, ChatRequest, Provider, UsageInfo,
+    create_chat_model_with_model_id, provider_for_role, UsageInfo,
 };
+use tinyagents::harness::message::Message;
+use tinyagents::harness::model::{ChatModel, ModelRequest};
 
 /// One pair of prompt messages handed to the memory LLM backend.
 #[derive(Debug, Clone)]
@@ -62,17 +64,17 @@ pub trait ChatProvider: Send + Sync {
 }
 
 struct InferenceChatProvider {
-    inner: Box<dyn Provider>,
-    model: String,
+    inner: Arc<dyn ChatModel<()>>,
+    model_id: String,
     display: String,
 }
 
 impl InferenceChatProvider {
-    fn new(inner: Box<dyn Provider>, model: String) -> Self {
-        let display = format!("inference:{model}");
+    fn new(inner: Arc<dyn ChatModel<()>>, model_id: String) -> Self {
+        let display = format!("inference:{model_id}");
         Self {
             inner,
-            model,
+            model_id,
             display,
         }
     }
@@ -93,41 +95,42 @@ impl InferenceChatProvider {
             "[memory::chat] provider={} kind={} model={} sys_chars={} user_chars={}",
             self.display,
             prompt.kind,
-            self.model,
+            self.model_id,
             prompt.system.len(),
             prompt.user.len()
         );
 
-        let messages = vec![
-            ChatMessage::system(prompt.system.clone()),
-            ChatMessage::user(prompt.user.clone()),
-        ];
+        // One system + one user turn — the crate model interface's native shape.
+        // Temperature and the output cap ride the request (the shared model is
+        // reused across memory prompts of differing temperature/budget), and the
+        // adapter honors both per-request values.
+        let mut request = ModelRequest::new(vec![
+            Message::system(prompt.system.clone()),
+            Message::user(prompt.user.clone()),
+        ])
+        .with_temperature(prompt.temperature);
+        if let Some(cap) = prompt.max_tokens {
+            request = request.with_max_tokens(cap);
+        }
 
-        let request = ChatRequest {
-            messages: &messages,
-            tools: None,
-            stream: None,
-            max_tokens: prompt.max_tokens,
-        };
-
-        let response = self
-            .inner
-            .chat(request, &self.model, prompt.temperature)
-            .await?;
+        let response = self.inner.invoke(&(), request).await?;
 
         // Fail fast on a missing body rather than masking it as an empty
         // string: an empty summary would still be ingested (and, post-#3110,
         // counted against the run's real charge) as if it were valid output.
         // The caller's fallback path (`fallback_summary`) is the correct
         // recovery for a silent provider, and it only runs on `Err`.
-        let Some(text) = response.text else {
+        let text = response.text();
+        if text.is_empty() {
             anyhow::bail!(
                 "inference provider '{}' returned no text for {} summarise request",
                 self.display,
                 prompt.kind
             );
-        };
-        let usage = response.usage;
+        }
+        // Recover the full host usage (real token counts + backend-charged USD +
+        // context window) the adapter round-tripped through the response (G1).
+        let usage = crate::openhuman::tinyagents::model::usage_info_from_response(&response);
 
         log::debug!(
             "[memory::chat] provider={} kind={} response_chars={} usage_present={} input_tokens={} output_tokens={} charged_usd={}",
@@ -187,17 +190,21 @@ pub fn build_chat_runtime(config: &Config) -> Result<(Arc<dyn ChatProvider>, Str
     // per-caller `default_model` pre-routing is needed here. BYOK/local routes
     // carry their own model in the provider string.
     let resolved_provider = provider_for_role("summarization", config);
-    let (provider, model) = create_chat_provider("summarization", config)?;
+    // Temperature is applied per-prompt via `ModelRequest::with_temperature`
+    // (each memory `ChatPrompt` carries its own), so the construction temperature
+    // is just a default the per-call value overrides.
+    let (model, model_id) =
+        create_chat_model_with_model_id("summarization", config, config.default_temperature)?;
 
     log::debug!(
         "[memory::chat] built provider route={} model={}",
         resolved_provider,
-        model
+        model_id
     );
 
     Ok((
-        Arc::new(InferenceChatProvider::new(provider, model.clone())),
-        model,
+        Arc::new(InferenceChatProvider::new(model, model_id.clone())),
+        model_id,
     ))
 }
 

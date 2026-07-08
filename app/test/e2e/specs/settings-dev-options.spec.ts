@@ -35,7 +35,10 @@ describe('Settings - Developer Options', () => {
     this.timeout(90_000);
     await navigateViaHash('/settings/webhooks-debug');
 
-    await waitForText('Webhooks Debug', 15_000);
+    // Panel heading comes from the route registry titleKey
+    // (settings.developerMenu.webhooks.title = "Webhooks"); the old
+    // "Webhooks Debug" (webhooks.debugTitle) is no longer rendered.
+    await waitForText('Webhooks', 15_000);
     await waitForText('Registered Webhooks', 15_000);
     await waitForText('Captured Requests', 15_000);
     expect(await textExists('Refresh')).toBe(true);
@@ -43,9 +46,11 @@ describe('Settings - Developer Options', () => {
 
   it('mounts Memory Debug panel (13.4.3)', async function () {
     this.timeout(90_000);
+    // /settings/memory-debug now redirects to /brain?tab=memory-debug, where
+    // the relocated MemoryDebugPanel renders (no "Memory Debug" heading of its
+    // own). Assert on the section content that still renders there.
     await navigateViaHash('/settings/memory-debug');
 
-    await waitForText('Memory Debug', 15_000);
     await waitForText('Documents', 15_000);
     await waitForText('Namespaces', 15_000);
     await waitForText('Query & Recall', 15_000);
@@ -56,7 +61,9 @@ describe('Settings - Developer Options', () => {
     this.timeout(90_000);
     await navigateViaHash('/settings/autocomplete-debug');
 
-    await waitForText('Autocomplete Debug', 15_000);
+    // Panel heading is settings.developerMenu.autocomplete.title = "Autocomplete";
+    // the old "Autocomplete Debug" (autocomplete.debugTitle) is no longer used.
+    await waitForText('Autocomplete', 15_000);
     await waitForText('Live Logs', 15_000);
 
     const logsFound = (await textExists('No logs yet.')) || (await textExists('[runtime]'));

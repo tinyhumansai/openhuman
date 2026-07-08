@@ -317,6 +317,8 @@ fn text_response(text: &str) -> ChatResponse {
             output_tokens: 7,
             context_window: 16_000,
             cached_input_tokens: 3,
+            cache_creation_tokens: 0,
+            reasoning_tokens: 0,
             charged_amount_usd: 0.0001,
         }),
         reasoning_content: None,
@@ -337,6 +339,8 @@ fn native_tool_response(name: &str, arguments: serde_json::Value) -> ChatRespons
             output_tokens: 5,
             context_window: 16_000,
             cached_input_tokens: 2,
+            cache_creation_tokens: 0,
+            reasoning_tokens: 0,
             charged_amount_usd: 0.0002,
         }),
         reasoning_content: Some("private scratchpad".to_string()),
@@ -494,9 +498,19 @@ async fn bus_turn_prompt_mode_covers_invisible_cli_only_and_unknown_tools() {
         .map(|msg| msg.content)
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(invisible_joined.contains("Unknown tool: hidden"));
+    // Unknown-tool recovery now flows through the tinyagents
+    // `UnknownToolPolicy::ReturnToolError` path (issue #4249), which emits
+    // `unknown tool `<name>` (arguments: …)` instead of the legacy
+    // `Unknown tool: <name>` wording.
+    assert!(
+        invisible_joined.contains("unknown tool") && invisible_joined.contains("hidden"),
+        "invisible tool call should surface a crate unknown-tool result naming `hidden`"
+    );
     assert!(joined.contains("only available via explicit CLI/RPC invocation"));
-    assert!(joined.contains("Unknown tool: missing"));
+    assert!(
+        joined.contains("unknown tool") && joined.contains("missing"),
+        "unknown tool call should surface a crate unknown-tool result naming `missing`"
+    );
 }
 
 #[tokio::test]

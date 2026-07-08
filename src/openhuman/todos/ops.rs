@@ -153,7 +153,12 @@ fn save_cards(
             };
             normalise_board(&mut board);
             let store = TaskBoardStore::new(workspace_dir.clone());
-            Ok(store.put(board)?.cards)
+            let saved = store.put(board)?.cards;
+            // C2b shadow (adapter-first): mirror the persisted board into the
+            // vendored crate `graph.todos` store. Fire-and-forget, log-only —
+            // never affects this authoritative write.
+            super::graph_shadow::spawn_mirror(location, &saved);
+            Ok(saved)
         }
         BoardLocation::Scratch => {
             let mut board = TaskBoard {
@@ -541,6 +546,55 @@ pub fn claim_card(
 
     let _scratch_guard = maybe_scratch_lock(location);
     let mut cards = load_cards(location)?;
+    // Snapshot the pre-claim board so the C2b shadow can replay the crate CAS
+    // against the same state the legacy claim saw (see below).
+    let pre_cards = cards.clone();
+
+    // Compute the authoritative outcome without early-returning, so the shadow
+    // observes the same ok/err verdict (including the not-found/wrong-status
+    // rejection paths the dispatcher relies on).
+    let legacy = apply_claim(&mut cards, card_id, expected, target.clone());
+    let legacy_ok = legacy.is_ok();
+
+    let result = match legacy {
+        Ok(claimed_card) => {
+            let saved = save_cards(location, cards)?;
+            emit_progress(location, &saved);
+            tracing::info!(
+                card_id = %card_id,
+                new_status = %claimed_card.status.as_str(),
+                "[todos][ops] claim_card ok"
+            );
+            Ok(claimed_card)
+        }
+        Err(e) => Err(e),
+    };
+
+    // Shadow the CAS onto the vendored crate `graph.todos` store (adapter-first,
+    // log-only). The legacy claim above stays authoritative.
+    super::graph_shadow::spawn_shadow_claim(
+        location,
+        pre_cards,
+        card_id,
+        expected.to_vec(),
+        target,
+        legacy_ok,
+    );
+
+    result
+}
+
+/// Applies a claim to an in-memory card set: find `card_id`, verify its status
+/// is in `expected`, transition it to `target`, and enforce the single-
+/// `InProgress` invariant. Returns the claimed card (cloned) on success. Does
+/// **not** persist — the caller saves the mutated `cards`. Extracted so
+/// [`claim_card`] can capture a single ok/err verdict for its crate shadow.
+fn apply_claim(
+    cards: &mut [TaskBoardCard],
+    card_id: &str,
+    expected: &[TaskCardStatus],
+    target: TaskCardStatus,
+) -> Result<TaskBoardCard, String> {
     let card = cards
         .iter_mut()
         .find(|c| c.id == card_id)
@@ -563,15 +617,7 @@ pub fn claim_card(
     card.updated_at = Utc::now().to_rfc3339();
     let claimed_card = card.clone();
 
-    enforce_single_in_progress(&cards)?;
-    let cards = save_cards(location, cards)?;
-    emit_progress(location, &cards);
-
-    tracing::info!(
-        card_id = %card_id,
-        new_status = %claimed_card.status.as_str(),
-        "[todos][ops] claim_card ok"
-    );
+    enforce_single_in_progress(cards)?;
     Ok(claimed_card)
 }
 

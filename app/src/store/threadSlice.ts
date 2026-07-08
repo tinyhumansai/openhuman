@@ -112,11 +112,21 @@ export const deleteThread = createAsyncThunk(
 
 export const loadThreadMessages = createAsyncThunk(
   'thread/loadThreadMessages',
-  async (threadId: string, { rejectWithValue }) => {
+  async (threadId: string, { dispatch, rejectWithValue }) => {
     try {
       const response = await threadApi.getThreadMessages(threadId);
       return { threadId, messages: response.messages };
     } catch (error) {
+      // A cached/seeded thread id (e.g. the Flows copilot's persisted
+      // `workflowCopilotThreads.ts` mapping) can point at a thread that was
+      // since deleted/purged. Evict it the same way the write thunks below
+      // do, so callers see a clean rejection instead of permanently retrying
+      // a dead thread — `useWorkflowBuilderChat`'s rehydrate effect uses this
+      // to null out its `threadId` and let the next send start a fresh one.
+      if (isThreadNotFoundCoreRpcError(error, threadId)) {
+        await evictStaleThread(threadId, dispatch);
+        return rejectWithValue(THREAD_NOT_FOUND_MESSAGE);
+      }
       return rejectWithValue(error instanceof Error ? error.message : 'Failed to load messages');
     }
   }
@@ -439,9 +449,26 @@ const threadSlice = createSlice({
       })
       .addCase(loadThreadMessages.fulfilled, (state, action) => {
         state.isLoadingMessages = false;
-        state.messagesByThreadId[action.payload.threadId] = action.payload.messages;
-        if (action.payload.threadId === state.selectedThreadId) {
-          state.messages = action.payload.messages;
+        const { threadId, messages: fetched } = action.payload;
+        const existing = state.messagesByThreadId[threadId] ?? [];
+        const fetchedIds = new Set(fetched.map(m => m.id));
+        // A message present locally but missing from this fetch already
+        // persisted server-side (cache entries only ever land via a
+        // `.fulfilled` append) — it just hasn't shown up in this particular
+        // GET yet (e.g. a `loadThreadMessages` rehydrate racing a concurrent
+        // `addMessageLocal`/`addInferenceResponse` append on the same
+        // thread). Merge it back in instead of wholesale-replacing, or the
+        // fetch would silently wipe the newer message out of the visible
+        // transcript. See `useWorkflowBuilderChat`'s copilot-thread rehydrate
+        // effect, which can run concurrently with an auto-sent turn.
+        const localOnly = existing.filter(m => !fetchedIds.has(m.id));
+        const messages =
+          localOnly.length > 0
+            ? [...fetched, ...localOnly].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+            : fetched;
+        state.messagesByThreadId[threadId] = messages;
+        if (threadId === state.selectedThreadId) {
+          state.messages = messages;
         }
       })
       .addCase(loadThreadMessages.rejected, (state, action) => {

@@ -99,9 +99,9 @@ The `initialize` response includes:
 
 | URI | Content |
 | --- | --- |
-| `openhuman://prompts/identity` | `IDENTITY.md` — core agent identity |
-| `openhuman://prompts/soul` | `SOUL.md` — core agent personality and values |
-| `openhuman://prompts/user` | `USER.md` — user-profile context |
+| `openhuman://prompts/identity` | `IDENTITY.md` (core agent identity) |
+| `openhuman://prompts/soul` | `SOUL.md` (core agent personality and values) |
+| `openhuman://prompts/user` | `USER.md` (user-profile context) |
 | `openhuman://prompts/agents/<id>` | `<id>/prompt.md` for each of the 18 built-in subagents |
 
 All resources have `mimeType: "text/markdown"`.
@@ -114,7 +114,7 @@ without a matching catalog entry fails CI.
 
 ### Resource templates
 
-The catalog is fully static — every URI is concrete, none are templated — so
+The catalog is fully static (every URI is concrete, none are templated), so
 `resources/templates/list` always returns an empty `resourceTemplates` array.
 The handler exists for MCP-spec compliance: clients that probe
 `resources/templates/list` after seeing the `resources` capability get a

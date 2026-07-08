@@ -1,4 +1,5 @@
 use crate::openhuman::inference::provider::traits::ChatResponse as ProviderChatResponse;
+use crate::openhuman::inference::provider::ProviderDelta;
 
 use super::compatible_dump::dump_response_if_enabled;
 use super::compatible_repeat::{StreamRepeatDetector, STREAM_REPEAT_THRESHOLD};
@@ -259,7 +260,37 @@ impl OpenAiCompatibleProvider {
         let mut sse_chunks_parsed: usize = 0;
         let mut body_bytes_received: usize = 0;
 
-        'stream: while let Some(item) = bytes_stream.next().await {
+        // #4269: bound each SSE read with a per-chunk inactivity watchdog. The
+        // window RESETS on every received chunk, so a legitimately long response
+        // that keeps emitting tokens is never cut — only a stream that goes
+        // silent for the whole window (an upstream that flushed 200 then stalled
+        // / half-closed the body) trips it. Without this the read parks on
+        // `next().await` until the blunt whole-request timeout fires — which
+        // operators are told to raise up to 3600s for long research turns
+        // (#3856) — presenting as the indefinite RESPONSE-phase hang in #4269.
+        // The bail classifies as retryable, so `ReliableProvider` replays it.
+        let idle_window = self.stream_idle_timeout;
+        'stream: loop {
+            let item = match tokio::time::timeout(idle_window, bytes_stream.next()).await {
+                Ok(Some(item)) => item,
+                Ok(None) => break 'stream,
+                Err(_elapsed) => {
+                    let idle_secs = idle_window.as_secs();
+                    log::warn!(
+                        "[stream] {} watchdog fired — no SSE data for {}s (elapsed_ms={} sse_chunks={} body_bytes={}); aborting stalled stream for retry",
+                        self.name,
+                        idle_secs,
+                        stream_started_at.elapsed().as_millis(),
+                        sse_chunks_parsed,
+                        body_bytes_received,
+                    );
+                    anyhow::bail!(
+                        "{} streaming watchdog: no response data for {}s — aborting stalled stream for retry",
+                        self.name,
+                        idle_secs,
+                    );
+                }
+            };
             let bytes = item?;
             body_bytes_received += bytes.len();
             buffer.push_str(&String::from_utf8_lossy(&bytes));
@@ -295,7 +326,13 @@ impl OpenAiCompatibleProvider {
                     };
                     let data = data.trim();
                     if data == "[DONE]" {
-                        continue;
+                        // `[DONE]` is the terminal SSE sentinel — the response is
+                        // complete. Stop reading immediately rather than looping
+                        // back to another watchdog-armed read: a provider that
+                        // sends `[DONE]` but lingers the socket would otherwise
+                        // trip the inactivity watchdog and fail a finished
+                        // response as a retryable stall (#4269 watchdog review).
+                        break 'stream;
                     }
 
                     let chunk: StreamChunkResponse = match serde_json::from_str(data) {
@@ -325,11 +362,13 @@ impl OpenAiCompatibleProvider {
                         if let Some(content) = choice.delta.content.as_ref() {
                             if !content.is_empty() {
                                 text_accum.push_str(content);
-                                let _ = delta_tx
-                                    .send(crate::openhuman::inference::provider::ProviderDelta::TextDelta {
+                                self.forward_delta(
+                                    delta_tx,
+                                    ProviderDelta::TextDelta {
                                         delta: content.clone(),
-                                    })
-                                    .await;
+                                    },
+                                )
+                                .await?;
                                 if repeat_detector.observe(content) {
                                     log::warn!(
                                         "[stream] {} degenerate repetition detected (≥{} identical lines) — aborting generation, truncating (text_chars={})",
@@ -345,13 +384,13 @@ impl OpenAiCompatibleProvider {
                         if let Some(reasoning) = choice.delta.reasoning_content.as_ref() {
                             if !reasoning.is_empty() {
                                 thinking_accum.push_str(reasoning);
-                                let _ = delta_tx
-                                    .send(
-                                        crate::openhuman::inference::provider::ProviderDelta::ThinkingDelta {
-                                            delta: reasoning.clone(),
-                                        },
-                                    )
-                                    .await;
+                                self.forward_delta(
+                                    delta_tx,
+                                    ProviderDelta::ThinkingDelta {
+                                        delta: reasoning.clone(),
+                                    },
+                                )
+                                .await?;
                             }
                         }
                         // Tool-call fragments.
@@ -442,12 +481,14 @@ impl OpenAiCompatibleProvider {
                                             id,
                                             name,
                                         );
-                                        let _ = delta_tx
-                                            .send(crate::openhuman::inference::provider::ProviderDelta::ToolCallStart {
+                                        self.forward_delta(
+                                            delta_tx,
+                                            ProviderDelta::ToolCallStart {
                                                 call_id: id.clone(),
                                                 tool_name: name.clone(),
-                                            })
-                                            .await;
+                                            },
+                                        )
+                                        .await?;
                                         entry.emitted_start = true;
                                         if !entry.arguments.is_empty() {
                                             log::debug!(
@@ -457,12 +498,14 @@ impl OpenAiCompatibleProvider {
                                                 entry.arguments.len(),
                                             );
                                             let buffered = entry.arguments.clone();
-                                            let _ = delta_tx
-                                                .send(crate::openhuman::inference::provider::ProviderDelta::ToolCallArgsDelta {
+                                            self.forward_delta(
+                                                delta_tx,
+                                                ProviderDelta::ToolCallArgsDelta {
                                                     call_id: id.clone(),
                                                     delta: buffered,
-                                                })
-                                                .await;
+                                                },
+                                            )
+                                            .await?;
                                             entry.emitted_chars = entry.arguments.len();
                                         }
                                     }
@@ -470,12 +513,14 @@ impl OpenAiCompatibleProvider {
                                     if let Some(ref id) = entry.id {
                                         let fresh =
                                             entry.arguments[entry.emitted_chars..].to_string();
-                                        let _ = delta_tx
-                                            .send(crate::openhuman::inference::provider::ProviderDelta::ToolCallArgsDelta {
+                                        self.forward_delta(
+                                            delta_tx,
+                                            ProviderDelta::ToolCallArgsDelta {
                                                 call_id: id.clone(),
                                                 delta: fresh,
-                                            })
-                                            .await;
+                                            },
+                                        )
+                                        .await?;
                                         entry.emitted_chars = entry.arguments.len();
                                     }
                                 }
@@ -623,6 +668,36 @@ impl OpenAiCompatibleProvider {
         }
 
         Self::parse_native_response(api_resp, &self.name)
+    }
+
+    /// Forward a streamed [`ProviderDelta`] to the caller under the same
+    /// inactivity watchdog as the SSE read (#4269). A dropped receiver is a
+    /// benign stop (the consumer is gone — `Ok`, and the loop keeps aggregating
+    /// as before); a consumer that backpressures for the whole idle window is a
+    /// wedge (e.g. a stalled UI progress bridge), which trips the watchdog so a
+    /// turn can't hang on a full delta channel. The bail classifies as retryable.
+    async fn forward_delta(
+        &self,
+        delta_tx: &tokio::sync::mpsc::Sender<ProviderDelta>,
+        delta: ProviderDelta,
+    ) -> anyhow::Result<()> {
+        match tokio::time::timeout(self.stream_idle_timeout, delta_tx.send(delta)).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(_)) => Ok(()), // receiver dropped — consumer gone, not a stall
+            Err(_elapsed) => {
+                let idle_secs = self.stream_idle_timeout.as_secs();
+                log::warn!(
+                    "[stream] {} watchdog fired — delta channel backpressured for {}s; aborting stalled stream for retry",
+                    self.name,
+                    idle_secs,
+                );
+                anyhow::bail!(
+                    "{} streaming watchdog: delta channel stalled for {}s — aborting stalled stream for retry",
+                    self.name,
+                    idle_secs,
+                )
+            }
+        }
     }
 }
 

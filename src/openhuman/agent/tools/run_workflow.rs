@@ -34,8 +34,8 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::openhuman::skill_runtime::{await_run_outcome, spawn_workflow_run_background};
+use crate::openhuman::skills::schemas::resolve_workspace_dir;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
-use crate::openhuman::workflows::schemas::resolve_workspace_dir;
 
 /// Tool name surfaced to the LLM's function-calling schema.
 pub const RUN_WORKFLOW_TOOL_NAME: &str = "run_workflow";
@@ -151,7 +151,7 @@ fn reentrancy_key(workflow_id: &str, inputs: &Option<serde_json::Value>) -> Stri
         match v {
             serde_json::Value::Object(map) => {
                 let mut sorted: Vec<_> = map.iter().collect();
-                sorted.sort_by_key(|(k, _)| k.clone());
+                sorted.sort_by(|(left, _), (right, _)| left.cmp(right));
                 serde_json::Value::Object(
                     sorted
                         .into_iter()
@@ -178,7 +178,7 @@ fn outcome_to_result(
     run_id: &str,
     workflow_id: &str,
     log_path: &std::path::Path,
-    outcome: Option<crate::openhuman::workflows::run_log::RunOutcome>,
+    outcome: Option<crate::openhuman::skills::run_log::RunOutcome>,
 ) -> ToolResult {
     match outcome {
         Some(o) => ToolResult::success(
@@ -448,7 +448,7 @@ impl Tool for AwaitWorkflowTool {
 
         let workspace = resolve_workspace_dir().await;
         let log_path =
-            match crate::openhuman::workflows::run_log::find_run_log_path(&workspace, &run_id) {
+            match crate::openhuman::skills::run_log::find_run_log_path(&workspace, &run_id) {
                 Some(p) => p,
                 None => {
                     return Ok(ToolResult::error(format!(

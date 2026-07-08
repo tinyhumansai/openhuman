@@ -44,9 +44,30 @@ pub struct ReflectionHook {
     config: LearningConfig,
     full_config: Arc<Config>,
     memory: Arc<dyn Memory>,
-    provider: Option<Arc<dyn crate::openhuman::inference::provider::Provider>>,
+    provider: Option<Arc<dyn tinyagents::harness::model::ChatModel<()>>>,
     /// Per-session reflection counts for throttling. Key is session_id (or "__global__").
     session_counts: Mutex<HashMap<String, usize>>,
+}
+
+/// Run one cloud reflection call through the crate model interface.
+///
+/// The reflection model is built with the `hint:reasoning` route + 0.3
+/// temperature already baked in (see the session builder), so this is a single
+/// user turn with no per-request overrides — the [`ChatModel`] equivalent of the
+/// former `simple_chat(prompt, "hint:reasoning", 0.3)`.
+async fn invoke_cloud_reflection(
+    provider: &Arc<dyn tinyagents::harness::model::ChatModel<()>>,
+    prompt: &str,
+) -> anyhow::Result<String> {
+    use tinyagents::harness::message::Message;
+    use tinyagents::harness::model::{ChatModel, ModelRequest};
+    Ok(provider
+        .invoke(
+            &(),
+            ModelRequest::new(vec![Message::user(prompt.to_string())]),
+        )
+        .await?
+        .text())
 }
 
 impl ReflectionHook {
@@ -54,7 +75,7 @@ impl ReflectionHook {
         config: LearningConfig,
         full_config: Arc<Config>,
         memory: Arc<dyn Memory>,
-        provider: Option<Arc<dyn crate::openhuman::inference::provider::Provider>>,
+        provider: Option<Arc<dyn tinyagents::harness::model::ChatModel<()>>>,
     ) -> Self {
         Self {
             config,
@@ -171,8 +192,7 @@ impl ReflectionHook {
                             "[learning::reflection] local_ai.usage.learning_reflection not enabled — \
                              falling back to cloud provider"
                         );
-                        return provider
-                            .simple_chat(prompt, "hint:reasoning", 0.3)
+                        return invoke_cloud_reflection(provider, prompt)
                             .await
                             .map_err(|e| anyhow::anyhow!("cloud reflection fallback failed: {e}"));
                     }
@@ -201,7 +221,7 @@ impl ReflectionHook {
                 let provider = self.provider.as_ref().ok_or_else(|| {
                     anyhow::anyhow!("no cloud provider configured for reflection")
                 })?;
-                provider.simple_chat(prompt, "hint:reasoning", 0.3).await
+                invoke_cloud_reflection(provider, prompt).await
             }
         }
     }

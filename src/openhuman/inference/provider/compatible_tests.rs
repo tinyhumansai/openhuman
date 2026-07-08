@@ -4631,3 +4631,221 @@ async fn codex_oauth_responses_preserves_concrete_model() {
         "a concrete pinned model must not be remapped"
     );
 }
+
+// ---------------------------------------------------------------------------
+// #4269: SSE inactivity watchdog on stream_native_chat
+// ---------------------------------------------------------------------------
+
+/// Minimal streaming request for the watchdog tests.
+fn watchdog_request() -> NativeChatRequest {
+    NativeChatRequest {
+        model: "watchdog-model".to_string(),
+        messages: vec![NativeMessage {
+            role: "user".to_string(),
+            content: Some("hi".into()),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        temperature: Some(0.7),
+        stream: Some(true),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: Some(super::compatible_types::OpenAiStreamOptions {
+            include_usage: true,
+        }),
+        options: None,
+        frequency_penalty: None,
+        max_tokens: None,
+    }
+}
+
+/// Raw TCP server: writes a 200 SSE response head, plays `script` (each entry:
+/// sleep `delay`, then write `bytes`), then either closes the socket
+/// (`close_after`) or holds it open for `hold_open`. wiremock can't stall
+/// mid-body, so this reproduces the #4269 upstream-stall shape deterministically.
+async fn spawn_scripted_sse(
+    script: Vec<(std::time::Duration, &'static str)>,
+    close_after: bool,
+    hold_open: std::time::Duration,
+) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        if let Ok((mut sock, _)) = listener.accept().await {
+            // Best-effort drain of the request head so the client's send() completes.
+            let mut buf = [0u8; 2048];
+            let _ = sock.read(&mut buf).await;
+            let head =
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n";
+            if sock.write_all(head.as_bytes()).await.is_err() {
+                return;
+            }
+            let _ = sock.flush().await;
+            for (delay, bytes) in script {
+                tokio::time::sleep(delay).await;
+                if sock.write_all(bytes.as_bytes()).await.is_err() {
+                    return;
+                }
+                let _ = sock.flush().await;
+            }
+            if close_after {
+                return;
+            }
+            tokio::time::sleep(hold_open).await;
+        }
+    });
+    format!("http://{addr}")
+}
+
+#[tokio::test]
+async fn stream_watchdog_trips_on_stalled_read() {
+    // Upstream flushes 200 SSE headers then goes silent and holds the socket —
+    // the #4269 shape. With a short idle window the read watchdog must abort
+    // with a retryable error rather than parking on next().await until the
+    // whole-request timeout (which #3856 tells operators to raise up to 1h).
+    let url = spawn_scripted_sse(vec![], false, std::time::Duration::from_secs(30)).await;
+    let provider = OpenAiCompatibleProvider::new("stalltest", &url, None, AuthStyle::None)
+        .with_stream_idle_timeout(std::time::Duration::from_millis(400));
+    let request = watchdog_request();
+    let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(8);
+    let err = provider
+        .stream_native_chat(None, &request, &delta_tx, 0)
+        .await
+        .expect_err("a stalled stream must trip the read watchdog");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("streaming watchdog") && msg.contains("no response data"),
+        "unexpected error: {msg}"
+    );
+    // Must classify as retryable so ReliableProvider replays the turn.
+    assert!(
+        !crate::openhuman::inference::provider::reliable::is_non_retryable(&err),
+        "watchdog stall must be retryable, got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn stream_watchdog_resets_on_each_chunk() {
+    // Chunks arrive every 150ms — each well under the 500ms idle window — so the
+    // watchdog resets on every chunk and never fires: a legitimately long
+    // response that keeps emitting tokens is not cut (the #4269 no-regression
+    // guarantee).
+    let chunk = "data: {\"choices\":[{\"delta\":{\"content\":\"tok \"}}]}\n\n";
+    let script = vec![
+        (std::time::Duration::from_millis(150), chunk),
+        (std::time::Duration::from_millis(150), chunk),
+        (std::time::Duration::from_millis(150), chunk),
+        (std::time::Duration::from_millis(150), "data: [DONE]\n\n"),
+    ];
+    let url = spawn_scripted_sse(script, true, std::time::Duration::from_secs(0)).await;
+    let provider = OpenAiCompatibleProvider::new("resettest", &url, None, AuthStyle::None)
+        .with_stream_idle_timeout(std::time::Duration::from_millis(500));
+    let request = watchdog_request();
+    let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(64);
+    let resp = provider
+        .stream_native_chat(None, &request, &delta_tx, 0)
+        .await
+        .expect("chunks within the idle window must not trip the watchdog");
+    let text = resp.text.as_deref().unwrap_or_default();
+    assert!(
+        text.contains("tok tok tok"),
+        "all three tokens must stream to completion (watchdog must not fire): {text:?}"
+    );
+}
+
+#[tokio::test]
+async fn stream_watchdog_trips_on_wedged_delta_consumer() {
+    // The full SSE body arrives at once, but the delta channel is capacity-1 and
+    // never drained (receiver held, not polled). The send-side watchdog must
+    // trip rather than block the stream forever on a full delta channel — the
+    // backpressure-wedge path (#4269).
+    let body = "data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\n\
+                data: {\"choices\":[{\"delta\":{\"content\":\"b\"}}]}\n\n\
+                data: {\"choices\":[{\"delta\":{\"content\":\"c\"}}]}\n\n\
+                data: [DONE]\n\n";
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+        .mount(&mock_server)
+        .await;
+    let provider =
+        OpenAiCompatibleProvider::new("wedgetest", &mock_server.uri(), None, AuthStyle::None)
+            .with_stream_idle_timeout(std::time::Duration::from_millis(300));
+    let request = watchdog_request();
+    // Capacity 1, receiver kept alive but never polled -> the second send wedges.
+    let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(1);
+    let err = provider
+        .stream_native_chat(None, &request, &delta_tx, 0)
+        .await
+        .expect_err("a wedged delta consumer must trip the send-side watchdog");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("streaming watchdog") && msg.contains("delta channel"),
+        "unexpected error: {msg}"
+    );
+    assert!(
+        !crate::openhuman::inference::provider::reliable::is_non_retryable(&err),
+        "watchdog wedge must be retryable, got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn stream_watchdog_tolerates_dropped_delta_receiver() {
+    // A dropped receiver is benign, not a stall: forward_delta returns Ok and the
+    // loop keeps aggregating, so the response still completes with no watchdog error.
+    let body = "data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\n\
+                data: {\"choices\":[{\"delta\":{\"content\":\"y\"}}]}\n\n\
+                data: [DONE]\n\n";
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+        .mount(&mock_server)
+        .await;
+    let provider =
+        OpenAiCompatibleProvider::new("droptest", &mock_server.uri(), None, AuthStyle::None)
+            .with_stream_idle_timeout(std::time::Duration::from_millis(300));
+    let request = watchdog_request();
+    let (delta_tx, delta_rx) = tokio::sync::mpsc::channel(8);
+    drop(delta_rx); // consumer gone before streaming starts
+    let resp = provider
+        .stream_native_chat(None, &request, &delta_tx, 0)
+        .await
+        .expect("a dropped delta receiver must not fail the stream");
+    assert_eq!(resp.text.as_deref(), Some("xy"));
+}
+
+#[tokio::test]
+async fn stream_stops_on_done_even_if_socket_lingers() {
+    // A provider that sends `[DONE]` then holds the socket open must finalize the
+    // (complete) response immediately — the watchdog must NOT re-arm and fail it
+    // as a stall. Regression for the watchdog + terminal-sentinel interaction
+    // (CodeRabbit review, PR #4393). With the pre-fix `continue`, this stream
+    // would trip the 300ms idle watchdog instead of completing.
+    let script = vec![
+        (
+            std::time::Duration::from_millis(0),
+            "data: {\"choices\":[{\"delta\":{\"content\":\"done-content\"}}]}\n\n",
+        ),
+        (std::time::Duration::from_millis(0), "data: [DONE]\n\n"),
+    ];
+    // close_after = false: hold the socket open for 30s AFTER [DONE].
+    let url = spawn_scripted_sse(script, false, std::time::Duration::from_secs(30)).await;
+    let provider = OpenAiCompatibleProvider::new("donetest", &url, None, AuthStyle::None)
+        .with_stream_idle_timeout(std::time::Duration::from_millis(300));
+    let request = watchdog_request();
+    let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(8);
+    // Must return well under the 30s socket hold (and without a stall error).
+    let resp = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        provider.stream_native_chat(None, &request, &delta_tx, 0),
+    )
+    .await
+    .expect("must complete on [DONE], not wait for the socket to close")
+    .expect("[DONE] must finalize the response, not trip the watchdog");
+    assert_eq!(resp.text.as_deref(), Some("done-content"));
+}

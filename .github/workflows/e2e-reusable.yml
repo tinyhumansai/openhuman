@@ -64,8 +64,16 @@ on:
         default: mega-flow
 
 permissions:
+  # `actions: read` lets scripts/ci-cancel-aware.sh poll the run status so
+  # cancelled builds inside container jobs stop themselves (docker exec
+  # swallows the runner's signals).
+  actions: read
   contents: read
   packages: read
+
+env:
+  # Consumed by scripts/ci-cancel-aware.sh's cancellation watchdog.
+  GH_TOKEN: ${{ github.token }}
 
 jobs:
   # Selected-spec gate for PR/push (full=false). The full-suite path lives in
@@ -462,7 +470,15 @@ jobs:
         run: |
           rustup default 1.93.0 || true
           which cargo
+          # `cargo --version` in the repo root materializes the
+          # rust-toolchain.toml override toolchain (1.96.1), which supersedes the
+          # dtolnay-installed 1.93.0. The action's `targets:` input added
+          # x86_64-apple-darwin to 1.93.0, NOT the override toolchain the CEF
+          # universal-helper build actually uses — so add it to the active
+          # (override) toolchain here or the cross-compile fails with E0463
+          # "can't find crate for `core`".
           cargo --version
+          rustup target add x86_64-apple-darwin
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -661,7 +677,15 @@ jobs:
         run: |
           rustup default 1.93.0 || true
           which cargo
+          # `cargo --version` in the repo root materializes the
+          # rust-toolchain.toml override toolchain (1.96.1), which supersedes the
+          # dtolnay-installed 1.93.0. The action's `targets:` input added
+          # x86_64-apple-darwin to 1.93.0, NOT the override toolchain the CEF
+          # universal-helper build actually uses — so add it to the active
+          # (override) toolchain here or the cross-compile fails with E0463
+          # "can't find crate for `core`".
           cargo --version
+          rustup target add x86_64-apple-darwin
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -694,13 +718,16 @@ jobs:
 
       - name: Package build artifact
         run: |
-          # The macOS .app is self-contained (frontend assets + CEF Frameworks +
-          # the OpenHuman Helper.app are embedded by tauri-bundler), so the .app
-          # bundle alone is everything a shard needs. tar preserves the bundle's
-          # internal symlinks + executable bits; each shard re-signs after
-          # extraction (adhoc codesign is required on every runner regardless).
-          tar -czf e2e-build-macos.tar.gz \
-            -C app/src-tauri/target/debug/bundle/macos OpenHuman.app
+          # Stage the same runner-visible layout Linux/Windows use. The .app is
+          # self-contained for runtime, but e2e-run-session.sh also validates the
+          # built frontend bundle before launching so shards need app/dist too.
+          STAGE="$(mktemp -d)"
+          mkdir -p "$STAGE/repo/app/src-tauri/target/debug/bundle/macos"
+          mkdir -p "$STAGE/repo/app/dist"
+          cp -a app/src-tauri/target/debug/bundle/macos/OpenHuman.app \
+            "$STAGE/repo/app/src-tauri/target/debug/bundle/macos/"
+          cp -a app/dist/. "$STAGE/repo/app/dist/"
+          tar -czf e2e-build-macos.tar.gz -C "$STAGE" repo
           ls -lh e2e-build-macos.tar.gz
 
       - name: Upload build artifact
@@ -770,11 +797,15 @@ jobs:
 
       - name: Restore .app bundle into workspace
         run: |
+          tar -xzf e2e-build-macos.tar.gz
           mkdir -p app/src-tauri/target/debug/bundle/macos
-          tar -xzf e2e-build-macos.tar.gz \
-            -C app/src-tauri/target/debug/bundle/macos
-          rm -f e2e-build-macos.tar.gz
+          mkdir -p app/dist
+          cp -a repo/app/src-tauri/target/debug/bundle/macos/OpenHuman.app \
+            app/src-tauri/target/debug/bundle/macos/
+          cp -a repo/app/dist/. app/dist/
+          rm -rf repo e2e-build-macos.tar.gz
           ls -la app/src-tauri/target/debug/bundle/macos/OpenHuman.app | head
+          ls -la app/dist | head
 
       # macOS rejects dynamic-framework loads from unsigned bundles — adhoc
       # signing satisfies the loader without a real developer-ID cert. A

@@ -9,8 +9,12 @@
 use crate::openhuman::agent::harness::definition::{
     AgentDefinition, AgentDefinitionRegistry, ToolScope,
 };
-use crate::openhuman::composio::fetch_connected_integrations;
+use crate::openhuman::composio::{
+    cached_active_integrations_including_expired, fetch_connected_integrations_status,
+    FetchConnectedIntegrationsStatus,
+};
 use crate::openhuman::config::Config;
+use crate::openhuman::context::prompt::ConnectedIntegration;
 use crate::openhuman::tools::{orchestrator_tools, Tool};
 use std::collections::HashSet;
 use std::time::Duration;
@@ -108,25 +112,43 @@ pub(super) async fn resolve_target_agent(channel: &str) -> AgentScoping {
     //
     // Wrap the Composio fetch in a 3-second timeout so a slow/unresponsive
     // Composio API can never block turn dispatch indefinitely.
+    //
+    // Crucially, a transient failure (backend 5xx / no client for a beat) or a
+    // timeout must NOT be laundered into "zero connected integrations": that
+    // would drop `delegate_to_integrations_agent` from the turn's tool surface
+    // and leave the channel agent unable to reach Gmail/Slack/etc. — the exact
+    // "just normal inference, no tool calling" symptom. So we take the
+    // status-returning fetch and, on `Unavailable`/timeout, fall back to the
+    // last cached snapshot (same defence the first-party turn path uses) rather
+    // than an empty set. Only an `Authoritative` result — the backend explicitly
+    // confirming an empty set — legitimately collapses the delegation surface.
     const COMPOSIO_FETCH_TIMEOUT_SECS: u64 = 3;
     let extra_tools = if !definition.subagents.is_empty() {
-        let connected = match tokio::time::timeout(
+        // `Ok(status)` on success, `None` when the 3s timeout elapsed.
+        let fetched = tokio::time::timeout(
             Duration::from_secs(COMPOSIO_FETCH_TIMEOUT_SECS),
-            fetch_connected_integrations(&config),
+            fetch_connected_integrations_status(&config),
         )
         .await
-        {
-            Ok(list) => list,
-            Err(_) => {
-                tracing::warn!(
-                    channel = %channel,
-                    target_agent = target_id,
-                    "[dispatch::routing] Composio fetch timed out after {}s — proceeding without connected integrations",
-                    COMPOSIO_FETCH_TIMEOUT_SECS
-                );
-                Vec::new()
-            }
-        };
+        .ok();
+        if matches!(
+            fetched,
+            None | Some(FetchConnectedIntegrationsStatus::Unavailable)
+        ) {
+            tracing::warn!(
+                channel = %channel,
+                target_agent = target_id,
+                timed_out = fetched.is_none(),
+                "[dispatch::routing] Composio unavailable/timed out — using cached integration snapshot instead of an empty set (keeps delegate_to_integrations_agent live)"
+            );
+        }
+        // Use the expiry-tolerant read for the fallback: a transient blip that
+        // lands just after the 60s cache TTL must still preserve the last-known
+        // integrations rather than collapse tool-calling to an empty set.
+        let connected = connected_with_fallback(
+            fetched,
+            cached_active_integrations_including_expired(&config),
+        );
         tracing::debug!(
             channel = %channel,
             target_agent = target_id,
@@ -159,6 +181,31 @@ pub(super) async fn resolve_target_agent(channel: &str) -> AgentScoping {
     }
 }
 
+/// Decide the connected-integration list to expand delegation tools from,
+/// preferring authoritative truth but never letting a transient failure erase
+/// the surface.
+///
+/// * `fetched` — `Some(status)` from the Composio fetch, or `None` when the
+///   dispatch timeout elapsed before it returned.
+/// * `cached` — the last cached snapshot (`cached_active_integrations`).
+///
+/// Only an `Authoritative` result (the backend explicitly reporting the current
+/// set, even if empty) is taken at face value. `Unavailable` or a timeout falls
+/// back to `cached`, so a one-off 5xx/slow call can't drop
+/// `delegate_to_integrations_agent` and silently disable tool calling for the
+/// turn (the "just normal inference" bug). With no cache to fall back on the
+/// result is empty — the same conservative default as before, but reached only
+/// when we genuinely have no better truth.
+pub(super) fn connected_with_fallback(
+    fetched: Option<FetchConnectedIntegrationsStatus>,
+    cached: Option<Vec<ConnectedIntegration>>,
+) -> Vec<ConnectedIntegration> {
+    match fetched {
+        Some(FetchConnectedIntegrationsStatus::Authoritative(list)) => list,
+        Some(FetchConnectedIntegrationsStatus::Unavailable) | None => cached.unwrap_or_default(),
+    }
+}
+
 /// Build the visible-tool whitelist for an agent.
 ///
 /// The set is the union of:
@@ -188,5 +235,75 @@ pub(super) fn build_visible_tool_set(
             }
             Some(set)
         }
+    }
+}
+
+#[cfg(test)]
+mod connected_fallback_tests {
+    use super::*;
+
+    fn integration(toolkit: &str) -> ConnectedIntegration {
+        ConnectedIntegration {
+            toolkit: toolkit.into(),
+            description: String::new(),
+            tools: vec![],
+            gated_tools: vec![],
+            connected: true,
+            connections: Vec::new(),
+            non_active_status: None,
+        }
+    }
+
+    fn toolkits(list: &[ConnectedIntegration]) -> Vec<String> {
+        list.iter().map(|i| i.toolkit.clone()).collect()
+    }
+
+    #[test]
+    fn authoritative_result_is_taken_verbatim_even_when_empty() {
+        // The backend confirming "zero connections" is truth — do NOT paper over
+        // it with a stale cache, or the agent would advertise integrations the
+        // user actually disconnected.
+        let out = connected_with_fallback(
+            Some(FetchConnectedIntegrationsStatus::Authoritative(vec![])),
+            Some(vec![integration("gmail")]),
+        );
+        assert!(out.is_empty());
+
+        let out = connected_with_fallback(
+            Some(FetchConnectedIntegrationsStatus::Authoritative(vec![
+                integration("gmail"),
+                integration("slack"),
+            ])),
+            None,
+        );
+        assert_eq!(toolkits(&out), vec!["gmail", "slack"]);
+    }
+
+    #[test]
+    fn unavailable_falls_back_to_cached_snapshot() {
+        // A transient backend failure must not drop the delegation surface.
+        let out = connected_with_fallback(
+            Some(FetchConnectedIntegrationsStatus::Unavailable),
+            Some(vec![integration("gmail")]),
+        );
+        assert_eq!(toolkits(&out), vec!["gmail"]);
+    }
+
+    #[test]
+    fn timeout_falls_back_to_cached_snapshot() {
+        // `None` models the dispatch timeout elapsing before the fetch returned.
+        let out = connected_with_fallback(None, Some(vec![integration("notion")]));
+        assert_eq!(toolkits(&out), vec!["notion"]);
+    }
+
+    #[test]
+    fn unavailable_without_cache_is_empty() {
+        // No authoritative truth and no cache → conservative empty set (same
+        // default as before, but only when we genuinely have nothing better).
+        assert!(
+            connected_with_fallback(Some(FetchConnectedIntegrationsStatus::Unavailable), None)
+                .is_empty()
+        );
+        assert!(connected_with_fallback(None, None).is_empty());
     }
 }

@@ -1150,11 +1150,13 @@ fn thread_title_error_and_turn_state_helpers_cover_wire_shapes() {
         name: "memory.search".into(),
         round: 1,
         status: ToolTimelineStatus::Success,
+        failure: None,
         args_buffer: Some("{\"q\":\"coverage\"}".into()),
         display_name: Some("Memory Search".into()),
         detail: Some("2 results".into()),
         source_tool_name: Some("memory.search".into()),
         subagent: None,
+        output: None,
     });
     let wire = serde_json::to_value(GetTurnStateResponse {
         turn_state: Some(state.clone()),
@@ -3157,8 +3159,11 @@ fn turn_state_mirror_persists_progress_edges_from_public_events() {
         tool_name: "memory.search".into(),
         success: false,
         output_chars: 0,
+        output: String::new(),
+        arguments: None,
         elapsed_ms: 11,
         iteration: 2,
+        failure: None,
     }));
     assert!(!mirror.observe(&AgentProgress::TurnCostUpdated {
         model: "coverage-model".into(),
@@ -3175,6 +3180,7 @@ fn turn_state_mirror_persists_progress_edges_from_public_events() {
         mode: "typed".into(),
         dedicated_thread: true,
         prompt_chars: 99,
+        prompt: String::new(),
         worker_thread_id: None,
         display_name: Some("Researcher".into()),
     }));
@@ -3208,8 +3214,10 @@ fn turn_state_mirror_persists_progress_edges_from_public_events() {
         success: true,
         output_chars: 44,
         output: "child tool output".into(),
+        arguments: None,
         elapsed_ms: 22,
         iteration: 1,
+        failure: None,
     }));
     assert!(mirror.observe(&AgentProgress::SubagentFailed {
         agent_id: "researcher".into(),
@@ -3450,6 +3458,7 @@ fn turn_state_store_persists_lists_marks_and_clears_snapshots() {
         name: "subagent:research".into(),
         round: 2,
         status: ToolTimelineStatus::Running,
+        failure: None,
         args_buffer: None,
         display_name: Some("Research".into()),
         detail: None,
@@ -3474,10 +3483,13 @@ fn turn_state_store_persists_lists_marks_and_clears_snapshots() {
                 elapsed_ms: Some(100),
                 output_chars: Some(10),
                 display_name: None,
+                output: None,
                 detail: None,
+                failure: None,
             }],
             transcript: vec![],
         }),
+        output: None,
     });
     let second = TurnState::started("thread/b", "request-2", 2, "2026-05-29T12:01:00Z");
 

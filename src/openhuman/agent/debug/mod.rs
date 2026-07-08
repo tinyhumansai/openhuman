@@ -36,7 +36,7 @@ use crate::openhuman::config::Config;
 use crate::openhuman::context::prompt::{
     LearnedContextData, PromptContext, PromptTool, ToolCallFormat,
 };
-use crate::openhuman::tools::{Tool, ToolCategory, ToolSpec};
+use crate::openhuman::tools::{Tool, ToolCategory};
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -306,17 +306,17 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
                 }
                 Ok(_) => {
                     log::debug!(
-                    "[agent::debug] fresh list_tools for `{}` returned empty; keeping cached catalogue ({} actions)",
-                    integration.toolkit,
-                    integration.tools.len()
-                );
+                        "[agent::debug] fresh list_tools for `{}` returned empty; keeping cached catalogue ({} actions)",
+                        integration.toolkit,
+                        integration.tools.len()
+                    );
                 }
                 Err(e) => {
                     log::warn!(
-                    "[agent::debug] fresh list_tools for `{}` failed ({e}); keeping cached catalogue ({} actions)",
-                    integration.toolkit,
-                    integration.tools.len()
-                );
+                        "[agent::debug] fresh list_tools for `{}` failed ({e}); keeping cached catalogue ({} actions)",
+                        integration.toolkit,
+                        integration.tools.len()
+                    );
                 }
             }
         }
@@ -443,19 +443,9 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
     // `force_text_mode` branch). Reproduce it here so
     // the dump matches what the LLM actually receives on turn 1.
     if !rendered_tools.is_empty() {
-        let tool_specs: Vec<ToolSpec> = rendered_tools
-            .iter()
-            .map(|t| ToolSpec {
-                name: t.name().to_string(),
-                description: t.description().to_string(),
-                parameters: t.parameters_schema().clone(),
-            })
-            .collect();
         text.push_str("\n\n");
         text.push_str(
-            &crate::openhuman::agent::harness::subagent_runner::build_text_mode_tool_instructions(
-                &tool_specs,
-            ),
+            &crate::openhuman::agent::harness::subagent_runner::build_text_mode_tool_instructions(),
         );
     }
 

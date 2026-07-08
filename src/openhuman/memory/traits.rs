@@ -1,173 +1,46 @@
 //! Core traits and data structures for the OpenHuman memory system.
 //!
 //! This module defines the foundational `Memory` trait that all storage backends
-//! must implement, as well as the standard `MemoryEntry` and `MemoryCategory`
-//! types used for representing and organizing memories.
+//! must implement. The standard memory value types (`MemoryEntry`,
+//! `MemoryCategory`, `MemoryTaint`, `RecallOpts`, `NamespaceSummary`) are
+//! **re-exported from the `tinycortex` crate** (migration W2, spec §0.5): the
+//! crate is the single source of truth for these wire-compatible types, and the
+//! 30+ host consumers keep their `memory::traits::…` import paths unchanged.
+//!
+//! `MemoryTaint` is security-critical provenance — it fails closed to
+//! `ExternalSync` for unknown/corrupt values so the subconscious gate refuses
+//! external-effect tools on chunks of unknown origin. Its semantics were proven
+//! byte-identical to the former host definition before re-exporting; the tests
+//! below are the host-side seam that pins that contract on the crate type.
+//!
+//! The `Memory` trait itself stays host-defined for now because of the
+//! `sqlite_conn()` escape hatch, which the crate deliberately omits. That hatch
+//! is retired in W3 (callers move to `tinycortex::memory::chunks::with_connection`),
+//! after which the trait can also become a crate re-export.
 
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// Provenance / trust signal attached to a memory entry. Drives downstream
-/// policy decisions — most importantly, whether a subconscious tick whose
-/// context contains this chunk may invoke external-effect tools.
-///
-/// Defaults to [`MemoryTaint::Internal`] so existing rows (which have no
-/// taint column persisted) and all in-memory `MemoryEntry::default()`
-/// constructions are conservatively trusted as user-driven content.
-/// Sync paths that ingest text from third-party services (Gmail / Slack /
-/// Notion / Composio / etc.) MUST flip this to [`MemoryTaint::ExternalSync`]
-/// at write time so the subconscious origin escalation can see it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum MemoryTaint {
-    /// User-driven memory (chat, manual remember, internal heuristics).
-    #[default]
-    Internal,
-    /// Chunk ingested from an external sync source (Gmail / Slack /
-    /// Notion / Composio / etc.). Subconscious turns whose context
-    /// contains any tainted chunk MUST run with
-    /// [`TrustedAutomationSource::SubconsciousTainted`] origin so
-    /// external_effect tools are refused.
-    ///
-    /// [`TrustedAutomationSource::SubconsciousTainted`]:
-    /// crate::openhuman::agent::turn_origin::TrustedAutomationSource::SubconsciousTainted
-    ExternalSync,
-}
-
-impl MemoryTaint {
-    /// Serialised form used by the SQLite `memory_docs.taint` column.
-    ///
-    /// Kept short + snake_case to match the serde representation and to
-    /// keep the on-disk footprint minimal. Round-trips via
-    /// [`Self::from_db_str`].
-    pub fn as_db_str(&self) -> &'static str {
-        match self {
-            Self::Internal => "internal",
-            Self::ExternalSync => "external_sync",
-        }
-    }
-
-    /// Reverse of [`Self::as_db_str`]. Unknown values (a forward-rolled
-    /// schema variant we don't know about yet, a manual `UPDATE` typo,
-    /// row corruption) decode as the more restrictive
-    /// [`MemoryTaint::ExternalSync`] so the subconscious gate fails
-    /// closed — we'd rather refuse external_effect tools on a chunk
-    /// of unknown provenance than silently treat it as user-authored.
-    /// Legacy rows that pre-date the column are not affected: the
-    /// migration writes a literal `'internal'` default so they
-    /// round-trip cleanly through the explicit arm.
-    pub fn from_db_str(raw: &str) -> Self {
-        match raw {
-            "internal" => Self::Internal,
-            "external_sync" => Self::ExternalSync,
-            _ => Self::ExternalSync,
-        }
-    }
-}
-
-/// Represents a single stored memory entry with associated metadata.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MemoryEntry {
-    /// Unique identifier for the memory entry (usually a UUID).
-    pub id: String,
-    /// The key or title associated with this memory.
-    pub key: String,
-    /// The actual content or value of the memory.
-    pub content: String,
-    /// Optional namespace for logical separation of memories.
-    #[serde(default)]
-    pub namespace: Option<String>,
-    /// The organizational category this memory belongs to.
-    pub category: MemoryCategory,
-    /// ISO 8601 formatted timestamp of when the memory was created or last updated.
-    pub timestamp: String,
-    /// Optional session ID if this memory is scoped to a specific interaction.
-    pub session_id: Option<String>,
-    /// Optional relevance or confidence score, typically from 0.0 to 1.0.
-    pub score: Option<f64>,
-    /// Provenance — `Internal` for user-driven writes, `ExternalSync` for
-    /// memory_sync ingest. Default keeps existing persisted rows safe;
-    /// composio / Gmail / Slack / Notion ingest paths must set this
-    /// explicitly. See [`MemoryTaint`] for the security contract.
-    #[serde(default)]
-    pub taint: MemoryTaint,
-}
-
-/// Categories used to organize and filter memories by their nature and lifecycle.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum MemoryCategory {
-    /// Long-term foundational facts, user preferences, and permanent decisions.
-    Core,
-    /// Temporal logs reflecting daily activities or ephemeral state.
-    Daily,
-    /// Contextual information derived from and relevant to active conversations.
-    Conversation,
-    /// A user-defined or system-defined custom category.
-    Custom(String),
-}
-
-impl std::fmt::Display for MemoryCategory {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Core => write!(f, "core"),
-            Self::Daily => write!(f, "daily"),
-            Self::Conversation => write!(f, "conversation"),
-            Self::Custom(name) => write!(f, "{name}"),
-        }
-    }
-}
-
-/// Optional filters for `Memory::recall`.
-///
-/// All fields default to `None` / `false`. `namespace = None` uses the
-/// backend's legacy default namespace (`GLOBAL_NAMESPACE`). Pass
-/// `Some("namespace")` to scope the semantic query to a specific namespace.
-///
-/// ## Cross-session recall (#1505)
-///
-/// `cross_session = true` asks the backend to surface conversational
-/// (episodic) hits from OTHER sessions belonging to the same workspace,
-/// alongside any current-session hits when `session_id` is also set. This
-/// is what lets a fresh chat recover context the user shared in a prior
-/// chat without waiting for the transcript-ingest threshold to fire.
-///
-/// User scope is enforced by the SQLite database living at
-/// `<workspace>/memory/...` — one workspace == one user — so `cross_session`
-/// can never cross a user/workspace boundary. When `session_id` is `Some`,
-/// the matching session is excluded from the cross-session sweep (its
-/// entries are already pulled via the same-session episodic path) so the
-/// caller doesn't double-count the current chat's history.
-#[derive(Debug, Default, Clone)]
-pub struct RecallOpts<'a> {
-    pub namespace: Option<&'a str>,
-    pub category: Option<MemoryCategory>,
-    pub session_id: Option<&'a str>,
-    pub min_score: Option<f64>,
-    /// When `true`, include conversational hits from other sessions in
-    /// the same workspace alongside the namespace recall. Defaults to
-    /// `false` so existing callers see no behavior change. See struct
-    /// docs for scope-safety details.
-    pub cross_session: bool,
-}
-
-/// Summary row returned by `Memory::namespace_summaries`, used for
-/// agent-side namespace discovery.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NamespaceSummary {
-    pub namespace: String,
-    pub count: usize,
-    /// RFC3339 timestamp of most recent `updated_at` in the namespace, if any.
-    pub last_updated: Option<String>,
-}
+// ── Value types: re-exported from the crate (W2 type-unification, spec §0.5) ──
+//
+// These were formerly defined here. They are now the crate's types verbatim
+// (identical fields, derives, serde attrs, and — for `MemoryTaint` — the same
+// fail-closed `from_db_str`). Re-exporting keeps one source of truth while every
+// `use crate::openhuman::memory::traits::{MemoryEntry, …}` site compiles unchanged.
+pub use tinycortex::memory::{
+    MemoryCategory, MemoryEntry, MemoryTaint, NamespaceSummary, RecallOpts,
+};
 
 /// The core trait for memory storage and retrieval.
 ///
 /// Any persistence backend (SQLite, Postgres, Vector DB, etc.) should implement
 /// this trait to be used within the OpenHuman ecosystem.
+///
+/// This mirrors [`tinycortex::memory::Memory`] method-for-method **plus** the
+/// host-only [`Memory::sqlite_conn`] escape hatch. It stays host-defined until
+/// W3 migrates that hatch to the crate's scoped `with_connection` accessor.
 #[async_trait]
 pub trait Memory: Send + Sync {
     /// Returns the name of the memory backend (e.g., "sqlite", "vector").
@@ -273,7 +146,9 @@ pub trait Memory: Send + Sync {
     /// access for FTS5 / segment writes without going through the async
     /// `Memory` trait.
     ///
-    /// Default: `None`. Only `UnifiedMemory` overrides this.
+    /// Default: `None`. Only `UnifiedMemory` overrides this. Host-only escape
+    /// hatch (the crate omits it by design); retired to
+    /// `tinycortex::memory::chunks::with_connection` in W3.
     fn sqlite_conn(&self) -> Option<Arc<Mutex<Connection>>> {
         None
     }
@@ -371,7 +246,8 @@ mod tests {
         // Unknown / corrupted column values fail closed to the more
         // restrictive `ExternalSync` so the subconscious gate refuses
         // external_effect tools on chunks of unknown provenance rather
-        // than silently treating them as user-authored.
+        // than silently treating them as user-authored. This is the W2
+        // security seam test on the re-exported crate type.
         assert_eq!(MemoryTaint::from_db_str(""), MemoryTaint::ExternalSync);
         assert_eq!(
             MemoryTaint::from_db_str("EXTERNAL_SYNC"),

@@ -38,6 +38,7 @@ describe('renderChannelIcon', () => {
     ['discord', '🎮'],
     ['web', '🌐'],
     ['mcp', '🔌'],
+    ['email', '✉️'],
   ])('renders the %s channel as its emoji glyph', (icon, glyph) => {
     const { getByTestId } = renderIcon(icon);
     expect(getByTestId('icon-host')).toHaveTextContent(glyph);
@@ -64,6 +65,7 @@ describe('renderChannelIcon', () => {
     'imessage',
     'lark',
     'dingtalk',
+    'email',
     'yuanbao',
   ];
   const supportedIcons = [

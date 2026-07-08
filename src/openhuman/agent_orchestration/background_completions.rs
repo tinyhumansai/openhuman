@@ -14,16 +14,16 @@ use std::sync::{Mutex, OnceLock};
 
 /// One finished background sub-agent's deliverable result.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CompletedBackgroundAgent {
+pub(crate) struct CompletedBackgroundAgent {
     /// Spawn process id (`sub-…`) — the tag the agent uses to reference it.
-    pub task_id: String,
+    pub(crate) task_id: String,
     /// Sub-agent definition id (e.g. `researcher`).
-    pub agent_id: String,
+    pub(crate) agent_id: String,
     /// The sub-agent's final output / summary.
-    pub summary: String,
+    pub(crate) summary: String,
     /// Parent chat thread id to stream the delivery turn into (captured at
     /// spawn). `None` for a headless spawn with no originating thread.
-    pub parent_thread_id: Option<String>,
+    pub(crate) parent_thread_id: Option<String>,
 }
 
 /// Upper bound on the cancelled-thread tombstone set. A thread id is a one-shot
@@ -77,7 +77,7 @@ fn queue() -> &'static Mutex<QueueState> {
 /// Drops the result outright if its parent thread has been tombstoned by
 /// [`discard_for_thread`] — closing the race where a detached sub-agent finishes
 /// (and records) concurrently with its parent thread being deleted.
-pub fn record_completion(
+pub(crate) fn record_completion(
     parent_session: impl Into<String>,
     task_id: impl Into<String>,
     agent_id: impl Into<String>,
@@ -112,7 +112,7 @@ pub fn record_completion(
 }
 
 /// Is anything waiting to be delivered for this session? Cheap idle-loop check.
-pub fn has_pending(parent_session: &str) -> bool {
+pub(crate) fn has_pending(parent_session: &str) -> bool {
     queue()
         .lock()
         .expect("background_completions queue poisoned")
@@ -122,7 +122,7 @@ pub fn has_pending(parent_session: &str) -> bool {
 }
 
 /// Number of results pending for a session.
-pub fn pending_count(parent_session: &str) -> usize {
+pub(crate) fn pending_count(parent_session: &str) -> usize {
     queue()
         .lock()
         .expect("background_completions queue poisoned")
@@ -134,7 +134,7 @@ pub fn pending_count(parent_session: &str) -> usize {
 /// Drain **all** results currently ready for this session — the "batch
 /// everything ready at that moment" step. Returns them in completion order and
 /// clears them so they're never re-delivered.
-pub fn take_pending(parent_session: &str) -> Vec<CompletedBackgroundAgent> {
+pub(crate) fn take_pending(parent_session: &str) -> Vec<CompletedBackgroundAgent> {
     queue()
         .lock()
         .expect("background_completions queue poisoned")
@@ -149,7 +149,7 @@ pub fn take_pending(parent_session: &str) -> Vec<CompletedBackgroundAgent> {
 /// [`record_completion`] rather than delivered into a thread that no longer
 /// exists. Called when that thread is deleted. Returns the number of queued
 /// completions removed.
-pub fn discard_for_thread(thread_id: &str) -> usize {
+pub(crate) fn discard_for_thread(thread_id: &str) -> usize {
     let mut state = queue()
         .lock()
         .expect("background_completions queue poisoned");
@@ -177,7 +177,7 @@ pub fn discard_for_thread(thread_id: &str) -> usize {
 /// [`discard_for_thread`]); the purge path tombstones each in-flight sub-agent's
 /// thread before calling this, so stragglers are still dropped. Returns the
 /// number of queued completions removed.
-pub fn clear_all() -> usize {
+pub(crate) fn clear_all() -> usize {
     let mut state = queue()
         .lock()
         .expect("background_completions queue poisoned");
@@ -188,7 +188,7 @@ pub fn clear_all() -> usize {
 }
 
 /// The thread id to deliver a batch into — the first record that carries one.
-pub fn batch_thread_id(completed: &[CompletedBackgroundAgent]) -> Option<String> {
+pub(crate) fn batch_thread_id(completed: &[CompletedBackgroundAgent]) -> Option<String> {
     completed.iter().find_map(|c| c.parent_thread_id.clone())
 }
 
@@ -197,7 +197,7 @@ pub fn batch_thread_id(completed: &[CompletedBackgroundAgent]) -> Option<String>
 /// `<background_agent_result id="…">` tag carrying its sub-agent process id, so
 /// the agent can reference / present them individually. Returns `None` for an
 /// empty batch.
-pub fn build_batched_notice(completed: &[CompletedBackgroundAgent]) -> Option<String> {
+pub(crate) fn build_batched_notice(completed: &[CompletedBackgroundAgent]) -> Option<String> {
     if completed.is_empty() {
         return None;
     }

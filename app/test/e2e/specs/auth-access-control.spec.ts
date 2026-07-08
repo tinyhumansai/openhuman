@@ -107,7 +107,7 @@ async function performFullLogin(token = 'e2e-test-token') {
   await waitForAppReady(15_000);
   await waitForAuthBootstrap(15_000);
 
-  const consumeCall = await waitForRequest('POST', '/telegram/login-tokens/', 20_000);
+  const consumeCall = await waitForRequest('POST', '/auth/login-token/consume', 20_000);
   if (!consumeCall) {
     console.log(
       '[AuthAccess] Missing consume call. Request log:',
@@ -183,7 +183,7 @@ describe('Auth & Access Control', () => {
         const homeText = await waitForHomePage(500);
         if (homeText) return true;
         const consumed = getRequestLog().find(
-          r => r.method === 'POST' && r.url.includes('/telegram/login-tokens/')
+          r => r.method === 'POST' && r.url.includes('/auth/login-token/consume')
         );
         return !!consumed;
       },
@@ -211,7 +211,7 @@ describe('Auth & Access Control', () => {
     await browser.waitUntil(
       async () => {
         const consumed = getRequestLog().find(
-          r => r.method === 'POST' && r.url.includes('/telegram/login-tokens/')
+          r => r.method === 'POST' && r.url.includes('/auth/login-token/consume')
         );
         return !!consumed;
       },
@@ -230,7 +230,7 @@ describe('Auth & Access Control', () => {
     expect(finalHome).not.toBeNull();
 
     const consumeCall = getRequestLog().find(
-      r => r.method === 'POST' && r.url.includes('/telegram/login-tokens/')
+      r => r.method === 'POST' && r.url.includes('/auth/login-token/consume')
     );
     expect(consumeCall).toBeDefined();
     console.log('[AuthAccess] Multi-device token accepted');
@@ -325,7 +325,7 @@ describe('Auth & Access Control', () => {
     await browser.waitUntil(
       async () => {
         const consumed = getRequestLog().find(
-          r => r.method === 'POST' && r.url.includes('/telegram/login-tokens/')
+          r => r.method === 'POST' && r.url.includes('/auth/login-token/consume')
         );
         return !!consumed;
       },
@@ -465,7 +465,7 @@ describe('Auth & Access Control', () => {
         const homeText = await waitForHomePage(500);
         if (!homeText) return true; // navigated away — auto-logout happened
         const consumed = getRequestLog().find(
-          r => r.method === 'POST' && r.url.includes('/telegram/login-tokens/')
+          r => r.method === 'POST' && r.url.includes('/auth/login-token/consume')
         );
         return !!consumed;
       },

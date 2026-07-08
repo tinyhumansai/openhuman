@@ -168,6 +168,8 @@ fn text_response(text: &str) -> ChatResponse {
             output_tokens: 2,
             context_window: 16_000,
             cached_input_tokens: 1,
+            cache_creation_tokens: 0,
+            reasoning_tokens: 0,
             charged_amount_usd: 0.00001,
         }),
         reasoning_content: None,

@@ -433,6 +433,19 @@ async fn store_session_inner(
             logs.push(format!("memory client bind warning: {e}"));
         }
     }
+    // Rebind the people store to the per-user workspace too — the boot seed may
+    // have bound it to the pre-login workspace, and it must follow the active
+    // user like the memory client does (#4378).
+    match crate::openhuman::people::store::init_from_workspace(&effective_config.workspace_dir) {
+        Ok(_) => logs.push(format!(
+            "people store bound to workspace {}",
+            effective_config.workspace_dir.display()
+        )),
+        Err(e) => {
+            tracing::warn!(error = %e, "[credentials] failed to bind people store after login");
+            logs.push(format!("people store bind warning: {e}"));
+        }
+    }
     crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
         effective_config.workspace_dir.clone(),
     );
@@ -443,7 +456,7 @@ async fn store_session_inner(
     // heartbeat loop. Idempotent — no-op on subsequent logins of the same
     // process. Bootstrap failures are non-fatal: the session itself is
     // already stored above, so we only warn.
-    if let Err(e) = crate::openhuman::subconscious::global::bootstrap_after_login().await {
+    if let Err(e) = crate::openhuman::subconscious::registry::bootstrap_after_login().await {
         tracing::warn!(error = %e, "[subconscious] post-login bootstrap failed");
         logs.push(format!("subconscious bootstrap warning: {e}"));
     } else {
@@ -584,7 +597,7 @@ pub async fn clear_session(config: &Config) -> Result<RpcOutcome<serde_json::Val
     // cached engine would keep pointing at the previous user's workspace_dir
     // and the heartbeat task would leak, ticking against the wrong DB when a
     // different user signs in to the same sidecar process.
-    crate::openhuman::subconscious::global::reset_engine_for_user_switch().await;
+    crate::openhuman::subconscious::registry::reset_engine_for_user_switch().await;
 
     // Drop the Sentry scope user so events surfaced during/after teardown
     // (and before the next login) are no longer attributed to the

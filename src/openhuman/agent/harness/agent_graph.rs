@@ -1,10 +1,10 @@
 //! Per-agent turn-graph selection (issue #4249).
 //!
-//! Each built-in agent folder ships a `graph.rs` exporting
+//! Built-in agents with bespoke turn graphs ship a `graph.rs` exporting
 //! `pub fn graph() -> AgentGraph`, mirroring the per-agent `prompt.rs::build`
-//! hook. The registry loader injects the returned value onto the agent's
-//! [`AgentDefinition`] (post-deserialize, exactly like `PromptSource::Dynamic`),
-//! and the sub-agent turn chokepoint (`run_typed_mode`) consults it:
+//! hook. Default agents omit that module and the registry loader leaves
+//! [`AgentDefinition::graph`] at [`AgentGraph::Default`]. The sub-agent turn
+//! chokepoint (`run_typed_mode`) consults the resolved value:
 //!
 //! - [`AgentGraph::Default`] runs the shared default sub-agent turn graph
 //!   (`subagent_runner::ops::graph::run_subagent_via_graph`).
@@ -12,9 +12,9 @@
 //!   runner — a bespoke tinyagents graph, thin over
 //!   `run_turn_via_tinyagents_shared`.
 //!
-//! Today every built-in agent selects `Default`. The hook is the extension
-//! point that lets a specialized agent (orchestrator, researcher, …) define a
-//! bespoke graph without branching the shared runner.
+//! Today every built-in agent selects `Default`. The optional hook is the
+//! extension point that lets a specialized agent (orchestrator, researcher, …)
+//! define a bespoke graph without branching the shared runner.
 
 use std::collections::HashSet;
 use std::future::Future;
@@ -22,6 +22,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use tinyagents::harness::workspace::WorkspaceDescriptor;
 use tokio::sync::mpsc::Sender;
 
 use crate::openhuman::agent::harness::run_queue::RunQueue;
@@ -54,8 +55,18 @@ pub struct AgentTurnRequest {
     pub extended_policy: bool,
     pub worker_thread_id: Option<String>,
     pub workspace_dir: PathBuf,
+    pub workspace_descriptor: Option<WorkspaceDescriptor>,
     pub max_output_tokens: u32,
     pub model_vision: bool,
+    pub transcript_stem: String,
+    pub provider_label: String,
+    pub(crate) handoff_cache:
+        Option<Arc<crate::openhuman::agent::harness::subagent_runner::ResultHandoffCache>>,
+    /// Agent-level TokenJuice compaction profile
+    /// (`definition.effective_tokenjuice_compression()`), threaded into the
+    /// sub-agent `TurnContextMiddleware` so tool outputs compact like the chat
+    /// path instead of taking a blunt byte-cap truncation (#4466).
+    pub tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression,
 }
 
 /// Token/cost totals a custom runner reports back. Mirrors the runner's internal
@@ -79,6 +90,9 @@ pub struct AgentTurnResult {
     pub early_exit_tool: Option<String>,
     /// `true` when the run stopped at the model-call cap with work still pending.
     pub hit_cap: bool,
+    /// Set (with the halt reason) when the repeated-failure / repeat-progress
+    /// circuit breaker halted the run; the runner reports `Incomplete` (#4466).
+    pub breaker_halt: Option<String>,
 }
 
 /// A per-agent custom turn-graph runner: given the assembled [`AgentTurnRequest`],

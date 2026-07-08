@@ -1,0 +1,747 @@
+---
+# CI Lite — the quick lane (pushes to main + PRs targeting main or release).
+#
+# Runs quality checks per changed area and unit tests ONLY for the files the
+# PR changed (vitest related / domain-scoped cargo-llvm-cov), with diff-cover
+# enforcing >= 80% coverage on changed lines. Integration and E2E suites do
+# NOT run here — they run in full via ci-full.yml on PRs targeting `release`
+# and on every push to `release` (the maintainer-dispatched
+# promote-main-to-release.yml merge and fix-PR merges). Fix PRs against
+# release get this fast lane too, for quick lint/coverage feedback alongside
+# the full suite.
+#
+# The gate job keeps its historical "PR CI Gate" check name so the main
+# ruleset's required-status-check reference stays valid.
+name: CI Lite
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main, release]
+
+permissions:
+  # `actions: read` lets scripts/ci-cancel-aware.sh poll the run status so
+  # cancelled builds inside container jobs stop themselves (docker exec
+  # swallows the runner's signals).
+  actions: read
+  contents: read
+  packages: read
+  pull-requests: read
+
+env:
+  # Consumed by scripts/ci-cancel-aware.sh's cancellation watchdog.
+  GH_TOKEN: ${{ github.token }}
+  NPM_CONFIG_STORE_DIR: .pnpm-store
+
+# Keep only the newest run per PR/branch. Long Rust/Tauri build commands must
+# run through scripts/ci-cancel-aware.sh so cancellation reaches descendants.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  changes:
+    name: Detect Changed Areas
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      # "true" when the change touches config that invalidates test scoping
+      # (lockfile, vitest/vite/ts config, test setup) → run the full suite.
+      frontend-full: ${{ steps.filter.outputs['frontend-full'] }}
+      # Shell-quoted list of changed app/src source files, consumed by
+      # scripts/ci/vitest-changed-coverage.sh (vitest related).
+      frontend-src-files: ${{ steps.filter.outputs['frontend-src_files'] }}
+      i18n: ${{ steps.filter.outputs.i18n }}
+      docs: ${{ steps.filter.outputs.docs }}
+      rust-core: ${{ steps.filter.outputs['rust-core'] }}
+      rust-core-full: ${{ steps.filter.outputs['rust-core-full'] }}
+      # Shell-quoted list of changed src/ + tests/ files, consumed by
+      # scripts/ci/rust-coverage-changed.sh (domain-scoped llvm-cov).
+      rust-core-src-files: ${{ steps.filter.outputs['rust-core-src_files'] }}
+      rust-tauri: ${{ steps.filter.outputs['rust-tauri'] }}
+      # Mock backend + shared scripts → run the scripts self-test suite.
+      scripts: ${{ steps.filter.outputs.scripts }}
+      # Test wiring surface (workflows, package.json, all.rs, tests/, script
+      # tests) → run the test-inventory orphan + controller-domain guard.
+      inventory: ${{ steps.filter.outputs.inventory }}
+      # Windows installer or its unit test → run the Pester install lane.
+      install-ps1: ${{ steps.filter.outputs.install_ps1 }}
+      coverage: ${{ steps.filter.outputs.frontend == 'true' || steps.filter.outputs['rust-core'] == 'true' || steps.filter.outputs['rust-tauri'] == 'true' }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@v4
+        with:
+          list-files: shell
+          filters: |
+            frontend:
+              - '.github/workflows/ci-lite.yml'
+              # The changed-files runner itself must trigger the lane that
+              # runs it (it is also in frontend-full → full-suite mode).
+              - 'scripts/ci/vitest-changed-coverage.sh'
+              - 'scripts/ci-cancel-aware.sh'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'app/package.json'
+              - 'app/index.html'
+              - 'app/public/**'
+              - 'app/src/**'
+              - 'app/test/vitest.config.ts'
+              - 'app/tsconfig*.json'
+              - 'app/vite.config.*'
+              - 'app/tailwind.config.*'
+              - 'app/postcss.config.*'
+            # Changes here invalidate per-file test scoping → full Vitest run.
+            frontend-full:
+              - '.github/workflows/ci-lite.yml'
+              - 'scripts/ci/vitest-changed-coverage.sh'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'app/package.json'
+              - 'app/index.html'
+              - 'app/public/**'
+              - 'app/test/vitest.config.ts'
+              - 'app/tsconfig*.json'
+              - 'app/vite.config.*'
+              - 'app/tailwind.config.*'
+              - 'app/postcss.config.*'
+              - 'app/src/test/**'
+            frontend-src:
+              - 'app/src/**/*.ts'
+              - 'app/src/**/*.tsx'
+            i18n:
+              - '.github/workflows/ci-lite.yml'
+              - 'app/src/**'
+            docs:
+              - '.github/workflows/ci-lite.yml'
+              - 'app/src/App.tsx'
+              - 'scripts/generate-architecture-docs.mjs'
+              - 'scripts/__tests__/generate-architecture-docs.test.mjs'
+              - 'gitbooks/developing/architecture/frontend.md'
+              - 'package.json'
+            rust-core:
+              - '.github/workflows/ci-lite.yml'
+              # The changed-files runner itself must trigger the lane that
+              # runs it (it is also in rust-core-full → full-suite mode).
+              - 'scripts/ci/rust-coverage-changed.sh'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'src/**'
+              - 'tests/**'
+              - 'scripts/ci-cancel-aware.sh'
+              - 'scripts/test-rust-e2e.sh'
+              - 'scripts/test-rust-with-mock.sh'
+            # Changes here invalidate per-module test scoping → full suite.
+            rust-core-full:
+              - '.github/workflows/ci-lite.yml'
+              - 'scripts/ci/rust-coverage-changed.sh'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'scripts/ci-cancel-aware.sh'
+            rust-core-src:
+              - 'src/**'
+              - 'tests/**'
+            rust-tauri:
+              - '.github/workflows/ci-lite.yml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'app/src-tauri/**'
+              - 'scripts/ci-cancel-aware.sh'
+            # Shared mock backend + script self-tests. The mock backend every
+            # E2E suite depends on had zero PR-lane coverage before this (its
+            # own socket-auth tests never ran in CI) — arm the scripts
+            # self-test job on any mock/script change.
+            scripts:
+              - '.github/workflows/ci-lite.yml'
+              - 'scripts/mock-api/**'
+              - 'scripts/*.mjs'
+              - 'scripts/__tests__/**'
+            # Test-wiring surface: a change here can orphan a test or add an
+            # untested controller domain → run the inventory guard.
+            inventory:
+              - '.github/workflows/**'
+              - 'package.json'
+              - 'src/core/all.rs'
+              - 'tests/**'
+              - 'scripts/**/*.test.mjs'
+              - 'scripts/tests/**'
+              - 'scripts/generate-test-inventory.mjs'
+            # Windows installer + its Pester unit test.
+            install_ps1:
+              - '.github/workflows/ci-lite.yml'
+              - 'scripts/install.ps1'
+              - 'scripts/tests/OpenHumanWindowsInstall.Tests.ps1'
+
+  frontend-checks:
+    name: Frontend Checks (quality, i18n, docs, coverage)
+    needs: [changes]
+    if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.i18n == 'true' || needs.changes.outputs.docs == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
+    steps:
+      - name: Checkout code
+        # Pinned to the v5 commit SHA for supply-chain hardening (CodeRabbit
+        # review on #3892). The combined frontend lane keeps that hardening
+        # from the former docs-drift job.
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # The RPC-catalog drift-guard test (rpcMethods.test.ts) reads
+      # vendor/tinychannels/src/controllers/schemas.rs at test time. This lane
+      # otherwise checks out without submodules, so init just that one — not
+      # `submodules: recursive`, which would also pull the large tauri-cef fork
+      # this job never builds. Mirrors the same fix in test-reusable.yml's
+      # `unit-tests` job.
+      #
+      # `actions/checkout` scopes its own `safe.directory` config to a
+      # temporary HOME for the duration of the checkout step only — it does
+      # not persist into this container job's real HOME, so a bare `git`
+      # invocation in a later step hits "detected dubious ownership" here.
+      # Add the workspace as a safe directory ourselves before touching git.
+      - name: Init tinychannels submodule (drift-guard test reads its schemas)
+        if: needs.changes.outputs.frontend == 'true'
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git submodule update --init vendor/tinychannels
+
+      - name: Cache pnpm store
+        id: pnpm-cache
+        if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.i18n == 'true'
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: .pnpm-store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+
+      - name: Install dependencies
+        if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.i18n == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Save pnpm store cache
+        if: always() && (needs.changes.outputs.frontend == 'true' || needs.changes.outputs.i18n == 'true') && steps.pnpm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: .pnpm-store
+          key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
+
+      - name: Type check TypeScript files
+        if: needs.changes.outputs.frontend == 'true'
+        run: pnpm --filter openhuman-app compile
+        env:
+          NODE_ENV: test
+
+      - name: Check Prettier formatting
+        if: needs.changes.outputs.frontend == 'true'
+        run: pnpm --filter openhuman-app format:check
+        env:
+          NODE_ENV: test
+
+      - name: Run ESLint
+        if: needs.changes.outputs.frontend == 'true'
+        run: pnpm --filter openhuman-app lint
+        env:
+          NODE_ENV: test
+
+      - name: Verify i18n coverage (missing / extra / drifted keys across locales)
+        if: needs.changes.outputs.i18n == 'true'
+        run: pnpm i18n:check
+
+      # The generator + its tests use only Node built-ins (no workspace deps),
+      # so docs-only changes still skip `pnpm install`.
+      - name: Generator unit tests
+        if: needs.changes.outputs.docs == 'true'
+        run: pnpm docs:test
+
+      - name: Verify generated architecture docs are not stale
+        if: needs.changes.outputs.docs == 'true'
+        run: pnpm docs:check
+
+      - name: Run Vitest with coverage (changed files only)
+        if: needs.changes.outputs.frontend == 'true'
+        run: bash scripts/ci/vitest-changed-coverage.sh
+        env:
+          NODE_ENV: test
+          FULL: ${{ needs.changes.outputs['frontend-full'] }}
+          CHANGED_FILES: ${{ needs.changes.outputs['frontend-src-files'] }}
+
+      - name: Normalize lcov source paths to repo root
+        if: needs.changes.outputs.frontend == 'true'
+        run: |
+          set -euo pipefail
+          test -f app/coverage/lcov.info
+          sed -i -E 's#^SF:(src/)#SF:app/\1#' app/coverage/lcov.info
+          sed -i -E 's#^SF:(\./src/)#SF:app/src/#' app/coverage/lcov.info
+
+      - name: Upload frontend lcov
+        if: needs.changes.outputs.frontend == 'true'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: lcov-frontend
+          path: app/coverage/lcov.info
+          retention-days: 7
+          if-no-files-found: error
+
+  rust-quality:
+    name: Rust Quality (fmt, clippy)
+    needs: [changes]
+    if: needs.changes.outputs['rust-core'] == 'true' || needs.changes.outputs['rust-tauri'] == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+          cache-on-failure: true
+          # shared-key (not key) so the cache name is stable and not suffixed
+          # with the job id. Swatinem caches the full target/, which is why we
+          # no longer layer sccache on top (it logged 0% hits under a warm
+          # rust-cache and just doubled the cache footprint).
+          shared-key: pr-rust-quality
+
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy (core crate)
+        run: bash scripts/ci-cancel-aware.sh cargo clippy -p openhuman
+
+  rust-core-coverage:
+    name: Rust Core Coverage (cargo-llvm-cov)
+    needs: [changes, rust-quality]
+    if: always() && needs.changes.outputs['rust-core'] == 'true' && needs['rust-quality'].result == 'success'
+    runs-on: ubuntu-22.04
+    # 30 min was only ever enough because a stack overflow aborted the run early
+    # (see RUST_MIN_STACK below). With the overflow fixed the job runs the full
+    # instrumented suite (~13.6k tests, single-threaded build) end-to-end, which
+    # needs more wall-time.
+    timeout-minutes: 50
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
+    env:
+      CARGO_INCREMENTAL: "0"
+      # Coverage-instrumented test binaries are dominated by DWARF debug info,
+      # which exhausts the runner disk and SIGBUSes the linker. Drop debug info
+      # entirely for this job — llvm-cov line/region coverage is read from the
+      # embedded __llvm_covmap/__llvm_covfun sections (filenames + line numbers
+      # included), NOT from DWARF, so coverage numbers are unaffected. This is
+      # the maximum-shrink setting; line-tables-only was still too large for the
+      # instrumented build.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      # cargo-llvm-cov instrumentation inflates per-frame stack usage, so deep
+      # async tests (e.g. cron::scheduler agent-job tests that drive the full
+      # harness) overflow the default ~2 MB test-thread stack and SIGABRT the
+      # whole run with "stack overflow". Give libtest's per-test threads a large
+      # stack so coverage runs don't abort. (Virtual reservation only — no real
+      # memory cost.)
+      RUST_MIN_STACK: "67108864"
+    steps:
+      - name: Free disk space
+        run: |
+          # Coverage-instrumented builds produce huge binaries that exhaust the
+          # runner's ~14GB free disk during linking (SIGBUS). Inside a container,
+          # host paths are bind-mounted:
+          #   /opt/hostedtoolcache → /__t
+          #   /home/runner/work    → /__w
+          # Deleting /__t frees ~8GB on the same partition the build uses.
+          rm -rf /__t/* || true
+          echo "Disk after cleanup:"
+          df -h /__w || true
+
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          cache-on-failure: false
+          shared-key: pr-rust-core-cov
+
+      - name: Prune stale coverage test executables
+        run: |
+          # The restored target cache can contain prior llvm-cov integration-test
+          # executables. Those are enormous after coverage instrumentation and
+          # can exhaust the runner before the current cargo invocation finishes.
+          find target/llvm-cov-target -type f -path '*/debug/deps/*' -perm -111 -delete 2>/dev/null || true
+          echo "Disk after coverage target prune:"
+          df -h /__w || true
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Run cargo llvm-cov for openhuman core (changed modules only)
+        run: bash scripts/ci/rust-coverage-changed.sh
+        env:
+          CARGO_BUILD_JOBS: "1"
+          FULL: ${{ needs.changes.outputs['rust-core-full'] }}
+          CHANGED_FILES: ${{ needs.changes.outputs['rust-core-src-files'] }}
+          OUT: lcov-core.info
+          # The tinyagents harness is the agent engine on every build now
+          # (issue #4249); the suite exercises it by default. The legacy engine
+          # is being removed.
+
+      - name: Prune coverage test executables before cache save
+        if: always()
+        run: |
+          find target/llvm-cov-target -type f -path '*/debug/deps/*' -perm -111 -delete 2>/dev/null || true
+          echo "Disk after post-coverage prune:"
+          df -h /__w || true
+
+      - name: Upload core lcov
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: lcov-rust-core
+          path: lcov-core.info
+          retention-days: 7
+          if-no-files-found: error
+
+  rust-tauri-coverage:
+    name: Rust Tauri Coverage (cargo-llvm-cov)
+    needs: [changes, rust-quality]
+    if: always() && needs.changes.outputs['rust-tauri'] == 'true' && needs['rust-quality'].result == 'success'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
+    env:
+      CARGO_INCREMENTAL: "0"
+      # The instrumented Tauri shell binary (whole tauri/zbus/CEF graph) is
+      # dominated by DWARF debug info, which exhausts the runner disk and
+      # SIGBUSes the linker (collect2: ld terminated with signal 7) during the
+      # final link. Drop debug info — llvm-cov reads coverage from the embedded
+      # __llvm_covmap/__llvm_covfun sections, NOT from DWARF, so coverage
+      # numbers are unaffected. Mirrors rust-core-coverage.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      # Large test-thread stack so coverage instrumentation's inflated frames
+      # don't overflow deep async tests. Mirrors rust-core-coverage.
+      RUST_MIN_STACK: "67108864"
+    steps:
+      - name: Free disk space
+        run: |
+          # Coverage-instrumented builds produce huge binaries that exhaust the
+          # runner's ~14GB free disk during linking (SIGBUS). Inside a container,
+          # host paths are bind-mounted:
+          #   /opt/hostedtoolcache → /__t
+          #   /home/runner/work    → /__w
+          # Deleting /__t frees ~8GB on the same partition the build uses.
+          # Mirrors rust-core-coverage.
+          rm -rf /__t/* || true
+          echo "Disk after cleanup:"
+          df -h /__w || true
+
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            app/src-tauri -> target
+          cache-on-failure: true
+          # Tauri shell coverage (instrumented) — its own stable cache; reuses
+          # its warm dependency tree run-over-run.
+          shared-key: pr-rust-tauri-cov
+
+      - name: Cache CEF binary distribution
+        id: cef-cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: |
+            ~/Library/Caches/tauri-cef
+            ~/.cache/tauri-cef
+          key: cef-x86_64-unknown-linux-gnu-v2-${{ hashFiles('app/src-tauri/Cargo.toml') }}
+          restore-keys: |
+            cef-x86_64-unknown-linux-gnu-v2-
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Run cargo llvm-cov for Tauri shell
+        run: bash scripts/ci-cancel-aware.sh cargo llvm-cov --manifest-path app/src-tauri/Cargo.toml --lcov --output-path lcov-tauri.info
+        env:
+          # Serialize codegen/link to cap peak memory + disk during the
+          # instrumented Tauri-shell link (SIGBUS otherwise). Mirrors
+          # rust-core-coverage.
+          CARGO_BUILD_JOBS: "1"
+
+      - name: Save CEF binary distribution cache
+        if: always() && steps.cef-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: |
+            ~/Library/Caches/tauri-cef
+            ~/.cache/tauri-cef
+          key: ${{ steps.cef-cache.outputs.cache-primary-key }}
+
+      - name: Upload tauri lcov
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: lcov-rust-tauri
+          path: lcov-tauri.info
+          retention-days: 7
+          if-no-files-found: error
+
+  scripts-tests:
+    name: Scripts Self-Tests (mock backend + CLIs)
+    needs: [changes]
+    if: needs.changes.outputs.scripts == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Cache pnpm store
+        id: pnpm-cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: .pnpm-store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+
+      # The socket self-tests resolve socket.io-client from app/, so the
+      # workspace deps must be installed.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Save pnpm store cache
+        if: always() && steps.pnpm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: .pnpm-store
+          key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
+
+      - name: Run mock-backend + script self-tests
+        run: pnpm test:scripts
+
+  test-inventory:
+    name: Test Inventory (orphan + controller-domain guard)
+    needs: [changes]
+    if: needs.changes.outputs.inventory == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # Node-only guard (no workspace deps): asserts every script-level test is
+      # invoked by a package.json script/workflow, and every controller domain
+      # in src/core/all.rs is referenced under tests/.
+      - name: Run test-inventory guard
+        run: pnpm test:inventory
+
+  pester-install:
+    name: PowerShell Install Test (Pester)
+    needs: [changes]
+    if: needs.changes.outputs['install-ps1'] == 'true'
+    # GitHub-hosted ubuntu-latest ships pwsh; the test only dot-sources
+    # install.ps1 helpers (no MSI, cross-platform), so no Windows runner needed.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # Invoked directly (not via `pnpm test:install-ps1`) so the lane needs no
+      # Node/pnpm toolchain — pwsh is preinstalled on ubuntu-latest. Keep this
+      # command in sync with the `test:install-ps1` package.json script.
+      - name: Run install.ps1 unit tests
+        run: pwsh -NoProfile -File scripts/tests/OpenHumanWindowsInstall.Tests.ps1
+
+  pr-ci-gate:
+    name: PR CI Gate
+    needs:
+      - changes
+      - frontend-checks
+      - rust-quality
+      - rust-core-coverage
+      - rust-tauri-coverage
+      - scripts-tests
+      - test-inventory
+      - pester-install
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Require PR CI jobs to pass
+        run: |
+          set -euo pipefail
+          declare -A results=(
+            ["Detect Changed Areas"]="${{ needs.changes.result }}"
+            ["Frontend Checks"]="${{ needs['frontend-checks'].result }}"
+            ["Rust Quality"]="${{ needs['rust-quality'].result }}"
+            ["Rust Core Coverage"]="${{ needs['rust-core-coverage'].result }}"
+            ["Rust Tauri Coverage"]="${{ needs['rust-tauri-coverage'].result }}"
+            ["Scripts Self-Tests"]="${{ needs['scripts-tests'].result }}"
+            ["Test Inventory"]="${{ needs['test-inventory'].result }}"
+            ["PowerShell Install Test"]="${{ needs['pester-install'].result }}"
+          )
+
+          failed=0
+          for name in "${!results[@]}"; do
+            result="${results[$name]}"
+            echo "${name}: ${result}"
+            if [ "${result}" != "success" ] && [ "${result}" != "skipped" ]; then
+              echo "::error::${name} did not pass (result=${result})."
+              failed=1
+            fi
+          done
+
+          if [ "${failed}" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Verify coverage lanes completed
+        run: |
+          set -euo pipefail
+          coverage="${{ needs.changes.outputs.coverage }}"
+          frontend_needed="${{ needs.changes.outputs.frontend }}"
+          core_needed="${{ needs.changes.outputs['rust-core'] }}"
+          tauri_needed="${{ needs.changes.outputs['rust-tauri'] }}"
+          frontend="${{ needs['frontend-checks'].result }}"
+          core="${{ needs['rust-core-coverage'].result }}"
+          tauri="${{ needs['rust-tauri-coverage'].result }}"
+
+          echo "Coverage needed: ${coverage}"
+          echo "Frontend changed: ${frontend_needed} (job=${frontend})"
+          echo "Rust core changed: ${core_needed} (job=${core})"
+          echo "Rust Tauri changed: ${tauri_needed} (job=${tauri})"
+
+          if [ "${coverage}" != "true" ]; then
+            echo "No coverage-relevant changes detected; skipping diff-cover."
+            exit 0
+          fi
+
+          if [ "${frontend_needed}" = "true" ] && [ "${frontend}" != "success" ]; then
+            echo "::error::Frontend coverage was required but Frontend Checks did not succeed (result=${frontend})."
+            exit 1
+          fi
+          if [ "${core_needed}" = "true" ] && [ "${core}" != "success" ]; then
+            echo "::error::Rust core coverage was required but the lane did not succeed (result=${core})."
+            exit 1
+          fi
+          if [ "${tauri_needed}" = "true" ] && [ "${tauri}" != "success" ]; then
+            echo "::error::Rust Tauri coverage was required but the lane did not succeed (result=${tauri})."
+            exit 1
+          fi
+
+      - name: Checkout code
+        if: needs.changes.outputs.coverage == 'true'
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Resolve coverage compare ref
+        if: needs.changes.outputs.coverage == 'true'
+        id: coverage-compare
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch origin "${{ github.base_ref }}" --depth=200
+            echo "ref=origin/${{ github.base_ref }}" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            echo "ref=${{ github.event.before }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=HEAD^" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Python
+        if: needs.changes.outputs.coverage == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install diff-cover
+        if: needs.changes.outputs.coverage == 'true'
+        run: pip install 'diff-cover>=9.2.0'
+
+      - name: Download all lcov artifacts
+        if: needs.changes.outputs.coverage == 'true'
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          path: lcov-artifacts
+          pattern: lcov-*
+          merge-multiple: false
+
+      - name: List collected lcov files
+        if: needs.changes.outputs.coverage == 'true'
+        run: |
+          set -euo pipefail
+          find lcov-artifacts -type f -name '*.info' -print
+
+      - name: Enforce >= 80% coverage on changed lines
+        if: needs.changes.outputs.coverage == 'true'
+        run: |
+          set -euo pipefail
+          mapfile -t LCOV_FILES < <(find lcov-artifacts -type f -name '*.info' | sort)
+          if [ "${#LCOV_FILES[@]}" -eq 0 ]; then
+            echo "::error::No lcov files found; coverage gate cannot run"
+            exit 1
+          fi
+          diff-cover "${LCOV_FILES[@]}" \
+            --compare-branch="${{ steps.coverage-compare.outputs.ref }}" \
+            --fail-under=80 \
+            --html-report diff-coverage.html \
+            --markdown-report diff-coverage.md
+
+      - name: Upload diff-cover report
+        if: always() && needs.changes.outputs.coverage == 'true'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: diff-coverage-report
+          path: |
+            diff-coverage.html
+            diff-coverage.md
+          retention-days: 14
+          if-no-files-found: warn

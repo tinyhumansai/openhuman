@@ -287,6 +287,30 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
     navOrder: 98,
   },
   {
+    // Core connection — promotes cloud-mode remote-core config (persisted
+    // RPC URL + token) into a first-class setting plus a live status
+    // indicator (GH-4396). Sits just above About in General.
+    id: 'core',
+    titleKey: 'settings.core.title',
+    descriptionKey: 'settings.core.menuDesc',
+    section: 'home',
+    searchKeywords: [
+      'core',
+      'remote',
+      'rpc',
+      'url',
+      'token',
+      'cloud',
+      'local',
+      'connection',
+      'server',
+      'attach',
+      'self-hosted',
+    ],
+    navGroup: 'general',
+    navOrder: 97,
+  },
+  {
     id: 'about',
     titleKey: 'settings.about',
     descriptionKey: 'settings.aboutDesc',

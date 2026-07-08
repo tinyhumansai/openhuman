@@ -1,7 +1,6 @@
 //! Session persistence: transcript loading, checkpointing, and background tasks.
 
 use super::super::transcript;
-use super::super::turn_checkpoint::MAX_ITER_CHECKPOINT_INSTRUCTION;
 use super::super::types::Agent;
 use crate::openhuman::agent::harness;
 use crate::openhuman::agent::progress::AgentProgress;
@@ -35,6 +34,11 @@ impl Agent {
                         }
                         let loaded_count = session.messages.len();
                         log::info!("[transcript] loaded {} messages for resume", loaded_count);
+                        // Best-effort store-backed shadow read (issue #4249,
+                        // 04.2 phase 2). Observes + logs divergence only; the
+                        // legacy transcript just loaded stays authoritative and
+                        // is what feeds the resume below. Gated OFF by default.
+                        self.maybe_shadow_read_session_store(&path, &session);
                         let bounded = self.bound_cached_transcript_messages(session.messages);
                         if bounded.len() < loaded_count {
                             log::warn!(
@@ -63,27 +67,30 @@ impl Agent {
         }
     }
 
-    /// Ask the provider for a resumable checkpoint summary when a turn
-    /// hits the tool-call iteration cap, with native tools **disabled** so
-    /// the model returns prose rather than another tool call. Streams text
-    /// deltas to the progress sink (when attached) so the checkpoint
+    /// Ask the provider for a short wrap-up message with native tools
+    /// **disabled** so the model returns prose rather than another tool call.
+    /// Streams text deltas to the progress sink (when attached) so the summary
     /// appears in the UI like any other reply.
     ///
+    /// `instruction` is the synthetic user turn that steers the wrap-up — the
+    /// tool-call-cap checkpoint (`MAX_ITER_CHECKPOINT_INSTRUCTION`) or the
+    /// no-final-answer close (`FINAL_ANSWER_INSTRUCTION`, issue #4093).
+    ///
     /// Returns the summary text (empty when the provider call fails or
-    /// yields nothing — the caller then falls back to
-    /// [`build_deterministic_checkpoint`] so the thread is never left on an
-    /// unterminated tool cycle, bug-report-2026-05-26 A1) **paired with the
-    /// provider usage** for this extra call, so the caller can fold it into
-    /// the turn's cumulative token/cost accounting instead of silently
-    /// dropping it.
-    pub(super) async fn summarize_iteration_checkpoint(
+    /// yields nothing — the caller then falls back to a deterministic builder
+    /// so the turn is never left without a well-formed assistant message,
+    /// bug-report-2026-05-26 A1 / issue #4093) **paired with the provider
+    /// usage** for this extra call, so the caller can fold it into the turn's
+    /// cumulative token/cost accounting instead of silently dropping it.
+    pub(super) async fn summarize_turn_wrapup(
         &self,
         base_messages: &[ChatMessage],
         effective_model: &str,
         iteration_for_stream: u32,
+        instruction: &str,
     ) -> (String, Option<UsageInfo>) {
         let mut messages = base_messages.to_vec();
-        messages.push(ChatMessage::user(MAX_ITER_CHECKPOINT_INSTRUCTION));
+        messages.push(ChatMessage::user(instruction));
 
         // Mirror the main loop's streaming sink so the checkpoint renders
         // incrementally. Only text deltas are relevant here (tools are
@@ -236,16 +243,145 @@ impl Agent {
             task_id: None,
         };
 
-        if let Err(err) = transcript::write_transcript(path, messages, &meta, turn_usage) {
-            log::warn!(
-                "[transcript] failed to write transcript {}: {err}",
-                path.display()
-            );
+        match transcript::write_transcript(path, messages, &meta, turn_usage) {
+            Ok(()) => {
+                // Best-effort, non-fatal dual-write into the TinyAgents store.
+                // Gated by the default-ON session dual-write flag
+                // (`OPENHUMAN_SESSION_DUAL_WRITE` is a kill switch). Only runs
+                // after the legacy JSONL append above succeeds; the legacy path
+                // is primary and untouched (issue #4249, 04.1).
+                self.maybe_dual_write_session_store(path, messages, &meta, turn_usage);
+            }
+            Err(err) => {
+                log::warn!(
+                    "[transcript] failed to write transcript {}: {err}",
+                    path.display()
+                );
+            }
         }
     }
 
+    /// Mirror the just-persisted turn into the TinyAgents session store.
+    ///
+    /// Additive and gated on the default-ON session dual-write flag
+    /// (`OPENHUMAN_SESSION_DUAL_WRITE` is a kill switch): when killed this is a
+    /// cheap early return — no store handle is constructed and behavior is
+    /// byte-identical to the legacy-only path. When on (the default), the
+    /// store write is fired best-effort on a background task and any error is
+    /// logged (`[session-store]`) and swallowed, so it can never fail or alter a
+    /// chat turn. Records reuse the importer's normalization
+    /// ([`crate::openhuman::session_import`]) so live and imported records are
+    /// shape-identical. Reads stay 100% legacy until 04.2.
+    fn maybe_dual_write_session_store(
+        &self,
+        path: &std::path::Path,
+        messages: &[ChatMessage],
+        meta: &transcript::TranscriptMeta,
+        turn_usage: Option<&transcript::TurnUsage>,
+    ) {
+        use crate::openhuman::session_import::live;
+
+        // Config flag (default ON) gates the mirror; the env kill switch can
+        // still force it off. `self.config` is the effective per-agent config.
+        if !live::dual_write_enabled(self.config.session_dual_write) {
+            return;
+        }
+
+        // The session key is the transcript stem — the same value the importer
+        // reads off the on-disk filename, so `stream_name`/descriptor keys match.
+        let Some(stem) = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(str::to_string)
+        else {
+            log::warn!(
+                "[session-store] dual-write skipped: no file stem for {}",
+                path.display()
+            );
+            return;
+        };
+
+        // Rebuild the exact message shape the importer sees after a JSONL
+        // round-trip: attach this turn's usage to the last assistant message so
+        // its `openhuman_turn_usage` metadata matches an imported record.
+        let mut msgs = messages.to_vec();
+        if let Some(usage) = turn_usage {
+            if let Some(idx) = msgs.iter().rposition(|m| m.role == "assistant") {
+                transcript::attach_turn_usage_metadata(&mut msgs[idx], usage);
+            }
+        }
+        let session_transcript = transcript::SessionTranscript {
+            meta: meta.clone(),
+            messages: msgs,
+        };
+        let workspace = self.workspace_dir.clone();
+
+        log::debug!(
+            "[session-store] dual-write scheduled stem={stem} workspace={}",
+            workspace.display()
+        );
+        tokio::spawn(async move {
+            if let Err(err) = live::write_live_turn(&workspace, &stem, &session_transcript).await {
+                log::warn!("[session-store] dual-write failed stem={stem}: {err:#}");
+            }
+        });
+    }
+
+    /// Store-backed **shadow read** of a just-loaded session transcript.
+    ///
+    /// Beside the legacy authoritative reader (`try_load_session_transcript`),
+    /// read the same session back from the TinyAgents journal store, normalize
+    /// both sides through the importer's `session_import::convert` machinery,
+    /// compare, and log any divergence (`[session_shadow_read]`, issue #4249,
+    /// 04.2 phase 2). Additive and gated on the default-**OFF**
+    /// `AgentConfig::session_shadow_reads` flag
+    /// (`OPENHUMAN_SESSION_SHADOW_READS` is a kill switch): when disabled this
+    /// is a cheap early return.
+    ///
+    /// The legacy transcript stays authoritative — this only observes. The
+    /// comparison runs on a spawned background task so it never slows the
+    /// authoritative read, and every store-read error is treated as "no shadow
+    /// available" (logged at debug), never propagated.
+    fn maybe_shadow_read_session_store(
+        &self,
+        path: &std::path::Path,
+        session: &transcript::SessionTranscript,
+    ) {
+        use crate::openhuman::session_import::live;
+
+        // Config flag (default OFF) gates the shadow read; the env kill switch
+        // can still force it off. `self.config` is the effective per-agent config.
+        if !live::shadow_reads_enabled(self.config.session_shadow_reads) {
+            return;
+        }
+
+        // Same session key the write side / importer use: the transcript stem.
+        let Some(stem) = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(str::to_string)
+        else {
+            log::debug!(
+                "[session_shadow_read] skipped: no file stem for {}",
+                path.display()
+            );
+            return;
+        };
+
+        let workspace = self.workspace_dir.clone();
+        let transcript = session.clone();
+        log::debug!(
+            "[session_shadow_read] scheduled stem={stem} workspace={} legacy_messages={}",
+            workspace.display(),
+            transcript.messages.len()
+        );
+        tokio::spawn(async move {
+            let _ = live::shadow_read_compare(&workspace, &stem, &transcript).await;
+        });
+    }
+
     // ─────────────────────────────────────────────────────────────────
-    // Session-memory extraction (stage 5 of the context pipeline)
+    // Session-memory extraction.
     // ─────────────────────────────────────────────────────────────────
 
     /// Spawn a background archivist sub-agent to extract durable facts
@@ -254,7 +390,10 @@ impl Agent {
     /// Gated by [`context_pipeline::SessionMemoryState::should_extract`]
     /// — see its docs for the threshold invariants. Safe to call from
     /// inside `turn()` after the turn body has settled.
-    pub(in super::super) async fn spawn_session_memory_extraction(&mut self) {
+    pub(in super::super) async fn spawn_session_memory_extraction(
+        &mut self,
+        parent_ctx: harness::ParentExecutionContext,
+    ) {
         // ── Flush the trailing open segment before the session winds down ──
         //
         // The ArchivistHook manages per-turn segment lifecycle but cannot
@@ -288,11 +427,6 @@ impl Agent {
             return;
         };
 
-        // Build a dedicated ParentExecutionContext for the background
-        // task. The in-progress turn's context has already been
-        // consumed by the `with_parent_context` scope above, so this is
-        // a fresh snapshot.
-        let parent_ctx = self.build_parent_execution_context();
         let extraction_prompt = ARCHIVIST_EXTRACTION_PROMPT.to_string();
 
         // Flip the extraction state to "in-progress" so future

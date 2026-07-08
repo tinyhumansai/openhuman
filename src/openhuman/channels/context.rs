@@ -8,39 +8,23 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+pub(crate) use tinychannels::context::{
+    effective_channel_message_timeout_secs, should_skip_memory_context_entry,
+    ChannelRouteSelection, CHANNEL_HISTORY_COMPACT_CONTENT_CHARS,
+    CHANNEL_HISTORY_COMPACT_KEEP_MESSAGES, CHANNEL_MESSAGE_TIMEOUT_SECS,
+    CHANNEL_TYPING_REFRESH_INTERVAL_SECS, DEFAULT_CHANNEL_INITIAL_BACKOFF_SECS,
+    DEFAULT_CHANNEL_MAX_BACKOFF_SECS, MAX_CHANNEL_HISTORY, MEMORY_CONTEXT_ENTRY_MAX_CHARS,
+    MEMORY_CONTEXT_MAX_CHARS, MEMORY_CONTEXT_MAX_ENTRIES,
+};
+
+#[cfg(test)]
+pub(crate) use tinychannels::context::MIN_CHANNEL_MESSAGE_TIMEOUT_SECS;
+
 /// Per-sender conversation history for channel messages.
 pub(crate) type ConversationHistoryMap = Arc<Mutex<HashMap<String, Vec<ChatMessage>>>>;
-/// Maximum history messages to keep per sender.
-pub(crate) const MAX_CHANNEL_HISTORY: usize = 50;
-
-pub(crate) const DEFAULT_CHANNEL_INITIAL_BACKOFF_SECS: u64 = 2;
-pub(crate) const DEFAULT_CHANNEL_MAX_BACKOFF_SECS: u64 = 60;
-pub(crate) const MIN_CHANNEL_MESSAGE_TIMEOUT_SECS: u64 = 30;
-/// Default timeout for processing a single channel message (LLM + tools).
-/// Used as fallback when not configured in channels_config.message_timeout_secs.
-pub(crate) const CHANNEL_MESSAGE_TIMEOUT_SECS: u64 = 300;
-pub(crate) const CHANNEL_PARALLELISM_PER_CHANNEL: usize = 4;
-pub(crate) const CHANNEL_MIN_IN_FLIGHT_MESSAGES: usize = 8;
-pub(crate) const CHANNEL_MAX_IN_FLIGHT_MESSAGES: usize = 64;
-pub(crate) const CHANNEL_TYPING_REFRESH_INTERVAL_SECS: u64 = 4;
-pub(crate) const MEMORY_CONTEXT_MAX_ENTRIES: usize = 4;
-pub(crate) const MEMORY_CONTEXT_ENTRY_MAX_CHARS: usize = 800;
-pub(crate) const MEMORY_CONTEXT_MAX_CHARS: usize = 4_000;
-pub(crate) const CHANNEL_HISTORY_COMPACT_KEEP_MESSAGES: usize = 12;
-pub(crate) const CHANNEL_HISTORY_COMPACT_CONTENT_CHARS: usize = 600;
 
 pub(crate) type ProviderCacheMap = Arc<Mutex<HashMap<String, Arc<dyn Provider>>>>;
 pub(crate) type RouteSelectionMap = Arc<Mutex<HashMap<String, ChannelRouteSelection>>>;
-
-pub(crate) fn effective_channel_message_timeout_secs(configured: u64) -> u64 {
-    configured.max(MIN_CHANNEL_MESSAGE_TIMEOUT_SECS)
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ChannelRouteSelection {
-    pub(crate) provider: String,
-    pub(crate) model: String,
-}
 
 #[derive(Clone)]
 pub(crate) struct ChannelRuntimeContext {
@@ -70,23 +54,11 @@ pub(crate) struct ChannelRuntimeContext {
 }
 
 pub(crate) fn conversation_memory_key(msg: &super::traits::ChannelMessage) -> String {
-    format!("{}_{}_{}", msg.channel, msg.sender, msg.id)
+    tinychannels::context::conversation_memory_key(msg)
 }
 
 pub(crate) fn conversation_history_key(msg: &super::traits::ChannelMessage) -> String {
-    let base_key = format!("{}_{}_{}", msg.channel, msg.sender, msg.reply_target);
-    // Telegram uses thread_ts as "reply-to message id" for transport targeting.
-    // It should not split memory/history into a new conversation per message.
-    if msg.channel == "telegram" {
-        return base_key;
-    }
-    if let Some(thread_ts) = msg.thread_ts.as_deref() {
-        let thread_ts = thread_ts.trim();
-        if !thread_ts.is_empty() {
-            return format!("{base_key}_thread:{thread_ts}");
-        }
-    }
-    base_key
+    tinychannels::context::conversation_history_key(msg)
 }
 
 pub(crate) fn clear_sender_history(ctx: &ChannelRuntimeContext, sender_key: &str) {
@@ -126,28 +98,8 @@ pub(crate) fn compact_sender_history(ctx: &ChannelRuntimeContext, sender_key: &s
     true
 }
 
-pub(crate) fn should_skip_memory_context_entry(key: &str, content: &str) -> bool {
-    if key.trim().to_ascii_lowercase().ends_with("_history") {
-        return true;
-    }
-
-    content.chars().count() > MEMORY_CONTEXT_MAX_CHARS
-}
-
 pub(crate) fn is_context_window_overflow_error(err: &anyhow::Error) -> bool {
-    let lower = err.to_string().to_lowercase();
-    [
-        "exceeds the context window",
-        "context window of this model",
-        "maximum context length",
-        "context length exceeded",
-        "too many tokens",
-        "token limit exceeded",
-        "prompt is too long",
-        "input is too long",
-    ]
-    .iter()
-    .any(|hint| lower.contains(hint))
+    tinychannels::context::is_context_window_overflow_message(&err.to_string())
 }
 
 pub(crate) async fn build_memory_context(

@@ -1,10 +1,10 @@
 import { configureStore } from '@reduxjs/toolkit';
 import { describe, expect, it, vi } from 'vitest';
 
-import reducer, { fetchAndHydrateTurnState } from '../chatRuntimeSlice';
+import reducer, { fetchAndHydrateTurnHistory, fetchAndHydrateTurnState } from '../chatRuntimeSlice';
 
 const { mockThreadApi } = vi.hoisted(() => ({
-  mockThreadApi: { getTurnState: vi.fn(), listRuns: vi.fn() },
+  mockThreadApi: { getTurnState: vi.fn(), listRuns: vi.fn(), getTurnStateHistory: vi.fn() },
 }));
 
 vi.mock('../../services/api/threadApi', () => ({ threadApi: mockThreadApi }));
@@ -39,5 +39,58 @@ describe('fetchAndHydrateTurnState', () => {
         sourceToolName: 'run_ledger',
       }),
     ]);
+  });
+});
+
+describe('fetchAndHydrateTurnHistory', () => {
+  const persistedTurn = (
+    requestId: string,
+    lifecycle: string,
+    startedAt: string,
+    tools: number
+  ) => ({
+    threadId: 'thread-hist',
+    requestId,
+    lifecycle,
+    iteration: 1,
+    maxIterations: 25,
+    streamingText: '',
+    thinking: '',
+    toolTimeline: Array.from({ length: tools }, (_, i) => ({
+      id: `${requestId}-tc-${i}`,
+      name: 'shell',
+      round: 0,
+      status: 'success' as const,
+    })),
+    startedAt,
+    updatedAt: startedAt,
+  });
+
+  it('stores older settled turns by requestId, skipping the latest and the live/started turn', async () => {
+    const store = configureStore({ reducer });
+    // Newest-first: req-3 (latest, skipped), req-2 (completed, kept),
+    // req-1 (interrupted, kept), req-0 (started → filtered by lifecycle).
+    mockThreadApi.getTurnStateHistory.mockResolvedValueOnce([
+      persistedTurn('req-3', 'completed', '2026-06-04T13:00:00Z', 1),
+      persistedTurn('req-2', 'completed', '2026-06-04T12:00:00Z', 2),
+      persistedTurn('req-1', 'interrupted', '2026-06-04T11:00:00Z', 1),
+      persistedTurn('req-0', 'started', '2026-06-04T10:00:00Z', 1),
+    ]);
+
+    await store.dispatch(fetchAndHydrateTurnHistory('thread-hist'));
+
+    const timelines = store.getState().turnTimelinesByThread['thread-hist'];
+    expect(Object.keys(timelines).sort()).toEqual(['req-1', 'req-2']);
+    expect(timelines['req-2']).toHaveLength(2);
+    expect(timelines['req-1']).toHaveLength(1);
+    expect(timelines['req-3']).toBeUndefined();
+    expect(timelines['req-0']).toBeUndefined();
+  });
+
+  it('swallows transport failures without throwing', async () => {
+    const store = configureStore({ reducer });
+    mockThreadApi.getTurnStateHistory.mockRejectedValueOnce(new Error('boom'));
+    await expect(store.dispatch(fetchAndHydrateTurnHistory('t'))).resolves.toBeDefined();
+    expect(store.getState().turnTimelinesByThread['t']).toBeUndefined();
   });
 });

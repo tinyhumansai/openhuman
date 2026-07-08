@@ -18,6 +18,55 @@ use super::types::ChatRequestMetadata;
 /// genuine-disconnect error path (6 missed beats before the 120s window lapses).
 const INFERENCE_HEARTBEAT_SECS: u64 = 20;
 
+/// Minimum trimmed length for the parent agent's leading narration to be
+/// surfaced as its own interim chat bubble. Below this a stray "Ok." / "Sure."
+/// is left as transient streaming text rather than persisted as a message.
+const MIN_INTERIM_NARRATION_CHARS: usize = 24;
+
+/// Flush the parent agent's accumulated leading narration (streamed before a
+/// tool call in the current round) as an interim `chat_interim` event, so it
+/// persists as a chat bubble interleaved with the tool activity instead of
+/// vanishing when the turn settles. Clears `buffer` unconditionally; emits
+/// nothing for narration that is empty or too short to stand alone.
+fn flush_interim_narration(
+    buffer: &mut String,
+    round: u32,
+    client_id: &str,
+    thread_id: &str,
+    request_id: &str,
+) {
+    let text = std::mem::take(buffer);
+    let Some(narration) = interim_narration_text(&text) else {
+        return;
+    };
+    log::debug!(
+        "[web_channel][bridge] chat_interim round={} chars={} request_id={}",
+        round,
+        narration.chars().count(),
+        request_id,
+    );
+    publish_web_channel_event(WebChannelEvent {
+        event: "chat_interim".to_string(),
+        client_id: client_id.to_string(),
+        thread_id: thread_id.to_string(),
+        request_id: request_id.to_string(),
+        full_response: Some(narration),
+        round: Some(round),
+        ..Default::default()
+    });
+}
+
+/// The trimmed narration to surface as an interim bubble, or `None` when it is
+/// empty or shorter than [`MIN_INTERIM_NARRATION_CHARS`]. Pure so the threshold
+/// is unit-testable without the global event bus.
+fn interim_narration_text(buffer: &str) -> Option<String> {
+    let trimmed = buffer.trim();
+    if trimmed.chars().count() < MIN_INTERIM_NARRATION_CHARS {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
 /// Current wall-clock time as Unix-epoch milliseconds, used to stamp tracing
 /// spans (issue #3886). Saturates to `0` if the clock is before the epoch.
 fn unix_epoch_ms() -> u64 {
@@ -90,6 +139,37 @@ pub(super) fn ledger_upsert_telemetry(
     }
 }
 
+pub(super) fn ledger_get_telemetry(
+    config: &crate::openhuman::config::Config,
+    run_id: &str,
+) -> Option<crate::openhuman::session_db::run_ledger::RunTelemetry> {
+    match crate::openhuman::session_db::run_ledger::get_agent_run(config, run_id) {
+        Ok(Some(run)) => {
+            let telemetry = run.telemetry;
+            log::debug!(
+                "[run_ledger][web_channel] read telemetry run_id={} present={}",
+                run_id,
+                telemetry.is_some()
+            );
+            telemetry
+        }
+        Ok(None) => {
+            log::debug!(
+                "[run_ledger][web_channel] telemetry unavailable; run missing run_id={}",
+                run_id
+            );
+            None
+        }
+        Err(err) => {
+            log::warn!(
+                "[run_ledger][web_channel] failed to read telemetry run_id={} err={err}",
+                run_id
+            );
+            None
+        }
+    }
+}
+
 /// Build the worktree-isolation slice of a `subagent_completed`
 /// [`SubagentProgressDetail`] (#3376). An empty `changed_files` collapses to
 /// `None` so the renderer omits an empty "changed files" list rather than
@@ -111,6 +191,114 @@ fn subagent_worktree_detail(
         dirty_status,
         ..Default::default()
     }
+}
+
+/// Trace user attribution for a turn whose `auth_get_me` cache is cold
+/// (headless / autonomous / freshly booted cores): read the on-disk
+/// app-session profile and return the user's email (preferred) or backend
+/// user id. `None` when signed out or the profile is unreadable — the caller
+/// then falls back to the transport client id.
+fn session_profile_user_attribution(config: &crate::openhuman::config::Config) -> Option<String> {
+    let state = crate::openhuman::credentials::session_support::build_session_state(config).ok()?;
+    state
+        .user
+        .as_ref()
+        .and_then(|u| u.get("email"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .or(state.user_id)
+}
+
+fn span_projection_signature(
+    spans: &[crate::openhuman::agent::progress_tracing::TraceSpan],
+) -> Vec<String> {
+    spans
+        .iter()
+        .map(|span| {
+            let attr_keys = span
+                .attributes
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(
+                "{:?}|{}|{:?}|attrs:[{}]",
+                span.kind, span.name, span.status, attr_keys
+            )
+        })
+        .collect()
+}
+
+async fn shadow_compare_journal_projection(
+    request_id: &str,
+    trace_ctx: crate::openhuman::agent::progress_tracing::TraceContext,
+    max_iterations: u32,
+    live_spans: &[crate::openhuman::agent::progress_tracing::TraceSpan],
+) -> Option<Vec<tinyagents::harness::observability::AgentObservation>> {
+    let Some(journal_run_id) =
+        crate::openhuman::tinyagents::journal::take_request_journal_run(request_id)
+    else {
+        log::debug!(
+            "[agent-tracing][journal-shadow] no journal run registered request_id={}",
+            request_id
+        );
+        return None;
+    };
+
+    let observations = match crate::openhuman::tinyagents::journal::read_run_events(
+        &journal_run_id,
+        0,
+    )
+    .await
+    {
+        Ok(observations) => observations,
+        Err(err) => {
+            log::warn!(
+                    "[agent-tracing][journal-shadow] read failed request_id={} journal_run_id={} err={err}",
+                    request_id,
+                    journal_run_id
+                );
+            return None;
+        }
+    };
+    if observations.is_empty() {
+        log::warn!(
+            "[agent-tracing][journal-shadow] journal empty request_id={} journal_run_id={}",
+            request_id,
+            journal_run_id
+        );
+        return None;
+    }
+
+    let projected =
+        crate::openhuman::agent::progress_tracing::journal_projection::spans_from_observations(
+            trace_ctx,
+            max_iterations,
+            &observations,
+        );
+    let live_sig = span_projection_signature(live_spans);
+    let projected_sig = span_projection_signature(&projected);
+    if live_sig == projected_sig {
+        log::debug!(
+            "[agent-tracing][journal-shadow] parity ok request_id={} journal_run_id={} spans={} observations={}",
+            request_id,
+            journal_run_id,
+            live_spans.len(),
+            observations.len()
+        );
+    } else {
+        log::warn!(
+            "[agent-tracing][journal-shadow] parity divergence request_id={} journal_run_id={} live_spans={} journal_spans={} observations={} live_sig={:?} journal_sig={:?}",
+            request_id,
+            journal_run_id,
+            live_spans.len(),
+            projected.len(),
+            observations.len(),
+            live_sig,
+            projected_sig
+        );
+    }
+    Some(observations)
 }
 
 /// Spawn a background task that reads [`AgentProgress`] events from the
@@ -143,6 +331,14 @@ pub(crate) fn spawn_progress_bridge(
             metadata.session_id,
         );
         let mut round: u32 = 0;
+        let mut parent_max_iterations: u32 = 0;
+        // Accumulates the parent agent's streamed narration for the current
+        // round. When a tool call closes the round, this leading narration is
+        // flushed as an interim chat bubble (`chat_interim`) so it persists in
+        // the thread instead of vanishing on settle — the final answer arrives
+        // separately via `deliver_response` and is never part of this buffer
+        // (it belongs to the terminal round, which ends with no tool call).
+        let mut pending_narration = String::new();
         let mut events_seen: u64 = 0;
         let mut parent_completed = false;
         let mut parent_tool_count: u64 = 0;
@@ -152,17 +348,67 @@ pub(crate) fn spawn_progress_bridge(
 
         // #3886: opt-in structured tracing export. When enabled, fold the same
         // progress stream into OTel/Langfuse-style spans correlated by session
-        // id (falling back to the thread id for headless/autonomous runs) with
-        // the client id as user attribution. `None` (disabled) is zero-cost.
-        let mut span_collector = if config.observability.agent_tracing.enabled {
+        // id (falling back to the thread id for headless/autonomous runs).
+        // `None` (disabled) is zero-cost.
+        let mut journal_trace_ctx = None;
+        let mut span_collector = if config.observability.share_usage_data
+            || config.observability.agent_tracing.enabled
+        {
             use crate::openhuman::agent::progress_tracing::{
-                trace_session_id, SpanCollector, TraceContext,
+                trace_session_id, RunType, SpanCollector, TraceContext,
             };
-            let session_id = trace_session_id(metadata.session_id, &thread_id);
-            Some(SpanCollector::new(TraceContext::new(
-                session_id,
-                Some(client_id.clone()),
-            )))
+            // One trace per turn: the trace id is unique per request, while the
+            // thread id rides along as the Langfuse `sessionId` so a
+            // conversation's per-turn traces still group under one session.
+            let base = trace_session_id(metadata.session_id, &thread_id);
+            let trace_id = format!("{base}:{request_id}");
+            // Attribute the trace to the *real* authenticated user (cached
+            // `auth_get_me` identity: id, else email) — the transport client
+            // id (socket client / "system") is NOT a user; it rides along as
+            // the separate `client.id` metadata attribute. When no identity is
+            // cached (signed-out / fresh install), fall back to the client id
+            // so the trace still carries some attribution.
+            let identity = crate::openhuman::app_state::peek_cached_current_user_identity();
+            let user_attributed = identity.is_some();
+            let user_id = identity
+                .and_then(|i| i.id.or(i.email))
+                .or_else(|| session_profile_user_attribution(&config))
+                .unwrap_or_else(|| client_id.clone());
+            // Run origin for trace metadata: the request's source tag
+            // ("ptt"/"dictation"/"type"/"agentbox"/"autonomous"/…), else a
+            // plain interactive chat turn.
+            let run_type = RunType::from_source(metadata.source.as_deref());
+            let channel_source = metadata
+                .source
+                .clone()
+                .unwrap_or_else(|| "chat".to_string());
+            // Storage-level privacy gate (#4454): capture_content (off by
+            // default) rides on the TraceContext so the collector only attaches
+            // prompt/reply content to spans when the operator opted in — no
+            // exporter can serialize prompt/reply text otherwise.
+            let capture_content = config.observability.agent_tracing.capture_content;
+            log::debug!(
+                "[web_channel][bridge] trace context trace_id={} user_attributed={} \
+                 agent_id={:?} channel_source={} run_type={} capture_content={} request_id={}",
+                trace_id,
+                user_attributed,
+                metadata.agent_id,
+                channel_source,
+                run_type.as_str(),
+                capture_content,
+                request_id,
+            );
+            let mut trace_ctx = TraceContext::new(trace_id, Some(user_id))
+                .with_session_group(thread_id.clone())
+                .with_client_id(client_id.clone())
+                .with_channel_source(channel_source)
+                .with_run_type(run_type)
+                .with_capture_content(capture_content);
+            if let Some(agent_id) = metadata.agent_id.clone() {
+                trace_ctx = trace_ctx.with_agent_id(agent_id);
+            }
+            journal_trace_ctx = Some(trace_ctx.clone());
+            Some(SpanCollector::new(trace_ctx))
         } else {
             None
         };
@@ -347,6 +593,7 @@ pub(crate) fn spawn_progress_bridge(
                     max_iterations,
                 } => {
                     round = iteration;
+                    parent_max_iterations = max_iterations;
                     publish_web_channel_event(WebChannelEvent {
                         event: "iteration_start".to_string(),
                         client_id: client_id.clone(),
@@ -365,6 +612,16 @@ pub(crate) fn spawn_progress_bridge(
                     display_label,
                     display_detail,
                 } => {
+                    // The parent's leading narration for this round is complete
+                    // once it calls a tool — flush it as an interim bubble so it
+                    // persists interleaved with the tool activity.
+                    flush_interim_narration(
+                        &mut pending_narration,
+                        iteration,
+                        &client_id,
+                        &thread_id,
+                        &request_id,
+                    );
                     parent_tool_count += 1;
                     ledger_append_event(
                         &config,
@@ -406,9 +663,14 @@ pub(crate) fn spawn_progress_bridge(
                     tool_name,
                     success,
                     output_chars,
+                    output,
                     elapsed_ms,
                     iteration,
+                    failure,
+                    ..
                 } => {
+                    // Serialize the classified failure (if any) for the UI + ledger.
+                    let failure_json = failure.as_ref().and_then(|f| serde_json::to_value(f).ok());
                     ledger_append_event(
                         &config,
                         RunEventAppend {
@@ -420,7 +682,8 @@ pub(crate) fn spawn_progress_bridge(
                                 "success": success,
                                 "outputChars": output_chars,
                                 "elapsedMs": elapsed_ms,
-                                "iteration": iteration
+                                "iteration": iteration,
+                                "failure": failure_json,
                             }),
                         },
                     );
@@ -431,13 +694,15 @@ pub(crate) fn spawn_progress_bridge(
                         request_id: request_id.clone(),
                         tool_name: Some(tool_name),
                         skill_id: Some("web_channel".to_string()),
-                        output: Some(
-                            json!({"output_chars": output_chars, "elapsed_ms": elapsed_ms})
-                                .to_string(),
-                        ),
+                        // Forward the real tool result (size-capped) so the UI
+                        // can render tool output — mirrors the subagent
+                        // `subagent_tool_result` path. Frontends that only
+                        // need size/timing read the ledger telemetry instead.
+                        output: Some(cap_wire_output(output)),
                         success: Some(success),
                         round: Some(iteration),
                         tool_call_id: Some(call_id),
+                        failure: failure_json,
                         ..Default::default()
                     });
                 }
@@ -449,6 +714,7 @@ pub(crate) fn spawn_progress_bridge(
                     prompt_chars,
                     worker_thread_id,
                     display_name,
+                    ..
                 } => {
                     let label = display_name.as_deref().unwrap_or(&agent_id);
                     let kind = if worker_thread_id.is_some() {
@@ -533,6 +799,7 @@ pub(crate) fn spawn_progress_bridge(
                     worktree_path,
                     changed_files,
                     dirty_status,
+                    ..
                 } => {
                     let completed_at = chrono::Utc::now();
                     ledger_upsert_agent_run(
@@ -848,7 +1115,13 @@ pub(crate) fn spawn_progress_bridge(
                     output,
                     elapsed_ms,
                     iteration,
+                    failure,
+                    ..
                 } => {
+                    // Serialize the classified failure (if any) so a failed
+                    // sub-agent tool row carries its "why + next" copy on the
+                    // wire + ledger, matching the main-agent path (#4459).
+                    let failure_json = failure.as_ref().and_then(|f| serde_json::to_value(f).ok());
                     ledger_append_event(
                         &config,
                         RunEventAppend {
@@ -861,7 +1134,8 @@ pub(crate) fn spawn_progress_bridge(
                                 "success": success,
                                 "outputChars": output_chars,
                                 "elapsedMs": elapsed_ms,
-                                "iteration": iteration
+                                "iteration": iteration,
+                                "failure": failure_json,
                             }),
                         },
                     );
@@ -880,6 +1154,7 @@ pub(crate) fn spawn_progress_bridge(
                         // bounded size for the wire (#4007); `output_chars` +
                         // `elapsed_ms` still ride along in `subagent` below.
                         output: Some(cap_wire_output(output)),
+                        failure: failure_json,
                         subagent: Some(SubagentProgressDetail {
                             child_iteration: Some(iteration),
                             agent_id: Some(agent_id),
@@ -959,6 +1234,9 @@ pub(crate) fn spawn_progress_bridge(
                     });
                 }
                 AgentProgress::TextDelta { delta, iteration } => {
+                    // Buffer the round's narration so it can be flushed as an
+                    // interim bubble if a tool call closes this round.
+                    pending_narration.push_str(&delta);
                     publish_web_channel_event(WebChannelEvent {
                         event: "text_delta".to_string(),
                         client_id: client_id.clone(),
@@ -1078,6 +1356,26 @@ pub(crate) fn spawn_progress_bridge(
                          total_usd={total_usd:.4} client_id={client_id} thread_id={thread_id}"
                     );
                 }
+                AgentProgress::TurnContent { .. } => {
+                    // Prompt/reply content is attached to the trace span by the
+                    // span collector above; the ledger/telemetry bridge ignores it.
+                }
+                AgentProgress::ModelCallCompleted {
+                    model,
+                    iteration,
+                    input_tokens,
+                    output_tokens,
+                    cost_usd,
+                    ..
+                } => {
+                    // Per-call usage is consumed by the span collector above
+                    // (per-call Langfuse generation); the socket/ledger surfaces
+                    // stay on the cumulative TurnCostUpdated rollup.
+                    log::debug!(
+                        "[web_channel][bridge] model_call_completed model={model} iter={iteration} \
+                         in={input_tokens} out={output_tokens} cost_usd={cost_usd:.6} request_id={request_id}"
+                    );
+                }
             }
         }
         turn_state.finish();
@@ -1118,10 +1416,33 @@ pub(crate) fn spawn_progress_bridge(
         // never affects the turn outcome.
         if let Some(mut collector) = span_collector.take() {
             collector.finish(unix_epoch_ms());
-            crate::openhuman::agent::progress_tracing::export_spans(
-                &config.observability.agent_tracing,
-                collector.spans(),
-            );
+            let live_spans = collector.spans().to_vec();
+            let journal_export = if let Some(trace_ctx) = journal_trace_ctx.take() {
+                shadow_compare_journal_projection(
+                    &request_id,
+                    trace_ctx.clone(),
+                    parent_max_iterations,
+                    &live_spans,
+                )
+                .await
+                .map(|observations| (trace_ctx, observations))
+            } else {
+                None
+            };
+            if let Some((trace_ctx, observations)) = journal_export {
+                let run_telemetry = ledger_get_telemetry(&config, &request_id);
+                crate::openhuman::agent::progress_tracing::export_run_trace_from_journal(
+                    &config,
+                    &trace_ctx,
+                    &observations,
+                    run_telemetry.as_ref(),
+                    &live_spans,
+                )
+                .await;
+            } else {
+                crate::openhuman::agent::progress_tracing::export_run_trace(&config, &live_spans)
+                    .await;
+            }
         }
 
         log::debug!(
@@ -1137,6 +1458,71 @@ pub(crate) fn spawn_progress_bridge(
 
 #[cfg(test)]
 mod tests {
+    use super::interim_narration_text;
+    use super::session_profile_user_attribution;
+
+    #[test]
+    fn interim_narration_skips_empty_and_trivial() {
+        assert_eq!(interim_narration_text(""), None);
+        assert_eq!(interim_narration_text("   \n  "), None);
+        // Below the min length → left as transient streaming text.
+        assert_eq!(interim_narration_text("Ok."), None);
+        assert_eq!(interim_narration_text("Sure, one sec"), None);
+    }
+
+    #[test]
+    fn interim_narration_surfaces_and_trims_substantial_text() {
+        let text = "  Let me check your calendar for conflicts first.  ";
+        assert_eq!(
+            interim_narration_text(text),
+            Some("Let me check your calendar for conflicts first.".to_string())
+        );
+    }
+
+    #[test]
+    fn session_profile_attribution_none_when_signed_out() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let config = crate::openhuman::config::Config {
+            workspace_dir: tmp.path().join("workspace"),
+            action_dir: tmp.path().join("workspace"),
+            config_path: tmp.path().join("config.toml"),
+            ..Default::default()
+        };
+        assert!(session_profile_user_attribution(&config).is_none());
+    }
+
+    #[test]
+    fn session_profile_attribution_prefers_email_from_stored_session() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let config = crate::openhuman::config::Config {
+            workspace_dir: tmp.path().join("workspace"),
+            action_dir: tmp.path().join("workspace"),
+            config_path: tmp.path().join("config.toml"),
+            ..Default::default()
+        };
+        let service = crate::openhuman::credentials::AuthService::from_config(&config);
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert(
+            "user_json".to_string(),
+            "{\"email\": \"steven@example.test\", \"_id\": \"u-1\"}".to_string(),
+        );
+        metadata.insert("user_id".to_string(), "u-1".to_string());
+        service
+            .store_provider_token(
+                crate::openhuman::credentials::APP_SESSION_PROVIDER,
+                crate::openhuman::credentials::DEFAULT_AUTH_PROFILE_NAME,
+                "session-token",
+                metadata,
+                true,
+            )
+            .expect("store session profile");
+        assert_eq!(
+            session_profile_user_attribution(&config).as_deref(),
+            Some("steven@example.test"),
+            "cold-cache attribution must resolve the on-disk session email"
+        );
+    }
+
     use super::*;
 
     #[test]
@@ -1157,6 +1543,70 @@ mod tests {
         assert!(capped.starts_with('é'));
         // The final payload (content + marker) must honor the wire cap.
         assert!(capped.len() <= MAX_WIRE_SUBAGENT_OUTPUT);
+    }
+
+    /// The `tool_result` wire event must carry the tool's real (capped) output
+    /// so the UI can render what the tool returned — not the legacy
+    /// `{"output_chars", "elapsed_ms"}` metadata stub (which broke both the
+    /// timeline result view and the `propose_workflow` proposal parser).
+    #[tokio::test]
+    async fn tool_call_completed_forwards_real_output_on_tool_result() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let config = crate::openhuman::config::Config {
+            workspace_dir: tmp.path().join("workspace"),
+            action_dir: tmp.path().join("workspace"),
+            config_path: tmp.path().join("config.toml"),
+            ..Default::default()
+        };
+        let store = TurnStateStore::new(tmp.path().join("turn_states"));
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+        let mut bus = super::super::event_bus::subscribe_web_channel_events();
+        spawn_progress_bridge(
+            rx,
+            "client-out".into(),
+            "thread-out".into(),
+            "req-out".into(),
+            store,
+            ChatRequestMetadata::default(),
+            config,
+        );
+
+        tx.send(
+            crate::openhuman::agent::progress::AgentProgress::ToolCallCompleted {
+                call_id: "call-1".into(),
+                tool_name: "web_search".into(),
+                success: true,
+                output_chars: 12,
+                output: "real payload".into(),
+                arguments: None,
+                elapsed_ms: 42,
+                iteration: 1,
+                failure: None,
+            },
+        )
+        .await
+        .expect("send progress");
+
+        // The bus is process-global — skip unrelated events from concurrent
+        // tests and wait (bounded) for our thread's tool_result.
+        let event = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                match bus.recv().await {
+                    Ok(ev) if ev.thread_id == "thread-out" && ev.event == "tool_result" => {
+                        return ev;
+                    }
+                    Ok(_) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(err) => panic!("bus closed: {err}"),
+                }
+            }
+        })
+        .await
+        .expect("tool_result within timeout");
+
+        assert_eq!(event.output.as_deref(), Some("real payload"));
+        assert_eq!(event.success, Some(true));
+        assert_eq!(event.tool_call_id.as_deref(), Some("call-1"));
     }
 
     #[test]

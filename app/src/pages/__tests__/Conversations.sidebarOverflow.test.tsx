@@ -214,7 +214,7 @@ function socketState(status: 'connected' | 'disconnected') {
 /** Render the Human-page chat embed: sidebar variant with the mic-cloud composer. */
 async function renderSidebar(preload: Record<string, unknown> = {}) {
   const store = buildStore(preload);
-  const { default: Conversations } = await import('../Conversations');
+  const { default: Conversations } = await import('../../features/conversations/Conversations');
 
   let container!: HTMLElement;
   await act(async () => {
@@ -269,7 +269,7 @@ describe('Conversations — sidebar composer footer overflow (#3785)', () => {
 
   it('keeps the floating page-variant composer absolutely positioned (no regression)', async () => {
     const store = buildStore({ thread: emptyThreadState });
-    const { default: Conversations } = await import('../Conversations');
+    const { default: Conversations } = await import('../../features/conversations/Conversations');
 
     let container!: HTMLElement;
     await act(async () => {

@@ -173,6 +173,15 @@ describe('rpcMethods catalog', () => {
         path.resolve(__dirname, '../../../../src/openhuman/channels/controllers/schemas.rs'),
         'utf8'
       ),
+      // The channels_* namespace/function literals now live in the vendored
+      // tinychannels crate (`ChannelControllerSchema`), not in the thin
+      // `src/openhuman/channels/controllers/schemas.rs` adapter above, which
+      // only converts from it (#4557 "Use tinychannels provider
+      // implementations") — read both so this drift guard still sees them.
+      fs.readFileSync(
+        path.resolve(__dirname, '../../../../vendor/tinychannels/src/controllers/schemas.rs'),
+        'utf8'
+      ),
     ].join('\n');
 
     for (const method of Object.values(CORE_RPC_METHODS)) {

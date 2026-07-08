@@ -1,5 +1,8 @@
 mod event_bus;
 mod ops;
+// Response delivery/segmentation for the web surface (folded in from the former
+// standalone `presentation` provider — it is the web channel's delivery formatter).
+pub mod presentation;
 mod progress_bridge;
 mod run_task;
 mod schemas;

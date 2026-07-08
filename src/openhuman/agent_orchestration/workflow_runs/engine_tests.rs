@@ -185,6 +185,7 @@ impl Provider for PeakProvider {
 
 fn mock_parent(provider: Arc<dyn Provider>) -> ParentExecutionContext {
     ParentExecutionContext {
+        workspace_descriptor: None,
         agent_definition_id: "workflow_engine".to_string(),
         allowed_subagent_ids: HashSet::new(),
         provider,

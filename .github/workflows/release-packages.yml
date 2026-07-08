@@ -13,6 +13,10 @@ name: Release Packages
 on:
   workflow_dispatch:
 permissions:
+  # `actions: read` lets scripts/ci-cancel-aware.sh poll the run status so
+  # cancelled builds inside container jobs stop themselves (docker exec
+  # swallows the runner's signals).
+  actions: read
   contents: write
   pages: write
   id-token: write
@@ -33,6 +37,9 @@ jobs:
     name: Build Linux arm64 CLI tarball
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
+    env:
+      # Consumed by scripts/ci-cancel-aware.sh's cancellation watchdog.
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout tag
         uses: actions/checkout@v5

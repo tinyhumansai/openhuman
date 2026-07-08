@@ -124,9 +124,11 @@ export default function Intelligence({ tabParamKey = 'tab' }: IntelligenceProps 
   // Subconscious engine data
   const {
     status: subconsciousEngineStatus,
+    instances: subconsciousInstances,
     mode: subconsciousMode,
     intervalMinutes: subconsciousInterval,
     triggering: subconsciousTriggering,
+    isTriggering: subconsciousIsTriggering,
     settingMode: subconsciousSettingMode,
     triggerTick,
     setMode: setSubconsciousMode,
@@ -270,13 +272,16 @@ export default function Intelligence({ tabParamKey = 'tab' }: IntelligenceProps 
             {activeTab === 'subconscious' && (
               <IntelligenceSubconsciousTab
                 status={subconsciousEngineStatus}
+                instances={subconsciousInstances}
                 mode={subconsciousMode}
                 intervalMinutes={subconsciousInterval}
                 triggerTick={triggerTick}
                 triggering={subconsciousTriggering}
+                isTriggering={subconsciousIsTriggering}
                 settingMode={subconsciousSettingMode}
                 setMode={setSubconsciousMode}
                 setIntervalMinutes={setSubconsciousInterval}
+                onViewDirectives={() => setActiveTab('orchestration')}
               />
             )}
 

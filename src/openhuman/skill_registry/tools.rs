@@ -281,10 +281,10 @@ impl Tool for SkillRegistryUninstallTool {
             .filter(|value| !value.is_empty())
             .ok_or_else(|| anyhow::anyhow!("missing required argument `name`"))?;
         tracing::debug!(name = %name, "[tool][skill_registry] uninstall");
-        let params = crate::openhuman::workflows::ops_install::UninstallWorkflowParams {
+        let params = crate::openhuman::skills::ops_install::UninstallWorkflowParams {
             name: name.to_string(),
         };
-        match crate::openhuman::workflows::ops_install::uninstall_workflow(params, None) {
+        match crate::openhuman::skills::ops_install::uninstall_workflow(params, None) {
             Ok(outcome) => Ok(ToolResult::success(serde_json::to_string(&json!({
                 "name": outcome.name,
                 "removed_path": outcome.removed_path,

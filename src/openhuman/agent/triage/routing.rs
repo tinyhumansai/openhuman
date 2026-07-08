@@ -24,8 +24,8 @@ pub struct ResolvedProvider {
     /// Provider name token — always `"openhuman"` (remote backend).
     /// Kept for telemetry / observability compat with the previous two-path design.
     pub provider_name: String,
-    /// Model identifier — the concrete string `run_tool_call_loop`
-    /// will hand to the provider.
+    /// Model identifier — the concrete string the turn
+    /// (`run_turn_via_tinyagents_shared`) will hand to the provider.
     pub model: String,
     /// Always `false` — local AI is never used for triage.
     /// Preserved so existing telemetry subscribers that read this field do not

@@ -199,17 +199,28 @@ pub(crate) async fn run_chat_task(
         }
     }
 
-    let (progress_tx, progress_rx) = tokio::sync::mpsc::channel(64);
+    // Bounded to 256 (was 64): a heavy-event subagent (e.g. `workflow_builder`,
+    // 50+ progress events per run) can overflow a smaller buffer, and the
+    // sender side uses `try_send` — an overflow silently drops progress
+    // events (including the ones that create a subagent's timeline row),
+    // which can in turn hide UI state derived from those events. This is
+    // defense-in-depth; extraction of durable state (like a workflow
+    // proposal) must not depend on any single progress event surviving.
+    let (progress_tx, progress_rx) = tokio::sync::mpsc::channel(256);
     agent.set_on_progress(Some(progress_tx));
     agent.set_run_queue(Some(run_queue));
     let turn_state_store = TurnStateStore::new(config.workspace_dir.clone());
+    // Stamp the resolved agent onto the bridge metadata so the trace exporter
+    // can attribute the run (`agent.id` attr / `agent.turn:<id>` trace name).
+    let mut bridge_metadata = metadata.clone();
+    bridge_metadata.agent_id = Some(target_agent_id.clone());
     spawn_progress_bridge(
         progress_rx,
         client_id.to_string(),
         thread_id.to_string(),
         request_id.to_string(),
         turn_state_store,
-        metadata.clone(),
+        bridge_metadata,
         config.clone(),
     );
 

@@ -2802,6 +2802,7 @@ async fn worker_a_controller_schemas_are_fully_exposed() {
                 "openhuman.config_get_meet_settings",
                 "openhuman.config_get_memory_sync_settings",
                 "openhuman.config_get_onboarding_completed",
+                "openhuman.config_get_privacy_mode",
                 "openhuman.config_get_runtime_flags",
                 "openhuman.config_get_sandbox_settings",
                 "openhuman.config_get_search_settings",
@@ -2811,6 +2812,7 @@ async fn worker_a_controller_schemas_are_fully_exposed() {
                 "openhuman.config_resolve_api_url",
                 "openhuman.config_set_browser_allow_all",
                 "openhuman.config_set_onboarding_completed",
+                "openhuman.config_set_privacy_mode",
                 "openhuman.config_set_super_context_enabled",
                 "openhuman.config_update_activity_level_settings",
                 "openhuman.config_update_agent_paths",
@@ -4871,11 +4873,10 @@ async fn app_state_snapshot_degrades_runtime_service_status_failures() {
     let _service_state =
         EnvVarGuard::set_to_path("OPENHUMAN_SERVICE_MOCK_STATE_FILE", &service_state_path);
 
-    // The runtime snapshot cache is process-global and not keyed by config.
-    // Let prior app_state_snapshot tests age out so this call exercises the
-    // service-status fallback instead of returning a cached runtime.
-    tokio::time::sleep(Duration::from_millis(2_100)).await;
-
+    // The runtime snapshot cache is keyed by config identity (workspace_dir), so
+    // this harness's unique workspace guarantees a cache miss regardless of prior
+    // app_state_snapshot tests — the call exercises the service-status fallback
+    // against our injected mock rather than returning a foreign cached runtime.
     let snapshot = rpc(
         &harness.rpc_base,
         30_051,

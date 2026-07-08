@@ -1,0 +1,357 @@
+---
+# CI Full — the slow lane. Runs EVERYTHING against the long-lived `release`
+# branch: full frontend + Rust unit suites, Rust mock-backend E2E, Playwright
+# web E2E, and the full desktop E2E matrix on Linux/macOS/Windows.
+#
+# Two-lane model:
+#   - ci-lite.yml (quick): pushes to main + PRs to main/release — quality
+#     checks + unit tests scoped to the changed files only.
+#   - ci-full.yml (this file, slow): PRs targeting `release` (fix PRs opened
+#     while stabilising a cut — the "CI Full Gate" check gates their merge)
+#     and pushes to `release` (the maintainer-dispatched promotion merge from
+#     promote-main-to-release.yml, which has no PR, plus each fix-PR merge
+#     commit). Once the gate is green on release HEAD a release is cut via
+#     release-staging.yml / release-production.yml.
+#
+# The release workflows' version-bump commits carry [skip ci] so cutting a
+# build does not re-trigger this suite on an already-validated tree.
+name: CI Full
+
+on:
+  push:
+    branches: [release]
+  pull_request:
+    branches: [release]
+  workflow_dispatch: {}
+
+permissions:
+  # `actions: read` lets scripts/ci-cancel-aware.sh poll the run status so
+  # cancelled builds inside container jobs stop themselves (docker exec
+  # swallows the runner's signals).
+  actions: read
+  contents: read
+  packages: read
+
+env:
+  # Consumed by scripts/ci-cancel-aware.sh's cancellation watchdog.
+  GH_TOKEN: ${{ github.token }}
+  NPM_CONFIG_STORE_DIR: .pnpm-store
+
+# Keep only the newest run per PR (or per ref for release pushes); the gate
+# result is per-commit, so cancelling the superseded run loses nothing.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # Full unit suites: frontend Vitest, i18n coverage, Rust core tests, Rust
+  # Tauri shell tests — the same reusable recipe the release workflows'
+  # pretest gate uses.
+  unit-tests:
+    name: Full Unit Suites
+    # No `secrets: inherit` — the called workflow uses no secrets; keep this
+    # workflow's runs secret-free.
+    uses: ./.github/workflows/test-reusable.yml
+    with:
+      run_unit: true
+      run_rust_core: true
+      run_rust_tauri: true
+
+  rust-e2e:
+    name: Rust E2E (mock backend)
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:latest
+    timeout-minutes: 30
+    env:
+      CARGO_INCREMENTAL: "0"
+      # Trim DWARF debug info so test-binary linking doesn't exhaust runner disk
+      # (SIGBUS). Tests don't need full debug info; backtraces keep file/line.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    steps:
+      - name: Free disk space
+        run: |
+          # Reclaim space on the build partition before compiling/linking the
+          # Rust test binaries (host toolcache is bind-mounted at /__t inside
+          # the container).
+          rm -rf /__t/* || true
+          df -h /__w || true
+
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Cache pnpm store
+        id: pnpm-cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: .pnpm-store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          cache-on-failure: true
+          # Shared with ci-lite's former key so warm caches carry over between
+          # the fast lane and this full lane on the same dependency tree.
+          shared-key: pr-rust-core
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Save pnpm store cache
+        if: always() && steps.pnpm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: .pnpm-store
+          key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
+
+      - name: Ensure .env exists for tests
+        run: |
+          touch .env
+          touch app/.env
+
+      - name: Run Rust E2E suite
+        # Wrapped so the cancellation watchdog covers the whole suite (mock
+        # server + node harness), not just the cargo segments the inner
+        # script wraps itself.
+        run: bash scripts/ci-cancel-aware.sh pnpm test:rust:e2e
+        env:
+          RUST_BACKTRACE: "1"
+
+  build-playwright-e2e-artifact:
+    name: Build Playwright E2E Artifact
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:latest
+    timeout-minutes: 30
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Cache pnpm store
+        id: pnpm-cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: .pnpm-store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          cache-on-failure: true
+          shared-key: pr-rust-core
+
+      - name: Restore cached Playwright E2E artifact
+        id: playwright-artifact-cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: .ci/artifacts/e2e-playwright-linux.tar.gz
+          key: e2e-playwright-linux-${{ hashFiles('src/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'app/src/**', 'app/public/**', 'app/index.html', 'app/vite.config.*', 'app/tailwind.config.*', 'app/postcss.config.*', 'app/package.json', 'pnpm-lock.yaml', 'app/scripts/e2e-web-build.sh') }}
+
+      - name: Install dependencies
+        if: steps.playwright-artifact-cache.outputs.cache-hit != 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Save pnpm store cache
+        if: always() && steps.pnpm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: .pnpm-store
+          key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
+
+      - name: Ensure .env exists for E2E build
+        if: steps.playwright-artifact-cache.outputs.cache-hit != 'true'
+        run: |
+          touch .env
+          touch app/.env
+
+      - name: Build and package Playwright E2E artifact
+        if: steps.playwright-artifact-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app test:e2e:web:build
+
+          RUST_HOST_TRIPLE="$(rustc -vV | awk '/^host: / { print $2 }')"
+          WEB_CORE_TARGET_DIR="target/e2e-web-${RUST_HOST_TRIPLE}"
+          STAGE="$(mktemp -d)"
+          mkdir -p "$STAGE/repo/app/dist-web"
+          mkdir -p "$STAGE/repo/$WEB_CORE_TARGET_DIR/debug"
+          mkdir -p .ci/artifacts
+
+          cp -a app/dist-web/. "$STAGE/repo/app/dist-web/"
+          cp -a "$WEB_CORE_TARGET_DIR/debug/openhuman-core" "$STAGE/repo/$WEB_CORE_TARGET_DIR/debug/"
+          tar -czf .ci/artifacts/e2e-playwright-linux.tar.gz -C "$STAGE" repo
+          ls -lh .ci/artifacts/e2e-playwright-linux.tar.gz
+
+      - name: Verify build artifact exists
+        run: |
+          set -euo pipefail
+          test -f .ci/artifacts/e2e-playwright-linux.tar.gz
+
+      - name: Save Playwright E2E artifact cache
+        if: always() && steps.playwright-artifact-cache.outputs.cache-hit != 'true' && hashFiles('.ci/artifacts/e2e-playwright-linux.tar.gz') != ''
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: .ci/artifacts/e2e-playwright-linux.tar.gz
+          key: ${{ steps.playwright-artifact-cache.outputs.cache-primary-key }}
+
+      - name: Upload Playwright E2E artifact
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: e2e-playwright-linux-${{ github.run_id }}
+          path: .ci/artifacts/e2e-playwright-linux.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+
+  playwright-e2e:
+    name: E2E (Playwright / web lane)
+    needs: [build-playwright-e2e-artifact]
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:latest
+    timeout-minutes: 90
+    # TODO(ci-flaky, #3615): several specs consistently hit toBeVisible
+    # timeouts under CI resource contention. Run the lane but don't block
+    # release merges until infra stabilises.
+    continue-on-error: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Cache pnpm store
+        id: pnpm-cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: .pnpm-store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+
+      - name: Install JS dependencies (test harness)
+        run: pnpm install --frozen-lockfile
+
+      - name: Save pnpm store cache
+        if: always() && steps.pnpm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: .pnpm-store
+          key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
+
+      - name: Download Playwright E2E artifact
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: e2e-playwright-linux-${{ github.run_id }}
+          path: .
+
+      - name: Restore Playwright E2E artifact
+        run: |
+          set -euo pipefail
+          tar -xzf e2e-playwright-linux.tar.gz
+          cp -a repo/app/dist-web app/
+          mkdir -p target
+          cp -a repo/target/. target/
+          rm -rf repo e2e-playwright-linux.tar.gz
+          chmod +x target/e2e-web-*/debug/openhuman-core
+
+      - name: Install Playwright Chromium headless shell
+        run: pnpm --filter openhuman-app exec playwright install chromium-headless-shell
+
+      - name: Run Playwright web E2E suite
+        env:
+          OPENHUMAN_WORKSPACE: ${{ runner.temp }}/openhuman-playwright-workspace
+        run: |
+          mkdir -p "$OPENHUMAN_WORKSPACE"
+          bash scripts/ci-cancel-aware.sh bash app/scripts/e2e-web-session.sh
+
+      - name: Upload Playwright E2E failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: e2e-playwright-failure-logs-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/openhuman-playwright-workspace/**
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # Full desktop E2E suite on all three shipped OSes (build-once-then-fanout
+  # shards — see e2e-reusable.yml).
+  e2e-desktop:
+    name: Desktop E2E (full suite, 3 OS)
+    # No `secrets: inherit` — the called workflow uses no secrets; keep this
+    # workflow's runs secret-free.
+    uses: ./.github/workflows/e2e-reusable.yml
+    with:
+      run_linux: true
+      run_macos: true
+      run_windows: true
+      full: true
+
+  ci-full-gate:
+    name: CI Full Gate
+    needs:
+      - unit-tests
+      - rust-e2e
+      - build-playwright-e2e-artifact
+      # `playwright-e2e` is intentionally EXCLUDED from the gate. It carries
+      # `continue-on-error: true` (flaky specs, TODO #3615), which makes the
+      # job report `success` to `needs` even when its steps fail — so listing
+      # it here would be a can-never-fail check that only reads as coverage.
+      # Rather than leave it decorative, we drop it from the gate until the
+      # specs are stabilised and the flag removed (#3615); the lane still runs
+      # for signal, and `build-playwright-e2e-artifact` (which CAN fail) stays
+      # gated so a broken web build is still caught.
+      - e2e-desktop
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require all CI Full jobs to pass
+        run: |
+          set -euo pipefail
+          # NOTE: "Playwright E2E" is deliberately absent — see the needs:
+          # comment above (#3615). Re-add it here once continue-on-error is
+          # removed from the playwright-e2e job.
+          declare -A results=(
+            ["Full Unit Suites"]="${{ needs['unit-tests'].result }}"
+            ["Rust E2E"]="${{ needs['rust-e2e'].result }}"
+            ["Build Playwright E2E Artifact"]="${{ needs['build-playwright-e2e-artifact'].result }}"
+            ["Desktop E2E"]="${{ needs['e2e-desktop'].result }}"
+          )
+
+          failed=0
+          for name in "${!results[@]}"; do
+            result="${results[$name]}"
+            echo "${name}: ${result}"
+            if [ "${result}" != "success" ] && [ "${result}" != "skipped" ]; then
+              echo "::error::${name} did not pass (result=${result})."
+              failed=1
+            fi
+          done
+
+          if [ "${failed}" -ne 0 ]; then
+            exit 1
+          fi

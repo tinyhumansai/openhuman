@@ -9,13 +9,21 @@
 //! The phase-execution logic (`select_next_phase`, `execute_phase`) and the run
 //! lifecycle (`start_workflow_run` / `stop_workflow_run` / `resume_workflow_run`)
 //! stay in [`super::engine`]; this module owns only the graph state machine that
-//! drives them.
+//! drives them. The two engine effects are **injected** as closures
+//! ([`build_scheduler_graph`]) so the structure has one definition shared by the
+//! live runner and the structure-only [`scheduler_graph_topology`] export.
 
+use std::future::Future;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use serde_json::Value;
+use tinyagents::graph::export::GraphTopology;
+use tinyagents::graph::recursion::RecursionPolicy;
+use tinyagents::graph::{
+    ClosureStateReducer, Command, CompiledGraph, GraphBuilder, NodeContext, NodeResult,
+};
 
 use crate::openhuman::config::Config;
 use crate::openhuman::session_db::run_ledger::get_workflow_run;
@@ -50,6 +58,95 @@ enum SchedulerUpdate {
     Noop,
 }
 
+/// Build (but do not run) the scheduler `CompiledGraph`. Shared by
+/// [`drive_phases`] and [`scheduler_graph_topology`] so the graph's structure
+/// has one definition. `select` and `run` are the injected engine effects:
+/// production captures the run's config/ledger session; the topology export
+/// passes no-op stubs.
+fn build_scheduler_graph<S, SF, R, RF>(
+    phase_count: usize,
+    select: S,
+    run: R,
+) -> Result<CompiledGraph<SchedulerState, SchedulerUpdate>>
+where
+    S: Fn() -> SF + Clone + Send + Sync + 'static,
+    SF: Future<Output = Result<PhaseSelection>> + Send + 'static,
+    R: Fn(WorkflowPhase, u32) -> RF + Clone + Send + Sync + 'static,
+    RF: Future<Output = Result<PhaseExecOutcome>> + Send + 'static,
+{
+    let mut builder = GraphBuilder::<SchedulerState, SchedulerUpdate>::new().set_reducer(
+        ClosureStateReducer::new(|mut s: SchedulerState, u: SchedulerUpdate| {
+            match u {
+                SchedulerUpdate::SelectPhase(p) => s.phase = Some(p),
+                SchedulerUpdate::AddSpawned(n) => s.total_spawned += n,
+                SchedulerUpdate::Noop => {}
+            }
+            Ok(s)
+        }),
+    );
+
+    // `dispatch`: pick the next runnable phase, or terminate (already persisted).
+    builder = builder.add_node("dispatch", move |_s: SchedulerState, _c: NodeContext| {
+        let select = select.clone();
+        async move {
+            match select().await.map_err(graph_err)? {
+                PhaseSelection::Run(phase) => Ok(NodeResult::Command(
+                    Command::default()
+                        .with_update(SchedulerUpdate::SelectPhase(phase))
+                        .with_goto(["run_phase"]),
+                )),
+                PhaseSelection::Terminated => {
+                    Ok(NodeResult::Command(Command::default().with_goto(["done"])))
+                }
+            }
+        }
+    });
+
+    // `run_phase`: execute the selected phase, then loop back to `dispatch` or
+    // terminate (on phase failure / mid-phase cancellation).
+    builder = builder.add_node("run_phase", move |s: SchedulerState, _c: NodeContext| {
+        let run = run.clone();
+        async move {
+            let phase = s.phase.clone().ok_or_else(|| {
+                tinyagents::TinyAgentsError::Graph(
+                    "workflow run_phase reached with no selected phase".to_string(),
+                )
+            })?;
+            match run(phase, s.total_spawned).await.map_err(graph_err)? {
+                PhaseExecOutcome::Continue { spawned } => Ok(NodeResult::Command(
+                    Command::default()
+                        .with_update(SchedulerUpdate::AddSpawned(spawned))
+                        .with_goto(["dispatch"]),
+                )),
+                PhaseExecOutcome::Terminated => {
+                    Ok(NodeResult::Command(Command::default().with_goto(["done"])))
+                }
+            }
+        }
+    });
+
+    let graph = builder
+        .add_node("done", |_s: SchedulerState, _c: NodeContext| async move {
+            Ok(NodeResult::Update(SchedulerUpdate::Noop))
+        })
+        .set_entry("dispatch")
+        .mark_command_routing("dispatch")
+        .mark_command_routing("run_phase")
+        .set_finish("done")
+        .compile()
+        .map_err(|e| anyhow!("workflow scheduler graph compile failed: {e}"))?
+        // Bound the dispatch⇄run_phase cycle as a backstop to the DAG's own
+        // termination: `dispatch` is visited once per phase plus a final
+        // no-phase visit, `run_phase` once per phase. A validated DAG always
+        // drains, so this only guards a malformed definition.
+        .with_recursion_policy(RecursionPolicy {
+            max_visits_per_node: Some(phase_count + 2),
+            max_total_steps: (phase_count + 1) * 3 + 16,
+            ..RecursionPolicy::default()
+        });
+    Ok(graph)
+}
+
 /// Topologically walk the phase DAG on a `tinyagents` conditional-routing graph
 /// (issue #4249, Phase 4): a `dispatch` node selects the next runnable phase and
 /// a `run_phase` node executes it, looping `dispatch ⇄ run_phase` until no phase
@@ -73,8 +170,6 @@ pub(super) async fn drive_phases(
 ) -> Result<()> {
     use crate::openhuman::agent_orchestration::AgentOrchestrationSession;
     use crate::openhuman::tinyagents::observability::GraphTracingSink;
-    use tinyagents::graph::recursion::RecursionPolicy;
-    use tinyagents::graph::{ClosureStateReducer, Command, GraphBuilder, NodeContext, NodeResult};
 
     let session = AgentOrchestrationSession::new(format!("workflow-engine-{run_id}"));
 
@@ -93,65 +188,37 @@ pub(super) async fn drive_phases(
         })
         .filter(|m| !m.trim().is_empty());
 
-    // `'static` captures for the graph node handlers (they are `Fn`, re-entered
-    // once per phase, so each invocation re-clones from these).
-    let config = Arc::new(config.clone());
-    let definition = Arc::new(definition.clone());
+    // `'static` captures for the injected engine effects (node handlers are
+    // `Fn`, re-entered once per phase, so each invocation re-clones from these).
+    let config_arc = Arc::new(config.clone());
+    let definition_arc = Arc::new(definition.clone());
     let run_id_owned = run_id.to_string();
     let cancel = cancel.clone();
 
-    let mut builder = GraphBuilder::<SchedulerState, SchedulerUpdate>::new().set_reducer(
-        ClosureStateReducer::new(|mut s: SchedulerState, u: SchedulerUpdate| {
-            match u {
-                SchedulerUpdate::SelectPhase(p) => s.phase = Some(p),
-                SchedulerUpdate::AddSpawned(n) => s.total_spawned += n,
-                SchedulerUpdate::Noop => {}
-            }
-            Ok(s)
-        }),
-    );
-
-    // `dispatch`: pick the next runnable phase, or terminate (already persisted).
-    {
-        let config = config.clone();
-        let definition = definition.clone();
+    let select = {
+        let config = config_arc.clone();
+        let definition = definition_arc.clone();
         let run_id = run_id_owned.clone();
         let cancel = cancel.clone();
         let session = session.clone();
-        builder = builder.add_node("dispatch", move |_s: SchedulerState, _c: NodeContext| {
+        move || {
             let config = config.clone();
             let definition = definition.clone();
             let run_id = run_id.clone();
             let cancel = cancel.clone();
             let session = session.clone();
-            async move {
-                match select_next_phase(&config, &run_id, &definition, &cancel, &session)
-                    .await
-                    .map_err(graph_err)?
-                {
-                    PhaseSelection::Run(phase) => Ok(NodeResult::Command(
-                        Command::default()
-                            .with_update(SchedulerUpdate::SelectPhase(phase))
-                            .with_goto(["run_phase"]),
-                    )),
-                    PhaseSelection::Terminated => {
-                        Ok(NodeResult::Command(Command::default().with_goto(["done"])))
-                    }
-                }
-            }
-        });
-    }
+            async move { select_next_phase(&config, &run_id, &definition, &cancel, &session).await }
+        }
+    };
 
-    // `run_phase`: execute the selected phase, then loop back to `dispatch` or
-    // terminate (on phase failure / mid-phase cancellation).
-    {
-        let config = config.clone();
-        let definition = definition.clone();
+    let run = {
+        let config = config_arc.clone();
+        let definition = definition_arc.clone();
         let run_id = run_id_owned.clone();
         let cancel = cancel.clone();
         let session = session.clone();
         let model_override = model_override.clone();
-        builder = builder.add_node("run_phase", move |s: SchedulerState, _c: NodeContext| {
+        move |phase: WorkflowPhase, total_spawned: u32| {
             let config = config.clone();
             let definition = definition.clone();
             let run_id = run_id.clone();
@@ -159,12 +226,7 @@ pub(super) async fn drive_phases(
             let session = session.clone();
             let model_override = model_override.clone();
             async move {
-                let phase = s.phase.clone().ok_or_else(|| {
-                    tinyagents::TinyAgentsError::Graph(
-                        "workflow run_phase reached with no selected phase".to_string(),
-                    )
-                })?;
-                match execute_phase(
+                execute_phase(
                     &config,
                     &run_id,
                     &definition,
@@ -172,51 +234,32 @@ pub(super) async fn drive_phases(
                     &cancel,
                     model_override,
                     &phase,
-                    s.total_spawned,
+                    total_spawned,
                 )
                 .await
-                .map_err(graph_err)?
-                {
-                    PhaseExecOutcome::Continue { spawned } => Ok(NodeResult::Command(
-                        Command::default()
-                            .with_update(SchedulerUpdate::AddSpawned(spawned))
-                            .with_goto(["dispatch"]),
-                    )),
-                    PhaseExecOutcome::Terminated => {
-                        Ok(NodeResult::Command(Command::default().with_goto(["done"])))
-                    }
-                }
             }
-        });
-    }
+        }
+    };
 
-    let phase_count = definition.phases.len();
-    let graph = builder
-        .add_node("done", |_s: SchedulerState, _c: NodeContext| async move {
-            Ok(NodeResult::Update(SchedulerUpdate::Noop))
-        })
-        .set_entry("dispatch")
-        .mark_command_routing("dispatch")
-        .mark_command_routing("run_phase")
-        .set_finish("done")
-        .compile()
-        .map_err(|e| anyhow!("workflow scheduler graph compile failed: {e}"))?
-        .with_event_sink(Arc::new(GraphTracingSink::new(format!(
-            "workflow:{run_id_owned}"
-        ))))
-        // Bound the dispatch⇄run_phase cycle as a backstop to the DAG's own
-        // termination: `dispatch` is visited once per phase plus a final
-        // no-phase visit, `run_phase` once per phase. A validated DAG always
-        // drains, so this only guards a malformed definition.
-        .with_recursion_policy(RecursionPolicy {
-            max_visits_per_node: Some(phase_count + 2),
-            max_total_steps: (phase_count + 1) * 3 + 16,
-            ..RecursionPolicy::default()
-        });
+    let graph = build_scheduler_graph(definition.phases.len(), select, run)?.with_event_sink(
+        Arc::new(GraphTracingSink::new(format!("workflow:{run_id_owned}"))),
+    );
 
     graph
         .run(SchedulerState::default())
         .await
         .map_err(|e| anyhow!("workflow scheduler graph run failed: {e}"))?;
     Ok(())
+}
+
+/// Structure-only [`GraphTopology`] of the workflow scheduler graph for debug /
+/// inspection (issue #4249, Phase 4). Built with no-op stub effects — the
+/// topology exposes only node names, edges, and routing, never closure bodies.
+pub(crate) fn scheduler_graph_topology() -> Result<GraphTopology> {
+    let graph = build_scheduler_graph(
+        1,
+        || async { Ok(PhaseSelection::Terminated) },
+        |_phase: WorkflowPhase, _spawned: u32| async { Ok(PhaseExecOutcome::Terminated) },
+    )?;
+    Ok(graph.topology())
 }

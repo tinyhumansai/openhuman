@@ -24,7 +24,7 @@ use crate::openhuman::channels::routes::{
     get_or_create_provider, get_route_selection, handle_runtime_command_if_needed,
 };
 use crate::openhuman::channels::traits;
-use crate::openhuman::channels::SendMessage;
+use crate::openhuman::channels::{ChannelSendExt, SendMessage};
 use crate::openhuman::inference::provider::{self, ChatMessage};
 use crate::openhuman::util::truncate_with_ellipsis;
 use std::sync::Arc;
@@ -36,6 +36,33 @@ use super::helpers::{
     spawn_scoped_typing_task, REPLY_LOG_TRUNCATE_CHARS,
 };
 use super::routing::resolve_target_agent;
+
+#[derive(Debug, Clone)]
+pub(crate) struct RuntimeChannelMessage {
+    pub(crate) message: traits::ChannelMessage,
+    pub(crate) inbound_envelope: Option<tinychannels::ChannelInboundEnvelope>,
+}
+
+impl RuntimeChannelMessage {
+    pub(crate) fn with_inbound_envelope(
+        message: traits::ChannelMessage,
+        inbound_envelope: tinychannels::ChannelInboundEnvelope,
+    ) -> Self {
+        Self {
+            message,
+            inbound_envelope: Some(inbound_envelope),
+        }
+    }
+}
+
+impl From<traits::ChannelMessage> for RuntimeChannelMessage {
+    fn from(message: traits::ChannelMessage) -> Self {
+        Self {
+            message,
+            inbound_envelope: None,
+        }
+    }
+}
 
 /// Whether a channel currently has a registered approval surface — i.e.
 /// a subscriber that turns `ApprovalRequested` events into chat messages
@@ -115,6 +142,18 @@ pub(crate) async fn process_channel_message(
     ctx: Arc<ChannelRuntimeContext>,
     msg: traits::ChannelMessage,
 ) {
+    process_channel_runtime_message(ctx, RuntimeChannelMessage::from(msg)).await;
+}
+
+pub(crate) async fn process_channel_runtime_message(
+    ctx: Arc<ChannelRuntimeContext>,
+    runtime_msg: RuntimeChannelMessage,
+) {
+    let RuntimeChannelMessage {
+        message: msg,
+        inbound_envelope,
+    } = runtime_msg;
+
     println!(
         "  💬 [{}] from {}: {}",
         msg.channel,
@@ -129,6 +168,10 @@ pub(crate) async fn process_channel_message(
         reply_target: msg.reply_target.clone(),
         content: msg.content.clone(),
         thread_ts: msg.thread_ts.clone(),
+        inbound_envelope: Some(
+            inbound_envelope
+                .unwrap_or_else(|| tinychannels::inbound_envelope_from_legacy_message(&msg)),
+        ),
         workspace_dir: ctx.workspace_dir.as_ref().clone(),
     });
 
@@ -176,7 +219,10 @@ pub(crate) async fn process_channel_message(
             let react_msg =
                 SendMessage::new(react_content, &msg.reply_target).in_thread(msg.thread_ts.clone());
             tokio::spawn(async move {
-                if let Err(e) = channel_for_react.send(&react_msg).await {
+                if let Err(e) = channel_for_react
+                    .send_with_outbound_intent(&react_msg)
+                    .await
+                {
                     tracing::debug!("[dispatch] Acknowledgment reaction failed: {e}");
                 }
             });
@@ -204,7 +250,7 @@ pub(crate) async fn process_channel_message(
             );
             if let Some(channel) = target_channel.as_ref() {
                 let _ = channel
-                    .send(
+                    .send_with_outbound_intent(
                         &SendMessage::new(message, &msg.reply_target)
                             .in_thread(msg.thread_ts.clone()),
                     )
@@ -556,14 +602,14 @@ pub(crate) async fn process_channel_message(
                     {
                         tracing::warn!("Failed to finalize draft: {e}; sending as new message");
                         let _ = channel
-                            .send(
+                            .send_with_outbound_intent(
                                 &SendMessage::new(&response_text, &msg.reply_target)
                                     .in_thread(msg.thread_ts.clone()),
                             )
                             .await;
                     }
                 } else if let Err(e) = channel
-                    .send(
+                    .send_with_outbound_intent(
                         &SendMessage::new(&response_text, &msg.reply_target)
                             .in_thread(msg.thread_ts.clone()),
                     )
@@ -599,7 +645,7 @@ pub(crate) async fn process_channel_message(
                             .await;
                     } else {
                         let _ = channel
-                            .send(
+                            .send_with_outbound_intent(
                                 &SendMessage::new(error_text, &msg.reply_target)
                                     .in_thread(msg.thread_ts.clone()),
                             )
@@ -688,7 +734,7 @@ pub(crate) async fn process_channel_message(
                         .await;
                 } else {
                     let _ = channel
-                        .send(
+                        .send_with_outbound_intent(
                             &SendMessage::new(&error_response, &msg.reply_target)
                                 .in_thread(msg.thread_ts.clone()),
                         )
@@ -732,7 +778,7 @@ pub(crate) async fn process_channel_message(
                         .await;
                 } else {
                     let _ = channel
-                        .send(
+                        .send_with_outbound_intent(
                             &SendMessage::new(&error_text, &msg.reply_target)
                                 .in_thread(msg.thread_ts.clone()),
                         )
@@ -765,7 +811,7 @@ pub(crate) async fn process_channel_message(
 }
 
 pub(crate) async fn run_message_dispatch_loop(
-    mut rx: tokio::sync::mpsc::Receiver<traits::ChannelMessage>,
+    mut rx: tokio::sync::mpsc::Receiver<RuntimeChannelMessage>,
     ctx: Arc<ChannelRuntimeContext>,
     max_in_flight_messages: usize,
 ) {
@@ -781,7 +827,7 @@ pub(crate) async fn run_message_dispatch_loop(
         let worker_ctx = Arc::clone(&ctx);
         workers.spawn(async move {
             let _permit = permit;
-            process_channel_message(worker_ctx, msg).await;
+            process_channel_runtime_message(worker_ctx, msg).await;
         });
 
         while let Some(result) = workers.try_join_next() {

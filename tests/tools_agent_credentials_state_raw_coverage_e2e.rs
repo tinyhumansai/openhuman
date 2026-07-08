@@ -334,6 +334,8 @@ fn usage(input_tokens: u64, output_tokens: u64) -> UsageInfo {
         output_tokens,
         context_window: 8_192,
         cached_input_tokens: input_tokens / 2,
+        cache_creation_tokens: 0,
+        reasoning_tokens: 0,
         charged_amount_usd: 0.001,
     }
 }
@@ -366,6 +368,7 @@ fn parent_context(workspace: PathBuf, provider: Arc<ScriptedProvider>) -> Parent
         model_name: "round16-model".to_string(),
         temperature: 0.0,
         workspace_dir: workspace,
+        workspace_descriptor: None,
         memory: Arc::new(StubMemory),
         agent_config: openhuman_core::openhuman::config::AgentConfig {
             max_tool_iterations: 3,

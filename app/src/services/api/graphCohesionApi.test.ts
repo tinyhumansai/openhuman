@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { computeGraphCohesion } from '../../lib/memory/graphCohesion';
 import type { GraphRelation } from '../../utils/tauriCommands/memory';
-import { graphCohesionApi, loadCohesion, loadNamespaces } from './graphCohesionApi';
+import { loadCohesion, loadNamespaces } from './graphCohesionApi';
 
 const mockGraphQuery = vi.fn();
 const mockListNamespaces = vi.fn();
@@ -63,12 +63,5 @@ describe('graphCohesionApi.loadNamespaces', () => {
   it('returns the namespace list from the RPC', async () => {
     mockListNamespaces.mockResolvedValueOnce(['work', 'personal']);
     expect(await loadNamespaces()).toEqual(['work', 'personal']);
-  });
-});
-
-describe('graphCohesionApi object', () => {
-  it('exposes the public surface', () => {
-    expect(typeof graphCohesionApi.loadCohesion).toBe('function');
-    expect(typeof graphCohesionApi.loadNamespaces).toBe('function');
   });
 });

@@ -51,9 +51,6 @@ use openhuman_core::openhuman::agent::hooks::{
     fire_hooks, sanitize_tool_output, PostTurnHook, ToolCallRecord, TurnContext,
 };
 use openhuman_core::openhuman::agent::host_runtime::create_runtime;
-use openhuman_core::openhuman::agent::memory_loader::{
-    collect_recall_citations, DefaultMemoryLoader, MemoryLoader, CROSS_CHAT_HEADER,
-};
 use openhuman_core::openhuman::agent::multimodal::{
     contains_image_markers, count_image_markers, extract_ollama_image_payload, parse_image_markers,
     prepare_messages_for_provider, MultimodalError,
@@ -86,9 +83,6 @@ use openhuman_core::openhuman::agent::tools::remember_preference::{
 };
 use openhuman_core::openhuman::agent::tools::save_preference::{PrefScope, SavePreferenceTool};
 use openhuman_core::openhuman::agent::tools::PlanExitTool;
-use openhuman_core::openhuman::agent::tree_loader::{
-    should_prefetch, TreeContextLoader, REFRESH_INTERVAL,
-};
 use openhuman_core::openhuman::agent::triage::envelope::{TriggerEnvelope, TriggerSource};
 use openhuman_core::openhuman::agent::triage::evaluator::{run_triage_with_arms, TriageOutcome};
 use openhuman_core::openhuman::agent::triage::events::{
@@ -101,6 +95,9 @@ use openhuman_core::openhuman::agent::triage::{parse_triage_decision, ParseError
 use openhuman_core::openhuman::agent::Agent;
 use openhuman_core::openhuman::agent::{
     all_agent_controller_schemas, all_agent_registered_controllers,
+};
+use openhuman_core::openhuman::agent_memory::memory_loader::{
+    collect_recall_citations, DefaultMemoryLoader, MemoryLoader, CROSS_CHAT_HEADER,
 };
 use openhuman_core::openhuman::agent_registry::agents::BUILTINS;
 use openhuman_core::openhuman::config::schema::cloud_providers::{
@@ -2781,42 +2778,6 @@ async fn agent_runtime_policy_cost_and_triage_helpers_cover_public_edges() {
     );
     assert_eq!(ToolPolicyDecision::Allow.blocking_reason(), None);
 
-    let usage = UsageInfo {
-        input_tokens: 2_000_000,
-        output_tokens: 1_000_000,
-        cached_input_tokens: 1_000_000,
-        charged_amount_usd: 0.0,
-        ..Default::default()
-    };
-    assert_eq!(
-        openhuman_core::openhuman::agent::cost::lookup_pricing("claude-opus-4.7").model,
-        "reasoning-v1"
-    );
-    assert_eq!(
-        openhuman_core::openhuman::agent::cost::lookup_pricing("unknown-model").model,
-        "<fallback>"
-    );
-    let estimated =
-        openhuman_core::openhuman::agent::cost::estimate_call_cost_usd("agentic-v1", &usage);
-    assert!((estimated - 1.308625).abs() < 1e-6, "got {estimated}");
-    let charged = UsageInfo {
-        charged_amount_usd: 0.42,
-        ..usage.clone()
-    };
-    assert_eq!(
-        openhuman_core::openhuman::agent::cost::call_cost_usd("reasoning-v1", &charged),
-        0.42
-    );
-    let mut turn_cost = openhuman_core::openhuman::agent::cost::TurnCost::new();
-    turn_cost.add_call("agentic-v1", &usage);
-    turn_cost.add_call("reasoning-v1", &charged);
-    assert_eq!(turn_cost.input_tokens, 4_000_000);
-    assert_eq!(turn_cost.output_tokens, 2_000_000);
-    assert_eq!(turn_cost.cached_input_tokens, 2_000_000);
-    assert_eq!(turn_cost.charged_usd, 0.42);
-    assert_eq!(turn_cost.call_count, 2);
-    assert!((turn_cost.total_usd() - 1.728625).abs() < 1e-6);
-
     let composio = TriggerEnvelope::from_composio(
         "gmail",
         "GMAIL_NEW_MESSAGE",
@@ -3721,31 +3682,6 @@ async fn agent_preference_tools_tree_loader_and_triage_events_cover_public_edges
     let forgotten = memory.forgotten.lock().expect("forgotten").clone();
     assert!(forgotten.iter().any(|(_, key)| key == "reply_style"));
 
-    let now = std::time::Instant::now();
-    assert!(should_prefetch(None, now, REFRESH_INTERVAL));
-    assert!(!should_prefetch(
-        Some(now - std::time::Duration::from_secs(30)),
-        now,
-        REFRESH_INTERVAL
-    ));
-    assert!(should_prefetch(
-        Some(now - REFRESH_INTERVAL),
-        now,
-        REFRESH_INTERVAL
-    ));
-
-    let tmp = tempdir().expect("tree workspace");
-    let config = Config {
-        workspace_dir: tmp.path().to_path_buf(),
-        ..Config::default()
-    };
-    assert_eq!(
-        TreeContextLoader::load(&config)
-            .await
-            .expect("empty tree context"),
-        ""
-    );
-
     let envelope = TriggerEnvelope::from_external(
         "triage-public-events",
         "manual",
@@ -4272,45 +4208,6 @@ async fn agent_error_hooks_interrupt_and_stop_hooks_cover_public_paths() {
     assert_eq!(hook_names, vec!["max_iterations"]);
     assert_eq!(current_stop_hooks().len(), 0);
 
-    let mut turn_cost = openhuman_core::openhuman::agent::cost::TurnCost::new();
-    turn_cost.add_call(
-        "agentic-v1",
-        &UsageInfo {
-            charged_amount_usd: 1.25,
-            ..Default::default()
-        },
-    );
-    let state = TurnState {
-        iteration: 3,
-        max_iterations: 10,
-        cost: &turn_cost,
-        model: "agentic-v1",
-    };
-    match BudgetStopHook::new(1.0).check(&state).await {
-        StopDecision::Stop { reason } => assert!(reason.contains("reached cap")),
-        StopDecision::Continue => panic!("budget cap should stop"),
-    }
-    match BudgetStopHook::new(f64::NAN).check(&state).await {
-        StopDecision::Stop { reason } => assert!(reason.contains("invalid budget cap")),
-        StopDecision::Continue => panic!("invalid budget should stop"),
-    }
-    assert!(matches!(
-        BudgetStopHook::new(2.0).check(&state).await,
-        StopDecision::Continue
-    ));
-    match MaxIterationsStopHook::new(2).check(&state).await {
-        StopDecision::Stop { reason } => {
-            assert!(reason.contains("about to start iteration 3"));
-        }
-        StopDecision::Continue => panic!("iteration cap should stop"),
-    }
-    assert!(matches!(
-        MaxIterationsStopHook::new(3).check(&state).await,
-        StopDecision::Continue
-    ));
-    assert_eq!(state.max_iterations, 10);
-    assert_eq!(state.model, "agentic-v1");
-
     assert_eq!(
         sanitize_tool_output("hello world", "read_file", true),
         "read_file: ok (11 chars)"
@@ -4678,6 +4575,7 @@ async fn agent_subagent_public_types_cover_task_local_and_error_display_paths() 
         initial_history: None,
         checkpoint_dir: None,
         worktree_action_dir: None,
+        workspace_descriptor: None,
         run_queue: None,
     };
     assert_eq!(options.skill_filter_override.as_deref(), Some("docs"));

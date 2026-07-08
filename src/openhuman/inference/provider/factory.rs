@@ -41,6 +41,8 @@ use crate::openhuman::inference::provider::openai_codex::{
 use crate::openhuman::inference::provider::openhuman_backend::OpenHumanBackendProvider;
 use crate::openhuman::inference::provider::traits::Provider;
 use crate::openhuman::inference::provider::ProviderRuntimeOptions;
+use std::sync::Arc;
+use tinyagents::harness::model::ChatModel;
 
 /// Sentinel meaning "use the OpenHuman backend session JWT".
 pub const PROVIDER_OPENHUMAN: &str = "openhuman";
@@ -176,6 +178,52 @@ pub fn resolve_model_for_hint(hint_or_tier: &str, config: &Config) -> String {
     }
 }
 
+/// Map a managed tier name (or `hint:*` string) to the workload **role** whose
+/// configured provider serves it.
+///
+/// This is the inverse of the role→tier routing `create_chat_provider` does:
+/// callers that select a model *per unit of work by tier* (e.g. a tinyflows
+/// `agent` node pinning `config.model = "reasoning-v1"`) use this to turn that
+/// tier back into the role, then call [`create_chat_provider`] with it — so the
+/// completion routes to that tier on the managed backend (or the role's BYOK
+/// model) instead of some caller default. Unknown strings fall back to `"chat"`.
+///
+/// Kept deliberately small and standalone (no `Config`) — it is a pure lookup
+/// over the tier constants, mirroring the `tier_to_role` table inside
+/// [`resolve_model_for_hint`].
+pub fn role_for_model_tier(hint_or_tier: &str) -> &'static str {
+    use crate::openhuman::config::{
+        MODEL_AGENTIC_V1, MODEL_BURST_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1,
+        MODEL_REASONING_V1, MODEL_SUMMARIZATION_V1, MODEL_VISION_V1,
+    };
+
+    // Normalise a `hint:*` alias to its concrete tier first.
+    let tier = match hint_or_tier.strip_prefix("hint:") {
+        Some("reasoning") => MODEL_REASONING_V1,
+        Some("chat") => MODEL_CHAT_V1,
+        Some("agentic") => MODEL_AGENTIC_V1,
+        Some("burst") => MODEL_BURST_V1,
+        Some("coding") => MODEL_CODING_V1,
+        Some("vision") => MODEL_VISION_V1,
+        Some("summarization") => MODEL_SUMMARIZATION_V1,
+        // Background subconscious rides the chat tier for its model.
+        Some("subconscious") => MODEL_CHAT_V1,
+        Some(_) => hint_or_tier,
+        None => hint_or_tier,
+    };
+
+    match tier {
+        MODEL_REASONING_V1 => "reasoning",
+        MODEL_CHAT_V1 | MODEL_REASONING_QUICK_V1 => "chat",
+        MODEL_AGENTIC_V1 => "agentic",
+        MODEL_BURST_V1 => "burst",
+        MODEL_CODING_V1 => "coding",
+        MODEL_VISION_V1 => "vision",
+        MODEL_SUMMARIZATION_V1 => "summarization",
+        _ => "chat",
+    }
+}
+
 /// Return whether `model` is a recognized OpenHuman backend tier name.
 ///
 /// Used to guard against stale `default_model` values (e.g. set by older UI
@@ -208,6 +256,22 @@ pub(crate) fn is_known_openhuman_tier(model: &str) -> bool {
             | "hint:summarization"
             | "hint:vision"
     )
+}
+
+/// Return whether `model` is a raw BYOK/custom model id that must be forwarded
+/// **verbatim** to provider construction rather than mapped onto a managed tier.
+///
+/// A raw passthrough id is any **non-empty** string that is neither a `hint:*`
+/// alias nor a known managed tier ([`is_known_openhuman_tier`]) — i.e. the model
+/// ids a user pins directly on an agent/node (e.g. `"claude-opus-4"`). The
+/// OpenHuman backend preserves such ids verbatim
+/// ([`super::openhuman_backend`]'s `resolve_model`) and is authoritative over
+/// their validity, so the core must **not** silently collapse them onto
+/// `reasoning-v1` (issue #4598). Managed tiers and every `hint:*` string return
+/// `false` so their existing resolution is untouched.
+pub(crate) fn is_raw_passthrough_model(model: &str) -> bool {
+    let trimmed = model.trim();
+    !trimmed.is_empty() && !trimmed.starts_with("hint:") && !is_known_openhuman_tier(trimmed)
 }
 
 /// Per-tier vision (image-input) capability for the managed OpenHuman backend.
@@ -524,6 +588,89 @@ pub mod test_provider_override {
     }
 }
 
+/// Human-readable label for an *external* provider string, used in the
+/// LocalOnly privacy-mode block message so the user knows what was refused.
+fn external_provider_label(provider: &str) -> String {
+    let p = provider.trim();
+    if p == PROVIDER_OPENHUMAN {
+        return "OpenHuman (managed cloud)".to_string();
+    }
+    if p == BYOK_INCOMPLETE_SENTINEL {
+        return "cloud (incomplete BYOK config)".to_string();
+    }
+    if p == CLAUDE_AGENT_SDK_PROVIDER || p.starts_with(CLAUDE_AGENT_SDK_PREFIX) {
+        return "Claude Agent SDK".to_string();
+    }
+    if p.starts_with(crate::openhuman::inference::provider::claude_code::PROVIDER_PREFIX) {
+        return "Claude Code CLI".to_string();
+    }
+    // Concrete cloud slug "<slug>:<model>" → surface just the slug.
+    match p.split_once(':') {
+        Some((slug, _)) if !slug.trim().is_empty() => slug.trim().to_string(),
+        _ => p.to_string(),
+    }
+}
+
+/// Privacy Mode (#4435) pure decision: under `mode`, is constructing chat
+/// provider `provider` a local-only violation? Returns `Some(label)` naming the
+/// blocked external provider when refused, else `None`.
+///
+/// Only `LocalOnly` restricts anything. Local runtimes (Ollama / LM Studio / MLX
+/// / local-openai) are always permitted. Re-resolving sentinels (`""` / `"cloud"`)
+/// return `None` here — they recurse through
+/// [`create_chat_provider_from_string`] and are re-checked with the concrete
+/// resolved string. Extracted as a pure fn so it is unit-testable without the
+/// process-global live policy.
+fn local_only_violation(
+    mode: crate::openhuman::config::PrivacyMode,
+    provider: &str,
+) -> Option<String> {
+    use crate::openhuman::config::PrivacyMode;
+    if mode != PrivacyMode::LocalOnly {
+        return None;
+    }
+    let p = provider.trim();
+    if p.is_empty() || p == "cloud" {
+        // Deferred: re-resolves to a concrete string on the recursive call.
+        return None;
+    }
+    if crate::openhuman::inference::local::profile::is_local_provider_string(p) {
+        return None;
+    }
+    Some(external_provider_label(p))
+}
+
+/// Enforce Privacy Mode `LocalOnly` at the inference chokepoint: refuse to build
+/// an external chat provider when the live policy is local-only. Reads the live
+/// privacy mode (defaults to `Standard`/allow when no session policy is
+/// installed). See [`local_only_violation`] for the pure decision.
+fn enforce_local_only_inference(role: &str, provider: &str) -> anyhow::Result<()> {
+    let mode = crate::openhuman::security::live_policy::current_privacy_mode();
+    match local_only_violation(mode, provider) {
+        None => {
+            log::debug!(
+                "[privacy][chat-factory] privacy_mode={:?} role={} provider='{}' — inference permitted",
+                mode,
+                role,
+                provider.trim()
+            );
+            Ok(())
+        }
+        Some(label) => {
+            log::warn!(
+                "[privacy][chat-factory] LocalOnly BLOCK: role={} external provider='{}' ({}) refused",
+                role,
+                provider.trim(),
+                label
+            );
+            anyhow::bail!(
+                "Local-only privacy mode is active: this action needs external provider {label}. \
+                 Switch to a local model (Ollama/LM Studio/etc.) or change privacy mode in Settings."
+            )
+        }
+    }
+}
+
 /// Build a `(Provider, model)` for the given workload role.
 pub fn create_chat_provider(
     role: &str,
@@ -563,6 +710,12 @@ pub fn create_chat_provider_from_string(
         role,
         p
     );
+
+    // Privacy Mode (#4435): in LocalOnly mode, refuse to construct any external
+    // provider here — the single inference chokepoint. Re-resolving sentinels
+    // ("" / "cloud") are allowed through and re-checked on the recursive call
+    // below with the concrete resolved provider string.
+    enforce_local_only_inference(role, p)?;
 
     // Fail-closed: BYOK intent was detected upstream but no matching provider
     // entry was found. Surface a clear configuration error instead of silently
@@ -753,6 +906,75 @@ pub fn create_chat_provider_from_string(
             .map(|e| e.slug.as_str())
             .collect::<Vec<_>>()
             .join(", ")
+    )
+}
+
+/// Build an `Arc<dyn ChatModel>` for the given workload role.
+///
+/// Phase 1 of the tinyagents inference migration (#4249): the crate
+/// [`ChatModel`] is the model interface the harness and one-shot inference
+/// callers target. Today this wraps the existing openhuman [`Provider`] stack
+/// via [`ProviderModel`](crate::openhuman::tinyagents::model) — a **zero
+/// behaviour change** shim — so callers can move off `Box<dyn Provider>`
+/// incrementally while the provider stack is dismantled underneath. `temperature`
+/// is pinned onto the returned model because the crate model interface bakes
+/// sampling into the model rather than the per-call request.
+pub fn create_chat_model(
+    role: &str,
+    config: &Config,
+    temperature: f64,
+) -> anyhow::Result<Arc<dyn ChatModel<()>>> {
+    Ok(create_chat_model_with_model_id(role, config, temperature)?.0)
+}
+
+/// Like [`create_chat_model`], but also returns the resolved model id.
+///
+/// One-shot callers that persist or log the concrete model (e.g. the memory
+/// summarise audit) need the id the role resolved to; the plain
+/// [`create_chat_model`] drops it.
+pub fn create_chat_model_with_model_id(
+    role: &str,
+    config: &Config,
+    temperature: f64,
+) -> anyhow::Result<(Arc<dyn ChatModel<()>>, String)> {
+    let (provider, model) = create_chat_provider(role, config)?;
+    let chat = chat_model_from_provider(provider, model.clone(), temperature);
+    Ok((chat, model))
+}
+
+/// Build an `Arc<dyn ChatModel>` from an explicit provider string and config.
+///
+/// The [`ChatModel`] counterpart of [`create_chat_provider_from_string`]; see
+/// [`create_chat_model`] for the migration rationale.
+pub fn create_chat_model_from_string(
+    role: &str,
+    provider: &str,
+    config: &Config,
+    temperature: f64,
+) -> anyhow::Result<Arc<dyn ChatModel<()>>> {
+    let (provider, model) = create_chat_provider_from_string(role, provider, config)?;
+    Ok(chat_model_from_provider(provider, model, temperature))
+}
+
+/// Wrap an owned [`Provider`] as an `Arc<dyn ChatModel>` pinned to
+/// `model`/`temperature`.
+///
+/// The single seam where a boxed provider becomes the crate model interface.
+/// As consumers migrate off `Box<dyn Provider>` this stays the conversion point,
+/// shrinking toward the Phase 1 exit criterion (`ProviderModel` constructed in
+/// exactly one place) and, ultimately, the `Provider` trait's deletion in
+/// Phase 4. Exposed `pub(crate)` so a caller that must build a specific provider
+/// itself (e.g. the LinkedIn enrichment path, which deliberately forces the
+/// managed backend) can still hand back a `ChatModel` without naming the trait.
+pub(crate) fn chat_model_from_provider(
+    provider: Box<dyn Provider>,
+    model: String,
+    temperature: f64,
+) -> Arc<dyn ChatModel<()>> {
+    crate::openhuman::tinyagents::model::provider_chat_model(
+        Arc::from(provider),
+        model,
+        temperature,
     )
 }
 
@@ -1007,17 +1229,28 @@ fn make_openhuman_backend(
             model
         }
         None => {
+            // `model` is guaranteed non-empty here: an empty/whitespace
+            // `default_model` was already normalised to `reasoning-v1` above, and
+            // the managed-tier / summarization branches yield non-empty tier
+            // constants. So a non-`hint:` id is either a known canonical tier or a
+            // raw/BYOK id the user pinned — both forward verbatim; only the log
+            // line differs.
             if is_known_openhuman_tier(&model) {
                 model
             } else {
-                log::warn!(
-                    "[providers][chat-factory] model '{}' is not a recognized OpenHuman \
-                     backend tier (valid: reasoning-v1, chat-v1, agentic-v1, burst-v1, coding-v1, \
-                     reasoning-quick-v1, summarization-v1, vision-v1); falling back to '{}'",
-                    model,
-                    crate::openhuman::config::MODEL_REASONING_V1,
+                // Unrecognised NON-empty model id — a raw/BYOK model the user
+                // pinned (e.g. `claude-opus-4`, written into `default_model` or
+                // a per-agent model pin). Forward it verbatim so the selected
+                // model actually reaches provider construction instead of the
+                // core silently collapsing it onto `reasoning-v1`. The managed
+                // backend is authoritative over validity and returns a clear
+                // error for a genuinely bad id (issue #4598).
+                log::debug!(
+                    "[providers][chat-factory] forwarding raw/BYOK model '{}' verbatim to the \
+                     OpenHuman backend (not a managed tier); the backend validates it",
+                    model
                 );
-                crate::openhuman::config::MODEL_REASONING_V1.to_string()
+                model
             }
         }
     };

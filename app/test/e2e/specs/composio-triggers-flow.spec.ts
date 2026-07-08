@@ -23,7 +23,9 @@ import { navigateToSkills } from '../helpers/shared-flows';
 import { clearRequestLog, setMockBehavior, startMockServer, stopMockServer } from '../mock-server';
 
 describe('Composio trigger toggles (UI + core RPC)', () => {
-  before(async () => {
+  before(async function () {
+    // waitForApp() + resetApp() can exceed the default 30s Mocha hook budget.
+    this.timeout(90_000);
     await startMockServer();
     setMockBehavior(
       'composioConnections',

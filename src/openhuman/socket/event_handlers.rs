@@ -390,10 +390,18 @@ pub(super) fn handle_sio_event(
                 .get("timestampMs")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
+            // Dual-mascot name addressing (#4277 follow-up): which slot the
+            // backend's wake matcher decided was addressed (0|1), if any.
+            let mascot_slot = data
+                .get("mascotSlot")
+                .and_then(|v| v.as_u64())
+                .filter(|s| *s <= 1)
+                .map(|s| s as u8);
             log::info!(
-                "[socket] bot:in_call_request speaker={} cmd_len={}",
+                "[socket] bot:in_call_request speaker={} cmd_len={} mascot_slot={:?}",
                 speaker,
-                command_text.len()
+                command_text.len(),
+                mascot_slot
             );
             publish_global(DomainEvent::BackendMeetInCallRequest {
                 correlation_id,
@@ -401,6 +409,7 @@ pub(super) fn handle_sio_event(
                 command_text,
                 recent_transcript,
                 timestamp_ms,
+                mascot_slot,
             });
         }
         "bot:error" => {

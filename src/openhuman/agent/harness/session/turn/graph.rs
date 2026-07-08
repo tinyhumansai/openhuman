@@ -13,7 +13,7 @@
 //! instead of erroring.
 //!
 //! **Available tools.** The agent's resolved harness tool set (`tools`),
-//! advertised via [`SharedToolAdapter`](crate::openhuman::tinyagents::SharedToolAdapter)
+//! advertised via `SharedToolAdapter`
 //! and filtered by `visible_tool_names`. The chat turn surfaces clarifying
 //! questions inline rather than pausing, so it advertises **no early-exit
 //! tools**.
@@ -79,13 +79,32 @@ pub(crate) struct ChatTurnGraph {
 /// ([`core`](super::core) folds usage, persists the conversation, and handles a
 /// cap-hit checkpoint).
 pub(crate) async fn run_chat_turn_graph(graph: ChatTurnGraph) -> Result<TinyagentsTurnOutcome> {
-    run_turn_via_tinyagents_shared(
+    // Fail-closed allowlist plumbing (issue #4452): the shared seam now takes an
+    // `Option<HashSet<String>>` where `None` = no filter (all visible tools) and
+    // `Some(set)` = exactly those tools. The chat path's historical convention is
+    // "empty `visible_tool_names` = every visible tool", so map an empty set to
+    // `None` to preserve that behavior; a populated set stays an explicit filter.
+    let visible_tool_names = if graph.visible_tool_names.is_empty() {
+        None
+    } else {
+        Some(graph.visible_tool_names)
+    };
+    // Build the turn's crate `ChatModel` set from the session provider; the seam
+    // entry is crate-native (issue #4249, Phase 5).
+    let provider_id = graph.provider.telemetry_provider_id();
+    let turn_models = crate::openhuman::tinyagents::build_turn_models(
         graph.provider,
         &graph.model,
         graph.temperature,
+        graph.context_window,
+    );
+    run_turn_via_tinyagents_shared(
+        turn_models,
+        provider_id,
+        &graph.model,
         graph.messages,
         vec![graph.tools],
-        graph.visible_tool_names,
+        visible_tool_names,
         graph.max_iterations,
         // Mirror the harness event stream onto this session's progress sink.
         graph.on_progress,
@@ -107,6 +126,17 @@ pub(crate) async fn run_chat_turn_graph(graph: ChatTurnGraph) -> Result<Tinyagen
         graph.context_mw,
         // Builder-configured tool policy enforcement (session chat path).
         graph.tool_policy,
+        // Top-level chat turns do not yet carry SDK workspace descriptors.
+        None,
+        // Interactive chat turn — response caching MUST stay off so a live user
+        // turn is never served a cached model response (correctness/safety).
+        false,
+        // #4457 (defect C): defer the terminal `TurnCompleted` to the caller.
+        // The session path (`run_turn_impl` in `turn/core.rs`) runs its cap/#4093
+        // wrap-up (`summarize_turn_wrapup`) *after* this seam returns and then
+        // emits the single `TurnCompleted` itself — a seam-level emit here would
+        // fire before that checkpoint streams and duplicate the event.
+        true,
     )
     .await
 }

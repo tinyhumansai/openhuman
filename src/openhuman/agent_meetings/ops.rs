@@ -761,6 +761,38 @@ fn build_join_payload(
                 }),
             );
         }
+        // Dual-mascot payload (issue #4277). Emitted only when the caller
+        // supplied a `mascots` array; the backend bot renders both slots,
+        // alternates the speaker per reply, and uses each slot's voice.
+        // Absent → the backend falls back to the single `mascotId` above,
+        // so one-mascot callers are unchanged.
+        if let Some(mascots) = &req.mascots {
+            let slots: Vec<Value> = mascots
+                .iter()
+                .map(|m| {
+                    let mut slot = json!({ "mascotId": m.mascot_id });
+                    if let Some(obj) = slot.as_object_mut() {
+                        if let Some(name) = &m.name {
+                            obj.insert("name".to_string(), json!(name));
+                        }
+                        if let Some(colors) = &m.rive_colors {
+                            obj.insert(
+                                "riveColors".to_string(),
+                                json!({
+                                    "primaryColor": colors.primary_color,
+                                    "secondaryColor": colors.secondary_color,
+                                }),
+                            );
+                        }
+                        if let Some(vid) = &m.voice_id {
+                            obj.insert("voiceId".to_string(), json!(vid));
+                        }
+                    }
+                    slot
+                })
+                .collect();
+            map.insert("mascots".to_string(), json!(slots));
+        }
         if let Some(respond_to) = &req.respond_to_participant {
             map.insert("respondToParticipant".to_string(), json!(respond_to));
         }
@@ -872,10 +904,23 @@ pub async fn handle_join(params: Map<String, Value>) -> Result<Value, String> {
         return Err("[agent_meetings] socket not connected to backend".to_string());
     }
 
+    // Name-addressing (#4277 follow-up) trace: the mascot ids + names forwarded
+    // to the backend. A `None` name on a slot means the backend can't route
+    // that mascot by name ("Hey Toshi").
+    let mascot_trace: Vec<(String, Option<String>)> = req
+        .mascots
+        .as_ref()
+        .map(|ms| {
+            ms.iter()
+                .map(|m| (m.mascot_id.clone(), m.name.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
     tracing::info!(
         meet_url_host = %normalized_url.host_str().unwrap_or(""),
         platform = %platform,
         display_name_len = display_name.len(),
+        mascots = ?mascot_trace,
         "[agent_meetings] emitting bot:join"
     );
 
@@ -1102,6 +1147,13 @@ pub async fn handle_notification_action(params: Map<String, Value>) -> Result<Va
             let meet_url = meet_url
                 .ok_or_else(|| "[agent_meetings] payload.meetUrl is required".to_string())?;
             let config = crate::openhuman::config::ops::load_config_with_timeout().await?;
+
+            // Final anchor fallback: the display name the user saved on the
+            // Meetings page, so the "Join & reply" button honors it too.
+            let respond_to_participant = respond_to_participant.or_else(|| {
+                let saved = config.meet.reply_display_name.trim();
+                (!saved.is_empty()).then(|| saved.to_string())
+            });
 
             if action_id == "always_join" {
                 let mut cfg = config.clone();
@@ -1645,6 +1697,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn notification_join_falls_back_to_saved_reply_display_name() {
+        // Join branch anchor resolution: when the notification payload carries
+        // no `respondToParticipant` and no cached account identity resolves, the
+        // reply anchor must fall back to the display name the user saved on the
+        // Meetings page (`config.meet.reply_display_name`). We can't inspect the
+        // resolved anchor without a live socket, but the handler must load
+        // config, run the fallback, build the join map, and reach `handle_join`
+        // — which then fails only at the (absent) socket. Reaching that error
+        // proves the changed fallback lines executed.
+        let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::TempDir::new().unwrap();
+        let _env = EnvGuard::set_workspace(tmp.path());
+
+        let mut cfg = crate::openhuman::config::Config::load_or_init()
+            .await
+            .unwrap();
+        cfg.meet.reply_display_name = "Saved Anchor".to_string();
+        cfg.save().await.unwrap();
+
+        let mut params = Map::new();
+        params.insert("action_id".to_string(), json!("join_active"));
+        params.insert(
+            "payload".to_string(),
+            json!({
+                "meetingId": "m-anchor-1",
+                "meetUrl": "https://meet.google.com/anchor-fallback",
+                // deliberately no respondToParticipant → config fallback path
+            }),
+        );
+
+        let err = handle_notification_action(params).await.unwrap_err();
+        assert!(
+            err.contains("socket not connected"),
+            "expected socket error after anchor fallback, got: {err}"
+        );
+    }
+
+    #[tokio::test]
     async fn notification_action_skip_without_meeting_id_is_ok() {
         // No meetingId → nothing to update; must succeed without touching
         // config or the session store.
@@ -1736,6 +1828,8 @@ mod tests {
         assert!(payload.get("systemPrompt").is_none());
         assert!(payload.get("mascotId").is_none());
         assert!(payload.get("riveColors").is_none());
+        // Single-mascot join carries no `mascots` array (issue #4277).
+        assert!(payload.get("mascots").is_none());
         assert!(payload.get("respondToParticipant").is_none());
         assert!(payload.get("wakePhrase").is_none());
     }
@@ -1792,6 +1886,50 @@ mod tests {
         assert_eq!(payload["riveColors"]["secondaryColor"], "#00ff00");
         assert_eq!(payload["respondToParticipant"], "Bob");
         assert_eq!(payload["wakePhrase"], "Hello bot");
+        // A single `mascot_id` (no `mascots` array) must NOT emit `mascots`
+        // — the legacy single-mascot wire shape is unchanged (issue #4277).
+        assert!(payload.get("mascots").is_none());
+    }
+
+    #[test]
+    fn build_join_payload_with_dual_mascots() {
+        // Two-mascot join (issue #4277): the `mascots` array is emitted with
+        // camelCase slot fields the backend expects; slot 0 = primary.
+        let req: BackendMeetJoinRequest = serde_json::from_value(json!({
+            "meet_url": "https://meet.google.com/abc-defg-hij",
+            "mascot_id": "tiny-mascot",
+            "mascots": [
+                {
+                    "mascot_id": "tiny-mascot",
+                    "name": "Tiny",
+                    "voice_id": "voice-a",
+                    "rive_colors": { "primary_color": "#111", "secondary_color": "#222" }
+                },
+                { "mascot_id": "toshi", "voice_id": "voice-b" }
+            ]
+        }))
+        .unwrap();
+        let payload = build_join_payload(
+            "https://meet.google.com/abc-defg-hij",
+            "OpenHuman",
+            "gmeet",
+            &req,
+        );
+        let mascots = payload["mascots"].as_array().expect("mascots array");
+        assert_eq!(mascots.len(), 2);
+        assert_eq!(mascots[0]["mascotId"], "tiny-mascot");
+        // Name-addressed routing (#4277 follow-up): the display name is
+        // forwarded so the bot can route "Hey Tiny …" to slot 0.
+        assert_eq!(mascots[0]["name"], "Tiny");
+        assert_eq!(mascots[0]["voiceId"], "voice-a");
+        assert_eq!(mascots[0]["riveColors"]["primaryColor"], "#111");
+        assert_eq!(mascots[0]["riveColors"]["secondaryColor"], "#222");
+        assert_eq!(mascots[1]["mascotId"], "toshi");
+        assert_eq!(mascots[1]["voiceId"], "voice-b");
+        // No name supplied for slot 1 → no `name` key.
+        assert!(mascots[1].get("name").is_none());
+        // No colors supplied for slot 1 → no `riveColors` key.
+        assert!(mascots[1].get("riveColors").is_none());
     }
 
     #[test]

@@ -89,9 +89,13 @@ fn agent_error_to_user_message(err: &AgentError) -> &'static str {
         // ToolExecutionError and Other have no actionable canned message —
         // their error bodies are too freeform to summarise safely without
         // interpolating contents. Fall back to the generic copy.
-        AgentError::ToolExecutionError { .. } | AgentError::Other(_) => {
-            AGENT_JOB_USER_FAILURE_MESSAGE
-        }
+        // RegistryValidationFailed carries diagnostic message bodies that name
+        // internal tool/component identifiers — too freeform to summarise safely
+        // without interpolation, so fall back to the generic copy like the other
+        // non-actionable variants.
+        AgentError::ToolExecutionError { .. }
+        | AgentError::RegistryValidationFailed { .. }
+        | AgentError::Other(_) => AGENT_JOB_USER_FAILURE_MESSAGE,
     }
 }
 
@@ -317,8 +321,9 @@ pub async fn execute_job_now(config: &Config, job: &CronJob) -> (bool, String) {
 /// after a single JWT lapse, every retries-exhausted capture pointing at a
 /// problem the user can only fix from the UI.
 ///
-/// The right move is the same halt-on-first-occurrence pattern as
-/// `agent::harness::tool_loop::BACKEND_USER_STATE_MARKER` (#3334): the
+/// The right move is the same halt-on-first-occurrence pattern as the
+/// legacy tool loop's `BACKEND_USER_STATE_MARKER` convention (#3334, the
+/// loop itself was retired in the tinyagents migration, #4249): the
 /// condition is global and retries can't recover it, so we stop after the
 /// first attempt. Skipping the `report_error` call too is correct because
 /// the existing classifier
@@ -427,6 +432,41 @@ fn is_api_key_unset_failure(
     crate::core::observability::is_api_key_unset_message(signal)
 }
 
+/// TAURI-RUST-12K — a cron **agent** job pinned to a **local** LLM provider
+/// (LM Studio / Ollama / llama.cpp on `localhost:<port>`) fails at the TCP
+/// layer with "connection refused" because the user's local server isn't
+/// running. This is a genuinely unpreventable user-environment state: the app
+/// has no lever to start a user's local model server, and retrying across the
+/// backoff loop cannot bring the port up within one cron cycle.
+///
+/// The provider / agent emit sites already demote this via
+/// `report_error_or_expected` (the `expected_error_kind` classifier routes it
+/// to `LoopbackUnavailable`), so it never reaches Sentry there. But the bare
+/// cron `report_error` below bypasses that demotion and re-emitted the
+/// `failure=retries_exhausted` capture on every cron cycle — 2802 events / 29
+/// users. So we halt on the first occurrence and skip the report, mirroring
+/// the source demotion and the sibling billing / api-key guards
+/// (TAURI-RUST-514 / -BMW / -HCK).
+///
+/// Delegates to the single-source matcher
+/// [`crate::core::observability::is_local_provider_unreachable_message`] so
+/// the wording cannot drift from the classifier emit site. Narrow by design:
+/// only **loopback** connection-refused matches, so a transient *remote*
+/// provider / backend network error still retries and still reports. Routes on
+/// `last_agent_error` first (the raw anyhow chain carrying the wire message),
+/// falling back to `last_output`. Restricted to `JobType::Agent`.
+fn is_local_provider_unreachable_failure(
+    job_type: &JobType,
+    last_agent_error: Option<&str>,
+    last_output: &str,
+) -> bool {
+    if !matches!(job_type, JobType::Agent) {
+        return false;
+    }
+    let signal = last_agent_error.unwrap_or(last_output);
+    crate::core::observability::is_local_provider_unreachable_message(signal)
+}
+
 async fn execute_job_with_retry(
     config: &Config,
     security: &SecurityPolicy,
@@ -440,6 +480,7 @@ async fn execute_job_with_retry(
     let mut credits_exhausted = false;
     let mut budget_exhausted = false;
     let mut key_unset = false;
+    let mut local_unreachable = false;
 
     for attempt in 0..=retries {
         let (success, output, agent_error) = match job.job_type {
@@ -448,6 +489,10 @@ async fn execute_job_with_retry(
                 (success, output, None)
             }
             JobType::Agent => run_agent_job(config, job).await,
+            JobType::Flow => {
+                let (success, output) = run_flow_schedule_job(job);
+                (success, output, None)
+            }
         };
         last_output = output;
         if agent_error.is_some() {
@@ -544,6 +589,30 @@ async fn execute_job_with_retry(
             break;
         }
 
+        if is_local_provider_unreachable_failure(
+            &job.job_type,
+            last_agent_error.as_deref(),
+            last_output.as_str(),
+        ) {
+            // Halt on the first occurrence — a local LLM provider refusing the
+            // loopback connection (LM Studio / Ollama not running) cannot
+            // recover across the backoff loop, and the provider/agent emit
+            // sites already demoted it from Sentry (`LoopbackUnavailable`).
+            // The bare cron `report_error` below bypasses that demotion, so
+            // suppressing here keeps the residual off Sentry at source
+            // (TAURI-RUST-12K). The failure stays visible via the run history
+            // + cron alert. See `is_local_provider_unreachable_failure`.
+            // Metadata-only log (no raw provider body — see CLAUDE.md).
+            log::debug!(
+                "[cron] action=halt_on_local_provider_unreachable job_id={} attempt={} retries={}",
+                job.id.as_str(),
+                attempt,
+                retries
+            );
+            local_unreachable = true;
+            break;
+        }
+
         if attempt < retries {
             let jitter_ms = u64::from(Utc::now().timestamp_subsec_millis() % 250);
             time::sleep(Duration::from_millis(backoff_ms + jitter_ms)).await;
@@ -555,9 +624,18 @@ async fn execute_job_with_retry(
     // loop and skip the retries-exhausted report, independent of the tag-gated
     // before_send filters that the cron re-report does not match. Covers BYO
     // 402 out-of-credit + managed-backend 400 out-of-budget (TAURI-RUST-514 /
-    // -BMW) and a configured provider with no API key (TAURI-RUST-HCK).
+    // -BMW) and a configured provider with no API key (TAURI-RUST-HCK). The
+    // `session_expired` (TAURI-RUST-N) and `local_unreachable` (a local LLM
+    // server refusing the loopback connection, TAURI-RUST-12K) halts are the
+    // same shape — suppress the bypassing bare report — but carry no
+    // user-config remediation surface, so they gate the report directly rather
+    // than routing through `permanent_config_halt`'s UserErrorCenter swap.
     let permanent_config_halt = credits_exhausted || budget_exhausted || key_unset;
-    if matches!(job.job_type, JobType::Agent) && !session_expired && !permanent_config_halt {
+    if matches!(job.job_type, JobType::Agent)
+        && !session_expired
+        && !local_unreachable
+        && !permanent_config_halt
+    {
         let report_message = last_agent_error
             .as_deref()
             .unwrap_or_else(|| last_output.as_str());
@@ -883,6 +961,29 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<
             (false, user_message.to_string(), Some(e.to_string()))
         }
     }
+}
+
+/// Fires a `JobType::Flow` job: publishes `DomainEvent::FlowScheduleTick` for
+/// the bound flow id (stored in `job.command`, see `JobType::Flow`'s doc) and
+/// returns immediately. This job type does no work itself — dispatching the
+/// actual `flows::ops::flows_run` happens asynchronously in
+/// `flows::bus::FlowTriggerSubscriber`, which is the sole consumer of this
+/// event (kept out of the cron domain so cron stays flow-agnostic).
+fn run_flow_schedule_job(job: &CronJob) -> (bool, String) {
+    let flow_id = job.command.clone();
+    tracing::info!(
+        target: "flows",
+        job_id = %job.id,
+        %flow_id,
+        "[cron] flow schedule tick — publishing FlowScheduleTick"
+    );
+    publish_global(DomainEvent::FlowScheduleTick {
+        flow_id: flow_id.clone(),
+    });
+    (
+        true,
+        format!("flow schedule tick emitted for flow {flow_id}"),
+    )
 }
 
 /// Placeholder recorded in run history when an agent job succeeds but returns

@@ -879,37 +879,46 @@ async fn composio_controller_registry_and_scope_handlers_cover_validation_edges(
 
 #[test]
 fn composio_controller_schema_catalog_covers_all_declared_functions() {
-    let expected = [
-        ("list_toolkits", 0, "toolkits"),
-        ("list_capabilities", 0, "capabilities"),
-        ("list_agent_ready_toolkits", 0, "toolkits"),
-        ("list_connections", 0, "connections"),
-        ("authorize", 2, "connectUrl"),
-        ("delete_connection", 2, "deleted"),
-        ("list_tools", 2, "tools"),
-        ("execute", 3, "result"),
-        ("list_github_repos", 1, "result"),
-        ("create_trigger", 3, "result"),
-        ("get_user_profile", 1, "profile"),
-        ("refresh_all_identities", 0, "report"),
-        ("sync", 2, "outcome"),
-        ("list_trigger_history", 1, "result"),
-        ("get_user_scopes", 1, "pref"),
-        ("set_user_scopes", 4, "pref"),
-        ("list_available_triggers", 2, "triggers"),
-        ("list_triggers", 1, "triggers"),
-        ("enable_trigger", 3, "result"),
-        ("disable_trigger", 1, "deleted"),
-        ("get_mode", 0, "mode"),
-        ("set_api_key", 2, "result"),
-        ("clear_api_key", 0, "result"),
+    // (function, required input names, first output name). Assert the required
+    // inputs are *present* rather than pinning `inputs.len() == N` — the exact
+    // count broke whenever an additive optional param was declared (plan.md §3).
+    let expected: [(&str, &[&str], &str); 23] = [
+        ("list_toolkits", &[], "toolkits"),
+        ("list_capabilities", &[], "capabilities"),
+        ("list_agent_ready_toolkits", &[], "toolkits"),
+        ("list_connections", &[], "connections"),
+        ("authorize", &["toolkit"], "connectUrl"),
+        ("delete_connection", &["connection_id"], "deleted"),
+        ("list_tools", &["toolkits"], "tools"),
+        ("execute", &["tool", "connection_id"], "result"),
+        ("list_github_repos", &["connection_id"], "result"),
+        ("create_trigger", &["slug", "connection_id"], "result"),
+        ("get_user_profile", &["connection_id"], "profile"),
+        ("refresh_all_identities", &[], "report"),
+        ("sync", &["connection_id"], "outcome"),
+        ("list_trigger_history", &["limit"], "result"),
+        ("get_user_scopes", &["toolkit"], "pref"),
+        ("set_user_scopes", &["toolkit", "read", "write"], "pref"),
+        ("list_available_triggers", &["toolkit"], "triggers"),
+        ("list_triggers", &["toolkit"], "triggers"),
+        ("enable_trigger", &["connection_id", "slug"], "result"),
+        ("disable_trigger", &["trigger_id"], "deleted"),
+        ("get_mode", &[], "mode"),
+        ("set_api_key", &["api_key"], "result"),
+        ("clear_api_key", &[], "result"),
     ];
 
-    for (function, input_count, first_output) in expected {
+    for (function, required_inputs, first_output) in expected {
         let schema = openhuman_core::openhuman::composio::schemas::schemas(function);
         assert_eq!(schema.namespace, "composio");
         assert_eq!(schema.function, function);
-        assert_eq!(schema.inputs.len(), input_count, "{function}");
+        let input_names: Vec<&str> = schema.inputs.iter().map(|f| f.name).collect();
+        for required in required_inputs {
+            assert!(
+                input_names.contains(required),
+                "{function} must declare input `{required}` (got {input_names:?})"
+            );
+        }
         assert_eq!(schema.outputs[0].name, first_output, "{function}");
         assert!(!schema.description.is_empty());
     }

@@ -177,10 +177,10 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         // User-state — the remediation is "add/pick a model in Settings →
         // LLM", which the user-facing copy surfaces; Sentry has no
         // remediation. Anchored on the role/slug-interpolation-free
-        // substring, which is also `factory::NO_MODEL_CONFIGURED_ANCHOR`; a
-        // round-trip test in `factory_tests.rs` couples the two so a
-        // wording drift fails CI instead of silently re-flooding Sentry.
-        "resolved to an empty model id",
+        // substring, which IS `factory::NO_MODEL_CONFIGURED_ANCHOR` —
+        // referenced directly so the two can never drift (the round-trip
+        // test in `factory_tests.rs` remains as a belt-and-braces guard).
+        super::factory::NO_MODEL_CONFIGURED_ANCHOR,
         // TAURI-RUST-2G (~2684 events) / TAURI-RUST-2F (~950 events) —
         // thinking-mode model (DeepSeek-R1 / Moonshot K2-thinking on
         // `provider=cloud` custom_openai) rejects a follow-up turn that

@@ -42,6 +42,8 @@ function makeAchievement(overrides: Partial<RewardsAchievement> = {}): RewardsAc
     roleId: null,
     discordRoleStatus: 'unavailable',
     creditAmountUsd: null,
+    rewardTokens: null,
+    rewardRecurring: false,
     ...overrides,
   };
 }

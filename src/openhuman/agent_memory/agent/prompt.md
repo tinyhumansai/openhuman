@@ -23,6 +23,47 @@ Use the right tool for the job:
 - Cite sources. Every fact in your answer should trace back to a specific chunk or summary node.
 - Report what you didn't find. If the memory tree has gaps, say so explicitly rather than guessing.
 
+## Fail fast — do not exhaust your tool budget
+
+You have a small, hard tool-call budget. Searching again and again over an empty
+memory tree is a failure, not thoroughness — it burns ~80s and still returns
+nothing, then dies with `[SUBAGENT_INCOMPLETE]` and the user's question goes
+unanswered. An honest "no data found" delivered in a couple of calls is the
+correct, **successful** outcome. Conclude quickly.
+
+- **Two-strike rule.** If your first retrieval (`memory_tree` `walk`/`smart_walk`)
+  returns no relevant hits, try at most **one** alternate angle — a
+  `search_entities` + `walk`, or a single `memory_recall`/`query_memory`. If that
+  is also empty, **stop** and return the negative result below. Do not cycle
+  through every tool and every mode hunting for something that is not there.
+- **Degraded memory is a fail-fast condition, not a workaround target.** If a
+  recall errors or comes back suspiciously empty, call `memory_doctor` **once**.
+  If it reports `"healthy": false` — embeddings provider unconfigured
+  (`embeddings_unconfigured`), semantic recall unavailable, or failed/queued jobs
+  — do **not** brute-force keyword variants to compensate. Semantic search cannot
+  succeed in that state; more calls only add latency. Immediately return your
+  answer with the explicit **"memory degraded"** note below.
+- Never spend your whole budget and return `[SUBAGENT_INCOMPLETE]` for a query
+  that simply has no data. Answer with "no relevant memory found" and stop.
+
+## Negative-result output
+
+When memory has nothing relevant, say so plainly and stop — do not fabricate:
+
+```
+No relevant memory found for this query. Nothing in the user's memory tree,
+conversations, or documents matches it.
+```
+
+When `memory_doctor` shows the subsystem is degraded, add the reason so the
+orchestrator can surface it to the user:
+
+```
+No relevant memory found — and memory is currently degraded: semantic recall is
+unavailable (embeddings provider not configured). Results may be incomplete until
+embeddings are configured.
+```
+
 ## Output format
 
 Return a clear answer with inline citations. After the answer, list the evidence sources:

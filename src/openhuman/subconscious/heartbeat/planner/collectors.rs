@@ -324,6 +324,45 @@ async fn collect_calendar_events_buffered(
         .collect()
 }
 
+/// Recall.ai Calendar V1 detection: fetch upcoming meetings from the backend
+/// and reshape them into the same event stream the Composio path produces, so
+/// downstream planning + dedup stay unchanged.
+async fn collect_recall_calendar_meetings(
+    config: &Config,
+    now: DateTime<Utc>,
+) -> Vec<PendingEvent> {
+    let lookahead = config.heartbeat.meeting_lookahead_minutes.max(1);
+    let end_window = now + chrono::Duration::minutes(i64::from(lookahead));
+    let meetings = match crate::openhuman::recall_calendar::ops::fetch_recall_meetings(config).await
+    {
+        Ok(m) => m,
+        Err(error) => {
+            tracing::warn!(error = %error, "[heartbeat:planner] recall calendar fetch failed");
+            return Vec::new();
+        }
+    };
+    let events = build_recall_pending(&meetings, now, end_window);
+    tracing::debug!(
+        fetched = meetings.len(),
+        within_window = events.len(),
+        "[heartbeat:planner] recall calendar events collected"
+    );
+    events
+}
+
+/// Pure transform: Recall meetings → `PendingEvent`s by reshaping to a
+/// Google-Calendar payload and reusing the shared `extract_calendar_events`
+/// parser (so dedup/overlap keys match the Composio path). Unit-testable
+/// without a backend session.
+fn build_recall_pending(
+    meetings: &[crate::openhuman::recall_calendar::types::RecallMeeting],
+    now: DateTime<Utc>,
+    end_window: DateTime<Utc>,
+) -> Vec<PendingEvent> {
+    let data = crate::openhuman::recall_calendar::ops::meetings_to_gcal_json(meetings);
+    extract_calendar_events(&data, "googlecalendar", "recall", now, end_window)
+}
+
 pub(crate) async fn collect_calendar_meetings(
     config: &Config,
     now: DateTime<Utc>,
@@ -334,6 +373,25 @@ pub(crate) async fn collect_calendar_meetings(
     // collector hard-bound to `build_composio_client` (backend-only)
     // and silently returned an empty meeting list for direct-mode
     // users.
+    // Auto-detect a connected Recall calendar even when `meet.calendar_provider`
+    // has not been flipped yet, mirroring the meetings-page fetch path
+    // (`agent_meetings::upcoming::fetch_upcoming_meetings`). Without this
+    // fallback the heartbeat auto-join would keep polling Composio (which a
+    // Recall-only user never connected) and silently never fire, even though the
+    // meetings page shows the Recall meetings.
+    let recall_selected = matches!(
+        config.meet.calendar_provider,
+        crate::openhuman::config::schema::CalendarProvider::Recall
+    );
+    let recall_connected = if recall_selected {
+        true
+    } else {
+        crate::openhuman::recall_calendar::ops::is_connected_cached(config).await
+    };
+    if recall_connected {
+        return collect_recall_calendar_meetings(config, now).await;
+    }
+
     let kind = match create_composio_client(config) {
         Ok(kind) => kind,
         Err(error) => {
@@ -718,6 +776,35 @@ mod tests {
     use chrono::TimeZone;
 
     use super::*;
+
+    #[test]
+    fn build_recall_pending_maps_meetings() {
+        let now = chrono::Utc::now();
+        let end = now + chrono::Duration::hours(2);
+        let meetings = vec![crate::openhuman::recall_calendar::types::RecallMeeting {
+            id: "r1".to_string(),
+            title: Some("Sync".to_string()),
+            meeting_url: Some("https://meet.google.com/aaa-bbbb-ccc".to_string()),
+            start_time: Some((now + chrono::Duration::minutes(30)).to_rfc3339()),
+            end_time: None,
+            platform: None,
+            bot_id: None,
+        }];
+        let events = build_recall_pending(&meetings, now, end);
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].meeting_url.as_deref(),
+            Some("https://meet.google.com/aaa-bbbb-ccc")
+        );
+    }
+
+    #[tokio::test]
+    async fn collect_routes_to_recall_and_degrades_empty() {
+        let mut config = Config::default();
+        config.meet.calendar_provider = crate::openhuman::config::schema::CalendarProvider::Recall;
+        let out = collect_calendar_meetings(&config, chrono::Utc::now()).await;
+        assert!(out.is_empty());
+    }
 
     fn conn(id: &str, toolkit: &str, status: &str) -> ComposioConnection {
         ComposioConnection {

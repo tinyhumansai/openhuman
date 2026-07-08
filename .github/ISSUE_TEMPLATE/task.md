@@ -25,7 +25,7 @@ What is in scope, what is not, and any implementation notes or tradeoffs worth c
 - [ ] **Task 1** — TODO
 - [ ] **Task 2** — TODO
 - [ ] **Task 3** — TODO
-- [ ] **Diff coverage ≥ 80%** — the implementing PR meets the changed-lines coverage gate (Vitest + cargo-llvm-cov, enforced by [`.github/workflows/pr-ci.yml`](../../.github/workflows/pr-ci.yml)) when code changes are involved.
+- [ ] **Diff coverage ≥ 80%** — the implementing PR meets the changed-lines coverage gate (Vitest + cargo-llvm-cov, enforced by [`.github/workflows/ci-lite.yml`](../../.github/workflows/ci-lite.yml)) when code changes are involved.
 
 - …
 

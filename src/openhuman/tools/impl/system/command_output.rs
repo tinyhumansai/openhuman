@@ -14,10 +14,10 @@
 //!      (command / dependency not found) or a `126` (permission denied — often a
 //!      sandbox restriction) from a generic `1`, so it could not recognise an
 //!      un-retryable wall and re-ran the identical command. The harness
-//!      repeated-failure circuit breaker (`RepeatFailureGuard`, see
-//!      `agent/harness/tool_loop.rs`) still bounds that loop, but only after a
-//!      few wasted iterations and with a generic halt message, because the
-//!      root-cause signal had already been thrown away.
+//!      repeated-failure circuit breaker (`RepeatedToolFailureMiddleware`, see
+//!      `src/openhuman/tinyagents/middleware.rs`) still bounds that loop, but
+//!      only after a few wasted iterations and with a generic halt message,
+//!      because the root-cause signal had already been thrown away.
 //!
 //! This module surfaces the exit code AND both streams on failure, and appends a
 //! short hint for the well-known dependency/sandbox exit codes so the agent can

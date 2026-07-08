@@ -90,6 +90,33 @@ pub struct RiveColors {
     pub secondary_color: Option<String>,
 }
 
+/// One mascot slot for a multi-mascot backend meeting (issue #4277).
+/// Slot 0 = primary speaker, slot 1 = secondary. The backend bot renders
+/// both mascots side-by-side, alternates the speaking slot per reply, and
+/// synthesizes each slot's replies with `voice_id` (falling back to its
+/// configured default when absent).
+///
+/// Deserialize-only: the RPC input arrives snake_case (`mascot_id`,
+/// `rive_colors`, `voice_id`); the outbound `bot:join` payload is built by
+/// hand in `ops.rs` (camelCase), so this struct is never serialized.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BackendMascotSlot {
+    /// Rive mascot id (e.g. "yellow", "toshi").
+    pub mascot_id: String,
+    /// Optional human-facing mascot name (e.g. "Toshi", "Tiny"), taken from the
+    /// manifest. Drives name-addressed routing (#4277 follow-up): a participant
+    /// who says "Hey Toshi …" is routed to this slot instead of the mechanical
+    /// alternation. Absent → that slot is not name-addressable.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Optional per-mascot color palette overrides.
+    #[serde(default)]
+    pub rive_colors: Option<RiveColors>,
+    /// Optional per-mascot ElevenLabs voice id.
+    #[serde(default)]
+    pub voice_id: Option<String>,
+}
+
 /// Inputs to `openhuman.agent_meetings_join`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct BackendMeetJoinRequest {
@@ -105,11 +132,18 @@ pub struct BackendMeetJoinRequest {
     #[serde(default)]
     pub system_prompt: Option<String>,
     /// Selects which Rive mascot appears in the meeting (e.g. "yellow", "blue").
+    /// Legacy single-mascot field; still honored when `mascots` is absent.
     #[serde(default)]
     pub mascot_id: Option<String>,
-    /// Optional Rive mascot color palette overrides.
+    /// Optional Rive mascot color palette overrides (single-mascot path).
     #[serde(default)]
     pub rive_colors: Option<RiveColors>,
+    /// Dual-mascot config (issue #4277). When present (2 slots) the backend
+    /// renders both mascots and alternates the speaker per reply, using each
+    /// slot's `voice_id`. Absent / single-element falls back to the legacy
+    /// single-mascot `mascot_id` + `rive_colors` behavior.
+    #[serde(default)]
+    pub mascots: Option<Vec<BackendMascotSlot>>,
     /// Only respond to this participant's messages (empty/absent = respond to everyone).
     #[serde(default)]
     pub respond_to_participant: Option<String>,

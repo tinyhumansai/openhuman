@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { computeFreshness } from '../../lib/memory/memoryFreshness';
 import { NOW, rel } from '../../test/memoryRelationFactory';
-import { loadFreshness, loadNamespaces, memoryFreshnessApi } from './memoryFreshnessApi';
+import { loadFreshness, loadNamespaces } from './memoryFreshnessApi';
 
 const mockGraphQuery = vi.fn();
 const mockListNamespaces = vi.fn();
@@ -46,12 +46,5 @@ describe('memoryFreshnessApi.loadNamespaces', () => {
   it('returns the namespace list from the RPC', async () => {
     mockListNamespaces.mockResolvedValueOnce(['work', 'personal']);
     expect(await loadNamespaces()).toEqual(['work', 'personal']);
-  });
-});
-
-describe('memoryFreshnessApi object', () => {
-  it('exposes the public surface', () => {
-    expect(typeof memoryFreshnessApi.loadFreshness).toBe('function');
-    expect(typeof memoryFreshnessApi.loadNamespaces).toBe('function');
   });
 });

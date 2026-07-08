@@ -141,11 +141,11 @@ pub async fn settings_set(
         || patch.triggers_enabled.is_some()
         || patch.max_promotions_per_hour.is_some()
     {
-        crate::openhuman::subconscious::global::stop_heartbeat_loop().await;
+        crate::openhuman::subconscious::registry::stop_heartbeat_loop().await;
         if config.heartbeat.effective_subconscious_mode().is_enabled() {
             debug!("[heartbeat][rpc] settings_set: (re)starting for mode change");
             if let Err(error) =
-                crate::openhuman::subconscious::global::bootstrap_after_login().await
+                crate::openhuman::subconscious::registry::bootstrap_after_login().await
             {
                 warn!("[heartbeat][rpc] settings_set: heartbeat bootstrap failed: {error}");
                 return Err(format!(

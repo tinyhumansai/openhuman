@@ -129,6 +129,7 @@ impl Provider for CannedProvider {
 
 fn mock_parent(provider: Arc<dyn Provider>) -> ParentExecutionContext {
     ParentExecutionContext {
+        workspace_descriptor: None,
         agent_definition_id: "agent_team_runtime".to_string(),
         allowed_subagent_ids: HashSet::new(),
         provider,

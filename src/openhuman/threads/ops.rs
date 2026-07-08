@@ -22,8 +22,8 @@ use crate::openhuman::threads::title::{
     THREAD_TITLE_MODEL_HINT, THREAD_TITLE_SYSTEM_PROMPT,
 };
 use crate::openhuman::threads::turn_state::{
-    self, ClearTurnStateRequest, ClearTurnStateResponse, GetTurnStateRequest, GetTurnStateResponse,
-    ListTurnStatesResponse,
+    self, ClearTurnStateRequest, ClearTurnStateResponse, GetTurnStateForRequestRequest,
+    GetTurnStateRequest, GetTurnStateResponse, ListTurnStatesResponse,
 };
 use crate::openhuman::threads::ThreadsError;
 use crate::rpc::RpcOutcome;
@@ -650,6 +650,37 @@ pub async fn turn_state_list(
     Ok(envelope(
         ListTurnStatesResponse { turn_states, count },
         Some(counts([("num_turn_states", count)])),
+        None,
+    ))
+}
+
+/// Lists every persisted turn snapshot for one thread, newest first — the
+/// per-turn history that lets the UI render each answer's own process trail.
+pub async fn turn_state_history(
+    request: GetTurnStateRequest,
+) -> Result<RpcOutcome<ApiEnvelope<ListTurnStatesResponse>>, String> {
+    let dir = workspace_dir().await?;
+    let turn_states = turn_state::store::list_thread(dir, &request.thread_id)?;
+    let count = turn_states.len();
+    Ok(envelope(
+        ListTurnStatesResponse { turn_states, count },
+        Some(counts([("num_turn_states", count)])),
+        None,
+    ))
+}
+
+/// Returns one specific turn of a thread by its producing request id — used by
+/// the UI to lazily load a past turn's full timeline when its insights block is
+/// first expanded.
+pub async fn turn_state_get_turn(
+    request: GetTurnStateForRequestRequest,
+) -> Result<RpcOutcome<ApiEnvelope<GetTurnStateResponse>>, String> {
+    let dir = workspace_dir().await?;
+    let turn_state = turn_state::store::get_turn(dir, &request.thread_id, &request.request_id)?;
+    let present = turn_state.is_some();
+    Ok(envelope(
+        GetTurnStateResponse { turn_state },
+        Some(counts([("present", usize::from(present))])),
         None,
     ))
 }

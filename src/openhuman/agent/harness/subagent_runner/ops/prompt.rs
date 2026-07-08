@@ -16,8 +16,7 @@ use std::collections::HashSet;
 /// - make the child explicitly aware it is acting as a sub-agent
 /// - keep delegated outputs concise so parent-context growth stays bounded
 /// - discourage verbose restatement of the delegated task/context
-pub(super) const SUBAGENT_ROLE_CONTRACT_SUFFIX: &str =
-    "## Sub-agent Role Contract\n\n\
+pub(super) const SUBAGENT_ROLE_CONTRACT_SUFFIX: &str = "## Sub-agent Role Contract\n\n\
 You are a sub-agent working for a parent OpenHuman agent, not a direct end-user assistant.\n\
 - Stay tightly scoped to the delegated task.\n\
 - Keep tool arguments and follow-up prompts compact, include only required fields/context.\n\
@@ -98,7 +97,7 @@ pub(crate) fn append_subagent_role_contract(base_prompt: String, agent_id: &str)
 ///
 /// Extracted as a free function so the regression suite can exercise the dedup
 /// without standing up the full `run_typed_mode` plumbing.
-pub(crate) fn dedup_tool_specs_by_name(agent_id: &str, specs: Vec<ToolSpec>) -> Vec<ToolSpec> {
+pub(super) fn dedup_tool_specs_by_name(agent_id: &str, specs: Vec<ToolSpec>) -> Vec<ToolSpec> {
     let mut seen: HashSet<String> = HashSet::with_capacity(specs.len());
     let mut deduped: Vec<ToolSpec> = Vec::with_capacity(specs.len());
     let mut dropped: Vec<String> = Vec::new();

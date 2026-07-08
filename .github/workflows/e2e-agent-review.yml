@@ -11,7 +11,15 @@ name: E2E (Linux) - agent-review
 on:
   workflow_dispatch:
 permissions:
+  # `actions: read` lets scripts/ci-cancel-aware.sh poll the run status so
+  # cancelled builds inside container jobs stop themselves (docker exec
+  # swallows the runner's signals).
+  actions: read
   contents: read
+env:
+  # Consumed by scripts/ci-cancel-aware.sh's cancellation watchdog.
+  GH_TOKEN: ${{ github.token }}
+
 concurrency:
   group: e2e-agent-review-${{ github.event.pull_request.number || github.head_ref || github.ref }}
   cancel-in-progress: true

@@ -176,7 +176,7 @@ pub fn render_ambient_environment(ctx: &PromptContext<'_>) -> Result<String> {
 /// An absolute date only changes when the underlying memory does. The
 /// model judges staleness by comparing this against the injected current
 /// date. Shared by [`UserMemorySection`] and the working-memory block in
-/// `agent::memory_loader`. (#2944)
+/// `agent_memory::memory_loader`. (#2944)
 pub fn memory_date_label(updated_at: DateTime<Utc>) -> String {
     updated_at.format("%Y-%m-%d").to_string()
 }
@@ -700,7 +700,7 @@ pub fn default_workspace_file_content(filename: &str) -> &'static str {
 /// manufacture a full context when they only need the static text.
 fn empty_prompt_context_for_static_sections() -> PromptContext<'static> {
     static EMPTY_TOOLS: &[PromptTool<'static>] = &[];
-    static EMPTY_WORKFLOWS: &[crate::openhuman::workflows::Workflow] = &[];
+    static EMPTY_WORKFLOWS: &[crate::openhuman::skills::Workflow] = &[];
     static EMPTY_INTEGRATIONS: &[ConnectedIntegration] = &[];
     // SAFETY: the &HashSet reference must outlive the returned context;
     // a leaked OnceLock-style allocation gives us a permanent 'static

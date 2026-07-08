@@ -38,7 +38,6 @@ vi.mock('./pages/Rewards', () => ({ default: () => <div /> }));
 vi.mock('./pages/Settings', () => ({ default: () => <div /> }));
 vi.mock('./pages/Skills', () => ({ default: () => <div /> }));
 vi.mock('./pages/Welcome', () => ({ default: () => <div /> }));
-vi.mock('./pages/WorkflowNew', () => ({ default: () => <div /> }));
 vi.mock('./pages/WorkflowsRun', () => ({ default: () => <div /> }));
 
 const AppRoutes = (await import('./AppRoutes')).default;

@@ -334,6 +334,15 @@ pub async fn summarise_profile_with_llm(config: &Config, raw_md: &str) -> anyhow
         config.api_key.as_deref(),
         &options,
     )?;
+    // This path deliberately forces the managed backend (not role routing), so
+    // wrap the built provider directly rather than resolving via
+    // `create_chat_model`. Behaviour-preserving; only the call surface moves to
+    // the crate `ChatModel`.
+    let model_chat = crate::openhuman::inference::provider::chat_model_from_provider(
+        provider,
+        "summarization-v1".to_string(),
+        0.3,
+    );
 
     let system = "\
 You are a profile analyst. You will receive a user's LinkedIn profile in Markdown format. \
@@ -359,9 +368,18 @@ Rules:\n\
         "[linkedin_enrichment] sending profile to LLM for summarisation"
     );
 
-    let summary = provider
-        .chat_with_system(Some(system), raw_md, model, 0.3)
-        .await?;
+    use tinyagents::harness::message::Message;
+    use tinyagents::harness::model::{ChatModel, ModelRequest};
+    let summary = model_chat
+        .invoke(
+            &(),
+            ModelRequest::new(vec![
+                Message::system(system),
+                Message::user(raw_md.to_string()),
+            ]),
+        )
+        .await?
+        .text();
 
     tracing::debug!(
         output_len = summary.len(),

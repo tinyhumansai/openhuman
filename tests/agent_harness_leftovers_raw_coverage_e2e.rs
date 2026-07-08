@@ -241,6 +241,8 @@ fn text_response(text: &str) -> ChatResponse {
             output_tokens: 5,
             context_window: 8_192,
             cached_input_tokens: 3,
+            cache_creation_tokens: 0,
+            reasoning_tokens: 0,
             charged_amount_usd: 0.002,
         }),
         reasoning_content: None,
@@ -270,6 +272,8 @@ fn tool_response(id: &str, name: &str, arguments: serde_json::Value) -> ChatResp
             output_tokens: 2,
             context_window: 8_192,
             cached_input_tokens: 1,
+            cache_creation_tokens: 0,
+            reasoning_tokens: 0,
             charged_amount_usd: 0.001,
         }),
         reasoning_content: Some("because tool".to_string()),
@@ -393,6 +397,7 @@ fn parent_context(workspace: PathBuf, provider: Arc<ScriptedProvider>) -> Parent
         model_name: "round19-parent".to_string(),
         temperature: 0.0,
         workspace_dir: workspace,
+        workspace_descriptor: None,
         memory: Arc::new(StubMemory::default()),
         agent_config: agent_config(3),
         workflows: Arc::new(Vec::new()),
@@ -535,13 +540,22 @@ async fn subagent_run_truncates_capped_final_output_after_parent_context_run() -
 }
 
 #[tokio::test]
-async fn subagent_repeated_unknown_tool_halts_with_root_cause() -> Result<()> {
+async fn subagent_repeated_unknown_tool_recovers_and_bounds_at_cap() -> Result<()> {
+    // A sub-agent that keeps calling an unregistered tool must not loop forever.
+    // Since issue #4249 the unknown-tool name flows through the tinyagents
+    // `UnknownToolPolicy::ReturnToolError` path: each call injects a recoverable
+    // `unknown tool `missing_tool` …` result (naming the blocked tool and the
+    // valid ones) and consumes one tool-call budget slot, so the run stays
+    // bounded and terminates at its iteration cap instead of early-halting. The
+    // anti-infinite-loop guarantee is preserved by the budget bound, and the
+    // model still sees a corrective error each round.
     let tmp = TempDir::new()?;
     let provider = ScriptedProvider::new(vec![
         tool_response("call-1", "missing_tool", json!({"same": true})),
         tool_response("call-2", "missing_tool", json!({"same": true})),
         tool_response("call-3", "missing_tool", json!({"same": true})),
     ]);
+    let provider_handle = provider.clone();
     let parent = parent_context(tmp.path().to_path_buf(), provider);
     let mut def = definition(None);
     def.max_iterations = 3;
@@ -556,11 +570,29 @@ async fn subagent_repeated_unknown_tool_halts_with_root_cause() -> Result<()> {
     })
     .await?;
 
-    assert!(outcome.output.contains("repeating it will not help"));
-    assert!(outcome
-        .output
-        .contains("tool 'missing_tool' is not available"));
+    // Bounded termination: the run stops at the iteration cap rather than looping.
     assert_eq!(outcome.iterations, 3);
+
+    // Each unknown-tool call was recovered into a model-consumable error naming
+    // the blocked tool, and that corrective message was fed back to the model on
+    // a subsequent turn (proving recovery fired instead of aborting or looping).
+    let recovered = provider_handle
+        .requests()
+        .into_iter()
+        .flat_map(|request| request.messages)
+        .any(|message| {
+            message.content.contains("unknown tool") && message.content.contains("missing_tool")
+        });
+    assert!(
+        recovered,
+        "model should have received a recoverable `unknown tool `missing_tool`` result: {:?}",
+        provider_handle
+            .requests()
+            .into_iter()
+            .flat_map(|r| r.messages)
+            .map(|m| m.content)
+            .collect::<Vec<_>>()
+    );
     Ok(())
 }
 
