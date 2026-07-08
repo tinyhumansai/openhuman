@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
+import type { MascotManifest } from '../../../features/human/Mascot/manifest/types';
 import type { ComposioConnection } from '../../../lib/composio/types';
 import {
+  buildMeetingMascots,
   deriveDisplayNameFromEmail,
   inferPlatformFromUrl,
   MEETING_PLATFORMS,
@@ -257,8 +259,16 @@ describe('resolveMeetingBotMascotId', () => {
     expect(resolveMeetingBotMascotId('navy', 'yellow')).toBe('navy');
   });
 
-  it('falls back to the legacy mascot color for a manifest-only mascot id', () => {
-    expect(resolveMeetingBotMascotId('river-guide', 'yellow')).toBe('yellow');
+  it('keeps the "toshi" manifest mascot id the backend now ships as an asset', () => {
+    expect(resolveMeetingBotMascotId('toshi', 'yellow')).toBe('toshi');
+  });
+
+  it('keeps the "tiny-mascot" manifest mascot id the backend now ships as an asset', () => {
+    expect(resolveMeetingBotMascotId('tiny-mascot', 'navy')).toBe('tiny-mascot');
+  });
+
+  it('falls back to the legacy mascot color for a manifest-only mascot id the backend still lacks', () => {
+    expect(resolveMeetingBotMascotId('jarvis', 'yellow')).toBe('yellow');
   });
 
   it('uses the mascot color when no mascot id is selected', () => {
@@ -267,5 +277,123 @@ describe('resolveMeetingBotMascotId', () => {
 
   it('returns undefined for custom color with an unrecognized mascot id', () => {
     expect(resolveMeetingBotMascotId('river-guide', 'custom')).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildMeetingMascots
+// ---------------------------------------------------------------------------
+
+describe('buildMeetingMascots', () => {
+  // findMascot only reads `.id`/`.name`, so a partial manifest is enough.
+  const manifest = {
+    mascots: [
+      { id: 'toshi', name: 'Toshi' },
+      { id: 'tiny-mascot', name: 'Tiny' },
+    ],
+  } as unknown as MascotManifest;
+
+  const pair = {
+    primary: { mascotId: 'toshi', voiceId: 'voice-a' },
+    secondary: { mascotId: 'tiny-mascot', voiceId: 'voice-b' },
+  };
+
+  it('returns undefined when dual mode is off', () => {
+    expect(
+      buildMeetingMascots({
+        dualMascotEnabled: false,
+        mascotVoicePair: pair,
+        manifest,
+        mascotId: 'toshi',
+        agentName: 'Tiny',
+      })
+    ).toBeUndefined();
+  });
+
+  it('returns undefined when no secondary is configured', () => {
+    expect(
+      buildMeetingMascots({
+        dualMascotEnabled: true,
+        mascotVoicePair: { primary: { mascotId: 'toshi', voiceId: 'voice-a' } },
+        manifest,
+        mascotId: 'toshi',
+        agentName: 'Tiny',
+      })
+    ).toBeUndefined();
+  });
+
+  it('returns undefined when the primary slot id cannot be resolved', () => {
+    // primary has no explicit mascot AND the resolved single-path id is undefined.
+    expect(
+      buildMeetingMascots({
+        dualMascotEnabled: true,
+        mascotVoicePair: {
+          primary: { voiceId: 'voice-a' },
+          secondary: { mascotId: 'tiny-mascot', voiceId: 'voice-b' },
+        },
+        manifest,
+        mascotId: undefined,
+        agentName: 'Tiny',
+      })
+    ).toBeUndefined();
+  });
+
+  it('falls back to the resolved single-path mascotId for the primary slot', () => {
+    const mascots = buildMeetingMascots({
+      dualMascotEnabled: true,
+      mascotVoicePair: {
+        primary: { voiceId: 'voice-a' },
+        secondary: { mascotId: 'tiny-mascot', voiceId: 'voice-b' },
+      },
+      manifest,
+      mascotId: 'toshi',
+      agentName: 'Tiny',
+    });
+    expect(mascots?.[0].mascotId).toBe('toshi');
+  });
+
+  it('builds two slots with manifest names and per-slot voices', () => {
+    const riveColors = { primaryColor: '#111', secondaryColor: '#222' };
+    const mascots = buildMeetingMascots({
+      dualMascotEnabled: true,
+      mascotVoicePair: pair,
+      manifest,
+      mascotId: 'toshi',
+      riveColors,
+      agentName: 'Tiny',
+    });
+    expect(mascots).toEqual([
+      { mascotId: 'toshi', name: 'Toshi', voiceId: 'voice-a', riveColors },
+      { mascotId: 'tiny-mascot', name: 'Tiny', voiceId: 'voice-b', riveColors },
+    ]);
+  });
+
+  it('resolves names by slot so either mascot order works', () => {
+    const mascots = buildMeetingMascots({
+      dualMascotEnabled: true,
+      mascotVoicePair: {
+        primary: { mascotId: 'tiny-mascot', voiceId: 'voice-b' },
+        secondary: { mascotId: 'toshi', voiceId: 'voice-a' },
+      },
+      manifest,
+      mascotId: 'tiny-mascot',
+      agentName: 'Tiny',
+    });
+    expect(mascots?.map(m => m.name)).toEqual(['Tiny', 'Toshi']);
+  });
+
+  it('falls back to agentName for the primary when its manifest entry is missing', () => {
+    const mascots = buildMeetingMascots({
+      dualMascotEnabled: true,
+      mascotVoicePair: {
+        primary: { mascotId: 'river-guide', voiceId: 'voice-a' },
+        secondary: { mascotId: 'toshi', voiceId: 'voice-a' },
+      },
+      manifest,
+      mascotId: 'river-guide',
+      agentName: 'Persona',
+    });
+    expect(mascots?.[0].name).toBe('Persona');
+    expect(mascots?.[1].name).toBe('Toshi');
   });
 });

@@ -22,7 +22,7 @@
 use crate::core::event_bus::{DomainEvent, EventHandler};
 use crate::core::socketio::WebChannelEvent;
 use crate::openhuman::channels::providers::web::publish_web_channel_event;
-use crate::openhuman::channels::{Channel, SendMessage};
+use crate::openhuman::channels::{Channel, ChannelSendExt, SendMessage};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -210,6 +210,7 @@ impl EventHandler for ProactiveMessageSubscriber {
             delta: None,
             delta_kind: None,
             tool_call_id: None,
+            failure: None,
             citations: None,
             subagent: None,
             task_board: None,
@@ -304,7 +305,9 @@ impl EventHandler for ProactiveMessageSubscriber {
                     }
                 }
 
-                let send_result = ch.send(&SendMessage::new(message, &recipient)).await;
+                let send_result = ch
+                    .send_with_outbound_intent(&SendMessage::new(message, &recipient))
+                    .await;
                 // Record the terminal status on the approval audit
                 // row before we log the outcome — best-effort, see
                 // #2135. `record_execution` itself logs write
@@ -357,11 +360,13 @@ mod tests {
     use super::*;
     use crate::openhuman::channels::traits::ChannelMessage;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
     use tokio::sync::mpsc;
 
     struct MockChannel {
         name: String,
         send_count: Arc<AtomicUsize>,
+        last_idempotency_key: Arc<Mutex<Option<String>>>,
         /// Configured proactive delivery target. `Some` ⇒ the channel can
         /// receive recipient-less proactive sends; `None` ⇒ proactive routing
         /// skips it (models Telegram, which has no stored default chat).
@@ -375,6 +380,7 @@ mod tests {
             Self {
                 name: name.to_string(),
                 send_count,
+                last_idempotency_key: Arc::new(Mutex::new(None)),
                 target: Some(name.to_string()),
             }
         }
@@ -384,7 +390,21 @@ mod tests {
             Self {
                 name: name.to_string(),
                 send_count,
+                last_idempotency_key: Arc::new(Mutex::new(None)),
                 target: None,
+            }
+        }
+
+        fn with_recorder(
+            name: &str,
+            send_count: Arc<AtomicUsize>,
+            last_idempotency_key: Arc<Mutex<Option<String>>>,
+        ) -> Self {
+            Self {
+                name: name.to_string(),
+                send_count,
+                last_idempotency_key,
+                target: Some(name.to_string()),
             }
         }
     }
@@ -397,8 +417,12 @@ mod tests {
         fn proactive_target(&self) -> Option<String> {
             self.target.clone()
         }
-        async fn send(&self, _message: &SendMessage) -> anyhow::Result<()> {
+        async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {
             self.send_count.fetch_add(1, Ordering::SeqCst);
+            *self
+                .last_idempotency_key
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = message.idempotency_key.clone();
             Ok(())
         }
         async fn listen(&self, _tx: mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
@@ -424,13 +448,24 @@ mod tests {
     #[tokio::test]
     async fn routes_to_active_external_channel() {
         let send_count = Arc::new(AtomicUsize::new(0));
-        let ch: Arc<dyn Channel> = Arc::new(MockChannel::new("telegram", Arc::clone(&send_count)));
+        let last_idempotency_key = Arc::new(Mutex::new(None));
+        let ch: Arc<dyn Channel> = Arc::new(MockChannel::with_recorder(
+            "telegram",
+            Arc::clone(&send_count),
+            Arc::clone(&last_idempotency_key),
+        ));
         let map: HashMap<String, Arc<dyn Channel>> = [("telegram".into(), ch)].into();
         let sub = ProactiveMessageSubscriber::new(Arc::new(map), Some("telegram".into()));
 
         sub.handle(&proactive_event()).await;
 
         assert_eq!(send_count.load(Ordering::SeqCst), 1);
+        assert!(last_idempotency_key
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_deref()
+            .unwrap()
+            .starts_with("legacy-send:telegram:"));
     }
 
     #[tokio::test]

@@ -1,0 +1,23 @@
+id = "frontend_agent"
+display_name = "Orchestration Front-End"
+when_to_use = "The Quick-LLM front end of the tiny.place orchestration wake graph. Turns raw session/master DM traffic into either an immediate channel reply or macro-instructions handed down to the reasoning core. Runs on the fast chat tier for low time-to-first-token."
+temperature = 0.3
+# Two-pass front end: pass 1 (defer or reply), pass 2 (compile reply). A handful
+# of turns is plenty; the graph, not the agent loop, drives the pass structure.
+max_iterations = 4
+sandbox_mode = "read_only"
+# Fast reflex tier — it triages and phrases, it does not do the deep work.
+agent_tier = "chat"
+omit_identity = false
+omit_memory_context = true
+omit_safety_preamble = false
+omit_skills_catalog = true
+
+[model]
+# Quick LLM — remote for TTFT (see routing/policy.rs). Verified by the loader test.
+hint = "chat"
+
+[tools]
+# Domain-owned decision tools (orchestration/tools.rs): the front end routes by
+# calling exactly one of these.
+named = ["defer_to_orchestrator", "reply_to_channel"]

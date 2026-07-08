@@ -192,6 +192,116 @@ describe('directory.skills', () => {
   });
 });
 
+// ── contacts ─────────────────────────────────────────────────────────────────
+
+describe('contacts', () => {
+  test.each([
+    ['request', 'openhuman.tinyplace_contacts_request', { agentId: '@worker' }],
+    ['accept', 'openhuman.tinyplace_contacts_accept', { agentId: '@worker' }],
+    ['remove', 'openhuman.tinyplace_contacts_remove', { agentId: '@worker' }],
+    ['block', 'openhuman.tinyplace_contacts_block', { agentId: '@worker' }],
+    ['unblock', 'openhuman.tinyplace_contacts_unblock', { agentId: '@worker' }],
+    ['status', 'openhuman.tinyplace_contacts_status', { agentId: '@worker' }],
+  ] as const)('calls %s with agentId', async (methodName, rpcMethod, params) => {
+    mockCallCoreRpc.mockResolvedValueOnce({ ok: true });
+    const client = createInvokeApiClient();
+
+    await client.contacts[methodName]('@worker');
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: rpcMethod, params });
+  });
+
+  test.each([
+    ['list', 'openhuman.tinyplace_contacts_list'],
+    ['requests', 'openhuman.tinyplace_contacts_requests'],
+  ] as const)('calls %s with default null params', async (methodName, rpcMethod) => {
+    mockCallCoreRpc.mockResolvedValueOnce({});
+    const client = createInvokeApiClient();
+
+    await client.contacts[methodName]();
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: rpcMethod, params: { params: null } });
+  });
+
+  test.each([
+    ['list', 'openhuman.tinyplace_contacts_list'],
+    ['requests', 'openhuman.tinyplace_contacts_requests'],
+  ] as const)('calls %s with provided params', async (methodName, rpcMethod) => {
+    mockCallCoreRpc.mockResolvedValueOnce({});
+    const client = createInvokeApiClient();
+    const params = { limit: 25, cursor: 'next' };
+
+    await client.contacts[methodName](params);
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: rpcMethod, params: { params } });
+  });
+
+  test('calls stats without params', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({ contactCount: 1 });
+    const client = createInvokeApiClient();
+
+    await client.contacts.stats();
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.tinyplace_contacts_stats',
+      params: {},
+    });
+  });
+});
+
+// ── orchestrationPairing ─────────────────────────────────────────────────────
+
+describe('orchestrationPairing', () => {
+  test('calls list without params', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({ records: [] });
+    const client = createInvokeApiClient();
+
+    await client.orchestrationPairing.list();
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.orchestration_pairing_list',
+      params: {},
+    });
+  });
+
+  test.each([
+    ['acceptRequest', 'openhuman.orchestration_pairing_accept_request', { agentId: '@worker' }],
+    ['declineRequest', 'openhuman.orchestration_pairing_decline_request', { agentId: '@worker' }],
+    ['blockRequest', 'openhuman.orchestration_pairing_block_request', { agentId: '@worker' }],
+  ] as const)('calls %s with agentId', async (methodName, rpcMethod, params) => {
+    mockCallCoreRpc.mockResolvedValueOnce({ record: null, remote: {} });
+    const client = createInvokeApiClient();
+
+    await client.orchestrationPairing[methodName]('@worker');
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: rpcMethod, params });
+  });
+
+  test('calls linkSession with default null label', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({ record: null, remote: {} });
+    const client = createInvokeApiClient();
+
+    await client.orchestrationPairing.linkSession('@worker');
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.orchestration_pairing_link_session',
+      params: { agentId: '@worker', label: null },
+    });
+  });
+
+  test('calls linkSession with provided label', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({ record: null, remote: {} });
+    const client = createInvokeApiClient();
+
+    await client.orchestrationPairing.linkSession('@worker', 'Worker session');
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.orchestration_pairing_link_session',
+      params: { agentId: '@worker', label: 'Worker session' },
+    });
+  });
+});
+
 // ── PaymentRequiredError ──────────────────────────────────────────────────────
 
 describe('PaymentRequiredError propagation', () => {

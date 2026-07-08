@@ -16,6 +16,12 @@ use super::{AuthStyle, OpenAiCompatibleProvider};
 
 #[async_trait]
 impl Provider for OpenAiCompatibleProvider {
+    fn telemetry_provider_id(&self) -> String {
+        // The configured provider slug ("openai", "groq", "venice", ...),
+        // normalized for stable telemetry labels.
+        self.name.trim().to_ascii_lowercase().replace(' ', "-")
+    }
+
     fn capabilities(&self) -> crate::openhuman::inference::provider::traits::ProviderCapabilities {
         crate::openhuman::inference::provider::traits::ProviderCapabilities {
             native_tool_calling: self.native_tool_calling,

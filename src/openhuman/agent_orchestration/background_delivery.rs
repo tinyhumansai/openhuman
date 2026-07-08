@@ -183,7 +183,7 @@ async fn try_deliver(session: String) {
 
 /// Register the delivery subscriber on the global event bus. Keeps the
 /// subscription alive for the process lifetime. Idempotent.
-pub fn register_background_delivery() {
+pub(crate) fn register_background_delivery() {
     static HANDLE: OnceLock<Option<SubscriptionHandle>> = OnceLock::new();
     HANDLE.get_or_init(|| subscribe_global(Arc::new(BackgroundDeliveryHandler)));
 }

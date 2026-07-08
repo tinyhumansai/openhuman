@@ -663,14 +663,19 @@ impl AutomateBackend for RealBackend {
         // `automation` provider knob is a follow-up (see plan §5); routing through
         // `summarization` keeps M1 free of Config-schema churn while still keeping
         // the chat model out of the loop.
-        let (provider, model) = crate::openhuman::inference::provider::create_chat_provider(
+        use tinyagents::harness::message::Message;
+        use tinyagents::harness::model::{ChatModel, ModelRequest};
+        let model = crate::openhuman::inference::provider::create_chat_model(
             "summarization",
             &self.config,
+            0.0,
         )
         .map_err(|e| format!("fast-model provider unavailable: {e}"))?;
-        provider
-            .chat_with_system(Some(system), user, &model, 0.0)
+        let request = ModelRequest::new(vec![Message::system(system), Message::user(user)]);
+        model
+            .invoke(&(), request)
             .await
+            .map(|response| response.text())
             .map_err(|e| format!("fast-model call failed: {e}"))
     }
 

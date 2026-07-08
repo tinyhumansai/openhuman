@@ -183,6 +183,7 @@ mod tests {
             AgentTurnOrigin::WebChat {
                 thread_id: "t-int".into(),
                 client_id: "c-int".into(),
+                request_id: Some("req-int".into()),
             },
             tool.execute(json!({ "summary": "plan", "steps": ["one"] })),
         );

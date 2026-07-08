@@ -6,8 +6,9 @@
 //! resolved from environment variables, with the previous values as defaults so
 //! behaviour is unchanged unless an operator overrides them:
 //!
-//!   - `OPENHUMAN_INFERENCE_TIMEOUT_SECS`         — whole-request timeout (default 120)
-//!   - `OPENHUMAN_INFERENCE_CONNECT_TIMEOUT_SECS` — connection-establishment timeout (default 10)
+//!   - `OPENHUMAN_INFERENCE_TIMEOUT_SECS`            — whole-request timeout (default 120)
+//!   - `OPENHUMAN_INFERENCE_CONNECT_TIMEOUT_SECS`    — connection-establishment timeout (default 10)
+//!   - `OPENHUMAN_INFERENCE_STREAM_IDLE_TIMEOUT_SECS` — per-chunk stream inactivity timeout (default 90, #4269)
 //!
 //! A missing, non-numeric, or out-of-range value falls back to the default
 //! (logged at debug level by [`resolve`]), so a typo can never disable the
@@ -29,9 +30,20 @@ const MAX_REQUEST_TIMEOUT_SECS: u64 = 3600;
 /// Largest accepted connect timeout (5 minutes) — establishing a connection
 /// should never legitimately take longer.
 const MAX_CONNECT_TIMEOUT_SECS: u64 = 300;
+/// Default per-chunk stream inactivity timeout in seconds (#4269). Sits
+/// comfortably above normal inter-token gaps — including reasoning-model
+/// thinking pauses, which still stream as `reasoning_content` deltas and so
+/// reset the window — yet below the 120s whole-request default, so a stalled
+/// RESPONSE phase is caught and retried rather than held to the request ceiling
+/// (up to 1 hour). The window RESETS on every received chunk, so a legitimately
+/// long answer that keeps emitting tokens is never cut.
+const DEFAULT_STREAM_IDLE_TIMEOUT_SECS: u64 = 90;
+/// Largest accepted stream-idle timeout (1 hour) — matches the request ceiling.
+const MAX_STREAM_IDLE_TIMEOUT_SECS: u64 = 3600;
 
 const REQUEST_ENV_VAR: &str = "OPENHUMAN_INFERENCE_TIMEOUT_SECS";
 const CONNECT_ENV_VAR: &str = "OPENHUMAN_INFERENCE_CONNECT_TIMEOUT_SECS";
+const STREAM_IDLE_ENV_VAR: &str = "OPENHUMAN_INFERENCE_STREAM_IDLE_TIMEOUT_SECS";
 
 /// Parse a raw env-var value into a bounded timeout in seconds.
 ///
@@ -90,6 +102,24 @@ pub(super) fn connect_timeout() -> Duration {
     })
 }
 
+/// Per-chunk inactivity timeout for streaming inference responses (#4269).
+/// Override via `OPENHUMAN_INFERENCE_STREAM_IDLE_TIMEOUT_SECS` (default 90s,
+/// range 1..=3600). The streaming read loop and each downstream delta send are
+/// guarded by this window; it RESETS on every received chunk, so a legitimately
+/// long response that keeps emitting tokens is never cut — only a genuine stall
+/// (no bytes from upstream, or a wedged consumer) for the whole window trips it.
+/// Resolved once per process and cached — see [`request_timeout`].
+pub(super) fn stream_idle_timeout() -> Duration {
+    static CACHED: OnceLock<Duration> = OnceLock::new();
+    *CACHED.get_or_init(|| {
+        resolve(
+            STREAM_IDLE_ENV_VAR,
+            DEFAULT_STREAM_IDLE_TIMEOUT_SECS,
+            MAX_STREAM_IDLE_TIMEOUT_SECS,
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,5 +154,31 @@ mod tests {
         // overridden, so an unconfigured install is byte-for-byte unchanged.
         assert_eq!(DEFAULT_REQUEST_TIMEOUT_SECS, 120);
         assert_eq!(DEFAULT_CONNECT_TIMEOUT_SECS, 10);
+    }
+
+    #[test]
+    fn stream_idle_default_fires_before_the_whole_request_timeout() {
+        // #4269: the watchdog must trip before the whole-request deadline so a
+        // stalled RESPONSE phase is retried, not held to the request ceiling.
+        assert_eq!(DEFAULT_STREAM_IDLE_TIMEOUT_SECS, 90);
+        assert!(DEFAULT_STREAM_IDLE_TIMEOUT_SECS < DEFAULT_REQUEST_TIMEOUT_SECS);
+    }
+
+    #[test]
+    fn stream_idle_parse_respects_bounds() {
+        let (def, min, max) = (DEFAULT_STREAM_IDLE_TIMEOUT_SECS, MIN_TIMEOUT_SECS, 3600);
+        assert_eq!(parse_timeout_secs(None, def, min, max), def);
+        assert_eq!(parse_timeout_secs(Some("0"), def, min, max), def); // 0 would disable
+        assert_eq!(parse_timeout_secs(Some("5"), def, min, max), 5);
+        assert_eq!(parse_timeout_secs(Some("3600"), def, min, max), max); // ceiling
+        assert_eq!(parse_timeout_secs(Some("3601"), def, min, max), def); // above ceiling
+    }
+
+    #[test]
+    fn stream_idle_getter_returns_a_sane_duration() {
+        // Unset (or set) in the env, the cached getter must resolve to a value
+        // inside the documented bounds — never 0 (which would disable the guard).
+        let d = stream_idle_timeout();
+        assert!(d.as_secs() >= MIN_TIMEOUT_SECS && d.as_secs() <= MAX_STREAM_IDLE_TIMEOUT_SECS);
     }
 }

@@ -12,7 +12,6 @@
 //! Sub-agents always run in "typed" mode: a narrow archetype-specific
 //! prompt with a filtered tool list, on a cheaper model where applicable.
 //!
-use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::harness::fork_context::current_parent;
 use crate::openhuman::agent::harness::subagent_runner::{
@@ -22,10 +21,11 @@ use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::memory_conversations::{
     self as conversations, ConversationMessage, CreateConversationThread,
 };
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::path::PathBuf;
+use tinyagents::harness::tool::ToolExecutionContext;
 
 /// Spawns a sub-agent of the requested type to handle a delegated task.
 ///
@@ -155,6 +155,16 @@ impl Tool for SpawnSubagentTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: ToolCallOptions,
+        tool_context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
         // ── Argument extraction with back-compat ───────────────────────
         let agent_id = args
             .get("agent_id")
@@ -433,7 +443,7 @@ impl Tool for SpawnSubagentTool {
                 "[spawn_subagent] routing to reusable async sub-agent by default"
             );
             return super::spawn_async_subagent::SpawnAsyncSubagentTool::new()
-                .execute(async_args)
+                .execute_with_context(async_args, ToolCallOptions::default(), tool_context)
                 .await;
         }
 
@@ -462,13 +472,13 @@ impl Tool for SpawnSubagentTool {
             .ok()
         });
 
-        publish_global(DomainEvent::SubagentSpawned {
-            parent_session: parent_session.clone(),
-            agent_id: definition.id.clone(),
-            mode: "typed".to_string(),
-            task_id: task_id.clone(),
-            prompt_chars: prompt.chars().count(),
-        });
+        crate::openhuman::agent_orchestration::subagent_events::publish_subagent_spawned(
+            parent_session.clone(),
+            definition.id.clone(),
+            "typed".to_string(),
+            task_id.clone(),
+            prompt.chars().count(),
+        );
 
         // Mirror the spawn onto the parent's per-turn progress sink so the
         // web-channel bridge can stream a live subagent row into the
@@ -483,6 +493,7 @@ impl Tool for SpawnSubagentTool {
                     mode: "typed".to_string(),
                     dedicated_thread,
                     prompt_chars: prompt.chars().count(),
+                    prompt: prompt.clone(),
                     worker_thread_id: worker_thread_id.clone(),
                     display_name: Some(definition.display_name().to_string()),
                 })
@@ -490,6 +501,19 @@ impl Tool for SpawnSubagentTool {
         }
 
         // ── Run the sub-agent ──────────────────────────────────────────
+        let workspace_descriptor = tool_context.and_then(|ctx| ctx.workspace.clone());
+        let worktree_action_dir = workspace_descriptor
+            .as_ref()
+            .map(|descriptor| descriptor.root.clone());
+        if let Some(descriptor) = workspace_descriptor.as_ref() {
+            tracing::debug!(
+                task_id = %task_id,
+                agent_id = %definition.id,
+                workspace_root = %descriptor.root.display(),
+                policy_id = %descriptor.policy_id,
+                "[spawn_subagent] using ToolExecutionContext workspace root"
+            );
+        }
         let options = SubagentRunOptions {
             skill_filter_override: None,
             toolkit_override,
@@ -499,7 +523,8 @@ impl Tool for SpawnSubagentTool {
             worker_thread_id: worker_thread_id.clone(),
             initial_history: None,
             checkpoint_dir: None,
-            worktree_action_dir: None,
+            worktree_action_dir,
+            workspace_descriptor,
             run_queue: None,
         };
 
@@ -516,12 +541,12 @@ impl Tool for SpawnSubagentTool {
                         // awaiting event and return structured envelope so
                         // the orchestrator can relay the question and later
                         // call continue_subagent.
-                        publish_global(DomainEvent::SubagentAwaitingUser {
+                        crate::openhuman::agent_orchestration::subagent_events::publish_subagent_awaiting_user(
                             parent_session,
-                            task_id: outcome.task_id.clone(),
-                            agent_id: outcome.agent_id.clone(),
-                            question: question.clone(),
-                        });
+                            outcome.task_id.clone(),
+                            outcome.agent_id.clone(),
+                            question.clone(),
+                        );
                         if let Some(ref tx) = progress_sink {
                             let _ = tx
                                 .send(AgentProgress::SubagentAwaitingUser {
@@ -541,14 +566,14 @@ impl Tool for SpawnSubagentTool {
                         Ok(ToolResult::success(envelope))
                     }
                     SubagentRunStatus::Completed => {
-                        publish_global(DomainEvent::SubagentCompleted {
+                        crate::openhuman::agent_orchestration::subagent_events::publish_subagent_completed(
                             parent_session,
-                            task_id: outcome.task_id.clone(),
-                            agent_id: outcome.agent_id.clone(),
-                            elapsed_ms: outcome.elapsed.as_millis() as u64,
-                            output_chars: outcome.output.chars().count(),
-                            iterations: outcome.iterations,
-                        });
+                            outcome.task_id.clone(),
+                            outcome.agent_id.clone(),
+                            outcome.elapsed.as_millis() as u64,
+                            outcome.output.chars().count(),
+                            outcome.iterations,
+                        );
 
                         if let Some(ref tx) = progress_sink {
                             let _ = tx
@@ -558,6 +583,7 @@ impl Tool for SpawnSubagentTool {
                                     elapsed_ms: outcome.elapsed.as_millis() as u64,
                                     iterations: outcome.iterations as u32,
                                     output_chars: outcome.output.chars().count(),
+                                    output: outcome.output.clone(),
                                     worktree_path: None,
                                     changed_files: Vec::new(),
                                     dirty_status: None,
@@ -599,6 +625,59 @@ impl Tool for SpawnSubagentTool {
 
                         Ok(ToolResult::success(outcome.output))
                     }
+                    SubagentRunStatus::Incomplete { reason } => {
+                        // The sub-agent stopped WITHOUT reaching its goal (a
+                        // no-progress circuit breaker halted it, or it hit the
+                        // iteration cap). Hand the orchestrator a structured
+                        // envelope carrying BOTH the blocker and the partial
+                        // progress — NOT the "nothing happened" failure envelope
+                        // (work WAS done) and NOT a bare success it would narrate
+                        // as done or re-spin (#4096).
+                        tracing::info!(
+                            agent_id = %outcome.agent_id,
+                            task_id = %outcome.task_id,
+                            iterations = outcome.iterations,
+                            "[spawn_subagent] sub-agent stopped incomplete — returning structured handback"
+                        );
+                        crate::openhuman::agent_orchestration::subagent_events::publish_subagent_completed(
+                            parent_session,
+                            outcome.task_id.clone(),
+                            outcome.agent_id.clone(),
+                            outcome.elapsed.as_millis() as u64,
+                            outcome.output.chars().count(),
+                            outcome.iterations,
+                        );
+                        if let Some(ref tx) = progress_sink {
+                            let _ = tx
+                                .send(AgentProgress::SubagentCompleted {
+                                    agent_id: outcome.agent_id.clone(),
+                                    task_id: outcome.task_id.clone(),
+                                    elapsed_ms: outcome.elapsed.as_millis() as u64,
+                                    iterations: outcome.iterations as u32,
+                                    output_chars: outcome.output.chars().count(),
+                                    output: outcome.output.clone(),
+                                    worktree_path: None,
+                                    changed_files: Vec::new(),
+                                    dirty_status: None,
+                                })
+                                .await;
+                        }
+                        let envelope = format!(
+                            "[SUBAGENT_INCOMPLETE]\n\
+                             task_id: {}\n\
+                             agent_id: {}\n\
+                             reason: the sub-agent {reason}\n\
+                             progress:\n{}\n\
+                             [/SUBAGENT_INCOMPLETE]\n\n\
+                             The sub-agent did NOT finish. Above is the partial progress it \
+                             made. Do NOT report this as done or fabricate a result. Decide: \
+                             relay the partial result and the blocker to the user, continue with \
+                             a different approach, or escalate — but do not re-run the identical \
+                             delegation unchanged.",
+                            outcome.task_id, outcome.agent_id, outcome.output,
+                        );
+                        Ok(ToolResult::success(envelope))
+                    }
                 }
             }
             Err(err) => {
@@ -618,12 +697,12 @@ impl Tool for SpawnSubagentTool {
                     error_kind = %error_kind,
                     "[spawn_subagent] sub-agent execution failed"
                 );
-                publish_global(DomainEvent::SubagentFailed {
+                crate::openhuman::agent_orchestration::subagent_events::publish_subagent_failed(
                     parent_session,
-                    task_id: task_id.clone(),
-                    agent_id: definition.id.clone(),
-                    error: message.clone(),
-                });
+                    task_id.clone(),
+                    definition.id.clone(),
+                    message.clone(),
+                );
 
                 if let Some(ref tx) = progress_sink {
                     let _ = tx
@@ -857,7 +936,8 @@ mod tests {
 
     #[test]
     fn build_worker_thread_title_collapses_whitespace_and_caps_length() {
-        let prompt = "  draft\n a very long\tplan that\nrambles ".to_string() + &"x".repeat(200);
+        let prompt =
+            "  draft\n a very long\tplan that\nrambles ".to_string() + "x".repeat(200).as_str();
         let title = build_worker_thread_title(&prompt);
         assert!(title.starts_with("draft a very long plan"));
         assert!(title.chars().count() <= WORKER_THREAD_TITLE_MAX_CHARS + 1);

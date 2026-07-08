@@ -170,7 +170,13 @@ mod tests {
     fn fingerprint_is_sixteen_hex_chars() {
         let fp = title_log_fingerprint("anything");
         assert_eq!(fp.len(), 16);
-        assert!(fp.chars().all(|c| c.is_ascii_hexdigit()));
+        // Lowercase hex specifically, so grep-friendly debug logs stay
+        // consistent (folded in from the former threads/ops_tests copy).
+        assert!(
+            fp.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            "fingerprint must be lowercase hex, got: {fp}"
+        );
     }
 
     // ── is_auto_generated_thread_title ────────────────────────────

@@ -433,6 +433,7 @@ pub const GROUNDING_BODY: &str = "## Grounding and tool use\n\n\
     - Do not round, convert units, rewrite relative times, or recalculate numeric values unless the user asks and you show the calculation from observed values. If sources disagree, name the discrepancy instead of choosing a plausible value.\n\
     - Use your tools to act. Do not just describe what you would do and stop, and never end a turn with a promise of future action: do it now, or hand back a concrete result.\n\
     - Never substitute plausible looking but fabricated output (made up data, invented file contents, synthesised tool or API responses) for results you could not actually produce. If a step failed, say it failed.\n\
+    - When a tool or delegated sub-agent hands back an incomplete or blocked result (for example a [SUBAGENT_INCOMPLETE] envelope), relay what it did accomplish and the blocker to the user. Do not present it as finished, fabricate the rest, or silently re-run the identical call: change the approach or ask the user.\n\
     - Ground every factual claim in evidence you actually observed: a tool result, the user's message, or cited memory. If the evidence is missing, partial, or truncated, say so or fetch more instead of guessing.\n\
     - Skills run only via `run_workflow`, and only the skills listed as installed exist. Do not invent skill ids.";
 

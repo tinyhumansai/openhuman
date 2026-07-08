@@ -84,8 +84,8 @@ fn managed_budget_applies_to_path(path: &str) -> bool {
 ///    `core::jsonrpc::is_session_expired_error` *if* it ever propagates up to
 ///    the RPC boundary.
 /// 2. **Publish `DomainEvent::SessionExpired` directly.** The autonomous agent
-///    loop (`agent/harness/engine/tools.rs::run_one_tool`) swallows tool errors
-///    into a `role:tool` result string fed back to the model — the `Err` never
+///    tool path converts tool errors into a `role:tool` result string fed back
+///    to the model — the `Err` never
 ///    reaches `jsonrpc::invoke_method`, so relying on propagation alone would
 ///    leave re-login un-triggered (this is the root-cause gap behind
 ///    TAURI-RUST-84E: the prior fix demoted the noise but never drove
@@ -98,14 +98,17 @@ fn handle_session_jwt_unauthorized(method: &str, path: &str, url: &str, detail: 
          (401 for {url}: {detail}) — sign in again to resume"
     );
 
+    let soft = is_composio_soft_auth_path(method, path);
+
     tracing::warn!(
         path = %path,
         method = %method,
-        "[integrations] backend rejected session JWT (401) — publishing SessionExpired to drive re-login"
+        soft_auth = soft,
+        "[integrations] backend rejected session JWT (401)"
     );
 
     // Demote from Sentry (SESSION_EXPIRED classifies as expected) — keeps the
-    // noise suppression the prior fix established.
+    // noise suppression the prior fix established. Applies to both paths.
     crate::core::observability::report_error_or_expected(
         message.as_str(),
         "integrations",
@@ -116,6 +119,16 @@ fn handle_session_jwt_unauthorized(method: &str, path: &str, url: &str, detail: 
             ("failure", "session_jwt"),
         ],
     );
+
+    // Soft path: surface the sentinel to the caller (→ in-place CTA) WITHOUT
+    // the global sign-out. See `is_composio_soft_auth_path`.
+    if soft {
+        tracing::debug!(
+            path = %path,
+            "[integrations] soft composio auth path — returning SESSION_EXPIRED to the panel without publishing global SessionExpired (#4281)"
+        );
+        return message;
+    }
 
     // Drive recovery: publish SessionExpired so the credentials subscriber
     // clears the stale token and the UI prompts re-sign-in. The reason string
@@ -128,6 +141,37 @@ fn handle_session_jwt_unauthorized(method: &str, path: &str, url: &str, detail: 
     });
 
     message
+}
+
+/// Composio **trigger-catalog reads** (`GET /agent-integrations/composio/triggers…`)
+/// where a 401 is a single recoverable read failure rather than whole-session
+/// death. The connection itself is still active — `list_connections` uses the
+/// *same* session JWT and succeeds, so signing the user out on a triggers-only
+/// 401 over-reacts and (per #2286) must not happen.
+///
+/// For these reads [`handle_session_jwt_unauthorized`] still builds the
+/// `SESSION_EXPIRED:` sentinel (so the trigger panel can classify the error and
+/// render an in-place "Sign in again" CTA) and still demotes from Sentry, but
+/// it does **not** publish [`DomainEvent::SessionExpired`] — that global
+/// teardown would unmount the panel before the CTA is usable (#4281). A
+/// genuinely dead session is still caught by the authoritative paths
+/// (app-state snapshot, connections poll), which keep driving re-login.
+///
+/// Scoped to `GET` deliberately: trigger **writes** (`POST` enable / disable /
+/// create) keep the standard global-sign-out on a 401 — they are not the
+/// "catalog won't load" surface this issue addresses, and a write that 401s on
+/// a dead session has no in-place CTA to fall back to (its error renders as a
+/// per-row toggle failure, not the panel banner).
+fn is_composio_soft_auth_path(method: &str, path: &str) -> bool {
+    // Match on a real path boundary, not a bare prefix: `…/triggers` exact,
+    // `…/triggers/…` (the `available` catalog), or `…/triggers?…` (the active
+    // list with a `toolkit` query). A bare `starts_with` would also match an
+    // unrelated `…/triggersXYZ` route and wrongly suppress the global sign-out.
+    const BASE: &str = "/agent-integrations/composio/triggers";
+    method.eq_ignore_ascii_case("GET")
+        && path
+            .strip_prefix(BASE)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/') || rest.starts_with('?'))
 }
 
 /// Strip any inference-style path that snuck into a backend URL before
@@ -160,6 +204,40 @@ fn sanitize_backend_url(backend_url: &str) -> String {
     } else {
         cleaned
     }
+}
+
+/// Extract the `filename` (or RFC 5987 `filename*`) parameter from a
+/// `Content-Disposition` header value, e.g.
+/// `attachment; filename="report.pdf"` → `Some("report.pdf")`.
+/// Best-effort: unparseable values yield `None` and callers fall back to
+/// their own naming scheme.
+fn parse_content_disposition_filename(value: &str) -> Option<String> {
+    for part in value.split(';') {
+        let part = part.trim();
+        let lower = part.to_ascii_lowercase();
+        if let Some(rest) = lower
+            .starts_with("filename*=")
+            .then(|| &part["filename*=".len()..])
+        {
+            // RFC 5987: filename*=UTF-8''percent-encoded — keep the tail
+            // after the last `'` and leave percent-decoding to callers who
+            // care (the raw form is still a usable, safe name).
+            let tail = rest.rsplit('\'').next().unwrap_or(rest);
+            let trimmed = tail.trim_matches('"').trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        } else if let Some(rest) = lower
+            .starts_with("filename=")
+            .then(|| &part["filename=".len()..])
+        {
+            let trimmed = rest.trim().trim_matches('"').trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
 }
 
 /// Shared client for all integration tools. Holds backend URL, auth token,
@@ -426,6 +504,227 @@ impl IntegrationClient {
         envelope
             .data
             .ok_or_else(|| anyhow::anyhow!("Backend returned success but no data for GET {}", url))
+    }
+
+    /// Render a reqwest transport error with its full source chain (mirrors
+    /// the inline closures in [`Self::post`] / [`Self::get`]) and route it
+    /// through the observability classifier so network-environment failures
+    /// skip Sentry.
+    fn report_transport_error(
+        e: reqwest::Error,
+        method: &str,
+        path: &str,
+        url: &str,
+    ) -> anyhow::Error {
+        let mut chain = format!("{e}");
+        let mut src: Option<&(dyn std::error::Error + 'static)> = e.source();
+        while let Some(s) = src {
+            chain.push_str(" → ");
+            chain.push_str(&s.to_string());
+            src = s.source();
+        }
+        crate::core::observability::report_error_or_expected(
+            chain.as_str(),
+            "integrations",
+            method,
+            &[("path", path), ("failure", "transport")],
+        );
+        anyhow::anyhow!("{} {} failed: {}", method.to_uppercase(), url, chain)
+    }
+
+    /// Shared non-2xx / 401 / envelope handling for the newer HTTP verbs
+    /// (`patch`, `delete`, `upload_multipart`). Mirrors the [`Self::post`]
+    /// error classification: 401 → session-expiry recovery flow, other
+    /// non-2xx → demoted/classified generic error, then `BackendResponse<T>`
+    /// envelope parsing with `success:false` classification.
+    async fn parse_json_response<T: serde::de::DeserializeOwned>(
+        method: &str,
+        path: &str,
+        url: &str,
+        resp: reqwest::Response,
+    ) -> anyhow::Result<T> {
+        let status = resp.status();
+        let method_upper = method.to_uppercase();
+        if !status.is_success() {
+            let body_text = resp.text().await.unwrap_or_default();
+            let detail = extract_error_detail(&body_text, MAX_ERROR_BODY_LEN);
+            let status_str = status.as_u16().to_string();
+            // Session-JWT rejection — same argument as in post()/get(): the
+            // backend auth middleware is the only 401 source on these routes.
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                let message = handle_session_jwt_unauthorized(&method_upper, path, url, &detail);
+                anyhow::bail!("{message}");
+            }
+            crate::core::observability::report_error_or_expected(
+                format!("Backend returned {status} for {method_upper} {url}: {detail}").as_str(),
+                "integrations",
+                method,
+                &[
+                    ("path", path),
+                    ("status", status_str.as_str()),
+                    ("failure", "non_2xx"),
+                ],
+            );
+            anyhow::bail!("Backend returned {status} for {method_upper} {url}: {detail}");
+        }
+
+        let envelope: BackendResponse<T> = resp.json().await?;
+        if !envelope.success {
+            let msg = envelope
+                .error
+                .unwrap_or_else(|| "unknown backend error".into());
+            crate::core::observability::report_error_or_expected(
+                msg.as_str(),
+                "integrations",
+                method,
+                &[("path", path), ("failure", "envelope_error")],
+            );
+            anyhow::bail!("Backend error for {} {}: {}", method_upper, url, msg);
+        }
+        envelope.data.ok_or_else(|| {
+            anyhow::anyhow!(
+                "Backend returned success but no data for {} {}",
+                method_upper,
+                url
+            )
+        })
+    }
+
+    /// PATCH JSON to a backend endpoint and parse the response `data` field.
+    /// Mirrors [`Self::post`] (auth header, 401 → session-expiry, error
+    /// classification).
+    pub async fn patch<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+    ) -> anyhow::Result<T> {
+        self.ensure_budget_available(path).await?;
+        let url = crate::api::config::api_url(&self.backend_url, path);
+        tracing::debug!("[integrations] PATCH {}", url);
+
+        let resp = self
+            .http_client
+            .patch(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .header("Content-Type", "application/json")
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| Self::report_transport_error(e, "patch", path, &url))?;
+
+        Self::parse_json_response("patch", path, &url, resp).await
+    }
+
+    /// DELETE a backend resource and parse the response `data` field.
+    /// Mirrors [`Self::post`] (auth header, 401 → session-expiry, error
+    /// classification).
+    pub async fn delete<T: serde::de::DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
+        self.ensure_budget_available(path).await?;
+        let url = crate::api::config::api_url(&self.backend_url, path);
+        tracing::debug!("[integrations] DELETE {}", url);
+
+        let resp = self
+            .http_client
+            .delete(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .send()
+            .await
+            .map_err(|e| Self::report_transport_error(e, "delete", path, &url))?;
+
+        Self::parse_json_response("delete", path, &url, resp).await
+    }
+
+    /// POST a `multipart/form-data` body to a backend endpoint and parse the
+    /// response `data` field. Mirrors [`Self::post`] URL building, Bearer
+    /// auth, 401 → session-expiry handling and error classification; the
+    /// content type is set by reqwest from the form boundary.
+    pub async fn upload_multipart<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        form: reqwest::multipart::Form,
+    ) -> anyhow::Result<T> {
+        self.ensure_budget_available(path).await?;
+        let url = crate::api::config::api_url(&self.backend_url, path);
+        tracing::debug!("[integrations] POST(multipart) {}", url);
+
+        let resp = self
+            .http_client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| Self::report_transport_error(e, "post_multipart", path, &url))?;
+
+        Self::parse_json_response("post_multipart", path, &url, resp).await
+    }
+
+    /// Authenticated GET returning the raw response body plus content-type and
+    /// any `Content-Disposition` filename. Used for backend download routes
+    /// that `302`-redirect to a presigned S3 URL: reqwest follows redirects by
+    /// default and its redirect policy strips sensitive headers (including
+    /// `Authorization`) on cross-host hops, so the bearer token never leaks to
+    /// S3 while the presigned URL still authorizes the fetch.
+    pub async fn get_bytes(
+        &self,
+        path: &str,
+    ) -> anyhow::Result<(bytes::Bytes, Option<String>, Option<String>)> {
+        self.ensure_budget_available(path).await?;
+        let url = crate::api::config::api_url(&self.backend_url, path);
+        tracing::debug!("[integrations] GET(bytes) {}", url);
+
+        let resp = self
+            .http_client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .send()
+            .await
+            .map_err(|e| Self::report_transport_error(e, "get_bytes", path, &url))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body_text = resp.text().await.unwrap_or_default();
+            let detail = extract_error_detail(&body_text, MAX_ERROR_BODY_LEN);
+            let status_str = status.as_u16().to_string();
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                let message = handle_session_jwt_unauthorized("GET", path, &url, &detail);
+                anyhow::bail!("{message}");
+            }
+            crate::core::observability::report_error_or_expected(
+                format!("Backend returned {status} for GET {url}: {detail}").as_str(),
+                "integrations",
+                "get_bytes",
+                &[
+                    ("path", path),
+                    ("status", status_str.as_str()),
+                    ("failure", "non_2xx"),
+                ],
+            );
+            anyhow::bail!("Backend returned {status} for GET {url}: {detail}");
+        }
+
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        let filename = resp
+            .headers()
+            .get(reqwest::header::CONTENT_DISPOSITION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(parse_content_disposition_filename);
+
+        let body = resp
+            .bytes()
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to read response body for GET {}: {}", url, e))?;
+        tracing::debug!(
+            "[integrations] GET(bytes) {} → {} bytes (content_type={:?})",
+            url,
+            body.len(),
+            content_type
+        );
+        Ok((body, content_type, filename))
     }
 
     /// Fetch and cache pricing info from the backend. Returns a default

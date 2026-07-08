@@ -30,6 +30,16 @@ export interface NotificationItem {
   provider?: string;
   deepLink?: string;
   actions?: NotificationAction[];
+  /**
+   * Discriminator for a core-originated notification that needs a dedicated
+   * rendering (routed in `NotificationCenter`) instead of the generic
+   * `CoreNotificationCard`. Currently only `'flow-gate-approval'` — a paused
+   * `tinyflows` run's approval gate, resolved via `GateApprovalCard` and the
+   * `openhuman.approval_decide` RPC. Absent for plain action notifications
+   * (e.g. the meeting auto-join prompt) and for the older
+   * `flow-pending-approval:`-prefixed id convention (`FlowApprovalCard`).
+   */
+  kind?: string;
 }
 
 export interface NotificationPreferences {

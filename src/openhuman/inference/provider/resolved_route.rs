@@ -13,7 +13,12 @@ pub struct ResolvedProviderRoute {
     pub model: String,
 }
 
-type RouteSlot = Arc<Mutex<Option<ResolvedProviderRoute>>>;
+/// The ambient audit slot shared by an enclosing
+/// [`with_resolved_provider_route_scope`]. Exposed so a detached provider call
+/// (issue #4460: streamed calls run in a `tokio::spawn`) can capture the caller's
+/// slot before crossing the spawn boundary and re-establish it inside, so its
+/// `record_resolved_provider_route` writes still land in the caller's scope.
+pub type RouteSlot = Arc<Mutex<Option<ResolvedProviderRoute>>>;
 
 tokio::task_local! {
     static RESOLVED_PROVIDER_ROUTE: RouteSlot;
@@ -49,6 +54,28 @@ pub fn record_resolved_provider_route(provider: impl Into<String>, model: impl I
         wrote,
         "[provider] resolved-route recorded"
     );
+}
+
+/// Clone the ambient audit slot handle (the `Arc`, not the recorded route) set
+/// by an enclosing [`with_resolved_provider_route_scope`]. `None` outside a
+/// scope. Capture this **before** a `tokio::spawn` so the detached task can
+/// re-establish the same slot via [`with_route_slot`] and have its route writes
+/// reach the caller's scope — task-locals do not propagate across `spawn`
+/// (issue #4460).
+pub fn current_route_slot() -> Option<RouteSlot> {
+    RESOLVED_PROVIDER_ROUTE.try_with(|slot| slot.clone()).ok()
+}
+
+/// Re-establish a [`current_route_slot`]-captured `slot` as the ambient
+/// resolved-route task-local for `future`. Any `record_resolved_provider_route`
+/// call inside `future` then writes back to the original caller's audit slot,
+/// even when `future` runs in a detached `tokio::spawn` (issue #4460).
+pub async fn with_route_slot<F>(slot: RouteSlot, future: F) -> F::Output
+where
+    F: std::future::Future,
+{
+    tracing::trace!("[provider] resolved-route slot re-established across spawn boundary");
+    RESOLVED_PROVIDER_ROUTE.scope(slot, Box::pin(future)).await
 }
 
 pub fn current_resolved_provider_route() -> Option<ResolvedProviderRoute> {

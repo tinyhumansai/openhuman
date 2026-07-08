@@ -350,22 +350,15 @@ fi
 if should_run_suite "connectors"; then
   echo ""
   echo "## Running suite: connectors"
-  run "test/e2e/specs/connector-airtable.spec.ts"            "connector-airtable"        "connectors"
-  run "test/e2e/specs/connector-asana.spec.ts"               "connector-asana"           "connectors"
-  run "test/e2e/specs/connector-clickup.spec.ts"             "connector-clickup"         "connectors"
-  run "test/e2e/specs/connector-confluence.spec.ts"          "connector-confluence"      "connectors"
+  # Table-driven contract spec covering the 11 formerly byte-identical
+  # Composio connector flows (airtable/asana/clickup/confluence/gcal/gdrive/
+  # gsheets/notion/slack/todoist/youtube) — see connector-contract.ts.
+  run "test/e2e/specs/connector-composio-contract.spec.ts"   "connector-composio-contract" "connectors"
   run "test/e2e/specs/connector-discord-composio.spec.ts"    "connector-discord"         "connectors"
   run "test/e2e/specs/connector-github.spec.ts"              "connector-github"          "connectors"
   run "test/e2e/specs/connector-gmail-composio.spec.ts"      "connector-gmail-composio"  "connectors"
-  run "test/e2e/specs/connector-google-calendar.spec.ts"     "connector-gcal"            "connectors"
-  run "test/e2e/specs/connector-google-drive.spec.ts"        "connector-gdrive"          "connectors"
-  run "test/e2e/specs/connector-google-sheets.spec.ts"       "connector-gsheets"         "connectors"
   run "test/e2e/specs/connector-jira.spec.ts"                "connector-jira"            "connectors"
-  run "test/e2e/specs/connector-notion.spec.ts"              "connector-notion"          "connectors"
   run "test/e2e/specs/connector-session-guard.spec.ts"       "connector-session-guard"   "connectors"
-  run "test/e2e/specs/connector-slack-composio.spec.ts"      "connector-slack-composio"  "connectors"
-  run "test/e2e/specs/connector-todoist.spec.ts"             "connector-todoist"         "connectors"
-  run "test/e2e/specs/connector-youtube.spec.ts"             "connector-youtube"         "connectors"
   _mini_summary "connectors"
 fi
 

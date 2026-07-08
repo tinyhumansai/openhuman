@@ -121,7 +121,23 @@ describe('Settings - Advanced Config', () => {
 
     const input = await browser.$('#autonomy-max-actions');
     await input.waitForExist({ timeout: 10_000 });
-    await input.setValue(String(target));
+    // Drive the controlled number input via the native value setter + React
+    // change event. WebDriver's setValue clears the field but doesn't reliably
+    // fire React's synthetic onChange, so `draft`/`isChanged` wouldn't update
+    // and the Save button (canSave = isValid && isChanged) would stay a
+    // disabled no-op — "Saved." would never appear.
+    await browser.execute((val: string) => {
+      const el = document.querySelector<HTMLInputElement>('#autonomy-max-actions');
+      if (!el) return;
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value'
+      )?.set;
+      if (setter) setter.call(el, val);
+      else el.value = val;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    }, String(target));
     await clickText('Save', 10_000);
     await waitForText('Saved.', 10_000);
 

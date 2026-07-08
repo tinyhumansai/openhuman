@@ -185,8 +185,11 @@ fn handle_subagent_steer(params: Map<String, Value>) -> ControllerFuture {
                     SteerError::Unknown => "unknown",
                     SteerError::AlreadyDone => "already_done",
                     // `steer_control` is trusted UI/RPC control and currently
-                    // does not perform parent ownership checks. Keep the arm
-                    // for future trust-model changes that may return NotOwned.
+                    // does not perform parent ownership checks, so this arm is
+                    // unreachable on THIS path. The variant is not dead overall:
+                    // the agent-tool `running_subagents::steer` path enforces
+                    // ownership and returns `NotOwned`. Kept here for the Phase 4
+                    // SteeringRegistry ownership consolidation.
                     SteerError::NotOwned => "not_owned",
                 };
                 log::debug!(

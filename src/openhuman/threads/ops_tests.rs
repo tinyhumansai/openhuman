@@ -3,7 +3,6 @@
 //! provider calls — they pin the behaviour of the branches that all of
 //! the async `ops::*` entry points rely on.
 use super::*;
-use crate::openhuman::threads::title::collapse_whitespace;
 use crate::openhuman::threads::turn_state::{
     self, ClearTurnStateRequest, GetTurnStateRequest, TurnState,
 };
@@ -64,48 +63,10 @@ fn counts_empty_iter_yields_empty_map() {
     assert!(map.is_empty());
 }
 
-// ── title_log_fingerprint ─────────────────────────────────────
-
-#[test]
-fn title_log_fingerprint_is_16_lowercase_hex_chars() {
-    let fp = title_log_fingerprint("Chat Jan 1 1:00 AM");
-    assert_eq!(fp.len(), 16);
-    assert!(
-        fp.chars()
-            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
-        "fingerprint must be lowercase hex, got: {fp}"
-    );
-}
-
-#[test]
-fn title_log_fingerprint_is_deterministic_for_same_title() {
-    // The fingerprint is only used for debug logging — the only real
-    // contract is stability across calls inside a single process so
-    // grep-friendly logs remain correlatable.
-    let a = title_log_fingerprint("My cool thread");
-    let b = title_log_fingerprint("My cool thread");
-    assert_eq!(a, b);
-}
-
-#[test]
-fn title_log_fingerprint_differs_for_different_titles() {
-    let a = title_log_fingerprint("thread one");
-    let b = title_log_fingerprint("thread two");
-    assert_ne!(a, b, "distinct titles must produce distinct fingerprints");
-}
-
-// ── collapse_whitespace ───────────────────────────────────────
-
-#[test]
-fn collapse_whitespace_collapses_runs_and_trims_edges() {
-    assert_eq!(collapse_whitespace("  a   b\tc\nd  "), "a b c d");
-}
-
-#[test]
-fn collapse_whitespace_on_empty_or_whitespace_only_is_empty() {
-    assert_eq!(collapse_whitespace(""), "");
-    assert_eq!(collapse_whitespace("   \t\n "), "");
-}
+// NOTE: the title_log_fingerprint / collapse_whitespace copies were removed
+// here (plan.md §2.1) — threads/title.rs (the owning module) already covers
+// these functions with equivalent cases; the lowercase-hex assertion was
+// folded into title.rs so no coverage was lost.
 
 // ── build_title_prompt ────────────────────────────────────────
 
@@ -118,98 +79,11 @@ fn build_title_prompt_renders_user_and_assistant_sections_in_order() {
     );
 }
 
-// ── sanitize_generated_title ──────────────────────────────────
-
-#[test]
-fn sanitize_generated_title_trims_surrounding_quotes_and_trailing_punct() {
-    assert_eq!(
-        sanitize_generated_title("\"Hello, world!\""),
-        Some("Hello, world".to_string())
-    );
-    assert_eq!(
-        sanitize_generated_title("`Hello`"),
-        Some("Hello".to_string())
-    );
-    assert_eq!(
-        sanitize_generated_title("'Plan trip'"),
-        Some("Plan trip".to_string())
-    );
-}
-
-#[test]
-fn sanitize_generated_title_strips_repeated_trailing_punct() {
-    assert_eq!(
-        sanitize_generated_title("Check this out.!?"),
-        Some("Check this out".to_string())
-    );
-}
-
-#[test]
-fn sanitize_generated_title_picks_first_non_empty_line() {
-    assert_eq!(
-        sanitize_generated_title("\n   \nLine one\nLine two"),
-        Some("Line one".to_string())
-    );
-}
-
-#[test]
-fn sanitize_generated_title_returns_none_for_empty_or_whitespace() {
-    assert!(sanitize_generated_title("").is_none());
-    assert!(sanitize_generated_title("   \n\t").is_none());
-    assert!(sanitize_generated_title("\"\"").is_none());
-}
-
-#[test]
-fn sanitize_generated_title_collapses_internal_whitespace() {
-    assert_eq!(
-        sanitize_generated_title("Very   spaced\tout"),
-        Some("Very spaced out".to_string())
-    );
-}
-
-#[test]
-fn sanitize_generated_title_truncates_to_80_chars_by_char_count() {
-    // 100 `a` chars → must truncate to exactly 80. Char-based truncation
-    // is load-bearing so multibyte titles never get sliced mid-codepoint.
-    let raw = "a".repeat(100);
-    let out = sanitize_generated_title(&raw).expect("non-empty");
-    assert_eq!(out.chars().count(), 80);
-}
-
-#[test]
-fn sanitize_generated_title_truncation_is_char_safe_for_multibyte() {
-    // 100 emoji (4-byte UTF-8 each) must still truncate on char
-    // boundaries, proving the `.chars().take(80)` vs byte slicing
-    // guarantee.
-    let raw = "🌍".repeat(100);
-    let out = sanitize_generated_title(&raw).expect("non-empty");
-    assert_eq!(out.chars().count(), 80);
-}
-
-// ── title_from_user_message ───────────────────────────────────
-
-#[test]
-fn title_from_user_message_builds_meaningful_fallback_title() {
-    assert_eq!(
-        title_from_user_message("Please summarize the latest five email threads for me.")
-            .as_deref(),
-        Some("Please summarize the latest five email threads for")
-    );
-}
-
-#[test]
-fn title_from_user_message_uses_first_sentence_and_drops_trailing_punct() {
-    assert_eq!(
-        title_from_user_message("Telegram connection help? Then inspect logs.").as_deref(),
-        Some("Telegram connection help")
-    );
-}
-
-#[test]
-fn title_from_user_message_returns_none_without_context() {
-    assert!(title_from_user_message("  ").is_none());
-    assert!(title_from_user_message("///").is_none());
-}
+// NOTE: the sanitize_generated_title / title_from_user_message copies were
+// removed here (plan.md §2.1) — threads/title.rs (the owning module) already
+// covers these functions with equivalent cases (quotes/punct trimming, first
+// non-empty line, empty→None, internal-whitespace collapse, char-safe 80-char
+// truncation incl. multibyte, and the fallback-title cases).
 
 // ── is_auto_generated_thread_title ────────────────────────────
 

@@ -86,7 +86,7 @@ pub(super) fn handle_install(params: Map<String, Value>) -> ControllerFuture {
                 )
             })?;
 
-        let workspace = crate::openhuman::workflows::schemas::resolve_workspace_dir().await;
+        let workspace = crate::openhuman::skills::schemas::resolve_workspace_dir().await;
         let outcome = ops::install_from_catalog(&workspace, entry).await?;
 
         to_json(RpcOutcome::new(
@@ -120,11 +120,10 @@ pub(super) fn handle_uninstall(params: Map<String, Value>) -> ControllerFuture {
             name = %payload.name,
             "[skill_registry][rpc] uninstall"
         );
-        let workflow_params = crate::openhuman::workflows::ops_install::UninstallWorkflowParams {
-            name: payload.name,
-        };
+        let workflow_params =
+            crate::openhuman::skills::ops_install::UninstallWorkflowParams { name: payload.name };
         let outcome =
-            crate::openhuman::workflows::ops_install::uninstall_workflow(workflow_params, None)?;
+            crate::openhuman::skills::ops_install::uninstall_workflow(workflow_params, None)?;
         to_json(RpcOutcome::new(
             UninstallResult {
                 name: outcome.name,

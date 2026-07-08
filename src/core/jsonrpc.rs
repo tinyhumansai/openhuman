@@ -62,7 +62,7 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
             // `StructuredRpcError` from their handlers — this layer never
             // branches on the RPC method name to recover error semantics.
             let structured = StructuredRpcError::decode(&raw_message);
-            let (display_message, error_data, expected_user_state) = match structured {
+            let (mut display_message, error_data, expected_user_state) = match structured {
                 Some(envelope) => (
                     envelope.message,
                     envelope.data,
@@ -121,6 +121,29 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
                 );
             } else if is_session_expired_error(&display_message) {
                 tracing::info!("[rpc] {} -> err ({}ms): {}", method, ms, display_message);
+            } else if crate::core::observability::is_suppressed_usage_probe_backoff(
+                &display_message,
+            ) {
+                // A `/teams/me/usage` probe that the failure-backoff in
+                // `team::ops` short-circuited within its window — i.e. an
+                // already-reported repeat. The FIRST failure of the streak
+                // already hit the backend and reported here normally; demoting
+                // the repeats is exactly the flood control GH #4153 asks for
+                // (backpressure, not silent drop). Debug-only, never Sentry.
+                tracing::debug!(
+                    method = %method,
+                    elapsed_ms = ms as u64,
+                    "[rpc] usage-probe failure-backoff repeat — not reporting to Sentry"
+                );
+                // Keep the internal demotion marker strictly out-of-band: it
+                // exists only to drive the Sentry-demotion decision above and
+                // must never reach the RPC client as the error message. Replace
+                // it with a clean, user-presentable string before the response
+                // is built below (CodeRabbit on #4153 — don't leak the sentinel).
+                display_message =
+                    "Usage temporarily unavailable — the last fetch failed and is backing off; \
+                     it will refresh shortly."
+                        .to_string();
             } else if crate::core::observability::is_transient_message_failure(&display_message) {
                 // Downstream call (backend_api / integrations / provider) already
                 // demoted the underlying transient failure to a warn. The error
@@ -1819,11 +1842,24 @@ async fn run_server_inner(
                     ),
                     Err(e) => log::warn!("[boot] whatsapp_data::global init failed: {e}"),
                 }
+                // Seed the people store so people controllers + `people_*`
+                // tools can read/write. Without this the process-global stays
+                // empty and every call fails with "people store not
+                // initialised" (Sentry TAURI-RUST-8NM). Sits inside this
+                // Ok(cfg) arm so it inherits the wrong-workspace guard above
+                // (never seed against a Config::default fallback).
+                match crate::openhuman::people::store::init_from_workspace(&cfg.workspace_dir) {
+                    Ok(_) => log::info!(
+                        "[boot] people::store initialized (workspace={})",
+                        cfg.workspace_dir.display()
+                    ),
+                    Err(e) => log::warn!("[boot] people::store init failed: {e}"),
+                }
                 // Prune legacy bundled skills (dev-workflow / github-issue-crusher
                 // / pr-review-shepherd) that older builds seeded into
                 // <workspace>/skills/. OpenHuman no longer ships bundled defaults;
                 // this removes the stale dirs on upgrade. Idempotent.
-                crate::openhuman::workflows::registry::prune_legacy_default_workflows(
+                crate::openhuman::skills::registry::prune_legacy_default_workflows(
                     &cfg.workspace_dir,
                 );
                 // Boot-time Sentry user binding — issue #3135. If the user is
@@ -2052,7 +2088,8 @@ async fn run_server_inner(
                     if !config.heartbeat.enabled {
                         log::info!("[subconscious] disabled by config (heartbeat.enabled = false)");
                     } else {
-                        match crate::openhuman::subconscious::global::bootstrap_after_login().await
+                        match crate::openhuman::subconscious::registry::bootstrap_after_login()
+                            .await
                         {
                             Ok(()) => log::info!(
                                 "[subconscious] bootstrapped on startup (existing session)"
@@ -2100,6 +2137,17 @@ async fn run_server_inner(
                 if let Err(e) = crate::openhuman::cron::seed::seed_proactive_agents_on_boot(&config)
                 {
                     log::warn!("[cron] boot seed of proactive agent jobs failed: {e}");
+                }
+                // Re-register the cron job for every enabled, schedule-trigger
+                // flow (issue B2) — idempotent, so a flow whose binding
+                // predates this feature (or was otherwise lost) gets its
+                // schedule re-registered without the user re-toggling it.
+                if let Err(e) =
+                    crate::openhuman::flows::ops::reconcile_schedule_triggers_on_boot(&config).await
+                {
+                    log::warn!(
+                        "[flows] boot reconciliation of schedule-trigger cron jobs failed: {e}"
+                    );
                 }
                 if let Err(e) = crate::openhuman::cron::scheduler::run(config).await {
                     log::error!("[cron] scheduler loop ended with error: {e}");
@@ -2208,6 +2256,20 @@ fn register_domain_subscribers(
             log::warn!("[event_bus] failed to register channel subscriber — bus not initialized");
         }
 
+        // Flows trigger dispatch (issue B2): maps FlowScheduleTick /
+        // ComposioTriggerReceived / WebhookIncomingRequest onto enabled flows and
+        // runs `flows::ops::flows_run`. Registered here (unconditional core boot,
+        // Once-guarded) rather than under channel startup, so schedule/app-event
+        // workflows still dispatch when no realtime channel is configured or
+        // `OPENHUMAN_DISABLE_CHANNEL_LISTENERS` short-circuits `start_channels`.
+        if let Some(handle) = crate::core::event_bus::subscribe_global(Arc::new(
+            crate::openhuman::flows::bus::FlowTriggerSubscriber::new(Arc::new(config.clone())),
+        )) {
+            std::mem::forget(handle);
+        } else {
+            log::warn!("[event_bus] failed to register flows trigger subscriber — bus not initialized");
+        }
+
         crate::openhuman::health::bus::register_health_subscriber();
         crate::openhuman::notifications::register_notification_bridge_subscriber(config.clone());
         crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
@@ -2228,6 +2290,14 @@ fn register_domain_subscribers(
         // only walks Composio connections, so without this they only sync
         // on manual "Sync now" and silently go stale.
         crate::openhuman::memory_sync::workspace::start_workspace_periodic_sync();
+        // Orchestration: ingest tiny.place harness session DMs off the stream bus.
+        crate::openhuman::orchestration::register_orchestration_ingest_subscriber();
+        // Orchestration: wake the split-brain graph on each persisted session DM.
+        crate::openhuman::orchestration::register_orchestration_wake_subscriber();
+        // Orchestration: relay DMs are poll-only (`/messages`) and never traverse
+        // `/inbox/stream`, so this poller is the delivery path that surfaces
+        // inbound DMs from paired agents into the wake graph.
+        crate::openhuman::orchestration::start_message_drain_supervisor();
         // Task-sources proactive ingestion: connection-created hook + poll.
         crate::openhuman::task_sources::bus::register_task_sources_subscriber();
         crate::openhuman::task_sources::start_periodic_poll();
@@ -2432,6 +2502,26 @@ pub async fn bootstrap_core_runtime(host_kind: crate::core::types::HostKind) {
         Err(err) => log::warn!("[runtime] failed to settle orphaned agent runs: {err}"),
     }
 
+    // --- Detached sub-agent TaskStore reconciliation -------------------
+    // The durable orchestration TaskStore (`<workspace>/.openhuman/
+    // orchestration_tasks.jsonl`) can hold non-terminal sub-agent records left
+    // by a previous process — their detached executor (abort handle +
+    // cooperative CancellationToken) died with that process, so they cannot be
+    // re-attached. Reconcile each orphan to a terminal state and emit the typed
+    // terminal lifecycle event so the run ledger finalizes. Best-effort and
+    // non-fatal (issue #4249 / 07.2 steps 2 & 4).
+    {
+        let reconciled =
+            crate::openhuman::agent_orchestration::running_subagents::reconcile_orphaned_tasks_on_boot(
+                &workspace_dir,
+            );
+        if reconciled > 0 {
+            log::info!(
+                "[runtime] reconciled {reconciled} orphaned detached sub-agent task(s) on startup"
+            );
+        }
+    }
+
     // --- Cost dashboard tracker ---
     // Activates the previously-dormant CostTracker so the dashboard RPC
     // surface (`openhuman.cost_get_dashboard`) and `record_provider_usage`
@@ -2483,11 +2573,14 @@ pub async fn bootstrap_core_runtime(host_kind: crate::core::types::HostKind) {
     // policy.
     let action_dir = cfg.action_dir.clone();
     crate::openhuman::security::live_policy::install(
-        std::sync::Arc::new(crate::openhuman::security::SecurityPolicy::from_config(
-            &cfg.autonomy,
-            &workspace_dir,
-            &action_dir,
-        )),
+        std::sync::Arc::new(
+            crate::openhuman::security::SecurityPolicy::from_config(
+                &cfg.autonomy,
+                &workspace_dir,
+                &action_dir,
+            )
+            .with_privacy_mode(cfg.privacy.mode),
+        ),
         workspace_dir.clone(),
         action_dir,
     );
@@ -2500,7 +2593,7 @@ pub async fn bootstrap_core_runtime(host_kind: crate::core::types::HostKind) {
     // installs. Idempotent — shares a process-global OnceLock with the
     // `start_channels` site so it registers exactly once regardless of which
     // path runs first. (Matching only for now; activation handoff still pending.)
-    crate::openhuman::workflows::bus::ensure_triggered_workflow_subscriber(&workspace_dir);
+    crate::openhuman::skills::bus::ensure_triggered_workflow_subscriber(&workspace_dir);
 
     // --- Approval gate (#1339) ---
     // ON by default; opt out with `OPENHUMAN_APPROVAL_GATE=0` (or `false`).

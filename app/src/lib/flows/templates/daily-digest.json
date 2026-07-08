@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "name": "Daily digest to channel",
+  "nodes": [
+    {
+      "id": "trigger",
+      "kind": "trigger",
+      "name": "Every morning",
+      "config": { "trigger_kind": "schedule", "schedule": "0 9 * * *" },
+      "ports": [],
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "summarize",
+      "kind": "agent",
+      "name": "Summarize the day",
+      "config": {
+        "prompt": "Write a short daily digest of what happened across my connected accounts. Keep it under 10 bullet points."
+      },
+      "ports": [],
+      "position": { "x": 0, "y": 160 }
+    },
+    {
+      "id": "notify",
+      "kind": "tool_call",
+      "name": "Post to channel",
+      "config": { "slug": "", "args": {} },
+      "ports": [],
+      "position": { "x": 0, "y": 320 }
+    }
+  ],
+  "edges": [
+    { "from_node": "trigger", "from_port": "main", "to_node": "summarize", "to_port": "main" },
+    { "from_node": "summarize", "from_port": "main", "to_node": "notify", "to_port": "main" }
+  ]
+}

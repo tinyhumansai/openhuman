@@ -2,8 +2,9 @@
 //!
 //! Pairs with `spawn_async_subagent`: that tool returns a `task_id` for a child
 //! running in the background. `steer_subagent` pushes a message into that child's
-//! steering queue, which its inner `run_turn_engine` drains at the next iteration
-//! boundary — so the parent can redirect or feed data to a running sub-agent
+//! steering queue, which the steering forwarder in the child's turn
+//! (`run_turn_via_tinyagents_shared`) drains mid-flight — so the parent can
+//! redirect or feed data to a running sub-agent
 //! without waiting for it to finish or restarting it. Mirrors Codex `send_input`.
 
 use crate::openhuman::agent::harness::fork_context::current_parent;
@@ -106,17 +107,22 @@ impl Tool for SteerSubagentTool {
             return Ok(ToolResult::error("steer_subagent: `message` is required"));
         }
 
-        let parent_session = match current_parent() {
-            Some(parent) => parent.session_id,
+        let parent = match current_parent() {
+            Some(parent) => parent,
             None => {
                 return Ok(ToolResult::error(
                     "steer_subagent called outside of an agent turn",
                 ));
             }
         };
+        let parent_session = parent.session_id;
 
         let resolved_task_id = if task_id.is_empty() {
-            match running_subagents::task_id_for_session(&subagent_session_id, &parent_session) {
+            match running_subagents::task_id_for_session_in_workspace(
+                &subagent_session_id,
+                &parent_session,
+                &parent.workspace_dir,
+            ) {
                 Ok(id) => id,
                 Err(running_subagents::WaitError::Unknown) => {
                     return Ok(ToolResult::error(format!(

@@ -6,13 +6,8 @@ use super::*;
 // spurious failures.
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Test that is_daemon_mode correctly detects daemon flag variations
-#[test]
-fn is_daemon_mode_detects_daemon_flag() {
-    // Note: This test relies on the current process args, so in test mode
-    // it will typically return false. We verify the function is callable.
-    let _result = is_daemon_mode();
-}
+// NOTE: `is_daemon_mode_detects_daemon_flag` removed (plan.md §2.1) — it
+// discarded the result with `let _` and asserted nothing.
 
 /// Test core_rpc_url returns expected format
 #[test]
@@ -58,34 +53,9 @@ fn overlay_parent_rpc_url_handles_empty() {
     }
 }
 
-/// Tests for setup_tray conditional compilation
-/// The PR adds two versions of setup_tray():
-/// 1. No-op for linux + cef: logs warning and returns Ok(())
-/// 2. Full implementation for other platforms
-///
-/// These tests verify the function signatures are correct and
-/// the compile-time cfg blocks are properly set up.
-
-/// Verify setup_tray function exists and has correct signature
-/// This test passes if the code compiles, as the function signature
-/// is validated by the compiler.
-#[test]
-fn setup_tray_function_signature_compiles() {
-    // This test exists to ensure the conditional compilation
-    // of setup_tray is valid. The function is not actually called
-    // here because it requires a full Tauri AppHandle.
-    // The cfg attributes ensure only one version exists at compile time.
-}
-
-/// Test that AppRuntime is defined for the current feature set
-#[test]
-fn app_runtime_type_exists() {
-    // This test verifies AppRuntime is properly defined
-    // based on the cef feature flag.
-    // The type alias exists at module scope and is used throughout.
-    fn _check_runtime<R: tauri::Runtime>() {}
-    // _check_runtime::<AppRuntime>(); // Would require importing
-}
+// NOTE: `setup_tray_function_signature_compiles` and `app_runtime_type_exists`
+// removed (plan.md §2.1) — one had an empty body, the other's only real
+// assertion was commented out; both were compile-only no-ops.
 
 #[test]
 fn no_app_update_available_result_is_quiet_unavailable() {
@@ -97,20 +67,8 @@ fn no_app_update_available_result_is_quiet_unavailable() {
     assert!(info.body.is_none());
 }
 
-/// Verify tray logging patterns exist (grep-friendly)
-#[test]
-fn tray_setup_logging_patterns_exist() {
-    // These log patterns from the PR are grep-friendly:
-    // "[tray] skipping tray setup on linux+cef: ..."
-    // "[tray] setting up tray icon"
-    // "[tray] tray icon ready"
-    // "[tray] action=show_window ..."
-    // "[tray] action=quit ..."
-    // "[tray] failed to setup tray icon ..."
-    // "[app] RunEvent::Ready — GTK initialized, setting up tray"
-    //
-    // This test passes if the code compiles with these log messages.
-}
+// NOTE: `tray_setup_logging_patterns_exist` removed (plan.md §2.1) — a
+// comments-only body that asserted nothing.
 
 // -------------------------------------------------------------------------
 // macos_os_version (issue #1012)
@@ -456,9 +414,37 @@ fn platform_cef_gpu_workarounds_disable_windows_gpu_when_requested() {
     let mut args = Vec::new();
     append_platform_cef_gpu_workarounds(&mut args, "windows", "x86_64", None, Some("1"));
 
+    // #4385: on Windows the escape hatch pins CEF to the pure-software
+    // ANGLE/SwiftShader backend instead of bare `--disable-gpu`, which is
+    // insufficient on NVIDIA Blackwell / RTX 50-series stacks (cef::initialize
+    // still returns 0). This mirrors the proven Linux #1697/#4193 fallback.
     assert_eq!(
         args,
-        vec![("--disable-gpu", None), ("--disable-gpu-compositing", None)]
+        vec![
+            ("--use-gl", Some("angle")),
+            ("--use-angle", Some("swiftshader")),
+            ("--enable-unsafe-swiftshader", None),
+            ("--disable-gpu-compositing", None),
+        ]
+    );
+}
+
+#[test]
+fn platform_cef_gpu_workarounds_windows_disable_gpu_avoids_bare_disable_gpu() {
+    // Regression guard for #4385: `--disable-gpu` alone leaves CEF without a
+    // working software GL path on unsupported (Blackwell) GPUs and init keeps
+    // failing. The Windows escape hatch must route through SwiftShader and must
+    // NOT emit the lethal `--disable-gpu` switch.
+    let mut args = Vec::new();
+    append_platform_cef_gpu_workarounds(&mut args, "windows", "x86_64", None, Some("1"));
+
+    assert!(
+        !args.contains(&("--disable-gpu", None)),
+        "Windows OPENHUMAN_DISABLE_GPU must not emit bare --disable-gpu (#4385), got: {args:?}"
+    );
+    assert!(
+        args.contains(&("--use-angle", Some("swiftshader"))),
+        "Windows OPENHUMAN_DISABLE_GPU must force SwiftShader software GL (#4385), got: {args:?}"
     );
 }
 

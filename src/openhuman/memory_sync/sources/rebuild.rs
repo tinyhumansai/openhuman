@@ -272,7 +272,6 @@ pub async fn rebuild_tree_from_raw(
     archive_source_id: &str,
 ) -> Result<RebuildOutcome> {
     let start = std::time::Instant::now();
-    let content_root = config.memory_tree_content_root();
 
     let coverage = raw_coverage(config, tree_scope, archive_source_id)?;
     tracing::info!(

@@ -154,19 +154,57 @@ pub fn effective_api_url(api_url: &Option<String>) -> String {
 pub fn effective_backend_api_url(api_url: &Option<String>) -> String {
     if let Some(u) = non_empty_str(api_url) {
         let is_local_ai = looks_like_local_ai_endpoint(u);
+        let is_inference_provider = looks_like_inference_provider_endpoint(u);
         let is_openhuman = looks_like_openhuman_backend_endpoint(u);
+        // A public third-party inference host (openrouter.ai, api.openai.com, …)
+        // set to its canonical base (`https://openrouter.ai/api/v1`) is neither
+        // local-AI nor an OpenHuman backend, so without this check the override
+        // would be used as the backend base and every domain call (team usage,
+        // billing) would 400/404 against the inference host — TAURI-RUST-HW1
+        // (4932 `GET /teams/me/usage` 400s from `openrouter.ai`). Cloud analogue
+        // of the local-AI guard (OPENHUMAN-TAURI-51/-80/-7Z, Ollama).
+        let is_cloud_inference =
+            crate::openhuman::config::schema::cloud_providers::endpoint_host(u).is_some_and(|h| {
+                crate::openhuman::config::schema::cloud_providers::host_is_builtin_cloud_provider(
+                    &h,
+                )
+            });
 
         tracing::debug!(
             api_url = %redact_url_for_log(u),
             is_local_ai,
+            is_inference_provider,
+            is_cloud_inference,
             is_openhuman,
             "[api/config] evaluating backend api_url override"
         );
 
-        // Let the override through only when it is NOT a local-AI endpoint,
-        // OR when it is one of our own hosted backends (user deliberately set
-        // `api_url` to `https://api.tinyhumans.ai/openai/v1/chat/completions`).
-        if !is_local_ai || is_openhuman {
+        // Let the override through only when it is NOT an inference endpoint
+        // (local model runner OR remote managed provider), OR when it is one of
+        // our own hosted backends (user deliberately set `api_url` to
+        // `https://api.tinyhumans.ai/openai/v1/chat/completions`).
+        //
+        // `config.api_url` doubles as the BYO inference base (see
+        // `effective_inference_url`), so a user who points it at a managed
+        // provider (`openrouter.ai`, `api.openmodel.ai`, …) was silently
+        // sending every CONTROL-PLANE call there too — `/teams/me/usage`,
+        // `/teams/*`, billing, referral — which the provider answers with a
+        // 400/404/500. That misroute is the bulk of the `/teams/me/usage`
+        // non-2xx flood (TAURI-RUST-BSF / -8C / -HDS / -HW1 / -JJ5, GH #4153):
+        // the `host` tag added in #4058 pinned the destinations to
+        // `openrouter.ai` / `api.openmodel.ai`, not our backend. The local-AI
+        // arm already covered Ollama (`OPENHUMAN-TAURI-51 / -80 / -7Z`); this
+        // widens the same fallback to remote providers. Inference routing is
+        // unaffected — it resolves through `effective_api_url`, which never
+        // consults this guard.
+        //
+        // `is_cloud_inference` (builtin cloud-provider host check, #4286) is
+        // kept as an additional signal: it and `is_inference_provider` use
+        // different detectors (builtin-cloud list vs curated inference domains +
+        // OpenAI `/v1` path), so either flagging the override as an inference
+        // base is enough to skip it — strictly safer against control-plane
+        // misroute.
+        if (!is_local_ai && !is_inference_provider && !is_cloud_inference) || is_openhuman {
             let normalized = normalize_backend_api_base_url(u);
             tracing::trace!(
                 api_url        = %redact_url_for_log(u),
@@ -178,7 +216,10 @@ pub fn effective_backend_api_url(api_url: &Option<String>) -> String {
 
         tracing::debug!(
             api_url = %redact_url_for_log(u),
-            "[api/config] override classified as local AI — falling back to backend default chain"
+            is_local_ai,
+            is_inference_provider,
+            is_cloud_inference,
+            "[api/config] override classified as inference endpoint (managed provider or builtin cloud host) — falling back to backend default chain"
         );
         warn_backend_url_fallback_once(u);
     }
@@ -256,6 +297,95 @@ pub fn looks_like_local_ai_endpoint(url: &str) -> bool {
     let path_is_llm = path.starts_with("/v1/") || path == "/v1";
 
     port_is_llm || path_is_llm
+}
+
+/// Well-known managed inference-provider registrable domains. A `config.api_url`
+/// pointed at one of these (or a subdomain) is a BYO chat/inference base — never
+/// an OpenHuman control-plane backend — so backend calls must NOT route there.
+///
+/// Suffix-matched so `api.<provider>` / `<region>.<provider>` also classify.
+/// Kept tight to genuinely managed inference hosts; an unknown custom backend
+/// is still honored unless it carries the OpenAI-compatible `/v1` base shape
+/// below. `tinyhumans.ai` is deliberately ABSENT — our own hosted backend is
+/// recognised by [`looks_like_openhuman_backend_endpoint`] and must route.
+const INFERENCE_PROVIDER_DOMAINS: &[&str] = &[
+    "openrouter.ai",
+    "openmodel.ai",
+    "openai.com",
+    "anthropic.com",
+    "groq.com",
+    "mistral.ai",
+    "deepseek.com",
+    "together.ai",
+    "together.xyz",
+    "perplexity.ai",
+    "fireworks.ai",
+    "deepinfra.com",
+    "anyscale.com",
+    "novita.ai",
+    "hyperbolic.xyz",
+    "x.ai",
+    "googleapis.com",
+    "cohere.ai",
+    "cohere.com",
+];
+
+/// Returns `true` when the URL looks like a **remote managed inference
+/// provider** base rather than the hosted OpenHuman backend.
+///
+/// Complements [`looks_like_local_ai_endpoint`] (which only catches *local*
+/// model runners): together they let [`effective_backend_api_url`] fall back to
+/// the canonical backend whenever `config.api_url` has been set to an inference
+/// base instead of a control-plane base. See the misroute note in
+/// `effective_backend_api_url` (GH #4153 / TAURI-RUST-BSF·8C·HDS·HW1·JJ5).
+///
+/// Two signals (either is sufficient):
+/// 1. **Known provider host** — host equals or is a subdomain of a domain in
+///    [`INFERENCE_PROVIDER_DOMAINS`].
+/// 2. **OpenAI-compatible base path** — the path is exactly `/v1` or `/api/v1`
+///    (trailing slash ignored). This is the canonical OpenAI-style base and is
+///    never an OpenHuman control-plane base. A bare `/v1/chat/completions` is
+///    already covered by [`looks_like_local_ai_endpoint`]'s path signal.
+///
+/// Our own hosted backend short-circuits to `false` so a user who set
+/// `api_url` to `https://api.tinyhumans.ai/...` still reaches the backend.
+pub fn looks_like_inference_provider_endpoint(url: &str) -> bool {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    // Our own hosted backend is a backend, never a "foreign" inference base.
+    if looks_like_openhuman_backend_endpoint(trimmed) {
+        return false;
+    }
+
+    let parsed = match url::Url::parse(trimmed) {
+        Ok(u) => u,
+        Err(_) => return false,
+    };
+
+    // ── Signal 1: known managed provider host (apex or subdomain) ──────────
+    if let Some(host) = parsed.host_str() {
+        let host = host.to_ascii_lowercase();
+        if INFERENCE_PROVIDER_DOMAINS
+            .iter()
+            .any(|d| host == *d || host.ends_with(&format!(".{d}")))
+        {
+            return true;
+        }
+    }
+
+    // ── Signal 2: OpenAI-compatible bare `/v1` or `/api/v1` base path ──────
+    // Exact-match both arms (per the doc contract): a longer self-hosted path
+    // that merely *ends* in `/api/v1` (e.g. `https://backend.internal/svc/api/v1`)
+    // is a custom backend, not an inference base, and must keep routing.
+    let path = parsed.path().trim_end_matches('/');
+    if path == "/api/v1" || path == "/v1" {
+        return true;
+    }
+
+    false
 }
 
 /// Returns `true` when the URL's host is one of the known OpenHuman backends.
@@ -1048,6 +1178,47 @@ mod tests {
     }
 
     #[test]
+    fn backend_url_falls_back_for_cloud_inference_base() {
+        // Regression: TAURI-RUST-HW1. A BYO user whose `api_url` is a public
+        // cloud-inference provider's *canonical base* (no `/chat/completions`
+        // path, public host) must NOT have backend domain calls routed there —
+        // `GET /teams/me/usage` was 400ing against `openrouter.ai`.
+        let _guard = env_lock();
+        let _env = EnvSnapshot::clear_backend_env();
+        let fallback = fallback_backend_base_for_current_build();
+
+        let falls_back: &[&str] = &[
+            "https://openrouter.ai/api/v1",
+            "https://api.openai.com/v1",
+            "https://api.groq.com/openai/v1",
+            "https://generativelanguage.googleapis.com/v1beta/openai",
+        ];
+        for api_url in falls_back {
+            assert_eq!(
+                effective_backend_api_url(&Some(api_url.to_string())),
+                fallback,
+                "cloud inference base must fall back: {api_url}"
+            );
+        }
+
+        // Our own hosted backend still passes through (is_openhuman short-circuit),
+        // but an UNKNOWN custom backend at a bare `/v1` base is now classified as
+        // an OpenAI-compatible inference base (#4153, Signal 2) and falls back so
+        // control-plane calls are not misrouted. A self-hosted backend must use a
+        // non-`/v1` base (see the `my-openhuman.example.com` case) to keep routing.
+        assert_eq!(
+            effective_backend_api_url(&Some("https://api.tinyhumans.ai/v1".to_string())),
+            "https://api.tinyhumans.ai",
+            "openhuman backend host must pass through"
+        );
+        assert_eq!(
+            effective_backend_api_url(&Some("https://my-backend.example/v1".to_string())),
+            fallback,
+            "unknown bare-/v1 base is an inference base and must fall back"
+        );
+    }
+
+    #[test]
     fn backend_url_falls_back_to_env_when_override_is_local_ai() {
         let _guard = env_lock();
         let _env = EnvSnapshot::clear_backend_env();
@@ -1074,6 +1245,90 @@ mod tests {
         let _guard = env_lock();
         let _env = EnvSnapshot::clear_backend_env();
         assert_eq!(effective_backend_api_url(&None), effective_api_url(&None));
+    }
+
+    // ── GH #4153: remote managed inference providers parked in `api_url` ──────
+
+    #[test]
+    fn inference_provider_matches_known_remote_hosts() {
+        // The hosts the #4058 `host` tag pinned the `/teams/me/usage` flood to.
+        assert!(looks_like_inference_provider_endpoint(
+            "https://openrouter.ai/api/v1"
+        ));
+        assert!(looks_like_inference_provider_endpoint(
+            "https://api.openmodel.ai/v1"
+        ));
+        // Other managed providers, apex and subdomain.
+        assert!(looks_like_inference_provider_endpoint(
+            "https://api.openai.com/v1"
+        ));
+        assert!(looks_like_inference_provider_endpoint(
+            "https://api.groq.com/openai/v1"
+        ));
+        assert!(looks_like_inference_provider_endpoint(
+            "https://api.mistral.ai"
+        ));
+    }
+
+    #[test]
+    fn inference_provider_matches_bare_v1_base_on_unknown_host() {
+        // An unknown OpenAI-compatible provider, recognised by its `/v1` base.
+        assert!(looks_like_inference_provider_endpoint(
+            "https://llm.unknown-provider.example/v1"
+        ));
+        assert!(looks_like_inference_provider_endpoint(
+            "https://gw.example.test/api/v1/"
+        ));
+    }
+
+    #[test]
+    fn inference_provider_excludes_openhuman_backend_and_plain_hosts() {
+        // Our own hosted backend is a backend, even though it serves inference.
+        assert!(!looks_like_inference_provider_endpoint(
+            "https://api.tinyhumans.ai/openai/v1/chat/completions"
+        ));
+        assert!(!looks_like_inference_provider_endpoint(
+            "https://staging-api.tinyhumans.ai/"
+        ));
+        // A custom self-hosted OpenHuman backend (no provider host, no `/v1`
+        // base) must keep routing control-plane calls to itself.
+        assert!(!looks_like_inference_provider_endpoint(
+            "https://my-openhuman.example.com/"
+        ));
+        // Garbage / relative input never panics or matches.
+        assert!(!looks_like_inference_provider_endpoint(""));
+        assert!(!looks_like_inference_provider_endpoint("not a url"));
+    }
+
+    #[test]
+    fn backend_url_falls_back_for_remote_inference_provider_override() {
+        // The core of #4153: `config.api_url` set to a managed inference
+        // provider must NOT be used as the control-plane base; backend calls
+        // fall back to the canonical default chain.
+        let _guard = env_lock();
+        let _env = EnvSnapshot::clear_backend_env();
+        let expected = fallback_backend_base_for_current_build();
+
+        assert_eq!(
+            effective_backend_api_url(&Some("https://openrouter.ai/api/v1".to_string())),
+            expected
+        );
+        assert_eq!(
+            effective_backend_api_url(&Some("https://api.openmodel.ai/v1".to_string())),
+            expected
+        );
+    }
+
+    #[test]
+    fn backend_url_falls_back_to_env_for_remote_inference_provider() {
+        let _guard = env_lock();
+        let _env = EnvSnapshot::clear_backend_env();
+        std::env::set_var("BACKEND_URL", "https://staging-api.tinyhumans.ai/");
+
+        assert_eq!(
+            effective_backend_api_url(&Some("https://openrouter.ai/api/v1".to_string())),
+            "https://staging-api.tinyhumans.ai"
+        );
     }
 
     #[test]

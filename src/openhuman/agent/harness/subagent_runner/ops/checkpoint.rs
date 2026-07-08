@@ -1,17 +1,23 @@
-//! Sub-agent [`CheckpointStrategy`] implementation.
+//! Sub-agent cap-hit checkpoint summary.
 //!
 //! When the iteration cap is hit, summarize the run-so-far into a resumable
 //! checkpoint (so the delegating agent can continue from partial progress)
 //! instead of erroring. Falls back to a deterministic digest summary if the
 //! summarization call fails or returns no prose.
 
-use crate::openhuman::inference::provider::{ChatMessage, ChatRequest, Provider};
+use crate::openhuman::inference::provider::{ChatMessage, ChatRequest, Provider, UsageInfo};
 
-/// Sub-agent [`CheckpointStrategy`]: when the iteration cap is hit, summarize
-/// the run-so-far into a resumable checkpoint (so the delegating agent can
-/// continue from partial progress) instead of erroring. Falls back to a
-/// deterministic digest summary if the summarization call fails or returns no
-/// prose.
+/// A checkpoint result. `usage`, when present, is the provider usage from the
+/// summary call so the caller can fold it into sub-agent token/cost accounting.
+pub(super) struct SubagentCheckpointOutcome {
+    pub(super) text: String,
+    pub(super) usage: Option<UsageInfo>,
+}
+
+/// Sub-agent cap-hit summary: when the iteration cap is hit, summarize the
+/// run-so-far into a resumable checkpoint (so the delegating agent can continue
+/// from partial progress) instead of erroring. Falls back to a deterministic
+/// digest summary if the summarization call fails or returns no prose.
 pub(super) struct SubagentCheckpoint<'a> {
     pub(super) provider: &'a dyn Provider,
     pub(super) model: String,
@@ -20,13 +26,12 @@ pub(super) struct SubagentCheckpoint<'a> {
     pub(super) max_output_tokens: u32,
 }
 
-#[async_trait::async_trait]
-impl super::super::super::engine::CheckpointStrategy for SubagentCheckpoint<'_> {
-    async fn on_max_iter(
+impl SubagentCheckpoint<'_> {
+    pub(super) async fn summarize_cap_hit(
         &self,
         digest: &str,
         max_iterations: usize,
-    ) -> anyhow::Result<super::super::super::engine::CheckpointOutcome> {
+    ) -> anyhow::Result<SubagentCheckpointOutcome> {
         let agent_id = &self.agent_id;
         let deterministic = format!(
             "I reached my tool-call limit ({max_iterations} steps) before finishing this task. \
@@ -63,7 +68,7 @@ impl super::super::super::engine::CheckpointStrategy for SubagentCheckpoint<'_> 
                 } else {
                     prose
                 };
-                Ok(super::super::super::engine::CheckpointOutcome { text, usage })
+                Ok(SubagentCheckpointOutcome { text, usage })
             }
             Err(e) => {
                 tracing::warn!(
@@ -71,16 +76,11 @@ impl super::super::super::engine::CheckpointStrategy for SubagentCheckpoint<'_> 
                     error = %e,
                     "[subagent_runner] checkpoint summary call failed — using deterministic fallback"
                 );
-                Ok(super::super::super::engine::CheckpointOutcome {
+                Ok(SubagentCheckpointOutcome {
                     text: deterministic,
                     usage: None,
                 })
             }
         }
     }
-}
-
-pub(super) fn parse_tool_arguments(arguments: &str) -> serde_json::Value {
-    serde_json::from_str(arguments)
-        .unwrap_or_else(|_| serde_json::Value::Object(Default::default()))
 }

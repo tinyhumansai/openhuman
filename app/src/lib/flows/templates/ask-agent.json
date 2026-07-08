@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "name": "Ask the agent",
+  "nodes": [
+    {
+      "id": "trigger",
+      "kind": "trigger",
+      "name": "Run manually",
+      "config": { "trigger_kind": "manual" },
+      "ports": [],
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "agent",
+      "kind": "agent",
+      "name": "Do the task",
+      "config": {
+        "prompt": "Describe the task you want the agent to carry out each time this workflow runs."
+      },
+      "ports": [],
+      "position": { "x": 0, "y": 160 }
+    }
+  ],
+  "edges": [{ "from_node": "trigger", "from_port": "main", "to_node": "agent", "to_port": "main" }]
+}

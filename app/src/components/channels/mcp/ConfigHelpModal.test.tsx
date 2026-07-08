@@ -14,10 +14,10 @@ describe('ConfigHelpModal', () => {
   beforeEach(() => {
     mockConfigAssist.mockReset();
     // The embedded ConfigAssistantPanel caches chat history per qualified_name at
-    // module scope; clear it so each test starts with a fresh chat and the
-    // auto-prompt fires again (a restored, non-empty chat suppresses the auto-run).
+    // module scope; clear it so each test starts with a fresh chat (and the
+    // one-click setup-help action is offered again).
     clearConfigChat('acme/test-server');
-    // The auto-sent prompt resolves so the auto-run doesn't surface as an error.
+    // The on-demand prompt resolves when the user triggers it.
     mockConfigAssist.mockResolvedValue({ reply: 'Get a token from the dashboard.' });
   });
 
@@ -35,9 +35,13 @@ describe('ConfigHelpModal', () => {
     expect(screen.getByRole('heading', { name: 'Help & configure' })).toBeInTheDocument();
     // Embedded ConfigAssistantPanel renders its input.
     expect(screen.getByPlaceholderText(/ask a question/i)).toBeInTheDocument();
+    // The help opens instantly — no blocking LLM call on open (#4272). The
+    // research is offered as a one-click action instead.
+    expect(mockConfigAssist).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Get step-by-step setup help' })).toBeInTheDocument();
   });
 
-  it('auto-runs a server-specific prompt naming the display name and qualified name', async () => {
+  it('runs a server-specific prompt on demand, naming the display name and qualified name', async () => {
     render(
       <ConfigHelpModal
         qualifiedName="acme/test-server"
@@ -46,19 +50,21 @@ describe('ConfigHelpModal', () => {
         onClose={() => {}}
       />
     );
+    // Nothing fires until the user asks for help.
+    expect(mockConfigAssist).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Get step-by-step setup help' }));
     await waitFor(() => {
       expect(mockConfigAssist).toHaveBeenCalledTimes(1);
     });
     const [{ qualified_name, user_message }] = mockConfigAssist.mock.calls[0];
     expect(qualified_name).toBe('acme/test-server');
-    // The auto prompt embeds both the friendly name and the qualified name and
-    // the description.
+    // The prompt embeds the friendly name, the qualified name, and description.
     expect(user_message).toContain('Test Server');
     expect(user_message).toContain('acme/test-server');
     expect(user_message).toContain('A test MCP server');
   });
 
-  it('builds an auto prompt that omits the description sentence when none is given', async () => {
+  it('builds an on-demand prompt that omits the description sentence when none is given', async () => {
     render(
       <ConfigHelpModal
         qualifiedName="acme/test-server"
@@ -66,6 +72,7 @@ describe('ConfigHelpModal', () => {
         onClose={() => {}}
       />
     );
+    fireEvent.click(screen.getByRole('button', { name: 'Get step-by-step setup help' }));
     await waitFor(() => {
       expect(mockConfigAssist).toHaveBeenCalledTimes(1);
     });
@@ -116,7 +123,9 @@ describe('ConfigHelpModal', () => {
         onApplySuggestedEnv={onApply}
       />
     );
-    // The auto-run reply carries suggested_env, so the Apply button appears.
+    // Trigger the on-demand help; the reply carries suggested_env, so the Apply
+    // button appears.
+    fireEvent.click(screen.getByRole('button', { name: 'Get step-by-step setup help' }));
     const applyBtn = await screen.findByRole('button', { name: 'Apply suggested values' });
     fireEvent.click(applyBtn);
     expect(onApply).toHaveBeenCalledWith({ API_KEY: 'abc' });

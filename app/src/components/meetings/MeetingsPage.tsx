@@ -15,6 +15,7 @@ import { useT } from '../../lib/i18n/I18nContext';
 import { selectBackendMeetStatus } from '../../store/backendMeetSlice';
 import { useAppSelector } from '../../store/hooks';
 import { isTauri, openhumanGetMeetSettings } from '../../utils/tauriCommands';
+import RecallCalendarCard from '../recallCalendar/RecallCalendarCard';
 import BetaBanner from '../ui/BetaBanner';
 import { ActiveMeetingBanner } from './ActiveMeetingBanner';
 import HistorySection from './HistorySection';
@@ -36,6 +37,9 @@ export default function MeetingsPage({ onToast }: MeetingsPageProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   // watchCalendar: null = unknown (don't show hint), false = off (show hint when there are meetings)
   const [watchCalendar, setWatchCalendar] = useState<boolean | null>(null);
+  // The saved meeting display name — passed to UpcomingTable so "Join now" uses
+  // it as the reply anchor (and joins in reply mode instead of listen-only).
+  const [replyDisplayName, setReplyDisplayName] = useState('');
   // Show the live banner while joining or in an active meeting. All other
   // states ('idle', 'ended', 'error') render the composer so the user can
   // submit a new join or see the inline error from a failed attempt.
@@ -69,6 +73,7 @@ export default function MeetingsPage({ onToast }: MeetingsPageProps) {
         if (!cancelled) {
           log('[page] watch_calendar=%s', resp.result.watch_calendar);
           setWatchCalendar(resp.result.watch_calendar ?? false);
+          setReplyDisplayName(resp.result.reply_display_name ?? '');
         }
       })
       .catch(err => {
@@ -115,7 +120,12 @@ export default function MeetingsPage({ onToast }: MeetingsPageProps) {
         <MeetComposer onToast={onToast} hasSubmittedRef={hasSubmittedRef} />
       )}
 
-      <UpcomingTable watchCalendar={watchCalendar} />
+      {/* Recall Calendar connect tile — meeting-specific, so it lives here
+          rather than on the OAuth/Connections page. Self-hides when the backend
+          has the integration disabled. */}
+      <RecallCalendarCard />
+
+      <UpcomingTable watchCalendar={watchCalendar} replyDisplayName={replyDisplayName} />
 
       <HistorySection />
 
@@ -126,7 +136,10 @@ export default function MeetingsPage({ onToast }: MeetingsPageProps) {
           // Re-fetch watch_calendar after drawer closes so the hint updates.
           if (!isTauri()) return;
           openhumanGetMeetSettings()
-            .then(resp => setWatchCalendar(resp.result.watch_calendar ?? false))
+            .then(resp => {
+              setWatchCalendar(resp.result.watch_calendar ?? false);
+              setReplyDisplayName(resp.result.reply_display_name ?? '');
+            })
             .catch(() => {
               /* leave unchanged */
             });

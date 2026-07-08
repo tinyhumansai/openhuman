@@ -559,6 +559,7 @@ async fn thread_ops_welcome_migration_and_turn_state_cover_error_and_cleanup_pat
         mode: "typed".into(),
         dedicated_thread: true,
         prompt_chars: 42,
+        prompt: String::new(),
         worker_thread_id: None,
         display_name: Some("Researcher".into()),
     }));
@@ -568,6 +569,7 @@ async fn thread_ops_welcome_migration_and_turn_state_cover_error_and_cleanup_pat
         elapsed_ms: 50,
         iterations: 2,
         output_chars: 100,
+        output: String::new(),
         worktree_path: None,
         changed_files: vec![],
         dirty_status: None,

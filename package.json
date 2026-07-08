@@ -10,6 +10,8 @@
     "docs:generate": "node scripts/generate-architecture-docs.mjs",
     "docs:check": "node scripts/generate-architecture-docs.mjs --check",
     "docs:test": "node --test scripts/__tests__/generate-architecture-docs.test.mjs",
+    "test:scripts": "node --test scripts/__tests__/*.test.mjs scripts/mock-api/*.test.mjs scripts/mock-api/routes/__tests__/*.test.mjs",
+    "test:inventory": "node scripts/generate-test-inventory.mjs",
     "compile": "pnpm --filter openhuman-app compile",
     "dev": "pnpm --filter openhuman-app dev",
     "dev:app": "pnpm --filter openhuman-app dev:app",

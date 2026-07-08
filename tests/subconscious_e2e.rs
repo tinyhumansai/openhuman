@@ -81,7 +81,7 @@ async fn two_tick_e2e_with_real_ollama() {
     config.local_ai.runtime_enabled = true;
     config.local_ai.usage.subconscious = true;
 
-    let engine = openhuman_core::openhuman::subconscious::SubconsciousEngine::new(&config);
+    let engine = openhuman_core::openhuman::subconscious::memory_instance(&config);
 
     // Tick 1
     println!("\n=== TICK 1 ===");
@@ -90,7 +90,8 @@ async fn two_tick_e2e_with_real_ollama() {
     println!("  Response chars: {}", result1.response_chars);
 
     let last_tick1 =
-        store::with_connection(workspace, store::get_last_tick_at).expect("read last tick");
+        store::with_connection(workspace, |conn| store::get_last_tick_at(conn, "memory"))
+            .expect("read last tick");
     assert!(last_tick1 >= result1.tick_at);
 
     // Tick 2 with new data

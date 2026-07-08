@@ -621,6 +621,16 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         privacy: DERIVED_TO_BACKEND,
     },
     Capability {
+        id: "intelligence.language_workflows",
+        name: "Language Workflows (Rhai)",
+        domain: "intelligence",
+        category: CapabilityCategory::Intelligence,
+        description: "The orchestrator can author and run small Rhai workflow scripts to express ad-hoc control flow over delegated work — parallel fan-out, loops, and dedup-then-verify pipelines that fixed spawn/parallel primitives cannot. Each script runs bounded and fail-closed (per-cell timeout, per-session caps on tool/model/agent calls and recursion depth), and every effectful step still passes the same approval and permission gates as a direct tool call. Progress rides the existing tool-call timeline.",
+        how_to: "Runs automatically when the orchestrator chooses the `rhai_workflows` tool; disable with OPENHUMAN_RHAI_WORKFLOWS=0 or the read-only autonomy tier",
+        status: CapabilityStatus::Beta,
+        privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
         id: "intelligence.agent_library",
         name: "Agents Library",
         domain: "intelligence",
@@ -1483,6 +1493,21 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         privacy: DERIVED_TO_BACKEND,
     },
     Capability {
+        id: "automation.discover_workflows",
+        name: "Suggested Workflows (Flow Scout)",
+        domain: "flows",
+        category: CapabilityCategory::Automation,
+        description: "A read-only discovery agent (\"Flow Scout\") reads your memory, past \
+                      conversations, known people, connected apps, and existing flows to figure \
+                      out which automations would actually help you, then proposes a handful of \
+                      concrete, buildable workflow suggestions. Each card explains why it was \
+                      suggested; \"Build this\" hands it to the workflow builder to author a real \
+                      flow you review and save. Discovery never creates, enables, or runs a flow.",
+        how_to: "Flows > Suggested for you > Discover",
+        status: CapabilityStatus::Beta,
+        privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
         id: "automation.view_cron_jobs",
         name: "View Cron Jobs",
         domain: "automation",
@@ -1780,5 +1805,21 @@ pub(super) const CAPABILITIES: &[Capability] = &[
                  \"when writing Rust, prefer Result over unwrap\".",
         status: CapabilityStatus::Stable,
         privacy: LOCAL_RAW,
+    },
+    Capability {
+        id: "intelligence.session_orchestration",
+        name: "Session Orchestration",
+        domain: "orchestration",
+        category: CapabilityCategory::Intelligence,
+        description: "Coordinate wrapped Claude Code / Codex sessions over tiny.place: a \
+                      split-brain wake graph (quick front end + reasoning core) replies to \
+                      session DMs, and a dedicated tiny.place subconscious instance reflects on \
+                      the compressed history + world diff on its own cadence to steer later \
+                      cycles — separate from the memory subconscious that watches your \
+                      connected sources.",
+        how_to: "Intelligence > Orchestration (pair a wrapped session, then chat via the Master \
+                 window).",
+        status: CapabilityStatus::Beta,
+        privacy: DERIVED_TO_BACKEND,
     },
 ];

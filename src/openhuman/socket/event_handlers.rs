@@ -207,34 +207,6 @@ pub(super) fn handle_sio_event(
                 }
             }
         }
-        // Device tunnel — backend ack for tunnel:register.
-        "tunnel:registered" => {
-            log::info!("[socket] tunnel:registered received");
-            let channel_id = data
-                .get("channelId")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let pairing_token = data
-                .get("pairingToken")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let session_token = data
-                .get("sessionToken")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            if !channel_id.is_empty() {
-                publish_global(DomainEvent::DeviceTunnelRegistered {
-                    channel_id,
-                    pairing_token,
-                    session_token,
-                });
-            } else {
-                log::warn!("[socket] tunnel:registered missing channelId");
-            }
-        }
         // Device tunnel — backend evicted the channel (TTL / server restart).
         "tunnel:evicted" => {
             let channel_id = data
@@ -369,6 +341,32 @@ pub(super) fn handle_sio_event(
                 correlation_id,
             });
         }
+        "bot:transcript_delta" => {
+            // Incremental mid-call transcript turn (issue #4304). Relayed live
+            // to the renderer; the terminal `bot:transcript` stays authoritative
+            // for thread creation / summary (handled by MeetingEventSubscriber).
+            match parse_transcript_delta(&data) {
+                Some((turn, index, is_partial, correlation_id)) => {
+                    log::info!(
+                        "[socket] bot:transcript_delta index={} is_partial={} role={}",
+                        index,
+                        is_partial,
+                        turn.role
+                    );
+                    publish_global(DomainEvent::BackendMeetTranscriptDelta {
+                        turn,
+                        index,
+                        is_partial,
+                        correlation_id,
+                    });
+                }
+                None => {
+                    log::warn!(
+                        "[socket] bot:transcript_delta dropped: missing/invalid 'turn' field"
+                    );
+                }
+            }
+        }
         "bot:in_call_request" => {
             let correlation_id = data
                 .get("correlationId")
@@ -392,10 +390,18 @@ pub(super) fn handle_sio_event(
                 .get("timestampMs")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
+            // Dual-mascot name addressing (#4277 follow-up): which slot the
+            // backend's wake matcher decided was addressed (0|1), if any.
+            let mascot_slot = data
+                .get("mascotSlot")
+                .and_then(|v| v.as_u64())
+                .filter(|s| *s <= 1)
+                .map(|s| s as u8);
             log::info!(
-                "[socket] bot:in_call_request speaker={} cmd_len={}",
+                "[socket] bot:in_call_request speaker={} cmd_len={} mascot_slot={:?}",
                 speaker,
-                command_text.len()
+                command_text.len(),
+                mascot_slot
             );
             publish_global(DomainEvent::BackendMeetInCallRequest {
                 correlation_id,
@@ -403,6 +409,7 @@ pub(super) fn handle_sio_event(
                 command_text,
                 recent_transcript,
                 timestamp_ms,
+                mascot_slot,
             });
         }
         "bot:error" => {
@@ -497,6 +504,30 @@ fn base64_encode(input: &str) -> String {
     base64::engine::general_purpose::STANDARD.encode(input.as_bytes())
 }
 
+/// Parse a `bot:transcript_delta` payload (issue #4304) into its event fields.
+///
+/// Expected shape: `{ turn: { role, content }, index, isPartial, correlationId }`.
+/// Returns `None` when the required `turn` object is missing or malformed so the
+/// caller can drop the event rather than publish a degenerate turn. `index`
+/// defaults to 0 and `isPartial` to `false` (final) when absent.
+fn parse_transcript_delta(
+    data: &serde_json::Value,
+) -> Option<(BackendMeetTurn, u64, bool, Option<String>)> {
+    let turn: BackendMeetTurn = data
+        .get("turn")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())?;
+    let index = data.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
+    let is_partial = data
+        .get("isPartial")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let correlation_id = data
+        .get("correlationId")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    Some((turn, index, is_partial, correlation_id))
+}
+
 /// Send a Socket.IO event through the emit channel.
 ///
 /// Format: `42["eventName", data]`
@@ -537,6 +568,7 @@ mod tests {
     fn make_shared() -> Arc<SharedState> {
         Arc::new(SharedState {
             webhook_router: RwLock::new(None),
+            ack_registry: super::super::manager::AckRegistry::default(),
             status: RwLock::new(ConnectionStatus::Disconnected),
             socket_id: RwLock::new(None),
             error: RwLock::new(None),
@@ -604,6 +636,41 @@ mod tests {
     #[test]
     fn parse_sio_event_returns_none_when_json_invalid() {
         assert!(parse_sio_event(r#"[invalid json"#).is_none());
+    }
+
+    // ── parse_transcript_delta (bot:transcript_delta, #4304) ────────
+
+    #[test]
+    fn parse_transcript_delta_extracts_all_fields() {
+        let data = json!({
+            "turn": { "role": "user", "content": "hello there" },
+            "index": 3,
+            "isPartial": true,
+            "correlationId": "corr-123"
+        });
+        let (turn, index, is_partial, correlation_id) = parse_transcript_delta(&data).unwrap();
+        assert_eq!(turn.role, "user");
+        assert_eq!(turn.content, "hello there");
+        assert_eq!(index, 3);
+        assert!(is_partial);
+        assert_eq!(correlation_id.as_deref(), Some("corr-123"));
+    }
+
+    #[test]
+    fn parse_transcript_delta_defaults_index_partial_and_correlation() {
+        let data = json!({ "turn": { "role": "assistant", "content": "hi" } });
+        let (turn, index, is_partial, correlation_id) = parse_transcript_delta(&data).unwrap();
+        assert_eq!(turn.role, "assistant");
+        assert_eq!(index, 0);
+        assert!(!is_partial);
+        assert!(correlation_id.is_none());
+    }
+
+    #[test]
+    fn parse_transcript_delta_returns_none_without_turn() {
+        assert!(parse_transcript_delta(&json!({ "index": 1, "isPartial": false })).is_none());
+        // Malformed turn (missing required fields) is also dropped.
+        assert!(parse_transcript_delta(&json!({ "turn": { "role": "user" } })).is_none());
     }
 
     // ── handle_sio_event dispatch ───────────────────────────────────

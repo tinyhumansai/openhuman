@@ -56,6 +56,11 @@ const DEFS: &[BackendMeetControllerDef] = &[
         schema: schema_get_event_policies,
         handler: handle_get_event_policies_wrap,
     },
+    BackendMeetControllerDef {
+        function: "generate_summary",
+        schema: schema_generate_summary,
+        handler: handle_generate_summary_wrap,
+    },
 ];
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -119,6 +124,16 @@ fn schema_join() -> ControllerSchema {
                 name: "rive_colors",
                 ty: TypeSchema::Json,
                 comment: "Optional Rive mascot color overrides forwarded to the backend bot.",
+                required: false,
+            },
+            FieldSchema {
+                name: "mascots",
+                ty: TypeSchema::Json,
+                comment: "Optional dual-mascot config (issue #4277): array of up to 2 slots, each \
+                          { mascotId, name?, riveColors?, voiceId? }. When present the backend renders \
+                          both mascots and alternates the speaker per reply. `name` (from the manifest) \
+                          enables name-addressed routing (\"Hey Toshi …\" → that slot). Absent falls \
+                          back to mascot_id.",
                 required: false,
             },
             FieldSchema {
@@ -412,6 +427,39 @@ fn handle_get_event_policies_wrap(params: Map<String, Value>) -> ControllerFutur
     Box::pin(async move { super::ops::handle_get_event_policies(params).await })
 }
 
+fn schema_generate_summary() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "agent_meetings",
+        function: "generate_summary",
+        description: "Generate a post-call summary for a recorded meeting transcript and create a \
+                      summary thread on demand. Used by Ask/manual flows.",
+        inputs: vec![FieldSchema {
+            name: "meeting_id",
+            ty: TypeSchema::String,
+            comment: "Recorded meeting id / recent-call request_id to summarize.",
+            required: true,
+        }],
+        outputs: vec![
+            FieldSchema {
+                name: "ok",
+                ty: TypeSchema::Bool,
+                comment: "True when summary generation and thread creation succeeded.",
+                required: true,
+            },
+            FieldSchema {
+                name: "thread_id",
+                ty: TypeSchema::String,
+                comment: "Thread containing the transcript and generated summary.",
+                required: true,
+            },
+        ],
+    }
+}
+
+fn handle_generate_summary_wrap(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { super::ops::handle_generate_summary(params).await })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -438,6 +486,7 @@ mod tests {
                 "list_upcoming",
                 "set_event_policy",
                 "get_event_policies",
+                "generate_summary",
             ]
         );
     }
@@ -447,5 +496,20 @@ mod tests {
         let s = schema_join();
         assert_eq!(s.namespace, "agent_meetings");
         assert_eq!(s.function, "join");
+    }
+
+    #[test]
+    fn generate_summary_schema_is_agent_meetings_rpc() {
+        let s = schema_generate_summary();
+        assert_eq!(s.namespace, "agent_meetings");
+        assert_eq!(s.function, "generate_summary");
+        assert!(s
+            .inputs
+            .iter()
+            .any(|f| f.name == "meeting_id" && f.required));
+        assert!(s
+            .outputs
+            .iter()
+            .any(|f| f.name == "thread_id" && f.required));
     }
 }

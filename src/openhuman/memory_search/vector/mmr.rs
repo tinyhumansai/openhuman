@@ -4,7 +4,7 @@
 //! subset that balances relevance to the query against redundancy within
 //! the selected set.
 
-use super::store::cosine_similarity;
+use crate::openhuman::memory_store::vectors::cosine_similarity;
 
 /// A candidate for MMR selection.
 pub struct MmrCandidate<'a> {

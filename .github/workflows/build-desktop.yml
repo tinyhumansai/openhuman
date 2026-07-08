@@ -126,6 +126,8 @@ jobs:
             artifact_suffix: windows
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Consumed by scripts/ci-cancel-aware.sh's cancellation watchdog.
+      GH_TOKEN: ${{ github.token }}
       # Keep in sync with DEFAULT_TELEGRAM_BOT_USERNAME_* in channels/controllers/ops.rs
       OPENHUMAN_TELEGRAM_BOT_USERNAME: ${{ inputs.telegram_bot_username }}
       VITE_TELEGRAM_BOT_USERNAME: ${{ inputs.telegram_bot_username }}
@@ -157,6 +159,16 @@ jobs:
         uses: dtolnay/rust-toolchain@1.93.0
         with:
           targets: ${{ matrix.settings.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - name: Ensure macOS cross target on the toolchain-file toolchain
+        if: matrix.settings.platform == 'macos-latest'
+        run: |
+          # rust-toolchain.toml pins 1.96.1, which overrides the dtolnay-installed
+          # 1.93.0. The action's `targets:` input added the darwin targets to
+          # 1.93.0, not the override toolchain the vendored tauri-cli's CEF
+          # universal-helper build actually uses, so add them to the active
+          # (override) toolchain here to avoid E0463 "can't find crate for `core`".
+          cargo --version
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - name: Install Tauri dependencies (ubuntu only)
         if: startsWith(matrix.settings.platform, 'ubuntu-')
         run: |

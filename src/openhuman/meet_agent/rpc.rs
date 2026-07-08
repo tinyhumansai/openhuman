@@ -49,14 +49,22 @@ pub async fn handle_start_session(params: Map<String, Value>) -> Result<Value, S
     registry().with_session(&req.request_id, |s| {
         s.set_identities(&req.owner_display_name, &req.bot_display_name);
         s.set_meet_url(&req.meet_url);
+        // Per-mascot voices for speaker alternation. Empty/absent =
+        // single-default-voice behavior (unchanged for one-mascot users).
+        s.set_voices(req.primary_voice_id.clone(), req.secondary_voice_id.clone());
     })?;
+    let voice_count = [&req.primary_voice_id, &req.secondary_voice_id]
+        .into_iter()
+        .filter(|v| v.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false))
+        .count();
     log::info!(
         "{LOG_PREFIX} start_session request_id={} sample_rate_hz={} \
-         owner_chars={} bot_chars={}",
+         owner_chars={} bot_chars={} voice_count={}",
         req.request_id,
         req.sample_rate_hz,
         req.owner_display_name.chars().count(),
-        req.bot_display_name.chars().count()
+        req.bot_display_name.chars().count(),
+        voice_count
     );
 
     RpcOutcome::new(
@@ -178,11 +186,11 @@ pub async fn handle_poll_speech(params: Map<String, Value>) -> Result<Value, Str
     let req: PollSpeechRequest = serde_json::from_value(Value::Object(params))
         .map_err(|e| format!("{LOG_PREFIX} invalid poll_speech params: {e}"))?;
 
-    let (pcm_base64, utterance_done, flush_pending) =
+    let (pcm_base64, utterance_done, flush_pending, active_mascot_slot) =
         registry().with_session(&req.request_id, |s| {
             let (b64, done) = s.poll_outbound();
             let flush = s.take_flush_pending();
-            (b64, done, flush)
+            (b64, done, flush, s.active_slot())
         })?;
 
     RpcOutcome::new(
@@ -191,6 +199,11 @@ pub async fn handle_poll_speech(params: Map<String, Value>) -> Result<Value, Str
             "pcm_base64": pcm_base64,
             "utterance_done": utterance_done,
             "flush_pending": flush_pending,
+            // Which mascot (0 = primary, 1 = secondary) is speaking the
+            // current outbound audio. The shell forwards this on the
+            // speaking-state edge so the frontend lip-syncs the right
+            // mascot and reacts the other. Always 0 for single-mascot.
+            "active_mascot_slot": active_mascot_slot,
         }),
         vec![],
     )
@@ -332,6 +345,35 @@ mod tests {
         stop.insert("request_id".into(), json!("rpc-roundtrip"));
         let out = handle_stop_session(stop).await.unwrap();
         assert_eq!(out.get("turn_count"), Some(&json!(0)));
+    }
+
+    #[tokio::test]
+    async fn poll_speech_reports_active_mascot_slot() {
+        // poll_speech surfaces `active_mascot_slot` (the mascot currently
+        // speaking, read from session state via `active_slot()`) on every
+        // reply so the shell can drive per-mascot lip-sync. This exercises
+        // that emit on an idle session — no LLM/brain turn needed, since
+        // `active_slot()` reads session state directly and defaults to 0.
+        let mut start = Map::new();
+        start.insert("request_id".into(), json!("rpc-active-slot"));
+        start.insert("sample_rate_hz".into(), json!(16_000));
+        start.insert("primary_voice_id".into(), json!("voice-primary"));
+        start.insert("secondary_voice_id".into(), json!("voice-secondary"));
+        handle_start_session(start).await.unwrap();
+
+        let mut poll = Map::new();
+        poll.insert("request_id".into(), json!("rpc-active-slot"));
+        let out = handle_poll_speech(poll).await.unwrap();
+        assert_eq!(out.get("ok"), Some(&json!(true)));
+        assert_eq!(
+            out.get("active_mascot_slot"),
+            Some(&json!(0)),
+            "idle session starts on the primary mascot (slot 0)"
+        );
+
+        let mut stop = Map::new();
+        stop.insert("request_id".into(), json!("rpc-active-slot"));
+        handle_stop_session(stop).await.unwrap();
     }
 
     #[tokio::test]

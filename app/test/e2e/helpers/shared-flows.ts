@@ -182,6 +182,7 @@ function routeReadySelector(hash) {
     '/settings/migration': '[data-testid="migration-form"]',
     '/settings/voice': '[data-testid="voice-providers-section"]',
     '/settings/memory-data': '[data-testid="memory-workspace"]',
+    '/settings/recovery-phrase': '[data-testid="recovery-phrase-panel"]',
   };
   return selectors[path] || null;
 }
@@ -717,9 +718,13 @@ export async function walkOnboarding(logPrefix = '[E2E]', maxSteps = 12): Promis
     await browser.pause(1_500);
   }
 
-  // Wait up to 15s for the onboarding shell to actually mount. If the user is
-  // already onboarded (e.g. resuming an existing session) the button never
-  // appears and we return without firing any clicks.
+  // Wait for the onboarding shell to actually mount. If the user is already
+  // onboarded (e.g. resuming an existing session — the common case in the
+  // shared-workspace E2E run) the button never appears and this wait is pure
+  // dead time on *every* resetApp, pushing the whole bring-up toward the 30s
+  // Mocha hook ceiling. 8s keeps ample headroom for a cold CEF boot to paint
+  // the button (it appears within a few seconds when onboarding is genuinely
+  // needed); the rare cold-boot miss is caught by the spec-file retry.
   const appeared = await browser
     .waitUntil(
       async () =>
@@ -728,7 +733,7 @@ export async function walkOnboarding(logPrefix = '[E2E]', maxSteps = 12): Promis
             () => document.querySelector('[data-testid="onboarding-next-button"]') !== null
           )
         ),
-      { timeout: 15_000, interval: 500, timeoutMsg: 'onboarding-next-button never appeared' }
+      { timeout: 8_000, interval: 500, timeoutMsg: 'onboarding-next-button never appeared' }
     )
     .catch(() => false);
 
@@ -792,7 +797,16 @@ export async function walkOnboarding(logPrefix = '[E2E]', maxSteps = 12): Promis
  */
 export async function completeOnboardingIfVisible(logPrefix = '[E2E]') {
   await walkOnboarding(logPrefix);
-  await waitForHomePage(15_000);
+  const marker = await waitForHomePage(15_000);
+  if (marker) return;
+  if (supportsExecuteScript()) {
+    const onChat = await browser.execute(() => window.location.hash.startsWith('#/chat'));
+    if (onChat) {
+      console.log(`${logPrefix} Onboarding complete; chat route accepted without home marker`);
+      return;
+    }
+  }
+  throw new Error('Onboarding completed but neither home nor chat became ready');
 }
 
 export async function waitForLoggedOutState(timeout = 10_000): Promise<string | null> {

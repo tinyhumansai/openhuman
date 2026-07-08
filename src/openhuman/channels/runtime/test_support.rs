@@ -1,11 +1,13 @@
 //! Debug-build harnesses for raw integration coverage of the channel runtime.
 
-use super::dispatch::process_channel_message;
 pub use super::dispatch::test_support::{
     build_channel_context_block_for_test, select_acknowledgment_reaction_for_test,
 };
+use super::dispatch::{
+    process_channel_message, process_channel_runtime_message, RuntimeChannelMessage,
+};
 pub use super::startup::test_support::resolve_yuanbao_app_secret_for_test;
-use crate::core::event_bus::{init_global, register_native_global, DEFAULT_CAPACITY};
+use crate::core::event_bus::{init_global, register_native_global, DomainEvent, DEFAULT_CAPACITY};
 use crate::openhuman::agent::bus::{AgentTurnRequest, AgentTurnResponse, AGENT_RUN_TURN_METHOD};
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::channels::context::{ChannelRuntimeContext, CHANNEL_MESSAGE_TIMEOUT_SECS};
@@ -28,6 +30,7 @@ pub struct DispatchHarnessOptions {
     pub channel_name: String,
     pub content: String,
     pub thread_ts: Option<String>,
+    pub inbound_envelope: Option<tinychannels::ChannelInboundEnvelope>,
     pub streaming: bool,
     pub supports_reactions: bool,
     pub response_text: Option<String>,
@@ -44,6 +47,7 @@ impl Default for DispatchHarnessOptions {
             channel_name: "test-channel".to_string(),
             content: "hello".to_string(),
             thread_ts: None,
+            inbound_envelope: None,
             streaming: false,
             supports_reactions: false,
             response_text: Some("dispatch ok".to_string()),
@@ -76,6 +80,7 @@ pub struct DispatchHarnessObservation {
     pub sends: Vec<ObservedSend>,
     pub start_typing_calls: usize,
     pub stop_typing_calls: usize,
+    pub received_event_envelope: Option<tinychannels::ChannelInboundEnvelope>,
     pub handler_history_roles: Vec<String>,
     pub handler_history_text: String,
     pub handler_provider_name: String,
@@ -283,27 +288,14 @@ fn memory_entry(input: TestMemoryEntry) -> MemoryEntry {
     }
 }
 
-/// Shared serialization guard for any test code that mutates the
-/// process-global native agent-turn handler (`AGENT_RUN_TURN_METHOD`).
-///
-/// The dispatch harness registers a *mock* `AGENT_RUN_TURN_METHOD` handler,
-/// while `start_channels` registers the *real* one (latest-wins on the global
-/// registry). Both can run concurrently inside the same test binary, so the
-/// real handler can clobber the harness's mock mid-run — producing flaky
-/// assertions (e.g. `handler_had_progress` going false because the real
-/// handler never feeds the harness progress channel). Every test path that
-/// touches that global slot must hold this guard for the whole run.
-fn agent_handler_lock() -> &'static tokio::sync::Mutex<()> {
-    static HARNESS_GUARD: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
-    HARNESS_GUARD.get_or_init(|| tokio::sync::Mutex::new(()))
-}
-
 /// Acquire the shared agent-handler guard. Hold the returned guard across any
 /// call that re-registers `AGENT_RUN_TURN_METHOD` (the harness, or
 /// `start_channels`) so concurrent registrations cannot race in the same
 /// process.
 pub async fn lock_agent_handler() -> tokio::sync::MutexGuard<'static, ()> {
-    agent_handler_lock().lock().await
+    crate::core::event_bus::testing::BUS_HANDLER_LOCK
+        .lock()
+        .await
 }
 
 pub async fn run_dispatch_harness(options: DispatchHarnessOptions) -> DispatchHarnessObservation {
@@ -314,7 +306,7 @@ pub async fn run_dispatch_harness(options: DispatchHarnessOptions) -> DispatchHa
     // observation capture) behind the shared agent-handler lock.
     let _harness_guard = lock_agent_handler().await;
 
-    init_global(DEFAULT_CAPACITY);
+    let mut event_rx = init_global(DEFAULT_CAPACITY).raw_receiver();
     let _ =
         crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins(
         );
@@ -458,19 +450,41 @@ pub async fn run_dispatch_harness(options: DispatchHarnessOptions) -> DispatchHa
         multimodal_files: MultimodalFileConfig::default(),
     });
 
-    process_channel_message(
-        Arc::clone(&ctx),
-        ChannelMessage {
-            id: "m1".to_string(),
-            sender: "alice".to_string(),
-            reply_target: "reply".to_string(),
-            content: options.content,
-            channel: options.channel_name,
-            timestamp: 1,
-            thread_ts: options.thread_ts,
-        },
-    )
-    .await;
+    let expected_event_channel = options.channel_name.clone();
+
+    let message = ChannelMessage {
+        id: "m1".to_string(),
+        sender: "alice".to_string(),
+        reply_target: "reply".to_string(),
+        content: options.content,
+        channel: options.channel_name,
+        timestamp: 1,
+        thread_ts: options.thread_ts,
+    };
+    if let Some(inbound_envelope) = options.inbound_envelope {
+        process_channel_runtime_message(
+            Arc::clone(&ctx),
+            RuntimeChannelMessage::with_inbound_envelope(message, inbound_envelope),
+        )
+        .await;
+    } else {
+        process_channel_message(Arc::clone(&ctx), message).await;
+    }
+
+    let received_event_envelope = loop {
+        match event_rx.try_recv() {
+            Ok(DomainEvent::ChannelMessageReceived {
+                channel,
+                message_id,
+                inbound_envelope,
+                ..
+            }) if channel == expected_event_channel && message_id == "m1" => {
+                break inbound_envelope;
+            }
+            Ok(_) => {}
+            Err(_) => break None,
+        }
+    };
 
     let sends = state.sends.lock().await.clone();
     let handler_history_roles = handler_roles.lock().expect("roles lock").clone();
@@ -488,6 +502,7 @@ pub async fn run_dispatch_harness(options: DispatchHarnessOptions) -> DispatchHa
         sends,
         start_typing_calls: state.start_typing_calls.load(Ordering::SeqCst),
         stop_typing_calls: state.stop_typing_calls.load(Ordering::SeqCst),
+        received_event_envelope,
         handler_history_roles,
         handler_history_text,
         handler_provider_name,

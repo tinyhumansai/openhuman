@@ -114,8 +114,13 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::audio_toolkit::all_audio_toolkit_registered_controllers());
     // Composio integration controllers
     controllers.extend(crate::openhuman::composio::all_composio_registered_controllers());
+    // Recall.ai Calendar V1 (backend-proxied) controllers
+    controllers
+        .extend(crate::openhuman::recall_calendar::all_recall_calendar_registered_controllers());
     // Scheduled job management
     controllers.extend(crate::openhuman::cron::all_cron_registered_controllers());
+    // Saved automation workflows (tinyflows graphs): create/get/list/update/delete/run
+    controllers.extend(crate::openhuman::flows::all_flows_registered_controllers());
     // Proactive task ingestion from external tools (github/notion/linear/clickup)
     controllers.extend(crate::openhuman::task_sources::all_task_sources_registered_controllers());
     controllers.extend(crate::openhuman::dashboard::all_dashboard_registered_controllers());
@@ -126,6 +131,10 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::webview_apis::all_webview_apis_registered_controllers());
     // Agent definition and prompt inspection
     controllers.extend(crate::openhuman::agent::all_agent_registered_controllers());
+    // Read-only agent run replay + status over the durable journal/status seams
+    // (agent_run_events / agent_run_status / agent_runs_active).
+    controllers
+        .extend(crate::openhuman::tinyagents::replay::all_agent_replay_registered_controllers());
     // Persistent agent profiles (flavours): name, soul, memory sources, skills, MCP, connectors.
     controllers.extend(crate::openhuman::profiles::all_profiles_registered_controllers());
     // User-facing agent registry: defaults, enablement, custom agents, tool policy.
@@ -205,7 +214,7 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     // Managed Node.js runtime bridge (tool listing + dispatch)
     controllers.extend(crate::openhuman::javascript::all_javascript_registered_controllers());
     // Discovered SKILL.md skills and their bundled resources
-    controllers.extend(crate::openhuman::workflows::all_workflows_registered_controllers());
+    controllers.extend(crate::openhuman::skills::all_skills_registered_controllers());
     // Skill runtime: run/cancel/log skill executions and resolve Node/Python toolchains
     controllers.extend(crate::openhuman::skill_runtime::all_skill_runtime_registered_controllers());
     // Skill registry: browse, search, install from remote registries
@@ -312,6 +321,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::devices::all_devices_registered_controllers());
     // Durable agent session database — queryable index over transcripts, lineage, tool calls
     controllers.extend(crate::openhuman::session_db::all_session_db_registered_controllers());
+    // One-time legacy session import into TinyAgents stores
+    controllers
+        .extend(crate::openhuman::session_import::all_session_import_registered_controllers());
     // Background agent command center — read-only grouped view over the run ledger
     controllers
         .extend(crate::openhuman::agent_orchestration::all_command_center_registered_controllers());
@@ -346,6 +358,13 @@ fn build_internal_only_controllers() -> Vec<RegisteredController> {
     // tiny.place A2A social-network integration: renderer-callable via core_rpc_relay
     // but NOT advertised to agents in tool listings or schema discovery.
     controllers.extend(crate::openhuman::tinyplace::all_tinyplace_registered_controllers());
+    // User-consented tiny.place pairing for wrapped agent sessions: UI-callable
+    // via core_rpc_relay, but excluded from agent tool listings/schema discovery.
+    controllers.extend(crate::openhuman::agent_orchestration::all_pairing_registered_controllers());
+    // Orchestration read surface (stage 7): the TinyPlaceOrchestrationTab reads
+    // sessions/messages, sends Master steering DMs, marks read, and polls status.
+    // Renderer-only — not advertised to agents.
+    controllers.extend(crate::openhuman::orchestration::all_registered_controllers());
     controllers
 }
 
@@ -360,12 +379,16 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::app_state::all_app_state_controller_schemas());
     schemas.extend(crate::openhuman::audio_toolkit::all_audio_toolkit_controller_schemas());
     schemas.extend(crate::openhuman::composio::all_composio_controller_schemas());
+    schemas.extend(crate::openhuman::recall_calendar::all_recall_calendar_controller_schemas());
     schemas.extend(crate::openhuman::cron::all_cron_controller_schemas());
+    schemas.extend(crate::openhuman::flows::all_flows_controller_schemas());
     schemas.extend(crate::openhuman::task_sources::all_task_sources_controller_schemas());
     schemas.extend(crate::openhuman::dashboard::all_dashboard_controller_schemas());
     schemas.extend(crate::openhuman::mcp_registry::all_mcp_registry_controller_schemas());
     schemas.extend(crate::openhuman::webview_apis::all_webview_apis_controller_schemas());
     schemas.extend(crate::openhuman::agent::all_agent_controller_schemas());
+    // Read-only agent run replay + status controllers (workstream 05.x).
+    schemas.extend(crate::openhuman::tinyagents::replay::all_agent_replay_controller_schemas());
     schemas.extend(crate::openhuman::profiles::all_profiles_controller_schemas());
     schemas.extend(crate::openhuman::agent_registry::all_agent_registry_controller_schemas());
     schemas.extend(crate::openhuman::agent_experience::all_agent_experience_controller_schemas());
@@ -404,7 +427,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::sandbox::all_sandbox_controller_schemas());
     schemas.extend(crate::openhuman::socket::all_socket_controller_schemas());
     schemas.extend(crate::openhuman::javascript::all_javascript_controller_schemas());
-    schemas.extend(crate::openhuman::workflows::all_workflows_controller_schemas());
+    schemas.extend(crate::openhuman::skills::all_skills_controller_schemas());
     schemas.extend(crate::openhuman::skill_runtime::all_skill_runtime_controller_schemas());
     schemas.extend(crate::openhuman::skill_registry::all_skill_registry_controller_schemas());
     schemas.extend(crate::openhuman::workspace::all_workspace_controller_schemas());
@@ -469,6 +492,8 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::devices::all_devices_controller_schemas());
     // Durable agent session database
     schemas.extend(crate::openhuman::session_db::all_session_db_controller_schemas());
+    // One-time legacy session import into TinyAgents stores
+    schemas.extend(crate::openhuman::session_import::all_session_import_controller_schemas());
     // Background agent command center
     schemas.extend(crate::openhuman::agent_orchestration::all_command_center_controller_schemas());
     // Durable dynamic workflow runs
@@ -520,6 +545,7 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
             "Connectivity diagnostics for the local sidecar, listening port, and backend Socket.IO state.",
         ),
         "cron" => Some("Manage scheduled jobs and run history."),
+        "flows" => Some("Create, store, and run automation workflows."),
         "dashboard" => Some(
             "Operator-facing dashboard aggregations: per-model health comparison rows.",
         ),
@@ -540,9 +566,12 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "screen_intelligence" => Some("Screen capture, permissions, and accessibility automation."),
         "security" => Some("Security policy and autonomy guardrail metadata."),
         "service" => Some("Desktop service lifecycle management."),
+        "session_import" => {
+            Some("One-time import of legacy session transcripts into TinyAgents stores.")
+        }
         "skill_registry" => Some("Browse, search, install, and uninstall skills from remote registries (OpenHuman, Hermes, OpenClaw)."),
         "skill_runtime" => Some("Run installed skills, inspect run logs, and resolve Node/Python skill runtimes."),
-        "workflows" => Some("Discovered workflows (WORKFLOW.md/SKILL.md bundles) and their resources."),
+        "skills" => Some("Discovered SKILL.md skills (discovery, parse, install, run) and their resources."),
         "socket" => Some("Backend Socket.IO bridge controls."),
         "memory" => Some("Document storage, vector search, key-value store, and knowledge graph."),
         "memory_goals" => Some(
@@ -578,6 +607,12 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         ),
         "agent_team" => Some(
             "Durable agent-team coordination: teams, members, dependency-aware task claiming, and teammate messaging.",
+        ),
+        "orchestration_pairing" => Some(
+            "User-consented tiny.place contact pairing for wrapped agent sessions.",
+        ),
+        "orchestration" => Some(
+            "Subconscious-orchestration read surface: chat windows (master/subconscious/per-session), message history, Master steering DMs, read state, and steering status.",
         ),
         "billing" => Some("Subscription plan, payment links, and credit top-up via the backend."),
         "announcements" => {
@@ -982,6 +1017,29 @@ pub fn all_http_method_schemas() -> Vec<HttpMethodSchemaDefinition> {
             }),
     );
     methods
+}
+
+/// Shared test helper: assert a domain's controller-schema list and
+/// registered-controller list stay in lockstep, and that a known function is
+/// present. Replaces the brittle `assert_eq!(schemas().len(), N)` magic-number
+/// pattern repeated across ~15 domains (plan.md §3/§6) — a legitimate new
+/// controller no longer breaks the count, but a schema/handler desync or a
+/// dropped op still fails.
+#[cfg(test)]
+pub(crate) fn assert_schema_controller_parity(
+    schemas: &[ControllerSchema],
+    controllers: &[RegisteredController],
+    known_function: &str,
+) {
+    assert_eq!(
+        schemas.len(),
+        controllers.len(),
+        "schema/controller registration lists must stay in lockstep",
+    );
+    assert!(
+        schemas.iter().any(|s| s.function == known_function),
+        "expected a `{known_function}` controller schema to be registered",
+    );
 }
 
 #[cfg(test)]

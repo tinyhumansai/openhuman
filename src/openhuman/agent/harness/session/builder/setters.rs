@@ -6,10 +6,10 @@
 use super::{dedup_visible_tool_specs, visible_tool_specs_for_policy};
 use crate::openhuman::agent::harness::session::types::{Agent, AgentBuilder};
 use crate::openhuman::agent::harness::TriggerMemoryAgent;
-use crate::openhuman::agent::memory_loader::DefaultMemoryLoader;
+use crate::openhuman::agent_memory::memory_loader::DefaultMemoryLoader;
 use crate::openhuman::agent_tool_policy::ToolPolicyEngine;
 use crate::openhuman::config::ContextConfig;
-use crate::openhuman::context::{ContextManager, ProviderSummarizer, SegmentRecapSummarizer};
+use crate::openhuman::context::ContextManager;
 use crate::openhuman::memory::Memory;
 use crate::openhuman::tools::{Tool, ToolSpec};
 use anyhow::Result;
@@ -49,7 +49,6 @@ impl AgentBuilder {
             tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression::Full,
             tool_policy: None,
             archivist_hook: None,
-            unified_compaction_enabled: true,
         }
     }
 
@@ -117,7 +116,7 @@ impl AgentBuilder {
     /// Sets the memory loader for the agent.
     pub fn memory_loader(
         mut self,
-        memory_loader: Box<dyn crate::openhuman::agent::memory_loader::MemoryLoader>,
+        memory_loader: Box<dyn crate::openhuman::agent_memory::memory_loader::MemoryLoader>,
     ) -> Self {
         self.memory_loader = Some(memory_loader);
         self
@@ -170,7 +169,7 @@ impl AgentBuilder {
     }
 
     /// Sets the skills available to the agent.
-    pub fn workflows(mut self, skills: Vec<crate::openhuman::workflows::Workflow>) -> Self {
+    pub fn workflows(mut self, skills: Vec<crate::openhuman::skills::Workflow>) -> Self {
         self.workflows = Some(skills);
         self
     }
@@ -298,18 +297,15 @@ impl AgentBuilder {
         self
     }
 
-    /// Wire an oversized-tool-result summarizer into the agent. When
-    /// set, [`Agent::execute_tool_call`] calls
-    /// [`crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer::maybe_summarize`]
-    /// on every successful tool output and replaces the raw payload
-    /// with the compressed summary on success. Currently set only for
-    /// the orchestrator session by
-    /// [`Agent::build_session_agent_inner`].
+    /// Wire an oversized-tool-result summarizer into the agent. The live
+    /// TinyAgents turn path passes it to `ToolOutputMiddleware`, which calls
+    /// [`crate::openhuman::tinyagents::payload_summarizer::PayloadSummarizer::maybe_summarize_in_parent`]
+    /// on successful tool output and replaces the raw payload with the
+    /// compressed summary on success. Currently set only for the orchestrator
+    /// session by [`Agent::build_session_agent_inner`].
     pub fn payload_summarizer(
         mut self,
-        summarizer: Arc<
-            dyn crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer,
-        >,
+        summarizer: Arc<dyn crate::openhuman::tinyagents::payload_summarizer::PayloadSummarizer>,
     ) -> Self {
         self.payload_summarizer = Some(summarizer);
         self
@@ -348,21 +344,6 @@ impl AgentBuilder {
         hook: Option<Arc<crate::openhuman::agent::harness::archivist::ArchivistHook>>,
     ) -> Self {
         self.archivist_hook = hook;
-        self
-    }
-
-    /// Phase 1.5 — gate the unified compaction path.
-    ///
-    /// When `true` (the default) and an archivist hook is wired in via
-    /// [`Self::archivist_hook`], the session's `ContextManager` summarizer is
-    /// wrapped with a [`SegmentRecapSummarizer`] that routes autocompaction
-    /// through the archivist's rolling recap (one LLM summarizer, soft-fallback
-    /// to [`ProviderSummarizer`] when the recap is unavailable).
-    ///
-    /// When `false` the `ProviderSummarizer` is used directly and Phase 1.5 is
-    /// completely absent from the hot path — behaviour is identical to today's.
-    pub fn unified_compaction_enabled(mut self, enabled: bool) -> Self {
-        self.unified_compaction_enabled = enabled;
         self
     }
 
@@ -457,57 +438,12 @@ impl AgentBuilder {
         // model's context window" routes through this single handle.
         let context_config = self.context_config.unwrap_or_default();
 
-        // Phase 1.5 — unified compaction.
-        //
-        // When `unified_compaction_enabled` is true AND an archivist hook
-        // is wired in, wrap the inner `ProviderSummarizer` with a
-        // `SegmentRecapSummarizer`. The outer type:
-        //   1. Tries the rolling segment recap from the open segment.
-        //   2. Falls back to the inner `ProviderSummarizer` if unavailable.
-        //
-        // With the flag off OR no archivist, the plain `ProviderSummarizer`
-        // is used and Phase 1.5 is completely absent from the hot path
-        // — behaviour is identical to Phase 1.
-        let inner_summarizer: Arc<dyn crate::openhuman::context::Summarizer> =
-            Arc::new(ProviderSummarizer::new(provider.clone()));
-        let session_id_for_recap = self
-            .event_session_id
-            .clone()
-            .unwrap_or_else(|| "standalone".to_string());
-        let summarizer: Arc<dyn crate::openhuman::context::Summarizer> =
-            if self.unified_compaction_enabled {
-                if let Some(ref archivist) = self.archivist_hook {
-                    log::debug!(
-                        "[agent::builder] unified_compaction_enabled=true — \
-                         wrapping summarizer with SegmentRecapSummarizer \
-                         session_id={session_id_for_recap}"
-                    );
-                    Arc::new(SegmentRecapSummarizer::new(
-                        Arc::clone(archivist),
-                        session_id_for_recap,
-                        inner_summarizer,
-                    ))
-                } else {
-                    log::debug!(
-                        "[agent::builder] unified_compaction_enabled=true but \
-                         no archivist hook — using ProviderSummarizer"
-                    );
-                    inner_summarizer
-                }
-            } else {
-                log::debug!(
-                    "[agent::builder] unified_compaction_enabled=false — \
-                     using ProviderSummarizer (Phase 1.5 disabled)"
-                );
-                inner_summarizer
-            };
-
-        let context = ContextManager::new(
-            &context_config,
-            summarizer,
-            model_name.clone(),
-            prompt_builder,
-        );
+        // Live history reduction moved to the tinyagents graph
+        // (`ContextCompressionMiddleware` + `MessageTrimMiddleware`, issue
+        // #4249), so the session no longer constructs an in-turn summarizer
+        // here. The archivist hook still drives durable segment recaps on its
+        // own post-turn path; it is no longer coupled to context compaction.
+        let context = ContextManager::new(&context_config, prompt_builder);
 
         let workspace_dir = self
             .workspace_dir

@@ -139,6 +139,33 @@ export const threadApi = {
     return data?.turnStates ?? [];
   },
 
+  /**
+   * Per-turn history for one thread, newest first — each turn's own tool
+   * timeline (Phase 4). Cheap enough to call on thread open; full timelines can
+   * be lazily re-fetched per turn via {@link getTurnStateForRequest}.
+   */
+  getTurnStateHistory: async (threadId: string): Promise<PersistedTurnState[]> => {
+    const response = await callCoreRpc<{ data?: ListTurnStatesResponse }>({
+      method: 'openhuman.threads_turn_state_history',
+      params: { thread_id: threadId },
+    });
+    const data = unwrapEnvelope(response);
+    return data?.turnStates ?? [];
+  },
+
+  /** One specific past turn of a thread, by its producing request id (Phase 4). */
+  getTurnStateForRequest: async (
+    threadId: string,
+    requestId: string
+  ): Promise<PersistedTurnState | null> => {
+    const response = await callCoreRpc<{ data?: GetTurnStateResponse }>({
+      method: 'openhuman.threads_turn_state_get_turn',
+      params: { thread_id: threadId, request_id: requestId },
+    });
+    const data = unwrapEnvelope(response);
+    return data?.turnState ?? null;
+  },
+
   clearTurnState: async (threadId: string): Promise<boolean> => {
     const response = await callCoreRpc<{ data?: ClearTurnStateResponse }>({
       method: 'openhuman.threads_turn_state_clear',

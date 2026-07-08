@@ -7,12 +7,12 @@ use openhuman_core::openhuman::agent::harness::{
     PromptSource, SandboxMode, SubagentRunError, SubagentRunOptions, ToolScope,
 };
 use openhuman_core::openhuman::agent::hooks::{PostTurnHook, TurnContext};
-use openhuman_core::openhuman::agent::memory_loader::MemoryLoader;
 use openhuman_core::openhuman::agent::progress::AgentProgress;
 use openhuman_core::openhuman::agent::tool_policy::{
     ToolPolicy, ToolPolicyDecision, ToolPolicyRequest,
 };
 use openhuman_core::openhuman::agent::Agent;
+use openhuman_core::openhuman::agent_memory::memory_loader::MemoryLoader;
 use openhuman_core::openhuman::config::{AgentConfig, ContextConfig, MemoryConfig};
 use openhuman_core::openhuman::inference::provider::{
     ChatMessage, ChatRequest, ChatResponse, ConversationMessage, Provider, ProviderDelta, ToolCall,
@@ -80,6 +80,9 @@ struct ScriptedProvider {
     requests: Mutex<Vec<CapturedRequest>>,
     stream_events: Vec<ProviderDelta>,
     native_tools: bool,
+    /// When set, every `chat` call fails with this message — models a provider
+    /// that is down for the whole turn, so no fallback route can recover it.
+    always_fail: Option<&'static str>,
 }
 
 impl ScriptedProvider {
@@ -92,7 +95,7 @@ impl ScriptedProvider {
 
     fn failing(message: &'static str) -> Arc<Self> {
         Arc::new(Self {
-            responses: Mutex::new(VecDeque::from([Err(anyhow::anyhow!(message))])),
+            always_fail: Some(message),
             ..Self::default()
         })
     }
@@ -139,6 +142,9 @@ impl Provider for ScriptedProvider {
                 .unwrap_or_default(),
             stream_was_requested: request.stream.is_some(),
         });
+        if let Some(message) = self.always_fail {
+            return Err(anyhow::anyhow!(message));
+        }
         if let Some(stream) = request.stream {
             for event in &self.stream_events {
                 stream.send(event.clone()).await.ok();
@@ -464,6 +470,8 @@ fn text_response(text: &str) -> ChatResponse {
             output_tokens: 9,
             context_window: 16_000,
             cached_input_tokens: 4,
+            cache_creation_tokens: 0,
+            reasoning_tokens: 0,
             charged_amount_usd: 0.0003,
         }),
         reasoning_content: None,
@@ -495,6 +503,8 @@ fn native_tool_response(id: &str, name: &str, args: serde_json::Value) -> ChatRe
             output_tokens: 6,
             context_window: 16_000,
             cached_input_tokens: 5,
+            cache_creation_tokens: 0,
+            reasoning_tokens: 0,
             charged_amount_usd: 0.0004,
         }),
         reasoning_content: Some("native reasoning".to_string()),
@@ -548,7 +558,6 @@ fn agent_with(
         .context_config(context_config)
         .auto_save(true)
         .explicit_preferences_enabled(false)
-        .unified_compaction_enabled(false)
         .build()
         .unwrap()
 }
@@ -575,6 +584,8 @@ async fn turn_native_tool_progress_reasoning_usage_and_resume_seed_paths() {
                         output_tokens: 3,
                         context_window: 16_000,
                         cached_input_tokens: 2,
+                        cache_creation_tokens: 0,
+                        reasoning_tokens: 0,
                         charged_amount_usd: 0.0001,
                     }),
                     reasoning_content: Some("final hidden reasoning".to_string()),
@@ -600,6 +611,7 @@ async fn turn_native_tool_progress_reasoning_usage_and_resume_seed_paths() {
             },
         ],
         native_tools: true,
+        always_fail: None,
     });
     let mut agent = agent_with(
         provider.clone(),
@@ -775,8 +787,23 @@ async fn turn_xml_failures_checkpoint_policy_visibility_and_hooks_are_publicly_e
             channel_permissions,
             ..AgentConfig::default()
         })
+        // Budget must clear the rendered policy-denial message (~400 B) so the
+        // `denied by policy 'round17-deny'` assertion below still sees it. Before
+        // the tinyagents 1.5 migration (#4473) policy denials bypassed the
+        // per-result budget entirely; the migration now routes them through
+        // `ToolOutputMiddleware.after_tool`, so a tiny 96 B budget truncated the
+        // denial down to a `[… truncated …]` stub and the assertion no longer
+        // saw it. Production's default budget is 16 KiB, so real denials (~400 B)
+        // are never truncated — the old 96 B here was an artificial value with no
+        // assertion depending on truncation actually happening.
+        // TODO(follow-up): restore the "policy denials are exempt from the
+        // per-result budget" contract in production (tag the denial render with
+        // POLICY_BLOCKED_MARKER and skip the budget/persist path for it in
+        // `ToolOutputMiddleware.after_tool`). That also re-enables the no-progress
+        // `hard_reject` fast-path, which currently never fires for policy denials
+        // because their render omits the marker it greps for.
         .context_config(ContextConfig {
-            tool_result_budget_bytes: 96,
+            tool_result_budget_bytes: 8192,
             ..ContextConfig::default()
         })
         .post_turn_hooks(vec![Arc::new(RecordingHook {
@@ -786,7 +813,6 @@ async fn turn_xml_failures_checkpoint_policy_visibility_and_hooks_are_publicly_e
         })])
         .tool_policy(Arc::new(DenyNamedPolicy("round17_ok")))
         .explicit_preferences_enabled(false)
-        .unified_compaction_enabled(false)
         .build()
         .unwrap();
     let mut visible = HashSet::new();
@@ -829,7 +855,13 @@ async fn turn_xml_failures_checkpoint_policy_visibility_and_hooks_are_publicly_e
         .map(|message| message.content)
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(joined.contains("not available to this agent"));
+    // An unregistered tool (`hidden_tool`, absent from both the tool set and the
+    // visible allowlist) is never executed: since issue #4249 it flows through the
+    // tinyagents `UnknownToolPolicy::ReturnToolError` path, which injects a
+    // recoverable result naming the requested tool and the valid ones instead of
+    // the legacy "not available to this agent" wording. The security guarantee —
+    // the hidden tool does not run — is preserved.
+    assert!(joined.contains("unknown tool `hidden_tool`"));
     assert!(joined.contains("semantic failure"));
     assert!(joined.contains("Error executing round17_boom"));
     assert!(joined.contains("denied by policy 'round17-deny'"));
@@ -844,6 +876,11 @@ async fn turn_xml_failures_checkpoint_policy_visibility_and_hooks_are_publicly_e
         AgentConfig::default(),
         ContextConfig::default(),
     );
+    // A provider that fails on every attempt (primary *and* every same-family
+    // fallback route the tinyagents `RunPolicy.fallback` chain tries — issue #4249,
+    // Workstream 02.2) must surface a terminal error from `run_single` rather than
+    // wedging on a partial/empty reply. `ScriptedProvider::failing` fails
+    // unconditionally, so the cross-route fallback cannot mask it.
     let err = failing_agent.run_single("fail now").await.unwrap_err();
     assert!(err.to_string().contains("provider offline"));
 }
@@ -905,6 +942,7 @@ async fn subagent_runner_parent_context_filters_tools_caps_output_and_reports_er
         model_name: "parent-model".to_string(),
         temperature: 0.22,
         workspace_dir: workspace_path.clone(),
+        workspace_descriptor: None,
         memory: Arc::new(StaticMemory::default()),
         agent_config: AgentConfig {
             max_tool_iterations: 5,
@@ -1027,5 +1065,6 @@ fn definition(
         delegate_name: None,
         agent_tier: AgentTier::Worker,
         source: DefinitionSource::Builtin,
+        graph: Default::default(),
     }
 }

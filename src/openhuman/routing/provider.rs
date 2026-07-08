@@ -377,6 +377,12 @@ impl IntelligentRoutingProvider {
 
 #[async_trait]
 impl Provider for IntelligentRoutingProvider {
+    fn telemetry_provider_id(&self) -> String {
+        // Attribute to the remote provider; local-routing decisions are
+        // per-call and the remote is the configured default.
+        self.remote.telemetry_provider_id()
+    }
+
     fn capabilities(&self) -> ProviderCapabilities {
         self.remote.capabilities()
     }

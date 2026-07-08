@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { computeNamespaceOverview } from '../../lib/memory/namespaceOverview';
 import type { GraphRelation } from '../../utils/tauriCommands/memory';
-import { loadNamespaceOverview, namespaceOverviewApi } from './namespaceOverviewApi';
+import { loadNamespaceOverview } from './namespaceOverviewApi';
 
 const mockGraphQuery = vi.fn();
 
@@ -47,11 +47,5 @@ describe('namespaceOverviewApi.loadNamespaceOverview', () => {
   it('propagates query errors', async () => {
     mockGraphQuery.mockRejectedValueOnce(new Error('graph unavailable'));
     await expect(loadNamespaceOverview()).rejects.toThrow('graph unavailable');
-  });
-});
-
-describe('namespaceOverviewApi object', () => {
-  it('exposes the public surface', () => {
-    expect(typeof namespaceOverviewApi.loadNamespaceOverview).toBe('function');
   });
 });

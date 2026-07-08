@@ -45,6 +45,11 @@ WORKDIR /build
 
 # Cache dependencies — copy only manifests first
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+# Vendored TinyAgents SDK (git submodule; [patch.crates-io] points here, so
+# the dep-cache build below already resolves it). CI must init the submodule
+# before docker build — see the "Init tinyagents submodule" steps in
+# release-production.yml / release-staging.yml.
+COPY vendor/ vendor/
 # Create a dummy src to build deps
 RUN mkdir -p src && \
     echo 'fn main() {}' > src/main.rs && \

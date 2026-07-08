@@ -5,6 +5,7 @@ API-usage cost tracking and budget enforcement for the agent. Records per-call t
 ## Responsibilities
 
 - Compute per-call cost in USD from token counts and per-million prices (`TokenUsage::new`), clamping non-finite/negative prices to `0.0`.
+- Preserve provider-reported usage provenance on persisted records: cached input tokens, cache-creation tokens, reasoning tokens, and whether `cost_usd` is `estimated` or `provider_charged`.
 - Persist each usage event as a `CostRecord` line in `costs.jsonl` (durable: write + `sync_all`).
 - Maintain cached current-day / current-month spend aggregates, rebuilt on day/month rollover.
 - Enforce daily and monthly budget limits with warn-threshold signalling (`check_budget` → `BudgetCheck::{Allowed, Warning, Exceeded}`) — only when `cost.enabled`.
@@ -14,15 +15,15 @@ API-usage cost tracking and budget enforcement for the agent. Records per-call t
 
 ## Key files
 
-| File | Role |
-| --- | --- |
-| `src/openhuman/cost/mod.rs` | Export-focused module root; re-exports tracker, types, global helpers, and the `all_cost_*` controller schema/registry pair. |
-| `src/openhuman/cost/types.rs` | Serde domain types: `TokenUsage`, `CostRecord`, `UsagePeriod`, `BudgetCheck`, `CostSummary`, `ModelStats`, `DailyCostEntry`, `BudgetStatus`, `CostDashboard`. Cost-calc logic lives in `TokenUsage::new`. |
-| `src/openhuman/cost/tracker.rs` | `CostTracker` (budget checks, recording, summaries, daily history, dashboard build) plus the private `CostStorage` JSONL persistence + aggregate-cache layer. Functions as both `ops` and `store`. |
-| `src/openhuman/cost/global.rs` | Process-global `OnceCell<Arc<CostTracker>>` singleton: `init_global`, `try_global`, `record_provider_usage`, and `build_token_usage` (provider `UsageInfo` → `TokenUsage`). |
-| `src/openhuman/cost/rpc.rs` | RPC-facing handlers (`dashboard`, `daily_history`, `summary`) returning `RpcOutcome<Value>`; DTO types; `resolve_tracker` with a cached fallback tracker + error-replay TTL. |
-| `src/openhuman/cost/schemas.rs` | Controller schemas + `handle_*` JSON-RPC dispatchers; `all_controller_schemas` / `all_registered_controllers`. |
-| `src/openhuman/cost/tracker_tests.rs` | Sibling test suite for `tracker.rs` (`#[path]`-included). |
+| File                                  | Role                                                                                                                                                                                                                    |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/openhuman/cost/mod.rs`           | Export-focused module root; re-exports tracker, types, global helpers, and the `all_cost_*` controller schema/registry pair.                                                                                            |
+| `src/openhuman/cost/types.rs`         | Serde domain types: `TokenUsage`, `CostSource`, `CostRecord`, `UsagePeriod`, `BudgetCheck`, `CostSummary`, `ModelStats`, `DailyCostEntry`, `BudgetStatus`, `CostDashboard`. Cost-calc logic lives in `TokenUsage::new`. |
+| `src/openhuman/cost/tracker.rs`       | `CostTracker` (budget checks, recording, summaries, daily history, dashboard build) plus the private `CostStorage` JSONL persistence + aggregate-cache layer. Functions as both `ops` and `store`.                      |
+| `src/openhuman/cost/global.rs`        | Process-global `OnceCell<Arc<CostTracker>>` singleton: `init_global`, `try_global`, `record_provider_usage`, and `build_token_usage` (provider `UsageInfo` → `TokenUsage`).                                             |
+| `src/openhuman/cost/rpc.rs`           | RPC-facing handlers (`dashboard`, `daily_history`, `summary`) returning `RpcOutcome<Value>`; DTO types; `resolve_tracker` with a cached fallback tracker + error-replay TTL.                                            |
+| `src/openhuman/cost/schemas.rs`       | Controller schemas + `handle_*` JSON-RPC dispatchers; `all_controller_schemas` / `all_registered_controllers`.                                                                                                          |
+| `src/openhuman/cost/tracker_tests.rs` | Sibling test suite for `tracker.rs` (`#[path]`-included).                                                                                                                                                               |
 
 ## Public surface
 
@@ -31,7 +32,7 @@ From `mod.rs` re-exports:
 - `CostTracker` — the tracker (`tracker`).
 - `init_global`, `try_global`, `record_provider_usage` (`global`).
 - `all_cost_controller_schemas`, `all_cost_registered_controllers` (`schemas`).
-- Types: `BudgetCheck`, `BudgetStatus`, `CostDashboard`, `CostRecord`, `CostSummary`, `DailyCostEntry`, `ModelStats`, `TokenUsage`, `UsagePeriod`.
+- Types: `BudgetCheck`, `BudgetStatus`, `CostDashboard`, `CostRecord`, `CostSource`, `CostSummary`, `DailyCostEntry`, `ModelStats`, `TokenUsage`, `UsagePeriod`.
 
 Notable `CostTracker` methods: `new`, `session_id`, `check_budget`, `record_usage`, `record_usage_unconditional`, `get_summary`, `get_daily_cost`, `get_monthly_cost`, `get_daily_history`, `get_dashboard`.
 
@@ -39,13 +40,13 @@ Notable `CostTracker` methods: `new`, `session_id`, `check_budget`, `record_usag
 
 Namespace `cost` (methods `openhuman.cost_*` via the registry):
 
-| Method | Inputs | Output |
-| --- | --- | --- |
-| `cost_get_dashboard` | none | 7-day dashboard payload: per-day buckets, summary metrics, budget utilisation/status, per-model breakdown. |
-| `cost_get_daily_history` | `days?` (u32, default 7, clamped `[1, 366]`) | Ordered daily entries, oldest first, gaps zero-filled. |
-| `cost_get_summary` | none | Live session / daily / monthly cost summary. |
+| Method                   | Inputs                                       | Output                                                                                                     |
+| ------------------------ | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `cost_get_dashboard`     | none                                         | 7-day dashboard payload: per-day buckets, summary metrics, budget utilisation/status, per-model breakdown. |
+| `cost_get_daily_history` | `days?` (u32, default 7, clamped `[1, 366]`) | Ordered daily entries, oldest first, gaps zero-filled.                                                     |
+| `cost_get_summary`       | none                                         | Live session / daily / monthly cost summary.                                                               |
 
-Handlers load config via `config_rpc::load_config_with_timeout`, then delegate to `rpc.rs`. RPC DTOs (`CostDashboardDto`, `DailyCostEntryDto`, `ModelStatsDto`, `CostSummaryDto`) add presentation fields not on the domain types — `provider` (derived from the `provider/model` prefix), `percent_of_total`, and dashboard threshold/`enabled` flags from `cost.dashboard`.
+Handlers load config via `config_rpc::load_config_with_timeout`, then delegate to `rpc.rs`. RPC DTOs (`CostDashboardDto`, `DailyCostEntryDto`, `ModelStatsDto`, `CostSummaryDto`, `UsageLogRecordDto`) add presentation fields not on the domain types — `provider` (derived from the `provider/model` prefix), `percent_of_total`, and dashboard threshold/`enabled` flags from `cost.dashboard`. Usage-log records preserve the persisted token provenance fields (`cached_input_tokens`, `cache_creation_tokens`, `reasoning_tokens`, `cost_source`) for migration audit callers even when the dashboard table does not render them yet.
 
 ## Events
 
@@ -79,6 +80,7 @@ None. The module has no `bus.rs` and no `DomainEvent` publishers/subscribers.
 - **`cost.enabled` gates enforcement only, not telemetry.** When `false`, `check_budget` returns `Allowed` and `record_usage` is a no-op, but the agent path uses `record_usage_unconditional`, so `costs.jsonl` still grows. This is a deliberate behavioural change (logged with a `warn` on init for upgraders) so spend history exists before turning on hard caps.
 - The global tracker is a one-shot `OnceCell`; `init_global` is idempotent and never panics on construction failure (it logs and leaves `try_global() == None`). Callers before bootstrap (e.g. unit tests) must treat the absence as a soft no-op.
 - `record_provider_usage` skips all-zero `UsageInfo` payloads (`input==0 && output==0 && charged==0.0`) so providers that don't echo usage don't inflate the request count.
+- Provider-charged USD is persisted directly with `cost_source = provider_charged`; otherwise usage remains `estimated`. Cached input tokens are clamped to `input_tokens` during provider usage translation.
 - The RPC fallback tracker (`resolve_tracker`) shares the same JSONL file as the real tracker and is read-effective only; it caches by workspace path and replays a construction error for `FALLBACK_ERROR_TTL` (30s) to avoid hammering a bad workspace on the UI's ~10s poll.
 - `budget_utilization` is clamped to `1.0` for display; `budget_status` is computed from the raw (unclamped) utilisation against `warn`/`alert` thresholds. A non-positive monthly limit forces `BudgetStatus::Normal` and `0.0` utilisation.
 - All amounts are stored/computed in USD; `currency` is a presentation hint only.

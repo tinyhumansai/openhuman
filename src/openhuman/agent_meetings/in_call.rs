@@ -161,6 +161,7 @@ pub async fn handle_in_call_request(
     command_text: String,
     recent_transcript: Vec<BackendMeetTurn>,
     timestamp_ms: u64,
+    mascot_slot: Option<u8>,
 ) {
     let command = command_text.trim();
     if command.is_empty() {
@@ -201,12 +202,21 @@ pub async fn handle_in_call_request(
         return;
     }
 
+    // Name-addressed routing (#4277 follow-up): `mascot_slot` is decided by the
+    // backend's wake matcher (it sees the un-stripped caption and knows which
+    // mascot name was said) and pins this whole turn — the speculative ack, the
+    // streamed chunks, and the final reply — to that slot so the named mascot's
+    // voice + face own the answer. `None` (no name / single mascot / follow-up)
+    // leaves the backend's mechanical alternation untouched, i.e. today's
+    // behavior.
+
     tracing::info!(
         correlation_id = ?correlation_id,
         speaker = %speaker,
         cmd_len = command.len(),
         transcript_turns = recent_transcript.len(),
         timestamp_ms = timestamp_ms,
+        mascot_slot = ?mascot_slot,
         "{LOG_PREFIX} dispatching in-call command to orchestrator"
     );
 
@@ -220,7 +230,7 @@ pub async fn handle_in_call_request(
     let ack_task = tokio::spawn(async move {
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(ACK_AFTER_SECS)) => {
-                if let Err(e) = emit_bot_speak(ACK_PHRASE, ack_cid.as_deref()).await {
+                if let Err(e) = emit_bot_filler(ACK_PHRASE, ack_cid.as_deref(), mascot_slot).await {
                     tracing::debug!("[agent_meetings::in_call] ack emit failed: {e}");
                 }
             }
@@ -235,6 +245,7 @@ pub async fn handle_in_call_request(
         &recent_transcript,
         streaming,
         ack_cancel.clone(),
+        mascot_slot,
     )
     .await;
 
@@ -253,7 +264,15 @@ pub async fn handle_in_call_request(
             // In streaming mode the reply was already spoken sentence-by-
             // sentence during the turn; only the buffered path emits here.
             if !streaming {
-                if let Err(e) = emit_bot_speak(&text, correlation_id.as_deref()).await {
+                if let Err(e) = emit_bot_speak_inner(
+                    &text,
+                    correlation_id.as_deref(),
+                    None,
+                    "reply",
+                    mascot_slot,
+                )
+                .await
+                {
                     tracing::warn!("{LOG_PREFIX} bot:speak emit failed: {e}");
                 }
             }
@@ -264,7 +283,18 @@ pub async fn handle_in_call_request(
         }
         Err(e) => {
             tracing::warn!("{LOG_PREFIX} in-call turn failed: {e}");
-            if let Err(e2) = emit_bot_speak(FAILURE_PHRASE, correlation_id.as_deref()).await {
+            // Speak the failure reply from the same mascot that was addressed
+            // (name-addressed routing, #4277 follow-up) — a terminal reply must
+            // carry `mascot_slot`, matching the success path above.
+            if let Err(e2) = emit_bot_speak_inner(
+                FAILURE_PHRASE,
+                correlation_id.as_deref(),
+                None,
+                "reply",
+                mascot_slot,
+            )
+            .await
+            {
                 tracing::debug!("{LOG_PREFIX} failure phrase emit failed: {e2}");
             }
             // The failure phrase promises a note in the thread — keep it.
@@ -281,7 +311,7 @@ pub async fn handle_in_call_request(
 
 /// Route a spoken yes/no to a parked in-call approval. Returns `true`
 /// when the command was consumed as an approval decision (the caller
-/// must not dispatch it as a fresh turn).
+/// must not dispatch it as a fresh turn)
 async fn try_voice_approval_decision(correlation_id: Option<&str>, command: &str) -> bool {
     let Some(gate) = ApprovalGate::try_global() else {
         return false;
@@ -362,7 +392,10 @@ pub(super) async fn speak_approval_prompt(action_summary: &str, correlation_id: 
         "I'd like to {action_summary}. Say — Hey Tiny, approve — to confirm, \
          or — Hey Tiny, deny — to cancel."
     );
-    if let Err(e) = emit_bot_speak(&prompt, correlation_id).await {
+    // Filler, not a terminal reply: the bot is now waiting for a spoken
+    // decision, so the mascot should stay in its thinking cue. Slot-agnostic
+    // (an approval prompt isn't name-addressed) → default alternation.
+    if let Err(e) = emit_bot_filler(&prompt, correlation_id, None).await {
         tracing::warn!("{LOG_PREFIX} approval prompt emit failed: {e}");
     }
 }
@@ -376,6 +409,7 @@ async fn run_orchestrator_turn(
     recent_transcript: &[BackendMeetTurn],
     streaming: bool,
     ack_cancel: Arc<Notify>,
+    mascot_slot: Option<u8>,
 ) -> Result<String, String> {
     let agent_lock = get_or_build_agent(correlation_id).await?;
     let mut agent = agent_lock.lock().await;
@@ -406,7 +440,12 @@ async fn run_orchestrator_turn(
         let (tx, rx) = mpsc::channel::<AgentProgress>(64);
         agent.set_on_progress(Some(tx));
         let cid_owned = correlation_id.map(String::from);
-        Some(tokio::spawn(stream_sentences(rx, cid_owned, ack_cancel)))
+        Some(tokio::spawn(stream_sentences(
+            rx,
+            cid_owned,
+            ack_cancel,
+            mascot_slot,
+        )))
     } else {
         None
     };
@@ -485,6 +524,7 @@ async fn stream_sentences(
     mut rx: mpsc::Receiver<AgentProgress>,
     correlation_id: Option<String>,
     ack_cancel: Arc<Notify>,
+    mascot_slot: Option<u8>,
 ) {
     let mut buf = String::new();
     let mut seq: u32 = 0;
@@ -499,6 +539,7 @@ async fn stream_sentences(
                     &mut seq,
                     &ack_cancel,
                     &mut spoke,
+                    mascot_slot,
                 )
                 .await;
             }
@@ -515,6 +556,7 @@ async fn stream_sentences(
             &mut seq,
             &ack_cancel,
             &mut spoke,
+            mascot_slot,
         )
         .await;
     }
@@ -526,6 +568,7 @@ async fn speak_stream_chunk(
     seq: &mut u32,
     ack_cancel: &Arc<Notify>,
     spoke: &mut bool,
+    mascot_slot: Option<u8>,
 ) {
     if text.is_empty() {
         return;
@@ -534,7 +577,9 @@ async fn speak_stream_chunk(
         *spoke = true;
         ack_cancel.notify_one(); // first real audio — no need for the filler ack
     }
-    if let Err(e) = emit_bot_speak_inner(text, correlation_id, Some(*seq)).await {
+    if let Err(e) =
+        emit_bot_speak_inner(text, correlation_id, Some(*seq), "reply", mascot_slot).await
+    {
         tracing::debug!("{LOG_PREFIX} streamed chunk emit failed: {e}");
     }
     *seq += 1;
@@ -797,16 +842,34 @@ async fn get_or_create_meeting_thread(
 /// The backend's SpeakOrchestrator handles streaming TTS + the audio
 /// politeness gate from there.
 async fn emit_bot_speak(text: &str, correlation_id: Option<&str>) -> Result<(), String> {
-    emit_bot_speak_inner(text, correlation_id, None).await
+    emit_bot_speak_inner(text, correlation_id, None, "reply", None).await
+}
+
+/// Emit a non-terminal *filler* utterance (the speculative "On it" ack, an
+/// approval prompt): tagged `kind="ack"` so the backend mascot returns to its
+/// thinking cue afterwards instead of settling to idle — the real reply is
+/// still on the way. `mascot_slot` pins the filler to the name-addressed slot
+/// so the ack comes from the same mascot that will answer.
+async fn emit_bot_filler(
+    text: &str,
+    correlation_id: Option<&str>,
+    mascot_slot: Option<u8>,
+) -> Result<(), String> {
+    emit_bot_speak_inner(text, correlation_id, None, "ack", mascot_slot).await
 }
 
 /// As [`emit_bot_speak`], plus an optional `seq` so the backend can order
-/// the per-sentence chunks of a streamed reply (additive; older backends
-/// ignore it).
+/// the per-sentence chunks of a streamed reply, a `kind` ("ack" filler vs
+/// terminal "reply") so the backend can drive the mascot's post-speech pose,
+/// and an optional `mascot_slot` (0|1) so a name-addressed turn is spoken by a
+/// specific mascot instead of the backend's default alternation (all additive;
+/// older backends ignore them).
 async fn emit_bot_speak_inner(
     text: &str,
     correlation_id: Option<&str>,
     seq: Option<u32>,
+    kind: &str,
+    mascot_slot: Option<u8>,
 ) -> Result<(), String> {
     let mgr = global_socket_manager()
         .ok_or_else(|| format!("{LOG_PREFIX} socket manager not initialized"))?;
@@ -822,11 +885,21 @@ async fn emit_bot_speak_inner(
         if let Some(s) = seq {
             map.insert("seq".to_string(), json!(s));
         }
+        map.insert("kind".to_string(), json!(kind));
+        // Name-addressed routing (#4277 follow-up): pin this utterance to a
+        // specific mascot slot. Maps to `MeetingBotSpeakPayload.mascotSlot`,
+        // which the backend prefers over its alternation cursor.
+        if let Some(slot) = mascot_slot {
+            map.insert("mascotSlot".to_string(), json!(slot));
+        }
     }
 
     tracing::info!(
         text_len = text.len(),
         correlation_id = ?correlation_id,
+        kind = kind,
+        seq = ?seq,
+        mascot_slot = ?mascot_slot,
         "{LOG_PREFIX} emitting bot:speak"
     );
     mgr.emit("bot:speak", payload)
@@ -1006,6 +1079,7 @@ mod tests {
             "   ".into(),
             vec![],
             0,
+            None,
         )
         .await;
     }
@@ -1023,6 +1097,7 @@ mod tests {
             "what time is it".into(),
             vec![],
             0,
+            None,
         )
         .await;
         // No agent should have been built for the meeting.

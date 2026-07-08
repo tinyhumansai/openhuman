@@ -526,6 +526,7 @@ async fn handle_runtime_command_telegram_new_status_and_sessions_round_trip() {
             reply_target: "chat-remote".into(),
             content: "work".into(),
             thread_ts: Some("42".into()),
+            inbound_envelope: None,
             workspace_dir: tempdir.path().to_path_buf(),
         })
         .await;

@@ -21,6 +21,9 @@ import Button from '../../ui/Button';
 import { SettingsRow, SettingsSection, SettingsTextArea, SettingsTextField } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 import SettingsPanel from '../layout/SettingsPanel';
+import PersonaGuidedFields from './persona/PersonaGuidedFields';
+
+type SoulMode = 'guided' | 'advanced';
 
 const log = debug('persona:panel');
 
@@ -59,6 +62,9 @@ const PersonaPanel = ({ embedded = false }: PersonaPanelProps) => {
   const [soulLoading, setSoulLoading] = useState(true);
   const [soulError, setSoulError] = useState<string | null>(null);
   const [soulBusy, setSoulBusy] = useState(false);
+  // Guided (structured fields) is the default so users never touch raw markdown;
+  // Advanced exposes the full SOUL.md text editor for power users.
+  const [soulMode, setSoulMode] = useState<SoulMode>('guided');
 
   useEffect(() => {
     let cancelled = false;
@@ -195,17 +201,44 @@ const PersonaPanel = ({ embedded = false }: PersonaPanelProps) => {
           </div>
         ) : (
           <>
-            <div className="px-4 py-3">
-              <SettingsTextArea
-                aria-label={t('settings.persona.soul.editorLabel')}
-                data-testid="persona-soul-editor"
-                value={soulDraft}
-                rows={12}
-                spellCheck={false}
-                className="font-mono text-xs leading-relaxed"
-                onChange={e => setSoulDraft(e.target.value)}
-              />
+            <div
+              role="group"
+              aria-label={t('settings.persona.builder.modeLabel')}
+              className="flex items-center gap-1 px-4 pt-3">
+              <Button
+                type="button"
+                aria-pressed={soulMode === 'guided'}
+                data-testid="persona-soul-mode-guided"
+                variant={soulMode === 'guided' ? 'primary' : 'secondary'}
+                size="xs"
+                onClick={() => setSoulMode('guided')}>
+                {t('settings.persona.builder.modeGuided')}
+              </Button>
+              <Button
+                type="button"
+                aria-pressed={soulMode === 'advanced'}
+                data-testid="persona-soul-mode-advanced"
+                variant={soulMode === 'advanced' ? 'primary' : 'secondary'}
+                size="xs"
+                onClick={() => setSoulMode('advanced')}>
+                {t('settings.persona.builder.modeAdvanced')}
+              </Button>
             </div>
+            {soulMode === 'guided' ? (
+              <PersonaGuidedFields value={soulDraft} onChange={setSoulDraft} disabled={soulBusy} />
+            ) : (
+              <div className="px-4 py-3">
+                <SettingsTextArea
+                  aria-label={t('settings.persona.soul.editorLabel')}
+                  data-testid="persona-soul-editor"
+                  value={soulDraft}
+                  rows={12}
+                  spellCheck={false}
+                  className="font-mono text-xs leading-relaxed"
+                  onChange={e => setSoulDraft(e.target.value)}
+                />
+              </div>
+            )}
             <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
               <Button
                 type="button"

@@ -1,0 +1,99 @@
+---
+# Promotes main into the long-lived `release` branch on demand.
+#
+# A maintainer dispatches this workflow to take a snapshot of main: it pushes
+# a merge commit from main into `release` directly (no PR). CI Full
+# (ci-full.yml) then runs the complete test + E2E matrix on that push. Fix
+# PRs for anything the full suite catches are opened directly against
+# `release` (they run ci-lite for quick feedback plus ci-full, whose
+# "CI Full Gate" check gates the merge). Releases are cut from `release` via
+# release-staging.yml / release-production.yml, both of which merge release
+# back into main.
+#
+# Merge, not reset: re-dispatching refreshes release with main's latest while
+# preserving fix commits already on release. When release already contains
+# main this is a no-op.
+name: Promote main to release
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promote-main-to-release
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Merge main into release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The XGITHUB_APP_* secrets live in environments, never at repo level.
+    # This dedicated environment holds ONLY those two secrets and is branch-
+    # policied to `main`, so this job never sees the Production environment
+    # (Apple signing, Tauri updater key, …) and no other ref can claim it.
+    environment: Release-PR-Automation
+    steps:
+      # Pushes made with the default GITHUB_TOKEN do not trigger `push`
+      # workflows (GitHub's recursion guard), which would leave the promotion
+      # commit on `release` without a CI Full run. Use the same GitHub App
+      # the release workflows push with; its identity is on the ruleset
+      # bypass list for the protected branches.
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.XGITHUB_APP_ID }}
+          private-key: ${{ secrets.XGITHUB_APP_PRIVATE_KEY }}
+          # Least privilege: this job only pushes the promotion merge commit
+          # to `release` — contents: write is all it needs.
+          permission-contents: write
+
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Merge main into release and push
+        env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          log() { echo "[ci][promote] $*"; }
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://${APP_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch origin main
+          log "main is at $(git rev-parse origin/main)"
+
+          if ! git fetch origin release 2>/dev/null; then
+            log "release branch does not exist — bootstrapping it from main"
+            git push origin origin/main:refs/heads/release
+            log "created release at $(git rev-parse origin/main)"
+            exit 0
+          fi
+          log "release is at $(git rev-parse origin/release)"
+
+          if git merge-base --is-ancestor origin/main origin/release; then
+            log "release already contains main — nothing to promote"
+            echo "::notice::release already contains main; no promotion needed."
+            exit 0
+          fi
+
+          git checkout -B release origin/release
+          # Plain merge (fast-forward allowed): ff keeps history linear when
+          # release carries no fix commits; when it does, git creates the
+          # merge commit with this message.
+          if ! git merge origin/main -m "chore(release): merge main into release"; then
+            git merge --abort
+            log "merge conflict between main and release"
+            echo "::error::main→release merge hit conflicts. Resolve by opening a fix PR against release (or merge main into release manually), then re-dispatch."
+            exit 1
+          fi
+          git push origin HEAD:release
+          log "release advanced to $(git rev-parse HEAD)"

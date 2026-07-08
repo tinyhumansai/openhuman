@@ -43,7 +43,7 @@ pub async fn mcp_setup_search(
     let page = page.unwrap_or(1);
     let page_size = page_size.unwrap_or(20);
     let (servers, total_pages) =
-        registry::registry_search(config, query.as_deref(), page, page_size)
+        registry::registry_search(config, query.as_deref(), None, page, page_size)
             .await
             .map_err(|e| e.to_string())?;
     Ok(RpcOutcome::new(

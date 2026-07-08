@@ -63,6 +63,13 @@ export interface PersistedSubagentToolCall {
   displayName?: string;
   /** Server-computed contextual detail (path / recipient / query). */
   detail?: string;
+  /** Plain-language failure explanation for a FAILED child call (#4459).
+   *  Mirrors the parent {@link PersistedToolTimelineEntry.failure}; absent on
+   *  successful rows and on snapshots written before this field. */
+  failure?: PersistedToolFailure;
+  /** Size-capped child tool result text. Absent while running and on
+   *  snapshots written before this field. */
+  output?: string;
 }
 
 /**
@@ -96,6 +103,9 @@ export type PersistedSubagentTranscriptItem =
       outputChars?: number;
       displayName?: string;
       detail?: string;
+      /** Plain-language failure explanation for a FAILED child tool call
+       *  (#4459); mirrors {@link PersistedSubagentToolCall.failure}. */
+      failure?: PersistedToolFailure;
     };
 
 export interface PersistedSubagentActivity {
@@ -118,6 +128,20 @@ export interface PersistedSubagentActivity {
   transcript?: PersistedSubagentTranscriptItem[];
 }
 
+/**
+ * Human-readable failure explanation persisted alongside a FAILED tool row
+ * (#4254). Mirrors the socket `failure` object; carried in the snapshot so a
+ * settled/reloaded turn keeps its "why + what to do next" explanation. Absent
+ * on successful rows and on snapshots written before this field.
+ */
+export interface PersistedToolFailure {
+  class: string;
+  category: string;
+  recoverable: boolean;
+  causePlain: string;
+  nextAction: string;
+}
+
 export interface PersistedToolTimelineEntry {
   id: string;
   name: string;
@@ -128,6 +152,10 @@ export interface PersistedToolTimelineEntry {
   detail?: string;
   sourceToolName?: string;
   subagent?: PersistedSubagentActivity;
+  failure?: PersistedToolFailure;
+  /** Size-capped tool result text. Absent while running and on snapshots
+   *  written before this field. */
+  output?: string;
 }
 
 export interface PersistedTurnState {

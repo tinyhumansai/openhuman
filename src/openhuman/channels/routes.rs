@@ -4,7 +4,7 @@ use super::context::{
     clear_sender_history, conversation_history_key, ChannelRouteSelection, ChannelRuntimeContext,
 };
 use super::traits;
-use super::{Channel, SendMessage};
+use super::{Channel, ChannelSendExt, SendMessage};
 use crate::openhuman::inference::provider::{self, Provider};
 use serde::Deserialize;
 use std::fmt::Write;
@@ -337,7 +337,9 @@ pub(crate) async fn handle_runtime_command_if_needed(
     };
 
     if let Err(err) = channel
-        .send(&SendMessage::new(response, &msg.reply_target).in_thread(msg.thread_ts.clone()))
+        .send_with_outbound_intent(
+            &SendMessage::new(response, &msg.reply_target).in_thread(msg.thread_ts.clone()),
+        )
         .await
     {
         tracing::warn!(

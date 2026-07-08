@@ -69,6 +69,18 @@ impl Provider for FailAtLevelProvider {
     }
 }
 
+/// Wrap a stub [`Provider`] as the crate `ChatModel` the engine now consumes.
+/// The baked model/temperature are inert for the stubs (they ignore both).
+fn as_model(
+    provider: impl Provider + 'static,
+) -> std::sync::Arc<dyn tinyagents::harness::model::ChatModel<()>> {
+    crate::openhuman::inference::provider::chat_model_from_provider(
+        Box::new(provider),
+        "test-model".to_string(),
+        0.3,
+    )
+}
+
 // ── group_by_hour ────────────────────────────────────────────────────────
 
 #[test]
@@ -191,16 +203,14 @@ async fn propagate_node_with_no_children_is_noop() {
     let tmp = TempDir::new().unwrap();
     let cfg = test_config(&tmp);
     std::fs::create_dir_all(&cfg.workspace_dir).unwrap();
-    let provider = StubProvider::with_reply("should not be called");
-    let model = "stub-model";
+    let provider = as_model(StubProvider::with_reply("should not be called"));
     // No children exist for "2024/03/15" — propagate must succeed silently.
     let result = propagate_node(
         &cfg,
-        &provider,
+        provider.as_ref(),
         "test-ns",
         "2024/03/15",
         NodeLevel::Day,
-        model,
     )
     .await;
     assert!(result.is_ok(), "empty children must not error: {result:?}");
@@ -247,8 +257,8 @@ async fn propagate_node_day_from_hour_children_fits_budget() {
     .unwrap();
 
     // StubProvider reply should NOT be used when content fits budget.
-    let provider = StubProvider::with_reply("SHOULD_NOT_APPEAR");
-    propagate_node(&cfg, &provider, ns, "2024/03/15", NodeLevel::Day, "m")
+    let provider = as_model(StubProvider::with_reply("SHOULD_NOT_APPEAR"));
+    propagate_node(&cfg, provider.as_ref(), ns, "2024/03/15", NodeLevel::Day)
         .await
         .unwrap();
 
@@ -289,8 +299,8 @@ async fn propagate_node_month_from_day_children() {
     store::write_node(&cfg, &make_day("2024/03/14", "Day 14 recap.")).unwrap();
     store::write_node(&cfg, &make_day("2024/03/15", "Day 15 recap.")).unwrap();
 
-    let provider = StubProvider::with_reply("Month summary from LLM.");
-    propagate_node(&cfg, &provider, ns, "2024/03", NodeLevel::Month, "m")
+    let provider = as_model(StubProvider::with_reply("Month summary from LLM."));
+    propagate_node(&cfg, provider.as_ref(), ns, "2024/03", NodeLevel::Month)
         .await
         .unwrap();
 
@@ -346,8 +356,8 @@ async fn propagate_node_preserves_created_at_on_update() {
     };
     store::write_node(&cfg, &child).unwrap();
 
-    let provider = StubProvider::with_reply("updated summary");
-    propagate_node(&cfg, &provider, ns, "2024/03/15", NodeLevel::Day, "m")
+    let provider = as_model(StubProvider::with_reply("updated summary"));
+    propagate_node(&cfg, provider.as_ref(), ns, "2024/03/15", NodeLevel::Day)
         .await
         .unwrap();
 
@@ -369,9 +379,9 @@ async fn run_summarization_empty_buffer_returns_none() {
     let tmp = TempDir::new().unwrap();
     let cfg = test_config(&tmp);
     std::fs::create_dir_all(&cfg.workspace_dir).unwrap();
-    let provider = StubProvider::with_reply("should not be called");
+    let provider = as_model(StubProvider::with_reply("should not be called"));
     let ts = Utc::now();
-    let result = run_summarization(&cfg, &provider, "test-model", "test-ns", ts)
+    let result = run_summarization(&cfg, provider.as_ref(), "test-ns", ts)
         .await
         .unwrap();
     assert!(result.is_none(), "empty buffer must return None");
@@ -389,8 +399,8 @@ async fn run_summarization_drains_buffer_and_writes_hour_node() {
     store::buffer_write(&cfg, ns, "entry one", &ts, None).unwrap();
     store::buffer_write(&cfg, ns, "entry two", &ts, None).unwrap();
 
-    let provider = StubProvider::with_reply("hour leaf summary from LLM");
-    let last_node = run_summarization(&cfg, &provider, "test-model", ns, ts)
+    let provider = as_model(StubProvider::with_reply("hour leaf summary from LLM"));
+    let last_node = run_summarization(&cfg, provider.as_ref(), ns, ts)
         .await
         .unwrap();
 
@@ -425,8 +435,8 @@ async fn run_summarization_builds_ancestor_chain() {
 
     store::buffer_write(&cfg, ns, "test content", &ts, None).unwrap();
 
-    let provider = StubProvider::with_reply("summary text");
-    run_summarization(&cfg, &provider, "test-model", ns, ts)
+    let provider = as_model(StubProvider::with_reply("summary text"));
+    run_summarization(&cfg, provider.as_ref(), ns, ts)
         .await
         .unwrap();
 
@@ -463,8 +473,8 @@ async fn run_summarization_multi_hour_groups_produce_multiple_hour_leaves() {
     store::buffer_write(&cfg, ns, "morning entry", &ts_h08, None).unwrap();
     store::buffer_write(&cfg, ns, "afternoon entry", &ts_h14, None).unwrap();
 
-    let provider = StubProvider::with_reply("grouped summary");
-    run_summarization(&cfg, &provider, "test-model", ns, ts_h14)
+    let provider = as_model(StubProvider::with_reply("grouped summary"));
+    run_summarization(&cfg, provider.as_ref(), ns, ts_h14)
         .await
         .unwrap();
 
@@ -537,11 +547,9 @@ async fn rebuild_tree_restores_buffer_and_rewrites_ancestors() {
 
     // Preserve unsummarized buffer content across rebuild.
     store::buffer_write(&cfg, ns, "pending buffer item", &ts, None).unwrap();
-    let provider = StubProvider::with_reply("rebuilt summary");
+    let provider = as_model(StubProvider::with_reply("rebuilt summary"));
 
-    let status = rebuild_tree(&cfg, &provider, "test-model", ns)
-        .await
-        .unwrap();
+    let status = rebuild_tree(&cfg, provider.as_ref(), ns).await.unwrap();
     assert!(status.total_nodes >= 5, "expected leaf + ancestor chain");
 
     let restored_buffer = store::buffer_read(&cfg, ns).unwrap();
@@ -594,13 +602,13 @@ async fn rebuild_tree_partial_success_when_one_level_fails() {
     store::write_node(&cfg, &make_hour("2024/03/15/10")).unwrap();
     store::write_node(&cfg, &make_hour("2024/03/15/11")).unwrap();
 
-    let provider = FailAtLevelProvider {
+    let provider = as_model(FailAtLevelProvider {
         fail_level: "day",
         reply: "ok summary".to_string(),
-    };
+    });
 
     // Must NOT error despite the day-level summarization failing.
-    let status = rebuild_tree(&cfg, &provider, "test-model", ns)
+    let status = rebuild_tree(&cfg, provider.as_ref(), ns)
         .await
         .expect("partial failure must not abort the rebuild");
 
@@ -623,8 +631,8 @@ async fn rebuild_tree_on_empty_namespace_is_noop() {
     let cfg = test_config(&tmp);
     std::fs::create_dir_all(&cfg.workspace_dir).unwrap();
 
-    let provider = StubProvider::with_reply("unused");
-    let status = rebuild_tree(&cfg, &provider, "test-model", "empty-rebuild")
+    let provider = as_model(StubProvider::with_reply("unused"));
+    let status = rebuild_tree(&cfg, provider.as_ref(), "empty-rebuild")
         .await
         .unwrap();
     assert_eq!(status.total_nodes, 0);
@@ -633,8 +641,8 @@ async fn rebuild_tree_on_empty_namespace_is_noop() {
 
 #[tokio::test]
 async fn summarize_to_limit_truncates_overlong_provider_output() {
-    let provider = StubProvider::with_reply("x".repeat(MAX_SUMMARY_CHARS + 50));
-    let summary = summarize_to_limit(&provider, "short input", 10, "day", "2024/03/15", "m")
+    let provider = as_model(StubProvider::with_reply("x".repeat(MAX_SUMMARY_CHARS + 50)));
+    let summary = summarize_to_limit(provider.as_ref(), "short input", 10, "day", "2024/03/15")
         .await
         .unwrap();
 

@@ -8,6 +8,14 @@ const graphExportMock = vi.hoisted(() => vi.fn());
 // Controllable authenticated identity so we can simulate a logout→login cycle
 // (userId null → set) and assert the graph reloads (#4149).
 const coreAuthRef = vi.hoisted(() => ({ current: 'user-A' as string | null }));
+// Captures navigate() calls so we can assert the legacy TinyPlace-orchestration
+// deep link bounces to the promoted top-level /orchestration tab.
+const navigateSpy = vi.hoisted(() => vi.fn());
+
+vi.mock('react-router-dom', async importOriginal => {
+  const actual = await importOriginal<typeof import('react-router-dom')>();
+  return { ...actual, useNavigate: () => navigateSpy };
+});
 
 vi.mock('../../utils/tauriCommands', () => ({
   memoryTreeGraphExport: graphExportMock,
@@ -95,7 +103,6 @@ vi.mock('../../components/settings/layout/SettingsLayoutContext', async () => {
       React.createElement(React.Fragment, null, children),
   };
 });
-
 const makeGraph = (n: number) => ({
   nodes: Array.from({ length: n }, (_, i) => ({ id: `n${i}`, kind: 'summary', label: `N${i}` })),
   edges: [],
@@ -184,6 +191,16 @@ describe('Brain page', () => {
     });
     await waitFor(() => {
       expect(screen.getByTestId(testId)).toBeInTheDocument();
+    });
+  });
+
+  it('redirects the legacy tinyplace-orchestration deep link to /orchestration', async () => {
+    graphExportMock.mockResolvedValue(makeGraph(0));
+    await act(async () => {
+      renderWithProviders(<Brain />, { initialEntries: ['/?tab=tinyplace-orchestration'] });
+    });
+    await waitFor(() => {
+      expect(navigateSpy).toHaveBeenCalledWith('/orchestration', { replace: true });
     });
   });
 });

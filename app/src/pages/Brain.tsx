@@ -91,6 +91,15 @@ export default function Brain() {
     },
     [location.pathname, location.search, navigate]
   );
+  // Back-compat: TinyPlace Orchestration was promoted out of Brain into the
+  // top-level `/orchestration` tab. Bounce the old deep link there.
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get('tab') === 'tinyplace-orchestration') {
+      console.debug('[brain] legacy tinyplace-orchestration deep link → /orchestration');
+      navigate('/orchestration', { replace: true });
+    }
+  }, [location.search, navigate]);
+
   const [graph, setGraph] = useState<GraphExportResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<GraphMode>('tree');
@@ -318,10 +327,12 @@ export default function Brain() {
                   <div className={cardClass}>
                     <IntelligenceSubconsciousTab
                       status={sub.status}
+                      instances={sub.instances}
                       mode={sub.mode}
                       intervalMinutes={sub.intervalMinutes}
                       triggerTick={sub.triggerTick}
                       triggering={sub.triggering}
+                      isTriggering={sub.isTriggering}
                       settingMode={sub.settingMode}
                       setMode={sub.setMode}
                       setIntervalMinutes={sub.setIntervalMinutes}

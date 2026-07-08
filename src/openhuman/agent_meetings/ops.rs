@@ -17,7 +17,8 @@ use crate::rpc::RpcOutcome;
 
 use super::types::{
     BackendMeetHarnessResponseRequest, BackendMeetJoinRequest, BackendMeetJoinResponse,
-    BackendMeetLeaveRequest, BackendMeetSpeakRequest, MeetingSessionStatus,
+    BackendMeetLeaveRequest, BackendMeetSpeakRequest, GenerateSummaryRequest,
+    GenerateSummaryResponse, MeetingSessionStatus,
 };
 
 const ALLOWED_HOSTS: &[(&str, &str)] = &[
@@ -217,15 +218,23 @@ pub async fn ingest_backend_meeting_transcript(
         "[agent_meetings] transcript ingested into memory tree"
     );
 
-    // Create a meeting thread with the transcript for the thread system. This
-    // path has no pre-generated summary, so the thread generates its own.
-    if let Err(e) =
-        create_meeting_thread_with_transcript(&turns, duration_ms, correlation_id, None).await
-    {
-        tracing::warn!("[agent_meetings] meeting thread creation failed: {e}");
-    }
-
     Ok(())
+}
+
+/// Whether thread creation may perform its own summary generation when the
+/// caller did not pass a pre-generated summary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SummaryGenerationMode {
+    /// Preserve the legacy behavior: enrich transcript threads when possible.
+    GenerateIfMissing,
+    /// Append only a summary supplied by the caller; never invoke the LLM.
+    UseProvidedOnly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ThreadAppendMode {
+    BestEffort,
+    Strict,
 }
 
 /// Create a conversation thread labelled "Meetings" containing the transcript.
@@ -242,7 +251,61 @@ pub async fn create_meeting_thread_with_transcript(
     duration_ms: u64,
     correlation_id: Option<String>,
     generated: Option<&super::summary::GeneratedSummary>,
-) -> Result<(), String> {
+) -> Result<String, String> {
+    create_meeting_thread_with_transcript_with_summary_mode(
+        turns,
+        duration_ms,
+        correlation_id,
+        generated,
+        SummaryGenerationMode::GenerateIfMissing,
+    )
+    .await
+}
+
+pub async fn create_meeting_thread_with_transcript_with_summary_mode(
+    turns: &[BackendMeetTurn],
+    duration_ms: u64,
+    correlation_id: Option<String>,
+    generated: Option<&super::summary::GeneratedSummary>,
+    summary_mode: SummaryGenerationMode,
+) -> Result<String, String> {
+    create_meeting_thread_with_transcript_inner(
+        turns,
+        duration_ms,
+        correlation_id,
+        generated,
+        summary_mode,
+        ThreadAppendMode::BestEffort,
+    )
+    .await
+}
+
+async fn create_meeting_thread_with_transcript_with_summary_mode_strict(
+    turns: &[BackendMeetTurn],
+    duration_ms: u64,
+    correlation_id: Option<String>,
+    generated: Option<&super::summary::GeneratedSummary>,
+    summary_mode: SummaryGenerationMode,
+) -> Result<String, String> {
+    create_meeting_thread_with_transcript_inner(
+        turns,
+        duration_ms,
+        correlation_id,
+        generated,
+        summary_mode,
+        ThreadAppendMode::Strict,
+    )
+    .await
+}
+
+async fn create_meeting_thread_with_transcript_inner(
+    turns: &[BackendMeetTurn],
+    duration_ms: u64,
+    correlation_id: Option<String>,
+    generated: Option<&super::summary::GeneratedSummary>,
+    summary_mode: SummaryGenerationMode,
+    append_mode: ThreadAppendMode,
+) -> Result<String, String> {
     use crate::openhuman::memory::{
         AppendConversationMessageRequest, ConversationMessageRecord,
         CreateConversationThreadRequest, UpdateConversationThreadTitleRequest,
@@ -250,7 +313,9 @@ pub async fn create_meeting_thread_with_transcript(
     use crate::openhuman::threads::ops;
 
     if turns.is_empty() {
-        return Ok(());
+        return Err(
+            "[agent_meetings] cannot create a meeting thread without transcript turns".to_string(),
+        );
     }
 
     // Format the transcript body first — this is the durable artifact and must
@@ -311,9 +376,13 @@ pub async fn create_meeting_thread_with_transcript(
         message: msg,
     };
     if let Err(e) = ops::message_append(append_req).await {
+        let message = format!("[agent_meetings] failed to append transcript message: {e}");
+        if matches!(append_mode, ThreadAppendMode::Strict) {
+            return Err(message);
+        }
         tracing::warn!(
             thread_id = %thread_id,
-            "[agent_meetings] failed to append transcript message: {e}"
+            "{message}"
         );
     }
 
@@ -322,7 +391,9 @@ pub async fn create_meeting_thread_with_transcript(
     //    and this thread); otherwise generate one here, bounded so a slow/flaky
     //    provider can never dominate the path. Any failure or timeout leaves the
     //    plain-transcript thread untouched.
-    let owned_generated = if generated.is_none() {
+    let owned_generated = if generated.is_none()
+        && matches!(summary_mode, SummaryGenerationMode::GenerateIfMissing)
+    {
         super::summary::generate_meeting_summary_bounded(turns, correlation_id.as_deref()).await
     } else {
         None
@@ -363,9 +434,13 @@ pub async fn create_meeting_thread_with_transcript(
             message: summary_msg,
         };
         if let Err(e) = ops::message_append(summary_req).await {
+            let message = format!("[agent_meetings] failed to append summary message: {e}");
+            if matches!(append_mode, ThreadAppendMode::Strict) {
+                return Err(message);
+            }
             tracing::warn!(
                 thread_id = %thread_id,
-                "[agent_meetings] failed to append summary message: {e}"
+                "{message}"
             );
         }
     }
@@ -376,7 +451,138 @@ pub async fn create_meeting_thread_with_transcript(
         summarized = generated.is_some(),
         "[agent_meetings] meeting thread created"
     );
+    Ok(thread_id)
+}
+
+pub async fn append_summary_prompt_message(
+    thread_id: &str,
+    meeting_id: &str,
+) -> Result<(), String> {
+    use crate::openhuman::memory::{AppendConversationMessageRequest, ConversationMessageRecord};
+    use crate::openhuman::threads::ops;
+
+    let content = super::summary::format_summary_prompt_markdown(meeting_id);
+    let req = AppendConversationMessageRequest {
+        thread_id: thread_id.to_string(),
+        message: ConversationMessageRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            content,
+            message_type: "system".to_string(),
+            extra_metadata: serde_json::json!({
+                "kind": "meeting_summary_prompt",
+                "meeting_id": meeting_id,
+            }),
+            sender: "system".to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+        },
+    };
+    ops::message_append(req)
+        .await
+        .map_err(|e| format!("[agent_meetings] append summary prompt failed: {e}"))?;
+    tracing::info!(
+        thread_id = %thread_id,
+        meeting_id = %meeting_id,
+        "[agent_meetings] summary prompt appended"
+    );
     Ok(())
+}
+
+fn detail_transcript_to_turns(
+    detail: &crate::openhuman::meet_agent::store::MeetCallDetail,
+) -> Vec<BackendMeetTurn> {
+    detail
+        .transcript
+        .iter()
+        .filter(|line| !line.content.trim().is_empty())
+        .map(|line| BackendMeetTurn {
+            role: if line.role.eq_ignore_ascii_case("assistant") {
+                "assistant".to_string()
+            } else {
+                "user".to_string()
+            },
+            content: line.content.trim().to_string(),
+        })
+        .collect()
+}
+
+async fn recorded_meeting_duration_ms(meeting_id: &str) -> Result<u64, String> {
+    let records = crate::openhuman::meet_agent::store::read_recent(
+        crate::openhuman::meet_agent::store::MAX_RECENT_CALLS,
+    )
+    .await?;
+    let Some(record) = records
+        .into_iter()
+        .find(|record| record.request_id == meeting_id)
+    else {
+        tracing::warn!(
+            meeting_id = %meeting_id,
+            "[agent_meetings] no recent call row found for manual summary duration"
+        );
+        return Ok(0);
+    };
+
+    let wall_ms = record.ended_at_ms.saturating_sub(record.started_at_ms);
+    let audio_ms = seconds_to_millis(record.listened_seconds + record.spoken_seconds);
+    Ok(wall_ms.max(audio_ms))
+}
+
+fn seconds_to_millis(seconds: f32) -> u64 {
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return 0;
+    }
+    let millis = (seconds as f64 * 1000.0).round();
+    if millis >= u64::MAX as f64 {
+        u64::MAX
+    } else {
+        millis as u64
+    }
+}
+
+pub async fn handle_generate_summary(params: Map<String, Value>) -> Result<Value, String> {
+    let req: GenerateSummaryRequest = serde_json::from_value(Value::Object(params))
+        .map_err(|e| format!("[agent_meetings] invalid generate_summary params: {e}"))?;
+    let meeting_id = req.meeting_id.trim();
+    if meeting_id.is_empty() {
+        return Err("[agent_meetings] meeting_id must not be empty".to_string());
+    }
+
+    tracing::info!(
+        meeting_id = %meeting_id,
+        "[agent_meetings] manual summary requested"
+    );
+
+    let detail = crate::openhuman::meet_agent::store::read_detail(meeting_id)
+        .await?
+        .ok_or_else(|| format!("[agent_meetings] no recorded meeting detail for {meeting_id}"))?;
+    let turns = detail_transcript_to_turns(&detail);
+    if turns.is_empty() {
+        return Err(format!(
+            "[agent_meetings] meeting {meeting_id} has no transcript lines to summarize"
+        ));
+    }
+
+    let generated = super::summary::generate_meeting_summary_bounded(&turns, Some(meeting_id))
+        .await
+        .ok_or_else(|| format!("[agent_meetings] summary generation failed for {meeting_id}"))?;
+
+    let updated = super::recent_calls::build_detail(meeting_id, &turns, Some(&generated));
+    crate::openhuman::meet_agent::store::write_detail(&updated).await?;
+    let duration_ms = recorded_meeting_duration_ms(meeting_id).await?;
+
+    let thread_id = create_meeting_thread_with_transcript_with_summary_mode_strict(
+        &turns,
+        duration_ms,
+        Some(meeting_id.to_string()),
+        Some(&generated),
+        SummaryGenerationMode::UseProvidedOnly,
+    )
+    .await?;
+
+    serde_json::to_value(GenerateSummaryResponse {
+        ok: true,
+        thread_id,
+    })
+    .map_err(|e| format!("[agent_meetings] serialize generate_summary response: {e}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -555,6 +761,38 @@ fn build_join_payload(
                 }),
             );
         }
+        // Dual-mascot payload (issue #4277). Emitted only when the caller
+        // supplied a `mascots` array; the backend bot renders both slots,
+        // alternates the speaker per reply, and uses each slot's voice.
+        // Absent → the backend falls back to the single `mascotId` above,
+        // so one-mascot callers are unchanged.
+        if let Some(mascots) = &req.mascots {
+            let slots: Vec<Value> = mascots
+                .iter()
+                .map(|m| {
+                    let mut slot = json!({ "mascotId": m.mascot_id });
+                    if let Some(obj) = slot.as_object_mut() {
+                        if let Some(name) = &m.name {
+                            obj.insert("name".to_string(), json!(name));
+                        }
+                        if let Some(colors) = &m.rive_colors {
+                            obj.insert(
+                                "riveColors".to_string(),
+                                json!({
+                                    "primaryColor": colors.primary_color,
+                                    "secondaryColor": colors.secondary_color,
+                                }),
+                            );
+                        }
+                        if let Some(vid) = &m.voice_id {
+                            obj.insert("voiceId".to_string(), json!(vid));
+                        }
+                    }
+                    slot
+                })
+                .collect();
+            map.insert("mascots".to_string(), json!(slots));
+        }
         if let Some(respond_to) = &req.respond_to_participant {
             map.insert("respondToParticipant".to_string(), json!(respond_to));
         }
@@ -666,10 +904,23 @@ pub async fn handle_join(params: Map<String, Value>) -> Result<Value, String> {
         return Err("[agent_meetings] socket not connected to backend".to_string());
     }
 
+    // Name-addressing (#4277 follow-up) trace: the mascot ids + names forwarded
+    // to the backend. A `None` name on a slot means the backend can't route
+    // that mascot by name ("Hey Toshi").
+    let mascot_trace: Vec<(String, Option<String>)> = req
+        .mascots
+        .as_ref()
+        .map(|ms| {
+            ms.iter()
+                .map(|m| (m.mascot_id.clone(), m.name.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
     tracing::info!(
         meet_url_host = %normalized_url.host_str().unwrap_or(""),
         platform = %platform,
         display_name_len = display_name.len(),
+        mascots = ?mascot_trace,
         "[agent_meetings] emitting bot:join"
     );
 
@@ -799,6 +1050,13 @@ pub async fn handle_speak(params: Map<String, Value>) -> Result<Value, String> {
         if let Some(cid) = &req.correlation_id {
             map.insert("correlationId".to_string(), json!(cid));
         }
+
+        // The RPC-driven `agent_meetings_speak` delivers the agent's spoken
+        // reply, so tag it terminal (`kind="reply"`) to match the in-call reply
+        // path (`in_call::emit_bot_speak`) — both `bot:speak` emitters now carry
+        // the same `kind` field so the backend mascot can settle to idle after a
+        // real reply. Additive; older backends ignore it.
+        map.insert("kind".to_string(), json!("reply"));
     }
 
     mgr.emit("bot:speak", speak_payload)
@@ -889,6 +1147,13 @@ pub async fn handle_notification_action(params: Map<String, Value>) -> Result<Va
             let meet_url = meet_url
                 .ok_or_else(|| "[agent_meetings] payload.meetUrl is required".to_string())?;
             let config = crate::openhuman::config::ops::load_config_with_timeout().await?;
+
+            // Final anchor fallback: the display name the user saved on the
+            // Meetings page, so the "Join & reply" button honors it too.
+            let respond_to_participant = respond_to_participant.or_else(|| {
+                let saved = config.meet.reply_display_name.trim();
+                (!saved.is_empty()).then(|| saved.to_string())
+            });
 
             if action_id == "always_join" {
                 let mut cfg = config.clone();
@@ -1432,6 +1697,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn notification_join_falls_back_to_saved_reply_display_name() {
+        // Join branch anchor resolution: when the notification payload carries
+        // no `respondToParticipant` and no cached account identity resolves, the
+        // reply anchor must fall back to the display name the user saved on the
+        // Meetings page (`config.meet.reply_display_name`). We can't inspect the
+        // resolved anchor without a live socket, but the handler must load
+        // config, run the fallback, build the join map, and reach `handle_join`
+        // — which then fails only at the (absent) socket. Reaching that error
+        // proves the changed fallback lines executed.
+        let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::TempDir::new().unwrap();
+        let _env = EnvGuard::set_workspace(tmp.path());
+
+        let mut cfg = crate::openhuman::config::Config::load_or_init()
+            .await
+            .unwrap();
+        cfg.meet.reply_display_name = "Saved Anchor".to_string();
+        cfg.save().await.unwrap();
+
+        let mut params = Map::new();
+        params.insert("action_id".to_string(), json!("join_active"));
+        params.insert(
+            "payload".to_string(),
+            json!({
+                "meetingId": "m-anchor-1",
+                "meetUrl": "https://meet.google.com/anchor-fallback",
+                // deliberately no respondToParticipant → config fallback path
+            }),
+        );
+
+        let err = handle_notification_action(params).await.unwrap_err();
+        assert!(
+            err.contains("socket not connected"),
+            "expected socket error after anchor fallback, got: {err}"
+        );
+    }
+
+    #[tokio::test]
     async fn notification_action_skip_without_meeting_id_is_ok() {
         // No meetingId → nothing to update; must succeed without touching
         // config or the session store.
@@ -1523,6 +1828,8 @@ mod tests {
         assert!(payload.get("systemPrompt").is_none());
         assert!(payload.get("mascotId").is_none());
         assert!(payload.get("riveColors").is_none());
+        // Single-mascot join carries no `mascots` array (issue #4277).
+        assert!(payload.get("mascots").is_none());
         assert!(payload.get("respondToParticipant").is_none());
         assert!(payload.get("wakePhrase").is_none());
     }
@@ -1579,6 +1886,50 @@ mod tests {
         assert_eq!(payload["riveColors"]["secondaryColor"], "#00ff00");
         assert_eq!(payload["respondToParticipant"], "Bob");
         assert_eq!(payload["wakePhrase"], "Hello bot");
+        // A single `mascot_id` (no `mascots` array) must NOT emit `mascots`
+        // — the legacy single-mascot wire shape is unchanged (issue #4277).
+        assert!(payload.get("mascots").is_none());
+    }
+
+    #[test]
+    fn build_join_payload_with_dual_mascots() {
+        // Two-mascot join (issue #4277): the `mascots` array is emitted with
+        // camelCase slot fields the backend expects; slot 0 = primary.
+        let req: BackendMeetJoinRequest = serde_json::from_value(json!({
+            "meet_url": "https://meet.google.com/abc-defg-hij",
+            "mascot_id": "tiny-mascot",
+            "mascots": [
+                {
+                    "mascot_id": "tiny-mascot",
+                    "name": "Tiny",
+                    "voice_id": "voice-a",
+                    "rive_colors": { "primary_color": "#111", "secondary_color": "#222" }
+                },
+                { "mascot_id": "toshi", "voice_id": "voice-b" }
+            ]
+        }))
+        .unwrap();
+        let payload = build_join_payload(
+            "https://meet.google.com/abc-defg-hij",
+            "OpenHuman",
+            "gmeet",
+            &req,
+        );
+        let mascots = payload["mascots"].as_array().expect("mascots array");
+        assert_eq!(mascots.len(), 2);
+        assert_eq!(mascots[0]["mascotId"], "tiny-mascot");
+        // Name-addressed routing (#4277 follow-up): the display name is
+        // forwarded so the bot can route "Hey Tiny …" to slot 0.
+        assert_eq!(mascots[0]["name"], "Tiny");
+        assert_eq!(mascots[0]["voiceId"], "voice-a");
+        assert_eq!(mascots[0]["riveColors"]["primaryColor"], "#111");
+        assert_eq!(mascots[0]["riveColors"]["secondaryColor"], "#222");
+        assert_eq!(mascots[1]["mascotId"], "toshi");
+        assert_eq!(mascots[1]["voiceId"], "voice-b");
+        // No name supplied for slot 1 → no `name` key.
+        assert!(mascots[1].get("name").is_none());
+        // No colors supplied for slot 1 → no `riveColors` key.
+        assert!(mascots[1].get("riveColors").is_none());
     }
 
     #[test]
@@ -1745,6 +2096,135 @@ mod tests {
         assert_eq!(
             resolve_effective_join_policy(Some("evt-zoom-2"), Some("zoom"), &config),
             "auto"
+        );
+    }
+
+    struct CountingProvider {
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::openhuman::inference::provider::Provider for CountingProvider {
+        async fn chat_with_system(
+            &self,
+            _system_prompt: Option<&str>,
+            _message: &str,
+            _model: &str,
+            _temperature: f64,
+        ) -> anyhow::Result<String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok("{\"label\":\"Policy Test\",\"headline\":\"Done\",\"key_points\":[],\"action_items\":[]}"
+                .to_string())
+        }
+    }
+
+    struct EnvGuard {
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set_workspace(path: &std::path::Path) -> Self {
+            let previous = std::env::var_os("OPENHUMAN_WORKSPACE");
+            std::env::set_var("OPENHUMAN_WORKSPACE", path);
+            Self { previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => std::env::set_var("OPENHUMAN_WORKSPACE", value),
+                None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn recorded_meeting_duration_uses_recent_call_row() {
+        let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::TempDir::new().unwrap();
+        let _env = EnvGuard::set_workspace(tmp.path());
+
+        crate::openhuman::meet_agent::store::append_record(
+            &crate::openhuman::meet_agent::store::MeetCallRecord {
+                request_id: "duration-call".to_string(),
+                meet_url: "https://meet.google.com/abc-defg-hij".to_string(),
+                bot_display_name: "OpenHuman".to_string(),
+                owner_display_name: "Alice".to_string(),
+                started_at_ms: 10_000,
+                ended_at_ms: 130_000,
+                listened_seconds: 30.0,
+                spoken_seconds: 2.0,
+                turn_count: 1,
+                participants: vec!["Alice".to_string()],
+            },
+        )
+        .await
+        .expect("record call row");
+
+        let duration_ms = recorded_meeting_duration_ms("duration-call")
+            .await
+            .expect("duration reads from recent calls");
+
+        assert_eq!(duration_ms, 120_000);
+    }
+
+    #[tokio::test]
+    async fn thread_creation_rejects_empty_transcript_turns() {
+        let err = create_meeting_thread_with_transcript_with_summary_mode(
+            &[],
+            60_000,
+            Some("empty-transcript".to_string()),
+            None,
+            SummaryGenerationMode::UseProvidedOnly,
+        )
+        .await
+        .expect_err("empty transcript should not return a successful empty thread ID");
+
+        assert!(
+            err.contains("without transcript turns"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn thread_creation_use_provided_only_does_not_generate_missing_summary() {
+        let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::TempDir::new().unwrap();
+        let _env = EnvGuard::set_workspace(tmp.path());
+
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let _provider =
+            crate::openhuman::inference::provider::factory::test_provider_override::install(
+                std::sync::Arc::new(CountingProvider {
+                    calls: calls.clone(),
+                }),
+            );
+
+        let turns = vec![BackendMeetTurn {
+            role: "user".to_string(),
+            content: "[00:01] [Alice] ship it".to_string(),
+        }];
+
+        let thread_id = create_meeting_thread_with_transcript_with_summary_mode(
+            &turns,
+            60_000,
+            Some("policy-never".to_string()),
+            None,
+            SummaryGenerationMode::UseProvidedOnly,
+        )
+        .await
+        .expect("thread created without generated summary");
+
+        assert!(!thread_id.is_empty());
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "UseProvidedOnly must not call the summarization provider"
         );
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "OpenHuman"
-version = "0.58.6"
+version = "0.58.12"
 description = "OpenHuman - AI-powered Super Assistant"
 authors = ["OpenHuman"]
 edition = "2021"
@@ -133,16 +133,17 @@ cef = { version = "=146.4.1", default-features = false }
 # probe in `core_process::ensure_running` still attaches to a running
 # `openhuman-core run` harness when one is already listening.
 openhuman_core = { path = "../..", package = "openhuman", default-features = false }
+tinyjuice = { version = "0.2.1", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.29", default-features = false, features = ["signal", "user"] }
+nix = { version = "0.29", default-features = false, features = ["hostname", "signal", "user"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-app-kit = "0.3.2"
 mac-notification-sys = "0.6"
 # iMessage scanner reads ~/Library/Messages/chat.db read-only on macOS.
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "=0.40.0", features = ["bundled"] }
 objc2-user-notifications = "0.3.2"
 block2 = "0.6.2"
 objc2-foundation = { version = "0.3.2", features = ["NSTimer", "block2"] }
@@ -207,6 +208,18 @@ e2e-test-support = ["openhuman_core/e2e-test-support"]
 # whisper.cpp to use MSVC's static runtime (/MT), matching CEF and avoiding
 # LNK2038/LNK1169 CRT conflicts on Windows.
 whisper-rs-sys = { git = "https://github.com/tinyhumansai/whisper-rs-sys.git", branch = "main" }
+# TinyAgents vendored submodule (repo-root vendor/tinyagents, pinned at the
+# released tag) — same patch as the root Cargo world so both resolve the
+# in-tree SDK source. `git submodule update --init vendor/tinyagents` first.
+tinyagents = { path = "../../vendor/tinyagents" }
+# TinyFlows, TinyCortex, TinyJuice, TinyChannels, and TinyPlace are vendored beside
+# TinyAgents so integration work can test crate changes against OpenHuman before
+# publishing.
+tinyflows = { path = "../../vendor/tinyflows" }
+tinycortex = { path = "../../vendor/tinycortex" }
+tinyjuice = { path = "../../vendor/tinyjuice" }
+tinychannels = { path = "../../vendor/tinychannels" }
+tinyplace = { path = "../../vendor/tinyplace/sdk/rust" }
 
 # CEF support lives on the `feat/cef` branch of tauri-apps/tauri. We carry our
 # own fork at tinyhumansai/tauri-cef on `feat/cef-notification-intercept` which

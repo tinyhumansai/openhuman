@@ -1,0 +1,41 @@
+id = "master_agent"
+display_name = "OpenHuman Master Chat"
+when_to_use = "OpenHuman talking DIRECTLY to its human in the Master chat (human ↔ OpenHuman). Answers the human about what's happening with their other agents and orchestrates them on the human's behalf. Same deep-thinking tier + tiny.place tool belt as the reasoning core, but a human-facing voice — no A2A front-end triage."
+temperature = 0.4
+max_iterations = 20
+iteration_policy = "extended"
+sandbox_mode = "none"
+# Deep-thinking tier — plans and delegates real work to worker sub-agents.
+agent_tier = "reasoning"
+omit_identity = false
+omit_memory_context = true
+omit_safety_preamble = false
+omit_skills_catalog = true
+
+[model]
+# Chat tier — the working staging model; master chat is a direct human turn.
+hint = "chat"
+
+[subagents]
+allowlist = [
+    "researcher",
+    "code_executor",
+    "tools_agent",
+]
+
+[tools]
+# The tiny.place orchestration belt (browse contacts/sessions, read history, act
+# on external agents) + sub-agent spawning + time grounding.
+named = [
+    "spawn_async_subagent",
+    "wait",
+    "tinyplace_whoami",
+    "tinyplace_status",
+    "tinyplace_feed",
+    "current_time",
+    "resolve_time",
+    "orchestration_list_contacts",
+    "orchestration_list_sessions",
+    "orchestration_read_session",
+    "orchestration_send_to_agent",
+]

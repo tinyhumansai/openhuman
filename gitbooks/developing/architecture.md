@@ -78,7 +78,7 @@ Tauri v2 compiles the Rust core into native binaries per platform, embedding the
      (Socket.io Server)        (Telegram, etc.)
 ```
 
-The frontend communicates with the **openhuman** Rust core in two ways: **Tauri IPC** for a small set of shell commands (windows, AI file helpers, **`core_rpc_relay`**) and **HTTP JSON-RPC** to the core process for business logic and tools. The core owns persistent connections where applicable, cryptographic work for memory/features, and tool execution — native Rust handlers plus Node-backed helpers via `runtime_node`, gated by the `security/` sandbox policy. Skills no longer execute in-process; the `src/openhuman/skills/` domain contributes metadata + tool descriptors that get injected into agent prompts.
+The frontend communicates with the **openhuman** Rust core in two ways: **Tauri IPC** for a small set of shell commands (windows, AI file helpers, **`core_rpc_relay`**) and **HTTP JSON-RPC** to the core process for business logic and tools. The core owns persistent connections where applicable, cryptographic work for memory/features, and tool execution: native Rust handlers plus Node-backed helpers via `runtime_node`, gated by the `security/` sandbox policy. Skills no longer execute in-process; the `src/openhuman/skills/` domain contributes metadata + tool descriptors that get injected into agent prompts.
 
 ---
 
@@ -274,11 +274,11 @@ Memory encryption keys derive from user credentials via Argon2id, ensuring memor
 
 - **Credential storage**: OS keychain integration via the `keyring` crate (macOS Keychain, Windows Credential Manager, Linux Secret Service), desktop only
 - **Memory encryption**: AES-256-GCM with Argon2id key derivation. All AI memory is encrypted at rest
-- **Tool sandboxing**: Executable tools run through `SecurityPolicy` (`src/openhuman/security/policy.rs`) and a host-appropriate sandbox backend selected at runtime — Docker, Bubblewrap, Firejail, Landlock, or Noop (`src/openhuman/security/{docker,bubblewrap,firejail,landlock}.rs`, `detect.rs`). The legacy per-skill QuickJS memory/stack limit model is gone
+- **Tool sandboxing**: Executable tools run through `SecurityPolicy` (`src/openhuman/security/policy.rs`) and a host-appropriate sandbox backend selected at runtime: Docker, Bubblewrap, Firejail, Landlock, or Noop (`src/openhuman/security/{docker,bubblewrap,firejail,landlock}.rs`, `detect.rs`). The legacy per-skill QuickJS memory/stack limit model is gone
 - **Auth handoff**: Web-to-desktop authentication uses single-use login tokens with 5-minute TTL, exchanged via Rust HTTP client (bypasses CORS)
 - **Network TLS**: All WebSocket and HTTP connections use rustls, no dependency on platform OpenSSL
 - **State management**: Sensitive data lives in Redux (memory) and OS keychain (persistent). No localStorage for credentials or tokens
-- **Prompt injection guard**: User prompts are normalized/scored and enforced server-side (`allow | review | block`) before model/tool execution. See [`docs/PROMPT_INJECTION_GUARD.md`](../../docs/PROMPT_INJECTION_GUARD.md)
+- **Prompt injection guard**: User prompts are normalized/scored and enforced server-side (`allow | review | block`) before model/tool execution. See `src/openhuman/prompt_injection/`
 
 ---
 
@@ -367,13 +367,13 @@ iOS App (React + Tauri iOS shell)
   |-- CloudHttpTransport   fallback via cloud backend API
 ```
 
-Transport is selected by `ConnectionProfile` stored in secure storage. On pairing, the iOS app stores `{channelId, sessionToken, corePubkey, devicePrivkey}`.
+Transport is selected by `ConnectionProfile` stored in secure storage. On pairing, the iOS app stores `{channelId, sessionToken, corePubkey, devicePrivkey}` after the client-side `tunnel:connect` succeeds.
 
 ### Pairing flow
 
-1. Desktop: `devices_create_pairing` RPC -> backend issues `{channelId, pairingToken, sessionToken}`.
+1. Desktop: `devices_create_pairing` RPC -> backend ACKs `tunnel:register` with `{channelId, pairingToken, pairingExpiresAt}`.
 2. Desktop shows QR: `openhuman://pair?cid=<>&pt=<>&cpk=<>&rpc=<>&exp=<>`.
-3. iOS scans QR, generates X25519 keypair, connects to backend (`tunnel:connect`, `role:client`).
+3. iOS scans QR, generates X25519 keypair, connects to backend (`tunnel:connect`, `role:client`, `pairingToken`).
 4. Backend consumes `pairingToken` (single-use) and returns iOS `sessionToken`.
 5. X25519 key agreement over `tunnel:frame` -> XChaCha20-Poly1305 symmetric key.
 6. Desktop emits `DomainEvent::DevicePaired`; device appears in the Devices panel.
@@ -394,7 +394,7 @@ Transport is selected by `ConnectionProfile` stored in secure storage. On pairin
 
 - Tunnel backend is a blind forwarder -- never sees plaintext payloads.
 - `pairingToken` is single-use, TTL'd, hashed at rest on backend.
-- `sessionToken` is per-peer and revocable from the desktop Devices panel.
+- `sessionToken` is per-client peer and revocable from the desktop Devices panel; the desktop core does not receive a session token during register.
 - Speech recognition runs on-device (Apple Speech framework); audio never leaves the device.
 - **TODO:** migrate iOS symmetric session key to Keychain for persistence across restarts.
 

@@ -798,6 +798,10 @@ export interface MeetSettings {
    * Decoupled from the heartbeat reminder-notification toggle.
    */
   watch_calendar: boolean;
+  /** Calendar detection source for Google Meet: composio (default) | recall. */
+  calendar_provider?: 'composio' | 'recall';
+  /** The user's meeting display name, reused as the bot's reply anchor on join. */
+  reply_display_name?: string;
 }
 
 /** Partial update accepted by `openhuman.config_update_meet_settings`. */
@@ -811,6 +815,10 @@ export interface MeetSettingsUpdate {
   platform_auto_join_policies?: Record<string, MeetAutoJoinPolicy>;
   /** Master switch for calendar-driven auto-join / ask-to-join. */
   watch_calendar?: boolean;
+  /** Calendar detection source for Google Meet: composio (default) | recall. */
+  calendar_provider?: 'composio' | 'recall';
+  /** The user's meeting display name, reused as the bot's reply anchor on join. */
+  reply_display_name?: string;
 }
 
 export async function openhumanUpdateMeetSettings(

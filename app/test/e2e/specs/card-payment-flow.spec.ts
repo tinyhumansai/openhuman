@@ -18,7 +18,10 @@ import { clearRequestLog, startMockServer, stopMockServer } from '../mock-server
 const LOG_PREFIX = '[PaymentFlow]';
 
 describe('Card Payment Flow', () => {
-  before(async () => {
+  before(async function () {
+    // resetApp bring-up can run ~25-30s and race the default 30s Mocha hook
+    // budget; raise it.
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     await resetApp('e2e-card-payment-token');

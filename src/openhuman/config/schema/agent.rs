@@ -174,6 +174,13 @@ pub struct AgentConfig {
     /// Maximum number of tool calls to execute concurrently when `parallel_tools` is true.
     #[serde(default = "default_max_parallel_tools")]
     pub max_parallel_tools: usize,
+    /// How the agent formats tool calls to text-only providers.
+    /// - `"auto"` (default): native structured tool-calling when the provider
+    ///   supports it, otherwise JSON-in-tag (`<tool_call>{…}</tool_call>`).
+    /// - `"native"`: force provider-native structured tool calls.
+    /// - `"xml"`: force JSON-in-tag.
+    /// - `"pformat"`: force compact positional P-Format (`tool[a|b]`) — most
+    ///   token-efficient, but mis-parses on some models, so it is opt-in only.
     #[serde(default = "default_agent_tool_dispatcher")]
     pub tool_dispatcher: String,
     /// **Legacy** — maximum characters of memory context to inject per
@@ -225,7 +232,7 @@ pub struct AgentConfig {
     pub channel_permissions: std::collections::HashMap<String, String>,
 
     /// Maximum byte length of a single tool-result body before the
-    /// context pipeline's tool-result budget stage truncates it. Applied
+    /// TinyAgents tool-output middleware budget stage truncates it. Applied
     /// inline at tool-execution time (before the result enters history),
     /// so it is cache-safe. `0` disables the cap. Defaults to
     /// `DEFAULT_TOOL_RESULT_BUDGET_BYTES` (16 KiB).
@@ -243,6 +250,50 @@ pub struct AgentConfig {
     /// `OPENHUMAN_TOOL_TIMEOUT_SECS` env var still overrides it when set.
     #[serde(default = "default_agent_timeout_secs")]
     pub agent_timeout_secs: u64,
+
+    /// Dual-write each completed session turn into the TinyAgents session
+    /// store (`{workspace}/tinyagents_store/{kv,journal}`) alongside the
+    /// legacy `session_raw/*.jsonl` transcript (issue #4249, sessions 04.1).
+    ///
+    /// Defaults **ON**: the store has to be populated by live turns so the
+    /// 04.2 read cutover inherits a complete corpus. The write is additive,
+    /// best-effort, and non-fatal — a store-write failure never affects the
+    /// chat turn or the authoritative legacy JSONL. The
+    /// `OPENHUMAN_SESSION_DUAL_WRITE` env var is a kill switch that overrides
+    /// this flag in either direction: a falsy value (`0`/`false`/`no`/`off`)
+    /// forces the dual-write OFF regardless of config; a truthy value forces
+    /// it ON. See
+    /// [`crate::openhuman::session_import::live::dual_write_enabled`].
+    #[serde(default = "default_session_dual_write")]
+    pub session_dual_write: bool,
+
+    /// Store-backed **shadow read** of a resumed session's messages: on the
+    /// legacy transcript read path (`session/turn/session_io.rs` →
+    /// `try_load_session_transcript`), also read the same session back from the
+    /// TinyAgents journal (`{workspace}/tinyagents_store/journal`), normalize
+    /// both sides through the importer's `session_import::convert` machinery,
+    /// compare, and log any divergence (`[session_shadow_read]`, issue #4249,
+    /// sessions 04.2 phase 2).
+    ///
+    /// Defaults **OFF** (unlike `session_dual_write`, which defaults ON): this
+    /// is an observation-only parity probe with no product effect. The legacy
+    /// JSONL read stays authoritative — the shadow read only observes and logs
+    /// on a background task; a store-read failure is treated as "no shadow
+    /// available" and never breaks or slows the authoritative read. The
+    /// `OPENHUMAN_SESSION_SHADOW_READS` env var is a pure **kill switch**: a
+    /// falsy value (`0`/`false`/`no`/`off`/`disable`) forces the shadow read
+    /// OFF regardless of config; it can never force it ON. See
+    /// [`crate::openhuman::session_import::live::shadow_reads_enabled`].
+    #[serde(default = "default_session_shadow_reads")]
+    pub session_shadow_reads: bool,
+}
+
+fn default_session_dual_write() -> bool {
+    true
+}
+
+fn default_session_shadow_reads() -> bool {
+    false
 }
 
 fn default_tool_result_budget_bytes() -> usize {
@@ -374,6 +425,8 @@ impl Default for AgentConfig {
             channel_permissions: std::collections::HashMap::new(),
             tool_result_budget_bytes: default_tool_result_budget_bytes(),
             agent_timeout_secs: default_agent_timeout_secs(),
+            session_dual_write: default_session_dual_write(),
+            session_shadow_reads: default_session_shadow_reads(),
         }
     }
 }

@@ -726,6 +726,7 @@ fn map_v3_tools_uses_name_when_slug_missing() {
         app_name: Some("myapp".into()),
         toolkit: None,
         input_parameters: None,
+        output_parameters: None,
     }];
     let actions = map_v3_tools_to_actions(items);
     assert_eq!(actions.len(), 1);
@@ -742,6 +743,7 @@ fn map_v3_tools_skips_items_without_slug_or_name() {
         app_name: None,
         toolkit: None,
         input_parameters: None,
+        output_parameters: None,
     }];
     let actions = map_v3_tools_to_actions(items);
     assert!(
@@ -762,6 +764,7 @@ fn map_v3_tools_prefers_toolkit_slug_over_app_name() {
             name: None,
         }),
         input_parameters: None,
+        output_parameters: None,
     }];
     let actions = map_v3_tools_to_actions(items);
     assert_eq!(actions[0].app_name.as_deref(), Some("preferred-app"));

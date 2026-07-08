@@ -77,6 +77,35 @@ describe('joinMeetCall', () => {
     });
   });
 
+  it('forwards per-mascot voices to the shell when provided (issue #4277)', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({
+      ok: true,
+      request_id: 'req-2',
+      meet_url: 'https://meet.google.com/abc-defg-hij',
+      display_name: 'Agent Alice',
+    } as never);
+    vi.mocked(invoke).mockResolvedValueOnce('meet-call-req-2');
+
+    await joinMeetCall({
+      meetUrl: 'https://meet.google.com/abc-defg-hij',
+      displayName: 'Agent Alice',
+      ownerDisplayName: 'Owner Bob',
+      primaryVoiceId: ' voice-a ',
+      secondaryVoiceId: 'voice-b',
+    });
+
+    expect(invoke).toHaveBeenCalledWith('meet_call_open_window', {
+      args: {
+        request_id: 'req-2',
+        meet_url: 'https://meet.google.com/abc-defg-hij',
+        display_name: 'Agent Alice',
+        owner_display_name: 'Owner Bob',
+        primary_voice_id: 'voice-a',
+        secondary_voice_id: 'voice-b',
+      },
+    });
+  });
+
   it('throws if core rejects the request', async () => {
     vi.mocked(callCoreRpc).mockResolvedValueOnce({ ok: false } as never);
     await expect(
@@ -231,6 +260,60 @@ describe('joinMeetViaBackendBot', () => {
       },
     });
     expect(result).toEqual({ meetUrl: 'https://meet.google.com/abc-defg-hij', platform: 'gmeet' });
+  });
+
+  it('omits mascots[] for a single-mascot join (unchanged wire shape)', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({
+      ok: true,
+      meet_url: 'https://meet.google.com/abc-defg-hij',
+      platform: 'gmeet',
+    } as never);
+
+    await joinMeetViaBackendBot({
+      meetUrl: 'https://meet.google.com/abc-defg-hij',
+      mascotId: 'yellow',
+    });
+
+    // No `mascots` key on the params → the single `mascot_id` path is
+    // byte-identical to before (undefined is dropped by the RPC boundary).
+    const params = vi.mocked(callCoreRpc).mock.calls[0][0].params as Record<string, unknown>;
+    expect(params.mascots).toBeUndefined();
+    expect(params.mascot_id).toBe('yellow');
+  });
+
+  it('maps dual mascots[] to snake_case slots and drops blank ids (issue #4277)', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({
+      ok: true,
+      meet_url: 'https://meet.google.com/abc-defg-hij',
+      platform: 'gmeet',
+    } as never);
+
+    await joinMeetViaBackendBot({
+      meetUrl: 'https://meet.google.com/abc-defg-hij',
+      mascots: [
+        {
+          mascotId: ' tiny-mascot ',
+          name: ' Tiny ',
+          voiceId: ' voice-a ',
+          riveColors: { primaryColor: '#111', secondaryColor: '#222' },
+        },
+        { mascotId: 'toshi', voiceId: 'voice-b' },
+        { mascotId: '   ', voiceId: 'ignored' },
+      ],
+    });
+
+    const params = vi.mocked(callCoreRpc).mock.calls[0][0].params as Record<string, unknown>;
+    expect(params.mascots).toEqual([
+      {
+        mascot_id: 'tiny-mascot',
+        // Name-addressed routing (#4277 follow-up): trimmed + forwarded.
+        name: 'Tiny',
+        voice_id: 'voice-a',
+        rive_colors: { primary_color: '#111', secondary_color: '#222' },
+      },
+      // Slot 1 supplies no name → `name` omitted (undefined).
+      { mascot_id: 'toshi', name: undefined, voice_id: 'voice-b', rive_colors: undefined },
+    ]);
   });
 
   it('rejects an empty meeting link before contacting core', async () => {

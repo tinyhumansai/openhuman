@@ -18,6 +18,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use anyhow::Context;
 use parking_lot::Mutex;
 use rusqlite::Connection;
 
@@ -438,7 +439,7 @@ impl VectorStore {
     /// Returns the number of entries in a namespace (or all if `None`).
     pub fn count(&self, namespace: Option<&str>) -> anyhow::Result<usize> {
         let conn = self.conn.lock();
-        let count: usize = match namespace {
+        let count: i64 = match namespace {
             Some(ns) => conn.query_row(
                 "SELECT COUNT(*) FROM vectors WHERE namespace = ?1",
                 rusqlite::params![ns],
@@ -446,7 +447,7 @@ impl VectorStore {
             )?,
             None => conn.query_row("SELECT COUNT(*) FROM vectors", [], |row| row.get(0))?,
         };
-        Ok(count)
+        usize::try_from(count).context("vector count did not fit in usize")
     }
 
     /// Lists all distinct namespaces.

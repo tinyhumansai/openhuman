@@ -54,9 +54,26 @@ pub enum AgentProgress {
         tool_name: String,
         success: bool,
         output_chars: usize,
+        /// Full text the tool returned. Mirrors
+        /// [`Self::SubagentToolCallCompleted::output`] so trace exporters can
+        /// record the parent-scope tool result as the span output (truncated +
+        /// content-gated at the collector). Empty when the harness ran with
+        /// payload capture off.
+        output: String,
+        /// The arguments the tool was invoked with, when the harness captured
+        /// them (`PayloadCapture::tool_io`). The crate emits arguments on the
+        /// *completed* event, so trace exporters use this to backfill the tool
+        /// span's input (the started event's `arguments` is `Null` on the
+        /// tinyagents path).
+        arguments: Option<serde_json::Value>,
         elapsed_ms: u64,
         /// 1-based iteration index.
         iteration: u32,
+        /// Present when `success` is false: a user-facing classification of the
+        /// failure (class, category, plain-language cause + next action) that
+        /// the chat "View processing" timeline renders. `None` on success and
+        /// on legacy snapshots. See `crate::openhuman::tool_status`.
+        failure: Option<crate::openhuman::tool_status::ClassifiedFailure>,
     },
 
     /// A sub-agent was spawned during tool execution.
@@ -84,6 +101,11 @@ pub enum AgentProgress {
         /// "Researcher", "Coding Agent"). Falls back to `agent_id` in
         /// the UI when absent.
         display_name: Option<String>,
+        /// The full delegated prompt text. `prompt_chars` stays as the cheap
+        /// size hint; trace exporters record this (truncated + content-gated)
+        /// as the subagent span's input so a delegation is inspectable
+        /// end-to-end in Langfuse.
+        prompt: String,
     },
 
     /// A sub-agent completed successfully.
@@ -98,6 +120,9 @@ pub enum AgentProgress {
         iterations: u32,
         /// Character length of the sub-agent's final assistant text.
         output_chars: usize,
+        /// The sub-agent's full final assistant text. Trace exporters record
+        /// this (truncated + content-gated) as the subagent span's output.
+        output: String,
         /// Absolute path to the worker's isolated `git worktree` checkout,
         /// when it ran with `isolation = "worktree"` (#3376). `None` for
         /// non-isolated (read-only / shared-workspace) workers.
@@ -182,9 +207,19 @@ pub enum AgentProgress {
         /// actual result/output. `output_chars` is kept as a cheap size hint
         /// for consumers that only want the length.
         output: String,
+        /// The arguments the tool was invoked with, when the harness captured
+        /// them (`PayloadCapture::tool_io`). Backfills the tool span's input in
+        /// trace exports (the started event's `arguments` is `Null` on the
+        /// tinyagents path).
+        arguments: Option<serde_json::Value>,
         elapsed_ms: u64,
         /// 1-based child iteration index.
         iteration: u32,
+        /// Present when `success` is false: a user-facing classification of the
+        /// child tool failure, mirroring [`Self::ToolCallCompleted::failure`] so
+        /// a failed sub-agent row carries the same "why + what to do next" copy
+        /// instead of discarding the already-computed classification (#4459).
+        failure: Option<crate::openhuman::tool_status::ClassifiedFailure>,
     },
 
     /// A chunk of a sub-agent's visible assistant text arrived from the
@@ -278,9 +313,63 @@ pub enum AgentProgress {
         total_usd: f64,
     },
 
+    /// A single LLM call finished and reported usage. Unlike
+    /// [`Self::TurnCostUpdated`] (cumulative rollup), every field here is
+    /// **per-call**, so trace exporters can render each model invocation as
+    /// its own Langfuse generation with exact model + token + cost figures.
+    /// Emitted once per model call — parent-scope calls carry
+    /// `subagent_task_id: None`; child (subagent) calls carry the owning
+    /// task id so exporters can nest the generation under the subagent span.
+    ModelCallCompleted {
+        /// Model that served this call (tier handle or concrete model id).
+        model: String,
+        /// Provider that served this call (`"managed"`, `"openai"`,
+        /// `"ollama"`, …). Trace exporters render the Langfuse model as
+        /// `{provider_id}.{model}` (e.g. `managed.chat-v1`).
+        provider_id: String,
+        /// Owning subagent task id when this call ran inside a child run
+        /// (`spawn_subagent` / Context Scout). `None` for parent-scope calls.
+        subagent_task_id: Option<String>,
+        /// The request messages sent to the model (including the system
+        /// prompt), when the harness captured them
+        /// (`PayloadCapture::model_io`). Trace exporters record this as the
+        /// generation's input, gated on `capture_content`.
+        input: Option<serde_json::Value>,
+        /// The model completion (assistant message), when captured. Recorded
+        /// as the generation's output, gated on `capture_content`.
+        output: Option<serde_json::Value>,
+        /// 1-based iteration index (one model call per iteration).
+        iteration: u32,
+        /// Input/prompt tokens for this call.
+        input_tokens: u64,
+        /// Output/completion tokens for this call.
+        output_tokens: u64,
+        /// Input tokens served from a provider-side cache (cache reads).
+        cached_input_tokens: u64,
+        /// Input tokens written into a provider cache (cache creation).
+        cache_creation_tokens: u64,
+        /// Reasoning/thinking tokens, when the provider reports them.
+        reasoning_tokens: u64,
+        /// Best-available USD cost for this single call (charged when the
+        /// backend reported it, else a catalog estimate).
+        cost_usd: f64,
+    },
+
     /// The turn completed with a final text response.
     TurnCompleted {
         /// Total iterations used.
         iterations: u32,
+    },
+
+    /// The turn's content: the user's prompt and the model's final reply.
+    /// Emitted just before [`Self::TurnCompleted`] so a tracing consumer can
+    /// attach `input`/`output` to the turn span. Carries prompt/reply text, so
+    /// exporters must honor the opt-in `observability.agent_tracing.capture_content`
+    /// gate before transmitting it off-device.
+    TurnContent {
+        /// The user's prompt for this turn.
+        input: Option<String>,
+        /// The model's final reply for this turn.
+        output: Option<String>,
     },
 }

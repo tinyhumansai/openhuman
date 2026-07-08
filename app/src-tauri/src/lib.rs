@@ -20,6 +20,13 @@ mod cef_profile;
 // logic is unit-tested on any host; the Win32 glue is windows-only.
 #[cfg(any(target_os = "windows", test))]
 mod cef_singleton_wait;
+// macOS/Linux pre-CEF reap of a wedged prior instance that still holds the CEF
+// SingletonLock after an update relaunch (issue #4395, follow-up to #3605).
+// Marker-gated so it never reaps a healthy running instance. Compiled under
+// `test` too so the pure decision logic is unit-tested on any host; the
+// filesystem/signal glue is macOS/Linux-only.
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
+mod cef_stale_reap;
 mod claude_code;
 mod companion_commands;
 mod core_process;
@@ -601,6 +608,11 @@ async fn apply_app_update(
     log::info!("[app-update] install complete — relaunching");
     let _ = app.emit("app-update:status", "restarting");
 
+    // Drop a post-update relaunch marker so the freshly launched process can
+    // safely reap this instance if it wedges instead of exiting (issue #4395).
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    cef_stale_reap::write_update_relaunch_marker();
+
     log::info!("[app-update] starting early teardown before restart");
     perform_early_teardown_async(&app).await;
 
@@ -813,6 +825,11 @@ async fn install_app_update(
 
     log::info!("[app-update] install complete — relaunching");
     let _ = app.emit("app-update:status", "restarting");
+
+    // Drop a post-update relaunch marker so the freshly launched process can
+    // safely reap this instance if it wedges instead of exiting (issue #4395).
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    cef_stale_reap::write_update_relaunch_marker();
 
     log::info!("[app-update] starting early teardown before restart");
     perform_early_teardown_async(&app).await;
@@ -2013,6 +2030,23 @@ fn cef_disable_gpu_enabled(env_override: Option<&str>) -> bool {
     }
 }
 
+/// Pin CEF to ANGLE's pure-software SwiftShader GL backend.
+///
+/// SwiftShader is a software rasteriser that needs no hardware EGL/driver, so it
+/// gives both WebGL surfaces and GPU-process init a working (software) context
+/// on stacks where the hardware GPU path aborts. `--enable-unsafe-swiftshader`
+/// is required because Chromium gates SwiftShader-backed WebGL behind it (the
+/// "unsafe" label is about software perf, not security). `--disable-gpu-compositing`
+/// keeps page compositing on the CPU. Crucially this does **not** pass
+/// `--disable-gpu`, which would shut the GPU process down entirely — and with it
+/// the SwiftShader context that lets CEF start.
+fn push_swiftshader_software_gl(args: &mut Vec<CefCommandLineArg>) {
+    args.push(("--use-gl", Some("angle")));
+    args.push(("--use-angle", Some("swiftshader")));
+    args.push(("--enable-unsafe-swiftshader", None));
+    args.push(("--disable-gpu-compositing", None));
+}
+
 fn append_platform_cef_gpu_workarounds(
     args: &mut Vec<CefCommandLineArg>,
     os: &str,
@@ -2027,11 +2061,27 @@ fn append_platform_cef_gpu_workarounds(
     // do not reach the vendored CEF runtime. Provide a narrow, release-safe
     // env escape hatch instead of forwarding arbitrary Chromium flags.
     if disable_gpu {
-        args.push(("--disable-gpu", None));
-        args.push(("--disable-gpu-compositing", None));
-        log::info!(
-            "[cef-startup] OPENHUMAN_DISABLE_GPU set: adding --disable-gpu and --disable-gpu-compositing for CEF startup compatibility (issue #4294)"
-        );
+        if os == "windows" {
+            // Issue #4385: on NVIDIA Blackwell / RTX 50-series Windows stacks the
+            // bundled CEF's GPU process fails to initialise and bare
+            // `--disable-gpu` is not enough — `cef::initialize` still returns 0
+            // before any UI renders (#4294, #4385). `--disable-gpu` removes the
+            // GPU process without giving CEF a working software GL path, so init
+            // still aborts. Pin CEF to the pure-software ANGLE/SwiftShader backend
+            // instead — the same fallback the Linux #1697/#4193 path relies on —
+            // which needs no hardware driver and lets CEF start on GPUs the
+            // bundled Chromium doesn't yet support.
+            push_swiftshader_software_gl(args);
+            log::info!(
+                "[cef-startup] OPENHUMAN_DISABLE_GPU set on Windows: forcing ANGLE/SwiftShader software GL for CEF startup compatibility (issues #4294/#4385)"
+            );
+        } else {
+            args.push(("--disable-gpu", None));
+            args.push(("--disable-gpu-compositing", None));
+            log::info!(
+                "[cef-startup] OPENHUMAN_DISABLE_GPU set: adding --disable-gpu and --disable-gpu-compositing for CEF startup compatibility (issue #4294)"
+            );
+        }
     }
 
     // Issue #1697: on Arch/Manjaro-family Linux systems, the AppImage can
@@ -2061,10 +2111,7 @@ fn append_platform_cef_gpu_workarounds(
                 "[cef-startup] OPENHUMAN_FORCE_GPU set — skipping SwiftShader software-GL fallback (issue #1697). If the app fails to launch with a GPU process abort, unset the env var."
             );
         } else {
-            args.push(("--use-gl", Some("angle")));
-            args.push(("--use-angle", Some("swiftshader")));
-            args.push(("--enable-unsafe-swiftshader", None));
-            args.push(("--disable-gpu-compositing", None));
+            push_swiftshader_software_gl(args);
             log::info!(
                 "[cef-startup] Linux detected: forcing ANGLE/SwiftShader software GL so WebGL surfaces (Tiny Place world renderer, Rive mascot) render without the crash-prone hardware GPU process (issues #1697/#4193); set OPENHUMAN_FORCE_GPU=1 for hardware acceleration"
             );
@@ -2358,6 +2405,7 @@ pub fn run() {
             if openhuman_core::core::observability::is_transient_backend_api_failure(&event)
                 || openhuman_core::core::observability::is_transient_integrations_failure(&event)
                 || openhuman_core::core::observability::is_updater_transient_event(&event)
+                || openhuman_core::core::observability::is_skill_install_user_fetch_failure(&event)
             {
                 return None;
             }
@@ -2646,6 +2694,40 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     process_recovery::reap_stale_openhuman_processes();
 
+    // ── Windows pre-CEF proactive stale-process reap (issues #3605, #3900) ─
+    // The Win32 mutex above already guaranteed we are the only *top-level*
+    // GUI instance past that point — a concurrent secondary saw
+    // `ERROR_ALREADY_EXISTS` and exited before reaching here. So a surviving
+    // GUI `OpenHuman.exe` browser process is a *wedged prior instance* left
+    // behind by an update or hard exit, not a legitimate peer. Reap it
+    // proactively (TERM then KILL) — the cross-platform analogue of the macOS
+    // reap above.
+    //
+    // The reap is deliberately narrow (issue #3900): it targets ONLY the
+    // wedged GUI browser process. It never touches `OpenHuman.exe core` /
+    // `mcp` CLI/MCP sessions or the standalone `openhuman-core.exe` (which
+    // never take the CEF mutex and may be an active user session), never
+    // touches CEF `--type=` helper subprocesses (the OS job object reaps
+    // those with their parent), never touches this process's ancestors (the
+    // old app that spawned us during an update relaunch), and force-kills
+    // without `/T` so a tree walk can never reach the freshly launched app.
+    //
+    // This must run BEFORE `cef_singleton_wait::wait_for_cache_release()`:
+    // a wedged prior process that never exits on its own keeps the CEF
+    // cache lock until that bounded wait times out and exits this instance
+    // (code 0) — i.e. the updated app silently refuses to start until the
+    // user manually kills the old process (the exact #3605 symptom).
+    // Actively reaping the holder lets the new version take over instead of
+    // bailing out.
+    //
+    // NOT done on Linux here: unlike Windows, the Linux
+    // `tauri-plugin-single-instance` guard registers later (in the builder),
+    // so at this preflight point a concurrent second launch has no
+    // single-instance guarantee and a bare reap could kill a legitimate
+    // peer. Linux needs the macOS-style live-lock-holder guard first.
+    #[cfg(target_os = "windows")]
+    process_recovery::reap_stale_openhuman_processes();
+
     // ── Windows pre-CEF cache-lock wait (Sentry TAURI-RUST-F) ─────────────
     // The Win32 mutex above stops a *concurrent* second launch, but on a
     // *sequential* relaunch (auto-update, fast quit+reopen, restart) the prior
@@ -2685,6 +2767,19 @@ pub fn run() {
     // after the budget we exit cleanly (code 0). Stale locks (PID dead) are
     // removed so crashed processes don't block launches. macOS: issue #864.
     // Linux: OPENHUMAN-TAURI-K1. Sentry: TAURI-RUST-F.
+    //
+    // ── macOS/Linux pre-CEF stale-lock reap (issue #4395) ─────────────────
+    // Before the bounded wait above can only *time out* on a wedged prior
+    // instance (the #3605 symptom: the updated app silently refuses to start),
+    // proactively reap that instance — but ONLY when a recent post-update
+    // relaunch marker proves the CEF-lock holder is the pre-update process,
+    // never a healthy running one. This is the macOS/Linux analogue of the
+    // Windows pre-CEF reap, gated on a staleness signal because these targets
+    // have no early single-instance mutex. See `cef_stale_reap` for the safety
+    // rationale (and why the reverted #3793 SIGKILL is not reintroduced).
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    cef_stale_reap::reap_stale_cef_lock_holder();
+
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     cef_preflight::wait_for_cache_release();
 
@@ -3622,6 +3717,10 @@ pub fn run() {
                             // wake gate will fail-closed (no wakes fire) which
                             // is the safe posture for an automated harness.
                             owner_display_name: String::new(),
+                            // No mascot config on the dev-auto path → single
+                            // default voice (issue #4277).
+                            primary_voice_id: None,
+                            secondary_voice_id: None,
                         };
                         match meet_call::meet_call_open_window(app_handle.clone(), state, args)
                             .await

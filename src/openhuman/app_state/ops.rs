@@ -34,7 +34,15 @@ use crate::rpc::RpcOutcome;
 const LOG_PREFIX: &str = "[app_state]";
 const APP_STATE_FILENAME: &str = "app-state.json";
 const CURRENT_USER_REFRESH_TTL: Duration = Duration::from_secs(5);
-const RUNTIME_SNAPSHOT_TTL: Duration = Duration::from_secs(2);
+// Runtime-status widgets (screen intelligence / local AI / autocomplete /
+// service) tolerate ~10s of staleness. A short TTL (was 2s < the ~2.4s build
+// time) meant the cache was stale before it was even written, so the frontend's
+// ~4s `app_state_snapshot` poll never hit the fast path and every poll re-ran
+// the full 4-way fan-out (issue #4249 profiling: this, combined with the lack
+// of a single-flight gate, pegged ~2 cores and starved the shared tokio runtime
+// the agent harness runs on — the agent's turns stalled 50-100s between model
+// calls even though inference itself was idle).
+const RUNTIME_SNAPSHOT_TTL: Duration = Duration::from_secs(10);
 const AUTH_FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 const RUNTIME_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(10);
 const SNAPSHOT_SUB_OP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -44,12 +52,26 @@ static APP_STATE_FILE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 static CURRENT_USER_CACHE: Lazy<Mutex<Option<CachedCurrentUser>>> = Lazy::new(|| Mutex::new(None));
 static RUNTIME_SNAPSHOT_CACHE: Lazy<Mutex<Option<CachedRuntimeSnapshot>>> =
     Lazy::new(|| Mutex::new(None));
+/// Single-flight gate for the runtime-snapshot rebuild. Concurrent callers whose
+/// cache read missed serialize here so only ONE runs the expensive sub-op
+/// fan-out; the rest wait, then re-read the cache the winner populated (see the
+/// double-check in `build_runtime_snapshot`). This is an async mutex because the
+/// guard is held across `.await` points (the sub-op `join`). Without it, every
+/// overlapping `app_state_snapshot` poll launched its own build — the rebuild
+/// stampede described on `RUNTIME_SNAPSHOT_TTL`.
+static RUNTIME_SNAPSHOT_REBUILD: Lazy<tokio::sync::Mutex<()>> =
+    Lazy::new(|| tokio::sync::Mutex::new(()));
 static SNAPSHOT_REQ_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone)]
 struct CachedRuntimeSnapshot {
     snapshot: RuntimeSnapshot,
     fetched_at: Instant,
+    /// Config identity (`workspace_dir`) the snapshot was built for. The cache
+    /// holds one entry process-wide, so a snapshot built for one config must
+    /// never be served to another — otherwise a different user/workspace (or an
+    /// E2E test with an injected service mock) reads a stale, foreign runtime.
+    config_key: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -494,10 +516,20 @@ async fn finish_revalidated_user_activation(
             "{LOG_PREFIX} failed to bind memory client after pending session revalidation: {error}"
         );
     }
+    // Rebind the people store to the activated user's workspace, mirroring the
+    // memory-client rebind so people controllers/tools follow the active user
+    // instead of the pre-switch workspace (#4378).
+    if let Err(error) =
+        crate::openhuman::people::store::init_from_workspace(&target_config.workspace_dir)
+    {
+        warn!(
+            "{LOG_PREFIX} failed to bind people store after pending session revalidation: {error}"
+        );
+    }
     crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
         target_config.workspace_dir.clone(),
     );
-    if let Err(error) = crate::openhuman::subconscious::global::bootstrap_after_login().await {
+    if let Err(error) = crate::openhuman::subconscious::registry::bootstrap_after_login().await {
         warn!("{LOG_PREFIX} subconscious bootstrap failed after pending session revalidation: {error}");
     }
     if let Some(source_config) = service_rebind_source {
@@ -640,7 +672,7 @@ async fn clear_deferred_session_after_backend_rejection(
         Err(_) => {}
     }
     crate::openhuman::credentials::stop_login_gated_services(config).await;
-    crate::openhuman::subconscious::global::reset_engine_for_user_switch().await;
+    crate::openhuman::subconscious::registry::reset_engine_for_user_switch().await;
     crate::openhuman::credentials::sentry_scope::clear();
 
     clear_result
@@ -736,19 +768,58 @@ pub fn peek_cached_current_user_identity() -> Option<crate::openhuman::agent::pr
     }
 }
 
+/// Return the cached runtime snapshot when it is still within
+/// `RUNTIME_SNAPSHOT_TTL`, else `None`. Kept as a small helper so both the
+/// fast-path read and the post-lock double-check share identical freshness logic.
+/// A service-status mock is injected via `OPENHUMAN_SERVICE_MOCK` (test-only env
+/// hook that production `service` status already honors). While it is active the
+/// runtime snapshot must never be served from — or written to — the process-
+/// global cache: the mock's state changes between calls, so caching it would
+/// both mask the freshly-injected value and poison later (non-mocked) reads.
+fn service_status_mock_active() -> bool {
+    std::env::var_os("OPENHUMAN_SERVICE_MOCK").is_some()
+}
+
+fn fresh_cached_runtime_snapshot(config: &Config, req_id: u64) -> Option<RuntimeSnapshot> {
+    if service_status_mock_active() {
+        return None;
+    }
+    let cache = RUNTIME_SNAPSHOT_CACHE.lock();
+    let entry = cache.as_ref()?;
+    // A snapshot built for a different config identity is a miss: rebuild against
+    // this config rather than serve another workspace's runtime.
+    if entry.config_key != config.workspace_dir {
+        return None;
+    }
+    let age = entry.fetched_at.elapsed();
+    if age < RUNTIME_SNAPSHOT_TTL {
+        debug!(
+            "{LOG_PREFIX} build_runtime_snapshot: returning cached snapshot req_id={req_id} age_ms={}",
+            age.as_millis()
+        );
+        Some(entry.snapshot.clone())
+    } else {
+        None
+    }
+}
+
 async fn build_runtime_snapshot(config: &Config, req_id: u64) -> RuntimeSnapshot {
-    {
-        let cache = RUNTIME_SNAPSHOT_CACHE.lock();
-        if let Some(entry) = cache.as_ref() {
-            if entry.fetched_at.elapsed() < RUNTIME_SNAPSHOT_TTL {
-                debug!(
-                    "{LOG_PREFIX} build_runtime_snapshot: returning cached snapshot req_id={} age_ms={}",
-                    req_id,
-                    entry.fetched_at.elapsed().as_millis()
-                );
-                return entry.snapshot.clone();
-            }
-        }
+    // Fast path: a fresh cached snapshot serves every poller without touching the
+    // sub-op fan-out.
+    if let Some(snapshot) = fresh_cached_runtime_snapshot(config, req_id) {
+        return snapshot;
+    }
+
+    // Cache miss: single-flight the rebuild so only one caller runs the expensive
+    // fan-out. Waiters re-check the cache the winner just populated (this
+    // double-check) and return it instead of launching a duplicate build —
+    // collapsing an N-way stampede into one build per TTL window.
+    let _rebuild_guard = RUNTIME_SNAPSHOT_REBUILD.lock().await;
+    if let Some(snapshot) = fresh_cached_runtime_snapshot(config, req_id) {
+        debug!(
+            "{LOG_PREFIX} build_runtime_snapshot: coalesced onto concurrent rebuild req_id={req_id}"
+        );
+        return snapshot;
     }
 
     let si_config = config.screen_intelligence.clone();
@@ -870,10 +941,15 @@ async fn build_runtime_snapshot(config: &Config, req_id: u64) -> RuntimeSnapshot
         service: service.0,
     };
 
-    *RUNTIME_SNAPSHOT_CACHE.lock() = Some(CachedRuntimeSnapshot {
-        snapshot: snapshot.clone(),
-        fetched_at: Instant::now(),
-    });
+    // Don't cache a snapshot built under an injected service mock (see
+    // `service_status_mock_active`) — it would poison later non-mocked reads.
+    if !service_status_mock_active() {
+        *RUNTIME_SNAPSHOT_CACHE.lock() = Some(CachedRuntimeSnapshot {
+            snapshot: snapshot.clone(),
+            fetched_at: Instant::now(),
+            config_key: config.workspace_dir.clone(),
+        });
+    }
 
     snapshot
 }

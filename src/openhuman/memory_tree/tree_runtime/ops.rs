@@ -44,10 +44,10 @@ pub async fn tree_summarizer_run(
 ) -> Result<RpcOutcome<Value>, String> {
     store::validate_namespace(namespace)?;
 
-    let (provider, model) = create_provider(config)?;
+    let (provider, _model) = create_provider(config)?;
     let ts = Utc::now();
 
-    match engine::run_summarization(config, provider.as_ref(), &model, namespace.trim(), ts).await {
+    match engine::run_summarization(config, provider.as_ref(), namespace.trim(), ts).await {
         Ok(Some(node)) => Ok(RpcOutcome::single_log(
             serde_json::to_value(&node).map_err(|e| e.to_string())?,
             format!(
@@ -126,9 +126,9 @@ pub async fn tree_summarizer_rebuild(
 ) -> Result<RpcOutcome<Value>, String> {
     store::validate_namespace(namespace)?;
 
-    let (provider, model) = create_provider(config)?;
+    let (provider, _model) = create_provider(config)?;
 
-    let status = engine::rebuild_tree(config, provider.as_ref(), &model, namespace.trim())
+    let status = engine::rebuild_tree(config, provider.as_ref(), namespace.trim())
         .await
         .map_err(|e| format!("rebuild failed: {e:#}"))?;
 
@@ -166,15 +166,24 @@ fn create_provider(
     config: &Config,
 ) -> Result<
     (
-        Box<dyn crate::openhuman::inference::provider::traits::Provider>,
+        std::sync::Arc<dyn tinyagents::harness::model::ChatModel<()>>,
         String,
     ),
     String,
 > {
+    // The summarizer applies its own temperature per request
+    // (`SUMMARIZATION_TEMP` in `engine`), so the construction temperature here is
+    // just a default the per-call value overrides.
     if config.local_ai.runtime_enabled {
         // Local path: Ollama + the user's local chat model.
         let provider = create_local_ai_provider(config)?;
-        return Ok((provider, config.local_ai.chat_model_id.clone()));
+        let model = config.local_ai.chat_model_id.clone();
+        let chat = crate::openhuman::inference::provider::chat_model_from_provider(
+            provider,
+            model.clone(),
+            config.default_temperature,
+        );
+        return Ok((chat, model));
     }
 
     if !config.memory_tree.cloud_summarization_opt_in {
@@ -185,8 +194,12 @@ fn create_provider(
 
     // Cloud path — user has explicitly opted in. Build the configured
     // provider for the summarization role (`memory_provider` hint).
-    crate::openhuman::inference::provider::factory::create_chat_provider("summarization", config)
-        .map_err(|e| format!("tree summarizer: failed to build cloud provider: {e:#}"))
+    crate::openhuman::inference::provider::create_chat_model_with_model_id(
+        "summarization",
+        config,
+        config.default_temperature,
+    )
+    .map_err(|e| format!("tree summarizer: failed to build cloud provider: {e:#}"))
 }
 
 /// Whether a summarization provider can be resolved for "Build Summary Trees"

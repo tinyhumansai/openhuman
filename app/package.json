@@ -1,6 +1,6 @@
 {
   "name": "openhuman-app",
-  "version": "0.58.6",
+  "version": "0.58.12",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
@@ -91,6 +91,7 @@
     "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-os": "^2.3.2",
     "@types/three": "^0.183.1",
+    "@xyflow/react": "^12.11.1",
     "buffer": "^6.0.3",
     "cmdk": "^1.1.1",
     "d3-force": "^3.0.0",
@@ -136,6 +137,7 @@
     "@trivago/prettier-plugin-sort-imports": "^6.0.2",
     "@types/d3-force": "^3.0.10",
     "@types/debug": "^4.1.12",
+    "@types/jest-axe": "^3.5.9",
     "@types/node": "^25.0.10",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
@@ -157,6 +159,7 @@
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.0.1",
     "husky": "^9.1.7",
+    "jest-axe": "^10.0.0",
     "jsdom": "^28.0.0",
     "knip": "^6.3.1",
     "postcss": "^8.5.6",

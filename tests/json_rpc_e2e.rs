@@ -3,6 +3,7 @@
 //! Isolates config under a temp `HOME` so auth profiles and the OpenHuman provider resolve
 //! the same state directory. Run with: `cargo test --test json_rpc_e2e`
 
+use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -120,6 +121,141 @@ fn with_chat_completion_requests<T>(f: impl FnOnce(&mut Vec<Value>) -> T) -> T {
             f(&mut guard)
         }
     }
+}
+
+// ── Scripted chat-completion FIFO (in-process, node-mock-free) ───────────────
+//
+// The heuristic `chat_completions` mock can't script tool calls, so agent-driven
+// flows (`flows_build` / `flows_discover`) and agent-node flow runs had no way to
+// exercise a deterministic tool_call / planner-drafter arc in-process. This FIFO
+// mirrors the node mock's `llmForcedResponses` (`scripts/mock-api/routes/llm.mjs`)
+// without pulling in a node dependency: a test pushes OpenAI-shape response
+// bodies, and the chat-completions handler pops the first *matching* one before
+// falling back to its heuristic.
+//
+// Entries are optionally gated on a marker substring appearing in the serialized
+// request body (`when_contains`). That gate is what makes the arc robust against
+// the "FIFO-drain" hazard the plan flags: a builder/scout turn may emit side
+// completions (memory summarization, etc.) that don't carry the marker, so they
+// hit the heuristic fallback instead of consuming a scripted response meant for a
+// different node. Matching entries are still served in strict FIFO order among
+// themselves, so a two-turn tool loop (tool_call turn, then terminal-text turn)
+// stays ordered.
+static FORCED_CHAT_COMPLETIONS: OnceLock<Mutex<VecDeque<ForcedChatCompletion>>> = OnceLock::new();
+
+#[derive(Clone)]
+struct ForcedChatCompletion {
+    /// When `Some`, only serve this entry if the serialized request body contains
+    /// this marker. `None` matches any request (strict FIFO).
+    when_contains: Option<String>,
+    /// The OpenAI-shape chat-completion body to return verbatim.
+    body: Value,
+}
+
+fn with_forced_chat_completions<T>(f: impl FnOnce(&mut VecDeque<ForcedChatCompletion>) -> T) -> T {
+    let mutex = FORCED_CHAT_COMPLETIONS.get_or_init(|| Mutex::new(VecDeque::new()));
+    match mutex.lock() {
+        Ok(mut guard) => f(&mut guard),
+        Err(poisoned) => {
+            let mut guard = poisoned.into_inner();
+            f(&mut guard)
+        }
+    }
+}
+
+/// Drop every queued scripted completion. Call between test sections so a leftover
+/// entry can never bleed into an unrelated arc.
+#[allow(dead_code)]
+fn clear_forced_chat_completions() {
+    with_forced_chat_completions(|q| q.clear());
+}
+
+/// RAII guard that drains the process-global scripted-completion FIFO on drop —
+/// including on an assertion panic mid-test. A trailing `clear_forced_chat_completions()`
+/// call only runs on the happy path; if an `assert!` unwinds first, the leftover
+/// scripted entries would otherwise be consumed by a later test sharing this
+/// binary. Hold one for the whole body of any test that queues completions.
+#[allow(dead_code)]
+struct ScriptedFifoGuard;
+
+impl Drop for ScriptedFifoGuard {
+    fn drop(&mut self) {
+        clear_forced_chat_completions();
+    }
+}
+
+/// Queue an unconditional scripted completion (strict FIFO — matches any request).
+#[allow(dead_code)]
+fn push_forced_chat_completion(body: Value) {
+    with_forced_chat_completions(|q| {
+        q.push_back(ForcedChatCompletion {
+            when_contains: None,
+            body,
+        })
+    });
+}
+
+/// Queue a scripted completion gated on `marker` appearing in the request body.
+#[allow(dead_code)]
+fn push_forced_chat_completion_when(marker: &str, body: Value) {
+    with_forced_chat_completions(|q| {
+        q.push_back(ForcedChatCompletion {
+            when_contains: Some(marker.to_string()),
+            body,
+        })
+    });
+}
+
+/// Pop the first queued completion whose marker matches `request_body`
+/// (unconditional entries always match), preserving FIFO order among matches.
+fn take_forced_chat_completion(request_body: &Value) -> Option<Value> {
+    let haystack = request_body.to_string();
+    with_forced_chat_completions(|q| {
+        let idx = q.iter().position(|entry| match &entry.when_contains {
+            Some(marker) => haystack.contains(marker.as_str()),
+            None => true,
+        })?;
+        q.remove(idx).map(|entry| entry.body)
+    })
+}
+
+/// A scripted plain-text assistant completion in the OpenAI shape the managed
+/// backend parses (mirrors the node mock's non-streaming `makeChoice`).
+#[allow(dead_code)]
+fn forced_text_completion(content: &str) -> Value {
+    json!({
+        "choices": [{
+            "index": 0,
+            "message": { "role": "assistant", "content": content },
+            "finish_reason": "stop"
+        }],
+        "usage": { "prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20 }
+    })
+}
+
+/// A scripted single-tool-call assistant completion. `arguments` is serialized to
+/// the JSON string the OpenAI tool-calling contract (and the harness) expects.
+#[allow(dead_code)]
+fn forced_tool_call_completion(tool_name: &str, arguments: Value) -> Value {
+    json!({
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": format!("call_{tool_name}"),
+                    "type": "function",
+                    "function": {
+                        "name": tool_name,
+                        "arguments": arguments.to_string()
+                    }
+                }]
+            },
+            "finish_reason": "tool_calls"
+        }],
+        "usage": { "prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20 }
+    })
 }
 
 fn mock_upstream_router() -> Router {
@@ -242,6 +378,11 @@ fn mock_upstream_router() -> Router {
                 "body": body.clone(),
             }))
         });
+        // A scripted response (tool_call or plain completion) wins over the
+        // heuristic when one is queued and matches this request.
+        if let Some(forced) = take_forced_chat_completion(&body) {
+            return Json(forced);
+        }
         let is_triage_turn = body
             .get("messages")
             .and_then(Value::as_array)
@@ -2173,16 +2314,22 @@ async fn json_rpc_model_council_runs_with_default_sentinel_and_repeated_jury_sea
         "mock chair synthesis should be returned: {result}"
     );
 
-    let captured_models = with_chat_completion_models(|models| models.clone());
+    // The council's jury members run concurrently (08.1 map_reduce), so the
+    // order the mock records their model ids is non-deterministic — only the
+    // multiset is a stable contract: two default-sentinel seats + one critic
+    // member + one default chair call. Compare sorted so a member reorder can't
+    // flake the gate.
+    let mut captured_models = with_chat_completion_models(|models| models.clone());
+    captured_models.sort();
     assert_eq!(
         captured_models,
         vec![
-            "e2e-mock-model",
-            "e2e-mock-model",
             "critic-model",
-            "e2e-mock-model"
+            "e2e-mock-model",
+            "e2e-mock-model",
+            "e2e-mock-model",
         ],
-        "three member calls plus one default chair call should be made"
+        "three member calls (two default seats + one critic) plus one default chair call should be made"
     );
     let captured_requests = with_chat_completion_requests(|requests| requests.clone());
     assert_eq!(captured_requests.len(), 4);
@@ -3362,6 +3509,77 @@ async fn json_rpc_thread_turn_state_lifecycle() {
             .and_then(serde_json::Value::as_u64),
         Some(1)
     );
+
+    // Seed a second, later turn on the same thread — the per-turn ring keeps
+    // both instead of overwriting.
+    // Far-future started_at guarantees turn-2 is the newest (turn-1 was seeded
+    // with the real `now()`), so history ordering is deterministic.
+    let mut state2 = openhuman_core::openhuman::threads::turn_state::TurnState::started(
+        "thread-turn-1",
+        "req-turn-2",
+        25,
+        "2999-01-01T00:00:00Z",
+    );
+    state2.lifecycle = openhuman_core::openhuman::threads::turn_state::TurnLifecycle::Completed;
+    state2.updated_at = "2999-01-01T00:00:00Z".into();
+    openhuman_core::openhuman::threads::turn_state::store::put(workspace_dir.clone(), &state2)
+        .expect("seed snapshot 2");
+
+    // history → both turns, newest first.
+    let history = post_json_rpc(
+        &rpc_base,
+        9106,
+        "openhuman.threads_turn_state_history",
+        json!({ "thread_id": "thread-turn-1" }),
+    )
+    .await;
+    let history_outer = assert_no_jsonrpc_error(&history, "turn_state_history");
+    let turns = history_outer
+        .get("data")
+        .and_then(|d| d.get("turnStates"))
+        .and_then(serde_json::Value::as_array)
+        .expect("turnStates array");
+    assert_eq!(turns.len(), 2, "both turns retained");
+    assert_eq!(
+        turns[0]
+            .get("requestId")
+            .and_then(serde_json::Value::as_str),
+        Some("req-turn-2"),
+        "newest turn first"
+    );
+
+    // get_turn → the specific earlier turn.
+    let get_turn = post_json_rpc(
+        &rpc_base,
+        9107,
+        "openhuman.threads_turn_state_get_turn",
+        json!({ "thread_id": "thread-turn-1", "request_id": "req-turn-1" }),
+    )
+    .await;
+    let get_turn_outer = assert_no_jsonrpc_error(&get_turn, "turn_state_get_turn (present)");
+    assert_eq!(
+        get_turn_outer
+            .get("data")
+            .and_then(|d| d.get("turnState"))
+            .and_then(|t| t.get("requestId"))
+            .and_then(serde_json::Value::as_str),
+        Some("req-turn-1")
+    );
+
+    // get_turn for an unknown request → null.
+    let get_turn_missing = post_json_rpc(
+        &rpc_base,
+        9108,
+        "openhuman.threads_turn_state_get_turn",
+        json!({ "thread_id": "thread-turn-1", "request_id": "nope" }),
+    )
+    .await;
+    let missing_outer = assert_no_jsonrpc_error(&get_turn_missing, "turn_state_get_turn (absent)");
+    assert!(missing_outer
+        .get("data")
+        .and_then(|d| d.get("turnState"))
+        .map(|v| v.is_null())
+        .unwrap_or(true));
 
     // clear → cleared:true
     let cleared = post_json_rpc(
@@ -5547,6 +5765,103 @@ async fn json_rpc_screen_intelligence_capture_test_returns_stable_shape() {
 
     mock_join.abort();
     rpc_join.abort();
+}
+
+#[tokio::test]
+async fn json_rpc_subconscious_status_exposes_instances_and_trigger_takes_kind() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // ── subconscious.status: legacy top-level fields + instances[] ──────────
+    let status = post_json_rpc(&rpc_base, 1101, "openhuman.subconscious_status", json!({})).await;
+    let result = assert_no_jsonrpc_error(&status, "subconscious_status");
+    let status_result = result.get("result").unwrap_or(result);
+
+    // Legacy flattened fields (backward compat) mirror the memory instance.
+    assert_eq!(
+        status_result.get("instance").and_then(Value::as_str),
+        Some("memory"),
+        "legacy top-level mirrors the memory instance: {status_result}"
+    );
+    assert!(
+        status_result.get("mode").and_then(Value::as_str).is_some(),
+        "expected top-level mode string: {status_result}"
+    );
+    assert!(
+        status_result
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .is_some(),
+        "expected top-level enabled bool: {status_result}"
+    );
+
+    // Additive: instances[] with at least the memory row, each tagged.
+    let instances = status_result
+        .get("instances")
+        .and_then(Value::as_array)
+        .expect("expected instances array");
+    assert!(
+        !instances.is_empty(),
+        "instances not empty: {status_result}"
+    );
+    assert!(
+        instances
+            .iter()
+            .any(|row| row.get("instance").and_then(Value::as_str) == Some("memory")),
+        "instances includes the memory row: {status_result}"
+    );
+
+    // ── subconscious.trigger: optional kind echoes back ─────────────────────
+    let trig = post_json_rpc(
+        &rpc_base,
+        1102,
+        "openhuman.subconscious_trigger",
+        json!({ "kind": "tinyplace" }),
+    )
+    .await;
+    let trig_result = assert_no_jsonrpc_error(&trig, "subconscious_trigger");
+    let trig_body = trig_result.get("result").unwrap_or(trig_result);
+    assert_eq!(
+        trig_body.get("triggered").and_then(Value::as_bool),
+        Some(true),
+        "trigger fire-and-forget acks: {trig_body}"
+    );
+    assert_eq!(
+        trig_body.get("kind").and_then(Value::as_str),
+        Some("tinyplace"),
+        "trigger echoes the requested kind: {trig_body}"
+    );
+
+    // An unknown kind is a clean JSON-RPC error, not a panic.
+    let bad = post_json_rpc(
+        &rpc_base,
+        1103,
+        "openhuman.subconscious_trigger",
+        json!({ "kind": "nope" }),
+    )
+    .await;
+    assert!(
+        bad.get("error").is_some(),
+        "unknown kind returns a JSON-RPC error: {bad}"
+    );
+
+    rpc_join.abort();
+    mock_join.abort();
 }
 
 #[tokio::test]
@@ -8577,7 +8892,7 @@ async fn credentials_crud_roundtrip() {
     rpc_join.abort();
 }
 
-/// End-to-end coverage for `openhuman.workflows_uninstall`.
+/// End-to-end coverage for `openhuman.skills_uninstall`.
 ///
 /// Validates that the RPC method is registered, wire-decodes
 /// `UninstallSkillParams`, resolves the slug against
@@ -8617,11 +8932,11 @@ async fn skills_uninstall_rpc_e2e() {
     let ok = post_json_rpc(
         &rpc_base,
         6001,
-        "openhuman.workflows_uninstall",
+        "openhuman.skills_uninstall",
         json!({ "name": slug }),
     )
     .await;
-    let ok_result = assert_no_jsonrpc_error(&ok, "workflows_uninstall success");
+    let ok_result = assert_no_jsonrpc_error(&ok, "skills_uninstall success");
     assert_eq!(
         ok_result.get("name").and_then(Value::as_str),
         Some(slug),
@@ -8650,7 +8965,7 @@ async fn skills_uninstall_rpc_e2e() {
     let missing = post_json_rpc(
         &rpc_base,
         6002,
-        "openhuman.workflows_uninstall",
+        "openhuman.skills_uninstall",
         json!({ "name": "does-not-exist" }),
     )
     .await;
@@ -8671,7 +8986,7 @@ async fn skills_uninstall_rpc_e2e() {
     let traversal = post_json_rpc(
         &rpc_base,
         6003,
-        "openhuman.workflows_uninstall",
+        "openhuman.skills_uninstall",
         json!({ "name": "../etc" }),
     )
     .await;
@@ -9844,9 +10159,18 @@ async fn json_rpc_meet_agent_session_lifecycle() {
     // 4) Give the spawned brain turn a chance to finish, then poll for
     //    synthesized PCM. The stub TTS produces 200 ms of 440 Hz tone
     //    which encodes to ~6.4 KB of base64.
+    //
+    //    The brain turn runs the full agentic path (`run_single`) before it
+    //    can fall back to the spoken ack that gets stub-TTS'd. In this
+    //    hermetic setup BACKEND_URL is unset, so each provider attempt must
+    //    fail a real connection first; since issue #4249 the turn also tries
+    //    one same-family fallback route (Workstream 02.2), so the ack (and its
+    //    audio) can take a few seconds to materialize — well under the 20 s
+    //    agentic timeout. Poll generously (up to ~12 s) so the assertion tracks
+    //    "audio is eventually synthesized", not a fragile sub-second deadline.
     let mut got_audio = false;
-    for _ in 0..20 {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+    for _ in 0..120 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
         let r = post_json_rpc(
             &rpc_base,
             9150,
@@ -10003,7 +10327,7 @@ async fn whatsapp_data_agent_tools_e2e_1341() {
     .expect("ingest");
 
     // Helper: parse a successful Tool response back into JSON.
-    fn parse_tool_output(result: openhuman_core::openhuman::workflows::types::ToolResult) -> Value {
+    fn parse_tool_output(result: openhuman_core::openhuman::skills::types::ToolResult) -> Value {
         assert!(!result.is_error, "tool returned error: {result:?}");
         serde_json::from_str(&result.output()).expect("tool output is valid JSON")
     }
@@ -12055,7 +12379,7 @@ async fn json_rpc_workflows_lifecycle_round_trip() {
     let create = post_json_rpc(
         &rpc_base,
         9201,
-        "openhuman.workflows_create",
+        "openhuman.skills_create",
         json!({
             "name": "Bug Triage",
             "description": "How to handle an incoming bug report",
@@ -12063,7 +12387,7 @@ async fn json_rpc_workflows_lifecycle_round_trip() {
         }),
     )
     .await;
-    let create_result = assert_no_jsonrpc_error(&create, "workflows_create");
+    let create_result = assert_no_jsonrpc_error(&create, "skills_create");
     let wf = create_result
         .get("workflow")
         .expect("workflow in create result");
@@ -12073,8 +12397,8 @@ async fn json_rpc_workflows_lifecycle_round_trip() {
     assert_eq!(wf.get("name").and_then(Value::as_str), Some("bug-triage"));
 
     // 2. List reflects the new workflow.
-    let list = post_json_rpc(&rpc_base, 9202, "openhuman.workflows_list", json!({})).await;
-    let list_result = assert_no_jsonrpc_error(&list, "workflows_list");
+    let list = post_json_rpc(&rpc_base, 9202, "openhuman.skills_list", json!({})).await;
+    let list_result = assert_no_jsonrpc_error(&list, "skills_list");
     let workflows = list_result
         .get("workflows")
         .and_then(Value::as_array)
@@ -12084,17 +12408,17 @@ async fn json_rpc_workflows_lifecycle_round_trip() {
         workflows[0].get("id").and_then(Value::as_str),
         Some("bug-triage")
     );
-    // when_to_use is surfaced via `workflows_describe` (step 3), not the list summary.
+    // when_to_use is surfaced via `skills_describe` (step 3), not the list summary.
 
     // 3. Describe returns the workflow's display name, when-to-use, and inputs.
     let describe = post_json_rpc(
         &rpc_base,
         9203,
-        "openhuman.workflows_describe",
+        "openhuman.skills_describe",
         json!({ "workflow_id": "bug-triage" }),
     )
     .await;
-    let describe_result = assert_no_jsonrpc_error(&describe, "workflows_describe");
+    let describe_result = assert_no_jsonrpc_error(&describe, "skills_describe");
     // Display name isn't separately preserved today — create slugifies it, so
     // describe reflects the slug. (Preserving the human display name is a known
     // minor gap, tracked separately.)
@@ -12118,19 +12442,19 @@ async fn json_rpc_workflows_lifecycle_round_trip() {
     let uninstall = post_json_rpc(
         &rpc_base,
         9205,
-        "openhuman.workflows_uninstall",
+        "openhuman.skills_uninstall",
         json!({ "name": "bug-triage" }),
     )
     .await;
-    let uninstall_result = assert_no_jsonrpc_error(&uninstall, "workflows_uninstall");
+    let uninstall_result = assert_no_jsonrpc_error(&uninstall, "skills_uninstall");
     assert_eq!(
         uninstall_result.get("name").and_then(Value::as_str),
         Some("bug-triage"),
         "uninstall echoes the slug it removed"
     );
 
-    let after = post_json_rpc(&rpc_base, 9206, "openhuman.workflows_list", json!({})).await;
-    let after_result = assert_no_jsonrpc_error(&after, "workflows_list");
+    let after = post_json_rpc(&rpc_base, 9206, "openhuman.skills_list", json!({})).await;
+    let after_result = assert_no_jsonrpc_error(&after, "skills_list");
     assert!(
         after_result
             .get("workflows")
@@ -12138,6 +12462,1085 @@ async fn json_rpc_workflows_lifecycle_round_trip() {
             .expect("workflows array")
             .is_empty(),
         "no workflows after uninstall"
+    );
+
+    api_join.abort();
+    rpc_join.abort();
+}
+
+// ── openhuman.flows_* (tinyflows) JSON-RPC E2E — PHASE 1e (G5) ─────────────
+//
+// These exercise the tinyflows `flows_*` controller surface end-to-end over
+// HTTP JSON-RPC (distinct from the legacy markdown `workflows_*` namespace
+// covered above). Flows persist to a SQLite store + durable checkpoint under
+// the temp `$HOME/.openhuman` workspace, so each test isolates `HOME`.
+//
+// All flows ops wrap their value with a log line, so `into_cli_compatible_json`
+// emits `{ "result": <value>, "logs": [...] }` — peel that envelope with
+// `peel_logs_envelope` before asserting on the inner payload.
+
+/// Shared boot for a flows E2E: isolates `HOME`, seeds a minimal config against
+/// a mock upstream, and stands up the core HTTP router. Returns the rpc base
+/// URL plus the join handles + tempdir the caller must keep alive/abort.
+async fn boot_flows_rpc_env() -> (
+    String,
+    tempfile::TempDir,
+    tokio::task::JoinHandle<std::io::Result<()>>,
+    tokio::task::JoinHandle<std::io::Result<()>>,
+    Vec<EnvVarGuard>,
+) {
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let guards = vec![
+        EnvVarGuard::set_to_path("HOME", home),
+        EnvVarGuard::unset("OPENHUMAN_WORKSPACE"),
+        EnvVarGuard::unset("BACKEND_URL"),
+        EnvVarGuard::unset("VITE_BACKEND_URL"),
+        EnvVarGuard::unset("OPENHUMAN_API_URL"),
+    ];
+
+    let (api_addr, api_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let api_origin = format!("http://{api_addr}");
+    write_min_config(openhuman_home.as_path(), &api_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    (rpc_base, tmp, api_join, rpc_join, guards)
+}
+
+/// The smallest valid graph with a human-in-the-loop approval gate:
+/// `trigger → gate(requires_approval) → downstream`. A run pauses at `gate`;
+/// approving it via `flows_resume` runs `downstream`.
+fn approval_gated_graph_json() -> Value {
+    json!({
+        "name": "approval-gated",
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Trigger" },
+            { "id": "gate", "kind": "output_parser", "name": "Gate", "config": { "requires_approval": true } },
+            { "id": "downstream", "kind": "output_parser", "name": "Downstream" }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "gate" },
+            { "from_node": "gate", "to_node": "downstream" }
+        ]
+    })
+}
+
+/// Full flows lifecycle over JSON-RPC:
+/// create → run (park on approval) → inspect steps via get_run/list_runs →
+/// resume (approve) to completion → run again → cancel_run the parked run →
+/// delete. Note: there is no dedicated `flows_cancel` for an in-flight run;
+/// cancel operates on a run id (checkpoint thread id), so we cancel a *fresh*
+/// parked run rather than the already-completed one (cancelling a terminal run
+/// is an error).
+#[tokio::test]
+async fn json_rpc_flows_lifecycle_round_trip() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let (rpc_base, _tmp, api_join, rpc_join, _guards) = boot_flows_rpc_env().await;
+
+    // 1. Create an approval-gated flow.
+    let create = post_json_rpc(
+        &rpc_base,
+        9301,
+        "openhuman.flows_create",
+        json!({ "name": "Gated Demo", "graph": approval_gated_graph_json() }),
+    )
+    .await;
+    let flow = peel_logs_envelope(assert_no_jsonrpc_error(&create, "flows_create"));
+    let flow_id = flow
+        .get("id")
+        .and_then(Value::as_str)
+        .expect("flow id in create result")
+        .to_string();
+    assert_eq!(flow.get("name").and_then(Value::as_str), Some("Gated Demo"));
+    assert_eq!(flow.get("enabled").and_then(Value::as_bool), Some(true));
+
+    // 2. List reflects exactly the new flow.
+    let list = post_json_rpc(&rpc_base, 9302, "openhuman.flows_list", json!({})).await;
+    let flows = peel_logs_envelope(assert_no_jsonrpc_error(&list, "flows_list"))
+        .as_array()
+        .expect("flows array");
+    assert_eq!(flows.len(), 1, "exactly one flow after create");
+    assert_eq!(
+        flows[0].get("id").and_then(Value::as_str),
+        Some(flow_id.as_str())
+    );
+
+    // 3. Run — pauses at the approval gate. Capture the thread id.
+    let run = post_json_rpc(
+        &rpc_base,
+        9303,
+        "openhuman.flows_run",
+        json!({ "id": flow_id, "input": { "x": 1 } }),
+    )
+    .await;
+    let run_out = peel_logs_envelope(assert_no_jsonrpc_error(&run, "flows_run"));
+    let thread_id = run_out
+        .get("thread_id")
+        .and_then(Value::as_str)
+        .expect("thread_id in run result")
+        .to_string();
+    let pending = run_out
+        .get("pending_approvals")
+        .and_then(Value::as_array)
+        .expect("pending_approvals array");
+    assert!(
+        pending.iter().any(|v| v == "gate"),
+        "run must park on the `gate` approval, got: {pending:?}"
+    );
+    // Downstream must NOT have run while the gate is pending.
+    assert!(run_out["output"]["nodes"]["downstream"].is_null());
+
+    // 4. Inspect the run via get_run — status pending_approval, steps recorded.
+    let get_run = post_json_rpc(
+        &rpc_base,
+        9304,
+        "openhuman.flows_get_run",
+        json!({ "run_id": thread_id }),
+    )
+    .await;
+    let run_row = peel_logs_envelope(assert_no_jsonrpc_error(&get_run, "flows_get_run"));
+    assert_eq!(
+        run_row.get("status").and_then(Value::as_str),
+        Some("pending_approval")
+    );
+    assert_eq!(
+        run_row.get("thread_id").and_then(Value::as_str),
+        Some(thread_id.as_str())
+    );
+    assert!(
+        run_row.get("steps").and_then(Value::as_array).is_some(),
+        "get_run returns a steps array"
+    );
+
+    // 5. list_runs surfaces the same single run.
+    let list_runs = post_json_rpc(
+        &rpc_base,
+        9305,
+        "openhuman.flows_list_runs",
+        json!({ "id": flow_id }),
+    )
+    .await;
+    let runs = peel_logs_envelope(assert_no_jsonrpc_error(&list_runs, "flows_list_runs"))
+        .as_array()
+        .expect("runs array");
+    assert_eq!(runs.len(), 1, "exactly one run after a single flows_run");
+    assert_eq!(
+        runs[0].get("id").and_then(Value::as_str),
+        Some(thread_id.as_str())
+    );
+
+    // 6. Resume with the gate approved — completes and runs downstream.
+    let resume = post_json_rpc(
+        &rpc_base,
+        9306,
+        "openhuman.flows_resume",
+        json!({ "id": flow_id, "thread_id": thread_id, "approvals": ["gate"] }),
+    )
+    .await;
+    let resume_out = peel_logs_envelope(assert_no_jsonrpc_error(&resume, "flows_resume"));
+    assert_eq!(resume_out["pending_approvals"], json!([]));
+    assert!(
+        !resume_out["output"]["nodes"]["downstream"]["items"].is_null(),
+        "downstream should run once the gate is approved via resume"
+    );
+
+    // The persisted run row must now be terminal `completed`.
+    let get_run2 = post_json_rpc(
+        &rpc_base,
+        9307,
+        "openhuman.flows_get_run",
+        json!({ "run_id": thread_id }),
+    )
+    .await;
+    let run_row2 = peel_logs_envelope(assert_no_jsonrpc_error(&get_run2, "flows_get_run"));
+    assert_eq!(
+        run_row2.get("status").and_then(Value::as_str),
+        Some("completed")
+    );
+
+    // 7. Run again to get a fresh parked run, then cancel it.
+    let run2 = post_json_rpc(
+        &rpc_base,
+        9308,
+        "openhuman.flows_run",
+        json!({ "id": flow_id, "input": { "x": 2 } }),
+    )
+    .await;
+    let run2_out = peel_logs_envelope(assert_no_jsonrpc_error(&run2, "flows_run"));
+    let thread_id_2 = run2_out
+        .get("thread_id")
+        .and_then(Value::as_str)
+        .expect("thread_id in second run")
+        .to_string();
+
+    let cancel = post_json_rpc(
+        &rpc_base,
+        9309,
+        "openhuman.flows_cancel_run",
+        json!({ "run_id": thread_id_2 }),
+    )
+    .await;
+    let cancel_out = peel_logs_envelope(assert_no_jsonrpc_error(&cancel, "flows_cancel_run"));
+    assert_eq!(
+        cancel_out.get("cancelled").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        cancel_out.get("run_id").and_then(Value::as_str),
+        Some(thread_id_2.as_str())
+    );
+    // A parked run has no live task, so cancel settles the row directly.
+    assert_eq!(
+        cancel_out.get("was_in_flight").and_then(Value::as_bool),
+        Some(false)
+    );
+
+    // The cancelled run is terminal and no longer resumable.
+    let get_run3 = post_json_rpc(
+        &rpc_base,
+        9310,
+        "openhuman.flows_get_run",
+        json!({ "run_id": thread_id_2 }),
+    )
+    .await;
+    let run_row3 = peel_logs_envelope(assert_no_jsonrpc_error(&get_run3, "flows_get_run"));
+    assert_eq!(
+        run_row3.get("status").and_then(Value::as_str),
+        Some("cancelled")
+    );
+
+    let resume_cancelled = post_json_rpc(
+        &rpc_base,
+        9311,
+        "openhuman.flows_resume",
+        json!({ "id": flow_id, "thread_id": thread_id_2, "approvals": ["gate"] }),
+    )
+    .await;
+    assert_jsonrpc_error(&resume_cancelled, "resume of a cancelled run must error");
+
+    // 8. Delete the flow; the list is empty again.
+    let delete = post_json_rpc(
+        &rpc_base,
+        9312,
+        "openhuman.flows_delete",
+        json!({ "id": flow_id }),
+    )
+    .await;
+    let del_out = peel_logs_envelope(assert_no_jsonrpc_error(&delete, "flows_delete"));
+    assert_eq!(del_out.get("removed").and_then(Value::as_bool), Some(true));
+
+    let after = post_json_rpc(&rpc_base, 9313, "openhuman.flows_list", json!({})).await;
+    assert!(
+        peel_logs_envelope(assert_no_jsonrpc_error(&after, "flows_list"))
+            .as_array()
+            .expect("flows array")
+            .is_empty(),
+        "no flows after delete"
+    );
+
+    api_join.abort();
+    rpc_join.abort();
+}
+
+/// Flow Scout suggestion-lifecycle methods over JSON-RPC (no LLM involved):
+/// `flows_list_suggestions` starts empty, and `flows_dismiss_suggestion` /
+/// `flows_mark_suggestion_built` on an unknown id resolve cleanly and report
+/// `false`. This pins that the four new controllers are registered and dispatch
+/// end-to-end (schema + handler wiring), independent of the agent-backed
+/// `flows_discover`, which needs a provider.
+#[tokio::test]
+async fn json_rpc_flows_suggestion_lifecycle_methods_are_wired() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let (rpc_base, _tmp, api_join, rpc_join, _guards) = boot_flows_rpc_env().await;
+
+    // Empty to start.
+    let list = post_json_rpc(
+        &rpc_base,
+        9501,
+        "openhuman.flows_list_suggestions",
+        json!({}),
+    )
+    .await;
+    assert!(
+        peel_logs_envelope(assert_no_jsonrpc_error(&list, "flows_list_suggestions"))
+            .as_array()
+            .expect("suggestions array")
+            .is_empty(),
+        "no suggestions before any discovery run"
+    );
+
+    // Filtered list also resolves (status param accepted).
+    let list_new = post_json_rpc(
+        &rpc_base,
+        9502,
+        "openhuman.flows_list_suggestions",
+        json!({ "status": "new" }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&list_new, "flows_list_suggestions(status=new)");
+
+    // Dismiss/mark unknown ids resolve without error and report false.
+    let dismiss = post_json_rpc(
+        &rpc_base,
+        9503,
+        "openhuman.flows_dismiss_suggestion",
+        json!({ "id": "does-not-exist" }),
+    )
+    .await;
+    let dismiss_out = peel_logs_envelope(assert_no_jsonrpc_error(
+        &dismiss,
+        "flows_dismiss_suggestion",
+    ));
+    assert_eq!(
+        dismiss_out.get("dismissed").and_then(Value::as_bool),
+        Some(false)
+    );
+
+    let built = post_json_rpc(
+        &rpc_base,
+        9504,
+        "openhuman.flows_mark_suggestion_built",
+        json!({ "id": "does-not-exist" }),
+    )
+    .await;
+    let built_out = peel_logs_envelope(assert_no_jsonrpc_error(
+        &built,
+        "flows_mark_suggestion_built",
+    ));
+    assert_eq!(built_out.get("built").and_then(Value::as_bool), Some(false));
+
+    api_join.abort();
+    rpc_join.abort();
+}
+
+/// Minimal config for the agent-backed flows arc: like `write_min_config` but
+/// pins `default_model = "chat-v1"` so an agent node on the **chat** tier
+/// resolves to `chat-v1` on the managed backend while a **reasoning**-tier node
+/// resolves to `reasoning-v1` — letting the full-arc test assert the two nodes
+/// routed to distinct managed tiers.
+fn write_flows_tier_config(openhuman_dir: &Path, api_origin: &str) {
+    let cfg = format!(
+        r#"api_url = "{api_origin}"
+default_model = "chat-v1"
+default_temperature = 0.7
+chat_onboarding_completed = true
+
+[secrets]
+encrypt = false
+
+# Keep tool-result content raw: the workflow_builder agent runs the reasoning
+# tier with Full TokenJuice compaction, which CCR-compresses a large
+# `propose_workflow` result into a `tinyjuice_retrieve` reference. `flows_build`
+# extracts the proposal from the agent's tool history by JSON-parsing that
+# content, so compaction must stay off for the arc to be observable in-test.
+[context]
+compaction_enabled = false
+"#
+    );
+    fn write_config_file(config_dir: &Path, cfg: &str) {
+        std::fs::create_dir_all(config_dir).expect("mkdir openhuman");
+        std::fs::write(config_dir.join("config.toml"), cfg).expect("write config");
+    }
+    write_config_file(openhuman_dir, &cfg);
+    if openhuman_dir
+        .file_name()
+        .is_some_and(|name| name == std::ffi::OsStr::new(".openhuman"))
+    {
+        write_config_file(&openhuman_dir.join("users").join("local"), &cfg);
+    }
+    let _: openhuman_core::openhuman::config::Config =
+        toml::from_str(&cfg).expect("config toml must match Config schema");
+}
+
+/// The canonical "Research brief (Opus plans, Sonnet drafts)" demo graph — the
+/// same shape as `app/src/lib/flows/templates/opus-sonnet-brief.json`, inlined so
+/// the e2e test doesn't depend on reading the frontend template at runtime. A
+/// `trigger` feeds a reasoning-tier `planner` (structured `{plan, angle}`) into a
+/// chat-tier `drafter` that references `nodes.planner.item.json.plan`, then a
+/// `transform` shapes `{topic, plan, draft}`.
+fn opus_sonnet_demo_graph() -> Value {
+    json!({
+        "schema_version": 1,
+        "name": "Research brief (Opus plans, Sonnet drafts)",
+        "nodes": [
+            {
+                "id": "trigger",
+                "kind": "trigger",
+                "name": "Run manually with a topic",
+                "config": { "trigger_kind": "manual" }
+            },
+            {
+                "id": "planner",
+                "kind": "agent",
+                "name": "Plan the brief (reasoning tier)",
+                "config": {
+                    "model": "reasoning-v1",
+                    "prompt": "=\"You are a research lead. Draft a concise research plan (3-5 steps) and pick one distinctive angle for a brief on: \" + (.run.trigger.topic // \"the requested topic\")",
+                    "output_parser": {
+                        "schema": {
+                            "type": "object",
+                            "required": ["plan", "angle"],
+                            "properties": {
+                                "plan": { "type": "string" },
+                                "angle": { "type": "string" }
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                "id": "drafter",
+                "kind": "agent",
+                "name": "Draft the brief (chat tier)",
+                "config": {
+                    "model": "chat-v1",
+                    "prompt": "=\"Using the plan and angle below, write a polished research brief (~300 words).\\n\\nPlan:\\n\" + (.nodes.planner.item.json.plan // \"\") + \"\\n\\nAngle:\\n\" + (.nodes.planner.item.json.angle // \"\")"
+                }
+            },
+            {
+                "id": "shape",
+                "kind": "transform",
+                "name": "Shape the result",
+                "config": {
+                    "set": {
+                        "topic": "=run.trigger.topic",
+                        "plan": "=nodes.planner.item.json.plan",
+                        "draft": "=nodes.drafter.item.text"
+                    }
+                }
+            }
+        ],
+        "edges": [
+            { "from_node": "trigger", "from_port": "main", "to_node": "planner", "to_port": "main" },
+            { "from_node": "planner", "from_port": "main", "to_node": "drafter", "to_port": "main" },
+            { "from_node": "drafter", "from_port": "main", "to_node": "shape", "to_port": "main" }
+        ]
+    })
+}
+
+/// Full flows arc over JSON-RPC, driven entirely by the scripted-completion FIFO:
+///
+/// 1. `flows_discover` — the Flow Scout scripts a `suggest_workflows` tool call;
+///    the recorded suggestion is asserted via `flows_list_suggestions`.
+/// 2. `flows_build` — the workflow_builder scripts a `propose_workflow` tool call
+///    carrying the Opus+Sonnet demo graph; the returned proposal is asserted.
+/// 3. `flows_create` + `flows_run` — the saved demo graph runs with two scripted
+///    plain completions (planner structured JSON, then drafter text). We assert
+///    the run completed, the planner's structured plan flowed into the drafter's
+///    prompt (data passing), and the two agent nodes routed to the expected
+///    managed tiers (`reasoning-v1` / `chat-v1`).
+///
+/// Runs on the agent-sized worker stack because the builder/scout turns and the
+/// agent-node run drive the full harness (deep async stacks).
+#[test]
+fn json_rpc_flows_full_arc_discover_build_create_run() {
+    run_json_rpc_e2e_on_agent_stack(
+        "json_rpc_flows_full_arc_discover_build_create_run",
+        json_rpc_flows_full_arc_discover_build_create_run_inner,
+    );
+}
+
+async fn json_rpc_flows_full_arc_discover_build_create_run_inner() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    // Drain the scripted-completion FIFO even if an assertion below panics, so a
+    // leftover entry can't bleed into another test sharing this binary.
+    let _fifo_guard = ScriptedFifoGuard;
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _api_url_guard = EnvVarGuard::unset("OPENHUMAN_API_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{mock_addr}");
+    write_flows_tier_config(&openhuman_home, &mock_origin);
+    let user_scoped_dir = openhuman_home.join("users").join("e2e-user");
+    write_flows_tier_config(&user_scoped_dir, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // The managed backend needs an active session JWT to build agent-node /
+    // builder / scout completions; the mock validates it via GET /auth/me.
+    let store = post_json_rpc(
+        &rpc_base,
+        71_000,
+        "openhuman.auth_store_session",
+        json!({ "token": "e2e-test-jwt", "user_id": "e2e-user" }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&store, "store_session");
+
+    // ── 1. flows_discover: the scout scripts a suggest_workflows tool call ──
+    clear_forced_chat_completions();
+    with_chat_completion_requests(|requests| requests.clear());
+    // Turn 1: emit the terminal `suggest_workflows` tool call. Turn 2: a plain
+    // reply ends the scout's tool loop. Both gate on "suggest_workflows" (present
+    // in the scout's tool schema every turn, absent from every other agent).
+    push_forced_chat_completion_when(
+        "suggest_workflows",
+        forced_tool_call_completion(
+            "suggest_workflows",
+            json!({
+                "suggestions": [{
+                    "title": "Weekly research brief",
+                    "one_liner": "Plan then draft a research brief on a topic each week.",
+                    "rationale": "Your recent threads keep asking for structured research briefs.",
+                    "build_prompt": "Build a workflow where a reasoning model plans a research brief and a chat model drafts it."
+                }]
+            }),
+        ),
+    );
+    push_forced_chat_completion_when(
+        "suggest_workflows",
+        forced_text_completion("Recorded one workflow suggestion for you."),
+    );
+
+    let discover = post_json_rpc(&rpc_base, 71_001, "openhuman.flows_discover", json!({})).await;
+    let discovered = peel_logs_envelope(assert_no_jsonrpc_error(&discover, "flows_discover"))
+        .as_array()
+        .cloned()
+        .expect("flows_discover returns a suggestions array");
+    assert!(
+        discovered
+            .iter()
+            .any(|s| s.get("title").and_then(Value::as_str) == Some("Weekly research brief")),
+        "scripted suggestion should be returned by flows_discover: {discovered:?}"
+    );
+
+    // The suggestion must have persisted — assert via the independent list path.
+    let listed = post_json_rpc(
+        &rpc_base,
+        71_002,
+        "openhuman.flows_list_suggestions",
+        json!({ "status": "new" }),
+    )
+    .await;
+    let listed = peel_logs_envelope(assert_no_jsonrpc_error(&listed, "flows_list_suggestions"))
+        .as_array()
+        .cloned()
+        .expect("flows_list_suggestions returns an array");
+    assert!(
+        listed
+            .iter()
+            .any(|s| s.get("title").and_then(Value::as_str) == Some("Weekly research brief")),
+        "scripted suggestion should be persisted: {listed:?}"
+    );
+
+    // ── 2. flows_build: the builder scripts a propose_workflow tool call ──
+    clear_forced_chat_completions();
+    with_chat_completion_requests(|requests| requests.clear());
+    let demo_graph = opus_sonnet_demo_graph();
+    // Turn 1: propose the demo graph. Turn 2: a plain reply ends the builder's
+    // loop. Both gate on "propose_workflow" (in the builder's tool schema every
+    // turn, absent from the scout / plain agent nodes).
+    push_forced_chat_completion_when(
+        "propose_workflow",
+        forced_tool_call_completion(
+            "propose_workflow",
+            json!({
+                "name": "Research brief (Opus plans, Sonnet drafts)",
+                "graph": demo_graph.clone()
+            }),
+        ),
+    );
+    push_forced_chat_completion_when(
+        "propose_workflow",
+        forced_text_completion("Here's a research-brief workflow: Opus plans, Sonnet drafts."),
+    );
+
+    let build = post_json_rpc(
+        &rpc_base,
+        71_010,
+        "openhuman.flows_build",
+        json!({
+            "mode": "create",
+            "instruction": "Build a research brief workflow where a reasoning model plans and a chat model drafts."
+        }),
+    )
+    .await;
+    let build_out = peel_logs_envelope(assert_no_jsonrpc_error(&build, "flows_build"));
+    let proposal = build_out
+        .get("proposal")
+        .filter(|p| !p.is_null())
+        .expect("flows_build returns a non-null proposal");
+    assert_eq!(
+        proposal.get("type").and_then(Value::as_str),
+        Some("workflow_proposal")
+    );
+    let proposed_ids: Vec<&str> = proposal
+        .pointer("/graph/nodes")
+        .and_then(Value::as_array)
+        .expect("proposal graph has nodes")
+        .iter()
+        .filter_map(|n| n.get("id").and_then(Value::as_str))
+        .collect();
+    assert!(
+        proposed_ids.contains(&"planner") && proposed_ids.contains(&"drafter"),
+        "proposal graph must carry the agent nodes: {proposed_ids:?}"
+    );
+
+    // ── 3. flows_create + flows_run: the saved graph runs its agent nodes ──
+    clear_forced_chat_completions();
+    with_chat_completion_requests(|requests| requests.clear());
+    with_chat_completion_models(|models| models.clear());
+
+    let create = post_json_rpc(
+        &rpc_base,
+        71_020,
+        "openhuman.flows_create",
+        json!({ "name": "Research brief (e2e)", "graph": demo_graph.clone() }),
+    )
+    .await;
+    let flow_id = peel_logs_envelope(assert_no_jsonrpc_error(&create, "flows_create"))
+        .get("id")
+        .and_then(Value::as_str)
+        .expect("flow id from flows_create")
+        .to_string();
+
+    // Planner (reasoning tier, structured): return the `{plan, angle}` object.
+    // The plan carries a marker so the drafter request can be proven to reference
+    // it. Gated on "research lead" — unique to the planner's rendered prompt.
+    push_forced_chat_completion_when(
+        "research lead",
+        forced_text_completion(
+            "{\"plan\":\"PLAN_MARKER: interview 3 experts, survey the literature, synthesize findings.\",\"angle\":\"a contrarian systems view\"}",
+        ),
+    );
+    // Drafter (chat tier, plain text). Gated on "polished research brief" — unique
+    // to the drafter's rendered prompt.
+    push_forced_chat_completion_when(
+        "polished research brief",
+        forced_text_completion("DRAFT_MARKER: a polished research brief distilled from the plan."),
+    );
+
+    let run = post_json_rpc(
+        &rpc_base,
+        71_021,
+        "openhuman.flows_run",
+        json!({ "id": flow_id, "input": { "topic": "renewable microgrids" } }),
+    )
+    .await;
+    let run_out = peel_logs_envelope(assert_no_jsonrpc_error(&run, "flows_run"));
+    assert!(
+        run_out
+            .get("pending_approvals")
+            .and_then(Value::as_array)
+            .is_some_and(|a| a.is_empty()),
+        "run should complete with no pending approvals: {run_out}"
+    );
+    let output_str = run_out
+        .get("output")
+        .expect("run output present")
+        .to_string();
+    assert!(
+        output_str.contains("PLAN_MARKER") && output_str.contains("DRAFT_MARKER"),
+        "run output should carry the planner's plan and the drafter's text: {output_str}"
+    );
+
+    // Assert the two agent-node completions routed to the expected managed tiers
+    // and that the planner's structured plan flowed into the drafter's prompt.
+    let requests = with_chat_completion_requests(|requests| requests.clone());
+    let body_of = |r: &Value| r.get("body").map(Value::to_string).unwrap_or_default();
+    let planner_req = requests
+        .iter()
+        .find(|r| body_of(r).contains("research lead"))
+        .cloned()
+        .expect("planner completion should have been captured");
+    assert_eq!(
+        planner_req.get("model").and_then(Value::as_str),
+        Some("reasoning-v1"),
+        "planner node (reasoning tier) must resolve to reasoning-v1"
+    );
+    let drafter_req = requests
+        .iter()
+        .find(|r| body_of(r).contains("polished research brief"))
+        .cloned()
+        .expect("drafter completion should have been captured");
+    assert_eq!(
+        drafter_req.get("model").and_then(Value::as_str),
+        Some("chat-v1"),
+        "drafter node (chat tier) must resolve to chat-v1"
+    );
+    assert!(
+        body_of(&drafter_req).contains("PLAN_MARKER"),
+        "drafter prompt must reference the planner's structured plan (graph data passing)"
+    );
+
+    // Hygiene: never let a leftover scripted completion bleed into another test
+    // sharing this process (the FIFO is a process-global static).
+    clear_forced_chat_completions();
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+/// Approval park + DENY over JSON-RPC (issue G4): a gate with both a `main`
+/// edge (→ `downstream`) and an `error` edge (→ `recover`). Resuming with the
+/// gate in `rejections` routes the denied gate's error item to `recover`, and
+/// `downstream` must not run.
+#[tokio::test]
+async fn json_rpc_flows_resume_deny_routes_to_error_port() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let (rpc_base, _tmp, api_join, rpc_join, _guards) = boot_flows_rpc_env().await;
+
+    let graph = json!({
+        "name": "approval-gated-error-port",
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Trigger" },
+            { "id": "gate", "kind": "output_parser", "name": "Gate", "config": { "requires_approval": true } },
+            { "id": "downstream", "kind": "output_parser", "name": "Downstream" },
+            { "id": "recover", "kind": "output_parser", "name": "Recover" }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "gate" },
+            { "from_node": "gate", "from_port": "main", "to_node": "downstream" },
+            { "from_node": "gate", "from_port": "error", "to_node": "recover" }
+        ]
+    });
+
+    let create = post_json_rpc(
+        &rpc_base,
+        9401,
+        "openhuman.flows_create",
+        json!({ "name": "Deny Demo", "graph": graph }),
+    )
+    .await;
+    let flow_id = peel_logs_envelope(assert_no_jsonrpc_error(&create, "flows_create"))
+        .get("id")
+        .and_then(Value::as_str)
+        .expect("flow id")
+        .to_string();
+
+    let run = post_json_rpc(
+        &rpc_base,
+        9402,
+        "openhuman.flows_run",
+        json!({ "id": flow_id, "input": { "x": 1 } }),
+    )
+    .await;
+    let thread_id = peel_logs_envelope(assert_no_jsonrpc_error(&run, "flows_run"))
+        .get("thread_id")
+        .and_then(Value::as_str)
+        .expect("thread_id")
+        .to_string();
+
+    // Deny the gate: no approvals, `gate` in rejections.
+    let resume = post_json_rpc(
+        &rpc_base,
+        9403,
+        "openhuman.flows_resume",
+        json!({ "id": flow_id, "thread_id": thread_id, "rejections": ["gate"] }),
+    )
+    .await;
+    let resume_out = peel_logs_envelope(assert_no_jsonrpc_error(&resume, "flows_resume"));
+    assert_eq!(resume_out["pending_approvals"], json!([]));
+    assert_eq!(
+        resume_out["output"]["nodes"]["recover"]["items"][0]["json"]["error"]["node"],
+        json!("gate"),
+        "a denied gate must route its error item to the `error`-port recovery node"
+    );
+    assert!(
+        resume_out["output"]["nodes"]["downstream"].is_null(),
+        "the main branch must not run when the gate is denied"
+    );
+
+    let get_run = post_json_rpc(
+        &rpc_base,
+        9404,
+        "openhuman.flows_get_run",
+        json!({ "run_id": thread_id }),
+    )
+    .await;
+    let run_row = peel_logs_envelope(assert_no_jsonrpc_error(&get_run, "flows_get_run"));
+    assert_eq!(
+        run_row.get("status").and_then(Value::as_str),
+        Some("completed")
+    );
+
+    api_join.abort();
+    rpc_join.abort();
+}
+
+/// `openhuman.flows_validate` over JSON-RPC (PHASE 3c): a structurally valid
+/// graph whose trigger kind does not fire automatically (`webhook`) validates
+/// clean but returns a loud, non-fatal warning; a `schedule` trigger (which
+/// does fire) warns nothing; a graph with no trigger is `valid: false` with a
+/// structural error and no warnings.
+#[tokio::test]
+async fn json_rpc_flows_validate_reports_warnings_and_errors() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let (rpc_base, _tmp, api_join, rpc_join, _guards) = boot_flows_rpc_env().await;
+
+    // 1. Webhook trigger — structurally valid, but does not fire yet → warning.
+    let webhook_graph = json!({
+        "name": "webhook-flow",
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Trigger", "config": { "trigger_kind": "webhook" } }
+        ],
+        "edges": []
+    });
+    let validate = post_json_rpc(
+        &rpc_base,
+        9501,
+        "openhuman.flows_validate",
+        json!({ "graph": webhook_graph }),
+    )
+    .await;
+    let v = peel_logs_envelope(assert_no_jsonrpc_error(&validate, "flows_validate"));
+    assert_eq!(v.get("valid").and_then(Value::as_bool), Some(true));
+    assert!(
+        v.get("errors")
+            .and_then(Value::as_array)
+            .expect("errors")
+            .is_empty(),
+        "a structurally valid webhook graph has no errors"
+    );
+    let warnings = v
+        .get("warnings")
+        .and_then(Value::as_array)
+        .expect("warnings");
+    assert_eq!(
+        warnings.len(),
+        1,
+        "webhook trigger emits exactly one warning"
+    );
+    assert!(
+        warnings[0]
+            .as_str()
+            .is_some_and(|w| w.contains("does not fire automatically")),
+        "webhook warning must explain the trigger will not fire on its own, got: {warnings:?}"
+    );
+
+    // 2. Schedule trigger — fires automatically → no warning.
+    let schedule_graph = json!({
+        "name": "scheduled-flow",
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Trigger", "config": { "trigger_kind": "schedule", "schedule": "0 9 * * *" } }
+        ],
+        "edges": []
+    });
+    let validate_sched = post_json_rpc(
+        &rpc_base,
+        9502,
+        "openhuman.flows_validate",
+        json!({ "graph": schedule_graph }),
+    )
+    .await;
+    let vs = peel_logs_envelope(assert_no_jsonrpc_error(&validate_sched, "flows_validate"));
+    assert_eq!(vs.get("valid").and_then(Value::as_bool), Some(true));
+    assert!(
+        vs.get("warnings")
+            .and_then(Value::as_array)
+            .expect("warnings")
+            .is_empty(),
+        "a schedule trigger fires automatically — no unfired-kind warning"
+    );
+
+    // 3. No trigger node — structurally invalid.
+    let invalid_graph = json!({
+        "name": "no-trigger",
+        "nodes": [ { "id": "a", "kind": "output_parser", "name": "A" } ],
+        "edges": []
+    });
+    let validate_bad = post_json_rpc(
+        &rpc_base,
+        9503,
+        "openhuman.flows_validate",
+        json!({ "graph": invalid_graph }),
+    )
+    .await;
+    let vb = peel_logs_envelope(assert_no_jsonrpc_error(&validate_bad, "flows_validate"));
+    assert_eq!(vb.get("valid").and_then(Value::as_bool), Some(false));
+    assert!(
+        !vb.get("errors")
+            .and_then(Value::as_array)
+            .expect("errors")
+            .is_empty(),
+        "a graph without a trigger must report a structural error"
+    );
+    assert!(
+        vb.get("warnings")
+            .and_then(Value::as_array)
+            .expect("warnings")
+            .is_empty(),
+        "an invalid graph reports errors, not warnings"
+    );
+
+    api_join.abort();
+    rpc_join.abort();
+}
+
+/// `openhuman.flows_import` over JSON-RPC (PHASE 4d): a native tinyflows graph
+/// imports clean (no warnings), and an n8n workflow export is mapped
+/// best-effort — an `if` node becomes a `condition`, an unmapped node type
+/// becomes an annotated placeholder, and the approximations come back as
+/// warnings — all WITHOUT persisting (the returned payload is a graph, not a
+/// saved Flow row; `flows_list` stays empty afterwards).
+#[tokio::test]
+async fn json_rpc_flows_import_native_and_n8n() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let (rpc_base, _tmp, api_join, rpc_join, _guards) = boot_flows_rpc_env().await;
+
+    // 1. Native import — a valid tinyflows graph, warning-free.
+    let native = json!({
+        "name": "native-flow",
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Trigger", "config": { "trigger_kind": "manual" } }
+        ],
+        "edges": []
+    });
+    let imp = post_json_rpc(
+        &rpc_base,
+        9601,
+        "openhuman.flows_import",
+        json!({ "graph": native, "format": "native" }),
+    )
+    .await;
+    let out = peel_logs_envelope(assert_no_jsonrpc_error(&imp, "flows_import native"));
+    assert_eq!(
+        out.get("graph")
+            .and_then(|g| g.get("name"))
+            .and_then(Value::as_str),
+        Some("native-flow")
+    );
+    assert!(
+        out.get("warnings")
+            .and_then(Value::as_array)
+            .expect("warnings")
+            .is_empty(),
+        "a clean native import has no warnings"
+    );
+
+    // 2. n8n import (auto-detected) — IF → condition, unmapped → placeholder.
+    let n8n = json!({
+        "name": "n8n-flow",
+        "nodes": [
+            { "id": "s", "name": "Schedule Trigger", "type": "n8n-nodes-base.scheduleTrigger" },
+            { "id": "c", "name": "IF", "type": "n8n-nodes-base.if" },
+            { "id": "x", "name": "Airtable", "type": "n8n-nodes-base.airtable",
+              "parameters": { "table": "leads" } }
+        ],
+        "connections": {
+            "Schedule Trigger": { "main": [[{ "node": "IF", "type": "main", "index": 0 }]] },
+            "IF": { "main": [[{ "node": "Airtable", "type": "main", "index": 0 }]] }
+        }
+    });
+    let imp2 = post_json_rpc(
+        &rpc_base,
+        9602,
+        "openhuman.flows_import",
+        json!({ "graph": n8n }),
+    )
+    .await;
+    let out2 = peel_logs_envelope(assert_no_jsonrpc_error(&imp2, "flows_import n8n"));
+    let graph = out2.get("graph").expect("graph");
+    let nodes = graph.get("nodes").and_then(Value::as_array).expect("nodes");
+    let kind_of = |id: &str| {
+        nodes
+            .iter()
+            .find(|n| n.get("id").and_then(Value::as_str) == Some(id))
+            .and_then(|n| n.get("kind"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    };
+    assert_eq!(
+        kind_of("c").as_deref(),
+        Some("condition"),
+        "IF maps to condition"
+    );
+    assert_eq!(
+        kind_of("x").as_deref(),
+        Some("transform"),
+        "unmapped Airtable node becomes a placeholder transform"
+    );
+    let warnings = out2
+        .get("warnings")
+        .and_then(Value::as_array)
+        .expect("warnings");
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.as_str().is_some_and(|s| s.contains("airtable"))),
+        "the unmapped node produces a warning, got: {warnings:?}"
+    );
+
+    // 3. Import never persists — no flow row was created by either call.
+    let list = post_json_rpc(&rpc_base, 9603, "openhuman.flows_list", json!({})).await;
+    let flows = peel_logs_envelope(assert_no_jsonrpc_error(&list, "flows_list"))
+        .as_array()
+        .expect("flows array")
+        .len();
+    assert_eq!(flows, 0, "flows_import must not persist a flow");
+
+    api_join.abort();
+    rpc_join.abort();
+}
+
+/// `openhuman.flows_list_connections` (PHASE 2): the connection picker source.
+/// Aggregates Composio connected accounts + stored HTTP credentials into a flat
+/// list of `connection_ref` + display + kind — and NEVER any secret material.
+///
+/// We seed one named HTTP credential (a bearer token) through the same
+/// host-side store the RPC reads, then assert the RPC surfaces it as
+/// `http_cred:<name>` with `kind = "http"` and that the token value never
+/// appears anywhere in the RPC payload. The Composio half is exercised for
+/// fault-tolerance: the mock upstream has no connected-accounts route, so the
+/// Composio source fails and is tolerated (the RPC still returns the HTTP half
+/// rather than erroring).
+#[tokio::test]
+async fn json_rpc_flows_list_connections_aggregates_secret_free() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let (rpc_base, _tmp, api_join, rpc_join, _guards) = boot_flows_rpc_env().await;
+
+    // Seed an HTTP credential through the same encrypted-at-rest store the op
+    // reads (config resolves under the guarded HOME set by boot_flows_rpc_env).
+    let seed_config = openhuman_core::openhuman::config::load_config_with_timeout()
+        .await
+        .expect("load config to seed http_cred");
+    const SECRET: &str = "sk_live_flows_list_connections_seed";
+    openhuman_core::openhuman::credentials::HttpCredentialsStore::from_config(&seed_config)
+        .upsert(&openhuman_core::openhuman::credentials::HttpCredential::bearer("stripe", SECRET))
+        .expect("seed http_cred");
+
+    let resp = post_json_rpc(
+        &rpc_base,
+        9330,
+        "openhuman.flows_list_connections",
+        json!({}),
+    )
+    .await;
+    let raw = assert_no_jsonrpc_error(&resp, "flows_list_connections");
+
+    // The seeded secret must never appear anywhere in the RPC response.
+    let raw_str = raw.to_string();
+    assert!(
+        !raw_str.contains(SECRET),
+        "secret leaked into flows_list_connections payload: {raw_str}"
+    );
+
+    let connections = peel_logs_envelope(raw)
+        .as_array()
+        .expect("connections is an array")
+        .clone();
+
+    let stripe = connections
+        .iter()
+        .find(|c| c.get("connection_ref").and_then(Value::as_str) == Some("http_cred:stripe"))
+        .expect("seeded http_cred surfaced in picker");
+    assert_eq!(stripe.get("kind").and_then(Value::as_str), Some("http"));
+    assert_eq!(stripe.get("scheme").and_then(Value::as_str), Some("bearer"));
+    assert!(
+        stripe.get("display").and_then(Value::as_str).is_some(),
+        "http_cred entry must carry a display label"
     );
 
     api_join.abort();
@@ -13790,6 +15193,42 @@ async fn json_rpc_meet_event_policy_round_trip() {
     )
     .await;
     assert_jsonrpc_error(&resp_bad, "set_event_policy invalid policy");
+
+    rpc_join.abort();
+}
+
+/// `openhuman.agent_meetings_generate_summary` — verifies the manual summary
+/// RPC is registered and reaches handler validation without needing an LLM.
+#[tokio::test]
+async fn json_rpc_agent_meetings_generate_summary_rejects_empty_meeting_id() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    write_min_config(&openhuman_home, "http://127.0.0.1:9");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    let resp = post_json_rpc(
+        &rpc_base,
+        9310,
+        "openhuman.agent_meetings_generate_summary",
+        json!({ "meeting_id": "" }),
+    )
+    .await;
+    let err = assert_jsonrpc_error(&resp, "agent_meetings_generate_summary empty meeting_id");
+    let message = err.get("message").and_then(Value::as_str).unwrap_or("");
+    assert!(
+        message.contains("meeting_id must not be empty"),
+        "expected generate_summary validation error, got: {err}"
+    );
 
     rpc_join.abort();
 }

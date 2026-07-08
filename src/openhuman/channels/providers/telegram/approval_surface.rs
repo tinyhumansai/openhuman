@@ -36,7 +36,7 @@
 //! [`parse_approval_reply`]: crate::openhuman::approval::parse_approval_reply
 
 use crate::core::event_bus::{DomainEvent, EventHandler};
-use crate::openhuman::channels::traits::SendMessage;
+use crate::openhuman::channels::traits::{ChannelSendExt, SendMessage};
 use crate::openhuman::channels::Channel;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -165,7 +165,7 @@ impl TelegramApprovalSurfaceSubscriber {
             reply_ctx.reply_target
         );
 
-        if let Err(err) = channel.send(&send).await {
+        if let Err(err) = channel.send_with_outbound_intent(&send).await {
             tracing::warn!(
                 "{LOG_PREFIX} failed to send approval prompt request_id={request_id} \
                  tool={tool_name}: {err}"

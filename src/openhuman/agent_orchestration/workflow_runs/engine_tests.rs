@@ -1,6 +1,6 @@
 //! Engine unit tests (#3375 PR2).
 //!
-//! These exercise the phase scheduler ([`super::drive_phases`]) directly with a
+//! These exercise the phase scheduler ([`super::super::graph::drive_phases`]) directly with a
 //! mock `Provider` so child agents resolve deterministically and never touch the
 //! network. The full [`super::start_workflow_run`] entry point (which builds a
 //! real `Agent` from config) is covered by the JSON-RPC e2e test over the live
@@ -21,6 +21,9 @@ use serde_json::{json, Value};
 use tokio::time::{sleep, Duration};
 
 use super::*;
+// The phase scheduler moved to the tinyagents-backed `graph` submodule in #4249;
+// its signature is unchanged (`drive_phases(config, run_id, definition, cancel)`).
+use super::super::graph::drive_phases;
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::harness::fork_context::{with_parent_context, ParentExecutionContext};
 use crate::openhuman::config::{AgentConfig, Config};
@@ -182,6 +185,7 @@ impl Provider for PeakProvider {
 
 fn mock_parent(provider: Arc<dyn Provider>) -> ParentExecutionContext {
     ParentExecutionContext {
+        workspace_descriptor: None,
         agent_definition_id: "workflow_engine".to_string(),
         allowed_subagent_ids: HashSet::new(),
         provider,
@@ -323,6 +327,35 @@ async fn unit_phases_execute_in_dependency_order() {
             .unwrap_or_default()
             .contains("PHASE_OUTPUT_OK"),
         "summary should carry final phase output: {summary:?}"
+    );
+}
+
+/// Covers `run_engine_loop` — the `with_root_parent` wrapper around
+/// `drive_phases`. With a mock parent installed, `with_root_parent` reuses it
+/// (rather than building a real root), so the engine loop drives the run to
+/// completion under the mock provider. Mirrors the `drive_phases` happy path,
+/// but through the wrapper the live engine spawns on its background task.
+#[tokio::test]
+async fn run_engine_loop_completes_run_under_ambient_parent() {
+    AgentDefinitionRegistry::init_global_builtins().unwrap();
+    let (_dir, config) = test_config();
+    let provider = PeakProvider::default();
+    let def = linear_def(2, 8, 2);
+    let id = seed_run(
+        &config,
+        &def,
+        json!({ "question": "what is X?", "modelOverride": "test-model" }),
+    );
+
+    with_parent_context(mock_parent(Arc::new(provider.clone())), async {
+        run_engine_loop(&config, &id, def).await
+    })
+    .await;
+
+    assert_eq!(
+        status_of(&config, &id),
+        WorkflowRunStatus::Completed,
+        "run_engine_loop drove the run to completion through with_root_parent"
     );
 }
 

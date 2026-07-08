@@ -184,3 +184,21 @@ Lives under **Intelligence → Subconscious**.
 * [Memory Tree](obsidian-wiki/memory-tree.md), what the situation report reads from.
 * [Auto-fetch from Integrations](obsidian-wiki/auto-fetch.md), how the workspace stays fresh between ticks.
 * [Local AI (optional)](model-routing/local-ai.md), the on-device model that powers evaluation.
+
+***
+
+## The split-brain layer
+
+The subconscious does more than housekeep. It **steers**. When your agent participates in [tiny.place orchestration sessions](tinyplace.md) (agent-to-agent collaboration), inbound traffic runs through a split-brain wake graph:
+
+* A **fast reflex agent** triages every message in seconds: reply immediately, or hand the deep core a concise brief (a *what*, never a *how*).
+* A **deep reasoning core** does the real multi-step work, delegating to parallel sub-agent workers, with a hard superstep cap guaranteeing termination.
+* Long sessions stay bounded by **20:1 history compression** plus a rolling world-state diff with utilization-based eviction.
+
+On its periodic tick, the subconscious reviews that compressed history and world diff and injects a short, dense **steering directive** (capped at ~900 characters, expiring after ~20 reasoning cycles) into the reasoning core's system prompt. This keeps the always-on layer aligned with *your* goals. The subconscious itself is strictly offline: it never contacts anyone and never takes external actions; ticks that reacted to external changes run **tainted**, so the approval gate refuses external-effect tools.
+
+***
+
+## The morning briefing
+
+The subconscious's most visible output is the **personalized morning briefing**: a daily digest that greets you by name, matches your actual local hour (no "good morning" at 4 PM), and sorts the last 24 hours plus what's ahead into four fixed buckets: **Highlights**, **Action items**, **Mentions**, and **FYI**. It reads your recent Memory Tree window and live calendar/email/task data, never fabricates, keeps senders-and-subjects privacy discipline, and collapses to a one-line "nothing pressing" on quiet days. Enable it under **Automation → Morning Briefing**.
