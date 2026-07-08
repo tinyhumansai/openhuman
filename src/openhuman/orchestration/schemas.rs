@@ -15,7 +15,9 @@ use crate::openhuman::config::{rpc as config_rpc, Config};
 
 use super::attention;
 use super::store;
-use super::types::{ChatKind, OrchestrationMessage, OrchestrationSession, SessionEnvelopeV1};
+use super::types::{
+    ChatKind, OrchestrationMessage, OrchestrationSession, SessionEnvelopeV1, LOCAL_MASTER_AGENT,
+};
 
 /// Active-window: a session is "active" if it saw traffic within this many ms.
 const ACTIVE_WINDOW_MS: i64 = 45 * 60 * 1000;
@@ -31,6 +33,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schema_for("orchestration_status"),
         schema_for("orchestration_attention"),
         schema_for("orchestration_self_identity"),
+        schema_for("orchestration_publish_identity"),
         schema_for("orchestration_relay_info"),
     ]
 }
@@ -68,6 +71,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schema_for("orchestration_self_identity"),
             handler: handle_self_identity,
+        },
+        RegisteredController {
+            schema: schema_for("orchestration_publish_identity"),
+            handler: handle_publish_identity,
         },
         RegisteredController {
             schema: schema_for("orchestration_relay_info"),
@@ -139,7 +146,7 @@ fn schema_for(function: &str) -> ControllerSchema {
         "orchestration_attention" => ControllerSchema {
             namespace: "orchestration",
             function: "attention",
-            description: "Aggregate the \"needs you\" signals across the hub — pending tool approvals, agent runs awaiting input, and instances with unread messages — into one priority-ordered queue.",
+            description: "Aggregate the \"needs you\" signals across the hub — pending local tool approvals, remote sessions parked on an approval, agent runs awaiting input, and instances with unread messages — into one priority-ordered queue.",
             inputs: vec![],
             outputs: vec![json_output("result", "AttentionQueue { items: AttentionItem[], counts }.")],
         },
@@ -147,6 +154,16 @@ fn schema_for(function: &str) -> ControllerSchema {
             namespace: "orchestration",
             function: "self_identity",
             description: "This agent's own tiny.place identity + discoverability: agent id (address), reverse-resolved @handles, whether its directory card and Signal encryption key are published, and whether peers can therefore DM it. Composes the tinyplace signal/directory reads.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "result",
+                "{ agentId, handles: {username, primary}[], primaryHandle?, cardPublished, keyPublished, discoverable }.",
+            )],
+        },
+        "orchestration_publish_identity" => ControllerSchema {
+            namespace: "orchestration",
+            function: "publish_identity",
+            description: "Make this agent discoverable: publish (or refresh) its directory card and Signal encryption key for the current wallet identity, then return the updated self-identity. No @handle registration or payment — repairs the common \"has identity but card/key unpublished\" gap that makes inbound DMs 404. Returns the same shape as self_identity.",
             inputs: vec![],
             outputs: vec![json_output(
                 "result",
@@ -260,17 +277,40 @@ fn harness_type_for(source: &str) -> Option<String> {
     matches!(source, "claude" | "codex" | "gemini").then(|| source.to_string())
 }
 
-/// Coarse instance status for the roster dot, derived from activity. Peer
-/// instances carry no true run-state yet, so today an instance is `idle` when it
-/// has recent traffic and `stopped` otherwise. The richer
-/// running/waiting-approval/errored states are reserved for the attention-queue
-/// and run-state follow-ups; the renderer's `InstanceStatusDot` already models
-/// all five.
-fn derive_status(active: bool) -> &'static str {
-    if active {
-        "idle"
-    } else {
-        "stopped"
+/// Coarse instance status for the roster dot. Reads the persisted v2 run-state
+/// (`status.state`) when present, mapping it to the renderer's five
+/// `InstanceStatus` values; falls back to recency for v1/legacy sessions that
+/// carry no run-state.
+///
+/// Staleness fallback: a `running`/`running_tool` session that has gone silent
+/// (no recent traffic → `active == false`) is reported `stopped`, so a crashed
+/// instance that never emitted a terminal `status` doesn't sit forever on a stuck
+/// green dot. `waiting_approval`/`errored`/`stopped`/`idle` are honoured as-is —
+/// they are already terminal/blocked states, not "silently alive" ones.
+fn derive_status(status_state: Option<&str>, active: bool) -> &'static str {
+    match status_state {
+        // Actively working — but downgrade to stopped if the session has gone
+        // silent (staleness fallback).
+        Some("running") | Some("running_tool") => {
+            if active {
+                "running"
+            } else {
+                "stopped"
+            }
+        }
+        Some("waiting_approval") => "waiting-approval",
+        Some("idle") => "idle",
+        Some("stopped") => "stopped",
+        Some("errored") => "errored",
+        // No persisted run-state (v1/legacy) or an unrecognised value → the
+        // original recency heuristic.
+        _ => {
+            if active {
+                "idle"
+            } else {
+                "stopped"
+            }
+        }
     }
 }
 
@@ -297,7 +337,7 @@ fn summarize(
     let chat_kind = chat_kind_for_session(&session.session_id);
     let active = pinned || is_active(&session.last_message_at);
     let harness_type = harness_type_for(&session.source);
-    let status = derive_status(active).to_string();
+    let status = derive_status(session.status_state.as_deref(), active).to_string();
     SessionSummary {
         chat_kind: chat_kind.as_str().to_string(),
         active,
@@ -333,13 +373,26 @@ fn handle_sessions_list(_params: Map<String, Value>) -> ControllerFuture {
                     _ => {}
                 }
                 let pinned = matches!(session.session_id.as_str(), "master" | "subconscious");
-                // Roster task line: latest message preview for real instance
-                // windows; the pinned windows don't need one.
+                // Roster task line: prefer the v2 `status.detail` (the harness's own
+                // current-activity line / active tool) when present; otherwise fall
+                // back to the latest message preview. Pinned windows carry neither.
                 let current_task = if pinned {
                     None
                 } else {
-                    store::latest_message_preview(conn, &session.agent_id, &session.session_id)?
-                        .map(|body| task_preview(&body))
+                    match session
+                        .current_detail
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|d| !d.is_empty())
+                    {
+                        Some(detail) => Some(task_preview(detail)),
+                        None => store::latest_message_preview(
+                            conn,
+                            &session.agent_id,
+                            &session.session_id,
+                        )?
+                        .map(|body| task_preview(&body)),
+                    }
                 };
                 out.push(summarize(session, unread, pinned, current_task));
             }
@@ -382,6 +435,7 @@ fn handle_sessions_create(params: Map<String, Value>) -> ControllerFuture {
             last_seq: 0,
             created_at: now.clone(),
             last_message_at: now.clone(),
+            ..Default::default()
         };
         store::with_connection(&config.workspace_dir, |conn| {
             store::upsert_session(conn, &session)
@@ -398,7 +452,7 @@ fn pinned_placeholder(session_id: &str) -> SessionSummary {
         agent_id: session_id.to_string(),
         source: "orchestration".to_string(),
         harness_type: None,
-        status: derive_status(true).to_string(),
+        status: derive_status(None, true).to_string(),
         current_task: None,
         label: None,
         workspace: None,
@@ -465,6 +519,71 @@ fn handle_send_master_message(params: Map<String, Value>) -> ControllerFuture {
             .filter(|s| !s.is_empty() && *s != "master" && *s != "subconscious")
             .map(str::to_string);
 
+        // W2 — "ask OpenHuman locally". No recipient AND no session id means the
+        // human is asking the OpenHuman agent itself via the Master chat (not
+        // steering an external peer). Route the question into OpenHuman's OWN
+        // reasoning graph: persist it in the Master window + wake the reasoning
+        // core locally — NO outbound peer DM, no recipient required. The core
+        // answers (using its history/read tools and, if it needs a real external
+        // agent, `orchestration_send_to_agent` + W7 threading) and its reply lands
+        // back in this Master window. This is the human↔OpenHuman channel; peer
+        // steering still works by passing an explicit `recipient`/`sessionId`.
+        if explicit.is_none() && session_id.is_none() {
+            let now = chrono::Utc::now().to_rfc3339();
+            let message_id = format!("master-ask:{now}");
+            let persisted = store::with_connection(&config.workspace_dir, |conn| {
+                let seq = store::next_session_seq(conn, LOCAL_MASTER_AGENT, "master")?;
+                store::upsert_session(
+                    conn,
+                    &OrchestrationSession {
+                        session_id: "master".to_string(),
+                        agent_id: LOCAL_MASTER_AGENT.to_string(),
+                        source: "master".to_string(),
+                        label: None,
+                        workspace: None,
+                        last_seq: seq,
+                        created_at: now.clone(),
+                        last_message_at: now.clone(),
+                        ..Default::default()
+                    },
+                )?;
+                store::insert_message(
+                    conn,
+                    &OrchestrationMessage {
+                        id: message_id.clone(),
+                        agent_id: LOCAL_MASTER_AGENT.to_string(),
+                        session_id: "master".to_string(),
+                        chat_kind: ChatKind::Master,
+                        role: "user".to_string(),
+                        body: body.clone(),
+                        timestamp: now.clone(),
+                        seq,
+                        ..Default::default()
+                    },
+                )
+            });
+            if let Err(e) = persisted {
+                return Err(format!("master ask persist: {e}"));
+            }
+            // Fan to the renderer so the question shows immediately …
+            super::bus::notify_orchestration_message(
+                LOCAL_MASTER_AGENT,
+                "master",
+                ChatKind::Master.as_str(),
+            );
+            // … and publish the domain event so the wake subscriber schedules the
+            // reasoning graph (notify alone only reaches the socket, not the wake).
+            crate::core::event_bus::publish_global(
+                crate::core::event_bus::DomainEvent::OrchestrationSessionMessage {
+                    agent_id: LOCAL_MASTER_AGENT.to_string(),
+                    session_id: "master".to_string(),
+                    chat_kind: ChatKind::Master.as_str().to_string(),
+                },
+            );
+            log::debug!(target: LOG, "[orchestration_rpc] master_ask.local id={message_id}");
+            return to_json(serde_json::json!({ "ok": true, "messageId": message_id }));
+        }
+
         // Resolve the recipient: explicit wins; otherwise the session's contact
         // (session mode) or the latest Master peer (master mode).
         let recipient = match (explicit, session_id.as_deref()) {
@@ -526,6 +645,7 @@ fn handle_send_master_message(params: Map<String, Value>) -> ControllerFuture {
                     last_seq: 0,
                     created_at: now.clone(),
                     last_message_at: now.clone(),
+                    ..Default::default()
                 },
             )?;
             store::insert_message(
@@ -539,6 +659,7 @@ fn handle_send_master_message(params: Map<String, Value>) -> ControllerFuture {
                     body: body.clone(),
                     timestamp: now.clone(),
                     seq: 0,
+                    ..Default::default()
                 },
             )
         });
@@ -648,7 +769,22 @@ fn handle_attention(_params: Map<String, Value>) -> ControllerFuture {
             }
         };
 
-        let queue = attention::assemble_attention(approvals, needs_input, unread);
+        // 4. Remote agent sessions parked on a tool-approval decision (Phase 1's
+        //    persisted `waiting_approval` run-state). Best-effort like the unread
+        //    read: a transient local-DB hiccup must not sink the other sources.
+        //    These fold into the Approval kind (see `assemble_attention`).
+        let remote_approvals = match store::with_connection(
+            &config.workspace_dir,
+            super::ops::gather_remote_approval_signals,
+        ) {
+            Ok(remote_approvals) => remote_approvals,
+            Err(e) => {
+                log::warn!(target: LOG, "[orchestration_rpc] attention.remote_approvals_failed: {e}");
+                Vec::new()
+            }
+        };
+
+        let queue = attention::assemble_attention(approvals, needs_input, unread, remote_approvals);
         log::debug!(
             target: LOG,
             "[orchestration_rpc] attention.exit total={} approvals={} needs_input={} unread={}",
@@ -697,11 +833,21 @@ fn handle_self_identity(_params: Map<String, Value>) -> ControllerFuture {
         } else {
             let mut rev_params = Map::new();
             rev_params.insert("cryptoId".to_string(), Value::from(agent_id.clone()));
-            match crate::openhuman::tinyplace::handle_tinyplace_directory_reverse(rev_params).await
+            // Bounded: a slow/degraded relay must degrade this to "no handle",
+            // never hang the whole card on "Loading identity…" forever.
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                crate::openhuman::tinyplace::handle_tinyplace_directory_reverse(rev_params),
+            )
+            .await
             {
-                Ok(reverse) => Some(reverse),
-                Err(e) => {
+                Ok(Ok(reverse)) => Some(reverse),
+                Ok(Err(e)) => {
                     log::debug!(target: LOG, "[orchestration_rpc] self_identity reverse miss: {e}");
+                    None
+                }
+                Err(_) => {
+                    log::warn!(target: LOG, "[orchestration_rpc] self_identity reverse timed out (relay slow)");
                     None
                 }
             }
@@ -714,9 +860,16 @@ fn handle_self_identity(_params: Map<String, Value>) -> ControllerFuture {
         } else {
             let mut card_params = Map::new();
             card_params.insert("agentId".to_string(), Value::from(agent_id.clone()));
-            crate::openhuman::tinyplace::handle_tinyplace_directory_get_agent(card_params)
-                .await
-                .is_ok()
+            // Bounded like the reverse lookup above: a stalled relay degrades to
+            // "card not published" rather than pinning the card on "Loading…".
+            matches!(
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    crate::openhuman::tinyplace::handle_tinyplace_directory_get_agent(card_params),
+                )
+                .await,
+                Ok(Ok(_))
+            )
         };
 
         let identity = super::ops::build_self_identity(
@@ -732,6 +885,46 @@ fn handle_self_identity(_params: Map<String, Value>) -> ControllerFuture {
             identity.discoverable
         );
         to_json(identity)
+    })
+}
+
+/// Make this agent fully messageable, then echo back the refreshed identity.
+///
+/// The `SelfIdentityCard` shows *why* peers can't DM this agent but had no
+/// remediation — the user was left to go register a @handle elsewhere even when
+/// the wallet already holds one. Two publishes are needed for a peer to actually
+/// deliver a first DM, and this does both:
+///
+/// 1. **Directory card + encryption key** (`signal_register_encryption_key`):
+///    upserts the directory card (minting a minimal one if none exists) and
+///    writes the wallet's encryption key into its metadata, so peers can *resolve*
+///    this address.
+/// 2. **X3DH prekey bundle** (`signal_provision`): generates a signed pre-key +
+///    one-time pre-keys and uploads them to `/keys/<addr>/bundle`, so peers can
+///    *initiate* a Signal session. Without this, resolution succeeds but the very
+///    first DM 404s on the bundle fetch — "discoverable" would be a lie. This is
+///    the step the old card-only publish missed.
+///
+/// Then re-reads `self_identity` so the card flips to "discoverable" in place. No
+/// @handle registration and no payment: this only publishes presence for the
+/// identity the wallet already has. Registering a brand-new paid handle stays in
+/// the tiny.place registry surface.
+fn handle_publish_identity(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        log::debug!(target: LOG, "[orchestration_rpc] publish_identity entry");
+        // 1. Directory card + encryption key → resolvable.
+        crate::openhuman::tinyplace::handle_tinyplace_signal_register_encryption_key(Map::new())
+            .await
+            .map_err(|e| format!("publish_identity card: {e}"))?;
+        // 2. X3DH prekey bundle → a peer can initiate the first DM. A peer that
+        //    resolves the card but finds no bundle 404s on `/keys/<addr>/bundle`,
+        //    so this is required for real messageability, not optional polish.
+        crate::openhuman::tinyplace::handle_tinyplace_signal_provision(Map::new())
+            .await
+            .map_err(|e| format!("publish_identity prekeys: {e}"))?;
+        // 3. Re-read discoverability from the directory so the renderer gets the
+        //    post-publish truth (card + key now live), not an optimistic guess.
+        handle_self_identity(Map::new()).await
     })
 }
 
@@ -805,13 +998,22 @@ mod tests {
     #[test]
     fn schemas_use_orchestration_namespace() {
         let schemas = all_controller_schemas();
-        assert_eq!(schemas.len(), 9);
+        assert_eq!(schemas.len(), 10);
         assert!(schemas.iter().all(|s| s.namespace == "orchestration"));
         assert_eq!(schema_for("orchestration_attention").function, "attention");
         assert_eq!(
             schema_for("orchestration_self_identity").function,
             "self_identity"
         );
+        assert_eq!(
+            schema_for("orchestration_publish_identity").function,
+            "publish_identity"
+        );
+        // The publish-identity remediation must be wired into the live registry,
+        // not just describable — otherwise the SelfIdentityCard button 404s.
+        assert!(all_registered_controllers()
+            .iter()
+            .any(|c| c.schema.function == "publish_identity"));
         assert_eq!(
             schema_for("orchestration_relay_info").function,
             "relay_info"
@@ -854,6 +1056,7 @@ mod tests {
             last_seq: 0,
             created_at: now.clone(),
             last_message_at: now,
+            ..Default::default()
         };
         let resolved = store::with_connection(&config.workspace_dir, |conn| {
             store::upsert_session(conn, &session)?;
@@ -917,9 +1120,59 @@ mod tests {
     }
 
     #[test]
-    fn status_is_idle_when_active_else_stopped() {
-        assert_eq!(derive_status(true), "idle");
-        assert_eq!(derive_status(false), "stopped");
+    fn status_falls_back_to_recency_without_persisted_state() {
+        // v1/legacy sessions carry no run-state → the original recency heuristic.
+        assert_eq!(derive_status(None, true), "idle");
+        assert_eq!(derive_status(None, false), "stopped");
+        // An unrecognised persisted value also falls back to recency.
+        assert_eq!(derive_status(Some("weird"), true), "idle");
+    }
+
+    #[test]
+    fn status_maps_persisted_v2_run_state() {
+        assert_eq!(derive_status(Some("running"), true), "running");
+        assert_eq!(derive_status(Some("running_tool"), true), "running");
+        assert_eq!(
+            derive_status(Some("waiting_approval"), true),
+            "waiting-approval"
+        );
+        assert_eq!(derive_status(Some("idle"), true), "idle");
+        assert_eq!(derive_status(Some("stopped"), true), "stopped");
+        assert_eq!(derive_status(Some("errored"), true), "errored");
+        // waiting/errored are honoured even when the session has gone stale.
+        assert_eq!(derive_status(Some("errored"), false), "errored");
+        assert_eq!(
+            derive_status(Some("waiting_approval"), false),
+            "waiting-approval"
+        );
+    }
+
+    #[test]
+    fn status_staleness_downgrades_silent_running_to_stopped() {
+        // A `running` session that has gone silent (no recent traffic) must not
+        // sit on a stuck green dot — it downgrades to stopped.
+        assert_eq!(derive_status(Some("running"), false), "stopped");
+        assert_eq!(derive_status(Some("running_tool"), false), "stopped");
+    }
+
+    #[test]
+    fn summarize_reads_persisted_run_state_and_detail() {
+        let session = OrchestrationSession {
+            session_id: "w2".to_string(),
+            agent_id: "@peer".to_string(),
+            source: "claude".to_string(),
+            last_seq: 3,
+            created_at: "2020-01-01T00:00:00Z".to_string(),
+            // Recent enough to be "active".
+            last_message_at: chrono::Utc::now().to_rfc3339(),
+            status_state: Some("waiting_approval".to_string()),
+            current_detail: Some("approve rm -rf".to_string()),
+            ..Default::default()
+        };
+        // current_task is threaded from the handler (status.detail preferred there).
+        let summary = summarize(session, 0, false, Some("approve rm -rf".to_string()));
+        assert_eq!(summary.status, "waiting-approval");
+        assert_eq!(summary.current_task.as_deref(), Some("approve rm -rf"));
     }
 
     #[test]
@@ -945,6 +1198,7 @@ mod tests {
             created_at: "2020-01-01T00:00:00Z".to_string(),
             // Stale timestamp → not active → stopped.
             last_message_at: "2020-01-01T00:00:00Z".to_string(),
+            ..Default::default()
         };
         let summary = summarize(session, 2, false, Some("drafting cards".to_string()));
         assert_eq!(summary.harness_type.as_deref(), Some("claude"));

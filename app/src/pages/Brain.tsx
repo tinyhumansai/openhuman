@@ -15,7 +15,6 @@ import { MemoryGraph } from '../components/intelligence/MemoryGraph';
 import { MemorySourcesRegistry } from '../components/intelligence/MemorySourcesRegistry';
 import { MemoryTreeStatusPanel } from '../components/intelligence/MemoryTreeStatusPanel';
 import SubconsciousTriggersPanel from '../components/intelligence/SubconsciousTriggersPanel';
-import TinyPlaceOrchestrationTab from '../components/intelligence/TinyPlaceOrchestrationTab';
 import { ToastContainer } from '../components/intelligence/Toast';
 import PanelPage from '../components/layout/PanelPage';
 import { SidebarContent } from '../components/layout/shell/SidebarSlot';
@@ -45,7 +44,6 @@ type BrainTab =
   | 'memory-data'
   | 'memory-debug'
   | 'analysis-views'
-  | 'tinyplace-orchestration'
   | 'subconscious';
 
 /** Tabs that render a relocated settings panel (Knowledge & Memory group). */
@@ -72,7 +70,6 @@ const BRAIN_TABS: readonly BrainTab[] = [
   'memory-data',
   'memory-debug',
   'analysis-views',
-  'tinyplace-orchestration',
   'subconscious',
 ];
 
@@ -94,6 +91,15 @@ export default function Brain() {
     },
     [location.pathname, location.search, navigate]
   );
+  // Back-compat: TinyPlace Orchestration was promoted out of Brain into the
+  // top-level `/orchestration` tab. Bounce the old deep link there.
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get('tab') === 'tinyplace-orchestration') {
+      console.debug('[brain] legacy tinyplace-orchestration deep link → /orchestration');
+      navigate('/orchestration', { replace: true });
+    }
+  }, [location.search, navigate]);
+
   const [graph, setGraph] = useState<GraphExportResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<GraphMode>('tree');
@@ -230,18 +236,6 @@ export default function Brain() {
                 ],
               },
               {
-                label: t('memory.tab.orchestration'),
-                items: [
-                  {
-                    value: 'tinyplace-orchestration',
-                    label: t('brain.tabs.tinyplaceOrchestration'),
-                    icon: navIcon(
-                      'M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8a9.77 9.77 0 01-4-.82L3 20l1.3-3.9A7.44 7.44 0 013 12c0-4.418 4.03-8 9-8s9 3.582 9 8z'
-                    ),
-                  },
-                ],
-              },
-              {
                 items: [
                   {
                     value: 'subconscious',
@@ -283,10 +277,7 @@ export default function Brain() {
           // Bespoke tabs share the standard scaffold: a single scrolling body,
           // all custom controls live inside it.
           <PanelPage contentClassName="p-4">
-            <div
-              className={`mx-auto space-y-5 ${
-                activeTab === 'tinyplace-orchestration' ? 'max-w-5xl' : 'max-w-3xl'
-              }`}>
+            <div className="mx-auto max-w-3xl space-y-5">
               {activeTab === 'graph' && (
                 <div className="space-y-5 animate-fade-up">
                   <MemoryControls
@@ -327,12 +318,6 @@ export default function Brain() {
                   <div className={cardClass}>
                     <MemoryTreeStatusPanel onToast={addToast} />
                   </div>
-                </div>
-              )}
-
-              {activeTab === 'tinyplace-orchestration' && (
-                <div className="animate-fade-up">
-                  <TinyPlaceOrchestrationTab />
                 </div>
               )}
 

@@ -17,6 +17,7 @@ import FlowsPage from './pages/FlowsPage';
 import Invites from './pages/Invites';
 import Notifications from './pages/Notifications';
 import Onboarding from './pages/onboarding/Onboarding';
+import OrchestrationPage from './pages/OrchestrationPage';
 import { PttOverlayPage } from './pages/PttOverlayPage';
 import Rewards from './pages/Rewards';
 import Skills from './pages/Skills';
@@ -132,6 +133,23 @@ const AppRoutes = ({ location }: AppRoutesProps = {}) => {
             <FlowCanvasPage />
           </ProtectedRoute>
         }
+      />
+
+      {/* Orchestration — TinyPlace multi-agent coordination surface, promoted
+          from a Brain sub-tab into a first-class sidebar destination (sits
+          right after Workflows). */}
+      <Route
+        path="/orchestration"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <OrchestrationPage />
+          </ProtectedRoute>
+        }
+      />
+      {/* Back-compat: the old Brain deep link → the promoted top-level tab. */}
+      <Route
+        path="/brain/tinyplace-orchestration"
+        element={<Navigate to="/orchestration" replace />}
       />
 
       {/* Back-compat: /activity and /intelligence → settings notifications page. */}

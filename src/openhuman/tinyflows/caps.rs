@@ -31,7 +31,8 @@ use crate::openhuman::config::{Config, HttpRequestConfig};
 use crate::openhuman::credentials::{HttpCredential, HttpCredentialsStore};
 use crate::openhuman::flows;
 use crate::openhuman::inference::provider::{
-    create_chat_provider, role_for_model_tier, ChatMessage, ChatRequest, UsageInfo,
+    create_chat_provider, is_raw_passthrough_model, role_for_model_tier, ChatMessage, ChatRequest,
+    UsageInfo,
 };
 use crate::openhuman::sandbox::{execute_in_sandbox, resolve_sandbox_policy};
 use crate::openhuman::security::{
@@ -181,6 +182,51 @@ fn escalated_origin_for_prompt(
     if tier_decision != GateDecision::Prompt {
         return None;
     }
+    match origin {
+        Some(AgentTurnOrigin::TrustedAutomation {
+            job_id,
+            source:
+                TrustedAutomationSource::Workflow {
+                    require_approval: false,
+                },
+        }) => Some(AgentTurnOrigin::TrustedAutomation {
+            job_id,
+            source: TrustedAutomationSource::Workflow {
+                require_approval: true,
+            },
+        }),
+        _ => None,
+    }
+}
+
+/// Pure decision core of the nested agent-node harness escalation (issue
+/// #4595): when the flow run's origin is a `Workflow { require_approval: false }`
+/// trust root, returns a clone with `require_approval` flipped to `true` so the
+/// [`ApprovalGate`](crate::openhuman::approval::ApprovalGate)'s pre-declared-
+/// action shortcut (`gate.rs::intercept_audited`, `Workflow { require_approval:
+/// false }` → `Allow` without prompt) does NOT apply to tool calls the nested
+/// harness picks at runtime.
+///
+/// **Why this is different from [`escalated_origin_for_prompt`].** That helper
+/// escalates a *single* flow-node acting tool dispatch when the tier decision
+/// is `Prompt`. This helper escalates the *entire nested harness turn*
+/// unconditionally, because the flow author never pre-declared which tools the
+/// referenced agent's LLM will pick — the graph only names the `agent_ref`, and
+/// the definition's `ToolScope` is the runtime pool. So the "trust root =
+/// static action" invariant that justifies the `intercept_audited` shortcut
+/// simply doesn't hold across the `Agent::run_single` boundary.
+///
+/// `Workflow { require_approval: true }` passes through unchanged (already
+/// user-forced HITL); other origins pass through unchanged (Cron / Web chat
+/// / etc. don't route through this call site today, but if they ever do the
+/// shortcut is safe or already covered by that origin's own gate branch).
+/// Split out as a free function over plain values so the escalation policy is
+/// unit-testable without a live `ApprovalGate`.
+fn escalated_origin_for_nested_harness(
+    origin: Option<crate::openhuman::agent::turn_origin::AgentTurnOrigin>,
+) -> Option<crate::openhuman::agent::turn_origin::AgentTurnOrigin> {
+    use crate::openhuman::agent::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
+
     match origin {
         Some(AgentTurnOrigin::TrustedAutomation {
             job_id,
@@ -367,6 +413,28 @@ pub(crate) fn parse_llm_json(text: &str) -> Option<Value> {
     matches!(parsed, Value::Object(_) | Value::Array(_)).then_some(parsed)
 }
 
+/// Select the model an `agent` node completion actually runs on.
+///
+/// `resolved_model` is what [`create_chat_provider`] returned for the node's
+/// mapped workload role. A node may instead pin a **raw/BYOK** model id
+/// (e.g. `claude-opus-4`) that [`role_for_model_tier`] collapsed to the `chat`
+/// role — in that case the pinned id, not the role default, is the model the
+/// user selected, so it is forwarded verbatim (issue #4598). Managed tiers and
+/// every `hint:*` alias fall through to `resolved_model` unchanged.
+fn resolve_completion_model(node_model: Option<&str>, resolved_model: String) -> String {
+    match node_model {
+        Some(pinned) if is_raw_passthrough_model(pinned) => {
+            tracing::debug!(
+                target: "flows",
+                raw_model = pinned,
+                "[flows] llm.complete: forwarding raw/BYOK node model verbatim (not a managed tier)"
+            );
+            pinned.to_string()
+        }
+        _ => resolved_model,
+    }
+}
+
 /// [`LlmProvider`] adapter over OpenHuman's inference stack
 /// (`src/openhuman/inference/provider/`).
 ///
@@ -450,6 +518,9 @@ impl LlmProvider for OpenHumanLlm {
 
         let (provider, model) = create_chat_provider(role, &self.config)
             .map_err(|e| EngineError::Capability(e.to_string()))?;
+        // `create_chat_provider` handed back the role's default model. If the node
+        // pinned a raw/BYOK id, forward it verbatim instead (issue #4598).
+        let model = resolve_completion_model(node_model, model);
 
         let response = provider
             .chat(
@@ -630,11 +701,19 @@ pub(crate) fn resolve_node_model(request: &Value, entry_model: Option<&str>) -> 
 /// to the workload serving that tier. The session builder's `provider_role_for`
 /// only routes the `hint:<role>` form to a specialised workload, so a bare tier
 /// name (`reasoning-v1`) must be normalised to `hint:reasoning` here — otherwise
-/// it would silently fall through to the chat workload. Mirrors the per-node
-/// routing [`OpenHumanLlm::complete`] applies via
-/// [`role_for_model_tier`](crate::openhuman::inference::provider::role_for_model_tier);
-/// an unrecognised string maps to the chat workload, same as there.
+/// it would silently fall through to the chat workload.
+///
+/// A **raw/BYOK** model id (e.g. `claude-opus-4`) is instead forwarded verbatim:
+/// wrapping it in `hint:chat` would collapse the user's explicit per-node model
+/// onto the managed `chat-v1` tier (issue #4598). Left verbatim, it flows through
+/// the session builder's generic `chat` role — which inherits
+/// `config.default_model` — to `make_openhuman_backend`, which forwards non-tier
+/// ids to the backend unchanged. Mirrors the per-node routing
+/// [`OpenHumanLlm::complete`] applies via [`resolve_completion_model`].
 pub(crate) fn harness_model_default_override(node_model: &str) -> String {
+    if is_raw_passthrough_model(node_model) {
+        return node_model.to_string();
+    }
     format!("hint:{}", role_for_model_tier(node_model))
 }
 
@@ -815,12 +894,45 @@ impl OpenHumanAgentRunner {
             "[flows] agent_runner: dispatching full harness turn"
         );
 
-        // No origin wrapper: the engine future already runs under the flow's
-        // Workflow origin, so the inner turn inherits the autonomy tier +
-        // approval gate; the definition's ToolScope/sandbox is the inner gate.
+        // Nested-harness HITL escalation (issue #4595): the engine future runs
+        // under the flow's Workflow origin, but the flow author only pre-
+        // declared `agent_ref` — not the concrete tools the harness LLM will
+        // pick from the definition's `ToolScope`. If we let the inner turn
+        // inherit a `Workflow { require_approval: false }` origin,
+        // `ApprovalGate::intercept_audited` treats it as a trust root and
+        // auto-`Allow`s external_effect tools (see
+        // `src/openhuman/approval/gate.rs` `Workflow { require_approval: false }`
+        // branch), which would let a scheduled / app-event flow reach out to
+        // Slack / email / desktop control with no HITL. We force
+        // `require_approval: true` around `run_single` so external_effect tools
+        // park for a real decision the same way flow acting nodes escalated by
+        // [`gate_call_for_tier`] do. Read-only tools (no `external_effect`)
+        // aren't gated by `intercept_audited` at all, so this doesn't add noise
+        // for pure-read nested agents.
+        //
         // Cancellation: the run_registry token aborts the engine future, and the
-        // inner turn drops with it.
-        let run = agent.run_single(&prompt);
+        // inner turn drops with it (task-local scope unwinds cleanly).
+        use crate::openhuman::agent::turn_origin;
+        let escalated_origin = escalated_origin_for_nested_harness(turn_origin::current());
+        if let Some(ref escalated) = escalated_origin {
+            tracing::debug!(
+                target: "flows",
+                agent_ref,
+                origin = ?escalated,
+                "[flows] agent_runner: escalating nested harness turn to Workflow{{require_approval:true}} \
+                 so external_effect tools park for HITL (issue #4595)"
+            );
+        }
+        let run: std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send>,
+        > = if let Some(escalated) = escalated_origin {
+            Box::pin(turn_origin::with_origin(
+                escalated,
+                agent.run_single(&prompt),
+            ))
+        } else {
+            Box::pin(agent.run_single(&prompt))
+        };
         let final_text =
             match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), run).await {
                 Ok(Ok(text)) => text,
@@ -1390,6 +1502,17 @@ pub struct ToolContract {
     /// [`Self::output_schema`] is `None` (unknown) OR when it's `Some` but
     /// names no top-level properties; check `output_schema` to tell those
     /// two apart.
+    ///
+    /// **These name fields of the tool's PAYLOAD, not of the runtime
+    /// envelope.** Composio's `output_parameters` (what [`Self::output_schema`]
+    /// mirrors) describes the return value the provider hands back — the
+    /// same value that ends up under `ComposioExecuteResponse.data` — NOT
+    /// the `{data, successful, error, costUsd, …}` envelope the execute
+    /// response wraps it in. So a downstream binding to one of these fields
+    /// off a `tool_call` node must dereference `.item.json.data.<field>`
+    /// (the engine's own `{json,text,raw}` envelope, THEN Composio's
+    /// `data` wrapper), never the bare `.item.json.<field>` an agent/
+    /// `http_request` output would use.
     pub output_fields: Vec<String>,
     /// The action's full output JSON Schema, when Composio publishes one.
     /// `None` means "unknown to this listing", not "empty" — mirrors
@@ -1397,9 +1520,13 @@ pub struct ToolContract {
     pub output_schema: Option<Value>,
     /// Dotted path (relative to the envelope's own `json` field — prefix
     /// with `"json."` for a `split_out.path`, e.g. `"json.data.messages"`)
-    /// to the first array-typed property in [`Self::output_schema`], via
-    /// [`compute_primary_array_path`]. `None` when the output schema is
-    /// unknown or names no array property.
+    /// to the first array-typed property in the tool's real runtime output,
+    /// via [`compute_composio_array_path`]. Already accounts for Composio's
+    /// `data` wrapper (see [`Self::output_fields`]'s doc) — this is NOT the
+    /// bare [`compute_primary_array_path`] walk over [`Self::output_schema`],
+    /// which is relative to the unwrapped payload and would be missing the
+    /// leading `data.` segment. `None` when the output schema is unknown or
+    /// names no array property.
     pub primary_array_path: Option<String>,
     /// Whether this action is ALSO one of OpenHuman's hand-curated actions
     /// for its toolkit (`catalog_for_toolkit` /
@@ -1552,7 +1679,7 @@ pub(crate) async fn fetch_live_toolkit_catalog(
             let output_fields =
                 response_fields_from_schema(tool.function.output_parameters.as_ref());
             let primary_array_path =
-                compute_primary_array_path(tool.function.output_parameters.as_ref());
+                compute_composio_array_path(tool.function.output_parameters.as_ref());
             let is_curated = curated_catalog.is_some_and(|cat| find_curated(cat, &slug).is_some());
             ToolContract {
                 slug,
@@ -1576,10 +1703,16 @@ pub(crate) async fn fetch_live_toolkit_catalog(
 
 /// Walks an output JSON Schema breadth-first for the first `type: "array"`
 /// property, returning its dotted path relative to the schema's own root
-/// (e.g. `"data.messages"` for a Gmail-list-shaped `{data: {messages:
-/// [...]}}` schema, or `"messages"` for a flatter `{messages: [...]}`
+/// (e.g. `"data.messages"` for a schema that itself is shaped `{data:
+/// {messages: [...]}}`, or `"messages"` for a flatter `{messages: [...]}`
 /// schema). `None` when `schema` is absent or no array property is found at
 /// any depth.
+///
+/// Pure schema walker — relative to `schema`'s own root, nothing else. A
+/// real Composio `output_parameters` schema is normally shaped like the
+/// flatter example (it describes the tool's payload, not the runtime
+/// envelope around it) — [`compute_composio_array_path`] is the caller that
+/// adjusts for that envelope; this function has no opinion on it.
 ///
 /// Breadth-first (not depth-first): when a schema nests more than one array
 /// property, the SHALLOWEST one wins, since that is virtually always the one
@@ -1615,6 +1748,32 @@ pub(crate) fn compute_primary_array_path(schema: Option<&Value>) -> Option<Strin
         }
     }
     None
+}
+
+/// [`compute_primary_array_path`], adjusted for the wrapper EVERY Composio
+/// `tool_call` result carries at runtime.
+///
+/// A `tool_call` node's real output (`OpenHumanTools::invoke`, which
+/// `serde_json::to_value`s the client's `ComposioExecuteResponse` verbatim)
+/// is `{data: <payload>, successful, error, costUsd, …}` — but the schema
+/// Composio publishes as `output_parameters` (what [`compute_primary_array_path`]
+/// walks) describes only `<payload>`, the content of that `data` field, not
+/// the envelope around it. So the bare walk's result (e.g. `"messages"`) is
+/// missing the `data.` segment a real `split_out.path`/downstream binding
+/// needs (`"data.messages"`) — this wrapper adds it, UNCONDITIONALLY.
+///
+/// There is no escape hatch for a payload schema that itself happens to
+/// declare a top-level `data` property (e.g. a provider whose real payload
+/// shape is `{data: {messages: [...]}}`, unrelated to Composio's own
+/// wrapper) — `output_parameters` describes the payload only, per the
+/// invariant documented on [`ToolContract::output_fields`], so the real
+/// runtime path in that case is `data.data.messages`, not `data.messages`.
+/// Treating a payload-level `data` key as "this schema already models the
+/// envelope" silently drops a real wrapper segment and points a downstream
+/// binding / `split_out.path` at the wrong (non-existent) array.
+pub(crate) fn compute_composio_array_path(schema: Option<&Value>) -> Option<String> {
+    let path = compute_primary_array_path(schema)?;
+    Some(format!("data.{path}"))
 }
 
 /// Best-effort lookup of a Composio action's **required** top-level parameter
@@ -1704,6 +1863,51 @@ pub(crate) fn missing_required_args(required: &[String], args: &Value) -> Vec<St
         .collect()
 }
 
+/// [B13] Returns argument names in `args` that are NOT declared `properties`
+/// of `schema` — the NAME-VALIDITY counterpart to [`missing_required_args`]'s
+/// PRESENCE check. Catches the class of bug `missing_required_args` alone
+/// cannot: a builder wires a real, well-typed value under an arg name the
+/// action's schema doesn't recognize at all (e.g. `SLACK_SEND_MESSAGE`'s
+/// `text` when the live action actually wants `markdown_text`) — the
+/// required arg still LOOKS satisfied from `missing_required_args`'
+/// perspective (a value is present under *some* key), so the mistake sails
+/// through authoring/save and only 400s from the real provider at runtime.
+///
+/// `None` means "cannot validate this schema — skip, never reject", so a
+/// caller must never turn a `None` into a rejection:
+/// - `schema` is `None` (`ToolContract::input_schema` unknown for this slug), or
+/// - `schema` is not a JSON object, or names no object `properties` map (an
+///   unrecognized/legacy shape — nothing to check names against), or
+/// - `schema` declares `additionalProperties: true` (Composio explicitly
+///   telling us to accept arbitrary keys beyond the declared ones).
+///
+/// `Some(vec![])` means the schema WAS usable and every arg name in `args`
+/// is a real declared property. `args` must be a JSON object to check
+/// against; any other shape (including `Value::Null` — no args wired at
+/// all) yields `Some(vec![])`, mirroring `missing_required_args`' treatment
+/// of an absent/non-object `args`.
+pub(crate) fn unsupported_arg_names(schema: Option<&Value>, args: &Value) -> Option<Vec<String>> {
+    let schema_obj = schema?.as_object()?;
+    if schema_obj
+        .get("additionalProperties")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        return None;
+    }
+    let properties = schema_obj.get("properties")?.as_object()?;
+    let Some(args_obj) = args.as_object() else {
+        return Some(Vec::new());
+    };
+    let mut unsupported: Vec<String> = args_obj
+        .keys()
+        .filter(|k| !properties.contains_key(k.as_str()))
+        .cloned()
+        .collect();
+    unsupported.sort();
+    Some(unsupported)
+}
+
 /// Required-arg preflight for a Composio `tool_call`: fails **before** the
 /// Composio dispatch when a required arg is missing or resolved to `null`,
 /// with a message that names the field and the likely fix — instead of letting
@@ -1739,6 +1943,44 @@ pub(crate) async fn preflight_composio_args(
          `agent`/`tool_call`/`http_request` nodes wrap their output in a `{{json,text,raw}}` \
          envelope). If the value comes from an agent node, give that agent an output schema \
          (config.output_parser.schema) so its fields are addressable."
+    )))
+}
+
+/// Turns a Composio execute response that reports a provider-side failure
+/// into a real capability error.
+///
+/// The Composio execute endpoint is a "successful HTTP request describing an
+/// unsuccessful tool call" API: a transport-level failure (network error, 5xx,
+/// bad JSON) already surfaces as `Err` via `?` in [`OpenHumanTools::invoke`],
+/// but a 200 response whose body is `{successful: false, error: "..."}` (e.g.
+/// Slack rejecting `SLACK_SEND_MESSAGE` with a 400 "Invalid request data")
+/// comes back as `Ok(ComposioExecuteResponse)` — nothing downstream ever
+/// inspected `successful`, so the tinyflows engine recorded the step (and
+/// therefore the run) as `Success`/`"completed"` even though the requested
+/// action never actually happened upstream.
+///
+/// Called on every Composio response (never on native `oh:` tool results,
+/// which don't carry this envelope and return earlier in `invoke`). A
+/// genuinely successful response (`successful: true`) passes through
+/// unchanged; an unsuccessful one becomes `Err(EngineError::Capability(_))`,
+/// which the engine turns into `StepStatus::Error` and — via
+/// `degrade_completed_status` — a degraded/failed run instead of a false
+/// "Completed".
+fn reject_unsuccessful_composio_response(
+    slug: &str,
+    resp: crate::openhuman::composio::ComposioExecuteResponse,
+) -> Result<crate::openhuman::composio::ComposioExecuteResponse> {
+    if resp.successful {
+        return Ok(resp);
+    }
+    let detail = resp
+        .error
+        .as_deref()
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+        .unwrap_or("no error detail returned by the provider");
+    Err(EngineError::Capability(format!(
+        "tool_call `{slug}` failed at the connected provider: {detail}"
     )))
 }
 
@@ -1949,6 +2191,12 @@ impl ToolInvoker for OpenHumanTools {
                 .map_err(|e| EngineError::Capability(e.to_string()))
             }
         };
+
+        // A successful HTTP round-trip can still carry a provider-side failure
+        // (`{successful: false, error: "..."}`, e.g. a Slack 400 on
+        // `SLACK_SEND_MESSAGE`) — reject it into a real capability error, see
+        // `reject_unsuccessful_composio_response`'s doc.
+        let response = response.and_then(|resp| reject_unsuccessful_composio_response(slug, resp));
 
         if let Some(id) = audit_id {
             if let Some(gate) = crate::openhuman::approval::ApprovalGate::try_global() {
@@ -2541,7 +2789,61 @@ pub fn open_flow_checkpointer(
 mod tests {
     use super::*;
     use crate::openhuman::agent::prompts::types::IntegrationConnection;
-    use crate::openhuman::composio::ConnectedIntegration;
+    use crate::openhuman::composio::{ComposioExecuteResponse, ConnectedIntegration};
+
+    // ── reject_unsuccessful_composio_response (B6) ──────────────────────────
+
+    #[test]
+    fn reject_unsuccessful_composio_response_errors_on_provider_failure() {
+        // Live-observed shape: SLACK_SEND_MESSAGE 400s upstream but the
+        // Composio execute call itself still returns HTTP 200.
+        let resp = ComposioExecuteResponse {
+            data: json!({}),
+            successful: false,
+            error: Some("Invalid request data".to_string()),
+            cost_usd: 0.0,
+            markdown_formatted: None,
+        };
+        let err = reject_unsuccessful_composio_response("SLACK_SEND_MESSAGE", resp)
+            .expect_err("unsuccessful response must become an Err");
+        let msg = err.to_string();
+        assert!(msg.contains("SLACK_SEND_MESSAGE"), "message was: {msg}");
+        assert!(msg.contains("Invalid request data"), "message was: {msg}");
+    }
+
+    #[test]
+    fn reject_unsuccessful_composio_response_falls_back_when_error_field_is_empty() {
+        let resp = ComposioExecuteResponse {
+            data: json!({}),
+            successful: false,
+            error: None,
+            cost_usd: 0.0,
+            markdown_formatted: None,
+        };
+        let err = reject_unsuccessful_composio_response("GMAIL_SEND_EMAIL", resp)
+            .expect_err("unsuccessful response must become an Err");
+        let msg = err.to_string();
+        assert!(msg.contains("GMAIL_SEND_EMAIL"), "message was: {msg}");
+        assert!(
+            msg.contains("no error detail returned by the provider"),
+            "message was: {msg}"
+        );
+    }
+
+    #[test]
+    fn reject_unsuccessful_composio_response_passes_through_on_success() {
+        let resp = ComposioExecuteResponse {
+            data: json!({ "ts": "123.456" }),
+            successful: true,
+            error: None,
+            cost_usd: 0.002,
+            markdown_formatted: None,
+        };
+        let ok = reject_unsuccessful_composio_response("SLACK_SEND_MESSAGE", resp.clone())
+            .expect("successful response must remain Ok");
+        assert!(ok.successful);
+        assert_eq!(ok.data, resp.data);
+    }
 
     // ── input_context (PR A) ────────────────────────────────────────────────
 
@@ -3338,6 +3640,68 @@ mod tests {
         assert!(escalated_origin_for_prompt(GateDecision::Prompt, None).is_none());
     }
 
+    // ── Nested agent-node harness escalation (issue #4595) ─────────────────
+    //
+    // The `agent` node's harness turn runs the full agent tool loop, and the
+    // flow author never pre-declared the tool selection (only the `agent_ref`).
+    // So `escalated_origin_for_nested_harness` must escalate a default
+    // `Workflow { require_approval: false }` origin so
+    // `ApprovalGate::intercept_audited` can't apply its
+    // pre-declared-action `Allow` shortcut to tools the nested LLM picks at
+    // runtime.
+
+    /// A default `require_approval: false` workflow origin unconditionally
+    /// escalates: the nested harness's tool selection was not pre-declared, so
+    /// the trust-root shortcut in `ApprovalGate` must not apply. `job_id` is
+    /// preserved so the parked approval is still attributable to the flow run.
+    #[test]
+    fn nested_harness_escalates_default_workflow_origin_and_preserves_job_id() {
+        let escalated =
+            escalated_origin_for_nested_harness(Some(workflow_origin("flow-42", false)))
+                .expect("a default require_approval=false workflow must escalate");
+        match escalated {
+            AgentTurnOrigin::TrustedAutomation {
+                job_id,
+                source:
+                    TrustedAutomationSource::Workflow {
+                        require_approval: true,
+                    },
+            } => assert_eq!(job_id, "flow-42"),
+            other => panic!("expected escalated Workflow origin, got {other:?}"),
+        }
+    }
+
+    /// A flow that already opted into `require_approval: true` needs no
+    /// escalation — the parking branch already applies.
+    #[test]
+    fn nested_harness_does_not_re_escalate_already_gated_workflow() {
+        assert!(
+            escalated_origin_for_nested_harness(Some(workflow_origin("flow-42", true,))).is_none()
+        );
+    }
+
+    /// A non-Workflow origin (Cron, Cli, WebChat, Unknown, …) passes through
+    /// unchanged: their own gate branches already make the right decision.
+    #[test]
+    fn nested_harness_does_not_escalate_non_workflow_origin() {
+        assert!(
+            escalated_origin_for_nested_harness(Some(AgentTurnOrigin::TrustedAutomation {
+                job_id: "cron-1".into(),
+                source: TrustedAutomationSource::Cron,
+            }))
+            .is_none()
+        );
+        assert!(escalated_origin_for_nested_harness(Some(AgentTurnOrigin::Cli)).is_none());
+    }
+
+    /// No scoped origin (unlabelled caller) passes through: the gate maps it
+    /// to `Unknown` and fails closed on external_effect tools already, so we
+    /// don't invent an escalation.
+    #[test]
+    fn nested_harness_does_not_escalate_without_an_origin() {
+        assert!(escalated_origin_for_nested_harness(None).is_none());
+    }
+
     // ── Phase 7: sub_workflow-by-id resolver ───────────────────────────────
 
     fn resolver_test_config(tmp: &tempfile::TempDir) -> Config {
@@ -3471,6 +3835,76 @@ mod tests {
         assert!(response_fields_from_schema(Some(&json!({}))).is_empty());
     }
 
+    // ── unsupported_arg_names (B13) ──────────────────────────────────────────
+    // Direct unit tests for the pure name-validity check — see
+    // `openhuman::flows::ops_tests` for the end-to-end
+    // `validate_tool_contracts` coverage of the same behavior.
+
+    #[test]
+    fn unsupported_arg_names_flags_a_name_not_in_properties() {
+        let schema = json!({
+            "type": "object",
+            "properties": { "channel": {"type": "string"}, "markdown_text": {"type": "string"} }
+        });
+        let args = json!({ "channel": "#general", "text": "hi" });
+        assert_eq!(
+            unsupported_arg_names(Some(&schema), &args),
+            Some(vec!["text".to_string()])
+        );
+    }
+
+    #[test]
+    fn unsupported_arg_names_empty_when_every_name_is_a_real_property() {
+        let schema = json!({
+            "type": "object",
+            "properties": { "channel": {"type": "string"}, "markdown_text": {"type": "string"} }
+        });
+        let args = json!({ "channel": "#general", "markdown_text": "hi" });
+        assert_eq!(unsupported_arg_names(Some(&schema), &args), Some(vec![]));
+    }
+
+    #[test]
+    fn unsupported_arg_names_skips_when_schema_is_none() {
+        let args = json!({ "anything": "goes" });
+        assert_eq!(unsupported_arg_names(None, &args), None);
+    }
+
+    #[test]
+    fn unsupported_arg_names_skips_when_schema_has_no_properties_object() {
+        // Legacy/loose schema shape (no `properties` map at all) — nothing to
+        // validate names against, so this must skip, not reject.
+        let schema = json!({ "type": "object", "description": "legacy shape" });
+        let args = json!({ "anything": "goes" });
+        assert_eq!(unsupported_arg_names(Some(&schema), &args), None);
+    }
+
+    #[test]
+    fn unsupported_arg_names_skips_when_additional_properties_is_true() {
+        let schema = json!({
+            "type": "object",
+            "properties": { "channel": {"type": "string"} },
+            "additionalProperties": true
+        });
+        let args = json!({ "channel": "#general", "any_extra_field": "hi" });
+        assert_eq!(unsupported_arg_names(Some(&schema), &args), None);
+    }
+
+    #[test]
+    fn unsupported_arg_names_empty_for_null_or_non_object_args() {
+        let schema = json!({
+            "type": "object",
+            "properties": { "channel": {"type": "string"} }
+        });
+        assert_eq!(
+            unsupported_arg_names(Some(&schema), &Value::Null),
+            Some(vec![])
+        );
+        assert_eq!(
+            unsupported_arg_names(Some(&schema), &json!("not an object")),
+            Some(vec![])
+        );
+    }
+
     // ── compute_primary_array_path ──────────────────────────────────────────
 
     #[test]
@@ -3535,6 +3969,65 @@ mod tests {
         );
         assert_eq!(
             compute_primary_array_path(Some(
+                &json!({ "type": "object", "properties": { "id": { "type": "string" } } })
+            )),
+            None
+        );
+    }
+
+    // ── compute_composio_array_path (B1: the `data` wrapper prefix) ─────────
+
+    #[test]
+    fn compute_composio_array_path_prefixes_data_for_an_unwrapped_payload_schema() {
+        // The real shape: Composio's `output_parameters` for GMAIL_FETCH_EMAILS
+        // describes the payload directly — no `data` key in the schema — but
+        // the tool_call's real runtime output nests that payload one level
+        // deeper under `data` (`ComposioExecuteResponse`). The array path must
+        // account for that even though the schema itself never mentions `data`.
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "messages": { "type": "array" },
+                "nextPageToken": { "type": "string" }
+            }
+        });
+        assert_eq!(
+            compute_composio_array_path(Some(&schema)),
+            Some("data.messages".to_string())
+        );
+    }
+
+    #[test]
+    fn compute_composio_array_path_still_prefixes_data_when_the_payload_schema_itself_has_a_data_key(
+    ) {
+        // A payload whose own real shape happens to have a top-level `data`
+        // key (unrelated to Composio's wrapper — e.g. a provider that
+        // itself returns `{data: {messages: [...]}}`) must NOT be mistaken
+        // for "this schema already models the envelope". `output_parameters`
+        // always describes the payload only (see `ToolContract::output_fields`'s
+        // doc) — the real runtime path still needs the wrapper's `data.`
+        // prefix stacked on top, landing on `data.data.messages`, not
+        // `data.messages`.
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "object",
+                    "properties": { "messages": { "type": "array" } }
+                }
+            }
+        });
+        assert_eq!(
+            compute_composio_array_path(Some(&schema)),
+            Some("data.data.messages".to_string())
+        );
+    }
+
+    #[test]
+    fn compute_composio_array_path_none_when_the_bare_walk_finds_nothing() {
+        assert_eq!(compute_composio_array_path(None), None);
+        assert_eq!(
+            compute_composio_array_path(Some(
                 &json!({ "type": "object", "properties": { "id": { "type": "string" } } })
             )),
             None
@@ -3668,6 +4161,48 @@ mod tests {
             composio_response_fields(&config, "FLOWSSCHEMAUNKNOWN_ACTION").await,
             None,
             "an action with no published output schema must be None, not Some(vec![])"
+        );
+    }
+
+    // ── resolve_completion_model raw/BYOK passthrough (issue #4598) ───────────
+    #[test]
+    fn resolve_completion_model_forwards_raw_byok_node_model_verbatim() {
+        // A raw/BYOK id maps to the `chat` role, so the role resolves to the
+        // default model — but the pinned id is what the user selected and must
+        // be the model the completion runs on.
+        assert_eq!(
+            resolve_completion_model(Some("claude-opus-4"), "chat-v1".to_string()),
+            "claude-opus-4"
+        );
+        assert_eq!(
+            resolve_completion_model(Some("deepseek-v4-pro"), "chat-v1".to_string()),
+            "deepseek-v4-pro"
+        );
+    }
+
+    #[test]
+    fn resolve_completion_model_leaves_managed_tier_and_hint_node_models_untouched() {
+        // Managed tiers and every `hint:*` alias keep the role-resolved model.
+        assert_eq!(
+            resolve_completion_model(Some("chat-v1"), "chat-v1".to_string()),
+            "chat-v1"
+        );
+        assert_eq!(
+            resolve_completion_model(Some("hint:reasoning"), "reasoning-v1".to_string()),
+            "reasoning-v1"
+        );
+        assert_eq!(
+            resolve_completion_model(Some("hint:garbage"), "reasoning-v1".to_string()),
+            "reasoning-v1"
+        );
+        // No pinned model, or a whitespace-only pin, keeps the resolved default.
+        assert_eq!(
+            resolve_completion_model(None, "chat-v1".to_string()),
+            "chat-v1"
+        );
+        assert_eq!(
+            resolve_completion_model(Some("   "), "chat-v1".to_string()),
+            "chat-v1"
         );
     }
 }

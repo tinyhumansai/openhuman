@@ -29,6 +29,7 @@ describe('CollapsedNavRail', () => {
       'nav.human',
       'nav.brain',
       'nav.flows',
+      'nav.orchestration',
       'nav.agentWorld',
       'nav.connections',
     ]) {

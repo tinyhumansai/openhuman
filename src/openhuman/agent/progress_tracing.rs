@@ -148,6 +148,17 @@ pub struct TraceContext {
     /// Kind of run — exported as Langfuse trace tags (`run:<type>`) and the
     /// `run_type` metadata key. Defaults to interactive chat.
     pub run_type: RunType,
+    /// This run's own id (the tinyagents `RunContext` run id), exported as the
+    /// `run_id` metadata key. `None` until the run's observations are known.
+    pub run_id: Option<String>,
+    /// The spawning run's id when this run is a sub-agent/graph node, exported
+    /// as the `parent_run_id` metadata key. `None` for top-level turns. This is
+    /// what links a spawned sub-agent's trace back to its parent turn (#4657).
+    pub parent_run_id: Option<String>,
+    /// The root ancestor run id (equal to [`Self::run_id`] for top-level runs),
+    /// exported as the `root_run_id` metadata key so Langfuse can thread a whole
+    /// spawn tree under one root.
+    pub root_run_id: Option<String>,
 }
 
 impl TraceContext {
@@ -161,6 +172,9 @@ impl TraceContext {
             session_group: None,
             capture_content: false,
             run_type: RunType::default(),
+            run_id: None,
+            parent_run_id: None,
+            root_run_id: None,
         }
     }
 
@@ -198,6 +212,22 @@ impl TraceContext {
     /// Set the run type (Langfuse `run:<type>` tag / `run_type` metadata).
     pub fn with_run_type(mut self, run_type: RunType) -> Self {
         self.run_type = run_type;
+        self
+    }
+
+    /// Stamp the run lineage (`run_id` / `parent_run_id` / `root_run_id`) so a
+    /// spawned sub-agent's trace links back to its parent turn (#4657). The ids
+    /// come from the tinyagents `RunContext`, surfaced via the run's journalled
+    /// observations at export time.
+    pub fn with_run_lineage(
+        mut self,
+        run_id: Option<String>,
+        parent_run_id: Option<String>,
+        root_run_id: Option<String>,
+    ) -> Self {
+        self.run_id = run_id;
+        self.parent_run_id = parent_run_id;
+        self.root_run_id = root_run_id;
         self
     }
 }

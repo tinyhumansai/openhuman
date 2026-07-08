@@ -50,6 +50,24 @@ export interface SessionSummary {
   pinned: boolean;
 }
 
+/**
+ * Typed kind of a harness (v2) event, mirroring the SDK's
+ * `tinyplace.harness.session.v2` stream. Absent on legacy v1 rows (which carry
+ * only role + body). The core hides `status`/`lifecycle`/`unknown` from the
+ * thread, so those should not normally reach the renderer.
+ */
+export type HarnessEventKind =
+  | 'user_prompt'
+  | 'agent_message'
+  | 'agent_thinking'
+  | 'tool_call'
+  | 'tool_result'
+  | 'approval_request'
+  | 'status'
+  | 'lifecycle'
+  | 'error'
+  | 'unknown';
+
 export interface OrchestrationMessage {
   id: string;
   agentId: string;
@@ -59,6 +77,12 @@ export interface OrchestrationMessage {
   body: string;
   timestamp: string;
   seq: number;
+  /** Typed event kind for v2 harness streams; absent on v1 text rows. */
+  eventKind?: HarnessEventKind;
+  /** Raw harness tool name (e.g. "Bash") on tool_call / tool_result rows. */
+  toolName?: string;
+  /** Correlation id shared by a tool_call and its tool_result. */
+  callId?: string;
 }
 
 export interface OrchestrationSteering {
@@ -257,6 +281,15 @@ export const orchestrationClient = {
    * DM it). Powers the SelfIdentityCard.
    */
   selfIdentity: () => call<SelfIdentity>('openhuman.orchestration_self_identity', {}),
+
+  /**
+   * Make this agent discoverable: publish (or refresh) its directory card + Signal
+   * encryption key for the wallet's current identity, then return the updated
+   * {@link SelfIdentity}. No @handle registration and no payment — it repairs the
+   * common "has an identity but card/key aren't published" gap that makes every
+   * inbound DM 404. Powers the SelfIdentityCard's "Make discoverable" action.
+   */
+  publishIdentity: () => call<SelfIdentity>('openhuman.orchestration_publish_identity', {}),
 
   /** The relay endpoint + network label the core is talking to (RelayBadge). */
   relayInfo: () => call<RelayInfo>('openhuman.orchestration_relay_info', {}),

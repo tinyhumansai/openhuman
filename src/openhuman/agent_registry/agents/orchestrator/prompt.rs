@@ -379,6 +379,24 @@ mod tests {
     }
 
     #[test]
+    fn prompt_routes_result_gating_tasks_to_synchronous_delegation() {
+        // Regression for #4681: a "critique it before you finalize" task was
+        // dispatched via fire-and-forget `spawn_async_subagent`, so the turn
+        // finalized before the critique ran. The orchestrator prompt must
+        // explicitly route result-gating work to a synchronous/awaited path.
+        assert!(
+            ARCHETYPE.contains("Result-gating tasks run synchronously"),
+            "orchestrator prompt must carry the result-gating delegation rule"
+        );
+        // It must steer such tasks to a synchronous/awaited primitive rather
+        // than fire-and-forget `spawn_async_subagent`.
+        assert!(
+            ARCHETYPE.contains("spawn_parallel_agents") && ARCHETYPE.contains("wait_subagent"),
+            "the rule must name the synchronous/awaited alternatives"
+        );
+    }
+
+    #[test]
     fn render_installed_skills_flattens_and_caps_long_descriptions() {
         // Third-party skill descriptions are untrusted, potentially huge
         // metadata — they must be flattened to one line and byte-capped so

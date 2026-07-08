@@ -185,6 +185,15 @@ impl ApprovalGate for CoreApprovalGate {
                 Core::ApproveAlwaysForTool => {
                     ApprovalDecision::Choice("approve_always_for_tool".to_string())
                 }
+                // `parse_approval_reply` never actually produces this variant
+                // (it only maps a free-text yes/no chat reply to
+                // ApproveOnce/Deny) — the "approve always for this workflow"
+                // decision is only ever picked from the dedicated
+                // `flow-gate-approval` notification action, not typed as a
+                // chat reply. Mapped here purely for match exhaustiveness.
+                Core::ApproveAlwaysForFlow => {
+                    ApprovalDecision::Choice("approve_always_for_flow".to_string())
+                }
                 Core::Deny => ApprovalDecision::Deny,
             }
         })

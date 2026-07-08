@@ -341,7 +341,13 @@ describe('Telegram channel — connect / receive / send / disconnect', () => {
   // ──────────────────────────────────────────────────────────────────────────
 
   it('C.5 inbound text message round-trip — inject update; observe or document reply path', async function () {
-    this.timeout(60_000);
+    // Internal budget is up to 30s (getUpdates poll) + 25s (reply) + connect/LLM
+    // overhead — that sums past a 60s ceiling on the slower macOS runner, so the
+    // working round-trip blew the Mocha `it` timeout instead of asserting. 90s
+    // (matching C.7) gives the observed flow headroom without masking a real hang:
+    // the getUpdates soft-pass at line ~386 still short-circuits if the listener
+    // never polls.
+    this.timeout(90_000);
     console.log(`${LOG_PREFIX} C.5: setting up inbound message round-trip`);
 
     // First ensure the bot is connected (writes credentials + TOML config).
@@ -432,7 +438,10 @@ describe('Telegram channel — connect / receive / send / disconnect', () => {
   // ──────────────────────────────────────────────────────────────────────────
 
   it('C.6 unauthorized user — connect with allowlist; excluded sender gets approval prompt', async function () {
-    this.timeout(60_000);
+    // 30s getUpdates poll + 20s reply wait + connect/LLM overhead exceeds 60s on the
+    // slower macOS runner; 90s fits the working flow. The getUpdates soft-pass still
+    // guards against a genuinely dead listener.
+    this.timeout(90_000);
     console.log(`${LOG_PREFIX} C.6: connecting with allowlist excluding Bob`);
 
     // Connect with Alice in the allowlist — Bob is excluded.
@@ -653,7 +662,10 @@ describe('Telegram channel — connect / receive / send / disconnect', () => {
   // ──────────────────────────────────────────────────────────────────────────
 
   it('C.10 remote /status command — bot replies with Thread: and Provider: markers', async function () {
-    this.timeout(60_000);
+    // 30s listener poll + 20s reply wait + connect/LLM overhead exceeds 60s on the
+    // slower macOS runner; 90s fits the working flow. The getUpdates soft-pass still
+    // guards against a genuinely dead listener.
+    this.timeout(90_000);
     console.log(`${LOG_PREFIX} C.10: setting up /status command scenario`);
 
     await connectTelegramBot({ botToken: BOT_TOKEN, allowedUsers: [ALICE_USERNAME] });

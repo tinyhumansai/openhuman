@@ -888,11 +888,24 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         if (!content) return;
         // Persist this round's leading narration as its own interleaved bubble,
         // stamped with the producing turn's request id (Phase 4 anchoring).
+        // `isInterim: true` marks this as between-tool narration rather than a
+        // turn's terminal answer — the main chat still renders it as a bubble
+        // (unchanged), but callers that only want the terminal turn (e.g. the
+        // Flows copilot's `displayMessages`, see `useWorkflowBuilderChat`) can
+        // filter it out.
+        rtLog('interim_narration_tagged', {
+          thread: event.thread_id,
+          request: event.request_id,
+          round: event.round,
+        });
         void dispatch(
           addInferenceResponse({
             content,
             threadId: event.thread_id,
-            extraMetadata: event.request_id ? { requestId: event.request_id } : undefined,
+            extraMetadata: {
+              isInterim: true,
+              ...(event.request_id ? { requestId: event.request_id } : {}),
+            },
           })
         );
         // The narration has now become a bubble, so drop it from the live

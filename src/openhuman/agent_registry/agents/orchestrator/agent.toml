@@ -237,6 +237,17 @@ named = [
     # to call a tool that does not exist.
     "spawn_async_subagent",
     "spawn_parallel_agents",
+    # Fleet awareness. `list_subagents` re-enumerates the async/parallel workers
+    # this parent has in flight (running / awaiting_user / completed-uncollected /
+    # failed) plus reusable durable sessions — the recovery move when the
+    # `[async_subagent_ref]` blocks have scrolled out of context and the model
+    # would otherwise lose track of, or needlessly re-spawn, a worker. It reads
+    # the same live `running_subagents` registry the ambient `[active_subagents]`
+    # turn block is built from. `close_subagent` tears a finished/abandoned worker
+    # down (cancelling it first if still running) so idle sessions don't leak
+    # toward the 256 registry soft cap.
+    "list_subagents",
+    "close_subagent",
     "wait",
     "wait_loop",
     # Async sub-agent control surface. prompt.md's "Async background

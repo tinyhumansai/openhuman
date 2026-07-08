@@ -3,23 +3,43 @@
  *
  * Asserts: renders null when `runId` is null; loading state; renders fetched
  * run data (status pill, steps, expandable output, port pill); error state;
- * pending-approvals banner when `status === 'pending_approval'`; run.error
- * banner; Escape and backdrop both close; close button calls `onClose`.
+ * actionable pending-approval cards when `status === 'pending_approval'`
+ * (flow-approval surface — run details); run.error banner; Escape and
+ * backdrop both close; close button calls `onClose`.
  *
- * Mocks `useFlowRunPoller` directly rather than the underlying RPC client —
- * its own poll-until-terminal contract is covered by
- * `hooks/__tests__/useFlowRunPoller.test.ts`.
+ * Mocks `useFlowRunPoller` and `useFlowPendingApprovals` directly rather than
+ * the underlying RPC client — their own poll contracts are covered by
+ * `hooks/__tests__/useFlowRunPoller.test.ts` and
+ * `hooks/__tests__/useFlowPendingApprovals.test.ts`.
  */
 import { fireEvent, render, screen } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { PendingApproval } from '../../../services/api/approvalApi';
 import type { FlowRun } from '../../../services/api/flowsApi';
 import { store } from '../../../store';
 import { FlowRunInspectorDrawer } from '../FlowRunInspectorDrawer';
 
 const useFlowRunPoller = vi.hoisted(() => vi.fn());
 vi.mock('../../../hooks/useFlowRunPoller', () => ({ useFlowRunPoller }));
+
+const useFlowPendingApprovals = vi.hoisted(() => vi.fn());
+vi.mock('../../../hooks/useFlowPendingApprovals', () => ({ useFlowPendingApprovals }));
+
+function makeApproval(overrides: Partial<PendingApproval> = {}): PendingApproval {
+  return {
+    request_id: 'req-1',
+    tool_name: 'shell',
+    action_summary: 'Run `shell` — rm -rf /tmp/scratch',
+    args_redacted: {},
+    session_id: 'session-1',
+    created_at: '2026-01-01T00:00:00Z',
+    expires_at: null,
+    source_context: { kind: 'flow', flow_id: 'flow-1', run_id: 'thread-1' },
+    ...overrides,
+  };
+}
 
 function makeRun(overrides: Partial<FlowRun> = {}): FlowRun {
   return {
@@ -48,6 +68,14 @@ function renderDrawer(runId: string | null, onClose: () => void) {
 describe('FlowRunInspectorDrawer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default: no pending approvals, no decide-in-flight. Tests that exercise
+    // the actionable approval cards override this explicitly.
+    useFlowPendingApprovals.mockReturnValue({
+      approvals: [],
+      decidingId: null,
+      error: null,
+      decide: vi.fn(),
+    });
   });
 
   it('renders null when runId is null', () => {
@@ -99,20 +127,92 @@ describe('FlowRunInspectorDrawer', () => {
     expect(screen.getByTestId('flow-run-inspector-error')).toHaveTextContent('network down');
   });
 
-  it('shows the pending-approvals banner when status is pending_approval', () => {
+  // ── Actionable pending-approval gates (flow-approval surface — run
+  // details). Replaces the old read-only "N node(s) awaiting approval"
+  // banner with Approve once / Approve always / Deny cards wired to
+  // `openhuman.approval_decide` via `useFlowPendingApprovals`.
+  it('polls scoped to this run only while pending_approval/running, passing null otherwise', () => {
     useFlowRunPoller.mockReturnValue({
-      run: makeRun({ status: 'pending_approval', pending_approvals: ['node-a', 'node-b'] }),
+      run: makeRun({ status: 'pending_approval', flow_id: 'flow-9', thread_id: 'thread-9' }),
+      loading: false,
+      error: null,
+    });
+    renderDrawer('thread-9', vi.fn());
+    expect(useFlowPendingApprovals).toHaveBeenCalledWith('flow-9', 'thread-9');
+  });
+
+  it('passes null/null to stop polling once the run is terminal', () => {
+    useFlowRunPoller.mockReturnValue({
+      run: makeRun({ status: 'completed' }),
       loading: false,
       error: null,
     });
     renderDrawer('thread-1', vi.fn());
-    expect(screen.getByTestId('flow-run-pending-approvals-banner')).toHaveTextContent('2');
+    expect(useFlowPendingApprovals).toHaveBeenCalledWith(null, null);
   });
 
-  it('does not show the pending-approvals banner for a running run', () => {
+  it('renders an actionable card per pending approval scoped to this run', () => {
+    useFlowRunPoller.mockReturnValue({
+      run: makeRun({ status: 'pending_approval' }),
+      loading: false,
+      error: null,
+    });
+    useFlowPendingApprovals.mockReturnValue({
+      approvals: [makeApproval({ request_id: 'req-a' }), makeApproval({ request_id: 'req-b' })],
+      decidingId: null,
+      error: null,
+      decide: vi.fn(),
+    });
+    renderDrawer('thread-1', vi.fn());
+    expect(screen.getByTestId('flow-run-pending-approval-req-a')).toBeInTheDocument();
+    expect(screen.getByTestId('flow-run-pending-approval-req-b')).toBeInTheDocument();
+  });
+
+  it('does not show any approval card for a running run with no pending approvals', () => {
     useFlowRunPoller.mockReturnValue({ run: makeRun(), loading: false, error: null });
     renderDrawer('thread-1', vi.fn());
-    expect(screen.queryByTestId('flow-run-pending-approvals-banner')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('flow-run-pending-approvals')).not.toBeInTheDocument();
+  });
+
+  it("routes Approve once / Approve always / Deny to the hook's decide() with the request id", () => {
+    const decide = vi.fn().mockResolvedValue(undefined);
+    useFlowRunPoller.mockReturnValue({
+      run: makeRun({ status: 'pending_approval' }),
+      loading: false,
+      error: null,
+    });
+    useFlowPendingApprovals.mockReturnValue({
+      approvals: [makeApproval({ request_id: 'req-a' })],
+      decidingId: null,
+      error: null,
+      decide,
+    });
+    renderDrawer('thread-1', vi.fn());
+
+    fireEvent.click(screen.getByTestId('flow-run-pending-approval-approve-req-a'));
+    expect(decide).toHaveBeenCalledWith('req-a', 'approve_once');
+
+    fireEvent.click(screen.getByTestId('flow-run-pending-approval-always-req-a'));
+    expect(decide).toHaveBeenCalledWith('req-a', 'approve_always_for_flow');
+
+    fireEvent.click(screen.getByTestId('flow-run-pending-approval-deny-req-a'));
+    expect(decide).toHaveBeenCalledWith('req-a', 'deny');
+  });
+
+  it('shows the polling error message when useFlowPendingApprovals reports one', () => {
+    useFlowRunPoller.mockReturnValue({
+      run: makeRun({ status: 'pending_approval' }),
+      loading: false,
+      error: null,
+    });
+    useFlowPendingApprovals.mockReturnValue({
+      approvals: [makeApproval()],
+      decidingId: null,
+      error: 'network down',
+      decide: vi.fn(),
+    });
+    renderDrawer('thread-1', vi.fn());
+    expect(screen.getByTestId('flow-run-pending-approvals-error')).toBeInTheDocument();
   });
 
   it('shows the run.error banner when present', () => {

@@ -151,4 +151,27 @@ describe('TriggerForm', () => {
       'Every 5 minutes on Wed'
     );
   });
+
+  it('shows a read-only summary (not the cron builder) for a tagged `{kind:"every"}` schedule', () => {
+    // Regression: the engine can store `config.schedule` as `{kind:"every",
+    // every_ms}`, which the cron builder can't edit. It must render a correct
+    // read-only summary instead of silently resetting the schedule to a
+    // default cron string via ScheduleField's empty-mount effect.
+    const { onChange } = renderForm('trigger', {
+      config: { trigger_kind: 'schedule', schedule: { kind: 'every', every_ms: 86_400_000 } },
+    });
+    expect(screen.queryByTestId('node-config-trigger-schedule')).not.toBeInTheDocument();
+    expect(screen.getByTestId('node-config-trigger-schedule-readonly')).toHaveTextContent('24h');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('still hands a tagged `{kind:"cron"}` schedule to the editable builder', () => {
+    renderForm('trigger', {
+      config: { trigger_kind: 'schedule', schedule: { kind: 'cron', expr: '30 9 * * *' } },
+    });
+    expect(screen.getByTestId('node-config-trigger-schedule')).toBeInTheDocument();
+    expect(screen.getByTestId('node-config-trigger-schedule-summary')).toHaveTextContent(
+      'Every day at 09:30'
+    );
+  });
 });

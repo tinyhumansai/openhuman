@@ -11,6 +11,7 @@ import ChatComposer from '../../components/chat/ChatComposer';
 import ChatFilesChip from '../../components/chat/ChatFilesChip';
 import ChatNewWindowHero from '../../components/chat/ChatNewWindowHero';
 import ComposerTokenStats from '../../components/chat/ComposerTokenStats';
+import { FlowApprovalRequestCard } from '../../components/chat/FlowApprovalRequestCard';
 import IntegrationConnectCard from '../../components/chat/IntegrationConnectCard';
 import QueuedFollowups from '../../components/chat/QueuedFollowups';
 import SuperContextToggle from '../../components/chat/SuperContextToggle';
@@ -62,6 +63,7 @@ import {
   isThreadVisibleInTab,
 } from '../../features/conversations/utils/threadFilter';
 import MicComposer from '../../features/human/MicComposer';
+import { useFlowApprovalRequests } from '../../hooks/useFlowApprovalRequests';
 import { useStickToBottom } from '../../hooks/useStickToBottom';
 import { useUsageState } from '../../hooks/useUsageState';
 import {
@@ -403,6 +405,12 @@ const Conversations = ({
   const pendingApprovalByThread = useAppSelector(
     state => state.chatRuntime.pendingApprovalByThread
   );
+  // Flow-approval surface (chat): a paused tinyflows run's gate, pushed via
+  // the `flow_approval_request` socket event. Not thread-scoped — the
+  // payload carries no `thread_id` — so it's tracked independently of the
+  // selected thread and surfaced regardless of which one is open.
+  const { requests: flowApprovalRequests, dismiss: dismissFlowApprovalRequest } =
+    useFlowApprovalRequests();
   const pendingPlanReviewByThread = useAppSelector(
     state => state.chatRuntime.pendingPlanReviewByThread
   );
@@ -2788,6 +2796,23 @@ const Conversations = ({
             </div>
           );
         })()}
+
+        {/* Flow-approval surface (chat): actionable banner(s) for paused
+            tinyflows runs, pushed via the `flow_approval_request` socket
+            event (issue: flow-approval surfacing). Not gated on the selected
+            thread — see the hook call above for why — so every pending
+            request renders regardless of which thread is open. */}
+        {flowApprovalRequests.length > 0 && (
+          <div className="mb-2 flex flex-col gap-2">
+            {flowApprovalRequests.map(request => (
+              <FlowApprovalRequestCard
+                key={request.request_id}
+                request={request}
+                onResolved={dismissFlowApprovalRequest}
+              />
+            ))}
+          </div>
+        )}
 
         {(() => {
           // Surface in-flight + failed artifact cards above the composer

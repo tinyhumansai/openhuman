@@ -14,7 +14,10 @@ use crate::openhuman::config::Config;
 use crate::openhuman::tinyplace::{acknowledge_message, decrypt_envelope};
 
 use super::store;
-use super::types::{ChatKind, OrchestrationMessage, OrchestrationSession, SessionEnvelopeV1};
+use super::types::{
+    ChatKind, HarnessEventKind, OrchestrationMessage, OrchestrationSession, SessionEnvelopeV1,
+    SessionEnvelopeV2,
+};
 
 const LOG: &str = "orchestration";
 
@@ -71,9 +74,35 @@ struct ClassifiedMessage {
     source: String,
     label: Option<String>,
     workspace: Option<String>,
+    /// The wire `line` (v1) / `event.seq` (v2). Retained for parity/debugging only
+    /// — persistence deliberately IGNORES it and stamps a store ordinal (#4583).
     seq: i64,
     body: String,
     timestamp: String,
+    // ── v2 event shape (all `None`/false for v1 + Master) ────────────────────
+    /// v2 `event.kind`; drives the per-message render branch (Phase 2).
+    event_kind: Option<String>,
+    /// v2 tool identity for `tool_call` / `approval_request`.
+    tool_name: Option<String>,
+    /// v2 `call_id` correlating `tool_result` → `tool_call`.
+    call_id: Option<String>,
+    /// v2 `status.state` (or a derived state for approval/lifecycle/error) written
+    /// onto the session row so `derive_status` reads a real run-state.
+    status_state: Option<String>,
+    /// v2 `status.detail` → the session's `current_detail` (roster task line).
+    status_detail: Option<String>,
+    /// v2 `status.active_call_id` → the session's `active_call_id`.
+    active_call_id: Option<String>,
+    /// Whether this event advances the monotonic wake ordinal. Content events
+    /// (prompts/messages/thinking/tool_call/tool_result/approval/error) do; pure
+    /// session-state events (`status`/`lifecycle`/`unknown`) do NOT, so a status
+    /// ping never spuriously wakes the front-end graph.
+    advances_seq: bool,
+    /// True only for an authoritative `status` snapshot, which OWNS the session's
+    /// run-state columns and must be able to CLEAR `current_detail`/`active_call_id`
+    /// (e.g. `running_tool` → `idle`). Content events leave this false so the
+    /// COALESCE upsert preserves the last status instead of wiping it.
+    authoritative_status: bool,
 }
 
 /// True for streams that carry ciphertext DM envelopes worth ingesting.
@@ -101,49 +130,223 @@ fn order_prekey_bundles_first(messages: &mut [tinyplace::types::MessageEnvelope]
     });
 }
 
-/// Classify a decrypted DM: a harness envelope becomes a per-session message,
-/// anything else becomes a message in the peer's Master window. Pure.
+/// Classify a decrypted DM into the fields we persist. Version-dispatched: try a
+/// v2 harness envelope first, then a v1 envelope, else the peer's Master window.
+/// Both envelope versions discriminate on `envelope_version`, so the order is
+/// safe (a v1 body never matches v2 and vice-versa); this is the v1↔v2
+/// coexistence seam — both persist into the same session model. Pure.
 fn classify_message(plaintext: String, fallback_timestamp: &str) -> ClassifiedMessage {
-    match SessionEnvelopeV1::parse(&plaintext) {
-        Some(env) => {
-            // Compute the session key while `env` is still fully intact (before any
-            // field moves below), since `session_key` borrows `&env`.
-            let session_id = env.session_key();
-            let label = (env.scope.scope_type == "folder").then(|| env.scope.key.clone());
-            let workspace = (!env.scope.cwd.is_empty()).then(|| env.scope.cwd.clone());
-            let timestamp = if env.message.timestamp.is_empty() {
-                fallback_timestamp.to_string()
-            } else {
-                env.message.timestamp
-            };
-            ClassifiedMessage {
-                chat_kind: ChatKind::Session,
-                // Key on the single per-pair session id (the shared `wrapper_session_id`
-                // both peers put on every message for a thread), so a reply threads back
-                // into the same session. Falls back to `harness_session_id` for a legacy
-                // envelope with no per-pair id. See `SessionEnvelopeV1::session_key`.
-                session_id,
-                role: env.message.role,
-                source: env.harness.provider,
-                label,
-                workspace,
-                seq: env.message.line,
-                body: env.message.text,
-                timestamp,
-            }
-        }
-        None => ClassifiedMessage {
-            chat_kind: ChatKind::Master,
-            session_id: "master".to_string(),
-            role: "user".to_string(),
-            source: String::new(),
-            label: None,
-            workspace: None,
-            seq: 0,
-            body: plaintext,
-            timestamp: fallback_timestamp.to_string(),
-        },
+    if let Some(env) = SessionEnvelopeV2::parse(&plaintext) {
+        return classify_v2(env, fallback_timestamp);
     }
+    if let Some(env) = SessionEnvelopeV1::parse(&plaintext) {
+        return classify_v1(env, fallback_timestamp);
+    }
+    // Not a harness envelope → a plain DM in the peer's Master window.
+    ClassifiedMessage {
+        chat_kind: ChatKind::Master,
+        session_id: "master".to_string(),
+        role: "user".to_string(),
+        source: String::new(),
+        label: None,
+        workspace: None,
+        seq: 0,
+        body: plaintext,
+        timestamp: fallback_timestamp.to_string(),
+        event_kind: None,
+        tool_name: None,
+        call_id: None,
+        status_state: None,
+        status_detail: None,
+        active_call_id: None,
+        advances_seq: true,
+        authoritative_status: false,
+    }
+}
+
+/// Classify a v1 harness envelope — the original per-session mapping, unchanged.
+fn classify_v1(env: SessionEnvelopeV1, fallback_timestamp: &str) -> ClassifiedMessage {
+    // Compute the session key while `env` is still fully intact (before any
+    // field moves below), since `session_key` borrows `&env`.
+    let session_id = env.session_key();
+    let label = (env.scope.scope_type == "folder").then(|| env.scope.key.clone());
+    let workspace = (!env.scope.cwd.is_empty()).then(|| env.scope.cwd.clone());
+    let timestamp = if env.message.timestamp.is_empty() {
+        fallback_timestamp.to_string()
+    } else {
+        env.message.timestamp
+    };
+    ClassifiedMessage {
+        chat_kind: ChatKind::Session,
+        // Key on the single per-pair session id (the shared `wrapper_session_id`
+        // both peers put on every message for a thread), so a reply threads back
+        // into the same session. Falls back to `harness_session_id` for a legacy
+        // envelope with no per-pair id. See `SessionEnvelopeV1::session_key`.
+        session_id,
+        role: env.message.role,
+        source: env.harness.provider,
+        label,
+        workspace,
+        seq: env.message.line,
+        body: env.message.text,
+        timestamp,
+        event_kind: None,
+        tool_name: None,
+        call_id: None,
+        status_state: None,
+        status_detail: None,
+        active_call_id: None,
+        advances_seq: true,
+        authoritative_status: false,
+    }
+}
+
+/// Classify a v2 harness envelope. Switches on `event.kind`, mapping each to the
+/// persisted fields (per the plan's mapping table). Content events become thread
+/// messages that advance the wake ordinal; `status`/`lifecycle`/`unknown` are
+/// session-state-only (they still persist a row for id-dedupe + ack, but do NOT
+/// advance the wake ordinal). Pure.
+fn classify_v2(env: SessionEnvelopeV2, fallback_timestamp: &str) -> ClassifiedMessage {
+    let session_id = env.session_key();
+    let label = (env.scope.scope_type == "folder").then(|| env.scope.key.clone());
+    let workspace = (!env.scope.cwd.is_empty()).then(|| env.scope.cwd.clone());
+    let source = env.harness.provider.clone();
+    let timestamp = if env.event.ts.is_empty() {
+        fallback_timestamp.to_string()
+    } else {
+        env.event.ts.clone()
+    };
+    let kind_str = env.event.kind.clone();
+    let wire_role = env.event.role.clone();
+    let seq = env.event.seq;
+
+    // Per-kind body + tool/status fields + wake disposition.
+    let mut b = V2Body::default();
+    match env.event.decoded() {
+        HarnessEventKind::UserPrompt(p) => {
+            b.body = p.text;
+            b.default_role = "owner";
+        }
+        HarnessEventKind::AgentMessage(p) => {
+            b.body = p.text;
+        }
+        HarnessEventKind::AgentThinking(p) => {
+            b.body = p.text;
+        }
+        HarnessEventKind::ToolCall(p) => {
+            b.body = p.display;
+            b.tool_name = non_empty(p.tool_name);
+            b.call_id = non_empty(p.call_id);
+        }
+        HarnessEventKind::ToolResult(p) => {
+            b.body = p.output;
+            b.call_id = non_empty(p.call_id);
+        }
+        HarnessEventKind::ApprovalRequest(p) => {
+            b.body = p.display;
+            b.tool_name = non_empty(p.tool_name);
+            b.call_id = p.call_id.and_then(non_empty);
+            // Drive the roster dot to waiting-approval.
+            b.status_state = Some("waiting_approval".to_string());
+        }
+        HarnessEventKind::Status(p) => {
+            b.body = p.detail.clone();
+            b.status_state = non_empty(p.state);
+            b.status_detail = non_empty(p.detail);
+            b.active_call_id = p.active_call_id.and_then(non_empty);
+            b.advances_seq = false;
+            // Authoritative run-state snapshot: it may CLEAR detail/active_call_id
+            // (running_tool → idle), so persistence overwrites rather than COALESCEs.
+            b.authoritative_status = true;
+        }
+        HarnessEventKind::Lifecycle(p) => {
+            b.body = p.phase.clone();
+            // A session_end lifecycle marks the instance stopped; other phases
+            // carry no run-state.
+            if p.phase == "session_end" {
+                b.status_state = Some("stopped".to_string());
+            }
+            b.advances_seq = false;
+        }
+        HarnessEventKind::Error(p) => {
+            b.body = p.message;
+            b.status_state = Some("errored".to_string());
+        }
+        HarnessEventKind::Unknown(p) => {
+            // Preserve the raw payload as the body so nothing is silently lost.
+            b.body = serde_json::to_string(&p.raw).unwrap_or_default();
+            b.advances_seq = false;
+            // Persist as the literal `unknown` (not the raw wire kind) so the store
+            // readers keep a forward/garbled event out of the thread + unread count.
+            b.kind_override = Some("unknown");
+        }
+    }
+
+    let role = if !wire_role.is_empty() {
+        wire_role
+    } else {
+        b.default_role.to_string()
+    };
+
+    ClassifiedMessage {
+        chat_kind: ChatKind::Session,
+        session_id,
+        role,
+        source,
+        label,
+        workspace,
+        seq,
+        body: b.body,
+        timestamp,
+        event_kind: Some(b.kind_override.map(str::to_string).unwrap_or(kind_str)),
+        tool_name: b.tool_name,
+        call_id: b.call_id,
+        status_state: b.status_state,
+        status_detail: b.status_detail,
+        active_call_id: b.active_call_id,
+        advances_seq: b.advances_seq,
+        authoritative_status: b.authoritative_status,
+    }
+}
+
+/// Per-kind accumulator for [`classify_v2`], so the big match stays a set of small
+/// assignments with sensible defaults (content event, `agent` role).
+struct V2Body {
+    body: String,
+    default_role: &'static str,
+    tool_name: Option<String>,
+    call_id: Option<String>,
+    status_state: Option<String>,
+    status_detail: Option<String>,
+    active_call_id: Option<String>,
+    advances_seq: bool,
+    authoritative_status: bool,
+    /// Overrides the persisted `event_kind` for a forward/garbled kind that
+    /// `decoded()` folded to `Unknown`: stored as the literal `"unknown"` so the
+    /// store readers keep it out of the thread instead of leaking the raw kind.
+    kind_override: Option<&'static str>,
+}
+
+impl Default for V2Body {
+    fn default() -> Self {
+        V2Body {
+            body: String::new(),
+            default_role: "agent",
+            tool_name: None,
+            call_id: None,
+            status_state: None,
+            status_detail: None,
+            active_call_id: None,
+            advances_seq: true,
+            authoritative_status: false,
+            kind_override: None,
+        }
+    }
+}
+
+/// `Some(s)` when non-empty, else `None` — so blank wire strings persist as NULL.
+fn non_empty(s: String) -> Option<String> {
+    (!s.is_empty()).then_some(s)
 }
 
 /// Persist a classified message + its session row. Idempotent by `msg_id`;
@@ -173,7 +376,17 @@ fn persist_message(
         // concurrent writer on the same session (the drain here vs the graph's
         // `send_dm` reply persist) can't read the same `MAX(seq)` and duplicate it.
         store::in_immediate_txn(c, |c| {
-            let ingest_seq = store::next_session_seq(c, agent_id, &classified.session_id)?;
+            // Content events advance the monotonic wake ordinal (the #4583 fix);
+            // pure session-state events (status/lifecycle/unknown) persist a row
+            // for id-dedupe + ack but stamp `seq = 0` so they do NOT advance
+            // `last_seq` and therefore never spuriously wake the front-end graph.
+            // (`upsert_session` clamps `last_seq` with `MAX(...)`, so a 0 here only
+            // refreshes `last_message_at` + the status columns.)
+            let ingest_seq = if classified.advances_seq {
+                store::next_session_seq(c, agent_id, &classified.session_id)?
+            } else {
+                0
+            };
             store::upsert_session(
                 c,
                 &OrchestrationSession {
@@ -185,9 +398,25 @@ fn persist_message(
                     last_seq: ingest_seq,
                     created_at: now.to_string(),
                     last_message_at: classified.timestamp.clone(),
+                    status_state: classified.status_state.clone(),
+                    current_detail: classified.status_detail.clone(),
+                    active_call_id: classified.active_call_id.clone(),
                 },
             )?;
-            store::insert_message(
+            // An authoritative `status` snapshot OWNS the run-state columns and may
+            // CLEAR them (running_tool → idle); the COALESCE upsert above can't, so
+            // overwrite them directly. Content events skip this and keep COALESCE.
+            if classified.authoritative_status {
+                store::apply_run_state(
+                    c,
+                    agent_id,
+                    &classified.session_id,
+                    classified.status_state.as_deref(),
+                    classified.status_detail.as_deref(),
+                    classified.active_call_id.as_deref(),
+                )?;
+            }
+            let landed = store::insert_message(
                 c,
                 &OrchestrationMessage {
                     id: msg_id.to_string(),
@@ -198,8 +427,18 @@ fn persist_message(
                     body: classified.body.clone(),
                     timestamp: classified.timestamp.clone(),
                     seq: ingest_seq,
+                    event_kind: classified.event_kind.clone(),
+                    tool_name: classified.tool_name.clone(),
+                    call_id: classified.call_id.clone(),
                 },
-            )
+            )?;
+            // An `error` event also records the short cause on the status surface
+            // (`orchestration.status.last_error`). Body is a harness error message,
+            // never a response body — safe to store (workspace-internal DB).
+            if landed && classified.event_kind.as_deref() == Some("error") {
+                store::kv_set(c, "orchestration:last_error", &classified.body)?;
+            }
+            Ok(landed)
         })
     })
     .map_err(|e| format!("persist: {e}"))
@@ -459,6 +698,329 @@ mod tests {
         assert_eq!(c.seq, 0);
         assert_eq!(c.body, "just chatting");
         assert_eq!(c.timestamp, "2026-07-02T09:00:00Z"); // fallback used
+    }
+
+    /// A v2 wire envelope for `kind`/`payload`, keyed on `wrapper` session id.
+    fn v2_env(kind: &str, payload: &str, wrapper: &str, role: &str) -> String {
+        format!(
+            r#"{{
+                "envelope_version": "tinyplace.harness.session.v2",
+                "version": 2,
+                "scope": {{ "type": "folder", "key": "my-repo", "cwd": "/w",
+                           "wrapper_session_id": "{wrapper}", "harness_session_id": "h2" }},
+                "harness": {{ "provider": "claude", "command": "claude", "argv": [] }},
+                "event": {{ "id": "e1", "seq": 9, "ts": "2026-07-05T01:00:00Z",
+                           "role": "{role}", "kind": "{kind}", "payload": {payload} }},
+                "source": {{ "path": "p", "record_type": "assistant" }}
+            }}"#
+        )
+    }
+
+    #[test]
+    fn classifies_v2_content_events_with_kind_and_tool_fields() {
+        // agent_message → session message, role from wire, event_kind set.
+        let am = classify_message(
+            v2_env("agent_message", r#"{ "text": "on it" }"#, "w2", "agent"),
+            "2026-07-05T09:00:00Z",
+        );
+        assert_eq!(am.chat_kind, ChatKind::Session);
+        assert_eq!(am.session_id, "w2"); // shared wrapper id, same as v1
+        assert_eq!(am.source, "claude");
+        assert_eq!(am.label.as_deref(), Some("my-repo"));
+        assert_eq!(am.role, "agent");
+        assert_eq!(am.body, "on it");
+        assert_eq!(am.event_kind.as_deref(), Some("agent_message"));
+        assert_eq!(am.timestamp, "2026-07-05T01:00:00Z"); // event ts wins
+        assert!(am.advances_seq);
+
+        // user_prompt defaults role to owner when the wire role is blank.
+        let up = classify_message(
+            v2_env(
+                "user_prompt",
+                r#"{ "text": "go", "source": "human" }"#,
+                "w2",
+                "",
+            ),
+            "2026-07-05T09:00:00Z",
+        );
+        assert_eq!(up.role, "owner");
+        assert_eq!(up.body, "go");
+
+        // tool_call → body is the display, tool_name + call_id captured.
+        let tc = classify_message(
+            v2_env(
+                "tool_call",
+                r#"{ "call_id": "c1", "tool_name": "bash", "tool_kind": "shell", "display": "ls" }"#,
+                "w2",
+                "agent",
+            ),
+            "2026-07-05T09:00:00Z",
+        );
+        assert_eq!(tc.event_kind.as_deref(), Some("tool_call"));
+        assert_eq!(tc.body, "ls");
+        assert_eq!(tc.tool_name.as_deref(), Some("bash"));
+        assert_eq!(tc.call_id.as_deref(), Some("c1"));
+        assert!(tc.advances_seq);
+
+        // tool_result → body is the output, call_id correlates back to the call.
+        let tr = classify_message(
+            v2_env(
+                "tool_result",
+                r#"{ "call_id": "c1", "ok": true, "output": "file.rs", "output_bytes": 7 }"#,
+                "w2",
+                "agent",
+            ),
+            "2026-07-05T09:00:00Z",
+        );
+        assert_eq!(tr.event_kind.as_deref(), Some("tool_result"));
+        assert_eq!(tr.body, "file.rs");
+        assert_eq!(tr.call_id.as_deref(), Some("c1"));
+    }
+
+    #[test]
+    fn classifies_v2_status_and_approval_and_error_run_state() {
+        // status → session-state-only: sets status_state/detail, does NOT advance seq.
+        let st = classify_message(
+            v2_env(
+                "status",
+                r#"{ "state": "running_tool", "detail": "compiling", "active_call_id": "c1" }"#,
+                "w2",
+                "agent",
+            ),
+            "2026-07-05T09:00:00Z",
+        );
+        assert_eq!(st.event_kind.as_deref(), Some("status"));
+        assert_eq!(st.status_state.as_deref(), Some("running_tool"));
+        assert_eq!(st.status_detail.as_deref(), Some("compiling"));
+        assert_eq!(st.active_call_id.as_deref(), Some("c1"));
+        assert!(!st.advances_seq, "status must not advance the wake ordinal");
+        assert!(
+            st.authoritative_status,
+            "a status snapshot owns the run-state columns (may clear them)"
+        );
+
+        // approval_request → drives waiting_approval, keeps advancing (owner must act).
+        let ar = classify_message(
+            v2_env(
+                "approval_request",
+                r#"{ "call_id": "c9", "tool_name": "rm", "display": "rm -rf x" }"#,
+                "w2",
+                "agent",
+            ),
+            "2026-07-05T09:00:00Z",
+        );
+        assert_eq!(ar.status_state.as_deref(), Some("waiting_approval"));
+        assert_eq!(ar.tool_name.as_deref(), Some("rm"));
+        assert!(ar.advances_seq);
+        assert!(
+            !ar.authoritative_status,
+            "approval sets status_state but is not a run-state snapshot (COALESCE)"
+        );
+
+        // error → errored run-state + body is the message.
+        let er = classify_message(
+            v2_env(
+                "error",
+                r#"{ "message": "boom", "fatal": true }"#,
+                "w2",
+                "agent",
+            ),
+            "2026-07-05T09:00:00Z",
+        );
+        assert_eq!(er.status_state.as_deref(), Some("errored"));
+        assert_eq!(er.body, "boom");
+
+        // lifecycle session_end → stopped, session-state-only.
+        let lc = classify_message(
+            v2_env("lifecycle", r#"{ "phase": "session_end" }"#, "w2", "agent"),
+            "2026-07-05T09:00:00Z",
+        );
+        assert_eq!(lc.status_state.as_deref(), Some("stopped"));
+        assert!(!lc.advances_seq);
+
+        // unknown → dropped from the wake path, raw preserved as body. The raw
+        // wire kind ("teleport") is normalized to the literal "unknown" so store
+        // readers keep it out of the thread instead of leaking a forward kind.
+        let uk = classify_message(
+            v2_env("teleport", r#"{ "flux": 1 }"#, "w2", "agent"),
+            "2026-07-05T09:00:00Z",
+        );
+        assert_eq!(uk.event_kind.as_deref(), Some("unknown"));
+        assert!(!uk.advances_seq);
+        assert!(uk.body.contains("flux"));
+    }
+
+    #[test]
+    fn v1_and_v2_envelopes_coexist_in_one_session_model() {
+        // During rollout a wrapped harness may emit v1 then v2 under the SAME
+        // shared wrapper id. Both classify to ChatKind::Session under the same
+        // session_id and persist into one session — proving the coexistence seam.
+        let tmp = tempfile::tempdir().unwrap();
+        let v1 = classify_message(ENVELOPE.to_string(), "2026-07-02T09:00:00Z"); // wrapper w1
+        let v2 = classify_message(
+            v2_env("agent_message", r#"{ "text": "v2 line" }"#, "w1", "agent"),
+            "2026-07-05T09:00:00Z",
+        );
+        assert_eq!(v1.session_id, "w1");
+        assert_eq!(v2.session_id, "w1");
+
+        assert!(persist_message(tmp.path(), "m-v1", "@peer", &v1, "now").unwrap());
+        assert!(persist_message(tmp.path(), "m-v2", "@peer", &v2, "now").unwrap());
+        store::with_connection(tmp.path(), |c| {
+            // Both rows land in the single "w1" session, seqs monotonic 1,2.
+            assert_eq!(store::count_messages(c, "@peer", "w1")?, 2);
+            let seqs: Vec<i64> = store::list_recent_messages(c, "@peer", "w1", 10)?
+                .iter()
+                .map(|m| m.seq)
+                .collect();
+            assert_eq!(seqs, vec![1, 2]);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn persisting_v2_status_updates_session_row_without_advancing_seq() {
+        let tmp = tempfile::tempdir().unwrap();
+        // A content message establishes the session at seq 1.
+        let msg = classify_message(
+            v2_env("agent_message", r#"{ "text": "working" }"#, "w2", "agent"),
+            "2026-07-05T09:00:00Z",
+        );
+        assert!(persist_message(tmp.path(), "m1", "@peer", &msg, "now").unwrap());
+        // A status event follows: it lands a (deduped) row + updates the session
+        // status columns, but last_seq must stay at 1 (no spurious wake).
+        let status = classify_message(
+            v2_env(
+                "status",
+                r#"{ "state": "running", "detail": "still working", "active_call_id": "c3" }"#,
+                "w2",
+                "agent",
+            ),
+            "2026-07-05T09:00:00Z",
+        );
+        assert!(persist_message(tmp.path(), "m2", "@peer", &status, "now").unwrap());
+
+        store::with_connection(tmp.path(), |c| {
+            let session = store::load_session(c, "@peer", "w2")?.expect("session exists");
+            assert_eq!(session.status_state.as_deref(), Some("running"));
+            assert_eq!(session.current_detail.as_deref(), Some("still working"));
+            assert_eq!(session.active_call_id.as_deref(), Some("c3"));
+            assert_eq!(session.last_seq, 1, "status must not advance last_seq");
+            // The status row is persisted (id-dedupe) with its event_kind + seq 0.
+            let msgs = store::list_recent_messages(c, "@peer", "w2", 10)?;
+            let status_row = msgs
+                .iter()
+                .find(|m| m.event_kind.as_deref() == Some("status"))
+                .expect("status row persisted");
+            assert_eq!(status_row.seq, 0);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn a_later_status_snapshot_clears_stale_detail_and_active_call_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        // running_tool: detail + active_call_id populated.
+        let running = classify_message(
+            v2_env(
+                "status",
+                r#"{ "state": "running_tool", "detail": "compiling", "active_call_id": "c1" }"#,
+                "w2",
+                "agent",
+            ),
+            "2026-07-05T09:00:00Z",
+        );
+        assert!(persist_message(tmp.path(), "s1", "@peer", &running, "now").unwrap());
+        store::with_connection(tmp.path(), |c| {
+            let s = store::load_session(c, "@peer", "w2")?.expect("session");
+            assert_eq!(s.current_detail.as_deref(), Some("compiling"));
+            assert_eq!(s.active_call_id.as_deref(), Some("c1"));
+            Ok(())
+        })
+        .unwrap();
+
+        // idle: the harness went quiet — detail + active_call_id are absent. The
+        // authoritative snapshot must CLEAR them, not keep the stale "compiling"/c1
+        // (the COALESCE upsert alone would preserve them — the bug this fixes).
+        let idle = classify_message(
+            v2_env("status", r#"{ "state": "idle" }"#, "w2", "agent"),
+            "2026-07-05T09:01:00Z",
+        );
+        assert!(persist_message(tmp.path(), "s2", "@peer", &idle, "now").unwrap());
+        store::with_connection(tmp.path(), |c| {
+            let s = store::load_session(c, "@peer", "w2")?.expect("session");
+            assert_eq!(s.status_state.as_deref(), Some("idle"));
+            assert_eq!(s.current_detail, None, "stale detail must be cleared");
+            assert_eq!(
+                s.active_call_id, None,
+                "stale active_call_id must be cleared"
+            );
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn a_content_event_never_wipes_a_live_status() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Establish a live run-state via a status snapshot.
+        let running = classify_message(
+            v2_env(
+                "status",
+                r#"{ "state": "running_tool", "detail": "compiling", "active_call_id": "c1" }"#,
+                "w2",
+                "agent",
+            ),
+            "2026-07-05T09:00:00Z",
+        );
+        assert!(persist_message(tmp.path(), "s1", "@peer", &running, "now").unwrap());
+        // A content event (agent_message) carries no run-state — it must COALESCE,
+        // preserving the live status rather than nulling it.
+        let msg = classify_message(
+            v2_env(
+                "agent_message",
+                r#"{ "text": "still going" }"#,
+                "w2",
+                "agent",
+            ),
+            "2026-07-05T09:00:30Z",
+        );
+        assert!(persist_message(tmp.path(), "m1", "@peer", &msg, "now").unwrap());
+        store::with_connection(tmp.path(), |c| {
+            let s = store::load_session(c, "@peer", "w2")?.expect("session");
+            assert_eq!(s.status_state.as_deref(), Some("running_tool"));
+            assert_eq!(s.current_detail.as_deref(), Some("compiling"));
+            assert_eq!(s.active_call_id.as_deref(), Some("c1"));
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn persisting_v2_error_records_last_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let err = classify_message(
+            v2_env(
+                "error",
+                r#"{ "message": "rate limited", "fatal": false }"#,
+                "w2",
+                "agent",
+            ),
+            "2026-07-05T09:00:00Z",
+        );
+        assert!(persist_message(tmp.path(), "e1", "@peer", &err, "now").unwrap());
+        store::with_connection(tmp.path(), |c| {
+            assert_eq!(
+                store::kv_get(c, "orchestration:last_error")?.as_deref(),
+                Some("rate limited")
+            );
+            let session = store::load_session(c, "@peer", "w2")?.unwrap();
+            assert_eq!(session.status_state.as_deref(), Some("errored"));
+            Ok(())
+        })
+        .unwrap();
     }
 
     #[test]

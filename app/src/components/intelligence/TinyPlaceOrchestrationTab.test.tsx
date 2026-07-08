@@ -31,6 +31,7 @@ vi.mock('../../lib/orchestration/orchestrationClient', async importOriginal => {
       markRead: vi.fn(),
       status: vi.fn(),
       selfIdentity: vi.fn(),
+      publishIdentity: vi.fn(),
       relayInfo: vi.fn(),
       attention: vi.fn(),
     },

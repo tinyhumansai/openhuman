@@ -21,6 +21,7 @@ import {
 import Button from '../ui/Button';
 import CoreNotificationCard from './CoreNotificationCard';
 import FlowApprovalCard from './FlowApprovalCard';
+import GateApprovalCard, { isGateApprovalNotification } from './GateApprovalCard';
 import NotificationCard from './NotificationCard';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -196,13 +197,15 @@ const NotificationCenter = () => {
             always shown first, independent of integration load state. */}
         {coreActionItems.length > 0 && (
           <div className="divide-y-0">
-            {coreActionItems.map(item =>
-              isFlowApproval(item) ? (
-                <FlowApprovalCard key={item.id} notification={item} />
-              ) : (
-                <CoreNotificationCard key={item.id} notification={item} />
-              )
-            )}
+            {coreActionItems.map(item => {
+              if (isFlowApproval(item)) {
+                return <FlowApprovalCard key={item.id} notification={item} />;
+              }
+              if (isGateApprovalNotification(item)) {
+                return <GateApprovalCard key={item.id} notification={item} />;
+              }
+              return <CoreNotificationCard key={item.id} notification={item} />;
+            })}
           </div>
         )}
 

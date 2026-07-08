@@ -563,8 +563,34 @@ pub enum DomainEvent {
     ApprovalDecided {
         request_id: String,
         tool_name: String,
-        /// `"approve_once"`, `"approve_always_for_tool"`, or `"deny"`.
+        /// `"approve_once"`, `"approve_always_for_tool"`,
+        /// `"approve_always_for_flow"`, or `"deny"`.
         decision: String,
+    },
+    /// A `Workflow`-origin tool call parked in the `ApprovalGate` (issue
+    /// flow-approval-surface, PR2/PR3). Unlike `ApprovalRequested`, this
+    /// event carries no `thread_id`/`client_id` — a flow run has neither, so
+    /// the generic chat-routed socket bridge
+    /// (`channels::providers::web::event_bus::ApprovalSurfaceSubscriber`)
+    /// silently drops it (that gap was the original silent-deadlock bug).
+    /// Published by `ApprovalGate::intercept_audited` alongside the existing
+    /// `ApprovalRequested`, bridged by `core::socketio` directly to a
+    /// broadcast (not per-room) `flow_approval_request` Socket.IO event so
+    /// the Workflows UI can surface and resolve the park without polling.
+    FlowApprovalRequested {
+        /// Unique id used to correlate the decision back to the parked
+        /// future — pass to `approval_decide` unchanged.
+        request_id: String,
+        /// The `flows::Flow` id whose run parked this call.
+        flow_id: String,
+        /// The run's stable identifier (== the tinyflows checkpointer
+        /// thread id).
+        run_id: String,
+        /// Tool name being gated (e.g. `"composio"`).
+        tool_name: String,
+        /// Short human-readable summary of the action (redacted, same as
+        /// `ApprovalRequested::action_summary`).
+        summary: String,
     },
 
     // ── Plan review (interactive plan-mode gate) ────────────────────────
@@ -1219,6 +1245,10 @@ pub enum DomainEvent {
         command_text: String,
         recent_transcript: Vec<BackendMeetTurn>,
         timestamp_ms: u64,
+        /// Dual-mascot name addressing (#4277 follow-up): slot (0 = primary,
+        /// 1 = secondary) whose mascot name was addressed, or `None` when no
+        /// specific mascot was named. Forwarded to `bot:speak` as `mascotSlot`.
+        mascot_slot: Option<u8>,
     },
     /// Core asked the backend bot to speak into the call (`bot:speak`).
     /// Published for observability after the Socket.IO emit succeeds.
@@ -1426,7 +1456,8 @@ impl DomainEvent {
             Self::ApprovalRequested { .. }
             | Self::ApprovalDecided { .. }
             | Self::ApprovalGateOverrideIgnored { .. }
-            | Self::ApprovalGateDisabled { .. } => "approval",
+            | Self::ApprovalGateDisabled { .. }
+            | Self::FlowApprovalRequested { .. } => "approval",
 
             Self::PlanReviewRequested { .. } | Self::PlanReviewDecided { .. } => "plan_review",
 
@@ -1565,6 +1596,7 @@ impl DomainEvent {
             Self::SessionExpired { .. } => "SessionExpired",
             Self::ApprovalRequested { .. } => "ApprovalRequested",
             Self::ApprovalDecided { .. } => "ApprovalDecided",
+            Self::FlowApprovalRequested { .. } => "FlowApprovalRequested",
             Self::PlanReviewRequested { .. } => "PlanReviewRequested",
             Self::PlanReviewDecided { .. } => "PlanReviewDecided",
             Self::ApprovalGateOverrideIgnored { .. } => "ApprovalGateOverrideIgnored",

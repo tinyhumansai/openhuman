@@ -1047,6 +1047,57 @@ fn invalid_models_fail() {
     assert!(!is_known_openhuman_tier("hint:"));
 }
 
+// ── is_raw_passthrough_model ─────────────────────────────────────────────────
+// Raw/BYOK model ids (non-empty, non-tier, non-`hint:*`) must be recognized as
+// passthrough so they reach provider construction verbatim (issue #4598).
+#[test]
+fn raw_passthrough_model_detects_byok_ids() {
+    assert!(is_raw_passthrough_model("claude-opus-4"));
+    assert!(is_raw_passthrough_model("deepseek-v4-pro"));
+    assert!(is_raw_passthrough_model("gpt-4o"));
+    assert!(is_raw_passthrough_model("reasoning-v2"));
+    // Surrounding whitespace is trimmed before the classification.
+    assert!(is_raw_passthrough_model("  claude-opus-4  "));
+}
+
+#[test]
+fn raw_passthrough_model_excludes_tiers_hints_and_empty() {
+    // Managed tiers are resolved, never forwarded raw.
+    assert!(!is_raw_passthrough_model("reasoning-v1"));
+    assert!(!is_raw_passthrough_model("chat-v1"));
+    assert!(!is_raw_passthrough_model("summarization-v1"));
+    // Every `hint:*` alias (known or not) stays on the hint-resolution path.
+    assert!(!is_raw_passthrough_model("hint:reasoning"));
+    assert!(!is_raw_passthrough_model("hint:garbage"));
+    // Empty / whitespace-only ids are not passthrough — they fall back to default.
+    assert!(!is_raw_passthrough_model(""));
+    assert!(!is_raw_passthrough_model("   "));
+}
+
+// End-to-end through the public factory string entry: a raw BYOK model pinned in
+// `default_model` reaches provider construction verbatim on the managed backend,
+// while a known tier and a `hint:*` alias keep their existing resolution.
+#[test]
+fn managed_backend_passthrough_via_create_chat_provider_from_string() {
+    let mut config = Config::default();
+    config.default_model = Some("claude-opus-4".to_string());
+    let (_, model) = create_chat_provider_from_string("chat", "openhuman", &config)
+        .expect("managed backend must build");
+    assert_eq!(model, "claude-opus-4");
+
+    // Managed tier resolution is unchanged.
+    config.default_model = Some("chat-v1".to_string());
+    let (_, model) = create_chat_provider_from_string("chat", "openhuman", &config)
+        .expect("managed backend must build");
+    assert_eq!(model, "chat-v1");
+
+    // `hint:*` resolution is unchanged.
+    config.default_model = Some("hint:reasoning".to_string());
+    let (_, model) = create_chat_provider_from_string("chat", "openhuman", &config)
+        .expect("managed backend must build");
+    assert_eq!(model, crate::openhuman::config::MODEL_REASONING_V1);
+}
+
 // ── oh_tier_supports_vision ──────────────────────────────────────────────────────
 
 #[test]
@@ -1192,17 +1243,24 @@ fn make_openhuman_backend_reports_vision_capability() {
 }
 
 #[test]
-fn make_openhuman_backend_falls_back_for_invalid_model() {
-    // An invalid default_model must not be forwarded to the backend.
-    // The factory must silently fall back to reasoning-v1 (the platform default).
+fn make_openhuman_backend_forwards_raw_byok_model_verbatim() {
+    // Issue #4598: a raw/BYOK model id pinned into `default_model` (e.g. a user
+    // selecting "claude-opus-4" for an agent) must reach provider construction
+    // verbatim rather than the core silently collapsing it onto reasoning-v1.
+    // The managed backend preserves non-empty ids and is authoritative over
+    // their validity.
     let mut config = Config::default();
-    config.default_model = Some("deepseek-v4-pro".to_string());
+    config.default_model = Some("claude-opus-4".to_string());
     let (_, model) = make_openhuman_backend("chat", &config).expect("factory should succeed");
     assert_eq!(
-        model,
-        crate::openhuman::config::MODEL_REASONING_V1,
-        "invalid default_model should fall back to MODEL_REASONING_V1"
+        model, "claude-opus-4",
+        "a raw/BYOK default_model must be forwarded verbatim, not collapsed"
     );
+
+    // Another stale/custom id shape from the wild — still forwarded verbatim.
+    config.default_model = Some("deepseek-v4-pro".to_string());
+    let (_, model) = make_openhuman_backend("chat", &config).expect("factory should succeed");
+    assert_eq!(model, "deepseek-v4-pro");
 }
 
 #[test]

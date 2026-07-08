@@ -43,7 +43,9 @@ use crate::openhuman::config::Config;
 use crate::openhuman::security::POLICY_DENIED_MARKER;
 
 use super::store;
-use super::types::{ApprovalDecision, ExecutionOutcome, GateOutcome, PendingApproval};
+use super::types::{
+    ApprovalDecision, ApprovalSourceContext, ExecutionOutcome, GateOutcome, PendingApproval,
+};
 
 /// Disambiguates why [`ApprovalGate::decide`] returned `Ok(None)`. See
 /// [`ApprovalGate::classify_decide_miss`] for the lookup that produces this.
@@ -102,6 +104,25 @@ pub struct InCallApprovalContext {
 
 tokio::task_local! {
     pub static APPROVAL_IN_CALL_CONTEXT: InCallApprovalContext;
+}
+
+/// Per-run flow context (flow-approval-surface, PR2 of the tinyflows
+/// approval-surfacing design). `flows::ops::flows_run` / `flows_resume`
+/// scope this around the engine invocation, alongside the existing
+/// `Workflow` [`AgentTurnOrigin`](crate::openhuman::agent::turn_origin::AgentTurnOrigin),
+/// so a tool call parked from that run can correlate
+/// [`PendingApproval::source_context`](super::types::PendingApproval) back to
+/// the exact flow + run (the origin alone only carries `flow_id`, not
+/// `run_id`). Absent for every non-flow caller — chat, cron, subconscious,
+/// CLI never scope this.
+#[derive(Clone, Debug)]
+pub struct FlowRunContext {
+    pub flow_id: String,
+    pub run_id: String,
+}
+
+tokio::task_local! {
+    pub static APPROVAL_FLOW_RUN_CONTEXT: FlowRunContext;
 }
 
 /// Parse a chat reply to a parked approval into a binary decision (v1). Only an
@@ -317,6 +338,44 @@ impl ApprovalGate {
         // external_effect tool from an unlabelled call site.
         let origin = turn_origin::current().unwrap_or(AgentTurnOrigin::Unknown);
 
+        // Per-flow tool trust shortcut (flow-approval-surface, PR2): a prior
+        // `ApproveAlwaysForFlow` decision on this exact `(flow_id, tool_name)`
+        // pair short-circuits to `Allow` for every future Workflow-origin call
+        // of that tool from that flow — including a `require_approval: true`
+        // flow and a Supervised-tier `caps.rs::gate_call_for_tier` escalation,
+        // both of which otherwise force the park below. The trust is scoped to
+        // the *flow*, never the tool alone, so it cannot leak into a different
+        // workflow that happens to call the same tool (that stays gated, or
+        // uses the separate global `autonomy.auto_approve` allowlist). Checked
+        // before any other origin branching so it wins regardless of which
+        // arm of the match below would otherwise fire.
+        if let AgentTurnOrigin::TrustedAutomation {
+            source: TrustedAutomationSource::Workflow { .. },
+            job_id: flow_id,
+        } = &origin
+        {
+            match store::is_flow_tool_trusted(&self.config, flow_id, tool_name) {
+                Ok(true) => {
+                    tracing::debug!(
+                        tool = tool_name,
+                        flow_id = %flow_id,
+                        "[approval::gate] flow_tool_trust hit — auto-allowing without prompt"
+                    );
+                    return (GateOutcome::Allow, None);
+                }
+                Ok(false) => {}
+                Err(err) => {
+                    tracing::warn!(
+                        tool = tool_name,
+                        flow_id = %flow_id,
+                        error = %err,
+                        "[approval::gate] flow_tool_trust lookup failed — falling through to \
+                         normal gating (fail-safe: still gated, not silently allowed)"
+                    );
+                }
+            }
+        }
+
         // An autonomous goal continuation runs with no user present, so an
         // irreversible external action must never be auto-allowed — not even via
         // the `autonomy.auto_approve` allowlist. Skip the shortcut for that
@@ -523,6 +582,30 @@ impl ApprovalGate {
         let now = chrono::Utc::now();
         let expires_at =
             Some(now + chrono::Duration::from_std(self.effective_ttl()).unwrap_or_default());
+
+        // Correlation context (flow-approval-surface, PR2): a Workflow-origin
+        // park carries the flow id on the origin itself, but not the run id —
+        // that comes from the `APPROVAL_FLOW_RUN_CONTEXT` task-local
+        // `flows::ops::flows_run`/`flows_resume` scope alongside `with_origin`.
+        // `try_with` returns `Err` for every non-flow caller (chat, cron,
+        // subconscious, CLI, and even a Workflow origin reached without the
+        // flows module's scope, which "should never happen" but must not
+        // panic), so `source_context` stays `None` there — unchanged chat
+        // behavior.
+        let source_context = match &origin {
+            AgentTurnOrigin::TrustedAutomation {
+                source: TrustedAutomationSource::Workflow { .. },
+                job_id: flow_id,
+            } => APPROVAL_FLOW_RUN_CONTEXT
+                .try_with(|ctx| ApprovalSourceContext::Flow {
+                    flow_id: flow_id.clone(),
+                    run_id: ctx.run_id.clone(),
+                    node_id: None,
+                })
+                .ok(),
+            _ => None,
+        };
+
         let pending = PendingApproval {
             request_id: request_id.clone(),
             tool_name: tool_name.to_string(),
@@ -530,6 +613,7 @@ impl ApprovalGate {
             args_redacted: args_redacted.clone(),
             created_at: now,
             expires_at,
+            source_context: source_context.clone(),
         };
 
         // Register the waiter BEFORE persisting the row so a fast
@@ -591,6 +675,37 @@ impl ApprovalGate {
             thread_id: chat_thread_id.clone(),
             client_id: chat_client_id.clone(),
         });
+
+        // Flow-origin surface bridge (flow-approval-surface, PR3): a flow run
+        // has no chat thread/client to route the generic `ApprovalRequested`
+        // through (both are `None` above, so the web-channel bridge silently
+        // drops it — see `channels::providers::web::event_bus`'s
+        // `ApprovalSurfaceSubscriber`), which is exactly the silent-deadlock
+        // bug this correlation fixes. Broadcast a dedicated
+        // `flow_approval_request` socket event (no thread/client required,
+        // unlike the chat path) plus a `CoreNotification` with the three
+        // flow-scoped decision actions, so the Workflows UI can surface and
+        // resolve the park without polling.
+        if let Some(ApprovalSourceContext::Flow {
+            flow_id, run_id, ..
+        }) = &source_context
+        {
+            tracing::info!(
+                request_id = %request_id,
+                flow_id = %flow_id,
+                run_id = %run_id,
+                tool = tool_name,
+                "[approval::gate] flow-origin park — surfacing flow_approval_request + notification"
+            );
+            publish_global(DomainEvent::FlowApprovalRequested {
+                request_id: request_id.clone(),
+                flow_id: flow_id.clone(),
+                run_id: run_id.clone(),
+                tool_name: tool_name.to_string(),
+                summary: action_summary.to_string(),
+            });
+            publish_flow_gate_notification(&request_id, flow_id, run_id, tool_name, action_summary);
+        }
 
         // Voice channel (issue #3513): tell the meeting bus to speak the
         // approval prompt into the call.
@@ -826,6 +941,34 @@ impl ApprovalGate {
         store::list_recent_decisions(&self.config, limit)
     }
 
+    /// List undecided rows correlated with a specific flow run (issue
+    /// flow-approval-surface, PR2) — lets a dedicated Workflows review
+    /// surface fetch just the gates blocking one run instead of filtering
+    /// [`Self::list_pending`] client-side.
+    pub fn list_pending_for_flow_run(
+        &self,
+        flow_id: &str,
+        run_id: &str,
+    ) -> anyhow::Result<Vec<PendingApproval>> {
+        store::list_pending_for_flow_run(&self.config, flow_id, run_id)
+    }
+
+    /// Grant "approve always for this flow" trust to `(flow_id, tool_name)`.
+    /// Called by the `approval_decide` RPC handler after an
+    /// [`ApprovalDecision::ApproveAlwaysForFlow`] decides a flow-origin row —
+    /// mirrors the RPC-owns-persistence split documented on
+    /// [`Self::decide`] for `ApproveAlwaysForTool`.
+    pub fn insert_flow_trust(&self, flow_id: &str, tool_name: &str) -> anyhow::Result<()> {
+        store::insert_flow_trust(&self.config, flow_id, tool_name)
+    }
+
+    /// Whether `(flow_id, tool_name)` currently holds "approve always for
+    /// this flow" trust. Exposed for tests and diagnostics; `intercept_audited`
+    /// consults [`store::is_flow_tool_trusted`] directly.
+    pub fn is_flow_tool_trusted(&self, flow_id: &str, tool_name: &str) -> anyhow::Result<bool> {
+        store::is_flow_tool_trusted(&self.config, flow_id, tool_name)
+    }
+
     /// Return the session id this gate was installed with (used by
     /// RPC handlers for diagnostics).
     pub fn session_id(&self) -> &str {
@@ -868,6 +1011,78 @@ impl ApprovalGate {
             self.meeting_to_request.lock().remove(&ic.meeting_key);
         }
     }
+}
+
+/// Wall-clock milliseconds since the Unix epoch, for `CoreNotificationEvent::timestamp_ms`.
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Surfaces a flow-origin park as a `CoreNotification` (category `Agents`,
+/// `kind: "flow-gate-approval"`) with three action buttons matching the
+/// [`ApprovalDecision`] variants a flow-scoped approval accepts:
+/// `approve_once` / `approve_always_for_flow` / `deny`. Each action's payload
+/// carries the same `{kind, request_id, flow_id, tool_name, summary}` shape
+/// (plus `run_id`, additive) so the frontend can dispatch straight to
+/// `approval_decide` without a second round-trip to fetch the pending row.
+///
+/// Mirrors `flows::ops::notify_pending_approval` (the tinyflows-native
+/// per-node HITL gate's notification) but is a distinct surface: this one
+/// fires from the *tool-call* `ApprovalGate`, not the graph's own
+/// `require_approval` gate node.
+fn publish_flow_gate_notification(
+    request_id: &str,
+    flow_id: &str,
+    run_id: &str,
+    tool_name: &str,
+    summary: &str,
+) {
+    use crate::openhuman::notifications::bus::publish_core_notification;
+    use crate::openhuman::notifications::types::{
+        CoreNotificationAction, CoreNotificationCategory, CoreNotificationEvent,
+    };
+
+    const KIND: &str = "flow-gate-approval";
+    let base_payload = |action: ApprovalDecision| {
+        serde_json::json!({
+            "kind": KIND,
+            "request_id": request_id,
+            "flow_id": flow_id,
+            "run_id": run_id,
+            "tool_name": tool_name,
+            "summary": summary,
+            "decision": action.as_str(),
+        })
+    };
+
+    publish_core_notification(CoreNotificationEvent {
+        id: format!("{KIND}:{request_id}"),
+        category: CoreNotificationCategory::Agents,
+        title: "Workflow needs approval".to_string(),
+        body: format!("\"{tool_name}\" — {summary}"),
+        deep_link: None,
+        timestamp_ms: now_ms(),
+        actions: Some(vec![
+            CoreNotificationAction {
+                action_id: "approve_once".to_string(),
+                label: "Approve once".to_string(),
+                payload: Some(base_payload(ApprovalDecision::ApproveOnce)),
+            },
+            CoreNotificationAction {
+                action_id: "approve_always_for_flow".to_string(),
+                label: "Always allow for this workflow".to_string(),
+                payload: Some(base_payload(ApprovalDecision::ApproveAlwaysForFlow)),
+            },
+            CoreNotificationAction {
+                action_id: "deny".to_string(),
+                label: "Deny".to_string(),
+                payload: Some(base_payload(ApprovalDecision::Deny)),
+            },
+        ]),
+    });
 }
 
 #[cfg(test)]
@@ -1675,5 +1890,316 @@ mod tests {
             first_id.is_some(),
             "the prompting call still persists a row"
         );
+    }
+
+    // ── flow-approval-surface (source_context, flow_tool_trust, surfacing) ──
+
+    /// A `Workflow`-origin turn for the flow-correlation tests below.
+    fn flow_origin(flow_id: &str, require_approval: bool) -> AgentTurnOrigin {
+        AgentTurnOrigin::TrustedAutomation {
+            job_id: flow_id.to_string(),
+            source: TrustedAutomationSource::Workflow { require_approval },
+        }
+    }
+
+    #[tokio::test]
+    async fn flow_origin_park_populates_source_context_with_flow_and_run_id() {
+        // A `require_approval: true` flow still parks (same shape as before
+        // this change) but the persisted row must now carry the flow/run
+        // correlation the `APPROVAL_FLOW_RUN_CONTEXT` task-local supplies —
+        // the origin alone only carries `flow_id`, not `run_id`.
+        let (gate, _dir) = test_gate();
+        let gate = Arc::new(gate);
+
+        let g = gate.clone();
+        let handle = tokio::spawn(async move {
+            turn_origin::with_origin(
+                flow_origin("flow-1", true),
+                APPROVAL_FLOW_RUN_CONTEXT.scope(
+                    FlowRunContext {
+                        flow_id: "flow-1".to_string(),
+                        run_id: "run-1".to_string(),
+                    },
+                    g.intercept_audited("composio", "post to slack", serde_json::json!({})),
+                ),
+            )
+            .await
+        });
+
+        let pending = loop {
+            if let Some(p) = gate.list_pending().unwrap().into_iter().next() {
+                break p;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+
+        match &pending.source_context {
+            Some(super::super::types::ApprovalSourceContext::Flow {
+                flow_id,
+                run_id,
+                node_id,
+            }) => {
+                assert_eq!(flow_id, "flow-1");
+                assert_eq!(run_id, "run-1");
+                assert!(
+                    node_id.is_none(),
+                    "node_id is not yet threaded down to the gate"
+                );
+            }
+            other => panic!("expected Flow source_context, got {other:?}"),
+        }
+
+        gate.decide(&pending.request_id, ApprovalDecision::Deny)
+            .unwrap();
+        let _ = handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn chat_origin_park_has_no_source_context() {
+        // Regression guard: the plain chat-routed path (unaffected by this
+        // change) must never gain a `source_context` — only Workflow-origin
+        // parks populate it.
+        let (gate, _dir) = test_gate();
+        let gate = Arc::new(gate);
+
+        let g = gate.clone();
+        let handle = tokio::spawn(async move {
+            turn_origin::with_origin(
+                web_origin(),
+                APPROVAL_CHAT_CONTEXT.scope(
+                    chat_ctx(),
+                    g.intercept_audited("composio", "send slack", serde_json::json!({})),
+                ),
+            )
+            .await
+        });
+
+        let pending = loop {
+            if let Some(p) = gate.list_pending().unwrap().into_iter().next() {
+                break p;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+        assert!(
+            pending.source_context.is_none(),
+            "chat-origin parks must not carry a source_context"
+        );
+
+        gate.decide(&pending.request_id, ApprovalDecision::ApproveOnce)
+            .unwrap();
+        let (outcome, _id) = handle.await.unwrap();
+        assert!(matches!(outcome, GateOutcome::Allow));
+    }
+
+    #[tokio::test]
+    async fn flow_tool_trust_auto_allows_before_parking() {
+        // A prior `ApproveAlwaysForFlow` grant for (flow_id, tool_name) must
+        // short-circuit to `Allow` even for a `require_approval: true` flow —
+        // that is the whole point of "approve always for this workflow": no
+        // pending row is created and the call never parks.
+        let (gate, _dir) = test_gate();
+        store::insert_flow_trust(&gate.config, "flow-trusted", "composio").unwrap();
+
+        let outcome = turn_origin::with_origin(
+            flow_origin("flow-trusted", true),
+            APPROVAL_FLOW_RUN_CONTEXT.scope(
+                FlowRunContext {
+                    flow_id: "flow-trusted".to_string(),
+                    run_id: "run-1".to_string(),
+                },
+                gate.intercept("composio", "post to slack", serde_json::json!({})),
+            ),
+        )
+        .await;
+
+        assert!(matches!(outcome, GateOutcome::Allow));
+        assert!(
+            gate.list_pending().unwrap().is_empty(),
+            "a trusted (flow, tool) pair must not persist a pending row"
+        );
+
+        // A different tool on the same trusted flow is unaffected — it still
+        // parks (TTL-denies on the 2s test gate).
+        let untrusted_outcome = turn_origin::with_origin(
+            flow_origin("flow-trusted", true),
+            APPROVAL_FLOW_RUN_CONTEXT.scope(
+                FlowRunContext {
+                    flow_id: "flow-trusted".to_string(),
+                    run_id: "run-1".to_string(),
+                },
+                gate.intercept("pushover", "send push", serde_json::json!({})),
+            ),
+        )
+        .await;
+        assert!(
+            matches!(untrusted_outcome, GateOutcome::Deny { .. }),
+            "trust must be scoped to the exact tool granted, not the whole flow"
+        );
+    }
+
+    #[tokio::test]
+    async fn decide_approve_always_for_flow_then_insert_flow_trust_composes_to_auto_allow() {
+        // Exercises the two building blocks the `approval_decide` RPC handler
+        // composes for `ApproveAlwaysForFlow` (see `approval::rpc`): the gate
+        // resolves the parked call and returns the decided row (carrying
+        // `source_context`), and the RPC layer then calls
+        // `ApprovalGate::insert_flow_trust` using that row's flow id. This
+        // test exercises both steps directly against a local (non-global)
+        // gate — the RPC handler itself reads the process-wide
+        // `ApprovalGate::try_global()` singleton, which tests must not touch
+        // (it would leak state into every other test in this binary).
+        let (gate, _dir) = test_gate();
+        let gate = Arc::new(gate);
+
+        let g = gate.clone();
+        let handle = tokio::spawn(async move {
+            turn_origin::with_origin(
+                flow_origin("flow-2", true),
+                APPROVAL_FLOW_RUN_CONTEXT.scope(
+                    FlowRunContext {
+                        flow_id: "flow-2".to_string(),
+                        run_id: "run-2".to_string(),
+                    },
+                    g.intercept_audited("composio", "post to slack", serde_json::json!({})),
+                ),
+            )
+            .await
+        });
+
+        let pending = loop {
+            if let Some(p) = gate.list_pending().unwrap().into_iter().next() {
+                break p;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+
+        let decided = gate
+            .decide(&pending.request_id, ApprovalDecision::ApproveAlwaysForFlow)
+            .unwrap()
+            .expect("decided row");
+
+        assert!(!gate.is_flow_tool_trusted("flow-2", "composio").unwrap());
+
+        match &decided.source_context {
+            Some(super::super::types::ApprovalSourceContext::Flow { flow_id, .. }) => {
+                gate.insert_flow_trust(flow_id, &decided.tool_name).unwrap();
+            }
+            other => panic!("expected Flow source_context, got {other:?}"),
+        }
+
+        assert!(gate.is_flow_tool_trusted("flow-2", "composio").unwrap());
+
+        let (outcome, _id) = handle.await.unwrap();
+        assert!(matches!(outcome, GateOutcome::Allow));
+    }
+
+    #[tokio::test]
+    async fn flow_origin_park_publishes_flow_approval_request_and_notification() {
+        // The silent-deadlock bug this whole PR fixes: a flow-origin park has
+        // no chat thread/client, so the generic `ApprovalRequested` event's
+        // web-channel bridge silently drops it. This test asserts the two new
+        // surfaces fire instead — the `flow_approval_request` DomainEvent
+        // (bridged to a broadcast Socket.IO event by `core::socketio`) and
+        // the `flow-gate-approval` CoreNotification with its three actions.
+        crate::core::event_bus::init_global(crate::core::event_bus::DEFAULT_CAPACITY);
+        let mut event_rx = crate::core::event_bus::global()
+            .expect("event bus initialized above")
+            .raw_receiver();
+        let mut notif_rx = crate::openhuman::notifications::bus::subscribe_core_notifications();
+
+        let (gate, _dir) = test_gate();
+        let gate = Arc::new(gate);
+
+        let g = gate.clone();
+        let handle = tokio::spawn(async move {
+            turn_origin::with_origin(
+                flow_origin("flow-9", true),
+                APPROVAL_FLOW_RUN_CONTEXT.scope(
+                    FlowRunContext {
+                        flow_id: "flow-9".to_string(),
+                        run_id: "run-9".to_string(),
+                    },
+                    g.intercept_audited("composio", "post to slack", serde_json::json!({})),
+                ),
+            )
+            .await
+        });
+
+        let (request_id, run_id, tool_name) = tokio::time::timeout(
+            Duration::from_secs(5),
+            find_flow_approval_requested(&mut event_rx, "flow-9"),
+        )
+        .await
+        .expect("timed out waiting for FlowApprovalRequested");
+        assert_eq!(run_id, "run-9");
+        assert_eq!(tool_name, "composio");
+
+        let notif = tokio::time::timeout(
+            Duration::from_secs(5),
+            find_flow_gate_notification(&mut notif_rx, &request_id),
+        )
+        .await
+        .expect("timed out waiting for the flow-gate-approval notification");
+        assert_eq!(notif.id, format!("flow-gate-approval:{request_id}"));
+        let actions = notif.actions.expect("notification must declare actions");
+        let action_ids: Vec<_> = actions.iter().map(|a| a.action_id.as_str()).collect();
+        assert_eq!(
+            action_ids,
+            vec!["approve_once", "approve_always_for_flow", "deny"]
+        );
+
+        gate.decide(&request_id, ApprovalDecision::Deny).unwrap();
+        let _ = handle.await.unwrap();
+    }
+
+    /// Drain `rx` until a `FlowApprovalRequested` for `expected_flow_id`
+    /// arrives. The event bus is process-wide and other tests in this file
+    /// (and elsewhere) publish on it concurrently — including other
+    /// `FlowApprovalRequested` events for *different* flow ids — so this must
+    /// filter by flow id, not just by variant, and tolerate both unrelated
+    /// events and broadcast lag rather than returning the first match.
+    async fn find_flow_approval_requested(
+        rx: &mut tokio::sync::broadcast::Receiver<crate::core::event_bus::DomainEvent>,
+        expected_flow_id: &str,
+    ) -> (String, String, String) {
+        loop {
+            match rx.recv().await {
+                Ok(crate::core::event_bus::DomainEvent::FlowApprovalRequested {
+                    request_id,
+                    flow_id,
+                    run_id,
+                    tool_name,
+                    ..
+                }) if flow_id == expected_flow_id => return (request_id, run_id, tool_name),
+                Ok(_) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    panic!("event bus closed before FlowApprovalRequested arrived")
+                }
+            }
+        }
+    }
+
+    /// Drain `rx` until the `flow-gate-approval` notification for
+    /// `request_id` arrives — the notification bus is process-wide, so
+    /// unrelated notifications from other concurrently-running tests are
+    /// tolerated and skipped.
+    async fn find_flow_gate_notification(
+        rx: &mut tokio::sync::broadcast::Receiver<
+            crate::openhuman::notifications::types::CoreNotificationEvent,
+        >,
+        request_id: &str,
+    ) -> crate::openhuman::notifications::types::CoreNotificationEvent {
+        let expected_id = format!("flow-gate-approval:{request_id}");
+        loop {
+            match rx.recv().await {
+                Ok(event) if event.id == expected_id => return event,
+                Ok(_) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    panic!("notification bus closed before the flow-gate-approval notification arrived")
+                }
+            }
+        }
     }
 }

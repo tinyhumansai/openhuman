@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { socketService } from '../../services/socketService';
 import {
+  type HarnessEventKind,
   orchestrationClient,
   type OrchestrationMessage,
   type OrchestrationMessageEvent,
@@ -37,6 +38,12 @@ export interface ChatMessage {
   body: string;
   timestamp: string;
   encrypted: boolean;
+  /** Typed harness (v2) event kind; absent on legacy v1 text rows. */
+  eventKind?: HarnessEventKind;
+  /** Tool name on tool_call / tool_result rows. */
+  toolName?: string;
+  /** Correlation id linking a tool_call to its tool_result. */
+  callId?: string;
 }
 
 export interface ChatWindow {
@@ -84,6 +91,9 @@ function mapMessage(message: OrchestrationMessage): ChatMessage {
     body: message.body,
     timestamp: message.timestamp,
     encrypted: false,
+    ...(message.eventKind ? { eventKind: message.eventKind } : {}),
+    ...(message.toolName ? { toolName: message.toolName } : {}),
+    ...(message.callId ? { callId: message.callId } : {}),
   };
 }
 

@@ -15,6 +15,9 @@ use super::types::{OrchestrationMessage, OrchestrationSession};
 const SCHEMA_DDL: &str = "
     PRAGMA foreign_keys = ON;
 
+    -- `status_state`/`current_detail`/`active_call_id` carry the v2 harness
+    -- run-state (`status.state`/`status.detail`/`status.active_call_id`). Nullable
+    -- and additive: a v1/legacy store gets them via `migrate` (existing rows NULL).
     CREATE TABLE IF NOT EXISTS sessions (
         session_id      TEXT NOT NULL,
         agent_id        TEXT NOT NULL,
@@ -24,9 +27,15 @@ const SCHEMA_DDL: &str = "
         last_seq        INTEGER NOT NULL DEFAULT 0,
         created_at      TEXT NOT NULL,
         last_message_at TEXT NOT NULL,
+        status_state    TEXT,
+        current_detail  TEXT,
+        active_call_id  TEXT,
         PRIMARY KEY (agent_id, session_id)
     );
 
+    -- `event_kind`/`tool_name`/`call_id` carry the v2 per-message event shape
+    -- (`event.kind` + tool identity/correlation). Nullable and additive; v1 and
+    -- pinned master/subconscious rows leave them NULL.
     CREATE TABLE IF NOT EXISTS messages (
         id         TEXT PRIMARY KEY,
         agent_id   TEXT NOT NULL,
@@ -35,7 +44,10 @@ const SCHEMA_DDL: &str = "
         role       TEXT NOT NULL,
         body       TEXT NOT NULL,
         timestamp  TEXT NOT NULL,
-        seq        INTEGER NOT NULL DEFAULT 0
+        seq        INTEGER NOT NULL DEFAULT 0,
+        event_kind TEXT,
+        tool_name  TEXT,
+        call_id    TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_messages_session
@@ -145,6 +157,33 @@ pub fn in_immediate_txn<T>(
     }
 }
 
+/// True if `column` already exists on `table` (via `PRAGMA table_info`). Used to
+/// make additive `ALTER TABLE ... ADD COLUMN` migrations idempotent — SQLite has
+/// no `ADD COLUMN IF NOT EXISTS`, and re-adding an existing column errors.
+fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    // `table` is a hardcoded internal literal (never user input); PRAGMA cannot be
+    // parameterised, so it is interpolated directly.
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Additively add `column` to `table` when it is not already present. Idempotent,
+/// so it is safe on a fresh DB (SCHEMA_DDL already created the column → no-op) and
+/// on an older store (adds it; existing rows default NULL).
+fn add_column_if_missing(conn: &Connection, table: &str, column: &str, decl: &str) -> Result<()> {
+    if !column_exists(conn, table, column)? {
+        conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {decl}"))?;
+    }
+    Ok(())
+}
+
 /// One-time, `user_version`-gated migrations. Runs after the idempotent
 /// `SCHEMA_DDL`; each version block executes exactly once per DB.
 fn migrate(conn: &Connection) -> Result<()> {
@@ -177,6 +216,18 @@ fn migrate(conn: &Connection) -> Result<()> {
              PRAGMA user_version = 1;",
         )?;
     }
+
+    // v2 — additive harness-session-v2 receiver columns. Guarded per-column by a
+    // `table_info` existence check rather than `user_version`, so it is order- and
+    // freshness-independent: a fresh DB already has them from SCHEMA_DDL (no-op),
+    // while a v1 store gains them here with existing rows defaulting NULL — which
+    // `derive_status` reads as "no persisted run-state" and falls back to recency.
+    add_column_if_missing(conn, "sessions", "status_state", "TEXT")?;
+    add_column_if_missing(conn, "sessions", "current_detail", "TEXT")?;
+    add_column_if_missing(conn, "sessions", "active_call_id", "TEXT")?;
+    add_column_if_missing(conn, "messages", "event_kind", "TEXT")?;
+    add_column_if_missing(conn, "messages", "tool_name", "TEXT")?;
+    add_column_if_missing(conn, "messages", "call_id", "TEXT")?;
     Ok(())
 }
 
@@ -196,13 +247,19 @@ pub fn message_exists(conn: &Connection, id: &str) -> Result<bool> {
 pub fn upsert_session(conn: &Connection, s: &OrchestrationSession) -> Result<()> {
     conn.execute(
         "INSERT INTO sessions
-           (session_id, agent_id, source, label, workspace, last_seq, created_at, last_message_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+           (session_id, agent_id, source, label, workspace, last_seq, created_at, last_message_at,
+            status_state, current_detail, active_call_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
          ON CONFLICT(agent_id, session_id) DO UPDATE SET
            last_seq = MAX(sessions.last_seq, excluded.last_seq),
            last_message_at = excluded.last_message_at,
            label = COALESCE(excluded.label, sessions.label),
-           workspace = COALESCE(excluded.workspace, sessions.workspace)",
+           workspace = COALESCE(excluded.workspace, sessions.workspace),
+           -- Run-state fields COALESCE so a content event (which carries none)
+           -- never wipes the last status; a fresh `status` event overwrites them.
+           status_state = COALESCE(excluded.status_state, sessions.status_state),
+           current_detail = COALESCE(excluded.current_detail, sessions.current_detail),
+           active_call_id = COALESCE(excluded.active_call_id, sessions.active_call_id)",
         params![
             s.session_id,
             s.agent_id,
@@ -212,6 +269,39 @@ pub fn upsert_session(conn: &Connection, s: &OrchestrationSession) -> Result<()>
             s.last_seq,
             s.created_at,
             s.last_message_at,
+            s.status_state,
+            s.current_detail,
+            s.active_call_id,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Overwrite a session's v2 run-state columns from an authoritative `status`
+/// snapshot. `upsert_session` COALESCEs these so a content event (which carries
+/// no run-state) never wipes the last status; a `status` event, by contrast, OWNS
+/// them and must be able to CLEAR `current_detail`/`active_call_id` on a
+/// `running_tool` → `idle` transition. The row already exists (the ingest path
+/// runs `upsert_session` first), so this is a plain UPDATE that SETs — not
+/// coalesces — all three, letting `None` clear a stale value.
+pub fn apply_run_state(
+    conn: &Connection,
+    agent_id: &str,
+    session_id: &str,
+    status_state: Option<&str>,
+    current_detail: Option<&str>,
+    active_call_id: Option<&str>,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE sessions
+            SET status_state = ?3, current_detail = ?4, active_call_id = ?5
+          WHERE agent_id = ?1 AND session_id = ?2",
+        params![
+            agent_id,
+            session_id,
+            status_state,
+            current_detail,
+            active_call_id
         ],
     )?;
     Ok(())
@@ -221,8 +311,9 @@ pub fn upsert_session(conn: &Connection, s: &OrchestrationSession) -> Result<()>
 pub fn insert_message(conn: &Connection, m: &OrchestrationMessage) -> Result<bool> {
     let changed = conn.execute(
         "INSERT OR IGNORE INTO messages
-           (id, agent_id, session_id, chat_kind, role, body, timestamp, seq)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+           (id, agent_id, session_id, chat_kind, role, body, timestamp, seq,
+            event_kind, tool_name, call_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             m.id,
             m.agent_id,
@@ -232,6 +323,9 @@ pub fn insert_message(conn: &Connection, m: &OrchestrationMessage) -> Result<boo
             m.body,
             m.timestamp,
             m.seq,
+            m.event_kind,
+            m.tool_name,
+            m.call_id,
         ],
     )?;
     Ok(changed > 0)
@@ -291,6 +385,8 @@ pub fn latest_message_preview(
         .query_row(
             "SELECT body FROM messages
                WHERE agent_id = ?1 AND session_id = ?2
+                 AND (event_kind IS NULL
+                      OR event_kind NOT IN ('status', 'lifecycle', 'unknown'))
                ORDER BY timestamp DESC, seq DESC LIMIT 1",
             params![agent_id, session_id],
             |row| row.get(0),
@@ -301,22 +397,12 @@ pub fn latest_message_preview(
 /// List every persisted session row, newest activity first (stage-7 read surface).
 pub fn list_sessions(conn: &Connection) -> Result<Vec<OrchestrationSession>> {
     let mut stmt = conn.prepare(
-        "SELECT session_id, agent_id, source, label, workspace, last_seq, created_at, last_message_at
+        "SELECT session_id, agent_id, source, label, workspace, last_seq, created_at, last_message_at,
+                status_state, current_detail, active_call_id
            FROM sessions ORDER BY last_message_at DESC",
     )?;
     let rows = stmt
-        .query_map([], |row| {
-            Ok(OrchestrationSession {
-                session_id: row.get(0)?,
-                agent_id: row.get(1)?,
-                source: row.get(2)?,
-                label: row.get(3)?,
-                workspace: row.get(4)?,
-                last_seq: row.get(5)?,
-                created_at: row.get(6)?,
-                last_message_at: row.get(7)?,
-            })
-        })?
+        .query_map([], map_session_row)?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(rows)
 }
@@ -333,8 +419,11 @@ pub fn list_messages_by_session(
     let rows = match before {
         Some(before) => {
             let mut stmt = conn.prepare(
-                "SELECT id, agent_id, session_id, chat_kind, role, body, timestamp, seq
+                "SELECT id, agent_id, session_id, chat_kind, role, body, timestamp, seq,
+                        event_kind, tool_name, call_id
                    FROM messages WHERE session_id = ?1 AND timestamp < ?2
+                     AND (event_kind IS NULL
+                          OR event_kind NOT IN ('status', 'lifecycle', 'unknown'))
                    ORDER BY timestamp DESC, seq DESC LIMIT ?3",
             )?;
             let rows = stmt
@@ -344,8 +433,11 @@ pub fn list_messages_by_session(
         }
         None => {
             let mut stmt = conn.prepare(
-                "SELECT id, agent_id, session_id, chat_kind, role, body, timestamp, seq
+                "SELECT id, agent_id, session_id, chat_kind, role, body, timestamp, seq,
+                        event_kind, tool_name, call_id
                    FROM messages WHERE session_id = ?1
+                     AND (event_kind IS NULL
+                          OR event_kind NOT IN ('status', 'lifecycle', 'unknown'))
                    ORDER BY timestamp DESC, seq DESC LIMIT ?2",
             )?;
             let rows = stmt
@@ -359,6 +451,7 @@ pub fn list_messages_by_session(
 
 /// Row → [`OrchestrationMessage`] mapper (a free fn so it is `Copy` and can be
 /// reused across the two `query_map` arms without a borrow-lifetime tangle).
+/// Column order MUST match the `SELECT` lists in the message readers.
 fn map_message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<OrchestrationMessage> {
     let chat_kind: String = row.get(3)?;
     Ok(OrchestrationMessage {
@@ -370,6 +463,27 @@ fn map_message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<OrchestrationMes
         body: row.get(5)?,
         timestamp: row.get(6)?,
         seq: row.get(7)?,
+        event_kind: row.get(8)?,
+        tool_name: row.get(9)?,
+        call_id: row.get(10)?,
+    })
+}
+
+/// Row → [`OrchestrationSession`] mapper. Column order MUST match the `SELECT`
+/// lists in [`list_sessions`] and [`load_session`].
+fn map_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<OrchestrationSession> {
+    Ok(OrchestrationSession {
+        session_id: row.get(0)?,
+        agent_id: row.get(1)?,
+        source: row.get(2)?,
+        label: row.get(3)?,
+        workspace: row.get(4)?,
+        last_seq: row.get(5)?,
+        created_at: row.get(6)?,
+        last_message_at: row.get(7)?,
+        status_state: row.get(8)?,
+        current_detail: row.get(9)?,
+        active_call_id: row.get(10)?,
     })
 }
 
@@ -377,7 +491,9 @@ fn map_message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<OrchestrationMes
 pub fn unread_count(conn: &Connection, session_id: &str) -> Result<i64> {
     let cursor = kv_get(conn, &read_cursor_key(session_id))?.unwrap_or_default();
     Ok(conn.query_row(
-        "SELECT COUNT(*) FROM messages WHERE session_id = ?1 AND timestamp > ?2",
+        "SELECT COUNT(*) FROM messages WHERE session_id = ?1 AND timestamp > ?2
+             AND (event_kind IS NULL
+                  OR event_kind NOT IN ('status', 'lifecycle', 'unknown'))",
         params![session_id, cursor],
         |row| row.get(0),
     )?)
@@ -417,6 +533,23 @@ pub fn session_agent_id(conn: &Connection, session_id: &str) -> Result<Option<St
     conn.query_row(
         "SELECT agent_id FROM sessions WHERE session_id = ?1 LIMIT 1",
         params![session_id],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+/// The most recent non-pinned session id for a peer agent, if any — the thread to
+/// reuse when OpenHuman initiates an outbound ask to that peer, so the peer's
+/// reply threads back into the same session (shared `wrapper_session_id` model,
+/// #227/#4582). Newest by `last_message_at`. Returns `None` when there is no
+/// existing thread with the peer (caller mints a fresh session id).
+pub fn latest_session_for_agent(conn: &Connection, agent_id: &str) -> Result<Option<String>> {
+    conn.query_row(
+        "SELECT session_id FROM sessions
+           WHERE agent_id = ?1 AND session_id NOT IN ('master', 'subconscious')
+           ORDER BY last_message_at DESC LIMIT 1",
+        params![agent_id],
         |row| row.get(0),
     )
     .optional()
@@ -464,21 +597,11 @@ pub fn load_session(
     session_id: &str,
 ) -> Result<Option<OrchestrationSession>> {
     conn.query_row(
-        "SELECT session_id, agent_id, source, label, workspace, last_seq, created_at, last_message_at
+        "SELECT session_id, agent_id, source, label, workspace, last_seq, created_at, last_message_at,
+                status_state, current_detail, active_call_id
            FROM sessions WHERE agent_id = ?1 AND session_id = ?2",
         params![agent_id, session_id],
-        |row| {
-            Ok(OrchestrationSession {
-                session_id: row.get(0)?,
-                agent_id: row.get(1)?,
-                source: row.get(2)?,
-                label: row.get(3)?,
-                workspace: row.get(4)?,
-                last_seq: row.get(5)?,
-                created_at: row.get(6)?,
-                last_message_at: row.get(7)?,
-            })
-        },
+        map_session_row,
     )
     .optional()
     .map_err(Into::into)
@@ -493,24 +616,13 @@ pub fn list_recent_messages(
     limit: u32,
 ) -> Result<Vec<OrchestrationMessage>> {
     let mut stmt = conn.prepare(
-        "SELECT id, agent_id, session_id, chat_kind, role, body, timestamp, seq
+        "SELECT id, agent_id, session_id, chat_kind, role, body, timestamp, seq,
+                event_kind, tool_name, call_id
            FROM messages WHERE agent_id = ?1 AND session_id = ?2
            ORDER BY timestamp DESC, seq DESC LIMIT ?3",
     )?;
     let rows = stmt
-        .query_map(params![agent_id, session_id, limit], |row| {
-            let chat_kind: String = row.get(3)?;
-            Ok(OrchestrationMessage {
-                id: row.get(0)?,
-                agent_id: row.get(1)?,
-                session_id: row.get(2)?,
-                chat_kind: crate::openhuman::orchestration::types::ChatKind::from_str(&chat_kind),
-                role: row.get(4)?,
-                body: row.get(5)?,
-                timestamp: row.get(6)?,
-                seq: row.get(7)?,
-            })
-        })?
+        .query_map(params![agent_id, session_id, limit], map_message_row)?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     // Reverse the DESC scan back to chronological order.
     Ok(rows.into_iter().rev().collect())
@@ -769,6 +881,67 @@ pub fn kv_set(conn: &Connection, key: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+/// Delete a `kv` value (no-op if absent).
+pub fn kv_delete(conn: &Connection, key: &str) -> Result<()> {
+    conn.execute("DELETE FROM kv WHERE k = ?1", params![key])?;
+    Ok(())
+}
+
+// ── Outbound-ask correlation (Master chat, W7) ───────────────────────────────
+//
+// When OpenHuman DMs a peer on the user's behalf (`orchestration_send_to_agent`),
+// we record a ONE-SHOT pending ask keyed by the outbound session id, mapping it
+// to the window the ask originated from (usually `master`). When the peer's reply
+// lands under that session id (shared `wrapper_session_id`), the wake path threads
+// the answer back into the origin window instead of auto-replying to the peer.
+//
+// This is a pragmatic 1:1 request/response correlation: it assumes the next
+// inbound message on the ask session is the answer. A robust many-in-flight
+// correlation needs an explicit envelope `inReplyTo` (tracked as F3 / #4583's
+// follow-ups); until then this covers the common single-ask case.
+
+/// Scope the pending-ask key by BOTH the answering peer and the session id.
+/// Sessions/checkpoints are keyed by `(agent, session)`, and legacy wrapper
+/// session ids can collide across peers (see the F2 checkpoint fix); keying by
+/// session id alone would let a *different* peer's inbound on a shared legacy
+/// session id consume the ask and misroute the reply.
+fn pending_ask_key(peer_agent_id: &str, ask_session_id: &str) -> String {
+    format!("pending_ask:{peer_agent_id}:{ask_session_id}")
+}
+
+/// Record a one-shot pending outbound ask: `(peer_agent_id, ask_session_id)` →
+/// `origin_session_id`.
+pub fn set_pending_ask(
+    conn: &Connection,
+    peer_agent_id: &str,
+    ask_session_id: &str,
+    origin_session_id: &str,
+) -> Result<()> {
+    kv_set(
+        conn,
+        &pending_ask_key(peer_agent_id, ask_session_id),
+        origin_session_id,
+    )
+}
+
+/// The origin window for a pending ask on `(peer_agent_id, ask_session_id)`.
+pub fn pending_ask_origin(
+    conn: &Connection,
+    peer_agent_id: &str,
+    ask_session_id: &str,
+) -> Result<Option<String>> {
+    kv_get(conn, &pending_ask_key(peer_agent_id, ask_session_id))
+}
+
+/// Clear a pending ask once its answer has been threaded back (one-shot).
+pub fn clear_pending_ask(
+    conn: &Connection,
+    peer_agent_id: &str,
+    ask_session_id: &str,
+) -> Result<()> {
+    kv_delete(conn, &pending_ask_key(peer_agent_id, ask_session_id))
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::types::ChatKind;
@@ -784,6 +957,7 @@ mod tests {
             body: "hi".into(),
             timestamp: "2026-07-02T00:00:00Z".into(),
             seq,
+            ..Default::default()
         }
     }
 
@@ -797,6 +971,7 @@ mod tests {
             last_seq: seq,
             created_at: "2026-07-02T00:00:00Z".into(),
             last_message_at: "2026-07-02T00:00:00Z".into(),
+            ..Default::default()
         }
     }
 
@@ -836,6 +1011,52 @@ mod tests {
 
             // Scoped to (agent, session): a different session is not returned.
             assert_eq!(latest_message_preview(conn, "@a", "other")?, None);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn status_lifecycle_unknown_rows_are_hidden_from_thread_and_unread() {
+        let tmp = tempfile::tempdir().unwrap();
+        with_connection(tmp.path(), |conn| {
+            upsert_session(conn, &session("@a", "h1", 1))?;
+
+            // A v1 row (no event_kind) and typed content rows stay visible;
+            // status/lifecycle/unknown are persisted (for relay dedup) but must
+            // not surface in the thread or the unread count.
+            let mut plain = msg("v1", "@a", "h1", 1);
+            plain.timestamp = "2026-07-02T00:00:01Z".into();
+            insert_message(conn, &plain)?;
+
+            let mut call = msg("call", "@a", "h1", 2);
+            call.event_kind = Some("tool_call".into());
+            call.timestamp = "2026-07-02T00:00:02Z".into();
+            insert_message(conn, &call)?;
+
+            for (id, kind, seq) in [
+                ("st", "status", 3),
+                ("lc", "lifecycle", 4),
+                ("uk", "unknown", 5),
+            ] {
+                let mut hidden = msg(id, "@a", "h1", seq);
+                hidden.event_kind = Some(kind.into());
+                hidden.timestamp = format!("2026-07-02T00:00:0{seq}Z");
+                insert_message(conn, &hidden)?;
+            }
+
+            let thread = list_messages_by_session(conn, "h1", 50, None)?;
+            let ids: Vec<&str> = thread.iter().map(|m| m.id.as_str()).collect();
+            assert_eq!(ids, vec!["v1", "call"], "only v1 + typed content rows");
+
+            // Unread (cursor at 0) counts the two visible rows, not the 3 hidden.
+            assert_eq!(unread_count(conn, "h1")?, 2);
+
+            // Roster preview skips the hidden rows → newest visible is the call.
+            assert_eq!(
+                latest_message_preview(conn, "@a", "h1")?.as_deref(),
+                Some("hi"),
+            );
             Ok(())
         })
         .unwrap();
@@ -992,6 +1213,67 @@ mod tests {
     }
 
     #[test]
+    fn latest_session_for_agent_reuses_newest_thread_and_ignores_pinned() {
+        let tmp = tempfile::tempdir().unwrap();
+        with_connection(tmp.path(), |conn| {
+            // No thread with the peer yet → caller mints a fresh id.
+            assert!(latest_session_for_agent(conn, "@peer")?.is_none());
+
+            // Two threads with the peer; the newest by last_message_at wins.
+            let mut old = session("@peer", "s-old", 1);
+            old.last_message_at = "2026-07-02T00:01:00Z".into();
+            upsert_session(conn, &old)?;
+            let mut new = session("@peer", "s-new", 1);
+            new.last_message_at = "2026-07-02T00:09:00Z".into();
+            upsert_session(conn, &new)?;
+            assert_eq!(
+                latest_session_for_agent(conn, "@peer")?.as_deref(),
+                Some("s-new")
+            );
+
+            // A pinned window for the same agent id must never be reused.
+            let mut pinned = session("@peer", "master", 1);
+            pinned.last_message_at = "2026-07-02T23:00:00Z".into();
+            upsert_session(conn, &pinned)?;
+            assert_eq!(
+                latest_session_for_agent(conn, "@peer")?.as_deref(),
+                Some("s-new"),
+                "pinned window excluded despite newer timestamp"
+            );
+
+            // Scoped by agent: a different peer has no thread.
+            assert!(latest_session_for_agent(conn, "@other")?.is_none());
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn pending_ask_correlation_is_one_shot() {
+        let tmp = tempfile::tempdir().unwrap();
+        with_connection(tmp.path(), |conn| {
+            // Nothing pending initially.
+            assert!(pending_ask_origin(conn, "peer-a", "s-ask")?.is_none());
+            // Record an ask to `peer-a` on session `s-ask` from the master window.
+            set_pending_ask(conn, "peer-a", "s-ask", "master")?;
+            assert_eq!(
+                pending_ask_origin(conn, "peer-a", "s-ask")?.as_deref(),
+                Some("master")
+            );
+            // Scoped by (agent, session) — same session id under a DIFFERENT peer
+            // must not satisfy the ask (legacy session-id collision guard).
+            assert!(pending_ask_origin(conn, "peer-b", "s-ask")?.is_none());
+            // A different session under the same peer is also unaffected.
+            assert!(pending_ask_origin(conn, "peer-a", "s-other")?.is_none());
+            // Clearing consumes it (one-shot).
+            clear_pending_ask(conn, "peer-a", "s-ask")?;
+            assert!(pending_ask_origin(conn, "peer-a", "s-ask")?.is_none());
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn compressed_history_is_idempotent_by_cycle_id() {
         let tmp = tempfile::tempdir().unwrap();
         with_connection(tmp.path(), |conn| {
@@ -1095,6 +1377,100 @@ mod tests {
             // Migration is one-shot: user_version was bumped.
             let uv: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
             assert_eq!(uv, 1, "migration marks user_version");
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn migrates_pre_v2_schema_by_adding_status_and_event_columns() {
+        // A store created before the harness-session-v2 receiver: the sessions and
+        // messages tables lack the new run-state / event columns. Opening through
+        // `with_connection` must add them additively (existing rows read NULL) and
+        // then accept writes that populate them — proving the ALTER path, not just
+        // the fresh-DDL path, works.
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("orchestration").join("orchestration.db");
+        std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE sessions (
+                     session_id TEXT NOT NULL, agent_id TEXT NOT NULL, source TEXT NOT NULL,
+                     label TEXT, workspace TEXT, last_seq INTEGER NOT NULL DEFAULT 0,
+                     created_at TEXT NOT NULL, last_message_at TEXT NOT NULL,
+                     PRIMARY KEY (agent_id, session_id));
+                 CREATE TABLE messages (
+                     id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, session_id TEXT NOT NULL,
+                     chat_kind TEXT NOT NULL, role TEXT NOT NULL, body TEXT NOT NULL,
+                     timestamp TEXT NOT NULL, seq INTEGER NOT NULL DEFAULT 0);",
+            )
+            .unwrap();
+            // A legacy row predating the new columns.
+            conn.execute(
+                "INSERT INTO sessions
+                   (session_id, agent_id, source, last_seq, created_at, last_message_at)
+                 VALUES ('h-old', '@a', 'claude', 1, 't', 't')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO messages
+                   (id, agent_id, session_id, chat_kind, role, body, timestamp, seq)
+                 VALUES ('m-old', '@a', 'h-old', 'session', 'agent', 'legacy body', 't', 1)",
+                [],
+            )
+            .unwrap();
+        }
+
+        with_connection(tmp.path(), |conn| {
+            // New columns now exist on both tables.
+            for (table, column) in [
+                ("sessions", "status_state"),
+                ("sessions", "current_detail"),
+                ("sessions", "active_call_id"),
+                ("messages", "event_kind"),
+                ("messages", "tool_name"),
+                ("messages", "call_id"),
+            ] {
+                assert!(
+                    column_exists(conn, table, column)?,
+                    "{table}.{column} must be added by migration"
+                );
+            }
+
+            // The legacy rows still read; the new fields come back NULL (None).
+            let old = load_session(conn, "@a", "h-old")?.expect("legacy session survives");
+            assert_eq!(old.source, "claude");
+            assert_eq!(old.status_state, None);
+            assert_eq!(old.current_detail, None);
+            let msgs = list_recent_messages(conn, "@a", "h-old", 10)?;
+            assert_eq!(msgs.len(), 1);
+            assert_eq!(msgs[0].body, "legacy body");
+            assert_eq!(msgs[0].event_kind, None);
+
+            // And the upgraded schema accepts writes that populate the new fields.
+            upsert_session(
+                conn,
+                &OrchestrationSession {
+                    status_state: Some("running".into()),
+                    current_detail: Some("compiling".into()),
+                    active_call_id: Some("call-1".into()),
+                    ..session("@a", "h-old", 1)
+                },
+            )?;
+            let updated = load_session(conn, "@a", "h-old")?.unwrap();
+            assert_eq!(updated.status_state.as_deref(), Some("running"));
+            assert_eq!(updated.current_detail.as_deref(), Some("compiling"));
+            assert_eq!(updated.active_call_id.as_deref(), Some("call-1"));
+            Ok(())
+        })
+        .unwrap();
+
+        // Re-opening is idempotent — the ADD COLUMN guard must not error the second
+        // time (no `duplicate column name`).
+        with_connection(tmp.path(), |conn| {
+            assert!(column_exists(conn, "messages", "call_id")?);
             Ok(())
         })
         .unwrap();

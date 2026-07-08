@@ -14,7 +14,9 @@ use crate::openhuman::agent_orchestration::spawn_parallel_graph::{
     SpawnParallelGraphOutcome, SpawnParallelTaskValidationError,
 };
 use crate::openhuman::tinyagents::current_run_cancellation;
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
+use crate::openhuman::tools::traits::{
+    PermissionLevel, Tool, ToolCallOptions, ToolResult, ToolTimeout,
+};
 use async_trait::async_trait;
 use serde_json::json;
 use tinyagents::harness::tool::ToolExecutionContext;
@@ -93,6 +95,20 @@ impl Tool for SpawnParallelAgentsTool {
 
     fn permission_level(&self) -> PermissionLevel {
         PermissionLevel::Execute
+    }
+
+    /// Run **without** the global per-tool wall-clock deadline. This is a
+    /// fan-out primitive: it spawns N independent sub-agents and awaits them
+    /// concurrently via `spawn_parallel_graph`'s bounded `map_reduce`. Under the
+    /// default `Inherit` policy the whole fan-out is hard-killed at the
+    /// single-tool timeout (120s by default) — so a group of long workers is
+    /// truncated at one worker's budget instead of running to ~the slowest, and
+    /// each worker's research is cut short. The fan-out is already bounded
+    /// internally — by `max_concurrency`, the run cancellation token, and each
+    /// sub-agent's own iteration/turn caps — so it governs its own lifetime,
+    /// like the long-running scripting tools (`shell`, `node_exec`).
+    fn timeout_policy(&self, _args: &serde_json::Value) -> ToolTimeout {
+        ToolTimeout::Unbounded
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {

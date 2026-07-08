@@ -20,8 +20,12 @@ export interface NavTab {
 }
 
 /**
- * Ordered list of sidebar nav entries. Four entries:
- *   chat → human → brain → connections
+ * Ordered list of sidebar nav entries:
+ *   chat → human → brain → flows → orchestration → agent-world → connections
+ *
+ * The Orchestration tab (TinyPlace multi-agent coordination) sits right after
+ * Workflows; it was promoted out of the Brain sub-tab drawer into a first-class
+ * destination at `/orchestration`.
  *
  * Settings has no primary tab — it's reached via the gear icon in the sidebar
  * header. Chat is the default landing and the merged Home surface: its empty
@@ -37,6 +41,12 @@ export const NAV_TABS: NavTab[] = [
   { id: 'human', labelKey: 'nav.human', path: '/human', walkthroughAttr: 'tab-human' },
   { id: 'brain', labelKey: 'nav.brain', path: '/brain', walkthroughAttr: 'tab-brain' },
   { id: 'flows', labelKey: 'nav.flows', path: '/flows', walkthroughAttr: 'tab-flows' },
+  {
+    id: 'orchestration',
+    labelKey: 'nav.orchestration',
+    path: '/orchestration',
+    walkthroughAttr: 'tab-orchestration',
+  },
   {
     id: 'agent-world',
     labelKey: 'nav.agentWorld',

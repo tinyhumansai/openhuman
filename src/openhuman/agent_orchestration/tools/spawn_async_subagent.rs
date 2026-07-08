@@ -47,7 +47,12 @@ impl Tool for SpawnAsyncSubagentTool {
          Use sparingly, only when the user does not need the result in the current \
          response, such as best-effort memory archiving, cleanup, or background \
          investigation. Do not use for user-visible answers, code changes, external \
-         service writes, financial actions, or anything that may need clarification."
+         service writes, financial actions, or anything that may need clarification. \
+         Never use it when the sub-agent's result must gate your final answer (e.g. \
+         review/critique/verify/approve X BEFORE finalizing): this returns immediately \
+         and the turn finalizes before the result lands. For those, run a synchronous \
+         awaited sub-agent instead — a blocking delegate_* specialist or \
+         spawn_parallel_agents (which collects results before returning)."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

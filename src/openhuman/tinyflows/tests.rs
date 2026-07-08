@@ -604,8 +604,25 @@ fn harness_model_default_override_normalises_tiers_to_hint_roles() {
         harness_model_default_override("hint:reasoning"),
         "hint:reasoning"
     );
-    // Unrecognised strings map to the chat workload (matches OpenHumanLlm).
-    assert_eq!(harness_model_default_override("openai:gpt-4o"), "hint:chat");
+}
+
+#[test]
+fn harness_model_default_override_forwards_raw_byok_models_verbatim() {
+    // Raw/BYOK ids a user pins on an agent node are forwarded verbatim (issue
+    // #4598) — normalising them to `hint:chat` would collapse the explicit
+    // per-node model onto the managed chat tier. They reach the harness `chat`
+    // role, which inherits `config.default_model`, and `make_openhuman_backend`
+    // forwards the non-tier id to the backend unchanged.
+    assert_eq!(
+        harness_model_default_override("claude-opus-4"),
+        "claude-opus-4"
+    );
+    assert_eq!(
+        harness_model_default_override("openai:gpt-4o"),
+        "openai:gpt-4o"
+    );
+    // Empty / whitespace is not a raw id — falls back to the chat workload.
+    assert_eq!(harness_model_default_override("   "), "hint:chat");
 }
 
 #[test]

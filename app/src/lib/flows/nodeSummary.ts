@@ -5,10 +5,10 @@
  * without opening the config drawer. Falls back to a generic per-kind label
  * when the config isn't filled in yet.
  *
- * Pure + dependency-light (only {@link describeCron}) so it's trivially
+ * Pure + dependency-light (only {@link describeSchedule}) so it's trivially
  * testable and can be called on every render of `FlowNodeComponent`.
  */
-import { describeCron } from './cron';
+import { describeSchedule } from './cron';
 import type { NodeKind } from './types';
 
 function str(config: Record<string, unknown>, key: string): string {
@@ -34,7 +34,7 @@ export function describeNode(
     case 'trigger': {
       const tk = str(config, 'trigger_kind') || 'manual';
       if (tk === 'manual') return 'Runs on demand';
-      if (tk === 'schedule') return describeCron(str(config, 'schedule'));
+      if (tk === 'schedule') return describeSchedule(config.schedule);
       if (tk === 'webhook') return 'Runs on an incoming webhook';
       if (tk === 'app_event') {
         const parts = [str(config, 'toolkit'), str(config, 'trigger_slug')].filter(Boolean);

@@ -720,6 +720,86 @@ fn spawn_status_watcher(
     });
 }
 
+/// Compact, read-only view of one registered sub-agent, for ambient injection
+/// into a parent's turn context (see [`active_subagents_context_block`]).
+#[derive(Debug, Clone)]
+pub(crate) struct SubagentSnapshot {
+    /// Worker *type* (e.g. `researcher`). Not unique — two parallel researchers
+    /// share this; disambiguate on `subagent_session_id` / `task_id`.
+    pub(crate) agent_id: String,
+    /// Durable, stable per-worker reference the prompt steers/waits/closes by.
+    pub(crate) subagent_session_id: Option<String>,
+    /// Transient registry key.
+    pub(crate) task_id: String,
+    /// Stable status label: `running` / `awaiting_user` / `completed` / `failed`.
+    pub(crate) status: &'static str,
+}
+
+/// Snapshot the sub-agents registered under `parent_session`, with each status
+/// read live from its watch channel. Read-only: it takes the registry lock only
+/// long enough to clone out the small summaries, never blocks on a child, and
+/// never mutates the table. Ordered by `agent_id` then `task_id` so the rendered
+/// roster is stable across turns (the underlying map is unordered).
+pub(crate) fn snapshot_for_parent(parent_session: &str) -> Vec<SubagentSnapshot> {
+    let map = registry().lock().expect("running_subagents mutex poisoned");
+    let mut out: Vec<SubagentSnapshot> = map
+        .iter()
+        .filter(|(_, entry)| entry.parent_session == parent_session)
+        .map(|(task_id, entry)| {
+            let status = match &*entry.status.borrow() {
+                SubagentStatus::Running => "running",
+                SubagentStatus::Completed { .. } => "completed",
+                SubagentStatus::AwaitingUser { .. } => "awaiting_user",
+                SubagentStatus::Failed { .. } => "failed",
+            };
+            SubagentSnapshot {
+                agent_id: entry.agent_id.clone(),
+                subagent_session_id: entry.subagent_session_id.clone(),
+                task_id: task_id.clone(),
+                status,
+            }
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        a.agent_id
+            .cmp(&b.agent_id)
+            .then_with(|| a.task_id.cmp(&b.task_id))
+    });
+    out
+}
+
+/// Build the ambient `[active_subagents]` block prepended to a parent's turn
+/// context when it has async/parallel workers registered. Returns `None` when the
+/// parent owns no registered sub-agents, so the block only appears when it is
+/// actionable — turns for agents that never spawn are untouched. Mirrors the
+/// thread-goal `[active_goal]` block: it rides the per-turn context (not the
+/// cached system-prompt prefix), so it reflects live status every turn.
+pub(crate) fn active_subagents_context_block(parent_session: &str) -> Option<String> {
+    let workers = snapshot_for_parent(parent_session);
+    if workers.is_empty() {
+        return None;
+    }
+    let mut block = format!(
+        "[active_subagents]\n\
+         You have {} background sub-agent(s) in flight (spawned earlier this session). \
+         This is your live roster — trust it over memory. Track each by subagent_session_id; \
+         use wait_subagent to collect a `completed` one, steer_subagent to redirect a `running` \
+         one, continue_subagent to answer an `awaiting_user` one, close_subagent when done, and \
+         list_subagents to re-enumerate. Never fabricate a result for a worker still running or \
+         one that has failed.\n",
+        workers.len()
+    );
+    for w in &workers {
+        let session = w.subagent_session_id.as_deref().unwrap_or("(none)");
+        block.push_str(&format!(
+            "- {} · session={} · task={} · status={}\n",
+            w.agent_id, session, w.task_id, w.status
+        ));
+    }
+    block.push_str("[/active_subagents]\n\n");
+    Some(block)
+}
+
 /// Resolve a durable `subagent_session_id` to the currently-running transient
 /// `task_id`, enforcing parent-session ownership.
 pub(crate) fn task_id_for_session(
@@ -1472,6 +1552,87 @@ mod tests {
             iterations: 1,
         });
         prune("task-session");
+    }
+
+    #[tokio::test]
+    async fn snapshot_and_block_scope_to_parent_and_reflect_live_status() {
+        let _guard = test_guard();
+        let (tx_a, rx_a) = status_channel();
+        register(
+            "task-fleet-a".into(),
+            "researcher".into(),
+            "fleet-parent".into(),
+            None,
+            Some("subsess-a".into()),
+            test_workspace(),
+            None,
+            RunQueue::new(),
+            dummy_abort(),
+            rx_a,
+        );
+        let (tx_b, rx_b) = status_channel();
+        register(
+            "task-fleet-b".into(),
+            "code_executor".into(),
+            "fleet-parent".into(),
+            None,
+            Some("subsess-b".into()),
+            test_workspace(),
+            None,
+            RunQueue::new(),
+            dummy_abort(),
+            rx_b,
+        );
+        // A worker owned by a different parent must not leak into the snapshot.
+        let (tx_other, rx_other) = status_channel();
+        register(
+            "task-fleet-other".into(),
+            "researcher".into(),
+            "other-parent".into(),
+            None,
+            Some("subsess-other".into()),
+            test_workspace(),
+            None,
+            RunQueue::new(),
+            dummy_abort(),
+            rx_other,
+        );
+
+        // `b` pauses awaiting the user; `a` stays running.
+        tx_b.send(SubagentStatus::AwaitingUser {
+            question: "which repo?".into(),
+        })
+        .unwrap();
+
+        let snap = snapshot_for_parent("fleet-parent");
+        assert_eq!(snap.len(), 2, "only this parent's workers: {snap:?}");
+        // Ordered by agent_id then task_id → code_executor before researcher.
+        assert_eq!(snap[0].agent_id, "code_executor");
+        assert_eq!(snap[0].status, "awaiting_user");
+        assert_eq!(snap[1].agent_id, "researcher");
+        assert_eq!(snap[1].status, "running");
+
+        let block = active_subagents_context_block("fleet-parent").expect("block present");
+        assert!(block.contains("[active_subagents]"));
+        assert!(block.contains("You have 2 background sub-agent(s)"));
+        assert!(block.contains("session=subsess-a"));
+        assert!(block.contains("session=subsess-b · task=task-fleet-b · status=awaiting_user"));
+        assert!(block.ends_with("[/active_subagents]\n\n"));
+
+        // A parent with no registered workers gets no block (no perturbation).
+        assert!(active_subagents_context_block("nobody-here").is_none());
+
+        let _ = tx_a.send(SubagentStatus::Completed {
+            output: "x".into(),
+            iterations: 1,
+        });
+        let _ = tx_other.send(SubagentStatus::Completed {
+            output: "x".into(),
+            iterations: 1,
+        });
+        prune("task-fleet-a");
+        prune("task-fleet-b");
+        prune("task-fleet-other");
     }
 
     #[tokio::test]

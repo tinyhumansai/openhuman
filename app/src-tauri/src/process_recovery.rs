@@ -622,12 +622,18 @@ mod linux_imp {
     }
 }
 
-/// Windows implementation: use sysinfo to enumerate openhuman processes.
+/// Windows implementation: enumerate processes via WMIC (command line included)
+/// and reap only a wedged GUI CEF-lock-holder — never a legitimate `core`/`mcp`
+/// CLI session, a CEF helper subprocess, or an ancestor of the current process
+/// (issue #3900, hardening the #3605 pre-CEF reap).
 #[cfg(target_os = "windows")]
 mod windows_imp {
-    use crate::core_process;
-    use crate::process_kill::{kill_pid_force, kill_pid_term};
+    use std::collections::{HashMap, HashSet};
+    use std::path::Path;
     use std::time::Duration;
+
+    use crate::core_process;
+    use crate::process_kill::{kill_pid_force_no_tree, kill_pid_term};
 
     pub(crate) use super::ProcessInfo;
 
@@ -643,10 +649,10 @@ mod windows_imp {
 
         let self_pid = std::process::id();
         log::debug!(
-            "[startup-recovery] windows: scanning processes for stale OpenHuman (self_pid={self_pid})"
+            "[startup-recovery] windows: scanning for a wedged GUI CEF-lock-holder (self_pid={self_pid})"
         );
 
-        let stale = match enumerate_openhuman_processes() {
+        let all = match enumerate_all_processes() {
             Ok(procs) => procs,
             Err(err) => {
                 log::warn!("[startup-recovery] windows: failed to enumerate processes: {err}");
@@ -654,21 +660,22 @@ mod windows_imp {
             }
         };
 
+        let stale = select_reapable_gui_instances(&all, self_pid);
         if stale.is_empty() {
-            log::info!("[startup-recovery] windows: no stale OpenHuman processes found");
+            log::info!("[startup-recovery] windows: no stale OpenHuman GUI instance to reap");
             return;
         }
 
         log::info!(
-            "[startup-recovery] windows: found {} stale OpenHuman process(es), sending terminate",
+            "[startup-recovery] windows: found {} stale OpenHuman GUI instance(s), sending terminate",
             stale.len()
         );
         for proc in &stale {
             match kill_pid_term(proc.pid) {
                 Ok(()) => log::warn!(
-                    "[startup-recovery] windows: TERM stale OpenHuman pid={} exe={}",
+                    "[startup-recovery] windows: TERM stale OpenHuman GUI pid={} cmd={}",
                     proc.pid,
-                    proc.argv0
+                    proc.command
                 ),
                 Err(err) => log::warn!(
                     "[startup-recovery] windows: failed to terminate pid={}: {err}",
@@ -679,34 +686,47 @@ mod windows_imp {
 
         std::thread::sleep(TERM_GRACE);
 
-        let after_term = match enumerate_openhuman_processes() {
+        // Re-validate before force-kill: only SIGKILL pids that are STILL present
+        // AND still classify as a reapable GUI instance. A pid that already
+        // exited — or whose number was reused by an unrelated process during the
+        // grace — must not be killed. This closes the PID-reuse window and honors
+        // `kill_pid_force`'s "revalidate ownership" contract.
+        let after = match enumerate_all_processes() {
             Ok(procs) => procs,
             Err(err) => {
                 log::warn!(
-                    "[startup-recovery] windows: failed to re-enumerate after terminate: {err}"
+                    "[startup-recovery] windows: failed to re-enumerate after terminate; skipping SIGKILL escalation: {err}"
                 );
                 return;
             }
         };
+        let still_reapable: HashSet<u32> = select_reapable_gui_instances(&after, self_pid)
+            .into_iter()
+            .map(|p| p.pid)
+            .collect();
 
-        let stale_pids: std::collections::HashSet<u32> = stale.iter().map(|p| p.pid).collect();
         let mut kill_count = 0usize;
-        for proc in &after_term {
-            if stale_pids.contains(&proc.pid) {
-                match kill_pid_force(proc.pid) {
-                    Ok(()) => {
-                        kill_count += 1;
-                        log::warn!(
-                            "[startup-recovery] windows: force-killed stale OpenHuman pid={} exe={}",
-                            proc.pid,
-                            proc.argv0
-                        );
-                    }
-                    Err(err) => log::warn!(
-                        "[startup-recovery] windows: failed to force-kill pid={}: {err}",
-                        proc.pid
-                    ),
+        for proc in &stale {
+            if !still_reapable.contains(&proc.pid) {
+                continue;
+            }
+            // Non-tree kill (`/F` without `/T`): the CEF helper children of the
+            // wedged browser process are reaped by the OS job object when it
+            // exits, so `/T` is unnecessary — and a tree kill could reach the
+            // freshly launched app during an update relaunch (issue #3900 P1).
+            match kill_pid_force_no_tree(proc.pid) {
+                Ok(()) => {
+                    kill_count += 1;
+                    log::warn!(
+                        "[startup-recovery] windows: force-killed stale OpenHuman GUI pid={} cmd={}",
+                        proc.pid,
+                        proc.command
+                    );
                 }
+                Err(err) => log::warn!(
+                    "[startup-recovery] windows: failed to force-kill pid={}: {err}",
+                    proc.pid
+                ),
             }
         }
 
@@ -718,20 +738,36 @@ mod windows_imp {
         );
     }
 
+    /// Diagnostics listing of OpenHuman-owned processes (GUI, CLI `core`/`mcp`,
+    /// standalone core, and CEF helpers), excluding the current process. Backs
+    /// the `process_diagnostics_list_owned` command — this is a *listing*, not a
+    /// kill list; the reap uses [`select_reapable_gui_instances`].
     pub(crate) fn enumerate_openhuman_processes() -> Result<Vec<ProcessInfo>, String> {
+        let self_pid = std::process::id();
+        Ok(enumerate_all_processes()?
+            .into_iter()
+            .filter(|p| p.pid != self_pid)
+            .filter(|p| is_openhuman_process(&p.argv0))
+            .collect())
+    }
+
+    /// Enumerate every running process with its parent pid, executable path, and
+    /// full command line. The command line (unavailable from the older
+    /// `Caption,ProcessId,…` query) is what lets the reap tell a wedged GUI
+    /// instance apart from a `core`/`mcp` CLI session or a CEF `--type=` helper.
+    /// Includes the current process so its ancestor chain can be walked.
+    fn enumerate_all_processes() -> Result<Vec<ProcessInfo>, String> {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-        let self_pid = std::process::id();
-
-        // Use WMIC to enumerate processes with their parent PIDs and executable paths.
-        // Output format: Caption,ProcessId,ParentProcessId,ExecutablePath
+        // `/format:list` (Key=Value blocks) instead of CSV: command lines and
+        // paths routinely contain commas, which corrupts CSV field splitting.
         let output = std::process::Command::new("wmic")
             .args([
                 "process",
                 "get",
-                "Caption,ProcessId,ParentProcessId,ExecutablePath",
-                "/format:csv",
+                "Caption,CommandLine,ExecutablePath,ParentProcessId,ProcessId",
+                "/format:list",
             ])
             .creation_flags(CREATE_NO_WINDOW)
             .output()
@@ -742,144 +778,306 @@ mod windows_imp {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        Ok(parse_wmic_output(&stdout, self_pid))
+        Ok(parse_wmic_list_output(&stdout))
     }
 
-    fn parse_wmic_output(stdout: &str, self_pid: u32) -> Vec<ProcessInfo> {
-        let mut results = Vec::new();
-        let mut lines = stdout.lines();
+    /// Parse `wmic ... /format:list` output: records are blocks of `Key=Value`
+    /// lines separated by a blank line. Robust to commas inside `CommandLine` /
+    /// `ExecutablePath` (the reason we dropped the CSV format).
+    fn parse_wmic_list_output(stdout: &str) -> Vec<ProcessInfo> {
+        // Normalize CR (wmic list emits `\r\r\n`) then split records on blanks.
+        stdout
+            .replace('\r', "")
+            .split("\n\n")
+            .filter_map(parse_wmic_list_record)
+            .collect()
+    }
 
-        // Skip header lines until we find the CSV header row.
-        let header = loop {
-            match lines.next() {
-                Some(line) if line.trim().starts_with("Node,") => break line,
-                Some(_) => continue,
-                None => return results,
-            }
-        };
-
-        // Find column indices from the header.
-        let cols: Vec<&str> = header.split(',').collect();
-        let idx_caption = cols.iter().position(|c| c.trim() == "Caption");
-        let idx_pid = cols.iter().position(|c| c.trim() == "ProcessId");
-        let idx_ppid = cols.iter().position(|c| c.trim() == "ParentProcessId");
-        let idx_exe = cols.iter().position(|c| c.trim() == "ExecutablePath");
-
-        let (Some(idx_caption), Some(idx_pid), Some(idx_ppid), Some(idx_exe)) =
-            (idx_caption, idx_pid, idx_ppid, idx_exe)
-        else {
-            log::warn!("[startup-recovery] windows: wmic CSV header missing expected columns");
-            return results;
-        };
-
-        for line in lines {
-            let line = line.trim();
-            if line.is_empty() {
+    fn parse_wmic_list_record(record: &str) -> Option<ProcessInfo> {
+        let mut caption = "";
+        let mut command_line = "";
+        let mut exe_path = "";
+        let mut ppid: u32 = 0;
+        let mut pid: Option<u32> = None;
+        for line in record.lines() {
+            let Some((key, value)) = line.split_once('=') else {
                 continue;
-            }
-            let fields: Vec<&str> = line.splitn(cols.len(), ',').collect();
-            if fields.len() < cols.len() {
-                continue;
-            }
-
-            let caption = fields[idx_caption].trim();
-            let exe_path = fields[idx_exe].trim();
-            let pid: u32 = match fields[idx_pid].trim().parse() {
-                Ok(p) => p,
-                Err(_) => continue,
             };
-            let ppid: u32 = fields[idx_ppid].trim().parse().unwrap_or(0);
-
-            if pid == self_pid {
-                continue;
+            let value = value.trim();
+            match key.trim() {
+                "Caption" => caption = value,
+                "CommandLine" => command_line = value,
+                "ExecutablePath" => exe_path = value,
+                "ParentProcessId" => ppid = value.parse().unwrap_or(0),
+                "ProcessId" => pid = value.parse().ok(),
+                _ => {}
             }
-
-            let argv0 = if !exe_path.is_empty() {
-                exe_path.to_string()
-            } else {
-                caption.to_string()
-            };
-
-            if !is_openhuman_executable(caption, exe_path) {
-                continue;
-            }
-
-            log::debug!(
-                "[startup-recovery] windows: found OpenHuman process pid={pid} argv0={argv0}"
-            );
-            results.push(ProcessInfo {
-                pid,
-                ppid,
-                argv0: argv0.clone(),
-                command: argv0,
-            });
         }
-
-        results
+        let pid = pid?;
+        let argv0 = if !exe_path.is_empty() {
+            exe_path.to_string()
+        } else {
+            caption.to_string()
+        };
+        let command = if !command_line.is_empty() {
+            command_line.to_string()
+        } else {
+            argv0.clone()
+        };
+        Some(ProcessInfo {
+            pid,
+            ppid,
+            argv0,
+            command,
+        })
     }
 
-    fn is_openhuman_executable(caption: &str, exe_path: &str) -> bool {
-        let caption_lower = caption.to_ascii_lowercase();
-        let exe_filename = std::path::Path::new(exe_path)
+    /// True for OpenHuman-owned processes of any role (GUI, CLI, standalone
+    /// core, CEF helper). Used only for the diagnostics listing.
+    fn is_openhuman_process(argv0: &str) -> bool {
+        let name = exe_file_name(argv0);
+        name == "openhuman.exe" || name == "openhuman-core.exe"
+    }
+
+    /// True only for a wedged GUI browser process that is safe to reap: the
+    /// desktop app binary (`OpenHuman.exe`, never the standalone
+    /// `openhuman-core.exe`), NOT a CEF helper re-exec (`--type=`), and NOT a
+    /// `core` / `mcp` / `mcp-server` CLI/MCP session — those never take the CEF
+    /// mutex and may be an active user session, e.g. a Claude MCP client
+    /// (issue #3900 P2; see `main.rs` for the subcommand routing).
+    fn is_reapable_gui_instance(argv0: &str, command_line: &str) -> bool {
+        if exe_file_name(argv0) != "openhuman.exe" {
+            return false;
+        }
+        if command_line_has_type_flag(command_line) {
+            return false;
+        }
+        !matches!(
+            first_subcommand(command_line).as_deref(),
+            Some("core") | Some("mcp") | Some("mcp-server")
+        )
+    }
+
+    /// Lowercased file name of an executable path or caption.
+    fn exe_file_name(argv0: &str) -> String {
+        Path::new(argv0)
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or(exe_path)
-            .to_ascii_lowercase();
-        caption_lower == "openhuman-core.exe"
-            || caption_lower == "openhuman.exe"
-            || exe_filename == "openhuman-core.exe"
-            || exe_filename == "openhuman.exe"
+            .unwrap_or(argv0)
+            .to_ascii_lowercase()
+    }
+
+    /// Whether the command line carries a CEF helper role flag (`--type=…`).
+    fn command_line_has_type_flag(command_line: &str) -> bool {
+        command_line
+            .split_whitespace()
+            .any(|tok| tok.trim_matches('"').starts_with("--type="))
+    }
+
+    /// Extract argv[1] (the subcommand) from a Windows command line, lowercased.
+    /// Handles a quoted or unquoted program path in argv[0]. `None` when there
+    /// is no second argument.
+    fn first_subcommand(command_line: &str) -> Option<String> {
+        let s = command_line.trim_start();
+        let rest = if let Some(after_quote) = s.strip_prefix('"') {
+            // Quoted argv0: skip to the closing quote.
+            let end = after_quote.find('"')?;
+            &after_quote[end + 1..]
+        } else {
+            // Unquoted argv0: skip to the first whitespace.
+            match s.find(char::is_whitespace) {
+                Some(i) => &s[i..],
+                None => "",
+            }
+        };
+        let rest = rest.trim_start();
+        if rest.is_empty() {
+            return None;
+        }
+        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+        let token = rest[..end].trim_matches('"');
+        (!token.is_empty()).then(|| token.to_ascii_lowercase())
+    }
+
+    /// PIDs of the current process's ancestor chain (parent, grandparent, …).
+    /// During an auto-update relaunch the *old* app spawns the new one, so the
+    /// old (possibly still-wedged) instance is our ancestor; excluding ancestors
+    /// stops the reap from killing the process that launched us — and, with the
+    /// non-tree force-kill, closes the #3900 P1 self-termination hole entirely.
+    fn collect_ancestor_pids(all: &[ProcessInfo], self_pid: u32) -> HashSet<u32> {
+        let ppid_of: HashMap<u32, u32> = all.iter().map(|p| (p.pid, p.ppid)).collect();
+        let mut ancestors = HashSet::new();
+        let mut cursor = ppid_of.get(&self_pid).copied();
+        while let Some(pid) = cursor {
+            // pid 0 = no-parent sentinel; stop. `insert` returning false means a
+            // cycle (possible under pid reuse) — break to avoid an infinite loop.
+            if pid == 0 || !ancestors.insert(pid) {
+                break;
+            }
+            cursor = ppid_of.get(&pid).copied();
+        }
+        ancestors
+    }
+
+    /// The wedged GUI instances that are safe to reap: reapable GUI processes
+    /// (see [`is_reapable_gui_instance`]) minus the current process and its
+    /// ancestors, deduplicated by pid.
+    fn select_reapable_gui_instances(all: &[ProcessInfo], self_pid: u32) -> Vec<ProcessInfo> {
+        let ancestors = collect_ancestor_pids(all, self_pid);
+        let mut seen = HashSet::new();
+        all.iter()
+            .filter(|p| p.pid != self_pid)
+            .filter(|p| !ancestors.contains(&p.pid))
+            .filter(|p| is_reapable_gui_instance(&p.argv0, &p.command))
+            .filter(|p| seen.insert(p.pid))
+            .cloned()
+            .collect()
     }
 
     #[cfg(test)]
     mod tests {
         use super::*;
 
+        fn proc(pid: u32, ppid: u32, argv0: &str, command: &str) -> ProcessInfo {
+            ProcessInfo {
+                pid,
+                ppid,
+                argv0: argv0.to_string(),
+                command: command.to_string(),
+            }
+        }
+
         #[test]
-        fn parse_wmic_output_finds_openhuman_processes() {
-            let csv = "\
-Node,Caption,ExecutablePath,ParentProcessId,ProcessId\r\n\
-\r\n\
-DESKTOP-ABC,openhuman-core.exe,C:\\Program Files\\OpenHuman\\openhuman-core.exe,1234,5678\r\n\
-DESKTOP-ABC,chrome.exe,C:\\Program Files\\Google\\Chrome\\chrome.exe,1,9000\r\n\
-";
-            let results = parse_wmic_output(csv, 9999);
-            assert_eq!(results.len(), 1);
+        fn parse_wmic_list_output_reads_command_line_with_commas() {
+            // A command line containing commas would corrupt CSV parsing; the
+            // list format must preserve it intact.
+            let list = "\r\n\
+Caption=OpenHuman.exe\r\r\n\
+CommandLine=\"C:\\Program Files\\OpenHuman\\OpenHuman.exe\" --flag=a,b,c\r\r\n\
+ExecutablePath=C:\\Program Files\\OpenHuman\\OpenHuman.exe\r\r\n\
+ParentProcessId=1234\r\r\n\
+ProcessId=5678\r\r\n\
+\r\r\n\
+Caption=chrome.exe\r\r\n\
+CommandLine=chrome.exe\r\r\n\
+ExecutablePath=C:\\chrome.exe\r\r\n\
+ParentProcessId=1\r\r\n\
+ProcessId=9000\r\r\n";
+            let results = parse_wmic_list_output(list);
+            assert_eq!(results.len(), 2);
             assert_eq!(results[0].pid, 5678);
             assert_eq!(results[0].ppid, 1234);
-            assert!(results[0].argv0.contains("openhuman-core"));
+            assert!(results[0].command.ends_with("--flag=a,b,c"));
+            assert_eq!(results[1].pid, 9000);
         }
 
         #[test]
-        fn parse_wmic_output_excludes_self_pid() {
-            let csv = "\
-Node,Caption,ExecutablePath,ParentProcessId,ProcessId\r\n\
-\r\n\
-DESKTOP-ABC,openhuman-core.exe,C:\\Program Files\\OpenHuman\\openhuman-core.exe,1,1234\r\n\
-";
-            let results = parse_wmic_output(csv, 1234);
-            assert!(results.is_empty(), "self pid should be excluded");
+        fn first_subcommand_handles_quoted_and_unquoted_argv0() {
+            assert_eq!(
+                first_subcommand("\"C:\\p\\OpenHuman.exe\" core --port 7788").as_deref(),
+                Some("core")
+            );
+            assert_eq!(
+                first_subcommand("C:\\p\\OpenHuman.exe mcp").as_deref(),
+                Some("mcp")
+            );
+            assert_eq!(
+                first_subcommand("\"C:\\p\\OpenHuman.exe\"").as_deref(),
+                None
+            );
+            assert_eq!(first_subcommand("OpenHuman.exe").as_deref(), None);
         }
 
         #[test]
-        fn is_openhuman_executable_matches_core() {
-            assert!(is_openhuman_executable(
-                "openhuman-core.exe",
-                "C:\\path\\openhuman-core.exe"
+        fn is_reapable_gui_instance_only_matches_the_gui_browser_process() {
+            // GUI browser process (no subcommand, no --type=) → reapable.
+            assert!(is_reapable_gui_instance(
+                "C:\\p\\OpenHuman.exe",
+                "\"C:\\p\\OpenHuman.exe\""
             ));
-            assert!(is_openhuman_executable(
-                "OpenHuman.exe",
-                "C:\\path\\OpenHuman.exe"
+            // #3900 P2: CLI core / MCP sessions must never be reaped.
+            assert!(!is_reapable_gui_instance(
+                "C:\\p\\OpenHuman.exe",
+                "\"C:\\p\\OpenHuman.exe\" core --port 7788"
             ));
+            assert!(!is_reapable_gui_instance(
+                "C:\\p\\OpenHuman.exe",
+                "\"C:\\p\\OpenHuman.exe\" mcp"
+            ));
+            assert!(!is_reapable_gui_instance(
+                "C:\\p\\OpenHuman.exe",
+                "\"C:\\p\\OpenHuman.exe\" mcp-server"
+            ));
+            // CEF helper re-execs carry --type= → not the browser process.
+            assert!(!is_reapable_gui_instance(
+                "C:\\p\\OpenHuman.exe",
+                "\"C:\\p\\OpenHuman.exe\" --type=renderer --enable-features=x"
+            ));
+            // The standalone core binary is never a GUI CEF-lock-holder.
+            assert!(!is_reapable_gui_instance(
+                "C:\\p\\openhuman-core.exe",
+                "openhuman-core.exe run"
+            ));
+            // Unrelated processes.
+            assert!(!is_reapable_gui_instance("C:\\chrome.exe", "chrome.exe"));
         }
 
         #[test]
-        fn is_openhuman_executable_rejects_unrelated() {
-            assert!(!is_openhuman_executable(
-                "chrome.exe",
-                "C:\\Chrome\\chrome.exe"
-            ));
-            assert!(!is_openhuman_executable("python.exe", "C:\\python.exe"));
+        fn collect_ancestor_pids_walks_the_parent_chain() {
+            // self(500) → parent 400 (old OpenHuman) → grandparent 300 (explorer)
+            let all = vec![
+                proc(300, 1, "explorer.exe", "explorer.exe"),
+                proc(400, 300, "OpenHuman.exe", "\"OpenHuman.exe\""),
+                proc(500, 400, "OpenHuman.exe", "\"OpenHuman.exe\""),
+            ];
+            let ancestors = collect_ancestor_pids(&all, 500);
+            assert!(ancestors.contains(&400));
+            assert!(ancestors.contains(&300));
+            assert!(!ancestors.contains(&500));
+        }
+
+        #[test]
+        fn select_reapable_excludes_self_ancestors_and_non_gui() {
+            // 500 = self (new app), 400 = update-relaunch parent (old app,
+            // still holds the CEF lock), 900 = an unrelated wedged GUI instance
+            // to reap, 700 = a legit `core` CLI session, 800 = a CEF helper.
+            let all = vec![
+                proc(300, 1, "explorer.exe", "explorer.exe"),
+                proc(400, 300, "OpenHuman.exe", "\"OpenHuman.exe\""),
+                proc(500, 400, "OpenHuman.exe", "\"OpenHuman.exe\""),
+                proc(
+                    700,
+                    1,
+                    "OpenHuman.exe",
+                    "\"OpenHuman.exe\" core --port 7788",
+                ),
+                proc(
+                    800,
+                    900,
+                    "OpenHuman.exe",
+                    "\"OpenHuman.exe\" --type=gpu-process",
+                ),
+                proc(900, 1, "OpenHuman.exe", "\"OpenHuman.exe\""),
+            ];
+            let reapable: Vec<u32> = select_reapable_gui_instances(&all, 500)
+                .into_iter()
+                .map(|p| p.pid)
+                .collect();
+            assert_eq!(
+                reapable,
+                vec![900],
+                "only the unrelated wedged GUI instance is reaped; self (500), \
+                 ancestor (400), CLI core (700) and CEF helper (800) are spared"
+            );
+        }
+
+        #[test]
+        fn is_openhuman_process_matches_gui_and_core_only() {
+            assert!(is_openhuman_process("C:\\p\\OpenHuman.exe"));
+            assert!(is_openhuman_process("C:\\p\\openhuman-core.exe"));
+            assert!(is_openhuman_process("OpenHuman.exe"));
+            assert!(!is_openhuman_process("C:\\Chrome\\chrome.exe"));
+            assert!(!is_openhuman_process("python.exe"));
         }
     }
 }

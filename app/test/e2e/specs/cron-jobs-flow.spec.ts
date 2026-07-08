@@ -36,7 +36,7 @@ import {
   waitForText,
 } from '../helpers/element-helpers';
 import { resetApp } from '../helpers/reset-app';
-import { navigateToSettings, navigateViaHash } from '../helpers/shared-flows';
+import { navigateToSettings, navigateViaHash, waitForHomePage } from '../helpers/shared-flows';
 import { startMockServer, stopMockServer } from '../mock-server';
 
 const USER_ID = 'e2e-cron-jobs';
@@ -49,18 +49,6 @@ function stepLog(message: string, context?: unknown): void {
     return;
   }
   console.log(`[CronJobsE2E][${stamp}] ${message}`, JSON.stringify(context, null, 2));
-}
-
-/** Wait for an element matching one of several texts to be visible. */
-async function waitForAnyText(candidates: string[], timeoutMs = 10_000): Promise<string | null> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    for (const text of candidates) {
-      if (await textExists(text)) return text;
-    }
-    await browser.pause(500);
-  }
-  return null;
 }
 
 async function waitForCronPanel(timeoutMs = 5_000): Promise<void> {
@@ -118,12 +106,14 @@ describe('Cron jobs settings panel (real UI flow)', () => {
   });
 
   it('completing onboarding lands the user on the home screen', async () => {
-    // Home.tsx renders t('home.askAssistant') = 'Ask your assistant anything...' as the stable
-    // CTA button. Old strings ('Good morning', 'Message OpenHuman', etc.) are no longer rendered.
-    const home = await waitForAnyText(
-      ['Ask your assistant anything', 'Your device is connected'],
-      15_000
-    );
+    // `/home` redirects to `/chat` (AppRoutes.tsx), so the landed surface can render
+    // either the CTA `home.askAssistant` ('Ask your assistant anything...') OR the
+    // `home.statusOk` hero ('Your assistant is ready when you are. Type something below
+    // to get started.'). Use the canonical waitForHomePage() helper — the same one
+    // resetApp() and every other spec use — which accepts the full marker set, instead
+    // of a stale subset that only matched the CTA and flaked on the slower macOS runner
+    // whenever the statusOk hero rendered first.
+    const home = await waitForHomePage(20_000);
     expect(home).toBeTruthy();
   });
 
@@ -157,6 +147,10 @@ describe('Cron jobs settings panel (real UI flow)', () => {
       await waitForCronRow(MORNING_BRIEFING, 10_000);
     }
     expect(await textExists(MORNING_BRIEFING)).toBe(true);
+    // The 'Enabled' status badge (CoreJobList renders t('common.enabled')) can paint a
+    // beat after the row name. Poll for it instead of point-checking right away — the
+    // bare textExists() check raced the render on the slower macOS runner.
+    await waitForText('Enabled', 10_000);
     expect(await textExists('Enabled')).toBe(true);
   });
 
@@ -186,8 +180,10 @@ describe('Cron jobs settings panel (real UI flow)', () => {
     await clickNativeButton('Remove', 8_000);
 
     // UI assertion first — the row should disappear and the empty state appear.
+    // The removal RPC + optimistic re-render can take longer on the slower macOS
+    // runner, so poll for up to 20s rather than 10s before declaring the row stuck.
     const gone = await browser.waitUntil(async () => !(await textExists(MORNING_BRIEFING)), {
-      timeout: 10_000,
+      timeout: 20_000,
       interval: 500,
       timeoutMsg: 'morning_briefing row never disappeared',
     });

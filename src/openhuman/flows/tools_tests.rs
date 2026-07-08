@@ -140,6 +140,20 @@ async fn explicit_require_approval_false_is_respected() {
 }
 
 #[tokio::test]
+async fn explicit_require_approval_true_is_respected() {
+    let tmp = TempDir::new().unwrap();
+    let tool = ProposeWorkflowTool::new(test_config(&tmp));
+
+    let result = tool
+        .execute(json!({ "name": "demo", "graph": valid_graph(), "require_approval": true }))
+        .await
+        .unwrap();
+
+    let parsed: Value = serde_json::from_str(&result.output()).unwrap();
+    assert_eq!(parsed["require_approval"], true);
+}
+
+#[tokio::test]
 async fn summary_step_count_and_kinds_are_correct() {
     let tmp = TempDir::new().unwrap();
     let tool = ProposeWorkflowTool::new(test_config(&tmp));

@@ -1072,6 +1072,35 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
                     let _ = io_memory_sync.emit("flow:run_progress", &payload);
                     let _ = io_memory_sync.emit("flow_run_progress", &payload);
                 }
+                // A Workflow-origin tool call parked in the `ApprovalGate`
+                // (flow-approval-surface, PR2/PR3). Broadcast — not
+                // room-scoped like `ApprovalRequested`'s `approval_request`
+                // bridge — because a flow run has no chat thread/client to
+                // target; the Workflows UI listens process-wide and filters
+                // by `flow_id`/`run_id` client-side.
+                crate::core::event_bus::DomainEvent::FlowApprovalRequested {
+                    request_id,
+                    flow_id,
+                    run_id,
+                    tool_name,
+                    summary,
+                } => {
+                    let payload = serde_json::json!({
+                        "request_id": request_id,
+                        "flow_id": flow_id,
+                        "run_id": run_id,
+                        "tool_name": tool_name,
+                        "summary": summary,
+                    });
+                    log::info!(
+                        "[socketio] broadcast flow_approval_request request_id={} flow_id={} run_id={} tool={}",
+                        request_id,
+                        flow_id,
+                        run_id,
+                        tool_name
+                    );
+                    let _ = io_memory_sync.emit("flow_approval_request", &payload);
+                }
                 _ => {}
             }
         }

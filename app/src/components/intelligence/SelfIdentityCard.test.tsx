@@ -60,6 +60,66 @@ describe('SelfIdentityCard', () => {
     ).toBeInTheDocument();
   });
 
+  const undiscoverable: SelfIdentity = {
+    agentId: 'addrWithNoCardPublishedYet',
+    handles: [{ username: 'openhuman', primary: true }],
+    primaryHandle: 'openhuman',
+    cardPublished: false,
+    keyPublished: false,
+    discoverable: false,
+  };
+
+  it('renders a "Make discoverable" button that fires onPublish while undiscoverable', () => {
+    const onPublish = vi.fn();
+    render(<SelfIdentityCard identity={undiscoverable} loading={false} onPublish={onPublish} />);
+    const btn = screen.getByTestId('tinyplace-self-identity-publish');
+    expect(btn).toHaveTextContent('tinyplaceOrchestration.identity.makeDiscoverable');
+    fireEvent.click(btn);
+    expect(onPublish).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables the button and shows the publishing label while a publish is in flight', () => {
+    render(
+      <SelfIdentityCard identity={undiscoverable} loading={false} onPublish={vi.fn()} publishing />
+    );
+    const btn = screen.getByTestId('tinyplace-self-identity-publish');
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveTextContent('tinyplaceOrchestration.identity.publishing');
+  });
+
+  it('surfaces a publish error under the button', () => {
+    render(
+      <SelfIdentityCard
+        identity={undiscoverable}
+        loading={false}
+        onPublish={vi.fn()}
+        publishError="boom"
+      />
+    );
+    expect(screen.getByTestId('tinyplace-self-identity-publish-error')).toHaveTextContent(
+      'tinyplaceOrchestration.identity.publishFailed'
+    );
+  });
+
+  it('shows no "make discoverable" button once discoverable', () => {
+    render(<SelfIdentityCard identity={discoverable} loading={false} onPublish={vi.fn()} />);
+    expect(screen.queryByTestId('tinyplace-self-identity-publish')).toBeNull();
+  });
+
+  it('offers a "Republish keys" action while discoverable that fires onPublish', () => {
+    const onPublish = vi.fn();
+    render(<SelfIdentityCard identity={discoverable} loading={false} onPublish={onPublish} />);
+    const btn = screen.getByTestId('tinyplace-self-identity-republish');
+    expect(btn).toHaveTextContent('tinyplaceOrchestration.identity.republish');
+    fireEvent.click(btn);
+    expect(onPublish).toHaveBeenCalledTimes(1);
+  });
+
+  it('omits the publish button when no onPublish handler is provided', () => {
+    render(<SelfIdentityCard identity={undiscoverable} loading={false} />);
+    expect(screen.queryByTestId('tinyplace-self-identity-publish')).toBeNull();
+  });
+
   it('copies the address to the clipboard on click', async () => {
     render(<SelfIdentityCard identity={discoverable} loading={false} />);
     fireEvent.click(screen.getByTestId('tinyplace-self-identity-copy'));

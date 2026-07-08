@@ -258,6 +258,22 @@ pub(crate) fn is_known_openhuman_tier(model: &str) -> bool {
     )
 }
 
+/// Return whether `model` is a raw BYOK/custom model id that must be forwarded
+/// **verbatim** to provider construction rather than mapped onto a managed tier.
+///
+/// A raw passthrough id is any **non-empty** string that is neither a `hint:*`
+/// alias nor a known managed tier ([`is_known_openhuman_tier`]) — i.e. the model
+/// ids a user pins directly on an agent/node (e.g. `"claude-opus-4"`). The
+/// OpenHuman backend preserves such ids verbatim
+/// ([`super::openhuman_backend`]'s `resolve_model`) and is authoritative over
+/// their validity, so the core must **not** silently collapse them onto
+/// `reasoning-v1` (issue #4598). Managed tiers and every `hint:*` string return
+/// `false` so their existing resolution is untouched.
+pub(crate) fn is_raw_passthrough_model(model: &str) -> bool {
+    let trimmed = model.trim();
+    !trimmed.is_empty() && !trimmed.starts_with("hint:") && !is_known_openhuman_tier(trimmed)
+}
+
 /// Per-tier vision (image-input) capability for the managed OpenHuman backend.
 ///
 /// The remote managed backend (`api.tinyhumans.ai`) does not advertise per-tier
@@ -1213,17 +1229,28 @@ fn make_openhuman_backend(
             model
         }
         None => {
+            // `model` is guaranteed non-empty here: an empty/whitespace
+            // `default_model` was already normalised to `reasoning-v1` above, and
+            // the managed-tier / summarization branches yield non-empty tier
+            // constants. So a non-`hint:` id is either a known canonical tier or a
+            // raw/BYOK id the user pinned — both forward verbatim; only the log
+            // line differs.
             if is_known_openhuman_tier(&model) {
                 model
             } else {
-                log::warn!(
-                    "[providers][chat-factory] model '{}' is not a recognized OpenHuman \
-                     backend tier (valid: reasoning-v1, chat-v1, agentic-v1, burst-v1, coding-v1, \
-                     reasoning-quick-v1, summarization-v1, vision-v1); falling back to '{}'",
-                    model,
-                    crate::openhuman::config::MODEL_REASONING_V1,
+                // Unrecognised NON-empty model id — a raw/BYOK model the user
+                // pinned (e.g. `claude-opus-4`, written into `default_model` or
+                // a per-agent model pin). Forward it verbatim so the selected
+                // model actually reaches provider construction instead of the
+                // core silently collapsing it onto `reasoning-v1`. The managed
+                // backend is authoritative over validity and returns a clear
+                // error for a genuinely bad id (issue #4598).
+                log::debug!(
+                    "[providers][chat-factory] forwarding raw/BYOK model '{}' verbatim to the \
+                     OpenHuman backend (not a managed tier); the backend validates it",
+                    model
                 );
-                crate::openhuman::config::MODEL_REASONING_V1.to_string()
+                model
             }
         }
     };

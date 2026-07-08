@@ -312,3 +312,38 @@ fn topology_is_structurally_valid() {
     );
     assert!(!t.nodes.is_empty());
 }
+
+#[test]
+fn local_master_cycle_skips_the_a2a_frontend_agent() {
+    // W2 + master-chat: a local human->OpenHuman cycle (counterpart =
+    // LOCAL_MASTER_AGENT) must NOT run the A2A front-end triage/compile — the
+    // reasoning core answers directly and its reply is used verbatim.
+    let rec = Arc::new(Recorder::default());
+    let state = OrchestrationState::seed(
+        "master",
+        crate::openhuman::orchestration::types::LOCAL_MASTER_AGENT,
+        Vec::new(),
+    );
+    let out = run(state, StubRuntime::new(rec.clone()));
+
+    assert_eq!(
+        rec.instruct_calls.load(Ordering::SeqCst),
+        0,
+        "front-end triage (pass 1) must not run for a local master cycle"
+    );
+    assert_eq!(
+        rec.compile_calls.load(Ordering::SeqCst),
+        0,
+        "front-end compile (pass 2) must not run for a local master cycle"
+    );
+    assert!(
+        rec.execute_calls.load(Ordering::SeqCst) >= 1,
+        "the reasoning core still runs"
+    );
+    // The core's answer is used verbatim (no "reply: " front-end wrapper).
+    assert_eq!(
+        out.channel_response.as_deref(),
+        Some("canned reasoning reply")
+    );
+    assert!(out.dm_sent);
+}

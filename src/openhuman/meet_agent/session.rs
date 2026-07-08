@@ -193,6 +193,20 @@ pub struct MeetAgentSession {
     /// Resets on `stop_session` (the registry drops the whole
     /// session). Empty by default — grants are opt-in per call.
     allowlist: HashSet<String>,
+    /// Per-mascot TTS voice ids in speaker-slot order (slot 0 = primary,
+    /// slot 1 = secondary). 0, 1, or 2 entries. Empty preserves the old
+    /// single-default-voice behavior (the reply-speech backend picks its
+    /// own default). Set once at `start_session` from the shell payload.
+    voices: Vec<String>,
+    /// Index into `voices` of the mascot speaking the *current* turn.
+    /// Advanced once per assistant reply by [`Self::advance_speaker`] so
+    /// two-mascot calls alternate which voice speaks (and which mascot
+    /// the frontend lip-syncs). Meaningless when `voices.len() <= 1`.
+    active_voice_ix: usize,
+    /// False until the first [`Self::advance_speaker`] of a two-mascot call.
+    /// Keeps the first reply on the primary (slot 0) — so an idle session also
+    /// reports slot 0 — while every subsequent reply rotates the speaker.
+    speaker_primed: bool,
 }
 
 impl MeetAgentSession {
@@ -228,6 +242,9 @@ impl MeetAgentSession {
             pending_unauthorized_speaker: None,
             pending_unauthorized_at_ms: 0,
             allowlist: HashSet::new(),
+            voices: Vec::new(),
+            active_voice_ix: 0,
+            speaker_primed: false,
         }
     }
 
@@ -303,6 +320,64 @@ impl MeetAgentSession {
     pub fn set_identities(&mut self, owner_display_name: &str, bot_display_name: &str) {
         self.owner_display_name = owner_display_name.trim().to_string();
         self.bot_display_name = bot_display_name.trim().to_string();
+    }
+
+    /// Configure the per-mascot TTS voices for speaker alternation.
+    /// `primary` is slot 0, `secondary` is slot 1. Empty / whitespace
+    /// ids are dropped, so:
+    ///   * both present  → two-voice call, speaker alternates per reply;
+    ///   * one present   → that single voice speaks every turn;
+    ///   * none present  → `advance_speaker` yields `None` and the
+    ///     reply-speech backend keeps picking its own default voice
+    ///     (exact previous behavior).
+    /// The active slot starts at 0 so an idle session reports the primary
+    /// mascot; [`Self::advance_speaker`] keeps the first reply there and
+    /// rotates thereafter.
+    pub fn set_voices(&mut self, primary: Option<String>, secondary: Option<String>) {
+        let mut voices = Vec::new();
+        for id in [primary, secondary].into_iter().flatten() {
+            let trimmed = id.trim();
+            if !trimmed.is_empty() {
+                voices.push(trimmed.to_string());
+            }
+        }
+        self.active_voice_ix = 0;
+        self.speaker_primed = false;
+        self.voices = voices;
+    }
+
+    /// Pick the voice for the turn that is about to start and rotate the
+    /// active speaker for two-mascot calls. Returns `None` when no voices
+    /// were configured (single default-voice behavior). Call exactly once
+    /// per assistant reply, before synthesizing, so a multi-chunk reply
+    /// keeps one voice for its whole duration.
+    pub fn advance_speaker(&mut self) -> Option<String> {
+        match self.voices.len() {
+            0 => None,
+            1 => Some(self.voices[0].clone()),
+            n => {
+                // First reply stays on the primary (slot 0); each later reply
+                // rotates. This keeps an idle session on slot 0 too.
+                if self.speaker_primed {
+                    self.active_voice_ix = (self.active_voice_ix + 1) % n;
+                } else {
+                    self.speaker_primed = true;
+                }
+                Some(self.voices[self.active_voice_ix].clone())
+            }
+        }
+    }
+
+    /// Slot (0 = primary, 1 = secondary) of the mascot speaking the
+    /// current turn. The shell forwards this on the `meet-video:speaking-state`
+    /// edge so the frontend lip-syncs the right mascot and reacts the
+    /// other. Defaults to 0 (single-mascot rendering ignores it).
+    pub fn active_slot(&self) -> u8 {
+        if self.voices.is_empty() {
+            0
+        } else {
+            (self.active_voice_ix % self.voices.len()) as u8
+        }
     }
 
     /// Read accessor used by audit logging. Empty when set_identities
@@ -948,6 +1023,57 @@ mod tests {
             assert!(!done);
         })
         .unwrap();
+    }
+
+    // ─── Speaker alternation (issue #4277) ──────────────────────────
+
+    #[test]
+    fn set_voices_empty_disables_alternation() {
+        let mut s = MeetAgentSession::new("p".into(), 16_000);
+        s.set_voices(None, None);
+        // No voices → brain keeps the backend default voice, slot pinned 0.
+        assert_eq!(s.advance_speaker(), None);
+        assert_eq!(s.active_slot(), 0);
+    }
+
+    #[test]
+    fn single_voice_speaks_every_turn_on_slot_zero() {
+        let mut s = MeetAgentSession::new("p".into(), 16_000);
+        s.set_voices(Some("voice-a".into()), None);
+        assert_eq!(s.advance_speaker().as_deref(), Some("voice-a"));
+        assert_eq!(s.active_slot(), 0);
+        // A single voice never rotates.
+        assert_eq!(s.advance_speaker().as_deref(), Some("voice-a"));
+        assert_eq!(s.active_slot(), 0);
+    }
+
+    #[test]
+    fn two_voices_alternate_speaker_and_slot_per_turn() {
+        let mut s = MeetAgentSession::new("p".into(), 16_000);
+        s.set_voices(Some("voice-a".into()), Some("voice-b".into()));
+        // First reply = primary (slot 0)…
+        assert_eq!(s.advance_speaker().as_deref(), Some("voice-a"));
+        assert_eq!(s.active_slot(), 0);
+        // …second = secondary (slot 1)…
+        assert_eq!(s.advance_speaker().as_deref(), Some("voice-b"));
+        assert_eq!(s.active_slot(), 1);
+        // …third wraps back to primary.
+        assert_eq!(s.advance_speaker().as_deref(), Some("voice-a"));
+        assert_eq!(s.active_slot(), 0);
+    }
+
+    #[test]
+    fn set_voices_filters_blank_and_trims() {
+        let mut s = MeetAgentSession::new("p".into(), 16_000);
+        // Blank primary collapses to a single (secondary) voice on slot 0…
+        s.set_voices(Some("   ".into()), Some("  voice-b  ".into()));
+        assert_eq!(s.advance_speaker().as_deref(), Some("voice-b"));
+        assert_eq!(s.advance_speaker().as_deref(), Some("voice-b"));
+        assert_eq!(s.active_slot(), 0);
+        // …and two real ids are trimmed before use.
+        s.set_voices(Some("  voice-a  ".into()), Some("  voice-b  ".into()));
+        assert_eq!(s.advance_speaker().as_deref(), Some("voice-a"));
+        assert_eq!(s.advance_speaker().as_deref(), Some("voice-b"));
     }
 
     /// Build a session pre-configured for the wake-word tests: Alice

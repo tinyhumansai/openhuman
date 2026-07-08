@@ -472,6 +472,29 @@ impl Agent {
             }
         }
 
+        // ── Active sub-agents (ambient fleet awareness) ──────────────────────
+        // When this agent has async/parallel workers registered under its own
+        // session, prepend a compact `[active_subagents]` roster (agent type,
+        // subagent_session_id, live status) so it tracks the fleet from the turn
+        // context instead of relying on remembered `[async_subagent_ref]` blocks
+        // that may have scrolled away. Children register under the parent's
+        // `session_id`, which is this agent's `event_session_id` (see
+        // `build_parent_execution_context`). Gated on presence: agents that never
+        // spawn get an empty block and no injection. Rides per-turn context (like
+        // the goal block) so status is always live.
+        if let Some(block) =
+            crate::openhuman::agent_orchestration::running_subagents::active_subagents_context_block(
+                &self.event_session_id,
+            )
+        {
+            log::info!(
+                "[running_subagents] injecting active_subagents block session={} ({} chars)",
+                self.event_session_id,
+                block.chars().count()
+            );
+            context.push_str(&block);
+        }
+
         let enriched = if context.is_empty() {
             log::info!("[agent] no memory context found — using raw user message");
             self.last_memory_context = None;

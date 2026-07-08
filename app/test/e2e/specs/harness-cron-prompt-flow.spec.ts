@@ -75,7 +75,21 @@ async function listCronJobs(): Promise<Array<{ id: string; name: string; schedul
   return Array.isArray(result) ? result : [];
 }
 
-/** Create a cron job via oracle RPC. Returns the created job id. */
+/** Create a cron job via oracle RPC. Returns the created job id.
+ *
+ * The `openhuman.cron_add` RPC requires either a `command` (shell job) or a
+ * `prompt` (agent job); with neither, it defaults to shell and rejects with
+ * `"'command' is required for shell jobs"`. This oracle seeds an agent job
+ * because the harness scenarios exercise agent-style scheduled reminders.
+ *
+ * `cron_add` has no way to seed a job disabled (the RPC hard-codes
+ * `enabled: true` for agent jobs; see `src/openhuman/cron/schemas.rs:359`).
+ * Since scenarios seed schedules like `0 9 * * *` and `0 10 * * 5`, a run
+ * that crosses one of those times would otherwise let the scheduler fire
+ * the oracle job during a later scenario — consuming mock LLM responses
+ * and adding stray request-log entries. Immediately disable the job via
+ * `cron_update` so the seed stays inert; the CR2.3 / CR2.4 flows still
+ * exercise update/remove against a real stored job. */
 async function createCronJobOracle(params: {
   name: string;
   schedule: string;
@@ -84,6 +98,8 @@ async function createCronJobOracle(params: {
   const out = await callOpenhumanRpc('openhuman.cron_add', {
     name: params.name,
     schedule: { kind: 'cron', expr: params.schedule },
+    job_type: 'agent',
+    prompt: `e2e oracle seed: ${params.name}`,
   });
   if (!out.ok) {
     console.warn(`${LOG_PREFIX} cron_add oracle failed: ${JSON.stringify(out)}`);
@@ -92,6 +108,17 @@ async function createCronJobOracle(params: {
   const result = (out.result as { result?: unknown } | undefined)?.result ?? out.result;
   const id = (result as { id?: string })?.id ?? null;
   console.log(`${LOG_PREFIX} oracle cron_add: name=${params.name}, id=${id}`);
+  if (id) {
+    const disable = await callOpenhumanRpc('openhuman.cron_update', {
+      job_id: id,
+      patch: { enabled: false },
+    });
+    if (!disable.ok) {
+      console.warn(`${LOG_PREFIX} cron_update disable oracle failed: ${JSON.stringify(disable)}`);
+    } else {
+      console.log(`${LOG_PREFIX} oracle cron disabled: id=${id}`);
+    }
+  }
   return id;
 }
 
@@ -163,11 +190,14 @@ describe('Harness — Cron prompt-flow', () => {
           {
             id: 'call_cron_add_1',
             name: 'cron_add',
+            // `schedule` must be the tagged-union shape { kind, expr } that
+            // `Schedule` deserializes from; a bare cron string fails at
+            // `serde_json::from_value::<Schedule>` inside CronAddTool.
             arguments: JSON.stringify({
               name: 'morning_reminder',
-              schedule: '0 9 * * *',
+              schedule: { kind: 'cron', expr: '0 9 * * *' },
+              job_type: 'agent',
               prompt: 'morning reminder',
-              enabled: true,
             }),
           },
         ],
@@ -316,11 +346,13 @@ describe('Harness — Cron prompt-flow', () => {
           {
             id: 'call_cron_update_1',
             name: 'cron_update',
+            // CronUpdateTool takes `{ job_id, patch }` where `patch` is a
+            // CronJobPatch (schedule/command/prompt/enabled/...). The LLM
+            // would look up the job id from context; the mock embeds it
+            // directly when available, otherwise a placeholder.
             arguments: JSON.stringify({
-              // The LLM would look up the job id from context; in the mock we
-              // embed it directly if available, otherwise use a placeholder.
-              id: jobId ?? 'morning_reminder_update_test',
-              schedule: '0 8 * * *',
+              job_id: jobId ?? 'morning_reminder_update_test',
+              patch: { schedule: { kind: 'cron', expr: '0 8 * * *' } },
             }),
           },
         ],
@@ -396,7 +428,8 @@ describe('Harness — Cron prompt-flow', () => {
           {
             id: 'call_cron_remove_1',
             name: 'cron_remove',
-            arguments: JSON.stringify({ id: jobId ?? 'morning_reminder_delete_test' }),
+            // CronRemoveTool takes `{ job_id }`, not `{ id }`.
+            arguments: JSON.stringify({ job_id: jobId ?? 'morning_reminder_delete_test' }),
           },
         ],
       },

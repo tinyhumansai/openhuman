@@ -414,9 +414,37 @@ fn platform_cef_gpu_workarounds_disable_windows_gpu_when_requested() {
     let mut args = Vec::new();
     append_platform_cef_gpu_workarounds(&mut args, "windows", "x86_64", None, Some("1"));
 
+    // #4385: on Windows the escape hatch pins CEF to the pure-software
+    // ANGLE/SwiftShader backend instead of bare `--disable-gpu`, which is
+    // insufficient on NVIDIA Blackwell / RTX 50-series stacks (cef::initialize
+    // still returns 0). This mirrors the proven Linux #1697/#4193 fallback.
     assert_eq!(
         args,
-        vec![("--disable-gpu", None), ("--disable-gpu-compositing", None)]
+        vec![
+            ("--use-gl", Some("angle")),
+            ("--use-angle", Some("swiftshader")),
+            ("--enable-unsafe-swiftshader", None),
+            ("--disable-gpu-compositing", None),
+        ]
+    );
+}
+
+#[test]
+fn platform_cef_gpu_workarounds_windows_disable_gpu_avoids_bare_disable_gpu() {
+    // Regression guard for #4385: `--disable-gpu` alone leaves CEF without a
+    // working software GL path on unsupported (Blackwell) GPUs and init keeps
+    // failing. The Windows escape hatch must route through SwiftShader and must
+    // NOT emit the lethal `--disable-gpu` switch.
+    let mut args = Vec::new();
+    append_platform_cef_gpu_workarounds(&mut args, "windows", "x86_64", None, Some("1"));
+
+    assert!(
+        !args.contains(&("--disable-gpu", None)),
+        "Windows OPENHUMAN_DISABLE_GPU must not emit bare --disable-gpu (#4385), got: {args:?}"
+    );
+    assert!(
+        args.contains(&("--use-angle", Some("swiftshader"))),
+        "Windows OPENHUMAN_DISABLE_GPU must force SwiftShader software GL (#4385), got: {args:?}"
     );
 }
 

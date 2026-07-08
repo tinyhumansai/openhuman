@@ -18,6 +18,7 @@
 import createDebug from 'debug';
 import { useEffect, useState } from 'react';
 
+import { describeSchedule, scheduleCronExpr } from '../../../../lib/flows/cron';
 import type { NodeKind } from '../../../../lib/flows/types';
 import { useT } from '../../../../lib/i18n/I18nContext';
 import type { FlowConnection } from '../../../../services/api/flowsApi';
@@ -88,13 +89,34 @@ function TriggerForm({ config, onChange, connections }: NodeConfigFormProps) {
           label: t(`flows.nodeConfig.trigger.kind_${k}`),
         }))}
       />
-      {kind === 'schedule' && (
-        <ScheduleField
-          value={configString(config, 'schedule')}
-          onChange={v => onChange({ schedule: v })}
-          testId="node-config-trigger-schedule"
-        />
-      )}
+      {kind === 'schedule' &&
+        (() => {
+          const rawSchedule = config.schedule;
+          const cronExpr = scheduleCronExpr(rawSchedule);
+          // A cron-shaped schedule (bare string or `{kind:"cron", expr}`) — or
+          // nothing set yet — is what the visual/advanced builder understands;
+          // let it render (and start empty, as before, when unset).
+          if (cronExpr !== null || rawSchedule == null) {
+            return (
+              <ScheduleField
+                value={cronExpr ?? ''}
+                onChange={v => onChange({ schedule: v })}
+                testId="node-config-trigger-schedule"
+              />
+            );
+          }
+          // `{kind:"every", every_ms}` / `{kind:"at", at}` — the cron builder
+          // can't model these. Show a read-only summary instead of handing it
+          // to `ScheduleField`, whose mount effect would otherwise seed (and
+          // silently overwrite) a default cron string over the real schedule.
+          return (
+            <div
+              className="rounded-lg border border-primary-200 bg-primary-50/60 px-2.5 py-1.5 text-xs font-medium text-primary-700 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-300"
+              data-testid="node-config-trigger-schedule-readonly">
+              {describeSchedule(rawSchedule)}
+            </div>
+          );
+        })()}
       {kind === 'app_event' && (
         <>
           <ComposioToolkitField

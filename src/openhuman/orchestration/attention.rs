@@ -141,6 +141,25 @@ pub(crate) struct UnreadSignal {
     pub last_message_at: Option<String>,
 }
 
+/// A REMOTE agent session parked on a tool-approval decision. Phase 1 persists
+/// `status.state = "waiting_approval"` on the session (plus the prompt in
+/// `current_detail` and the in-flight `active_call_id`) when a v2
+/// `approval_request` event arrives from a peer harness. Unlike [`ApprovalSignal`]
+/// — which is a call parked on THIS core's local approval gate — this is a
+/// remote instance blocked on the user; acting on it opens the orchestration
+/// chat window so the user can steer the reply.
+pub(crate) struct RemoteApprovalSignal {
+    pub session_id: String,
+    /// Human-friendly session label; falls back to the session id at the builder.
+    pub label: Option<String>,
+    /// The approval prompt / current-activity line (PII-safe summary text).
+    pub detail: Option<String>,
+    /// The in-flight tool call id awaiting the decision, when known. Carried for
+    /// parity with the persisted run-state; not currently surfaced on the wire.
+    pub active_call_id: Option<String>,
+    pub created_at: Option<String>,
+}
+
 // ── Builders ────────────────────────────────────────────────────────────────
 
 fn approval_item(sig: ApprovalSignal) -> AttentionItem {
@@ -194,18 +213,44 @@ fn unread_item(sig: UnreadSignal) -> AttentionItem {
     }
 }
 
+fn remote_approval_item(sig: RemoteApprovalSignal) -> AttentionItem {
+    let title = sig.label.unwrap_or_else(|| sig.session_id.clone());
+    // Namespaced apart from local approvals (`approval:<request_id>`) so a session
+    // id can never collide with a request id in the renderer's list keys, even
+    // though both surface as the same `Approval` kind.
+    AttentionItem {
+        id: format!("remote-approval:{}", sig.session_id),
+        kind: AttentionKind::Approval,
+        title,
+        summary: sig.detail,
+        count: None,
+        action: AttentionAction::OpenSession {
+            session_id: sig.session_id.clone(),
+        },
+        instance_id: sig.session_id,
+        created_at: sig.created_at,
+    }
+}
+
 // ── Assembly ────────────────────────────────────────────────────────────────
 
-/// Fold the three signal sources into one ordered queue. Unread signals with a
+/// Fold the four signal sources into one ordered queue. Unread signals with a
 /// zero count are dropped (nothing to surface). Ordering is by kind urgency,
 /// then newest-first within a kind, then id for a stable total order.
+///
+/// `remote_approvals` are peer sessions parked on an approval decision (Phase 1's
+/// persisted `waiting_approval` run-state). They share the `Approval` kind with
+/// the local-gate `approvals`, so they lead the queue and are counted under
+/// `counts.approvals` — they ARE approvals, just remote ones.
 pub(crate) fn assemble_attention(
     approvals: Vec<ApprovalSignal>,
     needs_input: Vec<NeedsInputSignal>,
     unread: Vec<UnreadSignal>,
+    remote_approvals: Vec<RemoteApprovalSignal>,
 ) -> AttentionQueue {
     let mut items: Vec<AttentionItem> = Vec::new();
     items.extend(approvals.into_iter().map(approval_item));
+    items.extend(remote_approvals.into_iter().map(remote_approval_item));
     items.extend(needs_input.into_iter().map(needs_input_item));
     items.extend(unread.into_iter().filter(|s| s.unread > 0).map(unread_item));
 
@@ -281,6 +326,28 @@ pub(crate) fn needs_input_from_command_center(
         .unwrap_or_default()
 }
 
+/// Map orchestration sessions into remote-approval signals — keeping only those
+/// whose persisted v2 run-state is `waiting_approval` (Phase 1 stamps this when a
+/// peer harness emits an `approval_request`). Pure: the handler passes the
+/// already-fetched session list. `detail` carries the PII-safe approval prompt
+/// (`current_detail`); the deep link opens the session window (`last_message_at`
+/// stamps the newest-first tie-break).
+pub(crate) fn remote_approval_signals(
+    sessions: Vec<super::types::OrchestrationSession>,
+) -> Vec<RemoteApprovalSignal> {
+    sessions
+        .into_iter()
+        .filter(|s| s.status_state.as_deref() == Some("waiting_approval"))
+        .map(|s| RemoteApprovalSignal {
+            session_id: s.session_id,
+            label: s.label,
+            detail: s.current_detail,
+            active_call_id: s.active_call_id,
+            created_at: Some(s.last_message_at),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,7 +363,7 @@ mod tests {
 
     #[test]
     fn empty_sources_yield_empty_queue_with_zero_counts() {
-        let q = assemble_attention(vec![], vec![], vec![]);
+        let q = assemble_attention(vec![], vec![], vec![], vec![]);
         assert!(q.items.is_empty());
         assert_eq!(
             q.counts,
@@ -326,6 +393,7 @@ mod tests {
                 unread: 3,
                 last_message_at: Some("2026-07-06T12:00:00Z".into()),
             }],
+            vec![],
         );
         let kinds: Vec<AttentionKind> = q.items.iter().map(|i| i.kind).collect();
         assert_eq!(
@@ -357,6 +425,7 @@ mod tests {
             ],
             vec![],
             vec![],
+            vec![],
         );
         let ids: Vec<&str> = q.items.iter().map(|i| i.instance_id.as_str()).collect();
         assert_eq!(ids, vec!["new", "mid", "old"]);
@@ -381,6 +450,7 @@ mod tests {
                     last_message_at: Some("2026-07-06T12:00:00Z".into()),
                 },
             ],
+            vec![],
         );
         assert_eq!(q.items.len(), 1);
         assert_eq!(q.items[0].instance_id, "loud");
@@ -416,6 +486,7 @@ mod tests {
                 unread: 2,
                 last_message_at: None,
             }],
+            vec![],
         );
         let by_id = |id: &str| q.items.iter().find(|i| i.id == id).unwrap().clone();
 
@@ -505,6 +576,7 @@ mod tests {
                 unread: 1,
                 last_message_at: None,
             }],
+            vec![],
         );
         assert_eq!(q.items[0].title, "h-xyz");
     }
@@ -612,5 +684,151 @@ mod tests {
             rows: vec![],
         }]));
         assert!(signals.is_empty());
+    }
+
+    // ── remote-approval mapping ─────────────────────────────────────────────
+
+    use crate::openhuman::orchestration::types::OrchestrationSession;
+
+    fn session(id: &str, state: Option<&str>) -> OrchestrationSession {
+        OrchestrationSession {
+            session_id: id.into(),
+            agent_id: "@peer".into(),
+            source: "claude".into(),
+            last_seq: 1,
+            created_at: "2026-07-06T00:00:00Z".into(),
+            last_message_at: "2026-07-06T12:00:00Z".into(),
+            status_state: state.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn remote_approval_signals_keep_only_waiting_approval_sessions() {
+        let waiting = OrchestrationSession {
+            label: Some("Claude · deploy".into()),
+            current_detail: Some("approve `rm -rf build/`".into()),
+            active_call_id: Some("call-9".into()),
+            ..session("h-waiting", Some("waiting_approval"))
+        };
+        let signals = remote_approval_signals(vec![
+            waiting,
+            session("h-running", Some("running")),
+            session("h-idle", Some("idle")),
+            session("h-legacy", None),
+        ]);
+        assert_eq!(signals.len(), 1, "only the waiting_approval session maps");
+        let s = &signals[0];
+        assert_eq!(s.session_id, "h-waiting");
+        assert_eq!(s.label.as_deref(), Some("Claude · deploy"));
+        assert_eq!(s.detail.as_deref(), Some("approve `rm -rf build/`"));
+        assert_eq!(s.active_call_id.as_deref(), Some("call-9"));
+        assert_eq!(s.created_at.as_deref(), Some("2026-07-06T12:00:00Z"));
+    }
+
+    fn remote(session_id: &str, at: &str) -> RemoteApprovalSignal {
+        RemoteApprovalSignal {
+            session_id: session_id.into(),
+            label: Some("Claude · deploy".into()),
+            detail: Some("approve `rm -rf build/`".into()),
+            active_call_id: Some("call-9".into()),
+            created_at: Some(at.into()),
+        }
+    }
+
+    #[test]
+    fn remote_approval_surfaces_as_approval_kind_ahead_of_other_kinds() {
+        let q = assemble_attention(
+            vec![],
+            vec![NeedsInputSignal {
+                run_id: "run-1".into(),
+                title: "researcher".into(),
+                summary: None,
+                thread_id: Some("t-1".into()),
+                updated_at: Some("2026-07-06T11:00:00Z".into()),
+            }],
+            vec![UnreadSignal {
+                session_id: "h-2".into(),
+                label: None,
+                unread: 2,
+                last_message_at: Some("2026-07-06T13:00:00Z".into()),
+            }],
+            vec![remote("h-remote", "2026-07-06T12:00:00Z")],
+        );
+        // The remote approval leads (Approval kind, priority 0).
+        assert_eq!(q.items[0].kind, AttentionKind::Approval);
+        assert_eq!(q.items[0].id, "remote-approval:h-remote");
+        assert_eq!(
+            q.items[0].action,
+            AttentionAction::OpenSession {
+                session_id: "h-remote".into()
+            }
+        );
+        assert_eq!(
+            q.items[0].summary.as_deref(),
+            Some("approve `rm -rf build/`")
+        );
+        assert_eq!(q.items[0].title, "Claude · deploy");
+        // Counted under approvals — a remote approval IS an approval.
+        assert_eq!(
+            q.counts,
+            AttentionCounts {
+                total: 3,
+                approvals: 1,
+                needs_input: 1,
+                unread: 1
+            }
+        );
+    }
+
+    #[test]
+    fn remote_approval_title_falls_back_to_session_id_when_unlabeled() {
+        let q = assemble_attention(
+            vec![],
+            vec![],
+            vec![],
+            vec![RemoteApprovalSignal {
+                session_id: "h-bare".into(),
+                label: None,
+                detail: None,
+                active_call_id: None,
+                created_at: None,
+            }],
+        );
+        assert_eq!(q.items.len(), 1);
+        assert_eq!(q.items[0].title, "h-bare");
+        assert_eq!(q.counts.approvals, 1);
+    }
+
+    #[test]
+    fn empty_remote_approvals_is_a_no_op() {
+        // A queue with only a local approval is unchanged by an empty remote vec.
+        let q = assemble_attention(
+            vec![approval("r1", "2026-07-06T10:00:00Z")],
+            vec![],
+            vec![],
+            vec![],
+        );
+        assert_eq!(q.items.len(), 1);
+        assert_eq!(q.items[0].id, "approval:r1");
+        assert_eq!(q.counts.approvals, 1);
+    }
+
+    #[test]
+    fn local_and_remote_approvals_coexist_newest_first() {
+        // Both are Approval kind; within the kind they order newest-first, so the
+        // later remote approval leads the earlier local one.
+        let q = assemble_attention(
+            vec![approval("local-old", "2026-07-06T09:00:00Z")],
+            vec![],
+            vec![],
+            vec![remote("remote-new", "2026-07-06T12:00:00Z")],
+        );
+        assert_eq!(q.counts.approvals, 2);
+        let ids: Vec<&str> = q.items.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["remote-approval:remote-new", "approval:local-old"]
+        );
     }
 }

@@ -9,6 +9,7 @@
 import debug from 'debug';
 import { type RefObject, useEffect, useRef, useState } from 'react';
 
+import { useMascotManifest } from '../../features/human/Mascot/manifest/useMascotManifest';
 import { useComposioIntegrations } from '../../lib/composio/hooks';
 import { useT } from '../../lib/i18n/I18nContext';
 import {
@@ -25,12 +26,15 @@ import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import {
   selectCustomPrimaryColor,
   selectCustomSecondaryColor,
+  selectDualMascotEnabled,
   selectMascotColor,
+  selectMeetingMascotVoicePair,
   selectSelectedMascotId,
 } from '../../store/mascotSlice';
 import { selectPersonaDescription, selectPersonaDisplayName } from '../../store/personaSlice';
 import Button from '../ui/Button';
 import {
+  buildMeetingMascots,
   platformLabel,
   platformUrlPlaceholder,
   resolveMeetingBotMascotId,
@@ -76,6 +80,15 @@ export function MeetComposer({ onToast, hasSubmittedRef }: MeetComposerProps) {
   const mascotColor = useAppSelector(selectMascotColor);
   const customPrimaryColor = useAppSelector(selectCustomPrimaryColor);
   const customSecondaryColor = useAppSelector(selectCustomSecondaryColor);
+  // Dual-mascot config (issue #4277): when a distinct second mascot is enabled
+  // we send both slots (each with its own voice) so the backend bot renders
+  // two mascots and alternates who speaks. Single-mascot keeps the legacy
+  // `mascotId` path below untouched.
+  const dualMascotEnabled = useAppSelector(selectDualMascotEnabled);
+  const mascotVoicePair = useAppSelector(selectMeetingMascotVoicePair);
+  // Manifest drives name-addressed routing (#4277 follow-up): each dual slot is
+  // tagged with its display name so "Hey Toshi …" routes to that mascot.
+  const { manifest } = useMascotManifest();
 
   // ── Meet slice ───────────────────────────────────────────────────────────
   const meetStatus = useAppSelector(selectBackendMeetStatus);
@@ -129,6 +142,17 @@ export function MeetComposer({ onToast, hasSubmittedRef }: MeetComposerProps) {
     mascotColor === 'custom'
       ? { primaryColor: customPrimaryColor, secondaryColor: customSecondaryColor }
       : undefined;
+  // Two-mascot slots for the backend bot (issue #4277) — built via the shared
+  // helper so this live-join path and the UpcomingTable scheduled-join path stay
+  // behaviorally identical.
+  const mascots = buildMeetingMascots({
+    dualMascotEnabled,
+    mascotVoicePair,
+    manifest,
+    mascotId,
+    riveColors,
+    agentName,
+  });
   const wakePhrase = listenOnly ? undefined : `Hey ${agentName}`;
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -142,6 +166,14 @@ export function MeetComposer({ onToast, hasSubmittedRef }: MeetComposerProps) {
       platform,
       !listenOnly,
       meetingId
+    );
+    // Name-addressing (#4277 follow-up) trace: the exact mascot ids + names sent
+    // to the backend. If `mascots` is undefined or a slot's `name` is empty,
+    // name addressing ("Hey Toshi") can't work — the backend needs both names.
+    log(
+      '[composer] join mascots=%o wakePhrase=%s',
+      mascots?.map(m => ({ mascotId: m.mascotId, name: m.name })),
+      wakePhrase
     );
     try {
       // Await the RPC BEFORE dispatching setBackendMeetJoining so that a
@@ -159,6 +191,8 @@ export function MeetComposer({ onToast, hasSubmittedRef }: MeetComposerProps) {
         systemPrompt,
         mascotId,
         riveColors,
+        // Dual-mascot slots (issue #4277); undefined for single-mascot calls.
+        mascots,
         correlationId: meetingId,
         respondToParticipant: displayedRespondTo.trim() || undefined,
         wakePhrase,

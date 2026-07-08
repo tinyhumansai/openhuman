@@ -16,6 +16,7 @@ use crate::openhuman::inference::provider::{
     ChatRequest, ChatResponse, ConversationMessage, Provider, ToolCall,
 };
 use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts};
+use crate::openhuman::tools::traits::ToolTimeout;
 use crate::openhuman::tools::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
 use parking_lot::Mutex;
@@ -897,5 +898,17 @@ async fn agent_turn_runs_long_parallel_subagent_flow_with_many_nested_tool_calls
         iterations,
         vec![4, 4],
         "each subagent should run three tool calls plus a final completion iteration"
+    );
+}
+
+#[test]
+fn spawn_parallel_agents_opts_out_of_the_global_tool_timeout() {
+    // A fan-out of N long sub-agents must not be hard-killed at the single-tool
+    // wall-clock default (120s): that truncates every worker and bounds the whole
+    // group at one worker's budget. The tool governs its own lifetime via its
+    // internal max_concurrency, cancellation token, and per-sub-agent caps.
+    assert_eq!(
+        SpawnParallelAgentsTool::new().timeout_policy(&json!({})),
+        ToolTimeout::Unbounded,
     );
 }

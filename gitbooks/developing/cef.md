@@ -119,10 +119,17 @@ the current stable Windows release. That separates a profile/cache problem from
 an OS/runtime compatibility regression in CEF startup.
 
 If the logs point to a GPU-process startup failure rather than a stale CEF
-profile lock, set `OPENHUMAN_DISABLE_GPU=1` before launching OpenHuman. This
-passes `--disable-gpu` and `--disable-gpu-compositing` to the embedded CEF
-runtime without forwarding arbitrary Chromium flags. Leave it unset for normal
-use because disabling the GPU path can break WebGL-heavy surfaces.
+profile lock, set `OPENHUMAN_DISABLE_GPU=1` before launching OpenHuman. On
+Windows this pins CEF to the pure-software ANGLE/SwiftShader GL backend
+(`--use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader
+--disable-gpu-compositing`) rather than bare `--disable-gpu`: on NVIDIA Blackwell
+/ RTX 50-series stacks the GPU process fails to initialise and `--disable-gpu`
+alone leaves CEF with no working software GL path, so `cef::initialize` still
+returns 0 (#4294, #4385). SwiftShader needs no hardware driver, so it lets CEF
+start on GPUs the bundled Chromium (currently CEF 146.4.1) doesn't yet support.
+On other platforms the same env var passes `--disable-gpu` and
+`--disable-gpu-compositing` without forwarding arbitrary Chromium flags. Leave it
+unset for normal use because forcing software rendering slows WebGL-heavy surfaces.
 
 ## Linux shell fallback for CEF startup crashes
 

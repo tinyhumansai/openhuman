@@ -118,6 +118,23 @@ export function NavIcon({ id, className = 'w-5 h-5' }: NavIconProps) {
           />
         </svg>
       );
+    case 'orchestration':
+      // Conductor/hub glyph — one root node branching to two workers,
+      // representing multi-agent orchestration (distinct from the horizontal
+      // `flows` automation graph).
+      return (
+        <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <circle cx="12" cy="5" r="2" strokeWidth={1.8} />
+          <circle cx="5" cy="19" r="2" strokeWidth={1.8} />
+          <circle cx="19" cy="19" r="2" strokeWidth={1.8} />
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={1.8}
+            d="M12 7v3m0 0l-5.5 6M12 10l5.5 6"
+          />
+        </svg>
+      );
     case 'agent-world':
       // Globe/network glyph — represents the A2A agent social network.
       return (

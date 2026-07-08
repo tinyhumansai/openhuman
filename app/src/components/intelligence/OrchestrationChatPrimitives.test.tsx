@@ -74,4 +74,43 @@ describe('MessageBubble', () => {
     render(<MessageBubble message={message({ encrypted: true, body: '••••' })} />);
     expect(screen.getByText('••••')).toHaveClass('text-content-muted');
   });
+
+  it('renders a tool_call as a monospace command row with ▶ + tool name', () => {
+    const { container } = render(
+      <MessageBubble message={message({ eventKind: 'tool_call', toolName: 'Bash', body: 'ls' })} />
+    );
+    expect(container.querySelector('[data-event-kind="tool_call"]')).not.toBeNull();
+    expect(screen.getByText('▶')).toBeInTheDocument();
+    expect(screen.getByText('Bash')).toBeInTheDocument();
+    expect(container.querySelector('p.font-mono')?.textContent).toBe('ls');
+  });
+
+  it('renders a tool_result with the ↳ glyph', () => {
+    render(
+      <MessageBubble
+        message={message({ eventKind: 'tool_result', toolName: 'Bash', body: 'ok' })}
+      />
+    );
+    expect(screen.getByText('↳')).toBeInTheDocument();
+  });
+
+  it('renders agent_thinking italic + muted with the ∴ glyph', () => {
+    const { container } = render(
+      <MessageBubble message={message({ eventKind: 'agent_thinking', body: 'considering…' })} />
+    );
+    expect(container.querySelector('p.italic')).not.toBeNull();
+    expect(screen.getByText('∴')).toBeInTheDocument();
+  });
+
+  it('renders an error row with the ✕ glyph', () => {
+    render(<MessageBubble message={message({ eventKind: 'error', body: 'boom' })} />);
+    expect(screen.getByText('✕')).toBeInTheDocument();
+  });
+
+  it('falls back to the plain-dot style for a legacy v1 row (no eventKind)', () => {
+    const { container } = render(<MessageBubble message={message({ body: 'plain' })} />);
+    expect(container.querySelector('[data-event-kind="v1"]')).not.toBeNull();
+    expect(container.querySelector('div.rounded-full')).not.toBeNull();
+    expect(container.querySelector('p.font-mono')).toBeNull();
+  });
 });
