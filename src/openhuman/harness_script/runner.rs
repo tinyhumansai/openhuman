@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, Lines};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdout};
 use tokio_util::sync::CancellationToken;
 
@@ -149,10 +149,21 @@ impl PythonHarnessScriptRunner {
         spec: ScriptRunSpec,
         cancel: CancellationToken,
     ) -> Result<ScriptRunOutcome, HarnessScriptError> {
+        tracing::info!(
+            script_bytes = spec.script.len() as u64,
+            wall_time_ms = spec.wall_time.as_millis() as u64,
+            max_stdout_bytes = spec.max_stdout_bytes as u64,
+            "[harness_script::runner] starting script run"
+        );
+
         let script_path = self
             .materialize_bootstrap()
             .await
             .map_err(HarnessScriptError::Spawn)?;
+        tracing::debug!(
+            path = %script_path.display(),
+            "[harness_script::runner] materialized bootstrap script"
+        );
 
         let launch = PythonLaunchSpec::new(script_path.clone());
         let spawned = self
@@ -171,8 +182,16 @@ impl PythonHarnessScriptRunner {
 
         let result = self.drive(&mut child, &spec, &cancel).await;
         cleanup_child(&mut child).await;
+        tracing::debug!("[harness_script::runner] child killed and reaped");
         // Child is dead and reaped; the interpreter no longer needs the source.
         let _ = tokio::fs::remove_file(&script_path).await;
+
+        match &result {
+            Ok(_) => tracing::info!("[harness_script::runner] script run completed"),
+            Err(err) => {
+                tracing::warn!(error = %err, "[harness_script::runner] script run failed")
+            }
+        }
         result
     }
 
@@ -214,22 +233,26 @@ impl PythonHarnessScriptRunner {
             }
         });
 
-        let mut lines = BufReader::new(stdout).lines();
+        let mut reader = BufReader::new(stdout);
 
         let handshake = tokio::select! {
             biased;
             _ = cancel.cancelled() => Err(HarnessScriptError::Cancelled),
-            res = tokio::time::timeout(self.handshake_timeout, lines.next_line()) => match res {
+            res = tokio::time::timeout(
+                self.handshake_timeout,
+                read_capped_line(&mut reader, spec.max_stdout_bytes),
+            ) => match res {
                 Err(_) => Err(HarnessScriptError::HandshakeTimeout(self.handshake_timeout)),
                 Ok(Ok(Some(line))) => Ok(line),
                 Ok(Ok(None)) => Err(HarnessScriptError::MalformedMessage(
                     "child closed stdout before handshake".into(),
                 )),
-                Ok(Err(e)) => Err(HarnessScriptError::Io(e)),
+                Ok(Err(e)) => Err(e),
             }
         };
         let handshake = handshake?;
         parse_handshake(&handshake)?;
+        tracing::debug!("[harness_script::runner] handshake complete; sending init");
 
         // Handshake good — send init.
         let init = InitMessage::new(
@@ -256,7 +279,7 @@ impl PythonHarnessScriptRunner {
             _ = cancel.cancelled() => Err(HarnessScriptError::Cancelled),
             res = tokio::time::timeout(
                 spec.wall_time,
-                read_terminal(&mut lines, spec.max_stdout_bytes),
+                read_terminal(&mut reader, spec.max_stdout_bytes),
             ) => match res {
                 Err(_) => Err(HarnessScriptError::WallTimeout(spec.wall_time)),
                 Ok(inner) => inner,
@@ -306,25 +329,54 @@ fn parse_handshake(line: &str) -> Result<(), HarnessScriptError> {
     }
 }
 
-/// Read the single post-handshake frame the child is expected to send,
-/// enforcing the stdout byte cap. Phase 1 has no intermediate frames; the
-/// caller treats a non-terminal frame here as a protocol error. (Phase 2 will
-/// grow this into a loop that services `call` request frames before the
-/// terminal message.)
+/// Read the single post-handshake frame the child is expected to send. Phase 1
+/// has no intermediate frames; the caller treats a non-terminal frame here as a
+/// protocol error. (Phase 2 will grow this into a loop that services `call`
+/// request frames before the terminal message.)
 async fn read_terminal(
-    lines: &mut Lines<BufReader<ChildStdout>>,
+    reader: &mut BufReader<ChildStdout>,
     max_stdout_bytes: usize,
 ) -> Result<ChildMessage, HarnessScriptError> {
-    match lines.next_line().await? {
+    match read_capped_line(reader, max_stdout_bytes).await? {
         None => Err(HarnessScriptError::MalformedMessage(
             "child exited before sending a terminal message".into(),
         )),
-        Some(line) => {
-            if line.len() + 1 > max_stdout_bytes {
-                return Err(HarnessScriptError::OutputCapExceeded(max_stdout_bytes));
+        Some(line) => decode_line(&line)
+            .map_err(|e| HarnessScriptError::MalformedMessage(format!("terminal read: {e}"))),
+    }
+}
+
+/// Read one newline-terminated protocol line, enforcing `cap` **during**
+/// reading so a child that never sends `\n` cannot grow the heap without bound.
+/// `tokio`'s `read_line`/`next_line` buffer the whole line before returning, so
+/// they can't enforce the cap; we accumulate byte-by-byte (over a `BufReader`,
+/// so reads stay cheap) and stop the moment the budget is exceeded.
+///
+/// Returns `Ok(None)` at a clean EOF with no buffered bytes, `Ok(Some(line))`
+/// for a complete line (trailing `\n` stripped; a final unterminated line at
+/// EOF is also returned), or `OutputCapExceeded` once the cap is passed.
+async fn read_capped_line(
+    reader: &mut BufReader<ChildStdout>,
+    cap: usize,
+) -> Result<Option<String>, HarnessScriptError> {
+    let mut buf: Vec<u8> = Vec::new();
+    loop {
+        match reader.read_u8().await {
+            Ok(b'\n') => return Ok(Some(String::from_utf8_lossy(&buf).into_owned())),
+            Ok(byte) => {
+                if buf.len() >= cap {
+                    return Err(HarnessScriptError::OutputCapExceeded(cap));
+                }
+                buf.push(byte);
             }
-            decode_line(&line)
-                .map_err(|e| HarnessScriptError::MalformedMessage(format!("terminal read: {e}")))
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                return Ok(if buf.is_empty() {
+                    None
+                } else {
+                    Some(String::from_utf8_lossy(&buf).into_owned())
+                });
+            }
+            Err(e) => return Err(HarnessScriptError::Io(e)),
         }
     }
 }

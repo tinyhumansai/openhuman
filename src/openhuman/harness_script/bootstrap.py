@@ -22,11 +22,16 @@ import traceback
 
 PROTOCOL_VERSION = 1
 
+# Bind the protocol channel to the real stdout at import time. The script's own
+# stdout is redirected to stderr during exec (see `_run`), so `print()` from
+# user code can never inject bytes into the protocol stream.
+_PROTOCOL_OUT = sys.stdout
+
 
 def _emit(message):
-    """Write a single protocol frame to stdout and flush immediately."""
-    sys.stdout.write(json.dumps(message) + "\n")
-    sys.stdout.flush()
+    """Write a single protocol frame to the protocol channel and flush."""
+    _PROTOCOL_OUT.write(json.dumps(message) + "\n")
+    _PROTOCOL_OUT.flush()
 
 
 def _log(text):
@@ -47,8 +52,15 @@ def _run(script, inputs):
         "inputs": inputs,
         "set_result": set_result,
     }
-    # PHASE 4: unsandboxed exec — see module docstring.
-    exec(script, namespace)  # noqa: S102
+    # Redirect the script's stdout to stderr so any print()/stdout writes from
+    # user code land on the log channel instead of corrupting protocol frames.
+    saved_stdout = sys.stdout
+    sys.stdout = sys.stderr
+    try:
+        # PHASE 4: unsandboxed exec — see module docstring.
+        exec(script, namespace)  # noqa: S102
+    finally:
+        sys.stdout = saved_stdout
     return captured["value"]
 
 
@@ -89,6 +101,11 @@ def main():
 
     try:
         output = _run(script, inputs)
+        result_frame = {"type": "result", "output": output}
+        # Force serialization inside the guarded block so a non-serializable
+        # set_result(...) value is reported as a ScriptError rather than
+        # crashing after the try and leaving the parent with no terminal frame.
+        json.dumps(result_frame)
     except BaseException as exc:  # noqa: BLE001 — report every failure to the parent
         _emit(
             {
@@ -100,7 +117,7 @@ def main():
         )
         return 1
 
-    _emit({"type": "result", "output": output})
+    _emit(result_frame)
     return 0
 
 

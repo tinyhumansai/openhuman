@@ -72,6 +72,43 @@ async fn result_defaults_to_null_when_unset() {
 }
 
 #[tokio::test]
+async fn script_stdout_does_not_corrupt_the_protocol() {
+    let bootstrap = bootstrap_or_skip!();
+    let runner = PythonHarnessScriptRunner::new(bootstrap);
+
+    // A script that prints to stdout before setting a result must still yield a
+    // clean `result`; the print goes to stderr, not the protocol stream.
+    let spec = ScriptRunSpec::new("print('noisy diagnostic')\nset_result(inputs)", json!(42));
+    let outcome = runner
+        .run(spec, CancellationToken::new())
+        .await
+        .expect("script should succeed despite printing");
+
+    assert_eq!(outcome.output, json!(42));
+}
+
+#[tokio::test]
+async fn non_serializable_result_is_reported_as_script_error() {
+    let bootstrap = bootstrap_or_skip!();
+    let runner = PythonHarnessScriptRunner::new(bootstrap);
+
+    // A value json can't encode must surface as a ScriptError, not as a missing
+    // terminal frame.
+    let spec = ScriptRunSpec::new("set_result(set([1, 2, 3]))", json!(null));
+    let err = runner
+        .run(spec, CancellationToken::new())
+        .await
+        .expect_err("non-serializable result should fail");
+
+    match err {
+        HarnessScriptError::ScriptError { error_class, .. } => {
+            assert_eq!(error_class, "TypeError");
+        }
+        other => panic!("expected ScriptError, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn script_exception_is_reported_as_script_error() {
     let bootstrap = bootstrap_or_skip!();
     let runner = PythonHarnessScriptRunner::new(bootstrap);
