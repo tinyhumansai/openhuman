@@ -14,6 +14,13 @@ use tokio::task::JoinHandle;
 
 use crate::openhuman::config::Config;
 
+// The `hotkey` submodule (`ActivationMode`, `HotkeyEvent`, `parse_hotkey`,
+// `start_listener`) is only used by `start_rdev_listener`, which is itself
+// gated on non-macOS. Gate the import identically to avoid an unused-import
+// warning on macOS, where the CoreGraphics-based path is used instead.
+#[cfg(not(target_os = "macos"))]
+use super::hotkey::{self, ActivationMode, HotkeyEvent};
+
 const LOG_PREFIX: &str = "[dictation_listener]";
 
 // ── Listener task handle (for stop support) ─────────────────────────
