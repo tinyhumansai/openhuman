@@ -145,7 +145,7 @@ const InstallDialog = ({ qualifiedName, prefillEnv, onSuccess, onCancel }: Insta
       }
       onSuccess(server);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : t('mcp.install.failedInstall');
+      const msg = mcpRegistryErrorMessage(err, t, 'mcp.install.failedInstall');
       log('install error: %s', msg);
       setInstallError(msg);
     } finally {

@@ -7,5 +7,5 @@ export function mcpRegistryErrorMessage(error: unknown, t: Translate, fallbackKe
   if (kind === 'not_found') return t('mcp.registry.error.notFound');
   if (kind === 'network') return t('mcp.registry.error.network');
   if (kind === 'unavailable') return t('mcp.registry.error.unavailable');
-  return error instanceof Error ? error.message : t(fallbackKey);
+  return t(fallbackKey);
 }

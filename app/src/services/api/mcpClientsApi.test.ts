@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { McpRegistryUserError } from './mcpRegistryErrors';
+import { classifyMcpRegistryError, McpRegistryUserError } from './mcpRegistryErrors';
 
 const mockCallCoreRpc = vi.fn();
 
@@ -11,6 +11,26 @@ vi.mock('../coreRpcClient', () => ({
 describe('mcpClientsApi', () => {
   beforeEach(() => {
     mockCallCoreRpc.mockReset();
+  });
+
+  describe('registry error classification', () => {
+    it('classifies official empty-version misses as not found', () => {
+      expect(
+        classifyMcpRegistryError(
+          new Error('Failed to fetch registry detail: no versions found for unreal-mcp')
+        )
+      ).toBe('not_found');
+    });
+
+    it('lets 5xx status codes win over not-found body text', () => {
+      expect(
+        classifyMcpRegistryError(
+          new Error(
+            'MCP official registry GET unreal-mcp returned HTTP 500: {"detail":"Server not found"}'
+          )
+        )
+      ).toBe('unavailable');
+    });
   });
 
   describe('registrySearch', () => {
@@ -204,6 +224,46 @@ describe('mcpClientsApi', () => {
         params: { qualified_name: 'test/server', env: { API_KEY: 'secret' } },
       });
       expect(result).toEqual(server);
+    });
+
+    it('normalizes registry detail fetch failures during install', async () => {
+      mockCallCoreRpc.mockRejectedValueOnce(
+        new Error(
+          'Failed to fetch registry detail: MCP official registry GET unreal-mcp returned HTTP 404 Not Found: {"title":"Not Found","status":404,"detail":"Server not found"}'
+        )
+      );
+
+      const { mcpClientsApi } = await import('./mcpClientsApi');
+
+      try {
+        await mcpClientsApi.install({ qualified_name: 'unreal-mcp', env: {} });
+        throw new Error('expected install to reject');
+      } catch (err) {
+        expect(err).toBeInstanceOf(McpRegistryUserError);
+        expect(err).toMatchObject({ kind: 'not_found' });
+        expect((err as Error).message).toContain('Server not found in registry');
+        expect((err as Error).message).not.toContain('"title"');
+      }
+    });
+
+    it('preserves non-registry install failures', async () => {
+      mockCallCoreRpc.mockRejectedValueOnce(new Error('spawn failed'));
+
+      const { mcpClientsApi } = await import('./mcpClientsApi');
+
+      await expect(
+        mcpClientsApi.install({ qualified_name: 'test/server', env: {} })
+      ).rejects.toThrow('spawn failed');
+    });
+
+    it('preserves non-registry HTTP failures during install', async () => {
+      mockCallCoreRpc.mockRejectedValueOnce(new Error('installer returned HTTP 404'));
+
+      const { mcpClientsApi } = await import('./mcpClientsApi');
+
+      await expect(
+        mcpClientsApi.install({ qualified_name: 'test/server', env: {} })
+      ).rejects.toThrow('installer returned HTTP 404');
     });
   });
 

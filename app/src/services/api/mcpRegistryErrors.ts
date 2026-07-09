@@ -31,25 +31,43 @@ function rawErrorMessage(error: unknown): string {
   return 'Unknown MCP registry error';
 }
 
-function statusCodes(message: string): number[] {
+function httpStatusCodes(message: string): number[] {
   const codes: number[] = [];
   for (const match of message.matchAll(/\bHTTP\s+(\d{3})\b/gi)) {
     codes.push(Number(match[1]));
   }
+  return codes;
+}
+
+function embeddedStatusCodes(message: string): number[] {
+  const codes: number[] = [];
   for (const match of message.matchAll(/["']?status["']?\s*:\s*(\d{3})/gi)) {
     codes.push(Number(match[1]));
   }
   return codes;
 }
 
+export function isMcpRegistryErrorLike(error: unknown): boolean {
+  if (error instanceof McpRegistryUserError) return true;
+
+  const message = rawErrorMessage(error);
+  return /MCP .*registry|registry detail|registry .*failed|all MCP registries failed|MCP official|Smithery|no versions found for/i.test(
+    message
+  );
+}
+
 export function classifyMcpRegistryError(error: unknown): McpRegistryErrorKind {
   if (error instanceof McpRegistryUserError) return error.kind;
 
   const message = rawErrorMessage(error);
-  const codes = statusCodes(message);
+  const httpCodes = httpStatusCodes(message);
+  const embeddedCodes = embeddedStatusCodes(message);
 
-  if (codes.includes(404) || /server not found/i.test(message)) return 'not_found';
-  if (codes.some(code => code === 429 || code >= 500)) return 'unavailable';
+  if (httpCodes.includes(404)) return 'not_found';
+  if (httpCodes.some(code => code === 429 || code >= 500)) return 'unavailable';
+  if (embeddedCodes.includes(404)) return 'not_found';
+  if (embeddedCodes.some(code => code === 429 || code >= 500)) return 'unavailable';
+  if (/server not found|no versions found for/i.test(message)) return 'not_found';
   if (
     /timed?\s*out|timeout|abort|failed to fetch|networkerror|econnrefused|enotfound|error sending request|client error \(connect\)|request failed|read failed|failed to respond|all MCP registries failed/i.test(
       message
@@ -69,5 +87,6 @@ export function normalizeMcpRegistryError(error: unknown): McpRegistryUserError 
 
 export function getMcpRegistryErrorKind(error: unknown): McpRegistryErrorKind | null {
   if (!error) return null;
+  if (!isMcpRegistryErrorLike(error)) return null;
   return classifyMcpRegistryError(error);
 }
