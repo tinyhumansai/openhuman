@@ -12,6 +12,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::openhuman::config::Config;
+// Test-facing: the inline `mod tests` (via `use super::*`) asserts against the
+// managed summarization model constant. Restored after the module refactor.
+#[cfg(test)]
+use crate::openhuman::config::DEFAULT_CLOUD_LLM_MODEL;
 use crate::openhuman::inference::provider::{
     create_chat_model_with_model_id, provider_for_role, UsageInfo,
 };

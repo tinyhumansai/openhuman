@@ -33,6 +33,10 @@ use chrono::{DateTime, Utc};
 use crate::openhuman::config::Config;
 use crate::openhuman::memory_store::content::raw::raw_source_dir;
 use crate::openhuman::memory_store::trees::types::Tree;
+// Test-facing: the inline `mod tests` builds sample `Tree`s using these enums.
+// Restored after the tree_source refactor dropped the imports.
+#[cfg(test)]
+use crate::openhuman::memory_store::trees::types::{TreeKind, TreeStatus};
 
 /// Filename of the per-source registry mirror inside `raw/<source_slug>/`.
 pub const SOURCE_FILE_NAME: &str = "_source.md";

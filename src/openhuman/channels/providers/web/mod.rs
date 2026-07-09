@@ -16,8 +16,10 @@ pub(crate) use web_errors::classify_inference_error;
 #[allow(unused_imports)]
 pub(crate) use web_errors::{
     extract_provider_error_detail, extract_provider_name, generic_inference_error_user_message,
-    is_action_budget_exhausted, is_fallback_chain_exhausted, is_non_retryable_rate_limit_text,
-    parse_retry_after_secs_from_str, retry_after_hint, with_provider_detail, ClassifiedError,
+    inference_budget_exceeded_user_message, is_action_budget_exhausted,
+    is_fallback_chain_exhausted, is_inference_budget_exceeded_error,
+    is_non_retryable_rate_limit_text, parse_retry_after_secs_from_str, retry_after_hint,
+    with_provider_detail, ClassifiedError,
 };
 
 // Public API — event bus
@@ -50,6 +52,20 @@ pub(crate) use ops::{event_session_id_for, key_for};
 pub(crate) use progress_bridge::spawn_progress_bridge;
 
 // Schema field helpers re-exported for tests
+#[cfg(any(test, debug_assertions))]
+#[allow(unused_imports)]
+pub(crate) use schemas::{
+    json_output, optional_bool, optional_f64, optional_string, optional_u64, required_string,
+};
+#[cfg(any(test, debug_assertions))]
+#[allow(unused_imports)]
+pub(crate) use session::{
+    compose_system_prompt_suffix, locale_reply_directive, normalize_model_override,
+    provider_role_for_model_override,
+};
+#[cfg(any(test, debug_assertions))]
+#[allow(unused_imports)]
+pub(crate) use types::WebChatParams;
 
 // Test helpers (debug/test builds only)
 #[cfg(any(test, debug_assertions))]

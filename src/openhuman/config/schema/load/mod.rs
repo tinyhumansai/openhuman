@@ -32,6 +32,10 @@ pub(crate) use super::Config;
 #[cfg(test)]
 pub(crate) use dirs::ACTIVE_USER_STATE_FILE;
 #[cfg(test)]
+pub(crate) use dirs::{ACTION_DIR_ENV_VAR, MEMORY_SYNC_INTERVAL_SECS_ENV_VAR};
+#[cfg(test)]
+pub(crate) use env::EnvLookup;
+#[cfg(test)]
 pub(crate) use env::ProcessEnvWithoutWorkspace;
 #[cfg(test)]
 pub(crate) use impl_load::parse_config_with_recovery;

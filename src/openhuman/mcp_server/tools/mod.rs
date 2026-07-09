@@ -29,6 +29,8 @@ pub use params::{build_rpc_params, slug_from};
 #[cfg(test)]
 pub use serde_json::{json, Value};
 #[cfg(test)]
+pub use specs::list_tools_result_for_config;
+#[cfg(test)]
 pub use types::{DEFAULT_LIMIT, MAX_LIMIT, TREE_TAG_MAX_TAGS, TREE_TAG_MAX_TAG_LENGTH};
 
 #[cfg(test)]

@@ -16,6 +16,10 @@ use super::types::{
     SandboxBackendHandle, SandboxBackendKind, SandboxExecRequest, SandboxExecResult, SandboxPolicy,
     SandboxStatus,
 };
+// Test-facing: the inline `mod tests` builds `DockerOverrides` values. Prod code
+// here doesn't reference the type, so gate to test builds. Restored post-refactor.
+#[cfg(test)]
+use super::types::DockerOverrides;
 use std::process::Stdio;
 use tokio::process::Command;
 

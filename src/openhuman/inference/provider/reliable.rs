@@ -23,6 +23,11 @@
 use super::traits::{
     ChatMessage, ChatRequest, ChatResponse, StreamChunk, StreamOptions, StreamResult,
 };
+// Test-facing: `reliable_tests.rs` (included via `use super::*`) constructs
+// `StreamError::Provider(..)` directly. Prod code uses the fully-qualified
+// path, so gate this to test builds to avoid an unused-import warning.
+#[cfg(test)]
+use super::traits::StreamError;
 use super::Provider;
 use crate::openhuman::inference::provider::record_resolved_provider_route;
 use async_trait::async_trait;
