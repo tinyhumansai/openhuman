@@ -29,6 +29,11 @@ pub mod host_runtime;
 pub mod library;
 pub mod multimodal;
 pub mod pformat;
+/// Cross-platform shell selection shared by [`host_runtime::NativeRuntime`]
+/// and [`crate::openhuman::sandbox::ops`] so all three shell-spawning sites
+/// agree on `cmd.exe` (Windows) vs `bash`/`sh` (Unix). Fixes #4705 where
+/// the sandbox paths hardcoded `sh` and failed at spawn on Windows.
+pub mod platform_shell;
 pub mod progress;
 /// Structured tracing export off the [`progress`] channel: turns the
 /// real-time [`progress::AgentProgress`] stream into OpenTelemetry/
