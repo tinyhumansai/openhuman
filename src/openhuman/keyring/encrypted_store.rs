@@ -294,7 +294,9 @@ impl SecretStore {
             };
 
             let hex_key = read_result.with_context(|| {
-                let msg = format!(
+                // `mut` is only exercised inside the #[cfg(windows)] block below.
+                #[cfg_attr(not(windows), allow(unused_mut))]
+                let mut msg = format!(
                     "Failed to read secret key file at {}",
                     self.key_path.display()
                 );
