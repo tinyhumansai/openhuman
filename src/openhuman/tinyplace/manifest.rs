@@ -174,7 +174,7 @@ pub(crate) fn handle_tinyplace_directory_resolve(params: Map<String, Value>) -> 
         }
 
         // Directory-card fallback: query by username.
-        match directory_card_fallback(&client, &name).await {
+        match directory_card_fallback(client, &name).await {
             Some(card) => {
                 log::debug!(
                     "{LOG_PREFIX} directory_resolve: found '{name}' via directory card \
@@ -586,7 +586,7 @@ pub(crate) fn handle_tinyplace_registry_register(params: Map<String, Value>) -> 
             Ok(identity) => {
                 log::debug!("{LOG_PREFIX} registry_register free-tier ok username={username}");
                 let _ =
-                    publish_directory_card_for_identity(&client, signer.as_ref(), &identity).await;
+                    publish_directory_card_for_identity(client, signer.as_ref(), &identity).await;
                 return to_value(serde_json::json!({ "identity": identity }));
             }
             Err(e) => match e.payment_required() {
@@ -615,7 +615,7 @@ pub(crate) fn handle_tinyplace_registry_register(params: Map<String, Value>) -> 
         if let Some(network) = challenge.network.as_deref() {
             ensure_cluster_matches(network)?;
         }
-        ensure_backend_mint_matches(&client).await?;
+        ensure_backend_mint_matches(client).await?;
 
         let mut extra_metadata = HashMap::new();
         extra_metadata.insert("identity".to_string(), format!("@{username}"));
@@ -642,9 +642,8 @@ pub(crate) fn handle_tinyplace_registry_register(params: Map<String, Value>) -> 
                     log::debug!(
                         "{LOG_PREFIX} registry_register settled username={username} attempt={attempt}"
                     );
-                    let _ =
-                        publish_directory_card_for_identity(&client, signer.as_ref(), &identity)
-                            .await;
+                    let _ = publish_directory_card_for_identity(client, signer.as_ref(), &identity)
+                        .await;
                     return to_value(serde_json::json!({
                         "identity": identity,
                         "payment": { "onChainTx": on_chain_tx },
@@ -680,9 +679,8 @@ pub(crate) fn handle_tinyplace_registry_register(params: Map<String, Value>) -> 
                     log::debug!(
                         "{LOG_PREFIX} registry_register recovered owned identity username={username}"
                     );
-                    let _ =
-                        publish_directory_card_for_identity(&client, signer.as_ref(), &identity)
-                            .await;
+                    let _ = publish_directory_card_for_identity(client, signer.as_ref(), &identity)
+                        .await;
                     return to_value(serde_json::json!({
                         "identity": identity,
                         "payment": { "onChainTx": on_chain_tx },
@@ -916,7 +914,7 @@ pub(crate) fn handle_tinyplace_marketplace_buy_product(
         if let Some(network) = challenge.network.as_deref() {
             ensure_cluster_matches(network)?;
         }
-        ensure_backend_mint_matches(&client).await?;
+        ensure_backend_mint_matches(client).await?;
         let mut extra_metadata = HashMap::new();
         extra_metadata.insert("productId".to_string(), product_id.clone());
         let fulfilled = fulfill_payment(
@@ -1011,7 +1009,7 @@ pub(crate) fn handle_tinyplace_marketplace_buy_identity(
         if let Some(network) = challenge.network.as_deref() {
             ensure_cluster_matches(network)?;
         }
-        ensure_backend_mint_matches(&client).await?;
+        ensure_backend_mint_matches(client).await?;
         let mut extra_metadata = HashMap::new();
         extra_metadata.insert("listingId".to_string(), listing_id.clone());
         let fulfilled = fulfill_payment(
@@ -1118,7 +1116,7 @@ pub(crate) fn handle_tinyplace_marketplace_bid(params: Map<String, Value>) -> Co
             .place_bid_with_payment(
                 &listing_id,
                 bid,
-                tinyplace::api::marketplace::IdentityBidPaymentOptions::default(),
+                tinyplace::api::marketplace::IdentityBidPaymentOptions,
             )
             .await
             .map_err(map_err)?;
@@ -1168,7 +1166,7 @@ pub(crate) fn handle_tinyplace_marketplace_offer(params: Map<String, Value>) -> 
             .marketplace
             .create_offer_with_payment(
                 offer,
-                tinyplace::api::marketplace::IdentityOfferPaymentOptions::default(),
+                tinyplace::api::marketplace::IdentityOfferPaymentOptions,
             )
             .await
             .map_err(map_err)?;
@@ -2927,7 +2925,7 @@ pub(crate) fn handle_tinyplace_signal_get_bundle(params: Map<String, Value>) -> 
         let client = global_state().client().await?;
 
         // Resolve the identifier (handle or crypto_id) before the bundle lookup.
-        let agent_id = resolve_recipient_to_agent_id(&client, &raw_agent_id).await?;
+        let agent_id = resolve_recipient_to_agent_id(client, &raw_agent_id).await?;
         log::debug!("{LOG_PREFIX} signal_get_bundle resolved agent_id={agent_id}");
 
         let result = match client.keys.get_bundle(&agent_id).await {
@@ -3319,7 +3317,7 @@ pub(crate) fn handle_tinyplace_signal_send_message(params: Map<String, Value>) -
 
         // Resolve the recipient identifier (@handle, bare handle, or crypto_id) to
         // the canonical crypto_id before any key-bundle or directory lookup.
-        let agent_id = resolve_recipient_to_agent_id(&client, &recipient).await?;
+        let agent_id = resolve_recipient_to_agent_id(client, &recipient).await?;
         log::debug!("{LOG_PREFIX} signal_send_message resolved to agent_id={agent_id}");
 
         // Fetch recipient's published key bundle (always needed for the X25519
@@ -5029,7 +5027,7 @@ pub(crate) fn handle_tinyplace_bounties_create(params: Map<String, Value>) -> Co
         if let Some(network) = challenge.network.as_deref() {
             ensure_cluster_matches(network)?;
         }
-        ensure_backend_mint_matches(&client).await?;
+        ensure_backend_mint_matches(client).await?;
 
         let mut extra_metadata = HashMap::new();
         extra_metadata.insert("title".to_string(), request.title.clone());

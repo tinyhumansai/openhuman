@@ -14,8 +14,10 @@ use serde::{Deserialize, Serialize};
 /// Controls whether the bot auto-joins meetings from the calendar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum AutoJoinPolicy {
     /// Prompt the user before every join (default).
+    #[default]
     AskEachTime,
     /// Always join without prompting.
     Always,
@@ -23,17 +25,13 @@ pub enum AutoJoinPolicy {
     Never,
 }
 
-impl Default for AutoJoinPolicy {
-    fn default() -> Self {
-        Self::AskEachTime
-    }
-}
-
 /// Controls whether post-call summaries are generated automatically.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum AutoSummarizePolicy {
     /// Ask the user after the call ends (default).
+    #[default]
     Ask,
     /// Always generate a summary.
     Always,
@@ -41,26 +39,16 @@ pub enum AutoSummarizePolicy {
     Never,
 }
 
-impl Default for AutoSummarizePolicy {
-    fn default() -> Self {
-        Self::Ask
-    }
-}
-
 /// Which calendar data source feeds Google Meet detection and auto-join.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum CalendarProvider {
     /// Composio-based Google Calendar sync (default; broad OAuth scopes).
+    #[default]
     Composio,
     /// Recall.ai Calendar V1 OAuth (less-invasive: read-only events + email).
     Recall,
-}
-
-impl Default for CalendarProvider {
-    fn default() -> Self {
-        Self::Composio
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

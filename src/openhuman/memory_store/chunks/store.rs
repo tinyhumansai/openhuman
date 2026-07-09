@@ -493,6 +493,155 @@ pub(crate) fn upsert_staged_chunks_tx(
     Ok(staged.len())
 }
 
+/// Repair the stored body-sha token for one chunk (#4689).
+///
+/// The chunk content file is content-addressed and atomically written, so it is
+/// the source of truth for its body. When a read detects that the on-disk body
+/// no longer hashes to the recorded `content_sha256` (e.g. an external editor
+/// rewrote a synced file after ingest), the reader serves the full on-disk body
+/// and calls this to re-point the stale token at the disk bytes so the next read
+/// verifies cleanly instead of falling back to the ≤500-char preview.
+pub fn update_chunk_content_sha256(
+    config: &Config,
+    chunk_id: &str,
+    new_sha256: &str,
+) -> Result<()> {
+    with_connection(config, |conn| {
+        conn.execute(
+            "UPDATE mem_tree_chunks SET content_sha256 = ?1 WHERE id = ?2",
+            params![new_sha256, chunk_id],
+        )?;
+        Ok(())
+    })
+}
+
+/// Summary counterpart of [`update_chunk_content_sha256`] (#4689).
+pub fn update_summary_content_sha256(
+    config: &Config,
+    summary_id: &str,
+    new_sha256: &str,
+) -> Result<()> {
+    with_connection(config, |conn| {
+        conn.execute(
+            "UPDATE mem_tree_summaries SET content_sha256 = ?1 WHERE id = ?2",
+            params![new_sha256, summary_id],
+        )?;
+        Ok(())
+    })
+}
+
+/// List the distinct `source_id`s of chunk rows for `source_kind` whose id
+/// starts with `source_id_prefix` (#4689).
+///
+/// Used by folder/list-based resync to discover previously-ingested items that
+/// have since vanished (e.g. a renamed or deleted file) so their stale rows +
+/// on-disk bodies can be cleaned. The prefix is applied Rust-side (literal, not
+/// a SQL `LIKE`) so ids containing `_`/`%` are matched verbatim — matching the
+/// convention in [`delete_chunks_by_source_prefix`].
+pub fn list_source_ids_with_prefix(
+    config: &Config,
+    source_kind: SourceKind,
+    source_id_prefix: &str,
+) -> Result<Vec<String>> {
+    with_connection(config, |conn| {
+        // Bounded range scan on the `idx_mem_tree_chunks_source (source_kind,
+        // source_id)` index instead of scanning every source_id for the kind and
+        // filtering in Rust: `source_id >= prefix AND source_id < upper`, where
+        // `upper` is the prefix with its last byte incremented. With SQLite's
+        // default BINARY collation this is exactly the literal byte-prefix set
+        // (so `_`/`%` stay literal, matching `delete_chunks_by_source_prefix`).
+        let out = match prefix_upper_bound(source_id_prefix) {
+            Some(upper) => {
+                let mut stmt = conn.prepare(
+                    "SELECT DISTINCT source_id FROM mem_tree_chunks \
+                     WHERE source_kind = ?1 AND source_id >= ?2 AND source_id < ?3",
+                )?;
+                let rows = stmt.query_map(
+                    params![source_kind.as_str(), source_id_prefix, upper],
+                    |row| row.get::<_, String>(0),
+                )?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()
+            }
+            None => {
+                // Empty prefix (or all-0xFF): no finite upper bound. The lower
+                // bound still uses the index; every row of the kind qualifies —
+                // identical to the previous `starts_with("")` behaviour.
+                let mut stmt = conn.prepare(
+                    "SELECT DISTINCT source_id FROM mem_tree_chunks \
+                     WHERE source_kind = ?1 AND source_id >= ?2",
+                )?;
+                let rows = stmt
+                    .query_map(params![source_kind.as_str(), source_id_prefix], |row| {
+                        row.get::<_, String>(0)
+                    })?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()
+            }
+        }
+        .context("Failed to list mem_tree chunk source_ids by prefix")?;
+        Ok(out)
+    })
+}
+
+/// Exclusive upper bound for a literal byte-prefix range scan: the least string
+/// strictly greater than every string starting with `prefix`. `None` when no
+/// finite bound exists (empty prefix, or every byte is `0xFF`), in which case
+/// the caller applies only the lower bound.
+fn prefix_upper_bound(prefix: &str) -> Option<String> {
+    let mut bytes = prefix.as_bytes().to_vec();
+    while let Some(&last) = bytes.last() {
+        if last < 0xFF {
+            *bytes.last_mut().unwrap() = last + 1;
+            // Our prefixes are ASCII (`mem_src:<id>:`), so incrementing the last
+            // byte yields valid UTF-8. If a future caller passes a prefix that
+            // ends mid-codepoint, fall back to the lower-bound-only path rather
+            // than emit invalid UTF-8.
+            return String::from_utf8(bytes).ok();
+        }
+        bytes.pop();
+    }
+    None
+}
+
+#[cfg(test)]
+mod prefix_bound_tests {
+    use super::prefix_upper_bound;
+
+    #[test]
+    fn upper_bound_increments_last_byte() {
+        assert_eq!(
+            prefix_upper_bound("mem_src:s1:").as_deref(),
+            Some("mem_src:s1;")
+        );
+        assert_eq!(prefix_upper_bound("a").as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn upper_bound_none_for_empty_prefix() {
+        // Empty prefix is the only reachable `None` for a valid UTF-8 `&str` (no
+        // valid string ends in 0xFF); the all-0xFF `pop` loop is defensive.
+        assert_eq!(prefix_upper_bound(""), None);
+    }
+
+    #[test]
+    fn upper_bound_handles_multibyte_prefix() {
+        // A prefix ending in a multibyte codepoint still yields a valid bound.
+        assert_eq!(prefix_upper_bound("café").as_deref(), Some("cafê"));
+    }
+
+    #[test]
+    fn range_excludes_sibling_prefix() {
+        // The trailing delimiter in the prefix is what keeps `mem_src:s1:` from
+        // matching `mem_src:s10:...`: `s10:` sorts below `s1:` (`'0' < ':'`), so
+        // it falls below the lower bound and is excluded — same as `starts_with`.
+        let prefix = "mem_src:s1:";
+        let upper = prefix_upper_bound(prefix).unwrap();
+        let sib = "mem_src:s10:x";
+        assert!(!(sib >= prefix && *sib < *upper.as_str()));
+        let child = "mem_src:s1:a";
+        assert!(child >= prefix && *child < *upper.as_str());
+    }
+}
+
 fn upsert_chunks_with_statement(
     stmt: &mut rusqlite::Statement<'_>,
     chunks: &[Chunk],

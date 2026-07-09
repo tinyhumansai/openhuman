@@ -98,7 +98,7 @@ impl ToolMemoryCaptureHook {
             .unwrap_or_else(|| "__unscoped__".to_string());
 
         let mut out = Vec::new();
-        for raw_line in trimmed.split(|c: char| matches!(c, '.' | '\n' | ';')) {
+        for raw_line in trimmed.split(['.', '\n', ';']) {
             let line = raw_line.trim();
             if line.is_empty() {
                 continue;

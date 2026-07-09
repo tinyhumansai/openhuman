@@ -11,7 +11,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::openhuman::config::{Config, DEFAULT_CLOUD_LLM_MODEL};
+use crate::openhuman::config::Config;
 use crate::openhuman::inference::provider::{
     create_chat_model_with_model_id, provider_for_role, UsageInfo,
 };

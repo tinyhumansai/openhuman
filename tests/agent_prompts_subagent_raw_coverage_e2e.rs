@@ -598,7 +598,13 @@ async fn run_subagent_surfaces_provider_errors_and_can_be_cancelled() -> Result<
         })
         .await
     });
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while slow.requests().is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("provider request should start before abort");
     handle.abort();
     let cancelled = handle.await;
     assert!(cancelled.is_err());

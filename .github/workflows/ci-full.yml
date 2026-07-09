@@ -82,7 +82,7 @@ jobs:
           df -h /__w || true
 
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -90,7 +90,7 @@ jobs:
 
       - name: Cache pnpm store
         id: pnpm-cache
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .pnpm-store
           key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
@@ -111,7 +111,7 @@ jobs:
 
       - name: Save pnpm store cache
         if: always() && steps.pnpm-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .pnpm-store
           key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
@@ -139,7 +139,7 @@ jobs:
       CARGO_INCREMENTAL: "0"
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -147,7 +147,7 @@ jobs:
 
       - name: Cache pnpm store
         id: pnpm-cache
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .pnpm-store
           key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
@@ -163,7 +163,7 @@ jobs:
 
       - name: Restore cached Playwright E2E artifact
         id: playwright-artifact-cache
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .ci/artifacts/e2e-playwright-linux.tar.gz
           key: e2e-playwright-linux-${{ hashFiles('src/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'app/src/**', 'app/public/**', 'app/index.html', 'app/vite.config.*', 'app/tailwind.config.*', 'app/postcss.config.*', 'app/package.json', 'pnpm-lock.yaml', 'app/scripts/e2e-web-build.sh') }}
@@ -174,7 +174,7 @@ jobs:
 
       - name: Save pnpm store cache
         if: always() && steps.pnpm-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .pnpm-store
           key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
@@ -210,13 +210,13 @@ jobs:
 
       - name: Save Playwright E2E artifact cache
         if: always() && steps.playwright-artifact-cache.outputs.cache-hit != 'true' && hashFiles('.ci/artifacts/e2e-playwright-linux.tar.gz') != ''
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .ci/artifacts/e2e-playwright-linux.tar.gz
           key: ${{ steps.playwright-artifact-cache.outputs.cache-primary-key }}
 
       - name: Upload Playwright E2E artifact
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: e2e-playwright-linux-${{ github.run_id }}
           path: .ci/artifacts/e2e-playwright-linux.tar.gz
@@ -236,7 +236,7 @@ jobs:
     continue-on-error: true
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -244,7 +244,7 @@ jobs:
 
       - name: Cache pnpm store
         id: pnpm-cache
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .pnpm-store
           key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
@@ -256,13 +256,13 @@ jobs:
 
       - name: Save pnpm store cache
         if: always() && steps.pnpm-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .pnpm-store
           key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
 
       - name: Download Playwright E2E artifact
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: e2e-playwright-linux-${{ github.run_id }}
           path: .
@@ -289,7 +289,7 @@ jobs:
 
       - name: Upload Playwright E2E failure artifacts
         if: failure()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: e2e-playwright-failure-logs-${{ github.run_id }}
           path: |

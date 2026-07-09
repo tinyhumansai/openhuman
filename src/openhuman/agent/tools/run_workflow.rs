@@ -151,7 +151,7 @@ fn reentrancy_key(workflow_id: &str, inputs: &Option<serde_json::Value>) -> Stri
         match v {
             serde_json::Value::Object(map) => {
                 let mut sorted: Vec<_> = map.iter().collect();
-                sorted.sort_by(|(left, _), (right, _)| left.cmp(right));
+                sorted.sort_by_key(|(left, _)| *left);
                 serde_json::Value::Object(
                     sorted
                         .into_iter()

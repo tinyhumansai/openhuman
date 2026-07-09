@@ -104,18 +104,13 @@ pub type AgentGraphRunner =
 
 /// How an agent's turn is driven. Selected per-agent via each folder's
 /// `graph.rs::graph()` and injected onto [`AgentDefinition`][super::definition::AgentDefinition].
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub enum AgentGraph {
     /// Run the shared default sub-agent turn graph (`run_subagent_via_graph`).
+    #[default]
     Default,
     /// Run this agent's bespoke graph.
     Custom(AgentGraphRunner),
-}
-
-impl Default for AgentGraph {
-    fn default() -> Self {
-        AgentGraph::Default
-    }
 }
 
 impl AgentGraph {

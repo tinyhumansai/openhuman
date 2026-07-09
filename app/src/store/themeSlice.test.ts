@@ -3,14 +3,20 @@ import { describe, expect, it } from 'vitest';
 
 import type { Theme } from '../lib/theme/types';
 import themeReducer, {
+  clampFontSizePx,
   deleteCustomTheme,
   FONT_SIZE_PX,
   type FontSize,
+  MAX_FONT_SIZE_PX,
+  MIN_FONT_SIZE_PX,
   resetActiveTheme,
+  selectEffectiveFontSizePx,
   selectEffectiveTheme,
   selectHideAgentInsights,
+  selectRootFontSizePx,
   setActiveTheme,
   setAgentMessageViewMode,
+  setCustomFontSizePx,
   setFontRole,
   setFontSize,
   setHideAgentInsights,
@@ -58,6 +64,7 @@ describe('themeSlice', () => {
       mode: 'dark',
       tabBarLabels: 'always',
       fontSize: 'xlarge',
+      customFontSizePx: null,
       agentMessageViewMode: 'text',
       developerMode: false,
       hideAgentInsights: false,
@@ -95,6 +102,52 @@ describe('themeSlice', () => {
 
   it('keeps medium aligned with the historical 16px root size', () => {
     expect(FONT_SIZE_PX.medium).toBe('16px');
+  });
+
+  describe('custom (fine-tuned) font size — issue #4246', () => {
+    it('defaults customFontSizePx to null (presets drive the root size)', () => {
+      const state = themeReducer(undefined, { type: '@@INIT' });
+      expect(state.customFontSizePx).toBeNull();
+    });
+
+    it('clampFontSizePx bounds, rounds, and guards against non-finite input', () => {
+      expect(clampFontSizePx(MIN_FONT_SIZE_PX - 5)).toBe(MIN_FONT_SIZE_PX);
+      expect(clampFontSizePx(MAX_FONT_SIZE_PX + 5)).toBe(MAX_FONT_SIZE_PX);
+      expect(clampFontSizePx(17.6)).toBe(18);
+      expect(clampFontSizePx(Number.NaN)).toBe(16);
+    });
+
+    it('setCustomFontSizePx stores a clamped override and null clears it', () => {
+      let state = themeReducer(undefined, { type: '@@INIT' });
+      state = themeReducer(state, setCustomFontSizePx(24));
+      expect(state.customFontSizePx).toBe(24);
+      state = themeReducer(state, setCustomFontSizePx(999));
+      expect(state.customFontSizePx).toBe(MAX_FONT_SIZE_PX);
+      state = themeReducer(state, setCustomFontSizePx(null));
+      expect(state.customFontSizePx).toBeNull();
+    });
+
+    it('picking a preset clears any fine-tuned override', () => {
+      let state = themeReducer(undefined, { type: '@@INIT' });
+      state = themeReducer(state, setCustomFontSizePx(26));
+      state = themeReducer(state, setFontSize('large'));
+      expect(state.fontSize).toBe('large');
+      expect(state.customFontSizePx).toBeNull();
+    });
+
+    it('selectRootFontSizePx: custom px wins, else the active preset', () => {
+      let state = themeReducer(undefined, { type: '@@INIT' });
+      state = themeReducer(state, setFontSize('large'));
+      expect(selectRootFontSizePx({ theme: state })).toBe('18px');
+      state = themeReducer(state, setCustomFontSizePx(23));
+      expect(selectRootFontSizePx({ theme: state })).toBe('23px');
+      expect(selectEffectiveFontSizePx({ theme: state })).toBe(23);
+    });
+
+    it('selectRootFontSizePx falls back to medium when the slice is absent', () => {
+      expect(selectRootFontSizePx({})).toBe('16px');
+      expect(selectEffectiveFontSizePx({})).toBe(16);
+    });
   });
 
   describe('runtime themes', () => {

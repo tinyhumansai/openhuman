@@ -694,7 +694,10 @@ mod tests {
         assert_eq!(done.load(Ordering::SeqCst), 20, "every item must run");
         let peak = max_seen.load(Ordering::SeqCst);
         assert!(peak >= 2, "work should actually overlap (peak {peak})");
-        assert!(peak <= 3, "concurrency must stay bounded to 3 (peak {peak})");
+        assert!(
+            peak <= 3,
+            "concurrency must stay bounded to 3 (peak {peak})"
+        );
         assert_eq!(
             inflight.load(Ordering::SeqCst),
             0,

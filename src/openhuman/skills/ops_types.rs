@@ -41,20 +41,16 @@ pub const MAX_WORKFLOW_RESOURCE_BYTES: u64 = 128 * 1024;
 /// Where the skill was discovered. Determines precedence on name collision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum WorkflowScope {
     /// Workflow shipped with the user's global config (`~/.openhuman/skills/...`).
+    #[default]
     User,
     /// Workflow shipped with the current workspace (`<ws>/.openhuman/skills/...`).
     /// Requires the trust marker to be loaded.
     Project,
     /// Workflow discovered under the legacy `<workspace>/skills/` layout.
     Legacy,
-}
-
-impl Default for WorkflowScope {
-    fn default() -> Self {
-        Self::User
-    }
 }
 
 /// Parsed frontmatter of a `SKILL.md` file.
@@ -161,7 +157,7 @@ pub(crate) fn extract_tags(fm: &WorkflowFrontmatter, warnings: &mut Vec<String>)
         .metadata
         .get("hermes")
         .and_then(|v| v.as_mapping())
-        .and_then(|m| m.get(&serde_yaml::Value::String("tags".to_string())))
+        .and_then(|m| m.get(serde_yaml::Value::String("tags".to_string())))
     {
         tags.extend(metadata_string_seq(hermes_tags));
     }
@@ -185,7 +181,7 @@ pub(crate) fn extract_related_skills(fm: &WorkflowFrontmatter) -> Vec<String> {
         .metadata
         .get("hermes")
         .and_then(|v| v.as_mapping())
-        .and_then(|m| m.get(&serde_yaml::Value::String("related_skills".to_string())))
+        .and_then(|m| m.get(serde_yaml::Value::String("related_skills".to_string())))
     {
         related.extend(metadata_string_seq(hermes_related));
     }

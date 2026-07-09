@@ -15,6 +15,12 @@ use super::jail::{Jail, JailBackend};
 
 pub struct SeatbeltBackend;
 
+impl Default for SeatbeltBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SeatbeltBackend {
     pub fn new() -> Self {
         Self

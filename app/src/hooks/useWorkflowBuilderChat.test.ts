@@ -4,14 +4,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BuilderTurnResult } from '../services/api/flowsApi';
 import type { WorkflowProposal } from '../store/chatRuntimeSlice';
 import type { ThreadMessage } from '../types/thread';
-import { useWorkflowBuilderChat } from './useWorkflowBuilderChat';
+import { useWorkflowBuilderChat, type WorkflowBuilderSendResult } from './useWorkflowBuilderChat';
 
 // The hook now runs the builder server-side via `openhuman.flows_build`.
 const buildWorkflow = vi.hoisted(() => vi.fn());
 vi.mock('../services/api/flowsApi', () => ({ buildWorkflow }));
 
-// Socket is always "connected" for these tests.
-vi.mock('../store/socketSelectors', () => ({ selectSocketStatus: () => 'connected' }));
+// Socket status is configurable per test (reset to 'connected' in beforeEach)
+// so the no-op/`skipped` path (socket not connected) can be exercised.
+const socketStatus = vi.hoisted(() => ({ current: 'connected' as string }));
+vi.mock('../store/socketSelectors', () => ({ selectSocketStatus: () => socketStatus.current }));
 
 const dispatch = vi.hoisted(() => vi.fn());
 const selectorState = vi.hoisted(() => ({
@@ -69,6 +71,7 @@ const okResult = (over: Partial<BuilderTurnResult> = {}): BuilderTurnResult => (
 describe('useWorkflowBuilderChat', () => {
   beforeEach(() => {
     buildWorkflow.mockReset().mockResolvedValue(okResult());
+    socketStatus.current = 'connected';
     selectorState.proposals = {};
     selectorState.messagesByThreadId = {};
     selectorState.toolTimelineByThread = {};
@@ -278,6 +281,60 @@ describe('useWorkflowBuilderChat', () => {
       });
     });
     await waitFor(() => expect(result.current.error).toBe('run failed'));
+  });
+
+  // The `send()` outcome contract (`dispatched` | `skipped` | `failed`) is the
+  // heart of the build-seed fix (PR #4628): a caller retries a seeded auto-send
+  // only on `skipped`, never on `failed` (which would resend and duplicate the
+  // turn). Assert it here at its SOURCE — the panel tests mock this hook, so
+  // without these a `failed` misreported as `skipped` would pass every test.
+  describe('send() outcome contract', () => {
+    it("returns 'dispatched' when the turn actually runs", async () => {
+      const { result } = renderHook(() => useWorkflowBuilderChat());
+      let outcome: WorkflowBuilderSendResult | undefined;
+      await act(async () => {
+        outcome = await result.current.send({
+          displayText: 'hi',
+          request: { mode: 'create', instruction: 'x' },
+        });
+      });
+      expect(outcome?.outcome).toBe('dispatched');
+      expect(buildWorkflow).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns 'failed' (not 'skipped') when the dispatch throws", async () => {
+      // A thrown dispatch is a real error, distinct from the retryable
+      // `skipped` no-op — misreporting it as `skipped` would re-arm the seeded
+      // build effect and loop duplicate turns (see WorkflowCopilotPanel's
+      // `buildSentRef`). The error is also surfaced via `error`.
+      buildWorkflow.mockRejectedValueOnce(new Error('rpc boom'));
+      const { result } = renderHook(() => useWorkflowBuilderChat());
+      let outcome: WorkflowBuilderSendResult | undefined;
+      await act(async () => {
+        outcome = await result.current.send({
+          displayText: 'hi',
+          request: { mode: 'create', instruction: 'x' },
+        });
+      });
+      expect(outcome?.outcome).toBe('failed');
+      expect(result.current.error).toBe('rpc boom');
+    });
+
+    it("returns 'skipped' without dispatching when the socket is not connected", async () => {
+      socketStatus.current = 'connecting';
+      const { result } = renderHook(() => useWorkflowBuilderChat());
+      let outcome: WorkflowBuilderSendResult | undefined;
+      await act(async () => {
+        outcome = await result.current.send({
+          displayText: 'hi',
+          request: { mode: 'create', instruction: 'x' },
+        });
+      });
+      expect(outcome?.outcome).toBe('skipped');
+      // A retryable no-op: nothing was sent and no thread was created.
+      expect(buildWorkflow).not.toHaveBeenCalled();
+      await waitFor(() => expect(result.current.error).toBe('offline'));
+    });
   });
 
   describe('displayMessages', () => {

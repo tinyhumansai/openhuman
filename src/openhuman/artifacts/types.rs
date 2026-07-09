@@ -4,17 +4,13 @@ use serde::{Deserialize, Serialize};
 /// The category of an artifact produced by the agent.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum ArtifactKind {
     Presentation,
     Document,
     Image,
+    #[default]
     Other,
-}
-
-impl Default for ArtifactKind {
-    fn default() -> Self {
-        Self::Other
-    }
 }
 
 impl ArtifactKind {
@@ -42,16 +38,12 @@ impl ArtifactKind {
 /// Lifecycle status of an artifact.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum ArtifactStatus {
+    #[default]
     Pending,
     Ready,
     Failed,
-}
-
-impl Default for ArtifactStatus {
-    fn default() -> Self {
-        Self::Pending
-    }
 }
 
 impl ArtifactStatus {

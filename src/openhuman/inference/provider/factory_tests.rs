@@ -1204,7 +1204,7 @@ fn create_chat_provider_subconscious_managed_resolves_chat_v1() {
 #[test]
 fn create_chat_provider_subconscious_honours_byok_route() {
     // When the user pins a concrete cloud provider for the subconscious workload
-    // in Settings → AI → Advanced, the factory builds that provider and returns
+    // in Connections → API keys → LLM, the factory builds that provider and returns
     // its exact model id.
     let mut config = Config::default();
     config.cloud_providers.push(openai_entry("p_oai", "openai"));

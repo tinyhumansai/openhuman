@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { WorkflowGraph, WorkflowNode } from '../../lib/flows/types';
@@ -55,7 +55,7 @@ describe('WorkflowCopilotPanel', () => {
     hookState.toolTimeline = [];
     hookState.liveResponse = '';
     hookState.error = null;
-    hookState.send = vi.fn().mockResolvedValue({ proposed: false });
+    hookState.send = vi.fn().mockResolvedValue({ outcome: 'dispatched', proposed: false });
     hookState.clearProposal = vi.fn();
   });
 
@@ -358,13 +358,140 @@ describe('WorkflowCopilotPanel', () => {
     expect(hookState.send).toHaveBeenCalledTimes(1);
   });
 
+  it('reports the build seed as consumed once the turn actually dispatched', async () => {
+    const onBuildSeedConsumed = vi.fn();
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        flowId="flow-1"
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+        buildSeed={{ description: 'digest my Slack every morning' }}
+        onBuildSeedConsumed={onBuildSeedConsumed}
+      />
+    );
+    expect(hookState.send).toHaveBeenCalledTimes(1);
+    // Fires exactly once, after the dispatched build turn resolves, so the
+    // route seed can be stripped.
+    await waitFor(() => expect(onBuildSeedConsumed).toHaveBeenCalledTimes(1));
+  });
+
+  it('does not consume the seed when send no-ops (socket not connected) (#4597)', async () => {
+    // `send` resolves `outcome: 'skipped'` when the socket isn't connected —
+    // the turn never dispatched, so the seed must be preserved (not cleared) so
+    // the build can still fire once the socket connects.
+    hookState.send = vi.fn().mockResolvedValue({ outcome: 'skipped', proposed: false });
+    const onBuildSeedConsumed = vi.fn();
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        flowId="flow-1"
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+        buildSeed={{ description: 'digest my Slack every morning' }}
+        onBuildSeedConsumed={onBuildSeedConsumed}
+      />
+    );
+    expect(hookState.send).toHaveBeenCalledTimes(1);
+    // Flush the actual send() promise so the effect's `.then` runs, then assert
+    // the no-op path never consumed the seed.
+    await hookState.send.mock.results[0]?.value;
+    await waitFor(() => expect(onBuildSeedConsumed).not.toHaveBeenCalled());
+  });
+
+  it('does not consume or resend the seed when send fails (#4597)', async () => {
+    // A dispatch error resolves 'failed' (not 'skipped'): the seed is NOT
+    // consumed, and — crucially — the guard stays set so the effect does not
+    // auto-resend the turn (which would duplicate the user message and hammer
+    // the backend). The error surfaces separately for the user to retry.
+    hookState.send = vi.fn().mockResolvedValue({ outcome: 'failed', proposed: false });
+    const onBuildSeedConsumed = vi.fn();
+    const { rerender } = render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        flowId="flow-1"
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+        buildSeed={{ description: 'digest my Slack every morning' }}
+        onBuildSeedConsumed={onBuildSeedConsumed}
+      />
+    );
+    expect(hookState.send).toHaveBeenCalledTimes(1);
+    await hookState.send.mock.results[0]?.value;
+    expect(onBuildSeedConsumed).not.toHaveBeenCalled();
+
+    // A re-render with a fresh `send` identity (as happens on any state change)
+    // must NOT resend — the guard remains set for a failed dispatch.
+    hookState.send = vi.fn().mockResolvedValue({ outcome: 'failed', proposed: false });
+    rerender(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        flowId="flow-1"
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+        buildSeed={{ description: 'digest my Slack every morning' }}
+        onBuildSeedConsumed={onBuildSeedConsumed}
+      />
+    );
+    expect(hookState.send).not.toHaveBeenCalled();
+    expect(onBuildSeedConsumed).not.toHaveBeenCalled();
+  });
+
+  it('does not re-fire the build turn when remounted after the seed is cleared (#4597)', async () => {
+    const onBuildSeedConsumed = vi.fn();
+    // First mount with the seed present (as the prompt-bar route lands).
+    const { unmount } = render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        flowId="flow-1"
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+        buildSeed={{ description: 'digest my Slack every morning' }}
+        onBuildSeedConsumed={onBuildSeedConsumed}
+      />
+    );
+    expect(hookState.send).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onBuildSeedConsumed).toHaveBeenCalledTimes(1));
+
+    // The host clears the route seed (buildSeed -> null) in response. Closing
+    // and reopening the copilot fully remounts the panel — the per-mount
+    // `buildSentRef` resets to false — but with no seed there is nothing to
+    // re-fire, so the build turn must NOT be sent a second time.
+    unmount();
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        flowId="flow-1"
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+        buildSeed={null}
+        onBuildSeedConsumed={onBuildSeedConsumed}
+      />
+    );
+    expect(hookState.send).toHaveBeenCalledTimes(1);
+    expect(onBuildSeedConsumed).toHaveBeenCalledTimes(1);
+  });
+
   it('carries the build seed description forward when the auto-sent build turn asks a clarifying question instead of proposing', async () => {
     hookState.send = vi
       .fn()
-      // The auto-sent build turn asks a question rather than proposing.
-      .mockResolvedValueOnce({ proposed: false })
+      // The auto-sent build turn dispatches but asks a question rather than
+      // proposing.
+      .mockResolvedValueOnce({ outcome: 'dispatched', proposed: false })
       // The user's free-text answer then resolves it.
-      .mockResolvedValueOnce({ proposed: true });
+      .mockResolvedValueOnce({ outcome: 'dispatched', proposed: true });
 
     render(
       <WorkflowCopilotPanel

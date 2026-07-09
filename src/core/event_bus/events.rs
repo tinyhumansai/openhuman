@@ -251,7 +251,7 @@ pub enum DomainEvent {
         /// Provider slug, e.g. `"openrouter"`.
         provider: String,
         /// Human-readable, actionable explanation (update the key in
-        /// Settings → AI). See `auth_error_registry::auth_error_message`.
+        /// Connections → API keys → LLM). See `auth_error_registry::auth_error_message`.
         message: String,
     },
 

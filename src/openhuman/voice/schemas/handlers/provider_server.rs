@@ -214,8 +214,8 @@ pub(crate) fn handle_voice_update_provider_settings(
                     "endpoint": p.endpoint,
                     "auth_style": p.auth_style.as_str(),
                     "capability": p.capability.as_str(),
-                    "stt_api_style": serde_json::to_value(&p.stt_api_style).unwrap_or_default(),
-                    "tts_api_style": serde_json::to_value(&p.tts_api_style).unwrap_or_default(),
+                    "stt_api_style": serde_json::to_value(p.stt_api_style).unwrap_or_default(),
+                    "tts_api_style": serde_json::to_value(p.tts_api_style).unwrap_or_default(),
                     "default_stt_model": p.default_stt_model,
                     "default_tts_voice": p.default_tts_voice,
                 })

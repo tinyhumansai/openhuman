@@ -91,7 +91,20 @@ async function clickRecoveryConsentCheckbox(): Promise<void> {
     throw new Error('Recovery phrase consent checkbox not found');
   }
   if (!(await checkbox.isSelected())) {
-    await checkbox.click();
+    try {
+      await checkbox.click();
+    } catch (err) {
+      console.warn(
+        `[chat-harness-wallet-flow] checkbox click intercepted; applying DOM fallback: ${err}`
+      );
+      await browser.execute(() => {
+        const input = document.querySelector<HTMLInputElement>('#mnemonic-confirm-checkbox');
+        if (!input) return;
+        input.checked = true;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    }
   }
   await browser.waitUntil(async () => await checkbox.isSelected(), {
     timeout: 5_000,

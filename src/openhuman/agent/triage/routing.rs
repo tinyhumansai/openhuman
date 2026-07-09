@@ -152,7 +152,7 @@ fn is_local_cli_route(provider_string: &str) -> bool {
 // ── Provider builder ────────────────────────────────────────────────────
 
 /// Build the remote provider for a triage turn, routed through the
-/// **`subconscious`** background workload so the Settings → AI → Advanced
+/// **`subconscious`** background workload so the Connections → API keys → LLM
 /// "Subconscious" provider control governs triage classification.
 ///
 /// The managed model id comes from `make_openhuman_backend` →

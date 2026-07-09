@@ -258,7 +258,7 @@ pub enum ExpectedErrorKind {
     /// contention (handled by the store's busy-retry loop) and unrelated DB
     /// failures in other domains still reach Sentry.
     SubconsciousSchemaUnavailable,
-    /// The user invoked "Import Codex CLI login" (Settings → AI → Codex auth)
+    /// The user invoked "Import Codex CLI login" (Connections → API keys → LLM → Codex auth)
     /// but the Codex CLI auth at `~/.codex/auth.json` is absent or unusable:
     /// the file doesn't exist (the user never ran `codex login`), can't be
     /// parsed, or carries no tokens / no access token. The import RPC already

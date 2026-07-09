@@ -213,7 +213,7 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         //   "The model `<name>` may not be available on your provider.
         //    Configure a fallback chain via `reliability.model_fallbacks`
         //    in your OpenHuman config, or change your default model in
-        //    Settings → AI.\n\nAll providers/models failed. Attempts:\n…"
+        //    Connections → API keys → LLM.\n\nAll providers/models failed. Attempts:\n…"
         //
         // The aggregate fires once per turn regardless of the underlying
         // per-attempt cause (auth wall, unknown model, region block,
@@ -418,7 +418,7 @@ mod tests {
             // the re-reported error stays demoted.
             (
                 "TAURI-RUST-4P6-enriched",
-                "ollama API error: model 'bge-m3:latest' does not support chat — it appears to be an embedding or non-chat model. Assign a chat-capable model to this provider (e.g. in Settings → AI), or pick a different model.",
+                "ollama API error: model 'bge-m3:latest' does not support chat — it appears to be an embedding or non-chat model. Assign a chat-capable model to this provider (e.g. in Connections → API keys → LLM), or pick a different model.",
             ),
         ] {
             assert!(
@@ -478,28 +478,28 @@ mod tests {
             // 1) Verbatim 4JS payload.
             "The model `reasoning-quick-v1` may not be available on your provider. \
              Configure a fallback chain via `reliability.model_fallbacks` in your \
-             OpenHuman config, or change your default model in Settings → AI.\n\n\
+             OpenHuman config, or change your default model in Connections → API keys → LLM.\n\n\
              All providers/models failed. Attempts:\n\
              provider=openhuman model=reasoning-quick-v1 attempt 1/3: non_retryable; \
              error=OpenHuman API error (401 Unauthorized): {\"success\":false,\"error\":\"Invalid token\"}",
             // 2) Unknown-model upstream cause.
             "The model `gpt-5.5` may not be available on your provider. \
              Configure a fallback chain via `reliability.model_fallbacks` in your \
-             OpenHuman config, or change your default model in Settings → AI.\n\n\
+             OpenHuman config, or change your default model in Connections → API keys → LLM.\n\n\
              All providers/models failed. Attempts:\n\
              provider=custom_openai model=gpt-5.5 attempt 1/3: non_retryable; \
              error=custom_openai API error (404 Not Found): {\"error\":\"model not found\"}",
             // 3) Region-block (R1-sibling) per-attempt cause.
             "The model `gpt-4o` may not be available on your provider. \
              Configure a fallback chain via `reliability.model_fallbacks` in your \
-             OpenHuman config, or change your default model in Settings → AI.\n\n\
+             OpenHuman config, or change your default model in Connections → API keys → LLM.\n\n\
              All providers/models failed. Attempts:\n\
              provider=custom_openai model=gpt-4o attempt 1/3: non_retryable; \
              error=custom_openai API error (403 Forbidden): {\"error\":{\"message\":\"This model is not available in your region.\"}}",
             // 4) Bare aggregate — minimal anchor surface.
             "The model `x` may not be available on your provider. \
              Configure a fallback chain via `reliability.model_fallbacks` in your \
-             OpenHuman config, or change your default model in Settings → AI.\n\n\
+             OpenHuman config, or change your default model in Connections → API keys → LLM.\n\n\
              All providers/models failed. Attempts:\n",
         ] {
             assert!(

@@ -181,11 +181,30 @@ const messages: TranslationMap = {
   'orchPage.group.agent': 'এজেন্ট',
   'orchPage.group.network': 'নেটওয়ার্ক',
   'orchPage.group.insights': 'অন্তর্দৃষ্টি',
+  'orchPage.overview.nav': 'এজেন্ট গ্রাফ',
+  'orchPage.tasks.nav': 'টাস্ক',
+  'orchPage.tasks.subtitle': 'অর্কেস্ট্রেটরের গ্লোবাল টাস্ক বোর্ড',
+  'orchPage.tasks.colPending': 'মুলতুবি',
+  'orchPage.tasks.colActive': 'সক্রিয়',
+  'orchPage.tasks.colBlocked': 'অবরুদ্ধ',
+  'orchPage.tasks.colCompleted': 'সম্পন্ন',
+  'orchPage.overview.core': 'এজেন্ট কোর',
+  'orchPage.overview.empty': 'এখনও ভিজ্যুয়ালাইজ করার মতো কোনো সাব-এজেন্ট নেই',
   'orchPage.agent.nav': 'চ্যাট',
   'orchPage.agent.mainTab': 'প্রধান এজেন্ট',
+  'orchPage.agent.consciousTab': 'সচেতন',
   'orchPage.agent.subconsciousTab': 'অবচেতন',
+  'orchPage.agent.modeLabel': 'এজেন্টের মন',
   'orchPage.agent.description': 'প্রধান এজেন্টের সাথে চ্যাট করুন এবং তার অবচেতন দেখুন',
   'orchPage.agent.viewSession': 'সেশন দেখুন',
+  'orchPage.sessions.railTitle': 'সক্রিয় এজেন্ট',
+  'orchPage.sessions.empty': 'এখনও কোনো সক্রিয় এজেন্ট নেই',
+  'orchPage.sessions.statusConnected': 'সংযুক্ত',
+  'orchPage.sessions.statusDisconnected': 'সংযোগ বিচ্ছিন্ন',
+  'orchPage.sessions.statusWaiting': 'ইনপুটের অপেক্ষায়',
+  'orchPage.session.runtime': 'রানটাইম',
+  'orchPage.session.directory': 'ডিরেক্টরি',
+  'orchPage.session.runningOn': 'চলছে',
   'orchPage.connections.nav': 'সংযোগ',
   'orchPage.connections.title': 'সংযুক্ত এজেন্ট',
   'orchPage.connections.description':
@@ -200,6 +219,10 @@ const messages: TranslationMap = {
   'orchPage.connections.messageCount': '{n}টি বার্তা',
   'orchPage.connections.back': 'সংযোগ',
   'orchPage.connections.replyPlaceholder': 'উত্তর…',
+  'orchPage.connections.initTitle': 'একটি এজেন্ট বা ইনস্ট্যান্স চালু করুন',
+  'orchPage.connections.initDesc':
+    'আপনার সাথে কাজ করার জন্য একটি নতুন সাব-এজেন্ট চালু করুন। এজেন্ট চ্যাট খুলুন এবং এর ভূমিকা, লক্ষ্য ও ব্যবহার্য টুল বর্ণনা করুন — OpenHuman একটি ডেডিকেটেড ইনস্ট্যান্স তৈরি করে যা আপনি এখান থেকে পরিচালনা করতে পারেন।',
+  'orchPage.connections.initCta': 'চ্যাটে শুরু করুন',
   'orchPage.connections.status.needsYou': 'আপনাকে প্রয়োজন',
   'orchPage.connections.status.running': 'চলছে',
   'orchPage.connections.status.idle': 'নিষ্ক্রিয়',
@@ -1059,7 +1082,7 @@ const messages: TranslationMap = {
   'onboarding.runtimeChoice.exitError': 'অনবোর্ডিং শেষ করা যায়নি। আবার চেষ্টা করুন।',
   'onboarding.apiKeys.title': 'আপনার API কী যোগ করুন',
   'onboarding.apiKeys.subtitle':
-    'এখনই পেস্ট করুন বা এড়িয়ে গিয়ে পরে Settings › AI-এ যোগ করুন। কীগুলো এই ডিভাইসে এনক্রিপ্ট করে সংরক্ষিত থাকে।',
+    'এখনই পেস্ট করুন বা এড়িয়ে গিয়ে পরে সংযোগ › API কী-তে যোগ করুন। কীগুলো এই ডিভাইসে এনক্রিপ্ট করে সংরক্ষিত থাকে।',
   'onboarding.apiKeys.openaiLabel': 'OpenAI API কী',
   'onboarding.apiKeys.openaiPlaceholder': 'sk-...',
   'onboarding.apiKeys.openaiOauthHint':
@@ -5425,6 +5448,10 @@ const messages: TranslationMap = {
   'settings.appearance.fontSizeXLargeDesc': 'সর্বাধিক পঠনযোগ্যতার জন্য সবচেয়ে বড় লেখা।',
   'settings.appearance.fontSizeHelperText':
     'সিস্টেম ফন্ট সেটিং নির্বিশেষে পুরো অ্যাপ জুড়ে — চ্যাট, সেটিংস ও প্যানেল — লেখার আকার পরিবর্তন করে।',
+  'settings.appearance.fontSizeCustomLabel': 'কাস্টম আকার',
+  'settings.appearance.fontSizeCustomAria': 'পিক্সেলে কাস্টম ফন্ট আকার',
+  'settings.appearance.fontSizeCustomSliderAria': 'কাস্টম ফন্ট আকারের স্লাইডার, পিক্সেলে',
+  'settings.appearance.fontSizeUnit': 'px',
   'settings.appearance.tabBarHeading': 'নীচের ট্যাব বার',
   'settings.appearance.tabBarAlwaysShowLabels': 'সর্বদা লেবেলগুলি দেখান',
   'settings.appearance.tabBarAlwaysShowLabelsDesc':
@@ -6647,21 +6674,21 @@ const messages: TranslationMap = {
   'memoryTree.status.degradedStructure': 'উইকি কাঠামো অসম্পূর্ণ',
   'memoryTree.status.extractionCoverage': 'এক্সট্র্যাকশন কভারেজ: {pct}% অংশের কাঠামো আছে',
   'memory.health.remediation.budget_exhausted':
-    'মেমরি এমবেডিং পরিচালিত বাজেটে পৌঁছেছে। স্থানীয় Ollama এমবেডিং সেট আপ করুন (সেটিংস → AI → এমবেডিংস) অথবা মেমরি তৈরি চালিয়ে যেতে আপনার নিজস্ব এমবেডিং API কী যোগ করুন।',
+    'মেমরি এমবেডিং পরিচালিত বাজেটে পৌঁছেছে। স্থানীয় Ollama এমবেডিং সেট আপ করুন (সংযোগ → API কী → এমবেডিংস) অথবা মেমরি তৈরি চালিয়ে যেতে আপনার নিজস্ব এমবেডিং API কী যোগ করুন।',
   'memory.health.remediation.auth_missing':
-    'কোনও এমবেডিং শংসাপত্র পাওয়া যায়নি। OpenHuman-এ লগ ইন করুন, অথবা সেটিংস → AI → এমবেডিংস-এ স্থানীয় Ollama এমবেডিং সেট আপ করুন।',
+    'কোনও এমবেডিং শংসাপত্র পাওয়া যায়নি। OpenHuman-এ লগ ইন করুন, অথবা সংযোগ → API কী → এমবেডিংস-এ স্থানীয় Ollama এমবেডিং সেট আপ করুন।',
   'memory.health.remediation.auth_invalid':
-    'আপনার এমবেডিং শংসাপত্র প্রত্যাখ্যাত হয়েছে। পুনরায় প্রমাণীকরণ করুন, অথবা সেটিংস → AI → এমবেডিংস-এ স্থানীয় Ollama এমবেডিং-এ স্যুইচ করুন।',
+    'আপনার এমবেডিং শংসাপত্র প্রত্যাখ্যাত হয়েছে। পুনরায় প্রমাণীকরণ করুন, অথবা সংযোগ → API কী → এমবেডিংস-এ স্থানীয় Ollama এমবেডিং-এ স্যুইচ করুন।',
   'memory.health.remediation.embeddings_unconfigured':
-    'কোনও এমবেডিং প্রদানকারী কনফিগার করা নেই, তাই সিম্যান্টিক রিকল বন্ধ। স্থানীয় Ollama এমবেডিং সেট আপ করুন (প্রস্তাবিত) অথবা সেটিংস → AI → এমবেডিংস-এ একটি এমবেডিং কী যোগ করুন।',
+    'কোনও এমবেডিং প্রদানকারী কনফিগার করা নেই, তাই সিম্যান্টিক রিকল বন্ধ। স্থানীয় Ollama এমবেডিং সেট আপ করুন (প্রস্তাবিত) অথবা সংযোগ → API কী → এমবেডিংস-এ একটি এমবেডিং কী যোগ করুন।',
   'memory.health.remediation.embedding_dim_mismatch':
     'এমবেডিং মডেল ভুল ভেক্টর আকার ফেরত দেয় (মেমরি 1024 মাত্রা প্রত্যাশা করে)। 1024-মাত্রার একটি মডেল বেছে নিন, অথবা আপনার প্রদানকারীর কাছে 1024 মাত্রা অনুরোধ করুন।',
   'memory.health.remediation.local_model_unavailable':
-    'একটি প্রয়োজনীয় স্থানীয় মডেল উপলব্ধ নেই। Ollama ইনস্টল/চালু করুন এবং মডেলটি ডাউনলোড করুন, অথবা সেটিংস → AI-তে এই কাজের চাপ একটি ক্লাউড প্রদানকারীতে স্যুইচ করুন।',
+    'একটি প্রয়োজনীয় স্থানীয় মডেল উপলব্ধ নেই। Ollama ইনস্টল/চালু করুন এবং মডেলটি ডাউনলোড করুন, অথবা সংযোগ → API কী-তে এই কাজের চাপ একটি ক্লাউড প্রদানকারীতে স্যুইচ করুন।',
   'memory.health.remediation.extraction_timeout':
-    'মেমরি এক্সট্র্যাকশন মডেল টাইম আউট হচ্ছে, তাই উইকিতে সামান্য কাঠামো আছে। সেটিংস → AI-তে মেমরি এক্সট্র্যাকশন মডেল একটি দ্রুততর মডেলে পরিবর্তন করুন।',
+    'মেমরি এক্সট্র্যাকশন মডেল টাইম আউট হচ্ছে, তাই উইকিতে সামান্য কাঠামো আছে। সংযোগ → API কী → LLM-তে মেমরি এক্সট্র্যাকশন মডেল একটি দ্রুততর মডেলে পরিবর্তন করুন।',
   'memory.health.remediation.summarizer_unavailable':
-    'সারাংশ ট্রি তৈরির জন্য কোনও সারাংশ প্রদানকারী উপলব্ধ নেই। স্থানীয় AI (Ollama) সক্ষম করুন, অথবা সেটিংস → AI → মেমরিতে ক্লাউড সারাংশ সক্ষম করুন।',
+    'সারাংশ ট্রি তৈরির জন্য কোনও সারাংশ প্রদানকারী উপলব্ধ নেই। স্থানীয় AI (Ollama) সক্ষম করুন, অথবা memory_tree.cloud_summarization_opt_in=true সেট করে সংযোগ → API কী → LLM-তে একটি LLM প্রদানকারী কনফিগার করুন।',
   'memory.health.remediation.empty_input_refused':
     'একটি মেমরি আইটেম এড়িয়ে যাওয়া হয়েছে কারণ এর পাঠ্য খালি ছিল। কোনো পদক্ষেপের প্রয়োজন নেই — নতুন আইটেমগুলি স্বাভাবিকভাবে এমবেড করতে থাকে।',
   'memory.health.remediation.storage_unavailable':
@@ -6669,7 +6696,7 @@ const messages: TranslationMap = {
   'memory.health.remediation.transient':
     'একটি অস্থায়ী ত্রুটি মেমরি প্রক্রিয়াকরণে বাধা দিয়েছে। স্বয়ংক্রিয়ভাবে পুনরায় চেষ্টা করা হবে।',
   'memory.health.remediation.unknown':
-    'মেমরি প্রক্রিয়াকরণে একটি সমস্যা হয়েছে। কনফিগারেশনের জন্য সেটিংস → AI পরীক্ষা করুন।',
+    'মেমরি প্রক্রিয়াকরণে একটি সমস্যা হয়েছে। কনফিগারেশনের জন্য সংযোগ → API কী পরীক্ষা করুন।',
   // Chat — agent-generated artifacts (#2779)
 
   // Chat composer toolbar

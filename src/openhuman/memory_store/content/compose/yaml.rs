@@ -76,7 +76,27 @@ pub fn split_front_matter(content: &str) -> Option<(&str, &str)> {
 /// We conservatively quote strings containing `:`, `#`, `[`, `]`, `{`, `}`,
 /// `"`, `'`, `\`, leading/trailing whitespace, or that start with special
 /// YAML indicator characters.
+///
+/// Newlines, carriage returns and tabs are collapsed to a single space first:
+/// front-matter scalars are single-line identifiers/paths, and a raw newline in
+/// a value would inject a spurious `\n---\n` into the outer front matter, which
+/// the reader's `split_front_matter` would then mistake for the closing
+/// delimiter — corrupting the body boundary and its sha (#4689). Collapsing is
+/// lossless for the identifier fields that flow through here (they never
+/// legitimately contain control whitespace).
 pub fn yaml_scalar(s: &str) -> String {
+    let sanitized: String = s
+        .chars()
+        .map(|c| {
+            if matches!(c, '\n' | '\r' | '\t') {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect();
+    let s = sanitized.as_str();
+
     let needs_quoting = s.is_empty()
         || s.trim() != s
         || s.starts_with(|c: char| {
@@ -92,5 +112,38 @@ pub fn yaml_scalar(s: &str) -> String {
         format!("\"{escaped}\"")
     } else {
         s.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn yaml_scalar_plain_value_is_unquoted() {
+        assert_eq!(yaml_scalar("hello"), "hello");
+    }
+
+    #[test]
+    fn yaml_scalar_collapses_newlines_and_blocks_fm_injection() {
+        // A field value carrying an embedded `\n---\n` must not emit a raw
+        // newline, or it would inject a spurious front-matter closer (#4689).
+        let out = yaml_scalar("vault:evil\n---\ninjected");
+        assert!(!out.contains('\n'), "no raw newline: {out}");
+        assert!(!out.contains('\r'));
+
+        // A composed front matter using the sanitized value still splits at the
+        // real closer, leaving the body intact.
+        let fm = format!("---\nsource_id: {out}\n---\nBODY");
+        let (_, body) = split_front_matter(&fm).expect("front matter splits");
+        assert_eq!(body, "BODY");
+    }
+
+    #[test]
+    fn yaml_scalar_collapses_tabs_and_carriage_returns() {
+        let out = yaml_scalar("a\tb\r\nc");
+        assert!(!out.contains('\t'));
+        assert!(!out.contains('\r'));
+        assert!(!out.contains('\n'));
     }
 }

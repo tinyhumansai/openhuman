@@ -226,7 +226,7 @@ impl Tool for CallMemoryAgentTool {
 
         // Synchronous path — block until the memory agent finishes.
         let started = std::time::Instant::now();
-        match run_subagent(&definition, &prompt, options).await {
+        match run_subagent(definition, &prompt, options).await {
             Ok(outcome) => {
                 let elapsed = started.elapsed();
                 log::info!(

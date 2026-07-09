@@ -137,7 +137,7 @@ impl MemoryProfile {
         let mut effective = config.clone();
         effective.agent.agent_timeout_secs = TOOL_CALL_TIMEOUT_SECS;
         // Route the tick build through the `subconscious` background workload so
-        // Settings → AI → Advanced "Subconscious" governs the cloud tick
+        // Connections → API keys → LLM "Subconscious" governs the cloud tick
         // provider, instead of riding the `chat` role.
         effective.default_model = Some("hint:subconscious".to_string());
         debug!(

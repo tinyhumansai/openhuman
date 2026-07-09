@@ -78,6 +78,7 @@ const INTENTIONAL_ENGLISH = new Set([
   "settings.ai.localOllama",
   "settings.ai.minutesShort",
   "settings.ai.openAiUrlLabel",
+  "settings.appearance.fontSizeUnit", // "px" — CSS unit, identical in every locale
   "settings.billing.inferenceBudget.dailySpendPoint",
   "settings.localModel.download.embeddingModel",
   "settings.localModel.download.ttsOutput",

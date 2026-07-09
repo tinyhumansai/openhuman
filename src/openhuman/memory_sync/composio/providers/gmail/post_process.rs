@@ -128,7 +128,7 @@ pub fn apply_response_level_markdown(data: &mut Value, top_md: &str) {
         );
         return;
     };
-    for (msg, slice) in messages.iter_mut().zip(slices.into_iter()) {
+    for (msg, slice) in messages.iter_mut().zip(slices) {
         if let Some(obj) = msg.as_object_mut() {
             obj.insert("markdownFormatted".to_string(), Value::String(slice));
         }

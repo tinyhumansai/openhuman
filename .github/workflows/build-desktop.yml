@@ -133,7 +133,7 @@ jobs:
       VITE_TELEGRAM_BOT_USERNAME: ${{ inputs.telegram_bot_username }}
     steps:
       - name: Checkout build ref
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.build_ref }}
           fetch-depth: 1
@@ -144,15 +144,16 @@ jobs:
           echo "[build-desktop] tag=${{ inputs.tag }} build_ref=${{ inputs.build_ref }}"
       - name: Set Xcode version
         if: matrix.settings.platform == 'macos-latest'
-        uses: maxim-lobanov/setup-xcode@v1
+        uses: maxim-lobanov/setup-xcode@v1.7.0
         with:
           xcode-version: latest-stable
       - name: Setup pnpm
-        uses: pnpm/action-setup@v5
+        uses: pnpm/action-setup@v6
         with:
+          version: 10.10.0
           cache: true
       - name: Setup Node.js 24.x
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
           node-version: 24.x
       - name: Install Rust (rust-toolchain.toml)
@@ -192,7 +193,7 @@ jobs:
         run: |
           echo "hash=$(tail -n +8 Cargo.lock | openssl dgst -sha256 | awk '{print $2}')" >> "$GITHUB_OUTPUT"
       - name: Cache Cargo registry and git sources
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -206,7 +207,7 @@ jobs:
       # runs. Default path is `dirs::cache_dir()/tauri-cef`.
       - name: Cache CEF binary distribution (unix)
         if: matrix.settings.platform != 'windows-latest'
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/Library/Caches/tauri-cef
@@ -216,7 +217,7 @@ jobs:
             cef-${{ matrix.settings.target }}-
       - name: Cache CEF binary distribution (windows)
         if: matrix.settings.platform == 'windows-latest'
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/AppData/Local/tauri-cef
           key: cef-${{ matrix.settings.target }}-${{ hashFiles('app/src-tauri/Cargo.toml') }}
@@ -236,14 +237,14 @@ jobs:
       - name: Cache vendored tauri-cli binary (unix)
         if: matrix.settings.platform != 'windows-latest'
         id: tauri-cli-cache-unix
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cargo/bin/cargo-tauri
           key: vendored-tauri-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml') }}
       - name: Cache vendored tauri-cli binary (windows)
         if: matrix.settings.platform == 'windows-latest'
         id: tauri-cli-cache-windows
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cargo/bin/cargo-tauri.exe
           key: vendored-tauri-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml') }}
@@ -299,7 +300,7 @@ jobs:
         # `KEYPAIR_ALIAS` (Windows DigiCert sign command). Pubkey + endpoint
         # come from the static `app/src-tauri/tauri.conf.json`.
         id: config-overrides
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           BASE_URL: ${{ inputs.base_url }}
           WITH_UPDATER: ${{ inputs.with_updater && 'true' || 'false' }}
@@ -753,7 +754,7 @@ jobs:
       # ---- Actions-artifact uploads (when not pushing to a GH Release) ------
       - name: Upload desktop bundles as Actions artifact
         if: "!inputs.with_release_upload"
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name:
             desktop-bundles-${{ matrix.settings.platform }}-${{ matrix.settings.artifact_suffix
@@ -763,7 +764,7 @@ jobs:
             target/${{ matrix.settings.target }}/${{ inputs.build_profile }}/bundle/**
       - name: Upload standalone CLI artifact
         if: inputs.build_sidecar && !inputs.with_release_upload
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name:
             standalone-bins-${{ matrix.settings.platform }}-${{ matrix.settings.artifact_suffix

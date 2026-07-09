@@ -610,7 +610,7 @@ impl OfficialServer {
             .map(|(_, s)| s)
             .or_else(|| raw.rsplit_once('.').map(|(_, s)| s))
             .unwrap_or(raw);
-        segment.replace('-', " ").replace('_', " ")
+        segment.replace(['-', '_'], " ")
     }
 
     fn into_summary(self) -> SmitheryServerSummary {

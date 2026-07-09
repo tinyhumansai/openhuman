@@ -353,7 +353,7 @@ pub(crate) fn format_failure_aggregate(
         format!(
             "The model `{model}` may not be available on your provider. \
              Configure a fallback chain via `reliability.model_fallbacks` in your \
-             OpenHuman config, or change your default model in Settings → AI.\n\n{attempts}"
+             OpenHuman config, or change your default model in Connections → API keys → LLM.\n\n{attempts}"
         )
     }
 }
@@ -739,7 +739,7 @@ mod tests {
             "config key reference missing: {msg}"
         );
         assert!(
-            msg.contains("Settings → AI"),
+            msg.contains("Connections → API keys → LLM"),
             "settings pointer missing: {msg}"
         );
         assert!(

@@ -14,6 +14,7 @@ use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::config::{rpc as config_rpc, Config};
 
 use super::attention;
+use super::presence;
 use super::store;
 use super::types::{
     ChatKind, OrchestrationMessage, OrchestrationSession, SessionEnvelopeV1, LOCAL_MASTER_AGENT,
@@ -205,8 +206,20 @@ struct SessionSummary {
     chat_kind: String,
     last_message_at: String,
     unread: i64,
+    /// Total persisted messages in the session (all kinds), for the roster's
+    /// per-session count. `0` for the pinned windows / a freshly created session.
+    message_count: i64,
     active: bool,
     pinned: bool,
+    /// Live peer reachability from the in-memory presence map (`presence.rs`).
+    /// `Some(true)` = confidently online (heard from within the TTL);
+    /// `Some(false)` = confidently offline (heartbeat, once landed); `None` =
+    /// unknown → the UI falls back to the recency-based `active`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    peer_online: Option<bool>,
+    /// ISO-8601 last time we heard from this peer, if ever.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_seen_at: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -333,19 +346,33 @@ fn summarize(
     unread: i64,
     pinned: bool,
     current_task: Option<String>,
+    message_count: i64,
 ) -> SessionSummary {
     let chat_kind = chat_kind_for_session(&session.session_id);
     let active = pinned || is_active(&session.last_message_at);
     let harness_type = harness_type_for(&session.source);
     let status = derive_status(session.status_state.as_deref(), active).to_string();
+    // Overlay live peer presence for real peer sessions only (the pinned
+    // master/subconscious windows have no remote peer).
+    let (peer_online, last_seen_at) = if pinned {
+        (None, None)
+    } else {
+        (
+            presence::is_online(&session.agent_id),
+            presence::last_seen_iso(&session.agent_id),
+        )
+    };
     SessionSummary {
         chat_kind: chat_kind.as_str().to_string(),
         active,
         unread,
+        message_count,
         pinned,
         harness_type,
         status,
         current_task,
+        peer_online,
+        last_seen_at,
         session_id: session.session_id,
         agent_id: session.agent_id,
         source: session.source,
@@ -362,6 +389,8 @@ fn handle_sessions_list(_params: Map<String, Value>) -> ControllerFuture {
         let config = load_config("sessions_list").await?;
         let sessions = store::with_connection(&config.workspace_dir, |conn| {
             let rows = store::list_sessions(conn)?;
+            let visible_counts = store::visible_message_counts(conn)?;
+            let pinned_visible_counts = store::visible_message_counts_by_session(conn)?;
             let mut out: Vec<SessionSummary> = Vec::with_capacity(rows.len() + 2);
             let mut have_master = false;
             let mut have_subconscious = false;
@@ -394,7 +423,24 @@ fn handle_sessions_list(_params: Map<String, Value>) -> ControllerFuture {
                         .map(|body| task_preview(&body)),
                     }
                 };
-                out.push(summarize(session, unread, pinned, current_task));
+                let message_count = if pinned {
+                    pinned_visible_counts
+                        .get(&session.session_id)
+                        .copied()
+                        .unwrap_or(0)
+                } else {
+                    visible_counts
+                        .get(&(session.agent_id.clone(), session.session_id.clone()))
+                        .copied()
+                        .unwrap_or(0)
+                };
+                out.push(summarize(
+                    session,
+                    unread,
+                    pinned,
+                    current_task,
+                    message_count,
+                ));
             }
             // Ensure the pinned windows always exist even before any traffic.
             if !have_master {
@@ -405,7 +451,7 @@ fn handle_sessions_list(_params: Map<String, Value>) -> ControllerFuture {
             }
             Ok(out)
         })
-        .map_err(|e| format!("sessions_list: {e}"))?;
+        .map_err(|e| format!("sessions_list: {e:#}"))?;
         to_json(serde_json::json!({ "sessions": sessions }))
     })
 }
@@ -440,9 +486,9 @@ fn handle_sessions_create(params: Map<String, Value>) -> ControllerFuture {
         store::with_connection(&config.workspace_dir, |conn| {
             store::upsert_session(conn, &session)
         })
-        .map_err(|e| format!("sessions_create: {e}"))?;
+        .map_err(|e| format!("sessions_create: {e:#}"))?;
         super::bus::notify_orchestration_message(&agent_id, &session_id, "session");
-        to_json(serde_json::json!({ "session": summarize(session, 0, false, None) }))
+        to_json(serde_json::json!({ "session": summarize(session, 0, false, None, 0) }))
     })
 }
 
@@ -459,8 +505,11 @@ fn pinned_placeholder(session_id: &str) -> SessionSummary {
         chat_kind: chat_kind_for_session(session_id).as_str().to_string(),
         last_message_at: String::new(),
         unread: 0,
+        message_count: 0,
         active: true,
         pinned: true,
+        peer_online: None,
+        last_seen_at: None,
     }
 }
 
@@ -482,7 +531,7 @@ fn handle_messages_list(params: Map<String, Value>) -> ControllerFuture {
             store::with_connection(&config.workspace_dir, |conn| {
                 store::list_messages_by_session(conn, &session_id, limit, before.as_deref())
             })
-            .map_err(|e| format!("messages_list: {e}"))?;
+            .map_err(|e| format!("messages_list: {e:#}"))?;
         to_json(serde_json::json!({ "messages": messages }))
     })
 }
@@ -593,12 +642,12 @@ fn handle_send_master_message(params: Map<String, Value>) -> ControllerFuture {
                 store::with_connection(&config.workspace_dir, move |conn| {
                     store::session_agent_id(conn, &sid)
                 })
-                .map_err(|e| format!("resolve session recipient: {e}"))?
+                .map_err(|e| format!("resolve session recipient: {e:#}"))?
                 .ok_or_else(|| "unknown session — specify a recipient".to_string())?
             }
             (None, None) => {
                 store::with_connection(&config.workspace_dir, store::latest_master_peer)
-                    .map_err(|e| format!("resolve recipient: {e}"))?
+                    .map_err(|e| format!("resolve recipient: {e:#}"))?
                     .ok_or_else(|| "no Master counterpart yet — specify a recipient".to_string())?
             }
         };
@@ -680,7 +729,7 @@ fn handle_mark_read(params: Map<String, Value>) -> ControllerFuture {
         store::with_connection(&config.workspace_dir, |conn| {
             store::mark_chat_read(conn, &session_id)
         })
-        .map_err(|e| format!("mark_read: {e}"))?;
+        .map_err(|e| format!("mark_read: {e:#}"))?;
         to_json(serde_json::json!({ "ok": true }))
     })
 }
@@ -716,7 +765,7 @@ fn handle_status(_params: Map<String, Value>) -> ControllerFuture {
             let last_error = store::kv_get(conn, "orchestration:last_error")?;
             Ok((steering, ingest_last, lag, last_error))
         })
-        .map_err(|e| format!("status: {e}"))?;
+        .map_err(|e| format!("status: {e:#}"))?;
 
         // Last subconscious tick (best-effort — subconscious store is separate).
         let last_tick_at =
@@ -1170,9 +1219,10 @@ mod tests {
             ..Default::default()
         };
         // current_task is threaded from the handler (status.detail preferred there).
-        let summary = summarize(session, 0, false, Some("approve rm -rf".to_string()));
+        let summary = summarize(session, 0, false, Some("approve rm -rf".to_string()), 7);
         assert_eq!(summary.status, "waiting-approval");
         assert_eq!(summary.current_task.as_deref(), Some("approve rm -rf"));
+        assert_eq!(summary.message_count, 7);
     }
 
     #[test]
@@ -1200,10 +1250,11 @@ mod tests {
             last_message_at: "2020-01-01T00:00:00Z".to_string(),
             ..Default::default()
         };
-        let summary = summarize(session, 2, false, Some("drafting cards".to_string()));
+        let summary = summarize(session, 2, false, Some("drafting cards".to_string()), 12);
         assert_eq!(summary.harness_type.as_deref(), Some("claude"));
         assert_eq!(summary.status, "stopped");
         assert_eq!(summary.current_task.as_deref(), Some("drafting cards"));
+        assert_eq!(summary.message_count, 12);
         assert!(!summary.active);
 
         // A pinned window is always active → idle, and carries no harness/task.

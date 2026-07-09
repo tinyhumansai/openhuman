@@ -3,7 +3,6 @@ mod helpers;
 mod schema_defs;
 
 pub use controllers::{all_controller_schemas, all_registered_controllers};
-pub use schema_defs::schemas;
 
 // Re-export items that schemas_tests.rs accesses via `use super::*`.
 // The test module is `schemas::tests` so `super::` resolves to `schemas`.

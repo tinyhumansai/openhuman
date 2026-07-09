@@ -473,6 +473,13 @@ async fn store_session_inner(
     // in place. Workers that were sleeping in the paused poll loop will
     // pick this up at their next iteration and resume LLM-bound work.
     crate::openhuman::scheduler_gate::set_signed_out(false);
+    tracing::debug!(
+        domain = "credentials",
+        operation = "store_session",
+        "[credentials][auth-store] scheduler gate cleared; ensuring re-embed backfill after login"
+    );
+    crate::openhuman::memory_queue::ensure_reembed_backfill(&effective_config);
+    logs.push("memory re-embed backfill checked after login".to_string());
 
     // Bind the Sentry scope to this user so background events that fire
     // before the frontend's `app_state_snapshot` warms the user cache still

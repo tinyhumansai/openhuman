@@ -99,27 +99,20 @@ pub fn stage_chunks(content_root: &Path, chunks: &[Chunk]) -> anyhow::Result<Vec
         let (full_bytes, body_bytes) = compose::compose_chunk_file(chunk);
         let sha256 = atomic::sha256_hex(&body_bytes);
 
-        match atomic::write_if_new(&abs_path, &full_bytes) {
-            Ok(written) => {
-                if written {
-                    log::debug!("[content_store] wrote chunk {} → {}", chunk.id, rel_path);
-                } else {
-                    log::debug!(
-                        "[content_store] chunk {} already on disk at {}",
-                        chunk.id,
-                        rel_path
-                    );
-                }
-            }
-            Err(e) => {
-                log::error!(
-                    "[content_store] failed to write chunk {} to {}: {e}",
-                    chunk.id,
-                    rel_path
-                );
-                return Err(e);
-            }
+        // Self-heal a stale/drifted on-disk file so the recorded content_sha256
+        // always matches the bytes actually on disk (#4689). A plain write_if_new
+        // would skip a pre-existing file at this path while we still record the
+        // freshly-composed sha, permanently diverging the DB token from disk and
+        // forcing read_chunk_body to serve the ≤500-char preview.
+        if let Err(e) = atomic::write_or_replace_body(&abs_path, &full_bytes, &sha256) {
+            log::error!(
+                "[content_store] failed to write chunk {} to {}: {e}",
+                chunk.id,
+                rel_path
+            );
+            return Err(e);
         }
+        log::debug!("[content_store] staged chunk {} → {}", chunk.id, rel_path);
 
         staged.push(StagedChunk {
             chunk: chunk.clone(),
@@ -193,5 +186,38 @@ mod tests {
         let second = stage_chunks(dir.path(), &chunks).unwrap();
         assert_eq!(first[0].content_sha256, second[0].content_sha256);
         assert_eq!(first[0].content_path, second[0].content_path);
+    }
+
+    #[test]
+    fn stage_chunks_overwrites_stale_on_disk_body() {
+        let dir = TempDir::new().unwrap();
+        let chunk = sample_chunk(0);
+
+        // Pre-write a stale file at the chunk's content path with a different
+        // body, so write_if_new would otherwise skip and leave it in place while
+        // stage_chunks records the fresh body's sha — the #4689 divergence.
+        let abs = paths::chunk_abs_path(
+            dir.path(),
+            chunk.metadata.source_kind.as_str(),
+            &chunk.metadata.source_id,
+            &chunk.id,
+        );
+        std::fs::create_dir_all(abs.parent().unwrap()).unwrap();
+        std::fs::write(&abs, b"---\nstale: 1\n---\nSTALE BODY").unwrap();
+
+        let staged = stage_chunks(dir.path(), std::slice::from_ref(&chunk)).unwrap();
+
+        // The file now holds the freshly-composed body, and the recorded sha
+        // matches the bytes actually on disk.
+        let on_disk = std::fs::read_to_string(&abs).unwrap();
+        assert!(
+            on_disk.ends_with(&chunk.content),
+            "body rewritten: {on_disk}"
+        );
+        let (_, body) = super::compose::split_front_matter(&on_disk).unwrap();
+        assert_eq!(
+            staged[0].content_sha256,
+            atomic::sha256_hex(body.as_bytes())
+        );
     }
 }

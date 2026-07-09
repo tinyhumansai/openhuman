@@ -11,10 +11,7 @@ mod types;
 
 #[path = "../web_errors.rs"]
 mod web_errors;
-pub(crate) use web_errors::{
-    classify_inference_error, inference_budget_exceeded_user_message,
-    is_inference_budget_exceeded_error,
-};
+pub(crate) use web_errors::classify_inference_error;
 #[cfg(any(test, debug_assertions))]
 #[allow(unused_imports)]
 pub(crate) use web_errors::{
@@ -52,25 +49,14 @@ pub use schemas::{
 // Helpers re-exported for tests
 pub(crate) use ops::{event_session_id_for, key_for};
 pub(crate) use progress_bridge::spawn_progress_bridge;
-pub(crate) use session::{compose_system_prompt_suffix, locale_reply_directive};
 
 // Schema field helpers re-exported for tests
-pub(crate) use schemas::{
-    json_output, optional_bool, optional_f64, optional_string, optional_u64, required_string,
-};
 
 // Test helpers (debug/test builds only)
 #[cfg(any(test, debug_assertions))]
 pub use ops::set_test_forced_run_chat_task_error;
 #[cfg(any(test, debug_assertions))]
 pub use ops::{set_test_run_chat_task_block, TestRunChatTaskBlock};
-
-#[cfg(any(test, debug_assertions))]
-pub(crate) use ops::THREAD_SESSIONS;
-#[cfg(any(test, debug_assertions))]
-pub(crate) use session::{normalize_model_override, provider_role_for_model_override};
-#[cfg(any(test, debug_assertions))]
-pub(crate) use types::WebChatParams;
 
 #[cfg(any(test, debug_assertions))]
 pub mod test_support {

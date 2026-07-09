@@ -59,6 +59,35 @@ export interface WorkflowBuilderSendParams {
   request: BuilderTurnRequest;
 }
 
+/**
+ * Outcome of a {@link UseWorkflowBuilderChat.send} call:
+ * - `dispatched` — the turn actually ran (thread created + `flows_build` sent).
+ * - `skipped` — a retryable no-op: the socket wasn't connected, or a turn was
+ *   already in flight. Nothing was sent; a caller may retry later.
+ * - `failed` — the dispatch was attempted but threw (thread create / RPC
+ *   error). The error is surfaced via `error`; a caller must NOT auto-retry, or
+ *   it would resend and duplicate the turn.
+ */
+export type WorkflowBuilderSendOutcome = 'dispatched' | 'skipped' | 'failed';
+
+/**
+ * Result of a {@link UseWorkflowBuilderChat.send} call. Carries two orthogonal
+ * signals a caller may need:
+ * - `outcome` — whether/why the turn dispatched (see {@link
+ *   WorkflowBuilderSendOutcome}). Drives a seeded auto-send's retry decision: it
+ *   retries only on `skipped`, never on `failed` (which would duplicate the
+ *   turn) or `dispatched`.
+ * - `proposed` — `true` iff this turn's `flows_build` call returned a proposal;
+ *   `false` for a clarifying question, an error, or a call that never ran.
+ *   Callers looping a conversation (the copilot's free-text follow-ups) use this
+ *   to know whether the turn's instruction is still "unresolved" and must be
+ *   carried into the next turn — see `WorkflowCopilotPanel`'s `pendingAskRef`.
+ */
+export interface WorkflowBuilderSendResult {
+  outcome: WorkflowBuilderSendOutcome;
+  proposed: boolean;
+}
+
 export interface UseWorkflowBuilderChat {
   /** The dedicated thread id, or `null` before the first send creates it. */
   threadId: string | null;
@@ -101,14 +130,15 @@ export interface UseWorkflowBuilderChat {
   error: string | null;
   /**
    * Send a builder turn, creating the dedicated thread on first use. Resolves
-   * with `proposed: true` iff this turn's `flows_build` call returned a
-   * proposal — `false` for a clarifying question, an error, or a call that
-   * never ran (already sending / offline). Callers that loop a conversation
-   * (the copilot's free-text follow-ups) use this to know whether the turn's
-   * instruction is still "unresolved" and must be carried into the next turn
-   * — see `WorkflowCopilotPanel`'s `pendingAskRef`.
+   * to a {@link WorkflowBuilderSendResult}: `outcome` lets callers tell a
+   * retryable no-op (`skipped`) apart from a real dispatch (`dispatched`) or an
+   * error (`failed`) — a seeded auto-send retries only on `skipped`, never on
+   * `failed`, so a dispatch error can't loop into duplicate turns — while
+   * `proposed` reports whether this turn's `flows_build` call returned a
+   * proposal (vs. a clarifying question / error / no-op), so a looping caller
+   * knows whether the instruction is still unresolved.
    */
-  send: (params: WorkflowBuilderSendParams) => Promise<{ proposed: boolean }>;
+  send: (params: WorkflowBuilderSendParams) => Promise<WorkflowBuilderSendResult>;
   /** Clear the current proposal (e.g. after Accept/Reject) without persisting. */
   clearProposal: () => void;
 }
@@ -239,15 +269,18 @@ export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflo
   const sending = localSending;
 
   const send = useCallback(
-    async ({ displayText, request }: WorkflowBuilderSendParams) => {
+    async ({
+      displayText,
+      request,
+    }: WorkflowBuilderSendParams): Promise<WorkflowBuilderSendResult> => {
       if (localSending) {
         log('send: ignored — a turn is already dispatching');
-        return { proposed: false };
+        return { outcome: 'skipped', proposed: false };
       }
       if (socketStatus !== 'connected') {
         log('send: blocked — socket not connected (%s)', socketStatus);
         setError('offline');
-        return { proposed: false };
+        return { outcome: 'skipped', proposed: false };
       }
       setLocalSending(true);
       setError(null);
@@ -333,6 +366,7 @@ export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflo
             dispatch(addMessageLocal({ threadId: targetThreadId, message: assistantMessage }));
           }
         }
+        return { outcome: 'dispatched', proposed };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         log('send: failed err=%o', err);
@@ -351,10 +385,12 @@ export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflo
           );
           setThreadId(null);
         }
+        // A dispatch error must NOT auto-retry (it would resend and duplicate
+        // the turn) — `failed` is distinct from the retryable `skipped`.
+        return { outcome: 'failed', proposed };
       } finally {
         setLocalSending(false);
       }
-      return { proposed };
     },
     [dispatch, localSending, socketStatus, threadId]
   );

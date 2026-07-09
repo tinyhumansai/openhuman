@@ -176,11 +176,30 @@ const messages: TranslationMap = {
   'orchPage.group.agent': 'الوكيل',
   'orchPage.group.network': 'الشبكة',
   'orchPage.group.insights': 'رؤى',
+  'orchPage.overview.nav': 'رسم الوكلاء',
+  'orchPage.tasks.nav': 'المهام',
+  'orchPage.tasks.subtitle': 'لوحة مهام المنسق العامة',
+  'orchPage.tasks.colPending': 'قيد الانتظار',
+  'orchPage.tasks.colActive': 'نشط',
+  'orchPage.tasks.colBlocked': 'محظور',
+  'orchPage.tasks.colCompleted': 'مكتمل',
+  'orchPage.overview.core': 'نواة الوكيل',
+  'orchPage.overview.empty': 'لا توجد وكلاء فرعيون لعرضهم بعد',
   'orchPage.agent.nav': 'محادثة',
   'orchPage.agent.mainTab': 'الوكيل الرئيسي',
+  'orchPage.agent.consciousTab': 'الوعي',
   'orchPage.agent.subconsciousTab': 'اللاوعي',
+  'orchPage.agent.modeLabel': 'عقل الوكيل',
   'orchPage.agent.description': 'تحدّث مع الوكيل الرئيسي وراقب لاوعيه',
   'orchPage.agent.viewSession': 'عرض الجلسة',
+  'orchPage.sessions.railTitle': 'الوكلاء النشطون',
+  'orchPage.sessions.empty': 'لا يوجد وكلاء نشطون بعد',
+  'orchPage.sessions.statusConnected': 'متصل',
+  'orchPage.sessions.statusDisconnected': 'غير متصل',
+  'orchPage.sessions.statusWaiting': 'بانتظار الإدخال',
+  'orchPage.session.runtime': 'وقت التشغيل',
+  'orchPage.session.directory': 'الدليل',
+  'orchPage.session.runningOn': 'يعمل على',
   'orchPage.connections.nav': 'الاتصالات',
   'orchPage.connections.title': 'الوكلاء المرتبطون',
   'orchPage.connections.description': 'الأقران الذين ينسّق معهم وكيلك — وسّع أحدهم لعرض جلساتك معه',
@@ -194,6 +213,10 @@ const messages: TranslationMap = {
   'orchPage.connections.messageCount': '{n} رسالة',
   'orchPage.connections.back': 'الاتصالات',
   'orchPage.connections.replyPlaceholder': 'رد…',
+  'orchPage.connections.initTitle': 'تهيئة وكيل أو نسخة',
+  'orchPage.connections.initDesc':
+    'أنشئ وكيلًا فرعيًا جديدًا يعمل إلى جانبك. افتح محادثة الوكيل وصف الدور والهدف والأدوات التي يجب أن يستخدمها — يقوم OpenHuman بتجهيز نسخة مخصصة يمكنك توجيهها من هنا.',
+  'orchPage.connections.initCta': 'ابدأ في المحادثة',
   'orchPage.connections.status.needsYou': 'يحتاج إليك',
   'orchPage.connections.status.running': 'قيد التشغيل',
   'orchPage.connections.status.idle': 'خامل',
@@ -1035,7 +1058,7 @@ const messages: TranslationMap = {
   'onboarding.runtimeChoice.exitError': 'تعذّر إتمام الإعداد. يُرجى المحاولة مجددًا.',
   'onboarding.apiKeys.title': 'لنضف مفاتيح API الخاصة بك',
   'onboarding.apiKeys.subtitle':
-    'يمكنك لصقها الآن أو تخطيها وإضافتها لاحقًا من الإعدادات › الذكاء الاصطناعي. تُحفظ المفاتيح على هذا الجهاز مشفرةً.',
+    'يمكنك لصقها الآن أو تخطيها وإضافتها لاحقًا من الاتصالات › مفاتيح API. تُحفظ المفاتيح على هذا الجهاز مشفرةً.',
   'onboarding.apiKeys.openaiLabel': 'مفتاح OpenAI API',
   'onboarding.apiKeys.openaiPlaceholder': 'sk-...',
   'onboarding.apiKeys.openaiOauthHint':
@@ -5304,6 +5327,10 @@ const messages: TranslationMap = {
   'settings.appearance.fontSizeXLargeDesc': 'أكبر حجم للنص لأقصى قدر من الوضوح.',
   'settings.appearance.fontSizeHelperText':
     'يضبط حجم النص في التطبيق بأكمله — المحادثة والإعدادات واللوحات — بشكل مستقل عن إعداد خط نظامك.',
+  'settings.appearance.fontSizeCustomLabel': 'حجم مخصص',
+  'settings.appearance.fontSizeCustomAria': 'حجم الخط المخصص بالبكسل',
+  'settings.appearance.fontSizeCustomSliderAria': 'شريط تمرير حجم الخط المخصص، بالبكسل',
+  'settings.appearance.fontSizeUnit': 'px',
   'settings.appearance.tabBarHeading': 'شريط علامات التبويب السفلي',
   'settings.appearance.tabBarAlwaysShowLabels': 'إظهار التسميات دائمًا',
   'settings.appearance.tabBarAlwaysShowLabelsDesc':
@@ -6500,21 +6527,21 @@ const messages: TranslationMap = {
   'memoryTree.status.degradedStructure': 'بنية الويكي غير مكتملة',
   'memoryTree.status.extractionCoverage': 'تغطية الاستخراج: {pct}% من الأجزاء لها بنية',
   'memory.health.remediation.budget_exhausted':
-    'استنفدت تضمينات الذاكرة الميزانية المُدارة. أعدّ تضمينات Ollama المحلية (الإعدادات → الذكاء الاصطناعي → التضمينات) أو أضف مفتاح API الخاص بك للتضمينات لمواصلة بناء الذاكرة.',
+    'استنفدت تضمينات الذاكرة الميزانية المُدارة. أعدّ تضمينات Ollama المحلية (الاتصالات → مفاتيح API → التضمينات) أو أضف مفتاح API الخاص بك للتضمينات لمواصلة بناء الذاكرة.',
   'memory.health.remediation.auth_missing':
-    'لم يتم العثور على بيانات اعتماد التضمينات. سجّل الدخول إلى OpenHuman، أو أعدّ تضمينات Ollama المحلية في الإعدادات → الذكاء الاصطناعي → التضمينات.',
+    'لم يتم العثور على بيانات اعتماد التضمينات. سجّل الدخول إلى OpenHuman، أو أعدّ تضمينات Ollama المحلية في الاتصالات → مفاتيح API → التضمينات.',
   'memory.health.remediation.auth_invalid':
-    'تم رفض بيانات اعتماد التضمينات الخاصة بك. أعد المصادقة، أو بدّل إلى تضمينات Ollama المحلية في الإعدادات → الذكاء الاصطناعي → التضمينات.',
+    'تم رفض بيانات اعتماد التضمينات الخاصة بك. أعد المصادقة، أو بدّل إلى تضمينات Ollama المحلية في الاتصالات → مفاتيح API → التضمينات.',
   'memory.health.remediation.embeddings_unconfigured':
-    'لم يتم تكوين أي مزوّد تضمينات، لذا فإن الاسترجاع الدلالي معطّل. أعدّ تضمينات Ollama المحلية (موصى به) أو أضف مفتاح تضمينات في الإعدادات → الذكاء الاصطناعي → التضمينات.',
+    'لم يتم تكوين أي مزوّد تضمينات، لذا فإن الاسترجاع الدلالي معطّل. أعدّ تضمينات Ollama المحلية (موصى به) أو أضف مفتاح تضمينات في الاتصالات → مفاتيح API → التضمينات.',
   'memory.health.remediation.embedding_dim_mismatch':
     'يعيد نموذج التضمين حجم متجه خاطئًا (تتوقع الذاكرة 1024 بُعدًا). اختر نموذجًا بـ 1024 بُعدًا، أو اطلب 1024 بُعدًا من مزوّدك.',
   'memory.health.remediation.local_model_unavailable':
-    'نموذج محلي مطلوب غير متوفر. ثبّت/شغّل Ollama ونزّل النموذج، أو بدّل هذا الحِمل إلى مزوّد سحابي في الإعدادات → الذكاء الاصطناعي.',
+    'نموذج محلي مطلوب غير متوفر. ثبّت/شغّل Ollama ونزّل النموذج، أو بدّل هذا الحِمل إلى مزوّد سحابي في الاتصالات → مفاتيح API.',
   'memory.health.remediation.extraction_timeout':
-    'يتجاوز نموذج استخراج الذاكرة المهلة الزمنية، لذا فإن بنية الويكي قليلة. بدّل نموذج استخراج الذاكرة إلى نموذج أسرع في الإعدادات → الذكاء الاصطناعي.',
+    'يتجاوز نموذج استخراج الذاكرة المهلة الزمنية، لذا فإن بنية الويكي قليلة. بدّل نموذج استخراج الذاكرة إلى نموذج أسرع في الاتصالات → مفاتيح API → LLM.',
   'memory.health.remediation.summarizer_unavailable':
-    'لا يتوفر مزوّد تلخيص لميزة إنشاء أشجار التلخيص. فعّل الذكاء الاصطناعي المحلي (Ollama)، أو فعّل تلخيص السحابة في الإعدادات → الذكاء الاصطناعي → الذاكرة.',
+    'لا يتوفر مزوّد تلخيص لميزة إنشاء أشجار التلخيص. فعّل الذكاء الاصطناعي المحلي (Ollama)، أو اضبط memory_tree.cloud_summarization_opt_in=true وهيّئ مزوّد LLM في الاتصالات → مفاتيح API → LLM.',
   'memory.health.remediation.empty_input_refused':
     'تم تخطي عنصر ذاكرة لأن نصه كان فارغًا. لا حاجة لأي إجراء — تستمر العناصر الجديدة في التضمين بشكل طبيعي.',
   'memory.health.remediation.storage_unavailable':
@@ -6522,7 +6549,7 @@ const messages: TranslationMap = {
   'memory.health.remediation.transient':
     'حدث خطأ مؤقت أدى إلى مقاطعة معالجة الذاكرة. ستتم إعادة المحاولة تلقائيًا.',
   'memory.health.remediation.unknown':
-    'واجهت معالجة الذاكرة مشكلة. تحقق من الإعدادات → الذكاء الاصطناعي للتكوين.',
+    'واجهت معالجة الذاكرة مشكلة. تحقق من الاتصالات → مفاتيح API للتكوين.',
   // Chat — agent-generated artifacts (#2779)
 
   // Chat composer toolbar

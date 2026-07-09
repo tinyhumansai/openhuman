@@ -396,11 +396,9 @@ pub(crate) async fn install_workflow_from_url_with_home(
 
     // Notify live agent sessions so they refresh their `## Installed Skills`
     // catalogue mid-conversation (see `Agent::refresh_workflows`).
-    let _ = crate::core::event_bus::publish_global(
-        crate::core::event_bus::DomainEvent::WorkflowsChanged {
-            reason: "install".to_string(),
-        },
-    );
+    crate::core::event_bus::publish_global(crate::core::event_bus::DomainEvent::WorkflowsChanged {
+        reason: "install".to_string(),
+    });
 
     Ok(InstallWorkflowFromUrlOutcome {
         url: raw_url,
@@ -570,11 +568,9 @@ pub fn uninstall_workflow(
 
     // Notify live agent sessions to drop the removed skill from their
     // `## Installed Skills` catalogue (see `Agent::refresh_workflows`).
-    let _ = crate::core::event_bus::publish_global(
-        crate::core::event_bus::DomainEvent::WorkflowsChanged {
-            reason: "uninstall".to_string(),
-        },
-    );
+    crate::core::event_bus::publish_global(crate::core::event_bus::DomainEvent::WorkflowsChanged {
+        reason: "uninstall".to_string(),
+    });
 
     Ok(UninstallWorkflowOutcome {
         name: trimmed,

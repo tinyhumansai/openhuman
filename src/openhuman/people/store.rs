@@ -453,8 +453,7 @@ impl PeopleStore {
         let ids: Vec<PersonId> = person_ids.to_vec();
         tokio::task::spawn_blocking(move || -> SqlResult<HashMap<PersonId, Vec<Interaction>>> {
             let guard = conn.blocking_lock();
-            let placeholders = std::iter::repeat("?")
-                .take(ids.len())
+            let placeholders = std::iter::repeat_n("?", ids.len())
                 .collect::<Vec<_>>()
                 .join(",");
             let sql = format!(

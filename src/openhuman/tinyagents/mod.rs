@@ -1243,7 +1243,7 @@ fn assemble_turn_harness(
     tool_sets: Vec<Arc<Vec<Box<dyn crate::openhuman::tools::Tool>>>>,
     allowed: Option<HashSet<String>>,
     max_iterations: usize,
-    on_progress: Option<Sender<AgentProgress>>,
+    _on_progress: Option<Sender<AgentProgress>>,
     subagent_scope: Option<SubagentScope>,
     context_window: Option<u64>,
     early_exit_tools: &[&str],
@@ -1461,11 +1461,8 @@ fn assemble_turn_harness(
         .iter()
         .flat_map(|set| set.iter())
         .map(|tool| tool.name())
-        .filter_map(|name| {
-            seen_candidates
-                .insert(name.to_string())
-                .then(|| name.to_string())
-        })
+        .filter(|&name| seen_candidates.insert(name.to_string()))
+        .map(|name| name.to_string())
         .collect();
     let mut registered: HashSet<String> = HashSet::new();
     for name in candidate_names.iter().map(String::as_str) {

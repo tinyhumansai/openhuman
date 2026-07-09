@@ -280,7 +280,7 @@ describe('AIPanel', () => {
         provider: 'openrouter',
         status: 401,
         message:
-          'openrouter rejected the API key (HTTP 401). Update your openrouter API key in Settings → AI to restore it.',
+          'openrouter rejected the API key (HTTP 401). Update your openrouter API key in Connections → API keys → LLM to restore it.',
         timestamp_ms: 1000,
       },
     ]);

@@ -137,11 +137,14 @@ function FlowEditor({
   editorFlow,
   initialCopilotSeed = null,
   initialBuildSeed = null,
+  onBuildSeedConsumed,
 }: {
   editorFlow: EditorFlow;
   initialCopilotSeed?: CopilotRepairSeed | null;
   /** Prompt-bar instant-create seed: open the copilot already building this. */
   initialBuildSeed?: CopilotBuildSeed | null;
+  /** Clear the route's build seed once the copilot has dispatched it (#4597). */
+  onBuildSeedConsumed?: () => void;
 }) {
   const { t } = useT();
   const navigate = useNavigate();
@@ -539,6 +542,7 @@ function FlowEditor({
             onClose={() => setCopilotOpen(false)}
             repairSeed={copilotRepairSeed}
             buildSeed={initialBuildSeed}
+            onBuildSeedConsumed={onBuildSeedConsumed}
             seedThreadId={copilotThreadId}
             onThreadIdChange={handleCopilotThreadId}
           />
@@ -560,6 +564,28 @@ export default function FlowCanvasPage() {
   // The Flows prompt bar's instant-create path navigates here with a build
   // seed so the copilot opens already building the described workflow.
   const buildSeed = useMemo(() => asCopilotBuildSeed(location.state), [location.state]);
+
+  // Strip the ephemeral build seed from `location.state` once the copilot has
+  // dispatched it. The panel's own `buildSentRef` guard is per-mount, so
+  // closing + reopening the copilot remounts it and would otherwise re-fire the
+  // same `build` turn against the still-present route seed (issue #4597).
+  // Preserve any other state fields (e.g. a repair seed) — only drop
+  // `copilotBuild`.
+  const clearBuildSeed = useCallback(() => {
+    // Named `routeState` (not `state`) to avoid shadowing the component-level
+    // `state` from `useState<LoadState>` that drives this file's render switch.
+    const routeState = location.state;
+    if (!routeState || typeof routeState !== 'object' || !('copilotBuild' in routeState)) return;
+    const next = { ...(routeState as Record<string, unknown>) };
+    delete next.copilotBuild;
+    log('build seed consumed — clearing route state: id=%s', id);
+    // Navigate with an object (not a bare pathname) so the current search and
+    // hash are preserved — a string target would drop them.
+    navigate(
+      { pathname: location.pathname, search: location.search, hash: location.hash },
+      { replace: true, state: next }
+    );
+  }, [id, location.state, location.pathname, location.search, location.hash, navigate]);
 
   useEffect(() => {
     // Guards a stale response from clobbering newer state: this effect
@@ -620,6 +646,7 @@ export default function FlowCanvasPage() {
         }}
         initialCopilotSeed={copilotSeed}
         initialBuildSeed={buildSeed}
+        onBuildSeedConsumed={clearBuildSeed}
       />
     );
   }

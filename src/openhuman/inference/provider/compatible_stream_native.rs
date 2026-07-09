@@ -4,7 +4,7 @@ use crate::openhuman::inference::provider::ProviderDelta;
 use super::compatible_dump::dump_response_if_enabled;
 use super::compatible_repeat::{StreamRepeatDetector, STREAM_REPEAT_THRESHOLD};
 use super::compatible_types::{
-    ApiChatResponse, ApiUsage, Choice, Function, NativeChatRequest, OpenHumanMeta, ResponseMessage,
+    ApiChatResponse, ApiUsage, Choice, NativeChatRequest, OpenHumanMeta, ResponseMessage,
     StreamChunkResponse, StreamingToolCall, ToolCall,
 };
 use super::OpenAiCompatibleProvider;

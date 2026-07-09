@@ -385,11 +385,9 @@ pub(crate) fn create_workflow_inner(
 
     // Notify live agent sessions so they pick up the new skill in their
     // `## Installed Skills` catalogue (see `Agent::refresh_workflows`).
-    let _ = crate::core::event_bus::publish_global(
-        crate::core::event_bus::DomainEvent::WorkflowsChanged {
-            reason: "create".to_string(),
-        },
-    );
+    crate::core::event_bus::publish_global(crate::core::event_bus::DomainEvent::WorkflowsChanged {
+        reason: "create".to_string(),
+    });
 
     Ok(created)
 }

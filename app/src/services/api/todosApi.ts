@@ -30,6 +30,14 @@ const log = debug('todosApi');
 export const USER_TASKS_THREAD_ID = 'user-tasks';
 
 /**
+ * The orchestrator's single **global** Kanban board. Unlike per-thread agent
+ * boards (thread-scoped to-dos live under Tiny Agents instead), this is one
+ * app-wide board the orchestrator owns. A human-readable sentinel like the
+ * others — persisted as its own `agent_task_boards/<hex(id)>.json`.
+ */
+export const ORCHESTRATOR_TASKS_THREAD_ID = 'orchestrator-tasks';
+
+/**
  * Reserved board id used by the task source ingestion flow. Source-backed
  * tasks land here before they are pulled into an agent workstream.
  */

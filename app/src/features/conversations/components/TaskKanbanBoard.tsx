@@ -31,12 +31,13 @@ import {
   type TaskSourcesStatus,
 } from '../../../utils/tauriCommands';
 
-type ColumnDef = { status: TaskBoardCardStatus; labelKey: string };
+export type ColumnDef = { status: TaskBoardCardStatus; labelKey: string };
 
 const TASK_SOURCES_THREAD_ID = 'task-sources';
 
-// The board surfaces five columns:
-// Pending / Awaiting Approval / In Progress / Blocked / Done
+// Default board layout — five columns:
+// Pending / Awaiting Approval / In Progress / Blocked / Done.
+// Callers can pass their own `columns` (e.g. the orchestrator's 4-column board).
 const COLUMN_DEFS: ColumnDef[] = [
   { status: 'todo', labelKey: 'conversations.taskKanban.pending' },
   { status: 'awaiting_approval', labelKey: 'conversations.taskKanban.awaitingApprovalColumn' },
@@ -45,10 +46,8 @@ const COLUMN_DEFS: ColumnDef[] = [
   { status: 'done', labelKey: 'conversations.taskKanban.done' },
 ];
 
-/** The five column statuses a user can set directly from the board. */
+/** Statuses offered in the edit dialog's status dropdown (the default set). */
 const COLUMN_STATUSES = COLUMN_DEFS.map(column => column.status);
-
-const STATUS_INDEX = new Map(COLUMN_DEFS.map((column, index) => [column.status, index]));
 
 /** Per-column visual accent: left-border + background tint. Empty string = no accent. */
 const COLUMN_ACCENT: Record<TaskBoardCardStatus, string> = {
@@ -75,14 +74,17 @@ const STATUS_LABEL_KEYS: Record<TaskBoardCardStatus, string> = {
   rejected: 'conversations.taskKanban.rejected',
 };
 
-/** Whether a status owns a kanban column. */
+/** Default status→column index, over the full column set. Used by the shared
+ *  status helpers below (a caller's custom `columns` are always a subset). */
+const STATUS_INDEX = new Map(COLUMN_DEFS.map((column, index) => [column.status, index]));
+
+/** Whether a status owns a kanban column (in the default set). */
 function isColumnStatus(status: TaskBoardCardStatus): boolean {
   return STATUS_INDEX.has(status);
 }
 
 /** Map a card status to the column it renders under.
- *  ready → in_progress column; rejected → done column.
- *  All other statuses now own their own column. */
+ *  ready → in_progress column; rejected → done column; else its own status. */
 function columnFor(status: TaskBoardCardStatus): TaskBoardCardStatus {
   switch (status) {
     case 'ready':
@@ -97,6 +99,9 @@ function columnFor(status: TaskBoardCardStatus): TaskBoardCardStatus {
 interface TaskKanbanBoardProps {
   board: TaskBoard;
   disabled?: boolean;
+  /** Column layout. Defaults to the 5-column set; the orchestrator board passes
+   *  a 4-column set (Pending / Active / Blocked / Completed). */
+  columns?: ColumnDef[];
   headerTitleKey?: string;
   /** Hide the board's own "Tasks" title row — used where the caller already
    *  renders a heading for the board, to avoid a doubled-up title. */
@@ -119,6 +124,7 @@ interface TaskKanbanBoardProps {
 export function TaskKanbanBoard({
   board,
   disabled = false,
+  columns = COLUMN_DEFS,
   headerTitleKey = 'conversations.taskKanban.title',
   hideHeader = false,
   onMove,
@@ -135,6 +141,15 @@ export function TaskKanbanBoard({
   const [sourceControlsOpen, setSourceControlsOpen] = useState(false);
   const [dragOverColumn, setDragOverColumn] = useState<TaskBoardCardStatus | null>(null);
 
+  // Per-instance column layout so a caller can override it (e.g. the
+  // orchestrator's 4-column board). The status→column mapping helpers stay
+  // shared, since any custom `columns` is a subset of the default statuses.
+  const columnDefs = columns;
+  const statusIndex = useMemo(
+    () => new Map(columnDefs.map((column, index) => [column.status, index])),
+    [columnDefs]
+  );
+
   const selectedCard = useMemo(
     () => board.cards.find(card => card.id === selectedCardId) ?? null,
     [board.cards, selectedCardId]
@@ -144,7 +159,7 @@ export function TaskKanbanBoard({
   const showSourceControls = isTaskSourcesBoard || hasSourceCards;
 
   // Always render (even with 0 cards) so a live agent board stays visible.
-  const cardsByStatus = COLUMN_DEFS.reduce(
+  const cardsByStatus = columnDefs.reduce(
     (acc, column) => {
       acc[column.status] = [];
       return acc;
@@ -157,8 +172,8 @@ export function TaskKanbanBoard({
   }
 
   const moveCard = (card: TaskBoardCard, direction: -1 | 1) => {
-    const current = STATUS_INDEX.get(columnFor(card.status)) ?? 0;
-    const next = COLUMN_DEFS[current + direction]?.status;
+    const current = statusIndex.get(columnFor(card.status)) ?? 0;
+    const next = columnDefs[current + direction]?.status;
     if (!next || disabled) return;
     onMove?.(card, next);
   };
@@ -221,7 +236,7 @@ export function TaskKanbanBoard({
         <TaskSourceControls disabled={disabled} compact={!isTaskSourcesBoard} />
       )}
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-        {COLUMN_DEFS.map(column => {
+        {columnDefs.map(column => {
           const cards = cardsByStatus[column.status];
           const isBlockedColumn = column.status === 'blocked';
           const isDragTarget = dragOverColumn === column.status;

@@ -56,13 +56,8 @@ pub enum SandboxBackend {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
+#[derive(Default)]
 pub struct ResourceLimitsConfig {}
-
-impl Default for ResourceLimitsConfig {
-    fn default() -> Self {
-        Self {}
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]

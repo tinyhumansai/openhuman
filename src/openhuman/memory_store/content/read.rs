@@ -256,20 +256,33 @@ pub fn read_chunk_body(
         )
     })?;
 
-    // Verify the on-disk body matches the SHA stored at write time. A mismatch
-    // means the file was tampered with, the tx that committed the pointer
-    // raced with a separate writer, or the disk corrupted — all unsafe to
-    // hand back to a consumer. Fail loudly rather than serve stale/corrupt
-    // bytes into the LLM extractor / summariser pipeline.
+    // The content file is content-addressed and atomically written, so the file
+    // on disk is authoritative for this chunk's body. A sha mismatch means the
+    // stored token drifted from disk — e.g. an external editor rewrote a synced
+    // file after ingest (#4689). Serve the full on-disk body and repair the
+    // stale token so the next read verifies cleanly, instead of returning an Err
+    // that every caller converts into the ≤500-char preview (silent truncation).
     if result.sha256 != expected_sha256 {
-        return Err(anyhow::anyhow!(
-            "[content_store::read] sha256 mismatch for chunk_id={} \
-             expected={} actual={} path_hash={}",
+        log::warn!(
+            "[content_store::read] stale sha token for chunk_id={} disk={} db={} path_hash={} \
+             — serving on-disk body and repairing token",
             chunk_id,
-            expected_sha256,
             result.sha256,
+            expected_sha256,
             redact(&rel_path),
-        ));
+        );
+        if let Err(e) = crate::openhuman::memory_store::chunks::store::update_chunk_content_sha256(
+            config,
+            chunk_id,
+            &result.sha256,
+        ) {
+            // Best-effort: the correct body is already in hand; a failed repair
+            // just means the next read re-heals. Never fail the read on this.
+            log::warn!(
+                "[content_store::read] failed to repair sha token for chunk_id={}: {e:#}",
+                chunk_id,
+            );
+        }
     }
 
     Ok(result.body)
@@ -384,17 +397,28 @@ pub fn read_summary_body(
         )
     })?;
 
-    // Verify the on-disk body matches the SHA stored at seal time. See the
-    // matching guard in `read_chunk_body` for rationale.
+    // Self-heal a drifted sha token by trusting the on-disk file and repairing
+    // the stored token, rather than returning an Err that callers convert into
+    // the ≤500-char preview. See the matching guard in `read_chunk_body` (#4689).
     if result.sha256 != expected_sha256 {
-        return Err(anyhow::anyhow!(
-            "[content_store::read] sha256 mismatch for summary_id={} \
-             expected={} actual={} path_hash={}",
+        log::warn!(
+            "[content_store::read] stale sha token for summary_id={} disk={} db={} path_hash={} \
+             — serving on-disk body and repairing token",
             summary_id,
-            expected_sha256,
             result.sha256,
+            expected_sha256,
             redact(&rel_path),
-        ));
+        );
+        if let Err(e) = crate::openhuman::memory_store::chunks::store::update_summary_content_sha256(
+            config,
+            summary_id,
+            &result.sha256,
+        ) {
+            log::warn!(
+                "[content_store::read] failed to repair sha token for summary_id={}: {e:#}",
+                summary_id,
+            );
+        }
     }
 
     Ok(result.body)
@@ -748,7 +772,7 @@ mod tests {
     }
 
     #[test]
-    fn read_chunk_body_errors_on_sha_mismatch() {
+    fn read_chunk_body_self_heals_on_sha_mismatch() {
         let tmp = TempDir::new().unwrap();
         let cfg = test_config(&tmp);
         let chunk = sample_chunk();
@@ -766,6 +790,8 @@ mod tests {
         })
         .unwrap();
 
+        // Simulate an external editor rewriting the synced file after ingest:
+        // the on-disk body drifts from the recorded content_sha256 (#4689).
         let rel =
             crate::openhuman::memory_store::chunks::store::get_chunk_content_path(&cfg, &chunk.id)
                 .unwrap()
@@ -776,8 +802,74 @@ mod tests {
         }
         std::fs::write(&abs, b"---\nsource_kind: chat\n---\nmutated body").unwrap();
 
-        let err = read_chunk_body(&cfg, &chunk.id).unwrap_err();
-        assert!(err.to_string().contains("sha256 mismatch"));
+        // Self-heal: serve the full on-disk body instead of erroring into the
+        // ≤500-char preview, and repair the stale token.
+        let body = read_chunk_body(&cfg, &chunk.id).unwrap();
+        assert_eq!(body, "mutated body");
+
+        let (_, sha) = crate::openhuman::memory_store::chunks::store::get_chunk_content_pointers(
+            &cfg, &chunk.id,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(sha, sha256_hex(b"mutated body"));
+        // A second read now verifies cleanly against the repaired token.
+        assert_eq!(read_chunk_body(&cfg, &chunk.id).unwrap(), "mutated body");
+    }
+
+    #[test]
+    fn read_summary_body_self_heals_on_sha_mismatch() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = test_config(&tmp);
+        let tree = sample_tree();
+        let node = sample_summary_node();
+        insert_tree(&cfg, &tree).unwrap();
+        let staged = stage_summary(
+            &cfg.memory_tree_content_root(),
+            &SummaryComposeInput {
+                summary_id: &node.id,
+                tree_kind: SummaryTreeKind::Source,
+                tree_id: &tree.id,
+                tree_scope: &tree.scope,
+                level: node.level,
+                child_ids: &node.child_ids,
+                child_basenames: None,
+                child_count: node.child_ids.len(),
+                time_range_start: node.time_range_start,
+                time_range_end: node.time_range_end,
+                sealed_at: node.sealed_at,
+                body: &node.content,
+            },
+            "slack-eng",
+        )
+        .unwrap();
+        with_connection(&cfg, |conn| {
+            let tx = conn.unchecked_transaction()?;
+            insert_summary_tx(&tx, &node, Some(&staged), "test")?;
+            tx.commit()?;
+            Ok(())
+        })
+        .unwrap();
+
+        let (rel, _) = crate::openhuman::memory_store::chunks::store::get_summary_content_pointers(
+            &cfg, &node.id,
+        )
+        .unwrap()
+        .unwrap();
+        let mut abs = cfg.memory_tree_content_root();
+        for part in rel.split('/') {
+            abs.push(part);
+        }
+        std::fs::write(&abs, b"---\ntree_kind: source\n---\nmutated summary").unwrap();
+
+        let body = read_summary_body(&cfg, &node.id).unwrap();
+        assert_eq!(body, "mutated summary");
+        let (_, sha) = crate::openhuman::memory_store::chunks::store::get_summary_content_pointers(
+            &cfg, &node.id,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(sha, sha256_hex(b"mutated summary"));
     }
 
     #[test]

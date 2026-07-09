@@ -13,7 +13,7 @@ use anyhow::{Context, Result};
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
-use tokio::fs::{self, File, OpenOptions};
+use tokio::fs::{self, OpenOptions};
 use tokio::io::AsyncWriteExt;
 
 static WARNED_WORLD_READABLE_CONFIGS: OnceLock<Mutex<HashSet<std::path::PathBuf>>> =

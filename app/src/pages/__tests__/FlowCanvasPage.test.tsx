@@ -5,7 +5,7 @@
  * and the Phase 3d host wiring: Save persists via `flows_update`, and the
  * unsaved-changes guard intercepts the Back button while dirty.
  */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -326,6 +326,45 @@ describe('FlowCanvasPage copilot build seed (prompt-bar instant create)', () => 
     await waitFor(() => expect(screen.getByTestId('stub-copilot-panel')).toBeInTheDocument());
     expect(copilotPanelProps.current?.buildSeed).toEqual({ description: 'digest it' });
     expect(copilotPanelProps.current?.flowId).toBe('test-id');
+  });
+
+  it('clears only the build seed on consume, preserving sibling route state (#4597)', async () => {
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: '/flows/test-id',
+            state: {
+              copilotBuild: { description: 'digest it' },
+              // A sibling seed (a repair context) must survive the strip: the
+              // host clones state and deletes ONLY `copilotBuild` — a regression
+              // that nuked the whole state object would drop this too.
+              copilotRepair: { runId: 'run-1' },
+            },
+          },
+        ]}>
+        <Routes>
+          <Route path="/flows/:id" element={<FlowCanvasPage />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() =>
+      expect(copilotPanelProps.current?.buildSeed).toEqual({ description: 'digest it' })
+    );
+    // The sibling repair seed is present before consumption.
+    expect(copilotPanelProps.current?.repairSeed).toMatchObject({ runId: 'run-1' });
+
+    // The panel dispatched the build turn and reports it consumed; the host must
+    // strip `copilotBuild` from `location.state` so a later remount (close +
+    // reopen) has no seed left to re-fire.
+    act(() => {
+      (copilotPanelProps.current?.onBuildSeedConsumed as () => void)();
+    });
+
+    await waitFor(() => expect(copilotPanelProps.current?.buildSeed).toBeNull());
+    // ...but the sibling repair seed must NOT be nuked along with it.
+    expect(copilotPanelProps.current?.repairSeed).toMatchObject({ runId: 'run-1' });
   });
 
   it('keeps the copilot closed without a seed', async () => {

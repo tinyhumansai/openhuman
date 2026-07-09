@@ -187,16 +187,16 @@ fn embedding_provider_capabilities_share_domain_and_category() {
         "both embedding capabilities must land in the same UI category"
     );
 
-    // The Settings panel they describe is the same one — make sure the
+    // The settings surface they describe is the same one — make sure the
     // `how_to` strings point at it, not at an out-of-date breadcrumb.
     assert!(
-        config.how_to.contains("Settings") && config.how_to.contains("Embeddings"),
-        "config how_to must mention Settings > … > Embeddings, got: {}",
+        config.how_to.contains("Connections") && config.how_to.contains("Embeddings"),
+        "config how_to must mention Connections → … → Embeddings, got: {}",
         config.how_to
     );
     assert!(
-        test.how_to.contains("Settings") && test.how_to.contains("Embeddings"),
-        "test how_to must mention Settings > … > Embeddings, got: {}",
+        test.how_to.contains("Connections") && test.how_to.contains("Embeddings"),
+        "test how_to must mention Connections → … → Embeddings, got: {}",
         test.how_to
     );
 }

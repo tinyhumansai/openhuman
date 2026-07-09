@@ -25,9 +25,9 @@ const AGENT_JOB_USER_FAILURE_MESSAGE: &str = "Something went wrong. Please try a
 // instead of "Something went wrong". Static `&'static str` only — they carry no
 // `err` fields, honouring the no-leak contract on `agent_error_to_user_message`.
 const CRON_HALT_API_KEY_UNSET_MESSAGE: &str =
-    "No API key is set for your AI provider. Add one in Settings \u{2192} AI \u{2192} LLM, then re-run.";
+    "No API key is set for your AI provider. Add it in Connections \u{2192} API keys \u{2192} LLM, then re-run.";
 const CRON_HALT_INSUFFICIENT_CREDITS_MESSAGE: &str =
-    "Your AI provider is out of credits. Top it up or update its key in Settings \u{2192} AI \u{2192} LLM.";
+    "Your AI provider is out of credits. Top it up or update its key in Connections \u{2192} API keys \u{2192} LLM.";
 const CRON_HALT_BUDGET_EXHAUSTED_MESSAGE: &str =
     "You've reached your managed AI budget. Raise it in Settings \u{2192} Billing.";
 const MORNING_BRIEFING_AGENT_ID: &str = "morning_briefing";
@@ -57,7 +57,7 @@ fn agent_error_to_user_message(err: &AgentError) -> &'static str {
             "The model provider is temporarily unavailable. The next run will retry automatically."
         }
         AgentError::ProviderError { retryable: false, .. } => {
-            "The model provider rejected the request. Check your provider credentials in Settings \u{2192} AI \u{2192} LLM."
+            "The model provider rejected the request. Check provider credentials in Connections \u{2192} API keys \u{2192} LLM."
         }
         AgentError::ContextLimitExceeded { .. } => {
             "The conversation grew too long for the model. Start a new session or pick a model with a larger context window."
@@ -66,7 +66,7 @@ fn agent_error_to_user_message(err: &AgentError) -> &'static str {
             "You've reached the daily cost budget for this agent. Raise it in Settings \u{2192} Billing or wait for the next budget window."
         }
         AgentError::MaxIterationsExceeded { .. } => {
-            "The agent stopped after too many tool iterations. Raise the iteration cap in Settings \u{2192} AI \u{2192} LLM or simplify the task."
+            "Too many tool iterations. Raise the iteration cap in Connections \u{2192} API keys \u{2192} LLM or simplify the task."
         }
         AgentError::EmptyProviderResponse { .. } => {
             // Issue #3335: the prior copy named a "local provider"
@@ -78,7 +78,7 @@ fn agent_error_to_user_message(err: &AgentError) -> &'static str {
             // configuration. The richer three-remedy copy lives on the
             // chat-surface side (`channels/providers/web_errors.rs`'s
             // empty_response arm) where there's no drawer-width limit.
-            "Empty model response. Out of credits (Settings \u{2192} Billing) or try a different model in Settings \u{2192} AI \u{2192} LLM."
+            "Empty model response. Out of credits (Settings \u{2192} Billing) or try another model in Connections \u{2192} API keys \u{2192} LLM."
         }
         AgentError::CompactionFailed { .. } => {
             "Automatic history compaction failed. The next run will start with a fresh context."
@@ -636,9 +636,7 @@ async fn execute_job_with_retry(
         && !local_unreachable
         && !permanent_config_halt
     {
-        let report_message = last_agent_error
-            .as_deref()
-            .unwrap_or_else(|| last_output.as_str());
+        let report_message = last_agent_error.as_deref().unwrap_or(last_output.as_str());
         crate::core::observability::report_error(
             report_message,
             "cron",
@@ -1192,29 +1190,28 @@ async fn deliver_if_configured(
 
         // Announce delivery — the cron job specifies the exact channel
         // and target. Used for explicit channel-targeted output.
-        "announce" => {
-            if deliver_to_chat {
-                let channel = delivery.channel.as_deref().ok_or_else(|| {
-                    anyhow::anyhow!("delivery.channel is required for announce mode")
-                })?;
-                let target = delivery
-                    .to
-                    .as_deref()
-                    .ok_or_else(|| anyhow::anyhow!("delivery.to is required for announce mode"))?;
+        "announce" if deliver_to_chat => {
+            let channel = delivery
+                .channel
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("delivery.channel is required for announce mode"))?;
+            let target = delivery
+                .to
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("delivery.to is required for announce mode"))?;
 
-                tracing::debug!(
-                    job_id = %job.id,
-                    channel = %channel,
-                    target = %target,
-                    "[cron] publishing CronDeliveryRequested event"
-                );
-                publish_global(DomainEvent::CronDeliveryRequested {
-                    job_id: job.id.clone(),
-                    channel: channel.to_string(),
-                    target: target.to_string(),
-                    output: output.to_string(),
-                });
-            }
+            tracing::debug!(
+                job_id = %job.id,
+                channel = %channel,
+                target = %target,
+                "[cron] publishing CronDeliveryRequested event"
+            );
+            publish_global(DomainEvent::CronDeliveryRequested {
+                job_id: job.id.clone(),
+                channel: channel.to_string(),
+                target: target.to_string(),
+                output: output.to_string(),
+            });
         }
 
         // No delivery configured — output is stored in last_output only.

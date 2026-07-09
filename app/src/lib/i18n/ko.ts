@@ -178,11 +178,30 @@ const messages: TranslationMap = {
   'orchPage.group.agent': '에이전트',
   'orchPage.group.network': '네트워크',
   'orchPage.group.insights': '인사이트',
+  'orchPage.overview.nav': '에이전트 그래프',
+  'orchPage.tasks.nav': '작업',
+  'orchPage.tasks.subtitle': '오케스트레이터의 전역 작업 보드',
+  'orchPage.tasks.colPending': '대기 중',
+  'orchPage.tasks.colActive': '활성',
+  'orchPage.tasks.colBlocked': '차단됨',
+  'orchPage.tasks.colCompleted': '완료',
+  'orchPage.overview.core': '에이전트 코어',
+  'orchPage.overview.empty': '아직 시각화할 서브 에이전트가 없습니다',
   'orchPage.agent.nav': '채팅',
   'orchPage.agent.mainTab': '메인 에이전트',
+  'orchPage.agent.consciousTab': '의식',
   'orchPage.agent.subconsciousTab': '잠재의식',
+  'orchPage.agent.modeLabel': '에이전트 마음',
   'orchPage.agent.description': '메인 에이전트와 대화하고 잠재의식을 지켜보세요',
   'orchPage.agent.viewSession': '세션 보기',
+  'orchPage.sessions.railTitle': '활성 에이전트',
+  'orchPage.sessions.empty': '아직 활성 에이전트가 없습니다',
+  'orchPage.sessions.statusConnected': '연결됨',
+  'orchPage.sessions.statusDisconnected': '연결 끊김',
+  'orchPage.sessions.statusWaiting': '입력 대기 중',
+  'orchPage.session.runtime': '런타임',
+  'orchPage.session.directory': '디렉터리',
+  'orchPage.session.runningOn': '실행 위치',
   'orchPage.connections.nav': '연결',
   'orchPage.connections.title': '연결된 에이전트',
   'orchPage.connections.description':
@@ -197,6 +216,10 @@ const messages: TranslationMap = {
   'orchPage.connections.messageCount': '{n}개 메시지',
   'orchPage.connections.back': '연결',
   'orchPage.connections.replyPlaceholder': '답장…',
+  'orchPage.connections.initTitle': '에이전트 또는 인스턴스 초기화',
+  'orchPage.connections.initDesc':
+    '함께 일할 새 서브 에이전트를 만드세요. 에이전트 채팅을 열고 역할, 목표, 사용할 도구를 설명하면 OpenHuman이 여기서 조종할 수 있는 전용 인스턴스를 준비합니다.',
+  'orchPage.connections.initCta': '채팅에서 시작',
   'orchPage.connections.status.needsYou': '확인 필요',
   'orchPage.connections.status.running': '실행 중',
   'orchPage.connections.status.idle': '유휴',
@@ -1050,7 +1073,7 @@ const messages: TranslationMap = {
   'onboarding.runtimeChoice.exitError': '온보딩을 완료할 수 없습니다. 다시 시도해 주세요.',
   'onboarding.apiKeys.title': 'API 키를 추가해 봅시다',
   'onboarding.apiKeys.subtitle':
-    '지금 붙여넣거나 건너뛰고 나중에 설정 › AI에서 추가할 수 있습니다. 키는 이 기기에 저장되며 저장 시 암호화됩니다.',
+    '지금 붙여넣거나 건너뛰고 나중에 연결 › API 키에서 추가할 수 있습니다. 키는 이 기기에 저장되며 저장 시 암호화됩니다.',
   'onboarding.apiKeys.openaiLabel': 'OpenAI API 키',
   'onboarding.apiKeys.openaiPlaceholder': 'sk-...',
   'onboarding.apiKeys.openaiOauthHint':
@@ -5361,6 +5384,10 @@ const messages: TranslationMap = {
   'settings.appearance.fontSizeXLargeDesc': '최대 가독성을 위한 가장 큰 텍스트.',
   'settings.appearance.fontSizeHelperText':
     '시스템 글꼴 설정과 관계없이 앱 전체 — 채팅, 설정, 패널 — 의 텍스트 크기를 조정합니다.',
+  'settings.appearance.fontSizeCustomLabel': '사용자 지정 크기',
+  'settings.appearance.fontSizeCustomAria': '픽셀 단위 사용자 지정 글꼴 크기',
+  'settings.appearance.fontSizeCustomSliderAria': '사용자 지정 글꼴 크기 슬라이더, 픽셀 단위',
+  'settings.appearance.fontSizeUnit': 'px',
   'settings.appearance.tabBarHeading': '하단 탭 표시줄',
   'settings.appearance.tabBarAlwaysShowLabels': '항상 레이블 표시',
   'settings.appearance.tabBarAlwaysShowLabelsDesc':
@@ -6570,21 +6597,21 @@ const messages: TranslationMap = {
   'memoryTree.status.degradedStructure': '위키 구조 불완전',
   'memoryTree.status.extractionCoverage': '추출 범위: 청크의 {pct}%에 구조가 있음',
   'memory.health.remediation.budget_exhausted':
-    '메모리 임베딩이 관리형 예산에 도달했습니다. 로컬 Ollama 임베딩을 설정하거나(설정 → AI → 임베딩) 메모리를 계속 구축하려면 자체 임베딩 API 키를 추가하세요.',
+    '메모리 임베딩이 관리형 예산에 도달했습니다. 로컬 Ollama 임베딩을 설정하거나(연결 → API 키 → 임베딩) 메모리를 계속 구축하려면 자체 임베딩 API 키를 추가하세요.',
   'memory.health.remediation.auth_missing':
-    '임베딩 자격 증명을 찾을 수 없습니다. OpenHuman에 로그인하거나 설정 → AI → 임베딩에서 로컬 Ollama 임베딩을 설정하세요.',
+    '임베딩 자격 증명을 찾을 수 없습니다. OpenHuman에 로그인하거나 연결 → API 키 → 임베딩에서 로컬 Ollama 임베딩을 설정하세요.',
   'memory.health.remediation.auth_invalid':
-    '임베딩 자격 증명이 거부되었습니다. 다시 인증하거나 설정 → AI → 임베딩에서 로컬 Ollama 임베딩으로 전환하세요.',
+    '임베딩 자격 증명이 거부되었습니다. 다시 인증하거나 연결 → API 키 → 임베딩에서 로컬 Ollama 임베딩으로 전환하세요.',
   'memory.health.remediation.embeddings_unconfigured':
-    '구성된 임베딩 제공자가 없어 의미 기반 검색이 꺼져 있습니다. 로컬 Ollama 임베딩을 설정하거나(권장) 설정 → AI → 임베딩에서 임베딩 키를 추가하세요.',
+    '구성된 임베딩 제공자가 없어 의미 기반 검색이 꺼져 있습니다. 로컬 Ollama 임베딩을 설정하거나(권장) 연결 → API 키 → 임베딩에서 임베딩 키를 추가하세요.',
   'memory.health.remediation.embedding_dim_mismatch':
     '임베딩 모델이 잘못된 벡터 크기를 반환합니다(메모리는 1024차원을 예상함). 1024차원 모델을 선택하거나 제공자에게 1024차원을 요청하세요.',
   'memory.health.remediation.local_model_unavailable':
-    '필요한 로컬 모델을 사용할 수 없습니다. Ollama를 설치/실행하고 모델을 다운로드하거나, 설정 → AI에서 이 작업을 클라우드 제공자로 전환하세요.',
+    '필요한 로컬 모델을 사용할 수 없습니다. Ollama를 설치/실행하고 모델을 다운로드하거나, 연결 → API 키에서 이 작업을 클라우드 제공자로 전환하세요.',
   'memory.health.remediation.extraction_timeout':
-    '메모리 추출 모델이 시간 초과되어 위키 구조가 거의 없습니다. 설정 → AI에서 메모리 추출 모델을 더 빠른 것으로 변경하세요.',
+    '메모리 추출 모델이 시간 초과되어 위키 구조가 거의 없습니다. 연결 → API 키 → LLM에서 메모리 추출 모델을 더 빠른 것으로 변경하세요.',
   'memory.health.remediation.summarizer_unavailable':
-    '요약 트리 만들기에 사용할 수 있는 요약 제공자가 없습니다. 로컬 AI(Ollama)를 활성화하거나, 설정 → AI → 메모리에서 클라우드 요약을 활성화하세요.',
+    '요약 트리 만들기에 사용할 수 있는 요약 제공자가 없습니다. 로컬 AI(Ollama)를 활성화하거나, memory_tree.cloud_summarization_opt_in=true를 설정하고 연결 → API 키 → LLM에서 LLM 제공자를 구성하세요.',
   'memory.health.remediation.empty_input_refused':
     '텍스트가 비어 있어 메모리 항목이 건너뛰어졌습니다. 조치가 필요하지 않습니다 — 새 항목은 정상적으로 임베딩됩니다.',
   'memory.health.remediation.storage_unavailable':
@@ -6592,7 +6619,7 @@ const messages: TranslationMap = {
   'memory.health.remediation.transient':
     '일시적인 오류로 메모리 처리가 중단되었습니다. 자동으로 다시 시도됩니다.',
   'memory.health.remediation.unknown':
-    '메모리 처리 중 문제가 발생했습니다. 설정 → AI에서 구성을 확인하세요.',
+    '메모리 처리 중 문제가 발생했습니다. 연결 → API 키에서 구성을 확인하세요.',
   // Chat — agent-generated artifacts (#2779)
 
   // Chat composer toolbar

@@ -25,7 +25,7 @@ jobs:
     if: ${{ !contains(github.event.pull_request.labels.*.name, 'docs') && !contains(github.event.pull_request.labels.*.name, 'chore') }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
       - name: Verify Submission Checklist
@@ -42,7 +42,7 @@ jobs:
     if: ${{ !contains(github.event.pull_request.labels.*.name, 'docs') && !contains(github.event.pull_request.labels.*.name, 'chore') }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
       - name: Verify Coverage Matrix
@@ -55,7 +55,7 @@ jobs:
     if: ${{ !contains(github.event.pull_request.labels.*.name, 'docs') && !contains(github.event.pull_request.labels.*.name, 'chore') }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
       - name: Lychee link check
@@ -84,7 +84,7 @@ jobs:
     if: ${{ !contains(github.event.pull_request.labels.*.name, 'docs') && !contains(github.event.pull_request.labels.*.name, 'chore') }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
       - name: Install patchelf

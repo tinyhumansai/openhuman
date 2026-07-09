@@ -186,11 +186,30 @@ const messages: TranslationMap = {
   'orchPage.group.agent': 'Агент',
   'orchPage.group.network': 'Сеть',
   'orchPage.group.insights': 'Аналитика',
+  'orchPage.overview.nav': 'Граф агентов',
+  'orchPage.tasks.nav': 'Задачи',
+  'orchPage.tasks.subtitle': 'Глобальная доска задач оркестратора',
+  'orchPage.tasks.colPending': 'Ожидание',
+  'orchPage.tasks.colActive': 'Активно',
+  'orchPage.tasks.colBlocked': 'Заблокировано',
+  'orchPage.tasks.colCompleted': 'Завершено',
+  'orchPage.overview.core': 'Ядро агента',
+  'orchPage.overview.empty': 'Пока нет субагентов для визуализации',
   'orchPage.agent.nav': 'Чат',
   'orchPage.agent.mainTab': 'Главный агент',
+  'orchPage.agent.consciousTab': 'Сознание',
   'orchPage.agent.subconsciousTab': 'Подсознание',
+  'orchPage.agent.modeLabel': 'Разум агента',
   'orchPage.agent.description': 'Общайтесь с главным агентом и наблюдайте за его подсознанием',
   'orchPage.agent.viewSession': 'Показать сессию',
+  'orchPage.sessions.railTitle': 'Активные агенты',
+  'orchPage.sessions.empty': 'Пока нет активных агентов',
+  'orchPage.sessions.statusConnected': 'Подключено',
+  'orchPage.sessions.statusDisconnected': 'Отключено',
+  'orchPage.sessions.statusWaiting': 'Ожидание ввода',
+  'orchPage.session.runtime': 'Среда выполнения',
+  'orchPage.session.directory': 'Каталог',
+  'orchPage.session.runningOn': 'Выполняется на',
   'orchPage.connections.nav': 'Связи',
   'orchPage.connections.title': 'Связанные агенты',
   'orchPage.connections.description':
@@ -205,6 +224,10 @@ const messages: TranslationMap = {
   'orchPage.connections.messageCount': '{n} сообщений',
   'orchPage.connections.back': 'Связи',
   'orchPage.connections.replyPlaceholder': 'Ответить…',
+  'orchPage.connections.initTitle': 'Инициализировать агента или экземпляр',
+  'orchPage.connections.initDesc':
+    'Создайте нового субагента для работы рядом с вами. Откройте чат агента и опишите роль, цель и инструменты — OpenHuman подготовит выделенный экземпляр, которым вы управляете отсюда.',
+  'orchPage.connections.initCta': 'Начать в чате',
   'orchPage.connections.status.needsYou': 'Требует вас',
   'orchPage.connections.status.running': 'Выполняется',
   'orchPage.connections.status.idle': 'Неактивно',
@@ -1072,7 +1095,7 @@ const messages: TranslationMap = {
     'Не удалось завершить настройку. Пожалуйста, попробуйте ещё раз.',
   'onboarding.apiKeys.title': 'Добавь свои API-ключи',
   'onboarding.apiKeys.subtitle':
-    'Вставь их сейчас или пропусти и добавь позже в Настройки › AI. Ключи хранятся на этом устройстве в зашифрованном виде.',
+    'Вставь их сейчас или пропусти и добавь позже в Подключения › API-ключи. Ключи хранятся на этом устройстве в зашифрованном виде.',
   'onboarding.apiKeys.openaiLabel': 'API-ключ OpenAI',
   'onboarding.apiKeys.openaiPlaceholder': 'sk-...',
   'onboarding.apiKeys.openaiOauthHint':
@@ -5480,6 +5503,11 @@ const messages: TranslationMap = {
   'settings.appearance.fontSizeXLargeDesc': 'Самый крупный текст для максимальной читаемости.',
   'settings.appearance.fontSizeHelperText':
     'Масштабирует текст во всём приложении — чат, настройки и панели — независимо от системных настроек шрифта.',
+  'settings.appearance.fontSizeCustomLabel': 'Пользовательский размер',
+  'settings.appearance.fontSizeCustomAria': 'Пользовательский размер шрифта в пикселях',
+  'settings.appearance.fontSizeCustomSliderAria':
+    'Ползунок пользовательского размера шрифта, в пикселях',
+  'settings.appearance.fontSizeUnit': 'px',
   'settings.appearance.tabBarHeading': 'Нижняя панель вкладок',
   'settings.appearance.tabBarAlwaysShowLabels': 'Всегда показывать метки',
   'settings.appearance.tabBarAlwaysShowLabelsDesc':
@@ -6715,21 +6743,21 @@ const messages: TranslationMap = {
   'memoryTree.status.degradedStructure': 'Структура вики неполная',
   'memoryTree.status.extractionCoverage': 'Охват извлечения: {pct}% фрагментов имеют структуру',
   'memory.health.remediation.budget_exhausted':
-    'Эмбеддинги памяти исчерпали управляемый бюджет. Настройте локальные эмбеддинги Ollama (Настройки → ИИ → Эмбеддинги) или добавьте свой ключ API для эмбеддингов, чтобы продолжить построение памяти.',
+    'Эмбеддинги памяти исчерпали управляемый бюджет. Настройте локальные эмбеддинги Ollama (Подключения → API-ключи → Эмбеддинги) или добавьте свой ключ API для эмбеддингов, чтобы продолжить построение памяти.',
   'memory.health.remediation.auth_missing':
-    'Учётные данные для эмбеддингов не найдены. Войдите в OpenHuman или настройте локальные эмбеддинги Ollama в разделе Настройки → ИИ → Эмбеддинги.',
+    'Учётные данные для эмбеддингов не найдены. Войдите в OpenHuman или настройте локальные эмбеддинги Ollama в разделе Подключения → API-ключи → Эмбеддинги.',
   'memory.health.remediation.auth_invalid':
-    'Ваши учётные данные для эмбеддингов отклонены. Пройдите аутентификацию заново или переключитесь на локальные эмбеддинги Ollama в разделе Настройки → ИИ → Эмбеддинги.',
+    'Ваши учётные данные для эмбеддингов отклонены. Пройдите аутентификацию заново или переключитесь на локальные эмбеддинги Ollama в разделе Подключения → API-ключи → Эмбеддинги.',
   'memory.health.remediation.embeddings_unconfigured':
-    'Поставщик эмбеддингов не настроен, поэтому семантический поиск отключён. Настройте локальные эмбеддинги Ollama (рекомендуется) или добавьте ключ эмбеддингов в разделе Настройки → ИИ → Эмбеддинги.',
+    'Поставщик эмбеддингов не настроен, поэтому семантический поиск отключён. Настройте локальные эмбеддинги Ollama (рекомендуется) или добавьте ключ эмбеддингов в разделе Подключения → API-ключи → Эмбеддинги.',
   'memory.health.remediation.embedding_dim_mismatch':
     'Модель эмбеддингов возвращает неверный размер вектора (память ожидает 1024 измерения). Выберите модель с 1024 измерениями или запросите 1024 измерения у своего поставщика.',
   'memory.health.remediation.local_model_unavailable':
-    'Требуемая локальная модель недоступна. Установите/запустите Ollama и загрузите модель либо переключите эту задачу на облачного поставщика в разделе Настройки → ИИ.',
+    'Требуемая локальная модель недоступна. Установите/запустите Ollama и загрузите модель либо переключите эту задачу на облачного поставщика в разделе Подключения → API-ключи.',
   'memory.health.remediation.extraction_timeout':
-    'Модель извлечения памяти превышает время ожидания, поэтому в вики мало структуры. Выберите более быструю модель извлечения памяти в разделе Настройки → ИИ.',
+    'Модель извлечения памяти превышает время ожидания, поэтому в вики мало структуры. Выберите более быструю модель извлечения памяти в разделе Подключения → API-ключи → LLM.',
   'memory.health.remediation.summarizer_unavailable':
-    'Нет доступного поставщика суммаризации для «Построить деревья сводок». Включите локальный ИИ (Ollama) или включите облачную суммаризацию в разделе Настройки → ИИ → Память.',
+    'Нет доступного поставщика суммаризации для «Построить деревья сводок». Включите локальный ИИ (Ollama) или установите memory_tree.cloud_summarization_opt_in=true и настройте провайдера LLM в Подключения → API-ключи → LLM.',
   'memory.health.remediation.empty_input_refused':
     'Элемент памяти пропущен, так как его текст был пуст. Действия не требуются — новые элементы продолжают встраиваться как обычно.',
   'memory.health.remediation.storage_unavailable':
@@ -6737,7 +6765,7 @@ const messages: TranslationMap = {
   'memory.health.remediation.transient':
     'Временная ошибка прервала обработку памяти. Повтор произойдёт автоматически.',
   'memory.health.remediation.unknown':
-    'При обработке памяти возникла проблема. Проверьте конфигурацию в разделе Настройки → ИИ.',
+    'При обработке памяти возникла проблема. Проверьте конфигурацию в разделе Подключения → API-ключи.',
   // Chat — agent-generated artifacts (#2779)
 
   // Chat composer toolbar

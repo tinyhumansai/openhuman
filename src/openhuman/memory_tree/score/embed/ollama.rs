@@ -126,7 +126,7 @@ fn format_embedding_status_error(
         return format!(
             "Ollama embedding model `{model}` is not installed at {endpoint}. \
              Run `ollama pull {model}` or choose an installed embedding model in \
-             Settings -> AI & Skills -> Local AI. status={status} body={trimmed_body}"
+             Connections → API keys → Embeddings. status={status} body={trimmed_body}"
         );
     }
 

@@ -79,7 +79,7 @@ fn read_string_array(v: &Value, key: &str) -> Vec<String> {
                 .filter_map(|e| e.as_str())
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
-                .map(|s| truncate(s))
+                .map(truncate)
                 .collect()
         })
         .unwrap_or_default()

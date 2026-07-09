@@ -136,7 +136,7 @@ fn parse_native_assistant_envelope(text: &str) -> Option<(String, Vec<TaToolCall
     let calls_val = obj.get("tool_calls")?;
     // Require a non-empty, parseable tool-call array so ordinary JSON-looking
     // assistant prose isn't misread as a tool round.
-    if !calls_val.as_array().is_some_and(|a| !a.is_empty()) {
+    if calls_val.as_array().is_none_or(|a| a.is_empty()) {
         return None;
     }
     let oh_calls: Vec<crate::openhuman::inference::provider::ToolCall> =

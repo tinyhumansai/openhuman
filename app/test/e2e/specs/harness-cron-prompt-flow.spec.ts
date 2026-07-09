@@ -164,6 +164,10 @@ describe('Harness — Cron prompt-flow', () => {
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
+    const superContext = await callOpenhumanRpc('openhuman.config_set_super_context_enabled', {
+      value: false,
+    });
+    expect(superContext.ok).toBe(true);
     console.log(`${LOG_PREFIX} Suite setup complete`);
   });
 

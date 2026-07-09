@@ -299,7 +299,14 @@ function ConnectionRow({
   );
 }
 
-export default function ConnectionsPanel({ onDiscover }: { onDiscover?: () => void }) {
+export default function ConnectionsPanel({
+  onDiscover,
+  onInitializeAgent,
+}: {
+  onDiscover?: () => void;
+  /** Jump to the agent chat to describe + spin up a new sub-agent. */
+  onInitializeAgent?: () => void;
+}) {
   const { t } = useT();
   const { state, runAction, pendingAction, actionError } = usePairing();
   const sessions = useContactSessions();
@@ -518,6 +525,22 @@ export default function ConnectionsPanel({ onDiscover }: { onDiscover?: () => vo
             })}
           </ul>
         )}
+      </SectionCard>
+
+      {/* Initialize a brand-new sub-agent / instance. Unlike Discover (which
+          links to an EXISTING peer), this explains how to spin up your own. */}
+      <SectionCard
+        title={t('orchPage.connections.initTitle')}
+        description={t('orchPage.connections.initDesc')}
+        testId="orch-connections-initialize">
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={onInitializeAgent}
+          disabled={!onInitializeAgent}
+          data-testid="orch-connections-initialize-cta">
+          {t('orchPage.connections.initCta')}
+        </Button>
       </SectionCard>
     </div>
   );

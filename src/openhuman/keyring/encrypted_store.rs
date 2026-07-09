@@ -294,7 +294,7 @@ impl SecretStore {
             };
 
             let hex_key = read_result.with_context(|| {
-                let mut msg = format!(
+                let msg = format!(
                     "Failed to read secret key file at {}",
                     self.key_path.display()
                 );

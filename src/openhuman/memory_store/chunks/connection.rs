@@ -479,7 +479,7 @@ pub(crate) fn get_or_init_connection(config: &Config) -> Result<Arc<PMutex<Conne
             // status for `memory_tree_db` instead of "unknown" until the first
             // failure. Fires once per path for the process lifetime.
             if breaker.mark_startup_emitted() {
-                let _ = crate::core::event_bus::publish_global(
+                crate::core::event_bus::publish_global(
                     crate::core::event_bus::DomainEvent::SystemStartup {
                         component: "memory_tree_db".to_string(),
                     },
@@ -494,7 +494,7 @@ pub(crate) fn get_or_init_connection(config: &Config) -> Result<Arc<PMutex<Conne
                     "[memory_tree] circuit breaker recovered for {}: DB init succeeded after a prior trip",
                     db_path.display()
                 );
-                let _ = crate::core::event_bus::publish_global(
+                crate::core::event_bus::publish_global(
                     crate::core::event_bus::DomainEvent::HealthChanged {
                         component: "memory_tree_db".to_string(),
                         healthy: true,
@@ -522,7 +522,7 @@ pub(crate) fn get_or_init_connection(config: &Config) -> Result<Arc<PMutex<Conne
                     db_path.display(),
                     CB_THRESHOLD
                 );
-                let _ = crate::core::event_bus::publish_global(
+                crate::core::event_bus::publish_global(
                     crate::core::event_bus::DomainEvent::HealthChanged {
                         component: "memory_tree_db".to_string(),
                         healthy: false,

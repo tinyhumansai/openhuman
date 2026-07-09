@@ -50,7 +50,7 @@ pub enum IdentityMatch {
 /// preflight gate runs for this skill. Present + `required = true` ⇒
 /// the preflight described in [`crate::openhuman::skills::schemas`]'s
 /// `preflight_github_gate` runs before the orchestrator boots.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct WorkflowGithubConfig {
     /// When true, the gate runs. When false (default), the gate is
     /// skipped even if other fields are populated — the gate is opt-in
@@ -61,15 +61,6 @@ pub struct WorkflowGithubConfig {
     /// local `git config user.name`. See [`IdentityMatch`].
     #[serde(default)]
     pub identity_match: IdentityMatch,
-}
-
-impl Default for WorkflowGithubConfig {
-    fn default() -> Self {
-        Self {
-            required: false,
-            identity_match: IdentityMatch::default(),
-        }
-    }
 }
 
 /// A skill = an agent definition + its declared inputs (parsed from `skill.toml`).

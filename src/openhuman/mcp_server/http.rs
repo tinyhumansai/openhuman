@@ -146,7 +146,7 @@ async fn handle_post(
         record.protocol_version.clone()
     };
 
-    if protocol_version.as_deref() != Some(expected_protocol.as_str()) {
+    if protocol_version != Some(expected_protocol.as_str()) {
         log_request_rejected(
             "protocol mismatch",
             Some(session_id),
@@ -245,7 +245,7 @@ async fn handle_get(State(state): State<AppState>, headers: HeaderMap) -> Respon
         record.protocol_version.clone()
     };
 
-    if protocol_version.as_deref() != Some(expected_protocol.as_str()) {
+    if protocol_version != Some(expected_protocol.as_str()) {
         log_request_rejected(
             "protocol mismatch",
             Some(session_id),

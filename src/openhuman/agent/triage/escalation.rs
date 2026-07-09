@@ -16,14 +16,12 @@
 //! installed on the task-local so [`run_subagent`] can inherit the
 //! provider and tools.
 
-use std::sync::Arc;
-
 use anyhow::{anyhow, Context};
 
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::harness::fork_context::{with_parent_context, ParentExecutionContext};
 use crate::openhuman::agent::harness::subagent_runner::{self, SubagentRunOptions};
-use crate::openhuman::agent::Agent;
+use crate::openhuman::agent_orchestration::parent_context::build_root_parent;
 use crate::openhuman::config::Config;
 
 use super::decision::TriageAction;
@@ -240,6 +238,28 @@ pub async fn apply_decision(run: TriageRun, envelope: &TriggerEnvelope) -> anyho
 /// normally needs. The cost is acceptable because `react`/`escalate`
 /// triggers are relatively rare (most triggers are `drop`/`acknowledge`)
 /// and the construction is the same O(1) code path `agent_chat` uses.
+/// Build the triage root parent: the shared [`build_root_parent`] context with
+/// nested spawns scoped to the single dispatched target agent.
+///
+/// This collapses the previously hand-rolled ~20-field [`ParentExecutionContext`]
+/// literal onto the shared builder so the two can't drift (#4369). The identity
+/// fields come straight from `build_root_parent` and match the old literal
+/// exactly: `agent_definition_id`/`channel` = `"triage"`, `session_id` =
+/// `"triage-{uuid}"`, and the session-key chain + PFormat tool-call format are
+/// inherited from the config-built agent. The **only** field triage overrides is
+/// `allowed_subagent_ids`: the escalated agent may itself nested-spawn only the
+/// dispatched target (the builder defaults this to empty for background roots).
+async fn build_triage_parent(
+    config: &Config,
+    agent_id: &str,
+) -> anyhow::Result<ParentExecutionContext> {
+    let mut parent_ctx = build_root_parent(config, "triage", "triage", "triage")
+        .await
+        .context("building root parent for sub-agent dispatch")?;
+    parent_ctx.allowed_subagent_ids = [agent_id.to_string()].into_iter().collect();
+    Ok(parent_ctx)
+}
+
 async fn dispatch_target_agent(agent_id: &str, prompt: &str) -> anyhow::Result<String> {
     #[cfg(test)]
     if agent_id.starts_with("missing-agent-") {
@@ -252,57 +272,15 @@ async fn dispatch_target_agent(agent_id: &str, prompt: &str) -> anyhow::Result<S
         .await
         .context("loading config for sub-agent dispatch")?;
 
-    let mut agent =
-        Agent::from_config(&config).context("building Agent from config for sub-agent dispatch")?;
+    let parent_ctx = build_triage_parent(&config, agent_id).await?;
 
-    // Populate connected integrations from the process-wide cache (or a
-    // fresh fetch if cold) so triage-triggered sub-agents see the real
-    // integrations in their system prompts.
-    let integrations = crate::openhuman::composio::fetch_connected_integrations(&config).await;
-    agent.set_connected_integrations(integrations);
-
+    // `build_root_parent` (inside `build_triage_parent`) guarantees the registry
+    // is initialised, so this lookup for the target definition is safe here.
     let registry = AgentDefinitionRegistry::global()
         .ok_or_else(|| anyhow!("AgentDefinitionRegistry not initialised"))?;
     let definition = registry
         .get(agent_id)
         .ok_or_else(|| anyhow!("agent definition `{agent_id}` not found in registry"))?;
-
-    // Build the ParentExecutionContext from the Agent's public accessors
-    // so `run_subagent` can inherit the provider, tools, memory, etc.
-    let parent_ctx = ParentExecutionContext {
-        agent_definition_id: "triage".to_string(),
-        allowed_subagent_ids: [agent_id.to_string()].into_iter().collect(),
-        provider: agent.provider_arc(),
-        all_tools: agent.tools_arc(),
-        all_tool_specs: agent.tool_specs_arc(),
-        visible_tool_names: std::collections::HashSet::new(),
-        model_name: agent.model_name().to_string(),
-        temperature: agent.temperature(),
-        workspace_dir: agent.workspace_dir().to_path_buf(),
-        workspace_descriptor: None,
-        memory: agent.memory_arc(),
-        agent_config: agent.agent_config().clone(),
-        workflows: Arc::new(agent.workflows().to_vec()),
-        memory_context: Arc::new(None), // Sub-agent queries memory via tools if needed
-        session_id: format!("triage-{}", uuid::Uuid::new_v4()),
-        channel: "triage".to_string(),
-        connected_integrations: agent.connected_integrations().to_vec(),
-        // Triage runs sub-agents with the parent's existing dispatcher
-        // — fall back to PFormat if no accessor is available. Triage
-        // doesn't currently spawn anything that depends on the new
-        // dispatcher-aware sub-agent renderer.
-        tool_call_format: crate::openhuman::context::prompt::ToolCallFormat::PFormat,
-        // Triage inherits the parent's session-key chain so escalated
-        // sub-agents write their transcripts alongside the parent's,
-        // preserving the `{parent}__{child}.jsonl` hierarchy.
-        session_key: agent.session_key().to_string(),
-        session_parent_prefix: agent.session_parent_prefix().map(str::to_string),
-        // Triage runs sub-agents synchronously without streaming progress
-        // back to a UI; the runner skips child-progress emission when this
-        // is `None`.
-        on_progress: None,
-        run_queue: None,
-    };
 
     tracing::debug!(
         agent_id = %agent_id,
@@ -406,6 +384,36 @@ mod tests {
     use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
     use serde_json::json;
     use tokio::time::{sleep, timeout, Duration};
+
+    /// The triage parent is the shared root context with one override: nested
+    /// spawns scoped to the dispatched target. Guards the #4369 collapse against
+    /// drift from `build_root_parent`.
+    #[tokio::test]
+    async fn build_triage_parent_scopes_allowed_subagents_to_target() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config = Config {
+            workspace_dir: dir.path().to_path_buf(),
+            ..Config::default()
+        };
+
+        let _ = AgentDefinitionRegistry::init_global_builtins();
+        let ctx = build_triage_parent(&config, "researcher")
+            .await
+            .expect("build triage parent");
+
+        assert_eq!(ctx.agent_definition_id, "triage");
+        assert_eq!(ctx.channel, "triage");
+        assert!(
+            ctx.session_id.starts_with("triage-"),
+            "session_id namespaced by triage prefix, got {}",
+            ctx.session_id
+        );
+        assert_eq!(
+            ctx.allowed_subagent_ids,
+            ["researcher".to_string()].into_iter().collect(),
+            "nested spawns must be scoped to the single dispatched target"
+        );
+    }
 
     static TEST_EVENTS_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 

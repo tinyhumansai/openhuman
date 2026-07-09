@@ -29,7 +29,7 @@ pub(crate) fn collect_cron_reminders(config: &Config, now: DateTime<Utc>) -> Vec
 
     jobs.into_iter()
         .filter(|job| job.enabled)
-        .filter(|job| is_reminder_like_job(job))
+        .filter(is_reminder_like_job)
         .filter(|job| {
             let delta = job.next_run.signed_duration_since(now);
             delta <= lookahead && delta >= Duration::minutes(-2)

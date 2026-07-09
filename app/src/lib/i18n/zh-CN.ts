@@ -164,11 +164,30 @@ const messages: TranslationMap = {
   'orchPage.group.agent': '智能体',
   'orchPage.group.network': '网络',
   'orchPage.group.insights': '洞察',
+  'orchPage.overview.nav': '智能体图谱',
+  'orchPage.tasks.nav': '任务',
+  'orchPage.tasks.subtitle': '编排器的全局任务看板',
+  'orchPage.tasks.colPending': '待处理',
+  'orchPage.tasks.colActive': '进行中',
+  'orchPage.tasks.colBlocked': '已阻塞',
+  'orchPage.tasks.colCompleted': '已完成',
+  'orchPage.overview.core': '智能体核心',
+  'orchPage.overview.empty': '暂无可可视化的子智能体',
   'orchPage.agent.nav': '聊天',
   'orchPage.agent.mainTab': '主智能体',
+  'orchPage.agent.consciousTab': '意识',
   'orchPage.agent.subconsciousTab': '潜意识',
+  'orchPage.agent.modeLabel': '智能体心智',
   'orchPage.agent.description': '与主智能体聊天并观察其潜意识',
   'orchPage.agent.viewSession': '查看会话',
+  'orchPage.sessions.railTitle': '活跃智能体',
+  'orchPage.sessions.empty': '暂无活跃智能体',
+  'orchPage.sessions.statusConnected': '已连接',
+  'orchPage.sessions.statusDisconnected': '已断开',
+  'orchPage.sessions.statusWaiting': '等待输入',
+  'orchPage.session.runtime': '运行时',
+  'orchPage.session.directory': '目录',
+  'orchPage.session.runningOn': '运行于',
   'orchPage.connections.nav': '连接',
   'orchPage.connections.title': '已关联智能体',
   'orchPage.connections.description': '你的智能体协作的伙伴 — 展开其中一个即可查看你与它的会话',
@@ -182,6 +201,10 @@ const messages: TranslationMap = {
   'orchPage.connections.messageCount': '{n} 条消息',
   'orchPage.connections.back': '连接',
   'orchPage.connections.replyPlaceholder': '回复…',
+  'orchPage.connections.initTitle': '初始化一个智能体或实例',
+  'orchPage.connections.initDesc':
+    '启动一个新的子智能体与你协作。打开智能体聊天，描述它的角色、目标和所需工具——OpenHuman 会创建一个专属实例，你可以在这里进行操控。',
+  'orchPage.connections.initCta': '在聊天中开始',
   'orchPage.connections.status.needsYou': '需要你',
   'orchPage.connections.status.running': '运行中',
   'orchPage.connections.status.idle': '空闲',
@@ -1005,7 +1028,7 @@ const messages: TranslationMap = {
   'onboarding.runtimeChoice.exitError': '无法完成引导流程，请重试。',
   'onboarding.apiKeys.title': '添加你的 API 密钥',
   'onboarding.apiKeys.subtitle':
-    '你可以现在粘贴，也可以跳过并稍后在设置 › AI 中添加。密钥会加密存储在此设备上。',
+    '你可以现在粘贴，也可以跳过并稍后在连接 › API 密钥中添加。密钥会加密存储在此设备上。',
   'onboarding.apiKeys.openaiLabel': 'OpenAI API 密钥',
   'onboarding.apiKeys.openaiPlaceholder': 'sk-...',
   'onboarding.apiKeys.openaiOauthHint':
@@ -5140,6 +5163,10 @@ const messages: TranslationMap = {
   'settings.appearance.fontSizeXLargeDesc': '最大的文字，可读性最佳。',
   'settings.appearance.fontSizeHelperText':
     '在整个应用中缩放文字——聊天、设置和面板——与系统字体设置无关。',
+  'settings.appearance.fontSizeCustomLabel': '自定义大小',
+  'settings.appearance.fontSizeCustomAria': '自定义字体大小（像素）',
+  'settings.appearance.fontSizeCustomSliderAria': '自定义字体大小滑块（像素）',
+  'settings.appearance.fontSizeUnit': 'px',
   'settings.appearance.tabBarHeading': '底部标签栏',
   'settings.appearance.tabBarAlwaysShowLabels': '始终显示标签',
   'settings.appearance.tabBarAlwaysShowLabelsDesc': '关闭时，标签仅出现在悬停时或活动选项卡上。',
@@ -6288,27 +6315,27 @@ const messages: TranslationMap = {
   'memoryTree.status.degradedStructure': 'Wiki 结构不完整',
   'memoryTree.status.extractionCoverage': '提取覆盖率：{pct}% 的片段具有结构',
   'memory.health.remediation.budget_exhausted':
-    '记忆嵌入已达到托管预算上限。请设置本地 Ollama 嵌入（设置 → AI → 向量嵌入），或添加你自己的嵌入 API 密钥以继续构建记忆。',
+    '记忆嵌入已达到托管预算上限。请设置本地 Ollama 嵌入（连接 → API 密钥 → 向量嵌入），或添加你自己的嵌入 API 密钥以继续构建记忆。',
   'memory.health.remediation.auth_missing':
-    '未找到嵌入凭据。请登录 OpenHuman，或在设置 → AI → 向量嵌入 中设置本地 Ollama 嵌入。',
+    '未找到嵌入凭据。请登录 OpenHuman，或在连接 → API 密钥 → 向量嵌入 中设置本地 Ollama 嵌入。',
   'memory.health.remediation.auth_invalid':
-    '你的嵌入凭据被拒绝。请重新进行身份验证，或在设置 → AI → 向量嵌入 中切换到本地 Ollama 嵌入。',
+    '你的嵌入凭据被拒绝。请重新进行身份验证，或在连接 → API 密钥 → 向量嵌入 中切换到本地 Ollama 嵌入。',
   'memory.health.remediation.embeddings_unconfigured':
-    '未配置嵌入提供方，因此语义召回已关闭。请设置本地 Ollama 嵌入（推荐），或在设置 → AI → 向量嵌入 中添加嵌入密钥。',
+    '未配置嵌入提供方，因此语义召回已关闭。请设置本地 Ollama 嵌入（推荐），或在连接 → API 密钥 → 向量嵌入 中添加嵌入密钥。',
   'memory.health.remediation.embedding_dim_mismatch':
     '嵌入模型返回的向量大小不正确（记忆需要 1024 维）。请选择 1024 维的模型，或向你的提供方请求 1024 维。',
   'memory.health.remediation.local_model_unavailable':
-    '所需的本地模型不可用。请安装/运行 Ollama 并拉取模型，或在设置 → AI 中将此工作负载切换到云提供方。',
+    '所需的本地模型不可用。请安装/运行 Ollama 并拉取模型，或在连接 → API 密钥 中将此工作负载切换到云提供方。',
   'memory.health.remediation.extraction_timeout':
-    '记忆提取模型超时，因此 Wiki 结构很少。请在设置 → AI 中将记忆提取模型更换为更快的模型。',
+    '记忆提取模型超时，因此 Wiki 结构很少。请在连接 → API 密钥 → 语言模型 中将记忆提取模型更换为更快的模型。',
   'memory.health.remediation.summarizer_unavailable':
-    '没有可用于构建摘要树的摘要提供方。请启用本地 AI（Ollama），或在设置 → AI → 记忆中启用云端摘要。',
+    '没有可用于构建摘要树的摘要提供方。请启用本地 AI（Ollama），或设置 memory_tree.cloud_summarization_opt_in=true，并在连接 → API 密钥 → 语言模型中配置语言模型提供商。',
   'memory.health.remediation.empty_input_refused':
     '由于文本为空，一项记忆已被跳过。无需操作 — 新条目继续正常嵌入。',
   'memory.health.remediation.storage_unavailable':
     'OpenHuman 无法写入其记忆存储 — 磁盘或 SD 卡似乎已损坏、已满或为只读。请检查驱动器并释放空间；存储恢复可写后，记忆处理将自动继续。',
   'memory.health.remediation.transient': '临时错误中断了记忆处理。将自动重试。',
-  'memory.health.remediation.unknown': '记忆处理遇到问题。请在设置 → AI 中检查配置。',
+  'memory.health.remediation.unknown': '记忆处理遇到问题。请在连接 → API 密钥 中检查配置。',
   // Chat — agent-generated artifacts (#2779)
 
   // Chat composer toolbar

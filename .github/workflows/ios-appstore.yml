@@ -49,7 +49,7 @@ jobs:
       APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref || github.ref }}
           fetch-depth: 1
@@ -71,10 +71,12 @@ jobs:
           cache-on-failure: true
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.10.0
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "24"
           cache: "pnpm"
@@ -294,7 +296,7 @@ jobs:
 
       - name: Upload IPA artifact
         if: always() && steps.export.outputs.ipa_path != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openhuman-ios-ipa
           path: ${{ steps.export.outputs.ipa_path }}
@@ -302,7 +304,7 @@ jobs:
 
       - name: Upload archive dSYMs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openhuman-ios-dsyms
           path: app/src-tauri-mobile/gen/apple/build/openhuman-mobile_iOS.xcarchive/dSYMs

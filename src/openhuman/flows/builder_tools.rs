@@ -1319,15 +1319,16 @@ impl Tool for DryRunWorkflowTool {
             .iter()
             .filter(|step| tool_call_node_ids.contains(step.node_id.as_str()))
             .flat_map(|step| {
-                step.diagnostics.iter().filter_map(|diag| {
-                    (diag.location == "args" || diag.location.starts_with("args.")).then(|| {
+                step.diagnostics
+                    .iter()
+                    .filter(|&diag| diag.location == "args" || diag.location.starts_with("args."))
+                    .map(|diag| {
                         json!({
                             "node_id": step.node_id,
                             "location": diag.location,
                             "expression": diag.expression,
                         })
                     })
-                })
             })
             .collect();
 
@@ -1345,8 +1346,10 @@ impl Tool for DryRunWorkflowTool {
             .iter()
             .filter(|step| agent_node_ids.contains(step.node_id.as_str()))
             .flat_map(|step| {
-                step.diagnostics.iter().filter_map(|diag| {
-                    (diag.location == "prompt").then(|| {
+                step.diagnostics
+                    .iter()
+                    .filter(|&diag| diag.location == "prompt")
+                    .map(|diag| {
                         json!({
                             "node_id": step.node_id,
                             "location": diag.location,
@@ -1355,7 +1358,6 @@ impl Tool for DryRunWorkflowTool {
                                 make the prompt a plain instruction.",
                         })
                     })
-                })
             })
             .collect();
 
@@ -1370,8 +1372,10 @@ impl Tool for DryRunWorkflowTool {
             .iter()
             .filter(|step| agent_node_ids.contains(step.node_id.as_str()))
             .flat_map(|step| {
-                step.diagnostics.iter().filter_map(|diag| {
-                    (diag.location == "input_context").then(|| {
+                step.diagnostics
+                    .iter()
+                    .filter(|&diag| diag.location == "input_context")
+                    .map(|diag| {
                         json!({
                             "node_id": step.node_id,
                             "location": diag.location,
@@ -1381,7 +1385,6 @@ impl Tool for DryRunWorkflowTool {
                                 trigger), not an expression that resolves to null.",
                         })
                     })
-                })
             })
             .collect();
 

@@ -1333,6 +1333,7 @@ fn composio_types_roundtrip_connection_tool_trigger_and_history_shapes() {
                 name: "GMAIL_SEND_EMAIL".into(),
                 description: Some("Send mail".into()),
                 parameters: Some(json!({ "type": "object" })),
+                output_parameters: None,
             },
         }],
     };

@@ -28,6 +28,12 @@ use uuid::Uuid;
 /// human cards on this board carry no `assigned_agent` and are never auto-run.
 pub const USER_TASKS_THREAD_ID: &str = "user-tasks";
 
+/// The orchestrator's single, app-wide task board. The orchestrator's `todo`
+/// tool always targets this fixed board (not a per-thread one) so it owns one
+/// global Kanban across every delegation — surfaced in the UI by
+/// `OrchestratorTaskBoard` under the same id.
+pub const ORCHESTRATOR_TASKS_THREAD_ID: &str = "orchestrator-tasks";
+
 use super::store::{global_scratch_store, ScratchTodoStore};
 
 /// Serialise scratch CRUD so each public op's load → mutate → save
@@ -600,7 +606,7 @@ fn apply_claim(
         .find(|c| c.id == card_id)
         .ok_or_else(|| format!("[todos][ops] claim_card: card '{card_id}' not found on board"))?;
 
-    if !expected.iter().any(|s| *s == card.status) {
+    if !expected.contains(&card.status) {
         let current = card.status.as_str();
         return Err(format!(
             "[todos][ops] claim_card: card '{card_id}' status is '{current}', \

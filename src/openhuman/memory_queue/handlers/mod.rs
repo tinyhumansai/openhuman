@@ -738,7 +738,9 @@ fn try_mark_summary_reembed_skipped(
 /// Failure semantics are preserved verbatim from #1574 §6:
 /// - body read failure → log + persistent tombstone (`"body read failed: {e}"`)
 /// - embed wrong dim → log + tombstone (`"embed wrong dim"`)
-/// - embed error → log + tombstone (`"embed failed: {e}"`)
+/// - per-row unrecoverable embed error → log + tombstone (`"embed failed: {e}"`)
+/// - global cloud-auth absence (`AuthMissing`, #4359) → fail the backfill
+///   **without** tombstoning, so the same rows re-embed once the user logs in.
 ///
 /// The single difference vs the old code is the embed call shape: one
 /// `embed_batch` (which collapses N provider round-trips into one for batch-
@@ -809,6 +811,27 @@ async fn reembed_collect(
             }
             Err(e) => {
                 let failure = crate::openhuman::memory_tree::health::classify_embed_error(&e);
+                // #4359: a missing cloud session is a GLOBAL, recoverable-by-
+                // login condition, not a per-row defect — the row is perfectly
+                // embeddable once the user signs in. Tombstoning it (the
+                // unrecoverable branch below) would exclude it from the
+                // worklist forever, so it would never re-embed even after login.
+                // Fail the backfill fast with the typed `AuthMissing` failure
+                // instead: the health banner surfaces the "log in" remediation
+                // and every row stays re-embeddable.
+                if matches!(
+                    failure.code,
+                    crate::openhuman::memory_tree::health::FailureCode::AuthMissing
+                ) {
+                    log::warn!(
+                        "[memory::jobs] reembed_backfill: {label} {id} embed failed — no cloud \
+                         session; failing backfill without tombstoning so rows stay re-embeddable \
+                         after login (sig={active_sig}): {e:#}"
+                    );
+                    return Err(anyhow::Error::new(failure).context(format!(
+                        "reembed_backfill: {label} {id} cloud auth missing (sig={active_sig}): {e:#}"
+                    )));
+                }
                 if !failure.is_unrecoverable() {
                     return Err(anyhow::Error::new(failure).context(format!(
                         "reembed_backfill: {label} {id} transient embed failed (sig={active_sig}): {e:#}"

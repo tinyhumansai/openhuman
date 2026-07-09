@@ -232,7 +232,7 @@ pub fn record_turn(
         // ── B. Edit-window detector ───────────────────────────────────────
         if let Some(prev_at) = prev_agent_at {
             let gap = user_timestamp - prev_at;
-            if gap >= 0.0 && gap < EDIT_WINDOW_SECS {
+            if (0.0..EDIT_WINDOW_SECS).contains(&gap) {
                 let lower = user_message.to_ascii_lowercase();
                 // Pattern → (key, value) pairs.
                 let patterns: &[(&str, &str, &str)] = &[

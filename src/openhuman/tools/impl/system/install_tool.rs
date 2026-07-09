@@ -57,12 +57,10 @@ fn manager_argv(manager: &str) -> Option<(&'static str, Vec<&'static str>)> {
 
 /// Best-effort detection of the host's system package manager.
 fn detect_system_manager() -> Option<&'static str> {
-    for m in ["apt-get", "dnf", "yum", "pacman", "apk", "brew", "winget"] {
-        if find_on_path(m).is_some() {
-            return Some(m);
-        }
-    }
-    None
+    ["apt-get", "dnf", "yum", "pacman", "apk", "brew", "winget"]
+        .into_iter()
+        .find(|&m| find_on_path(m).is_some())
+        .map(|v| v as _)
 }
 
 /// A package name is accepted only if it contains exclusively characters that

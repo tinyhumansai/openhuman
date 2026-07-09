@@ -43,7 +43,7 @@ pub(crate) fn inference_budget_exceeded_user_message() -> &'static str {
     // routing choice in Settings is respected.
     "You're out of credits, so I can't run the managed (cloud) model right now. \
      You can top up your credits or pick a plan to continue — or, if you've enabled a \
-     local model like Ollama, switch routing to \"Use Your Own Models\" in Settings → AI Configuration."
+     local model like Ollama, switch routing to \"Use Your Own Models\" in Connections → API keys → LLM."
 }
 
 pub(crate) fn generic_inference_error_user_message() -> &'static str {
@@ -445,7 +445,7 @@ fn classify_by_backend_error_code(
                 ClassifiedError {
                     error_type: "provider_request_rejected",
                     message: "The request was rejected — usually a model or parameter \
-                         mismatch. Try a different model in Settings → AI → LLM."
+                         mismatch. Try a different model in Connections → API keys → LLM."
                         .to_string(),
                     source: "provider",
                     retryable: false,
@@ -581,7 +581,7 @@ pub(crate) fn classify_inference_error(err: &str) -> ClassifiedError {
         // to quote.
         //
         // Issue #3335: the prior copy ("Try a different model or check your
-        // local provider in Settings → AI → LLM") sent Managed users in
+        // local provider in Connections → API keys → LLM") sent Managed users in
         // exactly the wrong direction — there is no local provider on the
         // Managed route, and the common underlying cause is credit
         // exhaustion (see #3386). The provider name is not available here
@@ -602,7 +602,7 @@ pub(crate) fn classify_inference_error(err: &str) -> ClassifiedError {
             message: "The model returned an empty response. This usually means your inference \
                  credits are exhausted (Settings → Billing), the upstream model is temporarily \
                  unhealthy, or your provider configuration is rejecting the request \
-                 (Settings → AI → LLM). Try one of those, or pick a different model."
+                 (Connections → API keys → LLM). Try one of those, or pick a different model."
                 .to_string(),
             source: "agent_loop",
             retryable: true,
@@ -779,7 +779,7 @@ pub(crate) fn classify_inference_error(err: &str) -> ClassifiedError {
         ClassifiedError {
             error_type: "capability_unsupported",
             message: "This model can't process images. Remove the attachment or switch to a \
-                 vision-capable model in Settings → AI → LLM."
+                 vision-capable model in Connections → API keys → LLM."
                 .to_string(),
             source: "config",
             retryable: false,
@@ -817,7 +817,7 @@ pub(crate) fn classify_inference_error(err: &str) -> ClassifiedError {
             error_type: "provider_request_rejected",
             message: with_provider_detail(
                 "The AI provider rejected the request — this is usually a model or \
-                 parameter incompatibility. Try a different model in Settings → AI → LLM.",
+                 parameter incompatibility. Try a different model in Connections → API keys → LLM.",
                 err,
             ),
             source: "provider",

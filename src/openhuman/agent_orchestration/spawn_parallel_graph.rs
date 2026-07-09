@@ -250,10 +250,7 @@ fn ownership_file_paths(ownership: Option<&str>) -> Result<Vec<PathBuf>, String>
     };
     let mut paths = Vec::new();
     for raw in rest.split([',', '\n']) {
-        let trimmed = raw
-            .trim()
-            .trim_start_matches(|c: char| c == '-' || c == '*')
-            .trim();
+        let trimmed = raw.trim().trim_start_matches(['-', '*']).trim();
         if trimmed.is_empty() {
             continue;
         }

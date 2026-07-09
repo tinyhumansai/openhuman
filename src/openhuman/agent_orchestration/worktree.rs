@@ -241,7 +241,7 @@ pub fn enforce_workspace_path(
         policy_id = %descriptor.policy_id,
         "[workspace] workspace_violation_out_of_root"
     );
-    let _ = publish_global(DomainEvent::WorkspaceViolation {
+    publish_global(DomainEvent::WorkspaceViolation {
         path: rendered.clone(),
     });
     Err(WorktreeError::OutsideWorkspace(path.to_path_buf()))

@@ -88,7 +88,7 @@ pub(super) async fn forward_steers(queue: &RunQueue, handle: &SteeringHandle, th
         delivered,
         "[run_queue] delivered steer message(s) into running steering handle"
     );
-    let _ = publish_global(DomainEvent::RunQueueMessageDelivered {
+    publish_global(DomainEvent::RunQueueMessageDelivered {
         thread_id: thread_label.to_string(),
         mode: "steer".to_string(),
         delivered,
@@ -121,7 +121,7 @@ pub(super) async fn forward_collects(
         delivered,
         "[run_queue] delivered collect message(s) into running steering handle"
     );
-    let _ = publish_global(DomainEvent::RunQueueMessageDelivered {
+    publish_global(DomainEvent::RunQueueMessageDelivered {
         thread_id: thread_label.to_string(),
         mode: "collect".to_string(),
         delivered,
@@ -298,7 +298,7 @@ impl Drop for SteeringForwarderGuard {
             requeued,
             "[run_queue] requeued residual steer(s) as next-turn input (guard drop)"
         );
-        let _ = publish_global(DomainEvent::RunQueueSteerRequeued {
+        publish_global(DomainEvent::RunQueueSteerRequeued {
             thread_id: thread_label,
             requeued,
         });

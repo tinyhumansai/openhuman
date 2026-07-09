@@ -139,16 +139,18 @@ jobs:
           # identity in the ruleset bypass list, not from token scopes.
           permission-contents: write
       - name: Checkout release
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: release
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
           submodules: recursive
       - name: Setup pnpm
-        uses: pnpm/action-setup@v5
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.10.0
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
           node-version: 24.x
           package-manager-cache: false
@@ -281,7 +283,7 @@ jobs:
           echo "upload_url=" >> "$GITHUB_OUTPUT"
       - name: Checkout release ref
         if: ${{ inputs.create_release }}
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare-build.outputs.build_ref }}
           fetch-depth: 0
@@ -323,7 +325,7 @@ jobs:
       - name: Create draft release with generated notes
         if: ${{ inputs.create_release }}
         id: create
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
@@ -414,7 +416,7 @@ jobs:
       IMAGE_NAME: tinyhumansai/openhuman-core
     steps:
       - name: Checkout build ref
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare-build.outputs.build_ref }}
           fetch-depth: 1
@@ -424,9 +426,9 @@ jobs:
       - name: Init vendored Rust submodules
         run: git submodule update --init vendor/tinyagents vendor/tinyflows vendor/tinycortex vendor/tinyjuice vendor/tinychannels vendor/tinyplace
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -448,7 +450,7 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
       - name: Build and push image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
@@ -499,7 +501,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout build ref
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare-build.outputs.build_ref }}
           fetch-depth: 1
@@ -561,7 +563,7 @@ jobs:
     environment: Production
     steps:
       - name: Checkout build ref
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare-build.outputs.build_ref }}
           fetch-depth: 1
@@ -599,7 +601,7 @@ jobs:
       && needs.publish-updater-manifest.result == 'success'
     steps:
       - name: Checkout validation scripts
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare-build.outputs.build_ref }}
           fetch-depth: 1
@@ -625,7 +627,7 @@ jobs:
           scripts/validate-release-assets.sh /tmp/openhuman-release.json /tmp/latest.json
 
       - name: Validate required installer assets exist
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const releaseId = Number('${{ needs.create-release.outputs.release_id }}');
@@ -670,7 +672,7 @@ jobs:
             core.info('All required installer assets are present.');
 
       - name: Publish release
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const releaseId = Number('${{ needs.create-release.outputs.release_id }}');
@@ -706,9 +708,9 @@ jobs:
       IMAGE_NAME: tinyhumansai/openhuman-core
     steps:
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -794,7 +796,7 @@ jobs:
     steps:
       - name: Delete GitHub release
         if: ${{ inputs.create_release && needs.create-release.result == 'success' }}
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const owner = context.repo.owner;
@@ -811,7 +813,7 @@ jobs:
               core.warning(`deleteRelease failed: ${e.message}`);
             }
       - name: Delete remote tag
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const owner = context.repo.owner;

@@ -50,6 +50,14 @@ export interface SessionSummary {
   messageCount?: number;
   active: boolean;
   pinned: boolean;
+  /**
+   * Live peer reachability from the core presence map. `true` = confidently
+   * online (heard from within the TTL); `false` = confidently offline
+   * (heartbeat); `undefined` = unknown → fall back to `active`/status.
+   */
+  peerOnline?: boolean;
+  /** ISO-8601 last time the core heard from this peer, if ever. */
+  lastSeenAt?: string;
 }
 
 /**

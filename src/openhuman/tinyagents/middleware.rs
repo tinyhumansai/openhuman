@@ -2642,7 +2642,7 @@ fn terminal_inference_halt_summary(
         TerminalInferenceFailure::ProviderConfig => format!(
             "Stopping: the `{tool}` step failed because the configured model/provider rejected the \
              request (e.g. an unknown model, a non-chat/embedding model, a missing credential, or \
-             a region block) — retrying will not help. Fix the model or API key in Settings → AI. \
+             a region block) — retrying will not help. Fix the model or API key in Connections → API keys → LLM. \
              Details:\n{}",
             truncate_for_halt(result),
         ),

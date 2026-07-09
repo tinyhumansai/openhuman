@@ -13,6 +13,7 @@ use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::config::Config;
 use crate::openhuman::tinyplace::{acknowledge_message, decrypt_envelope};
 
+use super::presence;
 use super::store;
 use super::types::{
     ChatKind, HarnessEventKind, OrchestrationMessage, OrchestrationSession, SessionEnvelopeV1,
@@ -104,6 +105,10 @@ struct ClassifiedMessage {
     tool_name: Option<String>,
     /// v2 `call_id` correlating `tool_result` → `tool_call`.
     call_id: Option<String>,
+    /// v2 `tool_result` outcome (`None` for rows that are not `tool_result`).
+    ok: Option<bool>,
+    is_error: Option<bool>,
+    exit_code: Option<i64>,
     /// v2 `status.state` (or a derived state for approval/lifecycle/error) written
     /// onto the session row so `derive_status` reads a real run-state.
     status_state: Option<String>,
@@ -187,6 +192,9 @@ fn classify_message(plaintext: String, fallback_timestamp: &str) -> ClassifiedMe
         event_kind: None,
         tool_name: None,
         call_id: None,
+        ok: None,
+        is_error: None,
+        exit_code: None,
         status_state: None,
         status_detail: None,
         active_call_id: None,
@@ -231,6 +239,9 @@ fn classify_v1(env: SessionEnvelopeV1, fallback_timestamp: &str) -> ClassifiedMe
         event_kind: None,
         tool_name: None,
         call_id: None,
+        ok: None,
+        is_error: None,
+        exit_code: None,
         status_state: None,
         status_detail: None,
         active_call_id: None,
@@ -303,6 +314,10 @@ fn classify_v2(env: SessionEnvelopeV2, fallback_timestamp: &str) -> ClassifiedMe
         HarnessEventKind::ToolResult(p) => {
             b.body = p.output;
             b.call_id = non_empty(p.call_id);
+            // Carry the outcome so the renderer can distinguish a failed run.
+            b.ok = p.ok;
+            b.is_error = Some(p.is_error);
+            b.exit_code = p.exit_code;
         }
         HarnessEventKind::ApprovalRequest(p) => {
             b.body = p.display;
@@ -363,6 +378,9 @@ fn classify_v2(env: SessionEnvelopeV2, fallback_timestamp: &str) -> ClassifiedMe
         event_kind: Some(b.kind_override.map(str::to_string).unwrap_or(kind_str)),
         tool_name: b.tool_name,
         call_id: b.call_id,
+        ok: b.ok,
+        is_error: b.is_error,
+        exit_code: b.exit_code,
         status_state: b.status_state,
         status_detail: b.status_detail,
         active_call_id: b.active_call_id,
@@ -384,6 +402,9 @@ struct V2Body {
     default_role: &'static str,
     tool_name: Option<String>,
     call_id: Option<String>,
+    ok: Option<bool>,
+    is_error: Option<bool>,
+    exit_code: Option<i64>,
     status_state: Option<String>,
     status_detail: Option<String>,
     active_call_id: Option<String>,
@@ -409,6 +430,9 @@ impl Default for V2Body {
             default_role: "agent",
             tool_name: None,
             call_id: None,
+            ok: None,
+            is_error: None,
+            exit_code: None,
             status_state: None,
             status_detail: None,
             active_call_id: None,
@@ -517,6 +541,9 @@ fn persist_message(
                     event_kind: classified.event_kind.clone(),
                     tool_name: classified.tool_name.clone(),
                     call_id: classified.call_id.clone(),
+                    ok: classified.ok,
+                    is_error: classified.is_error,
+                    exit_code: classified.exit_code,
                 },
             )?;
             // An `error` event also records the short cause on the status surface
@@ -622,6 +649,9 @@ async fn ingest_one(
         }
         Err(e) => return Err(e),
     };
+    // A decryptable inbound envelope proves the peer is reachable right now —
+    // feed the live presence map (drives the online/offline indicator).
+    presence::mark_seen(&agent_id);
     let classified = classify_message(plaintext, &envelope.timestamp);
     let now = chrono::Utc::now().to_rfc3339();
     let landed = persist_message(&workspace_dir, &msg_id, &agent_id, &classified, &now)?;
@@ -873,6 +903,44 @@ mod tests {
         assert_eq!(tr.event_kind.as_deref(), Some("tool_result"));
         assert_eq!(tr.body, "file.rs");
         assert_eq!(tr.call_id.as_deref(), Some("c1"));
+        // A successful result carries ok=true / is_error=false, exit_code absent.
+        assert_eq!(tr.ok, Some(true));
+        assert_eq!(tr.is_error, Some(false));
+        assert_eq!(tr.exit_code, None);
+
+        // A FAILED tool_result carries the outcome so the renderer can flag it red.
+        let tr_err = classify_message(
+            v2_env(
+                "tool_result",
+                r#"{ "call_id": "c1", "ok": false, "is_error": true, "exit_code": 1, "output": "boom" }"#,
+                "w2",
+                "agent",
+            ),
+            "2026-07-05T09:00:00Z",
+        );
+        assert_eq!(tr_err.ok, Some(false));
+        assert_eq!(tr_err.is_error, Some(true));
+        assert_eq!(tr_err.exit_code, Some(1));
+
+        // Older/partial payloads may omit `ok`; keep it unknown instead of
+        // defaulting to failure.
+        let tr_unknown = classify_message(
+            v2_env(
+                "tool_result",
+                r#"{ "call_id": "c1", "is_error": false, "output": "done" }"#,
+                "w2",
+                "agent",
+            ),
+            "2026-07-05T09:00:00Z",
+        );
+        assert_eq!(tr_unknown.ok, None);
+        assert_eq!(tr_unknown.is_error, Some(false));
+        assert_eq!(tr_unknown.exit_code, None);
+
+        // Non-tool_result rows leave the outcome fields unset.
+        assert_eq!(tc.ok, None);
+        assert_eq!(tc.is_error, None);
+        assert_eq!(am.ok, None);
     }
 
     #[test]

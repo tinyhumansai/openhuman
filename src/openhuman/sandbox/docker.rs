@@ -13,8 +13,8 @@
 //! spawned command runs sandboxed.
 
 use super::types::{
-    DockerOverrides, SandboxBackendHandle, SandboxBackendKind, SandboxExecRequest,
-    SandboxExecResult, SandboxPolicy, SandboxStatus,
+    SandboxBackendHandle, SandboxBackendKind, SandboxExecRequest, SandboxExecResult, SandboxPolicy,
+    SandboxStatus,
 };
 use std::process::Stdio;
 use tokio::process::Command;

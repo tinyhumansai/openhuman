@@ -33,11 +33,30 @@ const en: TranslationMap = {
   'orchPage.group.agent': 'Agent',
   'orchPage.group.network': 'Network',
   'orchPage.group.insights': 'Insights',
+  'orchPage.overview.nav': 'Agent graph',
+  'orchPage.tasks.nav': 'Tasks',
+  'orchPage.tasks.subtitle': "The orchestrator's global task board",
+  'orchPage.tasks.colPending': 'Pending',
+  'orchPage.tasks.colActive': 'Active',
+  'orchPage.tasks.colBlocked': 'Blocked',
+  'orchPage.tasks.colCompleted': 'Completed',
+  'orchPage.overview.core': 'Agent core',
+  'orchPage.overview.empty': 'No sub-agents to visualize yet',
   'orchPage.agent.nav': 'Chat',
   'orchPage.agent.mainTab': 'Main agent',
+  'orchPage.agent.consciousTab': 'Conscious',
   'orchPage.agent.subconsciousTab': 'Subconscious',
+  'orchPage.agent.modeLabel': 'Agent mind',
   'orchPage.agent.description': 'Chat with the main agent and watch its subconscious',
   'orchPage.agent.viewSession': 'View session',
+  'orchPage.sessions.railTitle': 'Active agents',
+  'orchPage.sessions.empty': 'No active agents yet',
+  'orchPage.sessions.statusConnected': 'Connected',
+  'orchPage.sessions.statusDisconnected': 'Disconnected',
+  'orchPage.sessions.statusWaiting': 'Waiting for input',
+  'orchPage.session.runtime': 'Runtime',
+  'orchPage.session.directory': 'Directory',
+  'orchPage.session.runningOn': 'Running on',
   'orchPage.connections.nav': 'Connections',
   'orchPage.connections.title': 'Linked agents',
   'orchPage.connections.description':
@@ -53,6 +72,10 @@ const en: TranslationMap = {
   'orchPage.connections.messageCount': '{n} messages',
   'orchPage.connections.back': 'Connections',
   'orchPage.connections.replyPlaceholder': 'Reply…',
+  'orchPage.connections.initTitle': 'Initialize an agent or an instance',
+  'orchPage.connections.initDesc':
+    'Spin up a new sub-agent to work alongside you. Open the agent chat and describe the role, goal, and tools it should use — OpenHuman provisions a dedicated instance you can steer from here.',
+  'orchPage.connections.initCta': 'Start in chat',
   'orchPage.connections.status.needsYou': 'Needs you',
   'orchPage.connections.status.running': 'Running',
   'orchPage.connections.status.idle': 'Idle',
@@ -1079,21 +1102,21 @@ const en: TranslationMap = {
   'memoryTree.status.degradedStructure': 'Wiki structure incomplete',
   'memoryTree.status.extractionCoverage': 'Extraction coverage: {pct}% of chunks have structure',
   'memory.health.remediation.budget_exhausted':
-    'Memory embeddings hit the managed budget. Set up local Ollama embeddings (Settings → AI → Embeddings) or add your own embeddings API key to keep building memory.',
+    'Memory embeddings hit the managed budget. Set up local Ollama embeddings (Connections → API keys → Embeddings) or add your own embeddings API key to keep building memory.',
   'memory.health.remediation.auth_missing':
-    'No embeddings credentials found. Log in to OpenHuman, or set up local Ollama embeddings in Settings → AI → Embeddings.',
+    'No embeddings credentials found. Log in to OpenHuman, or set up local Ollama embeddings in Connections → API keys → Embeddings.',
   'memory.health.remediation.auth_invalid':
-    'Your embeddings credentials were rejected. Re-authenticate, or switch to local Ollama embeddings in Settings → AI → Embeddings.',
+    'Your embeddings credentials were rejected. Re-authenticate, or switch to local Ollama embeddings in Connections → API keys → Embeddings.',
   'memory.health.remediation.embeddings_unconfigured':
-    'No embeddings provider is configured, so semantic recall is off. Set up local Ollama embeddings (recommended) or add an embeddings key in Settings → AI → Embeddings.',
+    'No embeddings provider is configured, so semantic recall is off. Set up local Ollama embeddings (recommended) or add an embeddings key in Connections → API keys → Embeddings.',
   'memory.health.remediation.embedding_dim_mismatch':
     'The embedding model returns the wrong vector size (memory expects 1024 dimensions). Pick a 1024-dim model, or request 1024 dimensions for your provider.',
   'memory.health.remediation.local_model_unavailable':
-    'A required local model is not available. Install/run Ollama and pull the model, or switch this workload to a cloud provider in Settings → AI.',
+    'A required local model is not available. Install/run Ollama and pull the model, or switch this workload to a cloud provider in Connections → API keys.',
   'memory.health.remediation.extraction_timeout':
-    'The memory extraction model is timing out, so the wiki has little structure. Switch the Memory extraction model to a faster one in Settings → AI.',
+    'The memory extraction model is timing out, so the wiki has little structure. Switch the Memory extraction model to a faster one in Connections → API keys → LLM.',
   'memory.health.remediation.summarizer_unavailable':
-    'No summarization provider is available for Build Summary Trees. Enable local AI (Ollama), or enable cloud summarization in Settings → AI → Memory.',
+    'No summarization provider is available for Build Summary Trees. Enable local AI (Ollama), or set memory_tree.cloud_summarization_opt_in=true and configure an LLM provider in Connections → API keys → LLM.',
   'memory.health.remediation.empty_input_refused':
     'A memory item was skipped because its text was empty. No action needed — newer items continue to embed normally.',
   'memory.health.remediation.storage_unavailable':
@@ -1101,7 +1124,7 @@ const en: TranslationMap = {
   'memory.health.remediation.transient':
     'A temporary error interrupted memory processing. It will retry automatically.',
   'memory.health.remediation.unknown':
-    'Memory processing encountered an issue. Check Settings → AI for configuration.',
+    'Memory processing encountered an issue. Check Connections → API keys for configuration.',
   'memoryTree.status.fetchError': "Couldn't fetch Memory Tree status",
   'memoryTree.status.retry': 'Retry',
   'memoryTree.status.toggleFailed': "Couldn't toggle auto-sync",
@@ -1188,7 +1211,7 @@ const en: TranslationMap = {
   // Onboarding: API keys step (only when Custom is picked)
   'onboarding.apiKeys.title': "Let's Add Your API Keys",
   'onboarding.apiKeys.subtitle':
-    'You can paste them now or skip and add them later in Settings › AI. Keys are stored on this device, encrypted at rest.',
+    'You can paste them now or skip and add them later in Connections › API keys. Keys are stored on this device, encrypted at rest.',
   'onboarding.apiKeys.openaiLabel': 'OpenAI API key',
   'onboarding.apiKeys.openaiPlaceholder': 'sk-...',
   'onboarding.apiKeys.openaiOauthHint':
@@ -6117,6 +6140,10 @@ const en: TranslationMap = {
   'settings.appearance.fontSizeXLargeDesc': 'The largest text, for maximum readability.',
   'settings.appearance.fontSizeHelperText':
     'Scales text across the whole app — chat, settings and panels — independently of your system font setting.',
+  'settings.appearance.fontSizeCustomLabel': 'Custom size',
+  'settings.appearance.fontSizeCustomAria': 'Custom font size in pixels',
+  'settings.appearance.fontSizeCustomSliderAria': 'Custom font size slider, in pixels',
+  'settings.appearance.fontSizeUnit': 'px',
   'settings.appearance.tabBarHeading': 'Bottom tab bar',
   'settings.appearance.tabBarAlwaysShowLabels': 'Always show labels',
   'settings.appearance.tabBarAlwaysShowLabelsDesc':

@@ -234,19 +234,15 @@ pub struct FlowRun {
 /// actually saved via `flows_create`, the frontend marks it `Built`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum SuggestionStatus {
     /// Freshly discovered, awaiting the user's decision. The default.
+    #[default]
     New,
     /// The user dismissed the card; kept for dedupe, never re-surfaced.
     Dismissed,
     /// The user built (saved) a flow from this suggestion.
     Built,
-}
-
-impl Default for SuggestionStatus {
-    fn default() -> Self {
-        Self::New
-    }
 }
 
 impl SuggestionStatus {

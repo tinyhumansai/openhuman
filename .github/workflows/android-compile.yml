@@ -90,7 +90,7 @@ jobs:
       version_code: ${{ steps.version.outputs.version_code }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.build_ref || github.ref }}
           fetch-depth: 1
@@ -118,7 +118,7 @@ jobs:
           java-version: "17"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Install Android SDK packages
         shell: bash
@@ -130,10 +130,12 @@ jobs:
             "ndk;27.0.12077973"
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v5
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.10.0
 
       - name: Set up Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
           node-version: "24"
           cache: "pnpm"
@@ -188,7 +190,7 @@ jobs:
           echo "Android versionName=$version_name versionCode=$version_code"
 
       - name: Upload unsigned AAB artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openhuman-android-aab-unsigned
           path: ${{ steps.aab.outputs.path }}
@@ -204,7 +206,7 @@ jobs:
     environment: Production
     steps:
       - name: Download unsigned AAB
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: openhuman-android-aab-unsigned
           path: android-release
@@ -250,7 +252,7 @@ jobs:
           echo "path=signed/openhuman-android-release.aab" >> "$GITHUB_OUTPUT"
 
       - name: Upload signed AAB artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openhuman-android-aab-signed
           path: ${{ steps.sign.outputs.path }}
@@ -258,7 +260,7 @@ jobs:
           retention-days: 30
 
       - name: Upload to Google Play
-        uses: r0adkll/upload-google-play@v1.1.4
+        uses: r0adkll/upload-google-play@v1.1.5
         with:
           serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: com.openhuman.app

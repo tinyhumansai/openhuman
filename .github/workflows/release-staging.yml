@@ -114,16 +114,18 @@ jobs:
           # identity in the ruleset bypass list, not from token scopes.
           permission-contents: write
       - name: Checkout release
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: release
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
           submodules: recursive
       - name: Setup pnpm
-        uses: pnpm/action-setup@v5
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.10.0
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
           node-version: 24.x
           package-manager-cache: false
@@ -309,7 +311,7 @@ jobs:
     environment: Production
     steps:
       - name: Checkout build ref
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare-build.outputs.build_ref }}
           fetch-depth: 1
@@ -319,9 +321,9 @@ jobs:
       - name: Init vendored Rust submodules
         run: git submodule update --init vendor/tinyagents vendor/tinyflows vendor/tinycortex vendor/tinyjuice vendor/tinychannels vendor/tinyplace
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
       - name: Build image (no push)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
@@ -402,7 +404,7 @@ jobs:
           || needs.build-docker.result == 'failure' || needs.build-docker.result == 'cancelled')
     steps:
       - name: Delete remote staging tag
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const owner = context.repo.owner;

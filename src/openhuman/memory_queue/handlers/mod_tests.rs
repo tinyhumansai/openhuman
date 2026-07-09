@@ -680,3 +680,65 @@ async fn prepare_extract_scores_full_body_but_returns_preview() {
         "returned chunk must NOT retain the full on-disk body"
     );
 }
+
+/// #4359: a cloud-embedding "No backend session" bail is a global, login-
+/// recoverable condition — `reembed_collect` must fail the backfill fast with a
+/// typed `AuthMissing` failure and must **not** tombstone any row, so the same
+/// rows re-embed once the user signs in. (A per-row tombstone here would
+/// exclude the rows from the worklist forever — the regression this guards.)
+struct MissingSessionEmbedder;
+
+#[async_trait::async_trait]
+impl crate::openhuman::memory_tree::score::embed::Embedder for MissingSessionEmbedder {
+    fn name(&self) -> &'static str {
+        "missing-session"
+    }
+
+    async fn embed(&self, _text: &str) -> anyhow::Result<Vec<f32>> {
+        anyhow::bail!(
+            "No backend session for cloud embeddings: log in to OpenHuman, or set \
+             memory.embedding_provider to \"ollama\" / \"none\" in config.toml"
+        )
+    }
+}
+
+#[tokio::test]
+async fn reembed_backfill_auth_missing_fails_fast_without_tombstone() {
+    use crate::openhuman::memory_tree::health::{FailureCode, PipelineFailure};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let (_tmp, cfg) = test_config();
+    let ids = vec![
+        "chunk-a".to_string(),
+        "chunk-b".to_string(),
+        "chunk-c".to_string(),
+    ];
+    let tombstoned = Arc::new(AtomicUsize::new(0));
+    let tombstoned_for_mark = Arc::clone(&tombstoned);
+
+    let err = reembed_collect(
+        &cfg,
+        &MissingSessionEmbedder,
+        "provider=cloud;model=embedding-v1;dims=1024",
+        &ids,
+        "chunk",
+        |_cfg, id| Ok(format!("body for {id}")),
+        move |_cfg, _id, _sig, _reason| {
+            tombstoned_for_mark.fetch_add(1, Ordering::SeqCst);
+        },
+    )
+    .await
+    .expect_err("missing cloud session must fail the backfill, not return Ok");
+
+    let failure = err
+        .downcast_ref::<PipelineFailure>()
+        .expect("auth-missing backfill error must carry a typed PipelineFailure");
+    assert_eq!(failure.code, FailureCode::AuthMissing);
+    assert!(failure.is_unrecoverable());
+    assert_eq!(
+        tombstoned.load(Ordering::SeqCst),
+        0,
+        "auth-missing must NOT tombstone any row — they must stay re-embeddable after login"
+    );
+}

@@ -6,6 +6,12 @@ import AgentChatPanel from '../AgentChatPanel';
 
 vi.mock('../../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (k: string) => k }) }));
 
+// The welcome hero pulls Redux/user/usage state; stub it so the panel renders
+// without the app providers. We only assert it mounts on an empty conscious thread.
+vi.mock('../../chat/ChatNewWindowHero', () => ({
+  default: () => <div data-testid="chat-new-window-hero" />,
+}));
+
 const selectChat = vi.hoisted(() => vi.fn());
 const sendMessage = vi.hoisted(() => vi.fn().mockResolvedValue(true));
 const chatsApi = vi.hoisted(() => ({
@@ -86,11 +92,18 @@ describe('AgentChatPanel', () => {
     };
   });
 
-  it('renders the thread rail and switches conversation', () => {
+  it('renders the conscious/subconscious toggle and switches conversation', () => {
     render(<AgentChatPanel />);
-    expect(screen.getByTestId('orch-agent-tab-master')).toBeInTheDocument();
+    const conscious = screen.getByTestId('orch-agent-tab-master');
+    expect(conscious).toHaveAttribute('role', 'radio');
+    expect(conscious).toHaveAttribute('aria-checked', 'true');
     fireEvent.click(screen.getByTestId('orch-agent-tab-subconscious'));
     expect(selectChat).toHaveBeenCalledWith('subconscious');
+  });
+
+  it('shows the welcome hero on an empty conscious thread', () => {
+    render(<AgentChatPanel />);
+    expect(screen.getByTestId('chat-new-window-hero')).toBeInTheDocument();
   });
 
   it('sends a master message from the composer', async () => {

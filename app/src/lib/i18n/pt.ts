@@ -183,11 +183,30 @@ const messages: TranslationMap = {
   'orchPage.group.agent': 'Agente',
   'orchPage.group.network': 'Rede',
   'orchPage.group.insights': 'Insights',
+  'orchPage.overview.nav': 'Grafo de agentes',
+  'orchPage.tasks.nav': 'Tarefas',
+  'orchPage.tasks.subtitle': 'O quadro de tarefas global do orquestrador',
+  'orchPage.tasks.colPending': 'Pendente',
+  'orchPage.tasks.colActive': 'Ativo',
+  'orchPage.tasks.colBlocked': 'Bloqueado',
+  'orchPage.tasks.colCompleted': 'Concluído',
+  'orchPage.overview.core': 'Núcleo do agente',
+  'orchPage.overview.empty': 'Ainda não há subagentes para visualizar',
   'orchPage.agent.nav': 'Chat',
   'orchPage.agent.mainTab': 'Agente principal',
+  'orchPage.agent.consciousTab': 'Consciente',
   'orchPage.agent.subconsciousTab': 'Subconsciente',
+  'orchPage.agent.modeLabel': 'Mente do agente',
   'orchPage.agent.description': 'Converse com o agente principal e observe seu subconsciente',
   'orchPage.agent.viewSession': 'Ver sessão',
+  'orchPage.sessions.railTitle': 'Agentes ativos',
+  'orchPage.sessions.empty': 'Ainda não há agentes ativos',
+  'orchPage.sessions.statusConnected': 'Conectado',
+  'orchPage.sessions.statusDisconnected': 'Desconectado',
+  'orchPage.sessions.statusWaiting': 'Aguardando entrada',
+  'orchPage.session.runtime': 'Tempo de execução',
+  'orchPage.session.directory': 'Diretório',
+  'orchPage.session.runningOn': 'Em execução em',
   'orchPage.connections.nav': 'Conexões',
   'orchPage.connections.title': 'Agentes vinculados',
   'orchPage.connections.description':
@@ -202,6 +221,10 @@ const messages: TranslationMap = {
   'orchPage.connections.messageCount': '{n} mensagens',
   'orchPage.connections.back': 'Conexões',
   'orchPage.connections.replyPlaceholder': 'Responder…',
+  'orchPage.connections.initTitle': 'Inicializar um agente ou uma instância',
+  'orchPage.connections.initDesc':
+    'Crie um novo subagente para trabalhar ao seu lado. Abra o chat do agente e descreva o papel, o objetivo e as ferramentas — o OpenHuman provisiona uma instância dedicada que você controla daqui.',
+  'orchPage.connections.initCta': 'Começar no chat',
   'orchPage.connections.status.needsYou': 'Precisa de você',
   'orchPage.connections.status.running': 'Em execução',
   'orchPage.connections.status.idle': 'Inativo',
@@ -1081,7 +1104,7 @@ const messages: TranslationMap = {
     'Não foi possível concluir o processo de integração. Por favor, tente novamente.',
   'onboarding.apiKeys.title': 'Vamos Adicionar Suas Chaves de API',
   'onboarding.apiKeys.subtitle':
-    'Você pode colá-las agora ou pular e adicioná-las depois em Configurações › IA. As chaves são armazenadas neste dispositivo, criptografadas em repouso.',
+    'Você pode colá-las agora ou pular e adicioná-las depois em Conexões › chaves de API. As chaves são armazenadas neste dispositivo, criptografadas em repouso.',
   'onboarding.apiKeys.openaiLabel': 'Chave de API OpenAI',
   'onboarding.apiKeys.openaiPlaceholder': 'sk-...',
   'onboarding.apiKeys.openaiOauthHint':
@@ -5515,6 +5538,11 @@ const messages: TranslationMap = {
   'settings.appearance.fontSizeXLargeDesc': 'O maior texto, para máxima legibilidade.',
   'settings.appearance.fontSizeHelperText':
     'Dimensiona o texto em todo o app — chat, configurações e painéis — independentemente da configuração de fonte do seu sistema.',
+  'settings.appearance.fontSizeCustomLabel': 'Tamanho personalizado',
+  'settings.appearance.fontSizeCustomAria': 'Tamanho da fonte personalizado em pixels',
+  'settings.appearance.fontSizeCustomSliderAria':
+    'Controle deslizante de tamanho de fonte personalizado, em pixels',
+  'settings.appearance.fontSizeUnit': 'px',
   'settings.appearance.tabBarHeading': 'Barra inferior da guia',
   'settings.appearance.tabBarAlwaysShowLabels': 'Sempre mostrar rótulos',
   'settings.appearance.tabBarAlwaysShowLabelsDesc':
@@ -6750,21 +6778,21 @@ const messages: TranslationMap = {
   'memoryTree.status.extractionCoverage':
     'Cobertura de extração: {pct}% dos fragmentos têm estrutura',
   'memory.health.remediation.budget_exhausted':
-    'Os embeddings de memória atingiram o orçamento gerenciado. Configure embeddings locais do Ollama (Configurações → IA → Incorporações) ou adicione sua própria chave de API de embeddings para continuar construindo a memória.',
+    'Os embeddings de memória atingiram o orçamento gerenciado. Configure embeddings locais do Ollama (Conexões → Chaves de API → Incorporações) ou adicione sua própria chave de API de embeddings para continuar construindo a memória.',
   'memory.health.remediation.auth_missing':
-    'Nenhuma credencial de embeddings encontrada. Faça login no OpenHuman ou configure embeddings locais do Ollama em Configurações → IA → Incorporações.',
+    'Nenhuma credencial de embeddings encontrada. Faça login no OpenHuman ou configure embeddings locais do Ollama em Conexões → Chaves de API → Incorporações.',
   'memory.health.remediation.auth_invalid':
-    'Suas credenciais de embeddings foram rejeitadas. Autentique-se novamente ou mude para embeddings locais do Ollama em Configurações → IA → Incorporações.',
+    'Suas credenciais de embeddings foram rejeitadas. Autentique-se novamente ou mude para embeddings locais do Ollama em Conexões → Chaves de API → Incorporações.',
   'memory.health.remediation.embeddings_unconfigured':
-    'Nenhum provedor de embeddings está configurado, então a recuperação semântica está desativada. Configure embeddings locais do Ollama (recomendado) ou adicione uma chave de embeddings em Configurações → IA → Incorporações.',
+    'Nenhum provedor de embeddings está configurado, então a recuperação semântica está desativada. Configure embeddings locais do Ollama (recomendado) ou adicione uma chave de embeddings em Conexões → Chaves de API → Incorporações.',
   'memory.health.remediation.embedding_dim_mismatch':
     'O modelo de embeddings retorna o tamanho de vetor errado (a memória espera 1024 dimensões). Escolha um modelo de 1024 dimensões ou solicite 1024 dimensões ao seu provedor.',
   'memory.health.remediation.local_model_unavailable':
-    'Um modelo local necessário não está disponível. Instale/execute o Ollama e baixe o modelo, ou mude esta carga de trabalho para um provedor de nuvem em Configurações → IA.',
+    'Um modelo local necessário não está disponível. Instale/execute o Ollama e baixe o modelo, ou mude esta carga de trabalho para um provedor de nuvem em Conexões → Chaves de API.',
   'memory.health.remediation.extraction_timeout':
-    'O modelo de extração de memória está expirando o tempo limite, então o wiki tem pouca estrutura. Mude o modelo de extração de memória para um mais rápido em Configurações → IA.',
+    'O modelo de extração de memória está expirando o tempo limite, então o wiki tem pouca estrutura. Mude o modelo de extração de memória para um mais rápido em Conexões → Chaves de API → LLM.',
   'memory.health.remediation.summarizer_unavailable':
-    'Nenhum provedor de resumo está disponível para Criar árvores de resumo. Ative a IA local (Ollama) ou ative o resumo na nuvem em Configurações → IA → Memória.',
+    'Nenhum provedor de resumo está disponível para Criar árvores de resumo. Ative a IA local (Ollama), ou defina memory_tree.cloud_summarization_opt_in=true e configure um provedor LLM em Conexões → Chaves de API → LLM.',
   'memory.health.remediation.empty_input_refused':
     'Um item de memória foi ignorado porque o texto estava vazio. Nenhuma ação necessária — itens novos continuam a ser incorporados normalmente.',
   'memory.health.remediation.storage_unavailable':
@@ -6772,7 +6800,7 @@ const messages: TranslationMap = {
   'memory.health.remediation.transient':
     'Um erro temporário interrompeu o processamento da memória. Será repetido automaticamente.',
   'memory.health.remediation.unknown':
-    'O processamento da memória encontrou um problema. Verifique Configurações → IA para a configuração.',
+    'O processamento da memória encontrou um problema. Verifique Conexões → Chaves de API para a configuração.',
   // Chat — agent-generated artifacts (#2779)
 
   // Chat composer toolbar

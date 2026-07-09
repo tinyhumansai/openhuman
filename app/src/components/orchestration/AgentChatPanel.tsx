@@ -1,18 +1,29 @@
 /**
- * AgentChatPanel — chat with the main agent, styled like the app's normal chat.
+ * AgentChatPanel — chat with the main agent, rendered exactly like the app's
+ * normal chat page.
  *
- * A ThreadList-style rail (Main agent / Subconscious) beside a centered message
- * pane rendered with the shared {@link SessionTranscript} (chat-window bubbles +
- * inline harness activity), plus the subconscious steering header and the Master
- * composer.
+ * Full-bleed page-variant layout (dark background, centered width-capped message
+ * column, a floating composer over a bottom fade, one vertical scroll) shared by
+ * three views via {@link ChatPageScaffold}:
  *
- * When the agent engages a fleet session (a session parked on an approval), an
- * inline **View session** card surfaces below the thread; opening it slides in a
- * right-hand session side-tab showing that session's live chat + a reply
- * composer. The side-tab never opens on its own — the user clicks the card.
+ *   - the **conscious** master session (composer + welcome hero when empty),
+ *   - the **subconscious** steering loop (steering header, no composer),
+ *   - a **peer session subpage** — opened from the sidebar's active sub-agents
+ *     list or an inline "needs you" card, it takes over the whole pane (not a
+ *     side drawer) so the session's chat renders full-size, with a back link.
+ *
+ * Conscious/Subconscious is a bottom toggle in the composer footer (where the
+ * generic chat's super-context / quick-reasoning controls sit).
  */
 import debugFactory from 'debug';
-import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
+import {
+  type KeyboardEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import {
@@ -29,6 +40,8 @@ import {
   useSessionTranscript,
 } from '../../lib/orchestration/useOrchestrationSessions';
 import { subconsciousTrigger } from '../../utils/tauriCommands/subconscious';
+import ChatComposer from '../chat/ChatComposer';
+import ChatNewWindowHero from '../chat/ChatNewWindowHero';
 import Button from '../ui/Button';
 import SessionTranscript from './SessionTranscript';
 
@@ -38,111 +51,284 @@ function sessionLabel(session: SessionSummary): string {
   return session.label?.trim() || session.sessionId;
 }
 
-/** Right-hand session side-tab: a fleet session's live chat + reply composer. */
-function SessionDrawer({ session, onClose }: { session: SessionSummary; onClose: () => void }) {
+/**
+ * Page-variant chat scaffold: the normal chat window's dark surface, a
+ * full-width scroll region with a centered width-capped body, a bottom fade, and
+ * a floating composer footer. The footer's measured height reserves bottom
+ * padding on the scroll region so the last message clears it.
+ */
+function ChatPageScaffold({
+  header,
+  footer,
+  children,
+}: {
+  header?: ReactNode;
+  footer?: ReactNode;
+  children: ReactNode;
+}) {
+  const footerRef = useRef<HTMLDivElement | null>(null);
+  const [footerHeight, setFooterHeight] = useState(0);
+
+  useEffect(() => {
+    const el = footerRef.current;
+    if (!el) {
+      setFooterHeight(0);
+      return;
+    }
+    // ResizeObserver may be absent in some test environments; fall back to a
+    // one-shot measure so the layout still resolves.
+    if (typeof ResizeObserver === 'undefined') {
+      setFooterHeight(el.offsetHeight);
+      return;
+    }
+    const ro = new ResizeObserver(() => setFooterHeight(el.offsetHeight));
+    ro.observe(el);
+    setFooterHeight(el.offsetHeight);
+    return () => ro.disconnect();
+  }, [footer]);
+
+  return (
+    <div className="relative flex h-full flex-col overflow-hidden bg-surface/70 dark:bg-black/40">
+      {header}
+      <div
+        className="min-h-0 flex-1 overflow-y-auto"
+        style={footer ? { paddingBottom: footerHeight } : undefined}>
+        {children}
+      </div>
+
+      {/* Fade so messages dissolve into the background behind the composer. */}
+      {footer ? (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-28 bg-gradient-to-t from-white via-white/90 to-transparent dark:from-black dark:via-black/90"
+        />
+      ) : null}
+
+      {/* Floating, centered, width-capped composer footer over the fade. */}
+      {footer ? (
+        <div
+          ref={footerRef}
+          className="absolute inset-x-0 bottom-0 z-20 mx-auto w-full max-w-[48.75rem] px-4 pb-4 pt-6">
+          {footer}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The shared chat composer wired for the orchestration surfaces: attachments and
+ * voice mode are off, and Enter sends (Shift+Enter inserts a newline). The host
+ * owns the input value + the async send.
+ */
+function AgentComposer({
+  value,
+  setValue,
+  onSend,
+  isSending,
+  placeholder,
+}: {
+  value: string;
+  setValue: (value: string | ((prev: string) => string)) => void;
+  onSend: (text?: string) => Promise<void>;
+  isSending: boolean;
+  placeholder: string;
+}) {
+  const textInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const isComposingTextRef = useRef(false);
+
+  const handleInputKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (event.key === 'Enter' && !event.shiftKey && !isComposingTextRef.current) {
+        event.preventDefault();
+        void onSend();
+      }
+    },
+    [onSend]
+  );
+
+  return (
+    <ChatComposer
+      inputValue={value}
+      setInputValue={setValue}
+      onSend={async text => {
+        await onSend(text);
+      }}
+      textInputRef={textInputRef}
+      fileInputRef={fileInputRef}
+      composerInteractionBlocked={false}
+      isSending={isSending}
+      attachments={[]}
+      onAttachFiles={async () => {}}
+      onRemoveAttachment={() => {}}
+      attachError={null}
+      onSwitchToMicCloud={() => {}}
+      handleInputKeyDown={handleInputKeyDown}
+      inlineCompletionSuffix=""
+      isComposingTextRef={isComposingTextRef}
+      maxAttachments={0}
+      allowedMimeTypes={[]}
+      attachmentsEnabled={false}
+      micEnabled={false}
+      placeholder={placeholder}
+    />
+  );
+}
+
+/**
+ * Peer-session subpage — takes over the whole agent pane (not a side drawer) so
+ * the session's chat renders full-size, with a back link to return to the agent
+ * chat. Replies go to the peer via the master send path.
+ */
+function SessionChatView({ session }: { session: SessionSummary }) {
   const { t } = useT();
   const { state, messages, refresh } = useSessionTranscript(session.sessionId);
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
-  const submit = useCallback(
-    (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault();
-      const trimmed = body.trim();
+  const send = useCallback(
+    async (text?: string) => {
+      const trimmed = (text ?? body).trim();
       if (!trimmed || sending) return;
       setSending(true);
       setSendError(null);
       debug('[orchestration:agent-chat] session reply: send session=%s', session.sessionId);
-      void orchestrationClient
-        .sendMasterMessage({
+      try {
+        await orchestrationClient.sendMasterMessage({
           body: trimmed,
           recipient: session.agentId,
           sessionId: session.sessionId,
-        })
-        .then(() => {
-          setBody('');
-          void refresh();
-        })
-        .catch((error: unknown) => {
-          const message = error instanceof Error ? error.message : String(error);
-          debug(
-            '[orchestration:agent-chat] session reply: failed session=%s %s',
-            session.sessionId,
-            message
-          );
-          setSendError(message);
-        })
-        .finally(() => setSending(false));
+        });
+        if (!mountedRef.current) return;
+        setBody('');
+        void refresh();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        debug(
+          '[orchestration:agent-chat] session reply: failed session=%s %s',
+          session.sessionId,
+          message
+        );
+        if (mountedRef.current) setSendError(message);
+      } finally {
+        if (mountedRef.current) setSending(false);
+      }
     },
     [body, sending, session.agentId, session.sessionId, refresh]
   );
 
+  const runtime = session.harnessType || session.source || null;
+  const directory = session.workspace?.trim() || null;
+  const runningOn = session.agentId?.trim() || null;
+
   return (
-    <aside
-      data-testid="orch-agent-session-drawer"
-      className="absolute inset-y-0 right-0 z-30 flex w-[24rem] flex-col border-l border-line bg-surface shadow-[-8px_0_24px_-12px_rgba(0,0,0,0.25)]">
-      <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
-        <span className="flex h-8 w-8 flex-none items-center justify-center rounded-full border border-line bg-surface-strong text-[11px] font-semibold text-content-secondary">
-          {sessionLabel(session).slice(0, 2)}
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-content">{sessionLabel(session)}</p>
-          <p className="truncate text-[11px] text-content-muted">
-            {session.status === 'waiting-approval' ? t('orchPage.connections.status.needsYou') : ''}
-          </p>
+    <ChatPageScaffold
+      header={
+        // Agent metadata, centered to the same width-capped column as the chat.
+        <div className="border-b border-line bg-surface/60 dark:bg-black/30">
+          <div
+            className="mx-auto w-full max-w-[48.75rem] px-5 py-3"
+            data-testid="orch-session-header">
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-semibold text-content">{sessionLabel(session)}</p>
+              {session.status === 'waiting-approval' ? (
+                <span className="flex-none rounded-full px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                  {t('orchPage.connections.status.needsYou')}
+                </span>
+              ) : null}
+            </div>
+            {/* Full values — they wrap/break only at the column's max width, never
+                truncated at an arbitrary per-field cap. */}
+            <dl className="mt-1.5 flex flex-wrap gap-x-5 gap-y-1 text-[11px]">
+              {runtime ? (
+                <div className="flex items-baseline gap-1">
+                  <dt className="text-content-faint">{t('orchPage.session.runtime')}</dt>
+                  <dd className="font-medium text-content-secondary">{runtime}</dd>
+                </div>
+              ) : null}
+              {directory ? (
+                <div className="flex items-baseline gap-1">
+                  <dt className="text-content-faint">{t('orchPage.session.directory')}</dt>
+                  <dd className="break-all font-mono font-medium text-content-secondary">
+                    {directory}
+                  </dd>
+                </div>
+              ) : null}
+              {runningOn ? (
+                <div className="flex items-baseline gap-1">
+                  <dt className="text-content-faint">{t('orchPage.session.runningOn')}</dt>
+                  <dd className="break-all font-mono font-medium text-content-secondary">
+                    {runningOn}
+                  </dd>
+                </div>
+              ) : null}
+            </dl>
+          </div>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          data-testid="orch-agent-drawer-close"
-          className="flex-none rounded p-1 text-content-faint transition hover:bg-surface-hover">
-          ✕
-        </button>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+      }
+      footer={
+        <>
+          {sendError ? (
+            <p
+              data-testid="orch-session-reply-error"
+              className="mb-2 rounded-md bg-coral-50 px-2 py-1 text-xs text-coral-700 dark:bg-coral-500/10 dark:text-coral-300">
+              {t('tinyplaceOrchestration.composer.sendFailed')}: {sendError}
+            </p>
+          ) : null}
+          <AgentComposer
+            value={body}
+            setValue={setBody}
+            onSend={send}
+            isSending={sending}
+            placeholder={t('orchPage.connections.replyPlaceholder')}
+          />
+        </>
+      }>
+      <div className="mx-auto w-full max-w-[48.75rem] space-y-3 px-5 pt-4">
         {state.status === 'loading' ? (
-          <p className="py-6 text-center text-sm text-content-muted">
+          <p className="py-10 text-center text-sm text-content-muted">
             {t('tinyplaceOrchestration.loading')}
           </p>
         ) : state.status === 'error' ? (
-          <p className="py-6 text-center text-sm text-coral-600 dark:text-coral-300">
+          <p className="py-10 text-center text-sm text-coral-600 dark:text-coral-300">
             {t('tinyplaceOrchestration.failedToLoad')}: {state.message}
           </p>
         ) : messages.length === 0 ? (
-          <p className="py-6 text-center text-sm text-content-faint">
+          <p className="py-10 text-center text-sm text-content-faint">
             {t('tinyplaceOrchestration.noMessages')}
           </p>
         ) : (
           <SessionTranscript messages={messages} />
         )}
       </div>
-      <form className="border-t border-line p-3" onSubmit={submit}>
-        {sendError ? (
-          <p
-            data-testid="orch-agent-drawer-reply-error"
-            className="mb-2 rounded-md bg-coral-50 px-2 py-1 text-xs text-coral-700 dark:bg-coral-500/10 dark:text-coral-300">
-            {t('tinyplaceOrchestration.composer.sendFailed')}: {sendError}
-          </p>
-        ) : null}
-        <div className="flex gap-2">
-          <input
-            value={body}
-            onChange={e => setBody(e.target.value)}
-            placeholder={t('orchPage.connections.replyPlaceholder')}
-            data-testid="orch-agent-drawer-reply"
-            className="min-w-0 flex-1 rounded-md border border-line bg-surface px-3 py-2 text-sm text-content outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
-          />
-          <Button type="submit" variant="primary" size="sm" disabled={!body.trim() || sending}>
-            {t('tinyplaceOrchestration.composer.send')}
-          </Button>
-        </div>
-      </form>
-    </aside>
+    </ChatPageScaffold>
   );
 }
 
-export default function AgentChatPanel() {
+export interface AgentChatPanelProps {
+  /**
+   * Controlled open peer-session id (the full-page session subpage). When
+   * `onOpenSession` is provided the parent owns this (OrchestrationPage drives
+   * it from the `?session=` query param + the sidebar's active sub-agents list);
+   * otherwise the panel falls back to its own local state.
+   */
+  openSessionId?: string | null;
+  onOpenSession?: (sessionId: string | null) => void;
+}
+
+export default function AgentChatPanel({
+  openSessionId: controlledOpenSessionId,
+  onOpenSession,
+}: AgentChatPanelProps = {}) {
   const { t } = useT();
   const {
     sessionsState,
@@ -161,7 +347,12 @@ export default function AgentChatPanel() {
   const [composerBody, setComposerBody] = useState('');
   const [sending, setSending] = useState(false);
   const [runningReview, setRunningReview] = useState(false);
-  const [openSessionId, setOpenSessionId] = useState<string | null>(null);
+  // Controlled by the parent when `onOpenSession` is wired (OrchestrationPage
+  // drives it from the URL + sidebar session list); local state otherwise.
+  const [localOpenSessionId, setLocalOpenSessionId] = useState<string | null>(null);
+  const openSessionId =
+    controlledOpenSessionId !== undefined ? controlledOpenSessionId : localOpenSessionId;
+  const setOpenSessionId = onOpenSession ?? setLocalOpenSessionId;
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -170,17 +361,16 @@ export default function AgentChatPanel() {
     };
   }, []);
 
-  const submitComposer = useCallback(
-    (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault();
-      const body = composerBody.trim();
+  // Send the master composer's body via the orchestration send path.
+  const sendComposer = useCallback(
+    async (text?: string) => {
+      const body = (text ?? composerBody).trim();
       if (!body || sending) return;
       setSending(true);
-      void sendMessage(selected, body).then(ok => {
-        if (!mountedRef.current) return;
-        if (ok) setComposerBody('');
-        setSending(false);
-      });
+      const ok = await sendMessage(selected, body);
+      if (!mountedRef.current) return;
+      if (ok) setComposerBody('');
+      setSending(false);
     },
     [composerBody, sending, sendMessage, selected]
   );
@@ -205,193 +395,167 @@ export default function AgentChatPanel() {
   // Sessions the agent has engaged that are parked on an approval → "needs you".
   const pinged = contactSessions.sessions.filter(s => s.status === 'waiting-approval');
   const openSession = contactSessions.sessions.find(s => s.sessionId === openSessionId) ?? null;
+  // Empty conscious thread → show the shared welcome hero (reuses the generic
+  // chat's "new window" panel) instead of the bare "no messages" line.
+  const showHero = isMasterSelected && (selected?.messages.length ?? 0) === 0;
+
+  // A session is open → take over the whole pane with its full-page chat.
+  // Returning to the master chat is done from the sidebar's Chat item (which
+  // clears the `?session=` param), so no in-view back button is needed.
+  if (openSession) {
+    return <SessionChatView session={openSession} />;
+  }
+
+  const loading = sessionsState.status === 'loading' || messagesState.status === 'loading';
+  const errored = sessionsState.status === 'error' || messagesState.status === 'error';
+
+  // The Conscious/Subconscious toggle — sits in the composer footer slot where
+  // the generic chat's super-context / quick-reasoning controls live.
+  const modeToggle = (
+    <div
+      className="inline-flex h-7 items-center rounded-full border border-line bg-surface-subtle p-0.5"
+      role="radiogroup"
+      aria-label={t('orchPage.agent.modeLabel')}>
+      {rail.map(chat => {
+        const active = selectedId === chat.id;
+        const label =
+          chat.id === SUBCONSCIOUS_CHAT_KEY
+            ? t('orchPage.agent.subconsciousTab')
+            : t('orchPage.agent.consciousTab');
+        return (
+          <button
+            key={chat.id}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            data-testid={`orch-agent-tab-${chat.id}`}
+            onClick={() => selectChat(chat.id)}
+            className={`flex items-center gap-1.5 rounded-full px-3 py-0.5 text-xs font-medium transition-all ${
+              active
+                ? 'bg-surface text-content shadow-sm'
+                : 'text-content-muted hover:text-content-secondary'
+            }`}>
+            {label}
+            {chat.unread > 0 ? (
+              <span className="inline-flex min-w-4 items-center justify-center rounded-full bg-primary-500 px-1 text-[10px] font-semibold text-content-inverted">
+                {chat.unread}
+              </span>
+            ) : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  const showComposer = isMasterSelected && sessionsState.status === 'ok';
 
   return (
-    <div className="relative flex h-full min-h-[520px] overflow-hidden rounded-xl border border-line bg-surface shadow-soft">
-      {/* Thread rail — mirrors the normal chat's ThreadList. */}
-      <aside className="flex w-56 flex-none flex-col border-r border-line bg-surface-muted/40">
-        <div className="border-b border-line-subtle px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-content-muted">
-          {t('orchPage.agent.mainTab')}
-        </div>
-        <div
-          className="min-h-0 flex-1 overflow-y-auto"
-          role="tablist"
-          aria-label={t('orchPage.agent.description')}>
-          {rail.map(chat => {
-            const active = selectedId === chat.id;
-            return (
-              <button
-                key={chat.id}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                data-testid={`orch-agent-tab-${chat.id}`}
-                onClick={() => selectChat(chat.id)}
-                className={`flex w-full items-center gap-2.5 border-b border-line-subtle/60 px-3 py-2.5 text-left transition-colors dark:border-line/60 ${
-                  active
-                    ? 'border-l-2 border-l-primary-500 bg-primary-50 dark:bg-primary-900/30'
-                    : 'hover:bg-surface-hover'
-                }`}>
-                <span
-                  className={`flex h-7 w-7 flex-none items-center justify-center rounded-lg text-[11px] font-semibold ${
-                    active
-                      ? 'bg-primary-500 text-white'
-                      : 'border border-line bg-surface-strong text-content-secondary'
-                  }`}>
-                  {chat.id === SUBCONSCIOUS_CHAT_KEY ? 'S' : 'M'}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span
-                    className={`block truncate text-sm ${
-                      active
-                        ? 'font-medium text-primary-700 dark:text-primary-200'
-                        : 'text-content-secondary'
-                    }`}>
-                    {chat.title}
-                  </span>
-                  <span className="block truncate text-[11px] text-content-faint">
-                    {chat.subtitle}
-                  </span>
-                </span>
-                {chat.unread > 0 ? (
-                  <span className="flex-none rounded-full bg-primary-500 px-1.5 py-0.5 text-[10px] font-semibold text-content-inverted">
-                    {chat.unread}
+    // The main agent chat has no top header — just the conscious/subconscious
+    // switching chip in the footer. When subconscious is active, the steering
+    // directive + "Run review" ride alongside the chip (no header bar).
+    <ChatPageScaffold
+      footer={
+        <div className="flex flex-col gap-2">
+          {showComposer ? (
+            <>
+              {masterError ? (
+                <p className="rounded-md bg-coral-50 px-2 py-1 text-xs text-coral-700 dark:bg-coral-500/10 dark:text-coral-300">
+                  {t('tinyplaceOrchestration.composer.sendFailed')}: {masterError}
+                </p>
+              ) : null}
+              <AgentComposer
+                value={composerBody}
+                setValue={setComposerBody}
+                onSend={sendComposer}
+                isSending={sending}
+                placeholder={t('tinyplaceOrchestration.composer.placeholder')}
+              />
+            </>
+          ) : null}
+          <div className="flex items-center justify-between gap-2">
+            {modeToggle}
+            {isSubconscious ? (
+              <div className="flex min-w-0 items-center gap-2" data-testid="orch-agent-steering">
+                {steeringText ? (
+                  <span className="hidden min-w-0 truncate text-[11px] text-content-muted sm:inline">
+                    {steeringText}
                   </span>
                 ) : null}
-              </button>
-            );
-          })}
-        </div>
-      </aside>
-
-      {/* Message pane. */}
-      <main className="relative flex min-w-0 flex-1 flex-col bg-surface/70 dark:bg-black/40">
-        {/* Subconscious steering header. */}
-        {isSubconscious ? (
-          <div
-            data-testid="orch-agent-steering-header"
-            className="flex items-center justify-between gap-3 border-b border-line bg-amber-50/40 px-5 py-2.5 dark:bg-amber-500/5">
-            <div className="min-w-0">
-              <p className="text-xs font-medium text-content">
-                {steeringText
-                  ? t('tinyplaceOrchestration.steeringHeader.current')
-                  : t('tinyplaceOrchestration.steeringHeader.none')}
-              </p>
-              {steeringText ? (
-                <p className="mt-0.5 truncate text-xs text-content-muted">{steeringText}</p>
-              ) : null}
-            </div>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => void runSteeringReview()}
-              disabled={runningReview}>
-              {runningReview
-                ? t('tinyplaceOrchestration.steeringHeader.running')
-                : t('tinyplaceOrchestration.steeringHeader.runReview')}
-            </Button>
-          </div>
-        ) : null}
-
-        {sessionsState.status === 'loading' || messagesState.status === 'loading' ? (
-          <div className="flex flex-1 items-center justify-center text-sm text-content-muted">
-            {t('tinyplaceOrchestration.loading')}
-          </div>
-        ) : sessionsState.status === 'error' || messagesState.status === 'error' ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-coral-600 dark:text-coral-300">
-            <p>
-              {t('tinyplaceOrchestration.failedToLoad')}:{' '}
-              {sessionsState.status === 'error'
-                ? sessionsState.message
-                : messagesState.status === 'error'
-                  ? messagesState.message
-                  : ''}
-            </p>
-            <Button variant="secondary" size="sm" onClick={() => void refresh()}>
-              {t('common.retry')}
-            </Button>
-          </div>
-        ) : (
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <div className="mx-auto w-full max-w-[48.75rem] space-y-3 px-5 py-5">
-              {selected?.messages.length ? (
-                <SessionTranscript messages={selected.messages} />
-              ) : (
-                <p className="py-10 text-center text-sm text-content-faint">
-                  {t('tinyplaceOrchestration.noMessages')}
-                </p>
-              )}
-
-              {/* View-session cards for sessions the agent engaged (needs you). */}
-              {pinged.map(session => (
-                <div key={session.sessionId} className="flex justify-start">
-                  <button
-                    type="button"
-                    data-testid={`orch-agent-view-session-${session.sessionId}`}
-                    onClick={() => setOpenSessionId(session.sessionId)}
-                    className="flex w-full max-w-[85%] items-center gap-3 rounded-xl border border-primary-200 bg-primary-50 px-3 py-2.5 text-left transition hover:bg-primary-100/60 dark:border-primary-500/30 dark:bg-primary-900/20">
-                    <span className="flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-primary-500/15 text-sm text-primary-600 dark:text-primary-300">
-                      ⧉
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium text-content">
-                        {sessionLabel(session)}
-                      </span>
-                      <span className="block truncate text-[11px] text-amber-600 dark:text-amber-300">
-                        {t('orchPage.connections.status.needsYou')}
-                      </span>
-                    </span>
-                    <span className="flex-none rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-semibold text-white">
-                      {t('orchPage.agent.viewSession')}
-                    </span>
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Master composer. */}
-        {isMasterSelected && sessionsState.status === 'ok' ? (
-          <form
-            className="flex flex-col gap-2 border-t border-line px-5 py-3"
-            onSubmit={submitComposer}>
-            {masterError ? (
-              <p className="rounded-md bg-coral-50 px-2 py-1 text-xs text-coral-700 dark:bg-coral-500/10 dark:text-coral-300">
-                {t('tinyplaceOrchestration.composer.sendFailed')}: {masterError}
-              </p>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void runSteeringReview()}
+                  disabled={runningReview}>
+                  {runningReview
+                    ? t('tinyplaceOrchestration.steeringHeader.running')
+                    : t('tinyplaceOrchestration.steeringHeader.runReview')}
+                </Button>
+              </div>
             ) : null}
-            <div className="flex gap-2">
-              <input
-                data-testid="orch-agent-composer-input"
-                value={composerBody}
-                onChange={event => setComposerBody(event.target.value)}
-                placeholder={t('tinyplaceOrchestration.composer.placeholder')}
-                className="min-w-0 flex-1 rounded-md border border-line bg-surface px-3 py-2 text-sm text-content outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
-              />
-              <Button
-                type="submit"
-                variant="primary"
-                size="sm"
-                data-testid="orch-agent-composer-send"
-                disabled={!composerBody.trim() || sending}>
-                {t('tinyplaceOrchestration.composer.send')}
-              </Button>
-            </div>
-          </form>
-        ) : null}
-      </main>
+          </div>
+        </div>
+      }>
+      {loading ? (
+        <div className="flex h-full items-center justify-center text-sm text-content-muted">
+          {t('tinyplaceOrchestration.loading')}
+        </div>
+      ) : errored ? (
+        <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-coral-600 dark:text-coral-300">
+          <p>
+            {t('tinyplaceOrchestration.failedToLoad')}:{' '}
+            {sessionsState.status === 'error'
+              ? sessionsState.message
+              : messagesState.status === 'error'
+                ? messagesState.message
+                : ''}
+          </p>
+          <Button variant="secondary" size="sm" onClick={() => void refresh()}>
+            {t('common.retry')}
+          </Button>
+        </div>
+      ) : showHero && pinged.length === 0 ? (
+        // Empty conscious thread: reuse the generic chat's welcome hero.
+        <div className="mx-auto flex h-full w-full max-w-[48.75rem] px-5">
+          <ChatNewWindowHero />
+        </div>
+      ) : (
+        <div className="mx-auto w-full max-w-[48.75rem] space-y-3 px-5 pt-4">
+          {selected?.messages.length ? (
+            <SessionTranscript messages={selected.messages} />
+          ) : showHero ? null : (
+            <p className="py-10 text-center text-sm text-content-faint">
+              {t('tinyplaceOrchestration.noMessages')}
+            </p>
+          )}
 
-      {/* Session side-tab (opens on demand from a View-session card). */}
-      {openSession ? (
-        // `key` resets the drawer's local composer/sending state when switching
-        // to a different session, so a draft reply never leaks across sessions.
-        <SessionDrawer
-          key={openSession.sessionId}
-          session={openSession}
-          onClose={() => setOpenSessionId(null)}
-        />
-      ) : null}
-    </div>
+          {/* "Needs you" cards for sessions the agent engaged → open the session
+              subpage (same as clicking it in the sidebar's active sub-agents). */}
+          {pinged.map(session => (
+            <div key={session.sessionId} className="flex justify-start">
+              <button
+                type="button"
+                data-testid={`orch-agent-view-session-${session.sessionId}`}
+                onClick={() => setOpenSessionId(session.sessionId)}
+                className="flex w-full max-w-[85%] items-center gap-3 rounded-xl border border-primary-200 bg-primary-50 px-3 py-2.5 text-left transition hover:bg-primary-100/60 dark:border-primary-500/30 dark:bg-primary-900/20">
+                <span className="flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-primary-500/15 text-sm text-primary-600 dark:text-primary-300">
+                  ⧉
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium text-content">
+                    {sessionLabel(session)}
+                  </span>
+                  <span className="block truncate text-[11px] text-amber-600 dark:text-amber-300">
+                    {t('orchPage.connections.status.needsYou')}
+                  </span>
+                </span>
+                <span className="flex-none rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-semibold text-white">
+                  {t('orchPage.agent.viewSession')}
+                </span>
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </ChatPageScaffold>
   );
 }

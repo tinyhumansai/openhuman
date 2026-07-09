@@ -118,7 +118,7 @@ pub fn title_from_user_message(message: &str) -> Option<String> {
     let stripped = collapsed
         .trim_matches(|c: char| matches!(c, '"' | '\'' | '`'))
         .trim()
-        .trim_start_matches(|c: char| matches!(c, '/' | '@' | '#'))
+        .trim_start_matches(['/', '@', '#'])
         .trim();
     if stripped.is_empty() {
         return None;

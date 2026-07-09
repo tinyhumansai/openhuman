@@ -186,10 +186,8 @@ pub(crate) async fn process_channel_runtime_message(
     // a fresh agent turn would cancel the parked tool call. Any other text
     // falls through to the normal dispatch (the user is redirecting). Mirrors
     // the same intercept in `channels/providers/web.rs:493-525`.
-    if channel_has_approval_surface(&msg.channel) {
-        if try_route_approval_reply(&msg).await {
-            return;
-        }
+    if channel_has_approval_surface(&msg.channel) && try_route_approval_reply(&msg).await {
+        return;
     }
 
     // Fire typing indicator as early as possible — before any async I/O — so the
@@ -385,16 +383,14 @@ pub(crate) async fn process_channel_runtime_message(
                             }
                         }
                     }
-                    AgentProgress::ToolCallStarted { tool_name, .. } => {
-                        if accumulated.is_empty() {
-                            let _ = channel
-                                .update_draft(
-                                    &reply_target,
-                                    &draft_id,
-                                    &format!("Working ({})...", tool_name),
-                                )
-                                .await;
-                        }
+                    AgentProgress::ToolCallStarted { tool_name, .. } if accumulated.is_empty() => {
+                        let _ = channel
+                            .update_draft(
+                                &reply_target,
+                                &draft_id,
+                                &format!("Working ({})...", tool_name),
+                            )
+                            .await;
                     }
                     _ => {}
                 }

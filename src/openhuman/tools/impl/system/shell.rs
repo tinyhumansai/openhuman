@@ -635,13 +635,13 @@ fn prepend_path_dirs<'a>(
 fn shell_command_needs_python_runtime(command: &str) -> bool {
     let lower = command.to_ascii_lowercase();
     lower
-        .split(|ch| matches!(ch, ';' | '&' | '|' | '\n' | '\r'))
+        .split([';', '&', '|', '\n', '\r'])
         .any(segment_starts_with_python_command)
 }
 
 fn segment_starts_with_python_command(segment: &str) -> bool {
-    let mut tokens = segment.split_whitespace().peekable();
-    while let Some(token) = tokens.next() {
+    let tokens = segment.split_whitespace().peekable();
+    for token in tokens {
         let token = token.trim_matches(|ch| matches!(ch, '(' | ')' | '<' | '>'));
         if token.is_empty() {
             continue;

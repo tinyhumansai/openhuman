@@ -57,6 +57,7 @@ export function levelColor(level: number | null | undefined): string {
 }
 
 export function nodeColor(node: GraphNode): string {
+  if (node.color) return node.color; // UI override (e.g. dimmed offline agents)
   if (node.kind === 'root') return ROOT_COLOR;
   if (node.kind === 'source') return SOURCE_COLOR;
   if (node.kind === 'summary') return levelColor(node.level);
@@ -104,12 +105,15 @@ export const ROOT_NODE_ID = '__root__';
 export function buildGraph(
   nodes: GraphNode[],
   edges: GraphEdge[],
-  mode: GraphMode
+  mode: GraphMode,
+  rootLabel = 'Memory'
 ): { simNodes: SimNode[]; links: SimLink[] } {
   const ids = new Set(nodes.map(n => n.id));
 
   // Synthetic master root at the origin — all source nodes fan out from it.
-  const rootNode: SimNode = { kind: 'root', id: ROOT_NODE_ID, label: 'Memory', x: 0, y: 0 };
+  // `rootLabel` lets non-memory reuses (e.g. the orchestration overview) name
+  // the hub; defaults to "Memory".
+  const rootNode: SimNode = { kind: 'root', id: ROOT_NODE_ID, label: rootLabel, x: 0, y: 0 };
 
   const simNodes: SimNode[] = [rootNode];
   for (let i = 0; i < nodes.length; i++) {

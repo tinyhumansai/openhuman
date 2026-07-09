@@ -1205,7 +1205,7 @@ fn agent_error_to_user_message_classifies_provider_non_retryable() {
     let msg = agent_error_to_user_message(&err);
     assert!(msg.contains("provider"));
     assert!(msg.contains("credentials"));
-    assert!(msg.contains("Settings"));
+    assert!(msg.contains("Connections \u{2192} API keys \u{2192} LLM"));
     assert_ne!(msg, AGENT_JOB_USER_FAILURE_MESSAGE);
 }
 
@@ -1237,7 +1237,7 @@ fn agent_error_to_user_message_classifies_max_iterations() {
     let err = AgentError::MaxIterationsExceeded { max: 10 };
     let msg = agent_error_to_user_message(&err);
     assert!(msg.contains("tool iterations"));
-    assert!(msg.contains("Settings"));
+    assert!(msg.contains("Connections \u{2192} API keys \u{2192} LLM"));
     assert_ne!(msg, AGENT_JOB_USER_FAILURE_MESSAGE);
 }
 
@@ -1258,11 +1258,11 @@ fn agent_error_to_user_message_classifies_empty_provider_response_for_3335() {
         "must not claim a local provider exists: {msg}"
     );
     assert!(
-        msg.contains("different model"),
+        msg.contains("another model"),
         "must keep the model-switch remedy: {msg}"
     );
     assert!(
-        msg.contains("Settings \u{2192} AI \u{2192} LLM"),
+        msg.contains("Connections \u{2192} API keys \u{2192} LLM"),
         "must keep the provider-config deep link: {msg}"
     );
     assert_ne!(msg, AGENT_JOB_USER_FAILURE_MESSAGE);

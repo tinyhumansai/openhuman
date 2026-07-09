@@ -854,22 +854,22 @@ fn mirror_worker_thread(
                     );
                 }
             }
-            ConversationMessage::Chat(c) if c.role == "assistant" => {
-                if !c.content.trim().is_empty() {
-                    iteration += 1;
-                    append_worker_message(
-                        workspace_dir,
-                        thread_id,
-                        agent_id,
-                        task_id,
-                        c.content.clone(),
-                        "agent",
-                        serde_json::json!({
-                            "iteration": iteration,
-                            "final": extra_final.is_none(),
-                        }),
-                    );
-                }
+            ConversationMessage::Chat(c)
+                if c.role == "assistant" && !c.content.trim().is_empty() =>
+            {
+                iteration += 1;
+                append_worker_message(
+                    workspace_dir,
+                    thread_id,
+                    agent_id,
+                    task_id,
+                    c.content.clone(),
+                    "agent",
+                    serde_json::json!({
+                        "iteration": iteration,
+                        "final": extra_final.is_none(),
+                    }),
+                );
             }
             _ => {}
         }

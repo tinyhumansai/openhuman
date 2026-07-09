@@ -5,7 +5,7 @@
 //! upserts so the user can hand-edit it in Obsidian without losing edits.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};

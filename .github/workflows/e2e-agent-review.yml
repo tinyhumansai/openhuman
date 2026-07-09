@@ -30,7 +30,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
           submodules: recursive
@@ -45,12 +45,13 @@ jobs:
           fi
       - name: Setup pnpm
         if: steps.gate.outputs.present == 'true'
-        uses: pnpm/action-setup@v5
+        uses: pnpm/action-setup@v6
         with:
+          version: 10.10.0
           cache: true
       - name: Setup Node.js 24.x
         if: steps.gate.outputs.present == 'true'
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
           node-version: 24.x
       - name: Install Rust (rust-toolchain.toml)
@@ -74,13 +75,14 @@ jobs:
           echo "hash=$(tail -n +8 Cargo.lock | openssl dgst -sha256 | awk '{print $2}')" >> "$GITHUB_OUTPUT"
       - name: Cache Cargo registry and build
         if: steps.gate.outputs.present == 'true'
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-e2e-agentreview-cargo-${{ steps.cargo-lock-fingerprint.outputs.hash
+          key:
+            ${{ runner.os }}-e2e-agentreview-cargo-${{ steps.cargo-lock-fingerprint.outputs.hash
             }}
           restore-keys: |
             ${{ runner.os }}-e2e-agentreview-cargo-
@@ -128,7 +130,7 @@ jobs:
           fi
       - name: Upload E2E artifacts
         if: always() && steps.gate.outputs.present == 'true'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-agent-review-artifacts
           path: |

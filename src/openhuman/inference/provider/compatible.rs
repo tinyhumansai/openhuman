@@ -388,7 +388,7 @@ pub(crate) fn prompt_cache_for_compatible_slug(
     // `openai:gpt-5.1` style slug still resolves to the `openai` family.
     let normalized = slug.trim().to_ascii_lowercase();
     let family = normalized
-        .split(|c| c == ':' || c == '/' || c == '-')
+        .split([':', '/', '-'])
         .next()
         .unwrap_or("")
         .trim();

@@ -1443,7 +1443,7 @@ fn title_case_toolkit(toolkit: &str) -> String {
         return String::new();
     }
     trimmed
-        .split(|c| c == '_' || c == '-' || c == ' ')
+        .split(['_', '-', ' '])
         .filter(|w| !w.is_empty())
         .map(|word| {
             let mut chars = word.chars();

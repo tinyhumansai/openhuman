@@ -161,7 +161,8 @@ pub async fn tree_summarizer_rebuild(
 ///    explicitly acknowledged that memory summaries will be sent to an
 ///    external provider.
 /// 3. Error otherwise — "Build Summary Trees" is local-only by default;
-///    the user must opt in to cloud summarization in Settings → AI → Memory.
+///    the user must opt in to cloud summarization via the
+///    `memory_tree.cloud_summarization_opt_in` setting.
 fn create_provider(
     config: &Config,
 ) -> Result<
@@ -187,8 +188,8 @@ fn create_provider(
     }
 
     if !config.memory_tree.cloud_summarization_opt_in {
-        return Err("no summarization provider — enable local AI, or enable \
-             cloud summarization in Settings → AI → Memory"
+        return Err("no summarization provider — enable local AI, or opt in to \
+             cloud summarization via the memory_tree.cloud_summarization_opt_in setting"
             .to_string());
     }
 
@@ -212,7 +213,7 @@ fn create_provider(
 ///   available iff the configured summarization-role provider resolves.
 /// - local AI off + opt-in `false` (default) ⇒ unavailable — explicit
 ///   consent required before routing workspace memory summaries to a cloud
-///   provider. Enable in Settings → AI → Memory.
+///   provider. Enable via the `memory_tree.cloud_summarization_opt_in` setting.
 ///
 /// The provider built for the `Ok` check is dropped — construction is cheap
 /// (no network) and confirming by build beats guessing.
@@ -229,7 +230,7 @@ pub fn summarizer_available(config: &Config) -> (bool, &'static str) {
         ),
         Err(_) => (
             false,
-            "no summarization provider available — enable local AI or configure a cloud provider in Settings → AI",
+            "no summarization provider available — enable local AI, or opt in to cloud summarization (memory_tree.cloud_summarization_opt_in) with a provider set in Connections → API keys → LLM",
         ),
     }
 }

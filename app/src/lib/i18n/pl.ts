@@ -186,11 +186,30 @@ const messages: TranslationMap = {
   'orchPage.group.agent': 'Agent',
   'orchPage.group.network': 'Sieć',
   'orchPage.group.insights': 'Statystyki',
+  'orchPage.overview.nav': 'Graf agentów',
+  'orchPage.tasks.nav': 'Zadania',
+  'orchPage.tasks.subtitle': 'Globalna tablica zadań orkiestratora',
+  'orchPage.tasks.colPending': 'Oczekujące',
+  'orchPage.tasks.colActive': 'Aktywne',
+  'orchPage.tasks.colBlocked': 'Zablokowane',
+  'orchPage.tasks.colCompleted': 'Ukończone',
+  'orchPage.overview.core': 'Rdzeń agenta',
+  'orchPage.overview.empty': 'Brak subagentów do wizualizacji',
   'orchPage.agent.nav': 'Czat',
   'orchPage.agent.mainTab': 'Główny agent',
+  'orchPage.agent.consciousTab': 'Świadomość',
   'orchPage.agent.subconsciousTab': 'Podświadomość',
+  'orchPage.agent.modeLabel': 'Umysł agenta',
   'orchPage.agent.description': 'Rozmawiaj z głównym agentem i obserwuj jego podświadomość',
   'orchPage.agent.viewSession': 'Zobacz sesję',
+  'orchPage.sessions.railTitle': 'Aktywni agenci',
+  'orchPage.sessions.empty': 'Brak aktywnych agentów',
+  'orchPage.sessions.statusConnected': 'Połączono',
+  'orchPage.sessions.statusDisconnected': 'Rozłączono',
+  'orchPage.sessions.statusWaiting': 'Oczekiwanie na dane',
+  'orchPage.session.runtime': 'Środowisko',
+  'orchPage.session.directory': 'Katalog',
+  'orchPage.session.runningOn': 'Działa na',
   'orchPage.connections.nav': 'Połączenia',
   'orchPage.connections.title': 'Połączeni agenci',
   'orchPage.connections.description':
@@ -205,6 +224,10 @@ const messages: TranslationMap = {
   'orchPage.connections.messageCount': '{n} wiadomości',
   'orchPage.connections.back': 'Połączenia',
   'orchPage.connections.replyPlaceholder': 'Odpowiedz…',
+  'orchPage.connections.initTitle': 'Zainicjuj agenta lub instancję',
+  'orchPage.connections.initDesc':
+    'Uruchom nowego subagenta do pracy u twojego boku. Otwórz czat agenta i opisz rolę, cel oraz narzędzia — OpenHuman udostępni dedykowaną instancję, którą pokierujesz stąd.',
+  'orchPage.connections.initCta': 'Zacznij w czacie',
   'orchPage.connections.status.needsYou': 'Wymaga Ciebie',
   'orchPage.connections.status.running': 'Uruchomione',
   'orchPage.connections.status.idle': 'Bezczynny',
@@ -1073,7 +1096,7 @@ const messages: TranslationMap = {
   'onboarding.runtimeChoice.exitError': 'Nie udało się zakończyć wdrożenia. Spróbuj ponownie.',
   'onboarding.apiKeys.title': 'Dodajmy Twoje klucze API',
   'onboarding.apiKeys.subtitle':
-    'Możesz wkleić je teraz lub pominąć i dodać później w Ustawieniach › AI. Klucze są przechowywane na tym urządzeniu, zaszyfrowane w spoczynku.',
+    'Możesz wkleić je teraz lub pominąć i dodać później w Połączenia › klucze API. Klucze są przechowywane na tym urządzeniu, zaszyfrowane w spoczynku.',
   'onboarding.apiKeys.openaiLabel': 'Klucz API OpenAI',
   'onboarding.apiKeys.openaiPlaceholder': 'sk-...',
   'onboarding.apiKeys.openaiOauthHint':
@@ -5506,6 +5529,11 @@ const messages: TranslationMap = {
   'settings.appearance.fontSizeXLargeDesc': 'Największy tekst dla maksymalnej czytelności.',
   'settings.appearance.fontSizeHelperText':
     'Skaluje tekst w całej aplikacji — czat, ustawienia i panele — niezależnie od ustawienia czcionki w systemie.',
+  'settings.appearance.fontSizeCustomLabel': 'Rozmiar niestandardowy',
+  'settings.appearance.fontSizeCustomAria': 'Niestandardowy rozmiar czcionki w pikselach',
+  'settings.appearance.fontSizeCustomSliderAria':
+    'Suwak niestandardowego rozmiaru czcionki, w pikselach',
+  'settings.appearance.fontSizeUnit': 'px',
   'settings.appearance.tabBarHeading': 'Dolny pasek zakładek',
   'settings.appearance.tabBarAlwaysShowLabels': 'Zawsze pokazuj etykiety',
   'settings.appearance.tabBarAlwaysShowLabelsDesc':
@@ -6744,21 +6772,21 @@ const messages: TranslationMap = {
   'memoryTree.status.degradedStructure': 'Struktura wiki niekompletna',
   'memoryTree.status.extractionCoverage': 'Pokrycie ekstrakcji: {pct}% fragmentów ma strukturę',
   'memory.health.remediation.budget_exhausted':
-    'Osadzenia pamięci wyczerpały zarządzany budżet. Skonfiguruj lokalne osadzenia Ollama (Ustawienia → AI → Embeddings) lub dodaj własny klucz API osadzeń, aby kontynuować budowanie pamięci.',
+    'Osadzenia pamięci wyczerpały zarządzany budżet. Skonfiguruj lokalne osadzenia Ollama (Połączenia → Klucze API → Embeddingi) lub dodaj własny klucz API osadzeń, aby kontynuować budowanie pamięci.',
   'memory.health.remediation.auth_missing':
-    'Nie znaleziono poświadczeń osadzeń. Zaloguj się do OpenHuman lub skonfiguruj lokalne osadzenia Ollama w Ustawienia → AI → Embeddings.',
+    'Nie znaleziono poświadczeń osadzeń. Zaloguj się do OpenHuman lub skonfiguruj lokalne osadzenia Ollama w Połączenia → Klucze API → Embeddingi.',
   'memory.health.remediation.auth_invalid':
-    'Twoje poświadczenia osadzeń zostały odrzucone. Uwierzytelnij się ponownie lub przełącz na lokalne osadzenia Ollama w Ustawienia → AI → Embeddings.',
+    'Twoje poświadczenia osadzeń zostały odrzucone. Uwierzytelnij się ponownie lub przełącz na lokalne osadzenia Ollama w Połączenia → Klucze API → Embeddingi.',
   'memory.health.remediation.embeddings_unconfigured':
-    'Nie skonfigurowano dostawcy osadzeń, więc wyszukiwanie semantyczne jest wyłączone. Skonfiguruj lokalne osadzenia Ollama (zalecane) lub dodaj klucz osadzeń w Ustawienia → AI → Embeddings.',
+    'Nie skonfigurowano dostawcy osadzeń, więc wyszukiwanie semantyczne jest wyłączone. Skonfiguruj lokalne osadzenia Ollama (zalecane) lub dodaj klucz osadzeń w Połączenia → Klucze API → Embeddingi.',
   'memory.health.remediation.embedding_dim_mismatch':
     'Model osadzeń zwraca nieprawidłowy rozmiar wektora (pamięć oczekuje 1024 wymiarów). Wybierz model o 1024 wymiarach lub poproś dostawcę o 1024 wymiary.',
   'memory.health.remediation.local_model_unavailable':
-    'Wymagany model lokalny jest niedostępny. Zainstaluj/uruchom Ollama i pobierz model albo przełącz to zadanie na dostawcę chmurowego w Ustawienia → AI.',
+    'Wymagany model lokalny jest niedostępny. Zainstaluj/uruchom Ollama i pobierz model albo przełącz to zadanie na dostawcę chmurowego w Połączenia → Klucze API.',
   'memory.health.remediation.extraction_timeout':
-    'Model ekstrakcji pamięci przekracza limit czasu, więc wiki ma niewielką strukturę. Zmień model ekstrakcji pamięci na szybszy w Ustawienia → AI.',
+    'Model ekstrakcji pamięci przekracza limit czasu, więc wiki ma niewielką strukturę. Zmień model ekstrakcji pamięci na szybszy w Połączenia → Klucze API → LLM.',
   'memory.health.remediation.summarizer_unavailable':
-    'Brak dostępnego dostawcy podsumowań dla funkcji Twórz drzewa podsumowań. Włącz lokalną AI (Ollama) lub włącz podsumowywanie w chmurze w Ustawienia → AI → Pamięć.',
+    'Brak dostępnego dostawcy podsumowań dla funkcji Twórz drzewa podsumowań. Włącz lokalną AI (Ollama) albo ustaw memory_tree.cloud_summarization_opt_in=true i skonfiguruj dostawcę LLM w Połączenia → Klucze API → LLM.',
   'memory.health.remediation.empty_input_refused':
     'Pominięto element pamięci, ponieważ jego tekst był pusty. Żadne działanie nie jest wymagane — nowe elementy są nadal osadzane normalnie.',
   'memory.health.remediation.storage_unavailable':
@@ -6766,7 +6794,7 @@ const messages: TranslationMap = {
   'memory.health.remediation.transient':
     'Tymczasowy błąd przerwał przetwarzanie pamięci. Ponowna próba nastąpi automatycznie.',
   'memory.health.remediation.unknown':
-    'Przetwarzanie pamięci napotkało problem. Sprawdź Ustawienia → AI w celu konfiguracji.',
+    'Przetwarzanie pamięci napotkało problem. Sprawdź Połączenia → Klucze API w celu konfiguracji.',
   // Chat — agent-generated artifacts (#2779)
 
   // Chat composer toolbar

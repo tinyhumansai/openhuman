@@ -8,8 +8,8 @@
 # OPTIONS:
 #   --suite=SUITE     Run only one suite category. Valid values:
 #                       auth, navigation, chat, skills, notifications,
-#                       webhooks, providers, payments, settings, system,
-#                       journeys, all  (default: all)
+#                       webhooks, providers, provider-web, payments, settings,
+#                       system, journeys, all  (default: all)
 #   --bail            Stop after the first spec failure (default: run all)
 #   --skip-preflight  Skip the pre-flight environment check
 #
@@ -57,7 +57,7 @@ for arg in "$@"; do
   esac
 done
 
-VALID_SUITES="auth navigation chat skills notifications webhooks providers connectors payments settings system journeys all"
+VALID_SUITES="auth navigation chat skills notifications webhooks providers provider-web connectors payments settings system journeys all"
 
 # Accept comma-separated suite lists, e.g. --suite=auth,navigation,system.
 # CI sharding passes one such list per matrix shard so a few parallel jobs
@@ -325,17 +325,28 @@ if should_run_suite "providers"; then
   run "test/e2e/specs/telegram-channel-flow.spec.ts"          "telegram-channel"          "providers"
   run "test/e2e/specs/gmail-flow.spec.ts"                     "gmail"                     "providers"
   run "test/e2e/specs/accounts-provider-modal.spec.ts"        "accounts-providers"        "providers"
+  _mini_summary "providers"
+fi
+
+# Split browser-heavy provider flows out of the core provider shard. Telegram,
+# Gmail, and accounts already consume several minutes of Appium/CEF runtime on
+# Windows; keeping WhatsApp/conversations in the same shared session makes the
+# later specs prone to "session is either terminated or not started" teardown
+# failures before their own assertions run.
+if should_run_suite "provider-web"; then
+  echo ""
+  echo "## Running suite: provider-web"
   # slack-flow currently crashes the CEF session mid-spec on Linux (#1850-style
   # state issue); skip until investigated rather than nuke the rest of the
   # provider suite.
-  # run "test/e2e/specs/slack-flow.spec.ts"                   "slack"                     "providers"
-  run "test/e2e/specs/whatsapp-flow.spec.ts"                  "whatsapp"                  "providers"
+  # run "test/e2e/specs/slack-flow.spec.ts"                   "slack"                     "provider-web"
+  run "test/e2e/specs/whatsapp-flow.spec.ts"                  "whatsapp"                  "provider-web"
   # notion-flow.spec.ts was removed; skip to avoid "spec not found" failure.
-  # run "test/e2e/specs/notion-flow.spec.ts"                  "notion"                    "providers"
-  run "test/e2e/specs/conversations-web-channel-flow.spec.ts" "conversations"             "providers"
-  run "test/e2e/specs/composio-triggers-flow.spec.ts"         "composio-triggers"         "providers"
-  run "test/e2e/specs/connectivity-state-differentiation.spec.ts" "connectivity-state"   "providers"
-  _mini_summary "providers"
+  # run "test/e2e/specs/notion-flow.spec.ts"                  "notion"                    "provider-web"
+  run "test/e2e/specs/conversations-web-channel-flow.spec.ts" "conversations"             "provider-web"
+  run "test/e2e/specs/composio-triggers-flow.spec.ts"         "composio-triggers"         "provider-web"
+  run "test/e2e/specs/connectivity-state-differentiation.spec.ts" "connectivity-state"   "provider-web"
+  _mini_summary "provider-web"
 fi
 
 # ---------------------------------------------------------------------------

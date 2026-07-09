@@ -184,11 +184,30 @@ const messages: TranslationMap = {
   'orchPage.group.agent': 'Agente',
   'orchPage.group.network': 'Rete',
   'orchPage.group.insights': 'Approfondimenti',
+  'orchPage.overview.nav': 'Grafo degli agenti',
+  'orchPage.tasks.nav': 'Attività',
+  'orchPage.tasks.subtitle': 'La bacheca attività globale dell’orchestratore',
+  'orchPage.tasks.colPending': 'In attesa',
+  'orchPage.tasks.colActive': 'Attivo',
+  'orchPage.tasks.colBlocked': 'Bloccato',
+  'orchPage.tasks.colCompleted': 'Completato',
+  'orchPage.overview.core': 'Nucleo dell’agente',
+  'orchPage.overview.empty': 'Nessun sotto-agente da visualizzare ancora',
   'orchPage.agent.nav': 'Chat',
   'orchPage.agent.mainTab': 'Agente principale',
+  'orchPage.agent.consciousTab': 'Conscio',
   'orchPage.agent.subconsciousTab': 'Subconscio',
+  'orchPage.agent.modeLabel': 'Mente dell’agente',
   'orchPage.agent.description': "Chatta con l'agente principale e osserva il suo subconscio",
   'orchPage.agent.viewSession': 'Vedi sessione',
+  'orchPage.sessions.railTitle': 'Agenti attivi',
+  'orchPage.sessions.empty': 'Ancora nessun agente attivo',
+  'orchPage.sessions.statusConnected': 'Connesso',
+  'orchPage.sessions.statusDisconnected': 'Disconnesso',
+  'orchPage.sessions.statusWaiting': 'In attesa di input',
+  'orchPage.session.runtime': 'Esecuzione',
+  'orchPage.session.directory': 'Cartella',
+  'orchPage.session.runningOn': 'In esecuzione su',
   'orchPage.connections.nav': 'Connessioni',
   'orchPage.connections.title': 'Agenti collegati',
   'orchPage.connections.description':
@@ -203,6 +222,10 @@ const messages: TranslationMap = {
   'orchPage.connections.messageCount': '{n} messaggi',
   'orchPage.connections.back': 'Connessioni',
   'orchPage.connections.replyPlaceholder': 'Rispondi…',
+  'orchPage.connections.initTitle': "Inizializza un agente o un'istanza",
+  'orchPage.connections.initDesc':
+    "Avvia un nuovo sotto-agente che lavori al tuo fianco. Apri la chat dell'agente e descrivi ruolo, obiettivo e strumenti — OpenHuman fornisce un'istanza dedicata che puoi guidare da qui.",
+  'orchPage.connections.initCta': 'Inizia nella chat',
   'orchPage.connections.status.needsYou': 'Richiede la tua attenzione',
   'orchPage.connections.status.running': 'In esecuzione',
   'orchPage.connections.status.idle': 'Inattivo',
@@ -1080,7 +1103,7 @@ const messages: TranslationMap = {
   'onboarding.runtimeChoice.exitError': "Impossibile completare l'onboarding. Riprova.",
   'onboarding.apiKeys.title': 'Aggiungiamo le tue chiavi API',
   'onboarding.apiKeys.subtitle':
-    'Puoi incollarle ora o saltare e aggiungerle dopo in Impostazioni › AI. Le chiavi sono memorizzate su questo dispositivo, crittografate a riposo.',
+    'Puoi incollarle ora o saltare e aggiungerle dopo in Connessioni › chiavi API. Le chiavi sono memorizzate su questo dispositivo, crittografate a riposo.',
   'onboarding.apiKeys.openaiLabel': 'Chiave API OpenAI',
   'onboarding.apiKeys.openaiPlaceholder': 'sk-...',
   'onboarding.apiKeys.openaiOauthHint':
@@ -5515,6 +5538,11 @@ const messages: TranslationMap = {
   'settings.appearance.fontSizeXLargeDesc': 'Il testo più grande, per la massima leggibilità.',
   'settings.appearance.fontSizeHelperText':
     'Ridimensiona il testo in tutta l’app — chat, impostazioni e pannelli — indipendentemente dall’impostazione del carattere del sistema.',
+  'settings.appearance.fontSizeCustomLabel': 'Dimensione personalizzata',
+  'settings.appearance.fontSizeCustomAria': 'Dimensione del carattere personalizzata in pixel',
+  'settings.appearance.fontSizeCustomSliderAria':
+    'Cursore dimensione carattere personalizzata, in pixel',
+  'settings.appearance.fontSizeUnit': 'px',
   'settings.appearance.tabBarHeading': 'Barra delle schede inferiore',
   'settings.appearance.tabBarAlwaysShowLabels': 'Mostra sempre le etichette',
   'settings.appearance.tabBarAlwaysShowLabelsDesc':
@@ -6758,21 +6786,21 @@ const messages: TranslationMap = {
   'memoryTree.status.extractionCoverage':
     'Copertura di estrazione: {pct}% dei frammenti ha una struttura',
   'memory.health.remediation.budget_exhausted':
-    'Gli embedding della memoria hanno raggiunto il budget gestito. Configura embedding Ollama locali (Impostazioni → IA → Incorporamenti) o aggiungi la tua chiave API per gli embedding per continuare a costruire la memoria.',
+    'Gli embedding della memoria hanno raggiunto il budget gestito. Configura embedding Ollama locali (Connessioni → Chiavi API → Incorporamenti) o aggiungi la tua chiave API per gli embedding per continuare a costruire la memoria.',
   'memory.health.remediation.auth_missing':
-    'Nessuna credenziale per gli embedding trovata. Accedi a OpenHuman o configura embedding Ollama locali in Impostazioni → IA → Incorporamenti.',
+    'Nessuna credenziale per gli embedding trovata. Accedi a OpenHuman o configura embedding Ollama locali in Connessioni → Chiavi API → Incorporamenti.',
   'memory.health.remediation.auth_invalid':
-    'Le tue credenziali per gli embedding sono state rifiutate. Autenticati di nuovo o passa agli embedding Ollama locali in Impostazioni → IA → Incorporamenti.',
+    'Le tue credenziali per gli embedding sono state rifiutate. Autenticati di nuovo o passa agli embedding Ollama locali in Connessioni → Chiavi API → Incorporamenti.',
   'memory.health.remediation.embeddings_unconfigured':
-    'Nessun provider di embedding è configurato, quindi il richiamo semantico è disattivato. Configura embedding Ollama locali (consigliato) o aggiungi una chiave per gli embedding in Impostazioni → IA → Incorporamenti.',
+    'Nessun provider di embedding è configurato, quindi il richiamo semantico è disattivato. Configura embedding Ollama locali (consigliato) o aggiungi una chiave per gli embedding in Connessioni → Chiavi API → Incorporamenti.',
   'memory.health.remediation.embedding_dim_mismatch':
     'Il modello di embedding restituisce una dimensione del vettore errata (la memoria prevede 1024 dimensioni). Scegli un modello a 1024 dimensioni o richiedi 1024 dimensioni al tuo provider.',
   'memory.health.remediation.local_model_unavailable':
-    'Un modello locale richiesto non è disponibile. Installa/avvia Ollama e scarica il modello, oppure passa questo carico di lavoro a un provider cloud in Impostazioni → IA.',
+    'Un modello locale richiesto non è disponibile. Installa/avvia Ollama e scarica il modello, oppure passa questo carico di lavoro a un provider cloud in Connessioni → Chiavi API.',
   'memory.health.remediation.extraction_timeout':
-    'Il modello di estrazione della memoria sta andando in timeout, quindi il wiki ha poca struttura. Passa a un modello di estrazione della memoria più veloce in Impostazioni → IA.',
+    'Il modello di estrazione della memoria sta andando in timeout, quindi il wiki ha poca struttura. Passa a un modello di estrazione della memoria più veloce in Connessioni → Chiavi API → LLM.',
   'memory.health.remediation.summarizer_unavailable':
-    "Nessun provider di riepilogo è disponibile per Crea alberi di riepilogo. Abilita l'IA locale (Ollama) o abilita il riepilogo cloud in Impostazioni → IA → Memoria.",
+    "Nessun provider di riepilogo è disponibile per Crea alberi di riepilogo. Abilita l'IA locale (Ollama), oppure imposta memory_tree.cloud_summarization_opt_in=true e configura un provider LLM in Connessioni → Chiavi API → LLM.",
   'memory.health.remediation.empty_input_refused':
     'Un elemento di memoria è stato saltato perché il suo testo era vuoto. Nessuna azione necessaria — i nuovi elementi continuano a essere incorporati normalmente.',
   'memory.health.remediation.storage_unavailable':
@@ -6780,7 +6808,7 @@ const messages: TranslationMap = {
   'memory.health.remediation.transient':
     "Un errore temporaneo ha interrotto l'elaborazione della memoria. Verrà riprovato automaticamente.",
   'memory.health.remediation.unknown':
-    "L'elaborazione della memoria ha riscontrato un problema. Controlla Impostazioni → IA per la configurazione.",
+    "L'elaborazione della memoria ha riscontrato un problema. Controlla Connessioni → Chiavi API per la configurazione.",
   // Chat — agent-generated artifacts (#2779)
 
   // Chat composer toolbar

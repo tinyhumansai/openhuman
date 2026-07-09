@@ -539,7 +539,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
              model name and embedding dimensions are tunable per provider. The \
              legacy `inference_embed` RPC is aliased to `embeddings_embed` so \
              existing callers continue to work.",
-        how_to: "Settings > AI > Embeddings",
+        how_to: "Connections → API keys → Embeddings",
         status: CapabilityStatus::Beta,
         // Privacy depends on the selected provider — see
         // `intelligence.embedding_provider_test` for the per-provider data
@@ -560,7 +560,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
              the model, dimensions, and any auth/error surface so a \
              misconfigured key doesn't get discovered halfway through a 50k \
              chunk backfill.",
-        how_to: "Settings > AI > Embeddings > Test Connection",
+        how_to: "Connections → API keys → Embeddings → Test Connection",
         // The probe payload routes to whichever provider the user has
         // selected — managed cloud (default), OpenAI, Cohere, or a custom
         // OpenAI-compatible endpoint. Using `DERIVED_TO_BACKEND` here would
@@ -934,7 +934,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         domain: "local_ai",
         category: CapabilityCategory::LocalAI,
         description: "Select Ollama, LM Studio, MLX, or a generic local OpenAI-compatible server as the local model provider and configure the endpoint.",
-        how_to: "Settings > AI > providers, or use provider strings: ollama:<model>, lmstudio:<model>, mlx:<model>, local-openai:<model>",
+        how_to: "Connections → API keys → LLM, or use provider strings: ollama:<model>, lmstudio:<model>, mlx:<model>, local-openai:<model>",
         status: CapabilityStatus::Beta,
         privacy: None,
     },
@@ -1362,7 +1362,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         domain: "settings",
         category: CapabilityCategory::Settings,
         description: "Configure managed, local, custom, and built-in BYOK LLM providers, including SumoPod and other OpenAI-compatible gateways, plus per-workload routing preferences.",
-        how_to: "Settings > AI",
+        how_to: "Connections → API keys → LLM",
         status: CapabilityStatus::Stable,
         privacy: None,
     },

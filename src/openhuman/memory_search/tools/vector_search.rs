@@ -196,7 +196,7 @@ impl Tool for MemoryVectorSearchTool {
                 .iter()
                 .map(|(idx, score, emb)| MmrCandidate {
                     index: *idx,
-                    embedding: *emb,
+                    embedding: emb,
                     relevance: *score,
                 })
                 .collect();

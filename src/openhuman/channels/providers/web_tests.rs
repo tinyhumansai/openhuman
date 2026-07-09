@@ -201,7 +201,7 @@ fn budget_exceeded_copy_mentions_top_up() {
     // switching routing to their own local model — so an Ollama user with
     // no credits can self-diagnose. We guide, never auto-switch.
     assert!(message.contains("Use Your Own Models"));
-    assert!(message.contains("Settings"));
+    assert!(message.contains("Connections → API keys → LLM"));
 }
 
 #[test]
@@ -995,7 +995,7 @@ fn classify_inference_error_empty_response_is_actionable_and_retryable() {
     );
     assert_eq!(classified.source, "agent_loop");
     assert!(
-        classified.message.contains("Settings → AI → LLM"),
+        classified.message.contains("Connections → API keys → LLM"),
         "must give the actionable model-switch remedy: {}",
         classified.message
     );
@@ -1010,7 +1010,7 @@ fn classify_inference_error_empty_response_is_actionable_and_retryable() {
 fn classify_inference_error_empty_response_copy_names_billing_remedy_and_drops_local_provider_misdirect(
 ) {
     // Issue #3335: the prior copy ("Try a different model or check your
-    // local provider in Settings → AI → LLM") sent Managed-route users
+    // local provider in Connections → API keys → LLM") sent Managed-route users
     // toward a remedy that does not exist for them. The common underlying
     // cause is credit exhaustion (issue #3386), so the revised copy must
     // name the credits / billing path explicitly, must NOT claim a "local
@@ -1045,7 +1045,7 @@ fn classify_inference_error_empty_response_copy_names_billing_remedy_and_drops_l
         classified.message
     );
     assert!(
-        classified.message.contains("Settings → AI → LLM"),
+        classified.message.contains("Connections → API keys → LLM"),
         "must keep the provider-config deep link: {}",
         classified.message
     );
@@ -1302,7 +1302,7 @@ fn classify_inference_error_user_param_bad_request_is_actionable() {
     assert_eq!(classified.error_type, "provider_request_rejected");
     assert!(!classified.retryable);
     assert!(
-        classified.message.contains("Settings → AI → LLM"),
+        classified.message.contains("Connections → API keys → LLM"),
         "user-param rejection points at Settings: {}",
         classified.message
     );
@@ -1606,7 +1606,7 @@ fn fingerprint_identical_inputs_are_cache_hit() {
 #[test]
 fn fingerprint_provider_binding_change_forces_rebuild() {
     // The whole point of adding provider_binding to the fingerprint:
-    // changing the workload routing in Settings → AI → LLM mid-thread
+    // changing the workload routing in Connections → API keys → LLM mid-thread
     // must invalidate the cached agent so the next turn rebuilds with
     // the new provider.
     let warm = fp(None, None, "orchestrator", "cloud");

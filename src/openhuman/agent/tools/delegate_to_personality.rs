@@ -246,7 +246,7 @@ impl Tool for DelegateToPersonalityTool {
             run_queue: None,
         };
 
-        match run_subagent(&definition, &prompt, options).await {
+        match run_subagent(definition, &prompt, options).await {
             Ok(outcome) => {
                 tracing::debug!(
                     personality_id = %personality_id,

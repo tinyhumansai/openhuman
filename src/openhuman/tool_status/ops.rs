@@ -11,7 +11,7 @@
 //! [`ToolFailureClass::Unknown`] (treated as recoverable so a later retry phase
 //! can give it one bounded attempt rather than surfacing a dead end).
 
-use super::types::{ClassifiedFailure, FailureCategory, ToolFailureClass};
+use super::types::{ClassifiedFailure, ToolFailureClass};
 
 /// Classify a failed tool call into a user-facing [`ClassifiedFailure`].
 ///

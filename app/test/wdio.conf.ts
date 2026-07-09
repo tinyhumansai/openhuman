@@ -90,6 +90,10 @@ export const config: Options.Testrunner & Record<string, unknown> = {
     {
       platformName: platformNameForHost(),
       'appium:automationName': 'Chromium',
+      // Provider specs can spend long stretches polling mock backends between
+      // visible browser operations. Keep Appium from expiring the Chromium
+      // session mid-spec and surfacing that as teardown DELETE failures.
+      'appium:newCommandTimeout': 300,
       // The runner downloads a chromedriver whose major matches CEF's
       // bundled Chromium and exports its path here. If unset, Appium falls
       // back to its bundled chromedriver — which usually drifts ahead of

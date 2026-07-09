@@ -363,7 +363,7 @@ fn settle_job(config: &Config, job: &Job, result: Result<JobOutcome>) -> Result<
                 job.id,
                 job.kind.as_str()
             );
-            mark_done(config, &job)?;
+            mark_done(config, job)?;
         }
         Ok(JobOutcome::Defer { until_ms, reason }) => {
             // Defer is normal operation (transient blocker, e.g. rate
@@ -382,7 +382,7 @@ fn settle_job(config: &Config, job: &Job, result: Result<JobOutcome>) -> Result<
                 until_ms,
                 scrub_for_log(&reason)
             );
-            mark_deferred(config, &job, until_ms, &reason)?;
+            mark_deferred(config, job, until_ms, &reason)?;
         }
         Err(err) => {
             // Preserve the full anyhow cause chain in the persisted
@@ -404,7 +404,7 @@ fn settle_job(config: &Config, job: &Job, result: Result<JobOutcome>) -> Result<
                 typed.map(|f| f.code.as_str()),
                 scrub_for_log(&message)
             );
-            mark_failed_typed(config, &job, &message, typed)?;
+            mark_failed_typed(config, job, &message, typed)?;
         }
     }
     Ok(())

@@ -2,7 +2,7 @@
 //!
 //! Both subconscious worlds (the `memory` decision agent and the `tinyplace`
 //! steering synthesis) run on the same **`subconscious`** provider route —
-//! Settings → AI → Advanced "Subconscious" governs the cloud/local tick model.
+//! Connections → API keys → LLM "Subconscious" governs the cloud/local tick model.
 //! The route resolution, the rate-cap circuit-breaker signature, and the two
 //! permanent-error classifiers (tool-capability, per-minute token cap) are
 //! therefore world-agnostic and live here, shared by the generic
@@ -16,13 +16,13 @@ use crate::openhuman::credentials::{AuthService, APP_SESSION_PROVIDER};
 /// tool-use endpoint. The memory decision turn is inherently tool-bearing (it
 /// acts through tools), so a tool-incapable model can never satisfy such a tick
 /// — this tells the user how to recover. See TAURI-RUST-ADC.
-pub(crate) const TOOL_UNSUPPORTED_REASON: &str = "The selected chat model has no tool-use endpoint, so Subconscious can't run. Pick a tool-capable model in Settings > AI.";
+pub(crate) const TOOL_UNSUPPORTED_REASON: &str = "The selected chat model has no tool-use endpoint, so Subconscious can't run. Pick a tool-capable model in Connections → API keys → LLM.";
 
 /// Surfaced in `SubconsciousStatus` when the circuit breaker has halted ticks
 /// because the configured Subconscious model keeps rejecting requests with a
 /// permanent per-minute token cap (413/TPM). Actionable: the fix is the user's
 /// to make (a bigger model/tier), so the message points there.
-pub(crate) const RATE_CAP_HALT_REASON: &str = "Subconscious is paused: the selected model rejected the request because it exceeds your provider's per-minute token limit. Pick a higher-tier model or provider for Subconscious in Settings > AI > Advanced.";
+pub(crate) const RATE_CAP_HALT_REASON: &str = "Subconscious is paused: the selected model rejected the request because it exceeds your provider's per-minute token limit. Pick a higher-tier model or provider for Subconscious in Connections → API keys → LLM.";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum SubconsciousProviderRoute {
@@ -53,7 +53,7 @@ pub(crate) fn subconscious_provider_unavailable_reason(config: &Config) -> Optio
             match auth.get_provider_bearer_token(APP_SESSION_PROVIDER, None) {
                 Ok(Some(token)) if !token.trim().is_empty() => None,
                 Ok(_) => Some(
-                    "Sign in or configure a local Subconscious provider in Settings > AI."
+                    "Sign in or configure a local Subconscious provider in Connections → API keys → LLM."
                         .to_string(),
                 ),
                 Err(e) => Some(format!("Unable to read the OpenHuman session: {e}")),
@@ -85,7 +85,7 @@ fn resolve_subconscious_route(config: &Config) -> SubconsciousProviderRoute {
 }
 
 /// Stable identity of the Subconscious provider routing — the exact knobs a
-/// user changes in Settings > AI > Advanced to switch the tick model/provider.
+/// user changes in Connections → API keys → LLM to switch the tick model/provider.
 /// The rate-cap circuit breaker keys its halt on this so a permanent per-minute
 /// token-cap rejection stops re-firing while the SAME config is set, and
 /// auto-clears the moment the user picks a different model/provider/tier.
