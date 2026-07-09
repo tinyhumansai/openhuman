@@ -13,6 +13,11 @@ use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
 use crate::openhuman::config::Config;
+// Only `start_rdev_listener` (non-macOS) touches the hotkey module — its
+// `ActivationMode`, `HotkeyEvent`, and `parse_hotkey`/`start_listener` fns — so
+// gate the import to the same cfg to avoid unused-import warnings on macOS.
+#[cfg(not(target_os = "macos"))]
+use crate::openhuman::voice::hotkey::{self, ActivationMode, HotkeyEvent};
 
 const LOG_PREFIX: &str = "[dictation_listener]";
 
