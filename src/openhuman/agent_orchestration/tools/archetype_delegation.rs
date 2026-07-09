@@ -3,7 +3,7 @@ use serde_json::json;
 use serde_json::Value;
 
 use crate::openhuman::tools::traits::{
-    PermissionLevel, Tool, ToolCallOptions, ToolCategory, ToolResult,
+    PermissionLevel, Tool, ToolCallOptions, ToolCategory, ToolResult, ToolTimeout,
 };
 use tinyagents::harness::tool::ToolExecutionContext;
 
@@ -74,6 +74,22 @@ impl Tool for ArchetypeDelegationTool {
 
     fn category(&self) -> ToolCategory {
         ToolCategory::System
+    }
+
+    /// Run **without** the global per-tool wall-clock deadline. This tool is a
+    /// delegation primitive: it hands a task to a bounded sub-agent
+    /// (`tools_agent` → `delegate_tools_agent`, `code_executor` → `run_code`,
+    /// …) and awaits that agent's full run. Under the default `Inherit` policy
+    /// the whole delegation is hard-killed at the single-tool timeout (120s) —
+    /// so any sub-agent run that legitimately exceeds two minutes is truncated
+    /// mid-flight (Sentry TAURI-RUST-K29 `delegate_tools_agent` and
+    /// TAURI-RUST-8HB `run_code`: thousands of 120.000s truncations). The
+    /// child's lifetime is already bounded internally — by its `max_iterations`,
+    /// the run cancellation token, and each inner tool's own timeout — so it
+    /// governs its own duration, exactly like the sibling `spawn_parallel_agents`
+    /// fan-out and the long-running scripting tools (`shell`, `node_exec`).
+    fn timeout_policy(&self, _args: &serde_json::Value) -> ToolTimeout {
+        ToolTimeout::Unbounded
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
@@ -198,6 +214,21 @@ mod tests {
         assert_eq!(tool.description(), "Use for web and docs research.");
         assert_eq!(tool.permission_level(), PermissionLevel::Execute);
         assert_eq!(tool.category(), ToolCategory::System);
+    }
+
+    #[test]
+    fn delegation_opts_out_of_the_global_tool_timeout() {
+        // A delegated sub-agent run (delegate_tools_agent / run_code / …) can
+        // legitimately outlast the single-tool wall-clock default (120s): under
+        // `Inherit` every such run is hard-killed and truncated (Sentry
+        // TAURI-RUST-K29 / TAURI-RUST-8HB). The child bounds its own lifetime
+        // via its max_iterations, the run cancellation token, and each inner
+        // tool's own timeout — so this primitive must be Unbounded, like
+        // spawn_parallel_agents and the long-running scripting tools.
+        assert_eq!(
+            sample_tool().timeout_policy(&json!({})),
+            ToolTimeout::Unbounded,
+        );
     }
 
     #[test]
