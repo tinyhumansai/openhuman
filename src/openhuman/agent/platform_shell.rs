@@ -33,37 +33,36 @@ use std::path::Path;
 /// platform's default shell. Callers are responsible for setting
 /// `current_dir`, environment, and stdio.
 pub fn build_tokio_command(command: &str) -> tokio::process::Command {
-    if cfg!(windows) {
-        let mut c = tokio::process::Command::new("cmd");
-        c.arg("/C").arg(command);
-        c
-    } else if let Some(bash) = bash_path() {
-        let mut c = tokio::process::Command::new(bash);
-        c.arg("-lc").arg(format!("set -o pipefail\n{command}"));
-        c
-    } else {
-        let mut c = tokio::process::Command::new("sh");
-        c.arg("-lc").arg(command);
-        c
-    }
+    let (program, args) = select_shell_program_and_args(command);
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.args(args);
+    cmd
 }
 
 /// [`std::process::Command`] variant for callers that hand the command
 /// to [`crate::openhuman::cwd_jail::spawn`], which is built around
 /// `std::process::Command` (not the tokio variant).
 pub fn build_std_command(command: &str) -> std::process::Command {
+    let (program, args) = select_shell_program_and_args(command);
+    let mut cmd = std::process::Command::new(program);
+    cmd.args(args);
+    cmd
+}
+
+/// Single source of truth for the shell-selection policy shared by
+/// [`build_tokio_command`] and [`build_std_command`] — future changes
+/// to the platform matrix (adding pwsh, changing pipefail semantics)
+/// belong here, so both `Command` flavours stay in lockstep.
+fn select_shell_program_and_args(command: &str) -> (&'static str, [String; 2]) {
     if cfg!(windows) {
-        let mut c = std::process::Command::new("cmd");
-        c.arg("/C").arg(command);
-        c
+        ("cmd", ["/C".to_string(), command.to_string()])
     } else if let Some(bash) = bash_path() {
-        let mut c = std::process::Command::new(bash);
-        c.arg("-lc").arg(format!("set -o pipefail\n{command}"));
-        c
+        (
+            bash,
+            ["-lc".to_string(), format!("set -o pipefail\n{command}")],
+        )
     } else {
-        let mut c = std::process::Command::new("sh");
-        c.arg("-lc").arg(command);
-        c
+        ("sh", ["-lc".to_string(), command.to_string()])
     }
 }
 
