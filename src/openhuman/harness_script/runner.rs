@@ -286,30 +286,54 @@ impl PythonHarnessScriptRunner {
             }
         };
 
+        // Kill the child before draining stderr: on the WallTimeout/Cancelled
+        // paths it is still alive, so its stderr pipe would not hit EOF and
+        // `collect_stderr` would block for its full deadline. Killing first
+        // closes the pipe so the drain returns promptly on every path. (run()
+        // still reaps the child afterwards.)
+        let _ = child.start_kill();
         let (stderr_log, stderr_truncated) = collect_stderr(stderr_task).await;
 
-        match terminal? {
-            ChildMessage::Result { output } => Ok(ScriptRunOutcome {
+        let outcome = match terminal {
+            Ok(ChildMessage::Result { output }) => Ok(ScriptRunOutcome {
                 output,
-                stderr_log,
+                stderr_log: stderr_log.clone(),
                 stderr_truncated,
             }),
-            ChildMessage::Error {
+            Ok(ChildMessage::Error {
                 error_class,
                 message,
                 traceback,
-            } => Err(HarnessScriptError::ScriptError {
+            }) => Err(HarnessScriptError::ScriptError {
                 error_class,
                 message,
                 traceback,
             }),
-            ChildMessage::Ready { .. } => Err(HarnessScriptError::MalformedMessage(
+            Ok(ChildMessage::Ready { .. }) => Err(HarnessScriptError::MalformedMessage(
                 "child sent a second `ready` instead of a terminal message".into(),
             )),
-            ChildMessage::Unknown => Err(HarnessScriptError::MalformedMessage(
+            Ok(ChildMessage::Unknown) => Err(HarnessScriptError::MalformedMessage(
                 "child sent an unrecognized frame before any terminal message".into(),
             )),
+            Err(err) => Err(err),
+        };
+
+        // Surface the child's stderr on any failure path — it is the most
+        // useful repair signal, and this is the one place all error variants
+        // (WallTimeout, Cancelled, ScriptError, MalformedMessage) converge.
+        // TODO(phase-2): attach it to the error outcome structurally so callers
+        // get it in-band, not just via logs.
+        if let Err(err) = &outcome {
+            if !stderr_log.trim().is_empty() {
+                tracing::warn!(
+                    error = %err,
+                    stderr = %stderr_log.trim(),
+                    "[harness_script::runner] child stderr at failure"
+                );
+            }
         }
+
+        outcome
     }
 }
 

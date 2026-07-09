@@ -17,15 +17,27 @@ that sandbox exists.
 """
 
 import json
+import os
 import sys
 import traceback
 
 PROTOCOL_VERSION = 1
 
-# Bind the protocol channel to the real stdout at import time. The script's own
-# stdout is redirected to stderr during exec (see `_run`), so `print()` from
-# user code can never inject bytes into the protocol stream.
-_PROTOCOL_OUT = sys.stdout
+# Reserve the protocol channel at the OS-fd level, before any script runs.
+#
+# We dup the real stdout (fd 1) to a private fd used only for protocol frames,
+# then point fd 1 at stderr (fd 2). After this, *every* write to stdout — a
+# Python `print()`, a C extension writing to fd 1, or a subprocess that
+# inherits fd 1 — lands on the stderr log channel and can never corrupt the
+# newline-JSON protocol stream. Rebinding only `sys.stdout` would miss the
+# fd-level and subprocess cases, which matter for an orchestration subsystem
+# where scripts routinely shell out.
+_protocol_fd = os.dup(1)
+_PROTOCOL_OUT = os.fdopen(_protocol_fd, "w", buffering=1)
+os.dup2(2, 1)
+# Keep Python's high-level stdout consistent with the redirected fd 1 so
+# buffered `print()` output also flows to stderr.
+sys.stdout = os.fdopen(os.dup(1), "w", buffering=1)
 
 
 def _emit(message):
@@ -52,15 +64,10 @@ def _run(script, inputs):
         "inputs": inputs,
         "set_result": set_result,
     }
-    # Redirect the script's stdout to stderr so any print()/stdout writes from
-    # user code land on the log channel instead of corrupting protocol frames.
-    saved_stdout = sys.stdout
-    sys.stdout = sys.stderr
-    try:
-        # PHASE 4: unsandboxed exec — see module docstring.
-        exec(script, namespace)  # noqa: S102
-    finally:
-        sys.stdout = saved_stdout
+    # stdout is already redirected away from the protocol channel at the fd
+    # level (see module top), so the script's print()/stdout writes are safe.
+    # PHASE 4: unsandboxed exec — see module docstring.
+    exec(script, namespace)  # noqa: S102
     return captured["value"]
 
 
@@ -91,6 +98,23 @@ def main():
                 "type": "error",
                 "error_class": "ProtocolError",
                 "message": f"expected init frame, got type={init.get('type')!r}",
+                "traceback": None,
+            }
+        )
+        return 1
+
+    # Fail fast on a version we don't speak, symmetric with the runner's
+    # handshake check, so a future dialect can't be silently misexecuted.
+    peer_version = init.get("protocol_version")
+    if peer_version != PROTOCOL_VERSION:
+        _emit(
+            {
+                "type": "error",
+                "error_class": "ProtocolError",
+                "message": (
+                    f"unsupported protocol_version={peer_version!r}; "
+                    f"child speaks {PROTOCOL_VERSION}"
+                ),
                 "traceback": None,
             }
         )
