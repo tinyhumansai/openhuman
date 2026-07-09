@@ -259,7 +259,18 @@ async fn ingestion_worker(
                 true
             }
             Err(e) => {
-                crate::core::observability::report_error(
+                // Graph extraction calls the configured LLM. When that provider
+                // is a local server the user isn't running (e.g. LM Studio on
+                // localhost:1234), the call fails with a connect-refused
+                // transport error the user alone can fix — the same expected
+                // condition the agent chat paths already demote. Route through
+                // `report_error_or_expected` so a stopped local model produces a
+                // breadcrumb, not a Sentry error (TAURI-RUST-12K: 3071 events).
+                // Genuine extraction bugs don't match the expected classifier
+                // and are still reported. The document is durably persisted and
+                // the failed job is re-runnable via "Retry failed", so no data
+                // is lost by demoting the noise.
+                crate::core::observability::report_error_or_expected(
                     &e,
                     "memory",
                     "ingestion_extract",

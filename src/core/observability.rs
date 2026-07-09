@@ -7213,6 +7213,29 @@ mod tests {
     }
 
     #[test]
+    fn memory_ingestion_extract_localhost_refused_classifies_as_loopback_unavailable() {
+        // Regression guard for the memory-ingestion call site (queue.rs), which
+        // now reports extraction failures through `report_error_or_expected`.
+        // When the configured LLM is a local server the user isn't running
+        // (LM Studio on localhost:1234), memory-tree extraction fails with the
+        // connect-refused body wrapped in the extraction error chain
+        // (TAURI-RUST-12K: 3071 events). The flattened `{err:#}` message must
+        // classify as an expected loopback-unavailable condition so it demotes
+        // to a breadcrumb instead of an error event — matching the agent chat
+        // paths. A stopped local model is user-state, not a defect.
+        let raw = "memory graph extraction failed for doc_id=abc123: \
+                   error sending request for url \
+                   (http://localhost:1234/v1/chat/completions): client error (Connect): \
+                   tcp connect error: No connection could be made because the target \
+                   machine actively refused it. (os error 10061)";
+        assert_eq!(
+            expected_error_kind(raw),
+            Some(ExpectedErrorKind::LoopbackUnavailable),
+            "memory ingestion loopback connect-refused must demote as LoopbackUnavailable"
+        );
+    }
+
+    #[test]
     fn does_not_classify_loopback_timeout_as_loopback() {
         // A loopback *timeout* (WSAETIMEDOUT os error 10060, not the
         // connect-refused 10061) shares the `tcp connect error` marker but is
