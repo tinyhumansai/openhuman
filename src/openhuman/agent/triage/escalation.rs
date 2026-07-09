@@ -396,6 +396,7 @@ mod tests {
             ..Config::default()
         };
 
+        let _ = AgentDefinitionRegistry::init_global_builtins();
         let ctx = build_triage_parent(&config, "researcher")
             .await
             .expect("build triage parent");
