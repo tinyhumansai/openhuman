@@ -462,6 +462,126 @@ fn open_conn_configures_busy_timeout_and_wal() {
 
 /// Messages with an empty message_id or chat_id must be silently skipped,
 /// never causing a panic or spurious database error.
+/// A malformed on-disk image must be detected on the upsert write path,
+/// quarantined (never deleted), the schema rebuilt, and the *same* upsert call
+/// must then SUCCEED against the fresh DB — proving ingest self-heals instead of
+/// re-hitting the dead file on every scan tick (Sentry TAURI-RUST-KNH: 1,813
+/// events from a single host). The process-wide report latch must reset after a
+/// successful recovery so it fires at most once per corruption episode.
+#[test]
+fn upsert_recovers_from_corrupt_database() {
+    use std::sync::atomic::Ordering;
+
+    let (store, tmp) = make_store();
+    let workspace = tmp.path().to_path_buf();
+    let db_path = db_path_for(&tmp);
+
+    // Reset the process-wide latch so this test observes a clean episode. This
+    // test is the only owner of `super::CORRUPT_REPORTED`, so no cross-test race.
+    super::CORRUPT_REPORTED.store(false, Ordering::Relaxed);
+
+    // Corrupt the freshly-created DB: drop any WAL side-files, then overwrite the
+    // main file with garbage so the next open reads a malformed image.
+    for suffix in ["-wal", "-shm"] {
+        let side = db_path.with_file_name(format!("whatsapp_data.db{suffix}"));
+        let _ = std::fs::remove_file(&side);
+    }
+    std::fs::write(
+        &db_path,
+        b"this is not a sqlite database, just garbage bytes",
+    )
+    .unwrap();
+
+    let mut chats = HashMap::new();
+    chats.insert("chat@c.us".to_string(), chat_meta("Alice"));
+
+    // First upsert hits the malformed image → detect → quarantine → rebuild →
+    // retry against the fresh DB, so the call SUCCEEDS.
+    let count = store
+        .upsert_chats("acct1", &chats)
+        .expect("upsert must succeed after corrupt-DB recovery");
+    assert_eq!(count, 1);
+
+    // The corrupt bytes are preserved alongside, never silently dropped.
+    let quarantined: Vec<_> = std::fs::read_dir(db_path.parent().unwrap())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .contains("whatsapp_data.db.corrupt-")
+        })
+        .collect();
+    assert_eq!(
+        quarantined.len(),
+        1,
+        "exactly one quarantined copy of the corrupt image should exist"
+    );
+
+    // The rebuilt DB is healthy and queryable — the chat we just wrote is there.
+    let rows = store
+        .list_chats(&ListChatsRequest {
+            account_id: Some("acct1".to_string()),
+            limit: None,
+            offset: None,
+        })
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].chat_id, "chat@c.us");
+
+    // A fresh store over the same workspace also sees the rebuilt, healthy DB.
+    let reopened = WhatsAppDataStore::new(&workspace).expect("reopen store");
+    let rows2 = reopened
+        .list_chats(&ListChatsRequest {
+            account_id: Some("acct1".to_string()),
+            limit: None,
+            offset: None,
+        })
+        .unwrap();
+    assert_eq!(rows2.len(), 1);
+
+    // Recovery settled, so the report latch was reset: a genuinely-new later
+    // corruption can page once more (the report fired at most once this episode).
+    assert!(
+        !super::CORRUPT_REPORTED.load(Ordering::Relaxed),
+        "report latch must reset after a successful recovery"
+    );
+}
+
+/// A *healthy* DB must never be quarantined even if `recover_corrupt_db` is
+/// invoked — `quick_check` passes, so good data is preserved and recovery is a
+/// no-op returning `Ok(false)`.
+#[test]
+fn recover_corrupt_db_is_noop_on_healthy_db() {
+    let (store, tmp) = make_store();
+    let db_path = db_path_for(&tmp);
+    // Seed a real row so there is genuine data that must survive.
+    let mut chats = HashMap::new();
+    chats.insert("chat@c.us".to_string(), chat_meta("Alice"));
+    store.upsert_chats("acct1", &chats).unwrap();
+
+    let recovered = store
+        .recover_corrupt_db()
+        .expect("recovery on a healthy DB must not error");
+    assert!(!recovered, "healthy DB must not be quarantined");
+
+    let quarantined = std::fs::read_dir(db_path.parent().unwrap())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .any(|e| e.file_name().to_string_lossy().contains(".corrupt-"));
+    assert!(!quarantined, "no quarantine file should be created");
+
+    // Data survives untouched.
+    let rows = store
+        .list_chats(&ListChatsRequest {
+            account_id: Some("acct1".to_string()),
+            limit: None,
+            offset: None,
+        })
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+}
+
 #[test]
 fn upsert_messages_skips_rows_with_empty_ids() {
     let (store, _tmp) = make_store();
