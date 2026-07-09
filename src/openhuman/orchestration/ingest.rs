@@ -21,7 +21,7 @@ use super::types::{
 
 const LOG: &str = "orchestration";
 
-/// True when the DM sender `from` is one of the linked (paired) agents.
+/// True when a tiny.place agent id `from` is one of the linked (paired) agents.
 ///
 /// tiny.place identifies the *same* Ed25519 key two ways: the orchestration
 /// pairing store keeps the **base58** Solana address (that's what the
@@ -32,16 +32,34 @@ const LOG: &str = "orchestration";
 /// so the message never lands in the orchestration view. Compare by the decoded
 /// 32-byte key so the two encodings unify. Fall back to the exact-string check
 /// first (cheap, and covers ids that aren't 32-byte keys, e.g. a handle).
-fn agent_id_in_linked_set(from: &str, linked: &HashSet<String>) -> bool {
-    if linked.contains(from) {
-        return true;
+///
+/// Shared with the contact-request auto-accept gate
+/// (`agent_orchestration::pairing`): "is this id one of my linked agents?" is the
+/// same trust question for an inbound DM and an inbound contact request, so both
+/// resolve it through this single encoding-unifying matcher.
+pub(crate) fn agent_id_in_linked_set(from: &str, linked: &HashSet<String>) -> bool {
+    resolve_linked_id(from, linked).is_some()
+}
+
+/// Resolve `from` to the **canonical** linked-set id it matches — the exact
+/// stored string if present, otherwise the stored id whose decoded 32-byte key
+/// equals `from`'s (unifying the base58 pairing-store form and the base64 wire
+/// form of one Ed25519 key). Returns `None` when `from` is not a linked agent.
+///
+/// A caller that then accepts/persists against the match MUST use this canonical
+/// id, not the raw wire id: `PairingStore` dedupes records by exact-string
+/// `agent_id`, so accepting under a base64 `from` while the linked record is
+/// base58 would persist a *second* `Linked` record for the same identity — and
+/// unlinking one encoding would leave the other still authorizing the peer.
+pub(crate) fn resolve_linked_id(from: &str, linked: &HashSet<String>) -> Option<String> {
+    if let Some(exact) = linked.get(from) {
+        return Some(exact.clone());
     }
-    let Some(from_key) = decode_agent_key(from) else {
-        return false;
-    };
+    let from_key = decode_agent_key(from)?;
     linked
         .iter()
-        .any(|id| decode_agent_key(id) == Some(from_key))
+        .find(|id| decode_agent_key(id) == Some(from_key))
+        .cloned()
 }
 
 /// Decode a tiny.place agent identifier to its raw 32-byte Ed25519 public key,
@@ -103,6 +121,19 @@ struct ClassifiedMessage {
     /// (e.g. `running_tool` → `idle`). Content events leave this false so the
     /// COALESCE upsert preserves the last status instead of wiping it.
     authoritative_status: bool,
+    // ── session_info enrichment (only a `session_info` event sets these) ──────
+    /// `session_info.title` → the session row's `title`.
+    title: Option<String>,
+    /// `session_info.model` (or `event.model` fallback) → the session row's `model`.
+    model: Option<String>,
+    /// `session_info.handle` → the session row's `handle`.
+    handle: Option<String>,
+    /// `session_info.repo` → the session row's `repo`.
+    repo: Option<String>,
+    /// `session_info.branch` → the session row's `branch`.
+    branch: Option<String>,
+    /// `session_info.capabilities` → the session row's `capabilities`.
+    capabilities: Vec<String>,
 }
 
 /// True for streams that carry ciphertext DM envelopes worth ingesting.
@@ -161,6 +192,13 @@ fn classify_message(plaintext: String, fallback_timestamp: &str) -> ClassifiedMe
         active_call_id: None,
         advances_seq: true,
         authoritative_status: false,
+        // session_info enrichment — only a v2 `session_info` event populates these.
+        title: None,
+        model: None,
+        handle: None,
+        repo: None,
+        branch: None,
+        capabilities: Vec::new(),
     }
 }
 
@@ -198,6 +236,13 @@ fn classify_v1(env: SessionEnvelopeV1, fallback_timestamp: &str) -> ClassifiedMe
         active_call_id: None,
         advances_seq: true,
         authoritative_status: false,
+        // session_info enrichment — only a v2 `session_info` event populates these.
+        title: None,
+        model: None,
+        handle: None,
+        repo: None,
+        branch: None,
+        capabilities: Vec::new(),
     }
 }
 
@@ -219,10 +264,27 @@ fn classify_v2(env: SessionEnvelopeV2, fallback_timestamp: &str) -> ClassifiedMe
     let kind_str = env.event.kind.clone();
     let wire_role = env.event.role.clone();
     let seq = env.event.seq;
+    // `session_info.model` is optional; fall back to the frame's `event.model`.
+    let event_model = env.event.model.clone();
 
     // Per-kind body + tool/status fields + wake disposition.
     let mut b = V2Body::default();
     match env.event.decoded() {
+        HarnessEventKind::SessionInfo(p) => {
+            // Session intro/announce: enrichment, not a chat bubble. Persist a
+            // seq=0 row (id-dedupe + ack) that does NOT advance the wake ordinal —
+            // same disposition as status/lifecycle — and fold the payload into the
+            // session record fields. `title` doubles as the row body so the
+            // session_info message carries a human-readable trace of the intro.
+            b.body = p.title.clone().unwrap_or_default();
+            b.advances_seq = false;
+            b.title = p.title;
+            b.model = p.model.or(event_model);
+            b.handle = p.handle;
+            b.repo = p.repo;
+            b.branch = p.branch;
+            b.capabilities = p.capabilities;
+        }
         HarnessEventKind::UserPrompt(p) => {
             b.body = p.text;
             b.default_role = "owner";
@@ -306,6 +368,12 @@ fn classify_v2(env: SessionEnvelopeV2, fallback_timestamp: &str) -> ClassifiedMe
         active_call_id: b.active_call_id,
         advances_seq: b.advances_seq,
         authoritative_status: b.authoritative_status,
+        title: b.title,
+        model: b.model,
+        handle: b.handle,
+        repo: b.repo,
+        branch: b.branch,
+        capabilities: b.capabilities,
     }
 }
 
@@ -325,6 +393,13 @@ struct V2Body {
     /// `decoded()` folded to `Unknown`: stored as the literal `"unknown"` so the
     /// store readers keep it out of the thread instead of leaking the raw kind.
     kind_override: Option<&'static str>,
+    // ── session_info enrichment (only the `SessionInfo` arm sets these) ───────
+    title: Option<String>,
+    model: Option<String>,
+    handle: Option<String>,
+    repo: Option<String>,
+    branch: Option<String>,
+    capabilities: Vec<String>,
 }
 
 impl Default for V2Body {
@@ -340,6 +415,12 @@ impl Default for V2Body {
             advances_seq: true,
             authoritative_status: false,
             kind_override: None,
+            title: None,
+            model: None,
+            handle: None,
+            repo: None,
+            branch: None,
+            capabilities: Vec::new(),
         }
     }
 }
@@ -401,6 +482,12 @@ fn persist_message(
                     status_state: classified.status_state.clone(),
                     current_detail: classified.status_detail.clone(),
                     active_call_id: classified.active_call_id.clone(),
+                    title: classified.title.clone(),
+                    model: classified.model.clone(),
+                    handle: classified.handle.clone(),
+                    repo: classified.repo.clone(),
+                    branch: classified.branch.clone(),
+                    capabilities: classified.capabilities.clone(),
                 },
             )?;
             // An authoritative `status` snapshot OWNS the run-state columns and may
@@ -654,6 +741,17 @@ mod tests {
         // An unrelated key is still rejected.
         let other = "De6RHrMj6eDqX1WBTXk11sks4WXHMaqEX9A6oQ3ZEmsg";
         assert!(!agent_id_in_linked_set(other, &linked));
+
+        // `resolve_linked_id` unifies encodings AND returns the CANONICAL stored
+        // id (base58), never the raw base64 wire form — so a caller accepting
+        // against the match reuses the one linked record instead of duplicating it.
+        assert_eq!(
+            resolve_linked_id(base64, &linked).as_deref(),
+            Some(base58),
+            "a base64 `from` must canonicalize to the stored base58 id"
+        );
+        assert_eq!(resolve_linked_id(base58, &linked).as_deref(), Some(base58));
+        assert_eq!(resolve_linked_id(other, &linked), None);
     }
 
     #[test]
@@ -848,6 +946,139 @@ mod tests {
         assert_eq!(uk.event_kind.as_deref(), Some("unknown"));
         assert!(!uk.advances_seq);
         assert!(uk.body.contains("flux"));
+    }
+
+    #[test]
+    fn classifies_v2_session_info_as_session_enrichment() {
+        // A full session_info: enrichment fields map onto the session record, the
+        // title doubles as the row body, and it does NOT advance the wake ordinal
+        // (same disposition as status/lifecycle).
+        let si = classify_message(
+            v2_env(
+                "session_info",
+                r#"{ "agent_address": "A1", "handle": "@alice", "title": "myrepo · feat/x",
+                     "repo": "org/myrepo", "branch": "feat/x", "model": "claude-opus-4-8",
+                     "capabilities": ["agent_message", "tool_call"], "resumed": false,
+                     "started_at": "2026-07-08T00:00:00Z" }"#,
+                "w2",
+                "agent",
+            ),
+            "2026-07-05T09:00:00Z",
+        );
+        assert_eq!(si.chat_kind, ChatKind::Session);
+        assert_eq!(si.session_id, "w2");
+        assert_eq!(si.event_kind.as_deref(), Some("session_info"));
+        assert!(
+            !si.advances_seq,
+            "session_info must not advance the wake ordinal"
+        );
+        assert!(!si.authoritative_status);
+        assert_eq!(si.body, "myrepo · feat/x", "title doubles as the row body");
+        assert_eq!(si.title.as_deref(), Some("myrepo · feat/x"));
+        assert_eq!(si.model.as_deref(), Some("claude-opus-4-8"));
+        assert_eq!(si.handle.as_deref(), Some("@alice"));
+        assert_eq!(si.repo.as_deref(), Some("org/myrepo"));
+        assert_eq!(si.branch.as_deref(), Some("feat/x"));
+        assert_eq!(si.capabilities, vec!["agent_message", "tool_call"]);
+    }
+
+    #[test]
+    fn session_info_model_falls_back_to_event_model() {
+        // The payload omits `model`; the frame's `event.model` fills it (spec §2b:
+        // "may also ride on event.model").
+        let wire = format!(
+            r#"{{
+                "envelope_version": "tinyplace.harness.session.v2",
+                "version": 2,
+                "scope": {{ "type": "folder", "key": "my-repo", "cwd": "/w",
+                           "wrapper_session_id": "w2", "harness_session_id": "h2" }},
+                "harness": {{ "provider": "claude", "command": "claude", "argv": [] }},
+                "event": {{ "id": "e1", "seq": 0, "ts": "2026-07-05T01:00:00Z",
+                           "model": "opus-from-frame", "role": "agent",
+                           "kind": "session_info",
+                           "payload": {{ "agent_address": "A1" }} }},
+                "source": {{ "path": "p", "record_type": "assistant" }}
+            }}"#
+        );
+        let si = classify_message(wire, "2026-07-05T09:00:00Z");
+        assert_eq!(si.model.as_deref(), Some("opus-from-frame"));
+        assert!(si.title.is_none());
+        assert!(si.capabilities.is_empty());
+    }
+
+    #[test]
+    fn persisting_session_info_enriches_session_lazily_and_idempotently() {
+        let tmp = tempfile::tempdir().unwrap();
+        // session_info is the FIRST event for this session — it must lazy-create
+        // the record (enrichment, not a prerequisite), populate the metadata, and
+        // stamp last_seq = 0 (no spurious wake).
+        let si = classify_message(
+            v2_env(
+                "session_info",
+                r#"{ "agent_address": "A1", "handle": "@alice", "title": "Intro",
+                     "repo": "org/myrepo", "branch": "feat/x", "model": "opus",
+                     "capabilities": ["agent_message"], "resumed": false,
+                     "started_at": "2026-07-08T00:00:00Z" }"#,
+                "w2",
+                "agent",
+            ),
+            "2026-07-05T09:00:00Z",
+        );
+        assert!(persist_message(tmp.path(), "si1", "@peer", &si, "now").unwrap());
+        // Re-persisting the SAME event id is idempotent (dedup on the relay id).
+        assert!(!persist_message(tmp.path(), "si1", "@peer", &si, "now").unwrap());
+
+        store::with_connection(tmp.path(), |c| {
+            let s = store::load_session(c, "@peer", "w2")?.expect("session lazy-created");
+            assert_eq!(s.title.as_deref(), Some("Intro"));
+            assert_eq!(s.model.as_deref(), Some("opus"));
+            assert_eq!(s.handle.as_deref(), Some("@alice"));
+            assert_eq!(s.repo.as_deref(), Some("org/myrepo"));
+            assert_eq!(s.branch.as_deref(), Some("feat/x"));
+            assert_eq!(s.capabilities, vec!["agent_message".to_string()]);
+            assert_eq!(s.last_seq, 0, "session_info must not advance last_seq");
+            assert_eq!(store::count_messages(c, "@peer", "w2")?, 1);
+            Ok(())
+        })
+        .unwrap();
+
+        // A reconnect re-intro (resumed=true, NEW event id, refreshed title)
+        // UPDATES the record rather than duplicating it, and a content event in
+        // between never wipes the intro metadata (COALESCE).
+        let content = classify_message(
+            v2_env("agent_message", r#"{ "text": "working" }"#, "w2", "agent"),
+            "2026-07-05T09:01:00Z",
+        );
+        assert!(persist_message(tmp.path(), "m1", "@peer", &content, "now").unwrap());
+        let resumed = classify_message(
+            v2_env(
+                "session_info",
+                r#"{ "agent_address": "A1", "title": "Intro v2", "resumed": true,
+                     "started_at": "2026-07-08T01:00:00Z" }"#,
+                "w2",
+                "agent",
+            ),
+            "2026-07-05T09:02:00Z",
+        );
+        assert!(persist_message(tmp.path(), "si2", "@peer", &resumed, "now").unwrap());
+
+        store::with_connection(tmp.path(), |c| {
+            let s = store::load_session(c, "@peer", "w2")?.expect("session");
+            assert_eq!(
+                s.title.as_deref(),
+                Some("Intro v2"),
+                "resumed intro refreshes title"
+            );
+            // Untouched intro fields survive the content event + the thin re-intro.
+            assert_eq!(s.model.as_deref(), Some("opus"));
+            assert_eq!(s.capabilities, vec!["agent_message".to_string()]);
+            // Only the content event advanced the ordinal (seq 1); both session_info
+            // rows persist at seq 0.
+            assert_eq!(s.last_seq, 1);
+            assert_eq!(store::count_messages(c, "@peer", "w2")?, 3);
+            Ok(())
+        })
+        .unwrap();
     }
 
     #[test]

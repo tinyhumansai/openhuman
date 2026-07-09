@@ -288,8 +288,15 @@ async fn graph_output_field_warnings(config: &Config, graph: &WorkflowGraph) -> 
             else {
                 continue;
             };
-            // Output schema unknown — nothing real to check `field_path` against.
-            if contract.output_schema.is_none() {
+            // B12: a real-output probe (`get_tool_output_sample`) for this
+            // exact slug overrides the schema-derived `output_fields` — most
+            // relevant for an action whose live listing publishes no output
+            // schema at all (e.g. every GitHub action, verified live).
+            let contract =
+                crate::openhuman::tinyflows::caps::apply_probe_override(contract.clone());
+            // Nothing real to check `field_path` against — schema unknown AND
+            // no probed output fields either.
+            if contract.output_schema.is_none() && contract.output_fields.is_empty() {
                 continue;
             }
 
@@ -357,25 +364,74 @@ async fn graph_output_field_warnings(config: &Config, graph: &WorkflowGraph) -> 
     warnings
 }
 
-/// Author-time WARN/suggest (systemic tool-contract fix, Part 2d): a
-/// `split_out` node whose direct predecessor is a `tool_call` calling a REAL
-/// Composio action with a KNOWN `primary_array_path` (see
-/// [`crate::openhuman::tinyflows::caps::compute_composio_array_path`] — this
-/// already bakes in the `data.` segment Composio's execute-response wrapper
-/// adds, so `expected` below comes out `"json.data.<…>"` for a real action
-/// with no extra handling needed here), but whose configured `config.path`
-/// doesn't match the `json.<primary_array_path>` convention (dereferencing
-/// the `{json,text,raw}` envelope's own `json` field, then the action's real
-/// array property). Advisory: a mismatched path degrades the fan-out (or
-/// silently produces one item instead of many) rather than crashing, so this
-/// suggests the real path instead of rejecting.
+/// Given a Composio action's payload-only `output_schema` (see
+/// [`crate::openhuman::tinyflows::caps::ToolContract::output_fields`]'s doc —
+/// NEVER includes the runtime `data` envelope) and a `split_out.path`
+/// addressed relative to the ENVELOPE (`json.<envelope_field…>`, e.g.
+/// `"json.data"` or `"json.data.issues"`), resolves whether the path lands on
+/// something that is DEFINITELY not an array.
 ///
-/// Skipped when the predecessor's action has no known `primary_array_path`
-/// (nothing to suggest), or when `split_out`'s predecessor isn't a
-/// `tool_call` at all (no envelope/array-path convention applies).
+/// `Some(true)` — non-array (an object or scalar): a `split_out` over this
+/// path fans out over exactly ONE item, the classic "wrong array path"
+/// signal [`graph_split_out_path_warnings`]'s generic enforcement flags.
+/// `Some(false)` — array: the path is fine. `None` — the path can't be
+/// resolved against the schema at all (an unpublished/unknown nested field,
+/// or a path missing the `data.` segment entirely) — stay silent rather than
+/// guess; that's a distinct failure mode from "resolves to a non-array".
+fn schema_says_path_is_non_array(output_schema: &Value, configured_path: &str) -> Option<bool> {
+    let relative = configured_path
+        .strip_prefix("json.")
+        .unwrap_or(configured_path);
+    if relative == "data" {
+        // Whole-payload access (`json.data`) — non-array unless the payload's
+        // own root schema type is literally "array" (a bare-array response,
+        // e.g. a REST endpoint that returns `[...]` directly), in which case
+        // `json.data` legitimately IS the real list.
+        let ty = output_schema.get("type").and_then(Value::as_str)?;
+        return Some(ty != "array");
+    }
+    let rest = relative.strip_prefix("data.").filter(|r| !r.is_empty())?;
+    let mut node = output_schema;
+    for seg in rest.split('.') {
+        node = node.get("properties")?.get(seg)?;
+    }
+    let ty = node.get("type").and_then(Value::as_str)?;
+    Some(ty != "array")
+}
+
+/// Author-time WARN/suggest (systemic tool-contract fix, Part 2d, extended by
+/// B12): a `split_out` node whose direct predecessor is a `tool_call` calling
+/// a REAL Composio action, checked two ways:
+///
+/// 1. **KNOWN `primary_array_path`** (see
+///    [`crate::openhuman::tinyflows::caps::compute_composio_array_path`] —
+///    this already bakes in the `data.` segment Composio's execute-response
+///    wrapper adds, so `expected` below comes out `"json.data.<…>"` with no
+///    extra handling needed here — and, via
+///    [`crate::openhuman::tinyflows::caps::apply_probe_override`], a real
+///    `get_tool_output_sample` probe for this slug overrides a schema that
+///    never named an array at all): if the configured `config.path` doesn't match the
+///    `json.<primary_array_path>` convention, suggest the real path.
+/// 2. **UNKNOWN `primary_array_path`, but a KNOWN `output_schema`/probe that
+///    proves the configured path is definitely NOT an array** (B12
+///    enforcement, "regardless" of whether a correct path can be suggested —
+///    catches the class at build time even when nothing to suggest is
+///    derivable): warn generically. This is exactly the live bug this fix
+///    closes — `GITHUB_LIST_REPOSITORY_ISSUES` publishes no output schema at
+///    all, so a builder without a probe guessed the whole-payload
+///    `"json.data"`, silently fanning out over ONE item (the `{issues:
+///    [...]}` container) instead of the real per-issue list.
+///
+/// Both are advisory: a mismatched/non-array path degrades the fan-out (or
+/// silently produces one item instead of many) rather than crashing.
+///
+/// Skipped entirely when `split_out`'s predecessor isn't a `tool_call` at all
+/// (no envelope/array-path convention applies), or when NEITHER a
+/// `primary_array_path` NOR an `output_schema` is known (truly nothing to
+/// check against).
 async fn graph_split_out_path_warnings(config: &Config, graph: &WorkflowGraph) -> Vec<String> {
     use crate::openhuman::memory_sync::composio::providers::toolkit_from_slug;
-    use crate::openhuman::tinyflows::caps::fetch_live_toolkit_catalog;
+    use crate::openhuman::tinyflows::caps::{apply_probe_override, fetch_live_toolkit_catalog};
 
     let mut warnings = Vec::new();
     for node in &graph.nodes {
@@ -409,29 +465,63 @@ async fn graph_split_out_path_warnings(config: &Config, graph: &WorkflowGraph) -
             else {
                 continue;
             };
-            let Some(primary) = contract.primary_array_path.as_deref() else {
-                continue;
-            };
-            let expected = format!("json.{primary}");
-            if configured_path != Some(expected.as_str()) {
-                tracing::warn!(
-                    target: "flows",
-                    node = %node.id,
-                    predecessor = %pred.id,
-                    pred_slug,
-                    configured_path,
-                    %expected,
-                    "[flows] wiring check: split_out.path does not match the predecessor tool's real array path"
-                );
-                let configured_display = configured_path
-                    .map(|p| format!("\"{p}\""))
-                    .unwrap_or_else(|| "unset".to_string());
-                warnings.push(format!(
-                    "Node '{}': split_out.path is {configured_display} but its predecessor \
-                     tool_call `{}` (`{pred_slug}`) wraps its real array at `{expected}` — set \
-                     config.path to \"{expected}\" to fan out over the actual response list.",
-                    node.id, pred.id,
-                ));
+            // B12: a real-output probe overrides the schema-derived
+            // `primary_array_path` for this exact slug when one is cached.
+            let contract = apply_probe_override(contract.clone());
+
+            match contract.primary_array_path.as_deref() {
+                Some(primary) => {
+                    let expected = format!("json.{primary}");
+                    if configured_path != Some(expected.as_str()) {
+                        tracing::warn!(
+                            target: "flows",
+                            node = %node.id,
+                            predecessor = %pred.id,
+                            pred_slug,
+                            configured_path,
+                            %expected,
+                            "[flows] wiring check: split_out.path does not match the predecessor tool's real array path"
+                        );
+                        let configured_display = configured_path
+                            .map(|p| format!("\"{p}\""))
+                            .unwrap_or_else(|| "unset".to_string());
+                        warnings.push(format!(
+                            "Node '{}': split_out.path is {configured_display} but its predecessor \
+                             tool_call `{}` (`{pred_slug}`) wraps its real array at `{expected}` — set \
+                             config.path to \"{expected}\" to fan out over the actual response list.",
+                            node.id, pred.id,
+                        ));
+                    }
+                }
+                // No known array anywhere in this action's real output — the
+                // generic non-array enforcement is the only thing left that
+                // can catch a wrong path here (nothing to suggest, but a
+                // known-non-array hit is still a strong signal).
+                None => {
+                    let Some(cp) = configured_path else { continue };
+                    let Some(schema) = contract.output_schema.as_ref() else {
+                        continue;
+                    };
+                    if schema_says_path_is_non_array(schema, cp) == Some(true) {
+                        tracing::warn!(
+                            target: "flows",
+                            node = %node.id,
+                            predecessor = %pred.id,
+                            pred_slug,
+                            configured_path = cp,
+                            "[flows] wiring check: split_out.path resolves to a non-array — likely the wrong array path"
+                        );
+                        warnings.push(format!(
+                            "Node '{}': split_out.path is \"{cp}\" but tool_call `{}` (`{pred_slug}`)'s \
+                             known real output does not name an array at that path (or names no array \
+                             property at all) — this fans out over a single object instead of a real \
+                             list. If the action's real output nests the list under a named field (e.g. \
+                             `data.issues`), call get_tool_output_sample {{ slug: \"{pred_slug}\" }} to \
+                             sample the real response, then re-check with get_tool_contract.",
+                            node.id, pred.id,
+                        ));
+                    }
+                }
             }
         }
     }

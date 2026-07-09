@@ -301,6 +301,15 @@ pub fn all_tools_with_runtime(
         // search_tool_catalog — the grounding step before WIRING a node's
         // args/downstream bindings (systemic tool-contract fix, Part 1).
         Box::new(GetToolContractTool::new(config.clone())),
+        // B12: ONE bounded, READ-ONLY, REAL Composio call to derive the real
+        // primary_array_path/output_fields when the live listing publishes no
+        // output schema at all (verified for every GitHub action) — overrides
+        // get_tool_contract's schema-derived hint for that slug from then on.
+        // Read-scope actions only (hard-refused otherwise), connected
+        // toolkits only — see builder_tools.rs's module doc for the carve-out
+        // this makes in the workflow-builder agent's "no composio_execute"
+        // invariant.
+        Box::new(GetToolOutputSampleTool::new(config.clone())),
         // Ground an `agent` node's `agent_ref` in real registered agent-kind ids
         // (researcher / code_executor / …) — the agent analogue of
         // search_tool_catalog. Read-only.

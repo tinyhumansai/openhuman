@@ -1829,7 +1829,9 @@ fn binding_to_agent_with_matching_schema_is_accepted() {
 // test below seeds the exact toolkit it needs via `seed_live_catalog_cache`
 // so none of this touches a live Composio backend.
 
-use crate::openhuman::tinyflows::caps::{seed_live_catalog_cache, ToolContract};
+use crate::openhuman::tinyflows::caps::{
+    seed_live_catalog_cache, seed_probe_cache, ProbedOutputSample, ToolContract,
+};
 
 fn seeded_slack_send_contract() -> ToolContract {
     ToolContract {
@@ -2365,6 +2367,239 @@ async fn graph_wiring_warnings_suggests_the_real_split_out_path() {
     let warnings = graph_wiring_warnings(&config, &g).await;
     assert!(
         warnings.iter().any(|w| w.contains("json.data.messages")),
+        "{warnings:?}"
+    );
+}
+
+/// B12 enforcement: a `split_out.path` that resolves to a NON-array (an
+/// object, here) against a KNOWN output schema is flagged even though the
+/// action names no array anywhere (`primary_array_path` is `None`) — there
+/// is nothing to *suggest*, but a definite non-array hit is still a strong
+/// "wrong array path" signal worth catching at build time.
+#[tokio::test]
+async fn graph_wiring_warnings_flags_a_split_out_path_that_resolves_to_a_non_array() {
+    // seeded_slack_send_contract's output_schema names only scalar fields
+    // (ts/channel) — a real, known schema with no array in it anywhere.
+    let mut contract = seeded_slack_send_contract();
+    contract.slug = "NONARRAYFANOUT_SEND_MESSAGE".to_string();
+    contract.toolkit = "nonarrayfanout".to_string();
+    seed_live_catalog_cache("nonarrayfanout", vec![contract]);
+    let config = Config::default();
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "NONARRAYFANOUT_SEND_MESSAGE",
+                "args": { "channel": "#general", "text": "hi" } } },
+            { "id": "split", "kind": "split_out", "name": "Split",
+              "config": { "path": "json.data" } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "post" },
+            { "from_node": "post", "to_node": "split" }
+        ]
+    }));
+    let warnings = graph_wiring_warnings(&config, &g).await;
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("split") && w.contains("does not name an array")),
+        "{warnings:?}"
+    );
+}
+
+/// The non-array enforcement stays SILENT when the action's output schema is
+/// genuinely unknown (not just "known but arrayless") — nothing real to check
+/// the path against, so no false positive.
+#[tokio::test]
+async fn graph_wiring_warnings_is_silent_on_split_out_when_schema_is_wholly_unknown() {
+    let contract = ToolContract {
+        slug: "UNKNOWNSCHEMA_DO_THING".to_string(),
+        toolkit: "unknownschema".to_string(),
+        description: None,
+        required_args: vec![],
+        input_schema: None,
+        output_fields: vec![],
+        output_schema: None,
+        primary_array_path: None,
+        is_curated: true,
+    };
+    seed_live_catalog_cache("unknownschema", vec![contract]);
+    let config = Config::default();
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "UNKNOWNSCHEMA_DO_THING", "args": {} } },
+            { "id": "split", "kind": "split_out", "name": "Split",
+              "config": { "path": "json.data" } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "post" },
+            { "from_node": "post", "to_node": "split" }
+        ]
+    }));
+    assert!(
+        graph_wiring_warnings(&config, &g).await.is_empty(),
+        "{:?}",
+        graph_wiring_warnings(&config, &g).await
+    );
+}
+
+/// B12 end-to-end: the EXACT live bug shape (flow "funny reminders v2").
+/// `GITHUB_LIST_REPOSITORY_ISSUES`-equivalent contract has NO schema at all
+/// (`output_schema: None`, `primary_array_path: None` — verified live for
+/// every GitHub action), so before a probe the enforcement above has nothing
+/// to check the configured `"json.data"` against and stays silent. Once
+/// `get_tool_output_sample` has probed the slug (seeded here via
+/// `seed_probe_cache`, standing in for a real bounded call), the cached
+/// `primary_array_path` overrides the schema-derived (absent) hint and the
+/// EXISTING mismatch-suggestion path fires with the real nested path.
+#[tokio::test]
+async fn graph_wiring_warnings_suggests_the_probed_split_out_path_when_schema_is_unknown() {
+    let contract = ToolContract {
+        slug: "GHPROBEFANOUT_LIST_REPOSITORY_ISSUES".to_string(),
+        toolkit: "ghprobefanout".to_string(),
+        description: None,
+        required_args: vec!["owner".to_string(), "repo".to_string()],
+        input_schema: None,
+        output_fields: vec![],
+        output_schema: None,
+        primary_array_path: None,
+        is_curated: true,
+    };
+    seed_live_catalog_cache("ghprobefanout", vec![contract]);
+    seed_probe_cache(
+        "GHPROBEFANOUT_LIST_REPOSITORY_ISSUES",
+        ProbedOutputSample {
+            primary_array_path: Some("data.issues".to_string()),
+            output_fields: vec!["issues".to_string(), "total_count".to_string()],
+            sample: json!({ "data": { "issues": [], "total_count": 0 } }),
+        },
+    );
+    let config = Config::default();
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "GHPROBEFANOUT_LIST_REPOSITORY_ISSUES",
+                "args": { "owner": "acme", "repo": "widgets" } } },
+            // The exact wrong guess observed live: whole-payload access
+            // instead of the real nested `data.issues`.
+            { "id": "split", "kind": "split_out", "name": "Split",
+              "config": { "path": "json.data" } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "post" },
+            { "from_node": "post", "to_node": "split" }
+        ]
+    }));
+    let warnings = graph_wiring_warnings(&config, &g).await;
+    assert!(
+        warnings.iter().any(|w| w.contains("json.data.issues")),
+        "{warnings:?}"
+    );
+
+    // Fixed: once config.path matches the probed real path, the warning
+    // clears.
+    let fixed = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "GHPROBEFANOUT_LIST_REPOSITORY_ISSUES",
+                "args": { "owner": "acme", "repo": "widgets" } } },
+            { "id": "split", "kind": "split_out", "name": "Split",
+              "config": { "path": "json.data.issues" } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "post" },
+            { "from_node": "post", "to_node": "split" }
+        ]
+    }));
+    assert!(
+        graph_wiring_warnings(&config, &fixed).await.is_empty(),
+        "{:?}",
+        graph_wiring_warnings(&config, &fixed).await
+    );
+}
+
+/// CodeRabbit (PR #4702 review): parity coverage for the probe-override path
+/// in `graph_output_field_warnings` — mirrors
+/// `graph_wiring_warnings_suggests_the_probed_split_out_path_when_schema_is_unknown`
+/// above, but for a downstream FIELD binding rather than `split_out.path`.
+/// With no schema at all (`output_schema: None`, `output_fields: []`), the
+/// field-not-in-output_fields check would otherwise stay silent (nothing
+/// real to check against) — once `get_tool_output_sample` has probed the
+/// slug, the probed `output_fields` become the ground truth: a binding to a
+/// probed-real field is silent, and a binding to a field NOT in the probed
+/// set is flagged, exactly like the schema-known case already covers.
+#[tokio::test]
+async fn graph_wiring_warnings_uses_the_probed_output_fields_when_schema_is_unknown() {
+    let contract = ToolContract {
+        slug: "GHPROBEFIELDS_LIST_REPOSITORY_ISSUES".to_string(),
+        toolkit: "ghprobefields".to_string(),
+        description: None,
+        required_args: vec!["owner".to_string(), "repo".to_string()],
+        input_schema: None,
+        output_fields: vec![],
+        output_schema: None,
+        primary_array_path: None,
+        is_curated: true,
+    };
+    seed_live_catalog_cache("ghprobefields", vec![contract]);
+    seed_probe_cache(
+        "GHPROBEFIELDS_LIST_REPOSITORY_ISSUES",
+        ProbedOutputSample {
+            primary_array_path: Some("data.issues".to_string()),
+            output_fields: vec!["issues".to_string(), "total_count".to_string()],
+            sample: json!({ "data": { "issues": [], "total_count": 0 } }),
+        },
+    );
+    let config = Config::default();
+
+    // A binding to a field the probe actually observed — silent.
+    let real_field = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "GHPROBEFIELDS_LIST_REPOSITORY_ISSUES",
+                "args": { "owner": "acme", "repo": "widgets" } } },
+            { "id": "xform", "kind": "transform", "name": "Log",
+              "config": { "set": { "note": "=nodes.post.item.json.data.total_count" } } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "post" },
+            { "from_node": "post", "to_node": "xform" }
+        ]
+    }));
+    assert!(
+        graph_wiring_warnings(&config, &real_field).await.is_empty(),
+        "a probed-real field must not warn: {:?}",
+        graph_wiring_warnings(&config, &real_field).await
+    );
+
+    // A binding to a field the probe did NOT observe — flagged, using the
+    // probed output_fields as ground truth even though the schema itself is
+    // unknown.
+    let fake_field = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "GHPROBEFIELDS_LIST_REPOSITORY_ISSUES",
+                "args": { "owner": "acme", "repo": "widgets" } } },
+            { "id": "xform", "kind": "transform", "name": "Log",
+              "config": { "set": { "note": "=nodes.post.item.json.data.not_a_probed_field" } } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "post" },
+            { "from_node": "post", "to_node": "xform" }
+        ]
+    }));
+    let warnings = graph_wiring_warnings(&config, &fake_field).await;
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("not_a_probed_field") && w.contains("post")),
         "{warnings:?}"
     );
 }

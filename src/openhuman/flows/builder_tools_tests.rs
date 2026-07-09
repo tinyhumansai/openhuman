@@ -190,7 +190,9 @@ async fn list_flow_connections_is_read_only() {
 // share a toolkit key (same discipline the pre-fix required-args/response-
 // fields caches already required).
 
-use crate::openhuman::tinyflows::caps::{seed_live_catalog_cache, ToolContract};
+use crate::openhuman::tinyflows::caps::{
+    seed_live_catalog_cache, seed_probe_cache, ProbedOutputSample, ToolContract,
+};
 
 fn seeded_gmail_send_contract() -> ToolContract {
     ToolContract {
@@ -399,6 +401,103 @@ async fn get_tool_contract_rejects_a_hallucinated_slug() {
         .unwrap();
     assert!(result.is_error);
     assert!(result.output().contains("not a real action"));
+}
+
+/// B12: a cached real-output probe overrides `get_tool_contract`'s
+/// schema-derived `primary_array_path`/`output_fields` — most relevant for a
+/// slug whose live listing (like every GitHub action, verified live) has NO
+/// output schema at all, so the schema-derived fields would otherwise be
+/// permanently empty/null.
+#[tokio::test]
+async fn get_tool_contract_applies_a_cached_probe_override() {
+    let contract = ToolContract {
+        slug: "PROBEOVERRIDETEST_LIST_REPOSITORY_ISSUES".to_string(),
+        toolkit: "probeoverridetest".to_string(),
+        description: None,
+        required_args: vec!["owner".to_string(), "repo".to_string()],
+        input_schema: None,
+        output_fields: vec![],
+        output_schema: None,
+        primary_array_path: None,
+        is_curated: true,
+    };
+    seed_live_catalog_cache("probeoverridetest", vec![contract]);
+    seed_probe_cache(
+        "PROBEOVERRIDETEST_LIST_REPOSITORY_ISSUES",
+        ProbedOutputSample {
+            primary_array_path: Some("data.issues".to_string()),
+            output_fields: vec!["issues".to_string(), "total_count".to_string()],
+            sample: json!({ "data": { "issues": [], "total_count": 0 } }),
+        },
+    );
+    let tmp = TempDir::new().unwrap();
+    let tool = GetToolContractTool::new(test_config(&tmp));
+    let result = tool
+        .execute(json!({ "slug": "PROBEOVERRIDETEST_LIST_REPOSITORY_ISSUES" }))
+        .await
+        .unwrap();
+    assert!(!result.is_error, "{}", result.output());
+    let parsed: Value = serde_json::from_str(&result.output()).unwrap();
+    assert_eq!(parsed["primary_array_path"], "data.issues");
+    assert_eq!(parsed["output_fields"], json!(["issues", "total_count"]));
+    // The schema-derived field stays null — the probe overrides the HINT
+    // fields, it doesn't fabricate a schema that was never published.
+    assert!(parsed["output_schema"].is_null());
+}
+
+// ── get_tool_output_sample (B12: the real-output probe) ─────────────────────
+
+#[test]
+fn get_tool_output_sample_is_read_only_permission_with_no_external_effect() {
+    let tmp = TempDir::new().unwrap();
+    let tool = GetToolOutputSampleTool::new(test_config(&tmp));
+    assert_eq!(tool.name(), "get_tool_output_sample");
+    assert_eq!(tool.permission_level(), PermissionLevel::ReadOnly);
+    assert!(!tool.external_effect());
+}
+
+#[tokio::test]
+async fn get_tool_output_sample_missing_slug_is_error() {
+    let tmp = TempDir::new().unwrap();
+    let tool = GetToolOutputSampleTool::new(test_config(&tmp));
+    let result = tool.execute(json!({})).await.unwrap();
+    assert!(result.is_error);
+    assert!(result.output().contains("Missing 'slug'"));
+}
+
+/// The scope gate runs BEFORE any client/network call, so a Write-scope
+/// action is refused entirely offline — this must never depend on a live
+/// Composio backend to prove the probe can't perform a real mutation.
+#[tokio::test]
+async fn get_tool_output_sample_refuses_a_write_scope_action() {
+    let tmp = TempDir::new().unwrap();
+    let tool = GetToolOutputSampleTool::new(test_config(&tmp));
+    let result = tool
+        .execute(json!({ "slug": "GMAIL_SEND_EMAIL" }))
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    assert!(result.output().contains("READ-only"), "{}", result.output());
+}
+
+/// The connected-toolkit gate runs before the real call too — in a test
+/// environment with no backend session, `fetch_connected_integrations`
+/// degrades to empty (best-effort, per its own doc), so a Read-scope action
+/// against an unconnected toolkit is refused without ever reaching a client.
+#[tokio::test]
+async fn get_tool_output_sample_refuses_an_unconnected_toolkit() {
+    let tmp = TempDir::new().unwrap();
+    let tool = GetToolOutputSampleTool::new(test_config(&tmp));
+    let result = tool
+        .execute(json!({ "slug": "GITHUB_LIST_REPOSITORY_ISSUES" }))
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    assert!(
+        result.output().contains("not connected") || result.output().contains("no active"),
+        "{}",
+        result.output()
+    );
 }
 
 // ── dry_run_workflow ─────────────────────────────────────────────────────────

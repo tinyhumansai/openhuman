@@ -1053,9 +1053,13 @@ mod tests {
         // SAVED to test it (a real run the prompt gates behind user
         // confirmation), and `save_workflow` a built graph onto a flow the host
         // ALREADY created (the prompt bar's instant-create path) — but it can
-        // never create/enable a flow or perform a raw integration action. This
-        // pins the invariant in the agent definition itself, not just the tool
-        // implementations.
+        // never create/enable a flow or perform an arbitrary raw integration
+        // action. One narrow, deliberate carve-out (B12): `get_tool_output_sample`
+        // DOES make a real Composio call, but only ever a Read-scope one
+        // (hard-refused otherwise, regardless of the user's scope preference)
+        // against an already-connected toolkit — see `builder_tools.rs`'s
+        // module doc. This pins the invariant in the agent definition itself,
+        // not just the tool implementations.
         let def = find("workflow_builder");
         assert_eq!(def.agent_tier, AgentTier::Worker);
         assert_eq!(def.delegate_name.as_deref(), Some("build_workflow"));
@@ -1082,6 +1086,7 @@ mod tests {
                     "list_flow_connections",
                     "search_tool_catalog",
                     "get_tool_contract",
+                    "get_tool_output_sample",
                     "list_agent_profiles",
                     "dry_run_workflow",
                     "run_flow",

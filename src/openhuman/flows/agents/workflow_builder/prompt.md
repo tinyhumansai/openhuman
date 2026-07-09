@@ -256,6 +256,17 @@ A `WorkflowGraph` is `{ name?, nodes: [...], edges: [...] }`.
      `"path": "json.data.messages"` — as the downstream `split_out.path`.
      `primary_array_path` already includes the `data.` segment above, so
      just prefix `json.` — don't guess where the array lives in the response.
+     **If `get_tool_contract` returns `primary_array_path: null` for a source
+     tool you plan to `split_out` (its live listing has no output schema at
+     all — this is genuinely true for every GitHub action, e.g.
+     `GITHUB_LIST_REPOSITORY_ISSUES`), do NOT default to `"json.data"`** — that
+     targets the WHOLE payload container (e.g. `{issues: [...]}` itself), so
+     the split yields exactly ONE item instead of one per real result. Instead
+     call `get_tool_output_sample { slug, args }` (the SAME `args` you're
+     wiring into the real node) to make one bounded, read-only, real call and
+     get the ACTUAL array path (e.g. `"data.issues"`, not `"data.items"`) —
+     it only works on an already-connected, Read-scope action, so if the
+     toolkit isn't connected yet, note that to the user instead of guessing.
    - **App not connected yet?** You can still build the node with a real
      slug from `search_tool_catalog` (searches the FULL live catalog
      regardless of connection state) and ground it with `get_tool_contract
@@ -296,6 +307,14 @@ the run scope (`.`):
   the first output is used; a bad program yields `null` (never an error).
 - A string **without** a leading `=` is a literal. To emit a literal `=`, don't
   start the string with it.
+- **Never mix the shorthand with jq.** If an expression **begins with a bare
+  scope key** (`item`/`items`/`run`/`nodes`) and continues into jq syntax —
+  `|`, `[`, functions (`any(...)`, `length`), or anything beyond a plain
+  dotted path — it MUST start with `.` instead (the jq root): write
+  `"=.item.labels | any(.name==\"x\")"`, NOT `"=item.labels | any(...)"`. The
+  plain shorthand `"=item.labels"` (no jq) is fine alone. Expressions that
+  already start with valid jq syntax (e.g. `"=[.item.a, .item.b]"` for array
+  construction) don't need an extra leading dot — only bare scope keys do.
 
 The scope exposes:
 

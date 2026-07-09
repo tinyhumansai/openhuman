@@ -30,14 +30,22 @@ hint = "reasoning"
 # a confirmed real test-run of a SAVED flow + save_workflow (persist a graph
 # onto an EXISTING flow only). NO shell, NO file writes, NO channel sends, NO
 # composio_execute, and NO flows_create/set_enabled — the agent can never
-# create or enable a flow, or perform a real integration action directly.
-# Composio access is limited to LISTING toolkits/connections and raising the
-# inline CONNECT card (an approval-gated OAuth hand-off).
+# create or enable a flow, or perform an arbitrary real integration action
+# directly. Composio access is limited to LISTING toolkits/connections,
+# raising the inline CONNECT card (an approval-gated OAuth hand-off), and one
+# narrow carve-out below.
 # `run_flow` executes a flow the user has ALREADY saved to test it — a real
 # run, but the prompt requires asking the user to confirm first, and the flow's
 # own approval gate still pauses outbound-action nodes. (Named `run_flow`, not
 # `run_workflow` — that name belongs to the unrelated legacy skills-workflow
 # runner tool, which is registered in the same default tool registry.)
+# `get_tool_output_sample` (B12) IS a real Composio call — the one deliberate
+# carve-out — but it is hard-gated to Read-scope actions only (regardless of
+# the user's scope preference) against an already-connected toolkit, and
+# exists solely to sample the real output shape of a source tool whose live
+# listing publishes no output schema at all (verified for every GitHub
+# action), so a downstream split_out.path is never guessed. See
+# `builder_tools.rs`'s module doc.
 named = [
     "propose_workflow",
     "revise_workflow",
@@ -48,6 +56,7 @@ named = [
     "list_flow_connections",
     "search_tool_catalog",
     "get_tool_contract",
+    "get_tool_output_sample",
     "list_agent_profiles",
     "dry_run_workflow",
     "run_flow",
