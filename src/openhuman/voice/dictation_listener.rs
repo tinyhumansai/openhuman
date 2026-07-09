@@ -13,6 +13,13 @@ use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
 use crate::openhuman::config::Config;
+// `hotkey::{self, ActivationMode, HotkeyEvent}` is only referenced from the
+// non-macOS `start_rdev_listener` path; gate the `use` on the same cfg so
+// rustc doesn't complain about an unused import on macOS. Restoring the
+// import unblocks Linux clippy after #4720 removed it as "unused" while
+// leaving the actual usage in place.
+#[cfg(not(target_os = "macos"))]
+use crate::openhuman::voice::hotkey::{self, ActivationMode, HotkeyEvent};
 
 const LOG_PREFIX: &str = "[dictation_listener]";
 
