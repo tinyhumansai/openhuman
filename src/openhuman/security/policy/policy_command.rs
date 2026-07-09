@@ -91,7 +91,7 @@ pub(super) fn has_dangerous_env_prefix(s: &str) -> bool {
         }
         let (name, _) = word.split_once('=').unwrap_or((word, ""));
         let upper = name.to_ascii_uppercase();
-        if DANGEROUS_ENV_PREFIXES.iter().any(|d| *d == upper.as_str()) {
+        if DANGEROUS_ENV_PREFIXES.contains(&upper.as_str()) {
             return true;
         }
         rest = rest[word.len()..].trim_start();
@@ -160,10 +160,7 @@ pub(super) fn skip_env_assignments(s: &str) -> &str {
 }
 
 pub(super) fn command_basename(command: &str) -> &str {
-    command
-        .split(|ch| ch == '/' || ch == '\\')
-        .next_back()
-        .unwrap_or(command)
+    command.split(['/', '\\']).next_back().unwrap_or(command)
 }
 
 pub(super) fn normalized_command_name(command: &str) -> String {
@@ -372,10 +369,8 @@ pub(super) fn contains_unquoted_single_ampersand(command: &str) -> bool {
                 match ch {
                     '\'' => quote = QuoteState::Single,
                     '"' => quote = QuoteState::Double,
-                    '&' => {
-                        if chars.next_if_eq(&'&').is_none() {
-                            return true;
-                        }
+                    '&' if chars.next_if_eq(&'&').is_none() => {
+                        return true;
                     }
                     _ => {}
                 }

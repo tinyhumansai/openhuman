@@ -8,6 +8,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { BubbleMarkdown } from '../../features/conversations/components/AgentMessageBubble';
 import {
   getMascotPalette,
   hexToArgbInt,
@@ -15,7 +16,6 @@ import {
   RiveMascot,
 } from '../../features/human/Mascot';
 import { useT } from '../../lib/i18n/I18nContext';
-import { BubbleMarkdown } from '../../pages/conversations/components/AgentMessageBubble';
 import {
   listProviderModels,
   loadAISettings,

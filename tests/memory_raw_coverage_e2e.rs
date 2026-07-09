@@ -588,6 +588,7 @@ fn threads_turn_state_store_skips_corrupt_entries_and_marks_interrupted() {
         name: "memory.search".into(),
         round: 1,
         status: ToolTimelineStatus::Running,
+        failure: None,
         args_buffer: Some("{\"query\":\"coverage\"}".into()),
         display_name: Some("Search Memory".into()),
         detail: None,
@@ -612,10 +613,13 @@ fn threads_turn_state_store_skips_corrupt_entries_and_marks_interrupted() {
                 elapsed_ms: Some(20),
                 output_chars: Some(64),
                 display_name: None,
+                output: None,
                 detail: None,
+                failure: None,
             }],
             transcript: vec![],
         }),
+        output: None,
     });
     let second = TurnState::started("thread-b", "req-b", 2, "2026-05-29T12:01:00Z");
     store.put(&first).expect("put first");

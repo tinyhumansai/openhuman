@@ -23,12 +23,26 @@
 //!
 //! ## Privacy
 //!
-//! Spans intentionally carry only *metadata* — span names, counts, timings,
-//! and token/cost figures. Prompt text, tool arguments, streamed text/thinking
-//! deltas, raw error strings, and filesystem paths are **never** recorded,
-//! honoring the project's "never log secrets or full PII" rule. The
-//! content-bearing [`AgentProgress`] variants (`TextDelta`, `ThinkingDelta`,
-//! `ToolCallArgsDelta`) are dropped on the floor here.
+//! Spans always carry *metadata* — span names, counts, timings, and
+//! token/cost figures (model labels are `{provider_id}.{model}`, e.g.
+//! `managed.chat-v1`). While `observability.agent_tracing.capture_content` is
+//! on, content is additionally recorded as span `input`/`output` — the turn's
+//! prompt/reply, each generation's **truncated** request messages (system
+//! prompt included) + completion, **truncated** tool arguments/results, and
+//! each subagent's delegated prompt + final output. With the flag off (the
+//! default — #4454), none of that content ever reaches the in-memory span, so
+//! no exporter (NDJSON file, app log, or Langfuse) can leak it.
+//! Streamed text/thinking deltas (`TextDelta`, `ThinkingDelta`,
+//! `ToolCallArgsDelta`), raw error strings, and filesystem paths are **never**
+//! recorded regardless of the flag, honoring the project's "never log secrets
+//! or full PII" rule for logs.
+//!
+//! The one exception is the turn's prompt/reply, delivered via
+//! `AgentProgress::TurnContent`. It is attached to the turn span **only** when
+//! the operator opts in via `observability.agent_tracing.capture_content`
+//! (default `false`). That gate is enforced at storage time in
+//! [`SpanCollector`] — the single choke point — so with the default off, no
+//! exporter (NDJSON file, app log, or Langfuse push) can ever serialize it.
 //!
 //! ## Wiring
 //!
@@ -44,15 +58,107 @@ use serde::Serialize;
 
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::config::schema::{AgentTracingBackend, AgentTracingConfig};
+use crate::openhuman::config::Config;
+
+/// Journal-backed projection from durable tinyagents observations.
+pub(crate) mod journal_projection;
+/// Langfuse ingestion exporter (remote push to the co-hosted staging server).
+pub(crate) mod langfuse;
+
+#[cfg(test)]
+mod journal_projection_tests;
+
+/// Kind of run a trace belongs to, rendered as stable snake_case strings for
+/// Langfuse trace tags (`run:<type>`) and metadata (`run_type`) so runs can be
+/// filtered in the UI.
+///
+/// Only kinds actually observable at the collector installation point (the
+/// web progress bridge) exist here: orchestration passes, subconscious runs,
+/// cron turns, and meeting agents run their turns WITHOUT a progress bridge
+/// today, so they never reach the span collector and get no variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RunType {
+    /// Interactive user chat turn (desktop UI / socket / PTT / dictation).
+    #[default]
+    InteractiveChat,
+    /// Autonomous background run from the task dispatcher.
+    AutonomousTask,
+    /// Programmatic AgentBox `/run` invocation.
+    Agentbox,
+    /// Inbound message relayed from an external channel (Telegram, Discord,
+    /// Slack, …) through the channel bus.
+    ChannelInbound,
+}
+
+impl RunType {
+    /// Stable snake_case identifier used in tags/metadata.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RunType::InteractiveChat => "interactive_chat",
+            RunType::AutonomousTask => "autonomous_task",
+            RunType::Agentbox => "agentbox",
+            RunType::ChannelInbound => "channel_inbound",
+        }
+    }
+
+    /// Classify from the chat-request `source` tag. Known background sources
+    /// map to their kinds; everything else (`ptt`/`dictation`/`type`/absent)
+    /// is an interactive chat turn.
+    pub fn from_source(source: Option<&str>) -> Self {
+        match source {
+            Some("autonomous") => RunType::AutonomousTask,
+            Some("agentbox") => RunType::Agentbox,
+            Some("channel_inbound") => RunType::ChannelInbound,
+            _ => RunType::InteractiveChat,
+        }
+    }
+}
 
 /// Trace-level correlation context, stamped onto the root span.
 #[derive(Debug, Clone)]
 pub struct TraceContext {
-    /// Trace id — the agent session id. All spans of a run share it.
+    /// Trace id — unique per turn. Every span of a single turn shares it, so
+    /// each turn becomes its own Langfuse trace.
     pub session_id: String,
-    /// User attribution (e.g. the broadcast client id / "system" for
-    /// autonomous runs). `None` when the caller is anonymous.
+    /// Real authenticated user attribution (the backend user id, or email as
+    /// fallback) — exported as the Langfuse `userId`. `None` when the caller
+    /// is anonymous. Transport identifiers (socket client id / "system")
+    /// belong in [`Self::client_id`], not here.
     pub user_id: Option<String>,
+    /// Transport client id (the broadcast socket client, or `"system"` for
+    /// autonomous runs). Exported as the `client.id` metadata attribute so it
+    /// stays inspectable without polluting user attribution.
+    pub client_id: Option<String>,
+    /// Agent definition id driving the turn (e.g. `"orchestrator"`,
+    /// `"researcher"`). Stamped as the `agent.id` attribute and folded into
+    /// the root span/trace name (`agent.turn:<agent_id>`).
+    pub agent_id: Option<String>,
+    /// Where the run originated (`"chat"`, `"ptt"`, `"autonomous"`, …).
+    /// Exported as the `channel.source` metadata attribute.
+    pub channel_source: Option<String>,
+    /// Grouping key (the thread/conversation id) exported as the Langfuse
+    /// `sessionId` so per-turn traces still group under one session. When
+    /// `None`, the collector falls back to the trace id so every trace still
+    /// carries a session id.
+    pub session_group: Option<String>,
+    /// Whether content capture (`observability.agent_tracing.capture_content`)
+    /// is on. Gates recording tool arguments/results onto spans at collection
+    /// time — when off, tool I/O never even reaches the in-memory span.
+    pub capture_content: bool,
+    /// Kind of run — exported as Langfuse trace tags (`run:<type>`) and the
+    /// `run_type` metadata key. Defaults to interactive chat.
+    pub run_type: RunType,
+    /// This run's own id (the tinyagents `RunContext` run id), exported as the
+    /// `run_id` metadata key. `None` until the run's observations are known.
+    pub run_id: Option<String>,
+    /// The spawning run's id when this run is a sub-agent/graph node, exported
+    /// as the `parent_run_id` metadata key. `None` for top-level turns. This is
+    /// what links a spawned sub-agent's trace back to its parent turn (#4657).
+    pub parent_run_id: Option<String>,
+    /// The root ancestor run id (equal to [`Self::run_id`] for top-level runs),
+    /// exported as the `root_run_id` metadata key so Langfuse can thread a whole
+    /// spawn tree under one root.
+    pub root_run_id: Option<String>,
 }
 
 impl TraceContext {
@@ -60,7 +166,69 @@ impl TraceContext {
         Self {
             session_id: session_id.into(),
             user_id,
+            client_id: None,
+            agent_id: None,
+            channel_source: None,
+            session_group: None,
+            capture_content: false,
+            run_type: RunType::default(),
+            run_id: None,
+            parent_run_id: None,
+            root_run_id: None,
         }
+    }
+
+    /// Set the grouping key (thread/conversation id) for the Langfuse
+    /// `sessionId`, so a conversation's per-turn traces group together.
+    pub fn with_session_group(mut self, group: impl Into<String>) -> Self {
+        self.session_group = Some(group.into());
+        self
+    }
+
+    /// Set the transport client id (`client.id` metadata attribute).
+    pub fn with_client_id(mut self, client_id: impl Into<String>) -> Self {
+        self.client_id = Some(client_id.into());
+        self
+    }
+
+    /// Set the agent definition id (`agent.id` attribute + trace name suffix).
+    pub fn with_agent_id(mut self, agent_id: impl Into<String>) -> Self {
+        self.agent_id = Some(agent_id.into());
+        self
+    }
+
+    /// Set the run origin (`channel.source` metadata attribute).
+    pub fn with_channel_source(mut self, source: impl Into<String>) -> Self {
+        self.channel_source = Some(source.into());
+        self
+    }
+
+    /// Enable/disable content capture (tool arguments/results on spans).
+    pub fn with_capture_content(mut self, capture_content: bool) -> Self {
+        self.capture_content = capture_content;
+        self
+    }
+
+    /// Set the run type (Langfuse `run:<type>` tag / `run_type` metadata).
+    pub fn with_run_type(mut self, run_type: RunType) -> Self {
+        self.run_type = run_type;
+        self
+    }
+
+    /// Stamp the run lineage (`run_id` / `parent_run_id` / `root_run_id`) so a
+    /// spawned sub-agent's trace links back to its parent turn (#4657). The ids
+    /// come from the tinyagents `RunContext`, surfaced via the run's journalled
+    /// observations at export time.
+    pub fn with_run_lineage(
+        mut self,
+        run_id: Option<String>,
+        parent_run_id: Option<String>,
+        root_run_id: Option<String>,
+    ) -> Self {
+        self.run_id = run_id;
+        self.parent_run_id = parent_run_id;
+        self.root_run_id = root_run_id;
+        self
     }
 }
 
@@ -83,6 +251,8 @@ pub enum SpanKind {
     Iteration,
     /// A tool call.
     Tool,
+    /// A single LLM call (model invocation) with per-call usage/cost.
+    Generation,
     /// A spawned subagent.
     Subagent,
     /// One LLM iteration inside a subagent.
@@ -102,7 +272,16 @@ pub enum SpanStatus {
 }
 
 /// A single finished (or in-flight) span. Field names follow OpenTelemetry
-/// conventions so the NDJSON drops cleanly into an OTel/Langfuse importer.
+/// conventions (snake_case `trace_id`/`span_id`/`start_unix_ms`/…) so the raw
+/// NDJSON file/log export is a self-describing OTel-style span dump for local
+/// inspection.
+///
+/// #4469 item 13: this raw record is **not** directly Langfuse-ingestible — the
+/// Langfuse `/api/public/ingestion` API needs each span wrapped in a
+/// `{ type, id, timestamp, body }` event envelope. That envelope is produced
+/// only by [`langfuse::spans_to_langfuse_batch`] on the remote-push path; the
+/// local NDJSON exporter intentionally emits the raw spans, not the batch
+/// format.
 #[derive(Debug, Clone, Serialize)]
 pub struct TraceSpan {
     /// Trace id (the session id) — shared by every span in the run.
@@ -125,10 +304,21 @@ pub struct TraceSpan {
     pub status: SpanStatus,
     /// Metadata-only attributes (no secrets/PII).
     pub attributes: BTreeMap<String, serde_json::Value>,
+    /// Optional prompt/input content. Populated (via `AgentProgress::TurnContent`)
+    /// **only** when `observability.agent_tracing.capture_content` is opted in —
+    /// the [`SpanCollector`] drops content at storage time otherwise, so with the
+    /// default gate off this is always `None` and no exporter can serialize it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input: Option<serde_json::Value>,
+    /// Optional model-reply/output content. Same storage-level gating as
+    /// [`Self::input`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output: Option<serde_json::Value>,
 }
 
 impl TraceSpan {
     /// Duration in milliseconds, or `None` while the span is still open.
+    #[cfg(test)]
     pub fn duration_ms(&self) -> Option<u64> {
         self.end_unix_ms
             .map(|end| end.saturating_sub(self.start_unix_ms))
@@ -156,6 +346,12 @@ pub struct SpanCollector {
     ctx: TraceContext,
     spans: Vec<TraceSpan>,
     next_span_seq: u64,
+    /// Per-collector (per-turn) random prefix for minted span ids. Langfuse
+    /// dedupes observations by id **globally**, so a bare per-turn sequence
+    /// (`0000…0001`) collides across turns and silently binds later turns'
+    /// observations to whichever trace first claimed the id. Prefixing with a
+    /// fresh nonce makes every span id globally unique.
+    id_prefix: String,
 
     turn_span_id: Option<String>,
     turn_span_index: Option<usize>,
@@ -174,6 +370,7 @@ impl SpanCollector {
             ctx,
             spans: Vec::new(),
             next_span_seq: 0,
+            id_prefix: uuid::Uuid::new_v4().simple().to_string(),
             turn_span_id: None,
             turn_span_index: None,
             current_iteration_span_id: None,
@@ -181,6 +378,17 @@ impl SpanCollector {
             open_tools: BTreeMap::new(),
             subagents: BTreeMap::new(),
         }
+    }
+
+    /// Opt into attaching content to spans (prompt/reply, generation
+    /// request/completion, tool + subagent I/O). Wire this to
+    /// `observability.agent_tracing.capture_content`. Equivalent to setting
+    /// [`TraceContext::with_capture_content`] before construction — there is a
+    /// single storage-level gate (`ctx.capture_content`), so content dropped
+    /// here can never reach any exporter.
+    pub fn with_content_capture(mut self, capture_content: bool) -> Self {
+        self.ctx.capture_content = capture_content;
+        self
     }
 
     /// All spans recorded so far (finished and in-flight).
@@ -194,6 +402,7 @@ impl SpanCollector {
     }
 
     /// Consume the collector and return its spans.
+    #[cfg(test)]
     pub fn into_spans(self) -> Vec<TraceSpan> {
         self.spans
     }
@@ -202,7 +411,9 @@ impl SpanCollector {
     /// and deterministic within a run, which keeps the tests reproducible.
     fn mint_span_id(&mut self) -> String {
         self.next_span_seq += 1;
-        format!("{:016x}", self.next_span_seq)
+        // Nonce prefix keeps the id globally unique across turns (Langfuse
+        // dedupes observations by id project-wide).
+        format!("{}-{:016x}", self.id_prefix, self.next_span_seq)
     }
 
     fn open_span(
@@ -225,6 +436,8 @@ impl SpanCollector {
             end_unix_ms: None,
             status: SpanStatus::Unset,
             attributes,
+            input: None,
+            output: None,
         });
         (span_id, index)
     }
@@ -263,7 +476,51 @@ impl SpanCollector {
                 serde_json::Value::String(user.clone()),
             );
         }
-        let (id, index) = self.open_span(SpanKind::Turn, "agent.turn", None, start_unix_ms, attrs);
+        if let Some(client) = &self.ctx.client_id {
+            attrs.insert(
+                "client.id".to_string(),
+                serde_json::Value::String(client.clone()),
+            );
+        }
+        if let Some(agent) = &self.ctx.agent_id {
+            attrs.insert(
+                "agent.id".to_string(),
+                serde_json::Value::String(agent.clone()),
+            );
+        }
+        if let Some(source) = &self.ctx.channel_source {
+            attrs.insert(
+                "channel.source".to_string(),
+                serde_json::Value::String(source.clone()),
+            );
+        }
+        attrs.insert(
+            "run.type".to_string(),
+            serde_json::Value::String(self.ctx.run_type.as_str().to_string()),
+        );
+        // Every trace must end up with a Langfuse sessionId: prefer the
+        // explicit grouping key (thread/conversation id), else fall back to
+        // the trace id itself so the trace is never left session-less.
+        let group = self
+            .ctx
+            .session_group
+            .clone()
+            .unwrap_or_else(|| self.ctx.session_id.clone());
+        attrs.insert("thread.id".to_string(), serde_json::Value::String(group));
+        // Trace/root-span name carries agent attribution when known.
+        let name = match &self.ctx.agent_id {
+            Some(agent) => format!("agent.turn:{agent}"),
+            None => "agent.turn".to_string(),
+        };
+        log::debug!(
+            "[agent-tracing] opening turn span trace_id={} name={} user_attributed={} client_attributed={} source={:?}",
+            self.ctx.session_id,
+            name,
+            self.ctx.user_id.is_some(),
+            self.ctx.client_id.is_some(),
+            self.ctx.channel_source,
+        );
+        let (id, index) = self.open_span(SpanKind::Turn, name, None, start_unix_ms, attrs);
         self.turn_span_id = Some(id.clone());
         self.turn_span_index = Some(index);
         id
@@ -276,6 +533,259 @@ impl SpanCollector {
             return id.clone();
         }
         self.ensure_turn_span(now_unix_ms)
+    }
+
+    /// Record a tool call's arguments as the span's `input`, truncated to
+    /// [`MAX_TOOL_CONTENT_CHARS`]. A no-op unless content capture is on
+    /// (`observability.agent_tracing.capture_content`) — when off, tool I/O
+    /// never even reaches the in-memory span. `Null` arguments are skipped.
+    fn capture_tool_arguments(&mut self, index: usize, arguments: &serde_json::Value) {
+        if !self.ctx.capture_content || arguments.is_null() {
+            return;
+        }
+        let serialized = arguments.to_string();
+        let chars = serialized.chars().count();
+        if let Some(span) = self.spans.get_mut(index) {
+            span.input = Some(serde_json::Value::String(truncate_capture_text(
+                &serialized,
+            )));
+            log::trace!(
+                "[agent-tracing] captured tool input span={} chars={chars} truncated={}",
+                span.name,
+                chars > MAX_TOOL_CONTENT_CHARS,
+            );
+        }
+    }
+
+    /// Record a tool call's result as the span's `output`, truncated to
+    /// [`MAX_TOOL_CONTENT_CHARS`]. Same capture gate as
+    /// [`Self::capture_tool_arguments`]. Empty output is skipped.
+    fn capture_tool_output(&mut self, index: usize, output: &str) {
+        if !self.ctx.capture_content || output.is_empty() {
+            return;
+        }
+        let chars = output.chars().count();
+        if let Some(span) = self.spans.get_mut(index) {
+            span.output = Some(serde_json::Value::String(truncate_capture_text(output)));
+            log::trace!(
+                "[agent-tracing] captured tool output span={} chars={chars} truncated={}",
+                span.name,
+                chars > MAX_TOOL_CONTENT_CHARS,
+            );
+        }
+    }
+
+    /// Fold a per-call `ModelCallCompleted` into the tree:
+    ///
+    /// 1. emit a closed [`SpanKind::Generation`] span (name `llm.<model>`)
+    ///    parented under the current iteration — or, for a child call
+    ///    (`subagent_task_id` set), under the owning subagent's current
+    ///    iteration — carrying exact per-call model/usage/cost plus provenance
+    ///    (`gen_ai.provider`) and the pricing basis the local estimator uses;
+    /// 2. record the captured request messages (incl. the system prompt) and
+    ///    completion as the generation's input/output, gated on
+    ///    `capture_content` and truncated to [`MAX_MODEL_CONTENT_CHARS`];
+    /// 3. accumulate reasoning / cache-creation tokens onto the root turn
+    ///    span, which `TurnCostUpdated` (cumulative rollup) does not carry —
+    ///    and, for child calls, roll model + usage onto the subagent span so
+    ///    a delegation (e.g. the Context Scout) surfaces its model natively.
+    ///
+    /// The Langfuse-facing model label is `{provider_id}.{model}` (e.g.
+    /// `managed.chat-v1`, `openai.gpt-4o`).
+    ///
+    /// Generation start is approximated by the enclosing iteration span's
+    /// start (the iteration opens on `ModelStarted`); end is the observation
+    /// time of the usage record.
+    #[allow(clippy::too_many_arguments)]
+    fn record_model_call(
+        &mut self,
+        model: &str,
+        provider_id: &str,
+        subagent_task_id: Option<&str>,
+        input: Option<&serde_json::Value>,
+        output: Option<&serde_json::Value>,
+        iteration: u32,
+        input_tokens: u64,
+        output_tokens: u64,
+        cached_input_tokens: u64,
+        cache_creation_tokens: u64,
+        reasoning_tokens: u64,
+        cost_usd: f64,
+        now_unix_ms: u64,
+    ) {
+        // Resolve the parent + start basis: a child call nests under its
+        // subagent's current iteration (else the subagent span itself); a
+        // parent call nests under the turn's current iteration (else root).
+        let subagent_state = subagent_task_id.and_then(|id| self.subagents.get(id));
+        let (parent, start_basis_index) = match subagent_state {
+            Some(state) => match &state.current_iteration_span_id {
+                Some(id) => {
+                    let idx = self.span_index_by_id(id);
+                    (id.clone(), idx)
+                }
+                None => (
+                    self.spans[state.span_index].span_id.clone(),
+                    Some(state.span_index),
+                ),
+            },
+            None => {
+                let parent = self.active_parent_id(now_unix_ms);
+                (parent, self.current_iteration_index)
+            }
+        };
+        let start_unix_ms = start_basis_index
+            .and_then(|idx| self.spans.get(idx))
+            .map(|span| span.start_unix_ms)
+            .unwrap_or(now_unix_ms);
+
+        let labeled_model = format!("{provider_id}.{model}");
+        let pricing = crate::openhuman::agent::cost::lookup_pricing(model);
+
+        let mut attrs = BTreeMap::new();
+        attrs.insert("gen_ai.request.model".to_string(), json_str(&labeled_model));
+        attrs.insert("gen_ai.provider".to_string(), json_str(provider_id));
+        attrs.insert("agent.iteration".to_string(), json_u32(iteration));
+        attrs.insert(
+            "gen_ai.usage.input_tokens".to_string(),
+            json_u64(input_tokens),
+        );
+        attrs.insert(
+            "gen_ai.usage.output_tokens".to_string(),
+            json_u64(output_tokens),
+        );
+        // Cache reads always flow (even 0) so usageDetails stay complete.
+        attrs.insert(
+            "gen_ai.usage.cached_input_tokens".to_string(),
+            json_u64(cached_input_tokens),
+        );
+        if cache_creation_tokens > 0 {
+            attrs.insert(
+                "gen_ai.usage.cache_creation_tokens".to_string(),
+                json_u64(cache_creation_tokens),
+            );
+        }
+        if reasoning_tokens > 0 {
+            attrs.insert(
+                "gen_ai.usage.reasoning_tokens".to_string(),
+                json_u64(reasoning_tokens),
+            );
+        }
+        attrs.insert("gen_ai.usage.cost_usd".to_string(), json_f64(cost_usd));
+        // Pricing basis so Langfuse cost figures are auditable against the
+        // client-side estimator (USD per million tokens).
+        attrs.insert(
+            "gen_ai.pricing.input_per_mtok_usd".to_string(),
+            json_f64(pricing.input_per_mtok_usd),
+        );
+        attrs.insert(
+            "gen_ai.pricing.cached_input_per_mtok_usd".to_string(),
+            json_f64(pricing.cached_input_per_mtok_usd),
+        );
+        attrs.insert(
+            "gen_ai.pricing.output_per_mtok_usd".to_string(),
+            json_f64(pricing.output_per_mtok_usd),
+        );
+
+        log::debug!(
+            "[agent-tracing] generation span model={labeled_model} \
+             iteration={iteration} child={} in={input_tokens} out={output_tokens} \
+             cost_usd={cost_usd:.6} input_captured={} output_captured={}",
+            subagent_task_id.is_some(),
+            input.is_some(),
+            output.is_some(),
+        );
+        let (_, index) = self.open_span(
+            SpanKind::Generation,
+            format!("llm.{model}"),
+            Some(parent),
+            start_unix_ms,
+            attrs,
+        );
+        // Captured request messages (incl. system prompt) + completion become
+        // the generation's input/output — only while content capture is on,
+        // truncated so one huge context window can't bloat the trace batch.
+        if self.ctx.capture_content {
+            if let Some(span) = self.spans.get_mut(index) {
+                if let Some(value) = input {
+                    span.input = Some(capture_model_content(value));
+                }
+                if let Some(value) = output {
+                    span.output = Some(capture_model_content(value));
+                }
+            }
+        }
+        self.close_span(index, now_unix_ms, SpanStatus::Ok, BTreeMap::new());
+
+        // Child call: roll model + usage + cost onto the owning subagent span
+        // so the delegation row (e.g. `subagent.Context Scout`) natively shows
+        // which model served it and what it cost.
+        if let Some(state_index) = subagent_task_id
+            .and_then(|id| self.subagents.get(id))
+            .map(|state| state.span_index)
+        {
+            if let Some(span) = self.spans.get_mut(state_index) {
+                span.attributes
+                    .insert("gen_ai.request.model".to_string(), json_str(&labeled_model));
+                span.attributes
+                    .insert("gen_ai.provider".to_string(), json_str(provider_id));
+                for (key, add) in [
+                    ("gen_ai.usage.input_tokens", input_tokens),
+                    ("gen_ai.usage.output_tokens", output_tokens),
+                    ("gen_ai.usage.cached_input_tokens", cached_input_tokens),
+                ] {
+                    let prior = span
+                        .attributes
+                        .get(key)
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0);
+                    span.attributes
+                        .insert(key.to_string(), json_u64(prior.saturating_add(add)));
+                }
+                let prior_cost = span
+                    .attributes
+                    .get("gen_ai.usage.cost_usd")
+                    .and_then(serde_json::Value::as_f64)
+                    .unwrap_or(0.0);
+                span.attributes.insert(
+                    "gen_ai.usage.cost_usd".to_string(),
+                    json_f64(prior_cost + cost_usd),
+                );
+            }
+            return;
+        }
+
+        // Root rollup for the usage dimensions the cumulative TurnCostUpdated
+        // event does not carry (reasoning / cache-creation), plus provenance
+        // and the provider-labeled model (TurnCostUpdated only knows the raw
+        // model handle and can fire before the first per-call event).
+        let root = match self.turn_span_index {
+            Some(idx) => idx,
+            None => {
+                self.ensure_turn_span(now_unix_ms);
+                self.turn_span_index.expect("turn span just created")
+            }
+        };
+        if let Some(span) = self.spans.get_mut(root) {
+            span.attributes
+                .insert("gen_ai.provider".to_string(), json_str(provider_id));
+            span.attributes
+                .insert("gen_ai.request.model".to_string(), json_str(&labeled_model));
+            for (key, add) in [
+                ("gen_ai.usage.reasoning_tokens", reasoning_tokens),
+                ("gen_ai.usage.cache_creation_tokens", cache_creation_tokens),
+            ] {
+                if add == 0 && span.attributes.get(key).is_none() {
+                    continue;
+                }
+                let prior = span
+                    .attributes
+                    .get(key)
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0);
+                span.attributes
+                    .insert(key.to_string(), json_u64(prior.saturating_add(add)));
+            }
+        }
     }
 
     fn close_current_iteration(&mut self, end_unix_ms: u64) {
@@ -319,6 +829,7 @@ impl SpanCollector {
             AgentProgress::ToolCallStarted {
                 call_id,
                 tool_name,
+                arguments,
                 iteration,
                 ..
             } => {
@@ -334,6 +845,7 @@ impl SpanCollector {
                     now_unix_ms,
                     attrs,
                 );
+                self.capture_tool_arguments(index, arguments);
                 self.open_tools.insert(call_id.clone(), index);
             }
 
@@ -341,10 +853,22 @@ impl SpanCollector {
                 call_id,
                 success,
                 output_chars,
+                output,
+                arguments,
                 elapsed_ms,
+                failure,
                 ..
             } => {
                 if let Some(index) = self.open_tools.remove(call_id) {
+                    // The tinyagents path emits `Null` arguments on the started
+                    // event and the real captured arguments on completion —
+                    // backfill the span input when it's still empty.
+                    if self.spans[index].input.is_none() {
+                        if let Some(arguments) = arguments {
+                            self.capture_tool_arguments(index, arguments);
+                        }
+                    }
+                    self.capture_tool_output(index, output);
                     let start = self.spans[index].start_unix_ms;
                     let mut extra = BTreeMap::new();
                     extra.insert(
@@ -353,8 +877,53 @@ impl SpanCollector {
                     );
                     extra.insert("tool.output_chars".to_string(), json_usize(*output_chars));
                     extra.insert("tool.elapsed_ms".to_string(), json_u64(*elapsed_ms));
+                    // Failed tool calls surface a Langfuse statusMessage: the
+                    // classified plain-language cause, truncated, gated on
+                    // content capture (it can quote user data / paths).
+                    if let Some(failure) = failure {
+                        if self.ctx.capture_content {
+                            extra.insert(
+                                "error.message".to_string(),
+                                serde_json::Value::String(truncate_chars(
+                                    &failure.cause_plain,
+                                    MAX_ERROR_MESSAGE_CHARS,
+                                )),
+                            );
+                        }
+                    }
                     self.close_span(index, start + elapsed_ms, status_of(*success), extra);
                 }
+            }
+
+            AgentProgress::ModelCallCompleted {
+                model,
+                provider_id,
+                subagent_task_id,
+                input,
+                output,
+                iteration,
+                input_tokens,
+                output_tokens,
+                cached_input_tokens,
+                cache_creation_tokens,
+                reasoning_tokens,
+                cost_usd,
+            } => {
+                self.record_model_call(
+                    model,
+                    provider_id,
+                    subagent_task_id.as_deref(),
+                    input.as_ref(),
+                    output.as_ref(),
+                    *iteration,
+                    *input_tokens,
+                    *output_tokens,
+                    *cached_input_tokens,
+                    *cache_creation_tokens,
+                    *reasoning_tokens,
+                    *cost_usd,
+                    now_unix_ms,
+                );
             }
 
             AgentProgress::SubagentSpawned {
@@ -363,6 +932,7 @@ impl SpanCollector {
                 mode,
                 dedicated_thread,
                 prompt_chars,
+                prompt,
                 display_name,
                 ..
             } => {
@@ -390,6 +960,16 @@ impl SpanCollector {
                     now_unix_ms,
                     attrs,
                 );
+                // The delegated prompt is the subagent span's input (gated +
+                // truncated like model content — scout prompts run 10k+ chars).
+                if self.ctx.capture_content && !prompt.is_empty() {
+                    if let Some(span) = self.spans.get_mut(index) {
+                        span.input = Some(serde_json::Value::String(truncate_chars(
+                            prompt,
+                            MAX_MODEL_CONTENT_CHARS,
+                        )));
+                    }
+                }
                 self.subagents.insert(
                     task_id.clone(),
                     SubagentState {
@@ -447,6 +1027,7 @@ impl SpanCollector {
                 task_id,
                 call_id,
                 tool_name,
+                arguments,
                 iteration,
                 ..
             } => {
@@ -468,6 +1049,7 @@ impl SpanCollector {
                     now_unix_ms,
                     attrs,
                 );
+                self.capture_tool_arguments(index, arguments);
                 if let Some(state) = self.subagents.get_mut(task_id) {
                     state.open_tools.insert(call_id.clone(), index);
                 }
@@ -478,6 +1060,8 @@ impl SpanCollector {
                 call_id,
                 success,
                 output_chars,
+                output,
+                arguments,
                 elapsed_ms,
                 ..
             } => {
@@ -488,6 +1072,12 @@ impl SpanCollector {
                 else {
                     return;
                 };
+                if self.spans[index].input.is_none() {
+                    if let Some(arguments) = arguments {
+                        self.capture_tool_arguments(index, arguments);
+                    }
+                }
+                self.capture_tool_output(index, output);
                 let start = self.spans[index].start_unix_ms;
                 let mut extra = BTreeMap::new();
                 extra.insert(
@@ -504,6 +1094,7 @@ impl SpanCollector {
                 elapsed_ms,
                 iterations,
                 output_chars,
+                output,
                 ..
             } => {
                 let Some(state) = self.subagents.remove(task_id) else {
@@ -512,6 +1103,16 @@ impl SpanCollector {
                 if let Some(id) = state.current_iteration_span_id.clone() {
                     if let Some(idx) = self.span_index_by_id(&id) {
                         self.close_span(idx, now_unix_ms, SpanStatus::Ok, BTreeMap::new());
+                    }
+                }
+                // The subagent's final assistant text is the span's output
+                // (same gate + cap as its prompt input).
+                if self.ctx.capture_content && !output.is_empty() {
+                    if let Some(span) = self.spans.get_mut(state.span_index) {
+                        span.output = Some(serde_json::Value::String(truncate_chars(
+                            output,
+                            MAX_MODEL_CONTENT_CHARS,
+                        )));
                     }
                 }
                 let start = self.spans[state.span_index].start_unix_ms;
@@ -535,10 +1136,18 @@ impl SpanCollector {
                     }
                 }
                 let mut extra = BTreeMap::new();
-                // Record only that an error occurred and its length — never the
-                // raw error text (may embed paths / payloads / secrets).
+                // Always record that an error occurred and its length. The raw
+                // error text (may embed paths / payloads) is recorded — truncated
+                // — only when content capture is on, and surfaces in Langfuse as
+                // the observation statusMessage.
                 extra.insert("error".to_string(), serde_json::Value::Bool(true));
                 extra.insert("error.length".to_string(), json_usize(error.len()));
+                if self.ctx.capture_content {
+                    extra.insert(
+                        "error.message".to_string(),
+                        serde_json::Value::String(truncate_chars(error, MAX_ERROR_MESSAGE_CHARS)),
+                    );
+                }
                 self.close_span(state.span_index, now_unix_ms, SpanStatus::Error, extra);
             }
 
@@ -576,6 +1185,41 @@ impl SpanCollector {
                     );
                     span.attributes
                         .insert("gen_ai.usage.cost_usd".to_string(), json_f64(*total_usd));
+                }
+            }
+
+            AgentProgress::TurnContent { input, output } => {
+                // Storage-level privacy gate (#4454): prompt/reply text is
+                // attached to the span ONLY when content capture is opted in.
+                // With the gate off (default), the content is dropped here so no
+                // exporter — NDJSON file, app log, or Langfuse push — can ever
+                // serialize it. This is the single choke point; the exporters
+                // deliberately do not re-check the flag.
+                if !self.ctx.capture_content {
+                    log::debug!(
+                        target: "agent-tracing",
+                        "[agent-tracing] TurnContent dropped at storage (capture_content=false)"
+                    );
+                    return;
+                }
+                let index = match self.turn_span_index {
+                    Some(idx) => idx,
+                    None => {
+                        self.ensure_turn_span(now_unix_ms);
+                        self.turn_span_index.expect("turn span just created")
+                    }
+                };
+                if let Some(span) = self.spans.get_mut(index) {
+                    if let Some(text) = input {
+                        span.input = Some(serde_json::Value::String(text.clone()));
+                    }
+                    if let Some(text) = output {
+                        span.output = Some(serde_json::Value::String(text.clone()));
+                    }
+                    log::debug!(
+                        target: "agent-tracing",
+                        "[agent-tracing] TurnContent attached to turn span (capture_content=true)"
+                    );
                 }
             }
 
@@ -619,6 +1263,52 @@ impl SpanCollector {
     }
 }
 
+/// Cap on tool arguments / tool output recorded onto spans when content
+/// capture is on. Keeps a single runaway tool result from bloating the trace
+/// batch while still giving Langfuse an actionable preview.
+const MAX_TOOL_CONTENT_CHARS: usize = 4_000;
+
+/// Cap on captured error text (Langfuse observation `statusMessage`).
+const MAX_ERROR_MESSAGE_CHARS: usize = 500;
+
+/// Cap on captured model request/completion content and subagent
+/// prompt/output. Larger than the tool cap because a generation's input is the
+/// full message array (system prompt included) — but still bounded so a
+/// 100k-token context can't push the ingestion batch past Langfuse's event
+/// size limits.
+const MAX_MODEL_CONTENT_CHARS: usize = 25_000;
+
+/// Capture a model-payload JSON value for a span: kept structured when it
+/// serializes within [`MAX_MODEL_CONTENT_CHARS`], else degraded to a truncated
+/// string (readable in Langfuse, bounded in size).
+fn capture_model_content(value: &serde_json::Value) -> serde_json::Value {
+    let serialized = value.to_string();
+    if serialized.chars().count() <= MAX_MODEL_CONTENT_CHARS {
+        value.clone()
+    } else {
+        serde_json::Value::String(truncate_chars(&serialized, MAX_MODEL_CONTENT_CHARS))
+    }
+}
+
+/// Truncate `text` to `max` characters, appending an explicit truncation
+/// marker (with the omitted char count) when content was dropped. Returns the
+/// input unchanged when it already fits. Slices on char boundaries, so it
+/// never panics on multi-byte content.
+fn truncate_chars(text: &str, max: usize) -> String {
+    match text.char_indices().nth(max) {
+        None => text.to_string(),
+        Some((byte_end, _)) => {
+            let omitted = text.chars().count() - max;
+            format!("{}…[truncated {omitted} chars]", &text[..byte_end])
+        }
+    }
+}
+
+/// Truncate tool-content text to [`MAX_TOOL_CONTENT_CHARS`].
+fn truncate_capture_text(text: &str) -> String {
+    truncate_chars(text, MAX_TOOL_CONTENT_CHARS)
+}
+
 fn status_of(success: bool) -> SpanStatus {
     if success {
         SpanStatus::Ok
@@ -655,7 +1345,7 @@ fn json_f64(n: f64) -> serde_json::Value {
 /// wraps each line with a `{"type":"span-create", ...}` observation envelope
 /// so it can be POSTed to the Langfuse ingestion API, while OTel emits the
 /// bare span. Returns an empty string for an empty slice.
-pub fn spans_to_ndjson(backend: AgentTracingBackend, spans: &[TraceSpan]) -> String {
+pub(crate) fn spans_to_ndjson(backend: AgentTracingBackend, spans: &[TraceSpan]) -> String {
     let mut out = String::new();
     for span in spans {
         let line = match backend {
@@ -677,7 +1367,7 @@ pub fn spans_to_ndjson(backend: AgentTracingBackend, spans: &[TraceSpan]) -> Str
 /// configured file, or emit to the application log when no path is set.
 /// Best-effort — a failed write is logged and swallowed so tracing never
 /// breaks an agent run. A no-op when tracing is disabled or there are no spans.
-pub fn export_spans(config: &AgentTracingConfig, spans: &[TraceSpan]) {
+pub(crate) fn export_spans(config: &AgentTracingConfig, spans: &[TraceSpan]) {
     if !config.enabled || spans.is_empty() {
         return;
     }
@@ -704,15 +1394,90 @@ pub fn export_spans(config: &AgentTracingConfig, spans: &[TraceSpan]) {
             }
         }
         None => {
-            // No path configured — surface to the log so the export still works
-            // on read-only / sandboxed deployments.
+            // No path configured. Surface only metadata (count + trace id) at
+            // `info` so the export is visible on read-only / sandboxed
+            // deployments WITHOUT ever printing span content at `info` (#4454).
+            // The NDJSON body — which may carry prompt/reply text when
+            // `capture_content` is opted in — goes to `debug` only. With the
+            // default gate off, the storage layer already strips content, so
+            // `payload` is metadata-only regardless.
             log::info!(
-                "[agent-tracing] {} spans (trace_id={}):\n{}",
+                "[agent-tracing] {} spans (trace_id={}) — set observability.agent_tracing.export_path to persist",
                 spans.len(),
                 spans.first().map(|s| s.trace_id.as_str()).unwrap_or(""),
+            );
+            log::debug!(
+                target: "agent-tracing",
+                "[agent-tracing] span NDJSON ({} spans):\n{}",
+                spans.len(),
                 payload.trim_end()
             );
         }
+    }
+}
+
+/// Hand a completed run's spans to the configured tracing sink(s).
+///
+/// Two independent paths, both best-effort and never fatal to a turn:
+///
+/// 1. **Usage-data sharing** (`observability.share_usage_data`, on by default):
+///    push the run's spans to the backend Langfuse proxy — endpoint derived from
+///    the current backend host, authed with the session bearer (see
+///    [`langfuse::push_spans`]). A failure (no live session, network, rejected
+///    batch) just logs; there is no local fallback, since sharing and local
+///    export are distinct opt-ins. Web-channel turns that successfully read a
+///    durable tinyagents journal should call [`export_run_trace_from_journal`]
+///    instead, so the remote push uses the crate-owned observation exporter.
+/// 2. **Local exporter** (`observability.agent_tracing.enabled`, opt-in): append
+///    OTel/Langfuse-format NDJSON to the configured file or the app log via
+///    [`export_spans`].
+///
+/// A no-op when there are no spans or both paths are off.
+pub(crate) async fn export_run_trace(config: &Config, spans: &[TraceSpan]) {
+    if spans.is_empty() {
+        return;
+    }
+    let observability = &config.observability;
+
+    if observability.share_usage_data {
+        if let Err(err) = langfuse::push_spans(config, spans).await {
+            log::warn!("[agent-tracing] Langfuse usage-data push failed ({err})");
+        }
+    }
+
+    if observability.agent_tracing.enabled {
+        export_spans(&observability.agent_tracing, spans);
+    }
+}
+
+/// Export a completed run when durable tinyagents observations are available.
+/// Remote usage-data sharing uses the crate Langfuse exporter over the journal;
+/// local tracing still writes the live spans until the migration deletes the
+/// legacy span collector/exporter path.
+pub(crate) async fn export_run_trace_from_journal(
+    config: &Config,
+    trace_ctx: &TraceContext,
+    observations: &[tinyagents::harness::observability::AgentObservation],
+    run_telemetry: Option<&crate::openhuman::session_db::run_ledger::RunTelemetry>,
+    live_spans: &[TraceSpan],
+) {
+    if observations.is_empty() && live_spans.is_empty() {
+        return;
+    }
+    let observability = &config.observability;
+
+    if observability.share_usage_data && !observations.is_empty() {
+        if let Err(err) =
+            langfuse::push_observations(config, trace_ctx, observations, run_telemetry).await
+        {
+            log::warn!("[agent-tracing] Langfuse journal usage-data push failed ({err})");
+        }
+    } else if observability.share_usage_data {
+        log::debug!("[agent-tracing] no journal observations for Langfuse usage-data push");
+    }
+
+    if observability.agent_tracing.enabled && !live_spans.is_empty() {
+        export_spans(&observability.agent_tracing, live_spans);
     }
 }
 

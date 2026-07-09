@@ -22,6 +22,8 @@
 //! Namespace note: `agent_team` is distinct from the existing `team` domain,
 //! which manages backend org/team membership.
 
+mod graph;
+pub(crate) use graph::member_graph_topology;
 pub mod ops;
 pub mod runtime;
 mod schemas;

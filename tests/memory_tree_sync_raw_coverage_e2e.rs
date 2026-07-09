@@ -15,7 +15,6 @@ use tempfile::TempDir;
 
 use openhuman_core::core::event_bus::{DomainEvent, EventHandler};
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::openhuman::inference::provider::traits::{ChatMessage, Provider};
 use openhuman_core::openhuman::memory_store::chunks::store::upsert_chunks;
 use openhuman_core::openhuman::memory_store::chunks::types::{
     approx_token_count, chunk_id, Chunk, Metadata, SourceKind as ChunkSourceKind, SourceRef,
@@ -44,6 +43,7 @@ use openhuman_core::openhuman::memory_tree::tree::{
 use openhuman_core::openhuman::memory_tree::tree_runtime::{
     engine, rpc as tree_runtime_rpc, store as runtime_store,
 };
+use tinyagents::harness::model::{ChatModel, ModelRequest, ModelResponse};
 
 struct EnvVarGuard {
     key: &'static str,
@@ -159,31 +159,19 @@ impl ScriptedProvider {
 }
 
 #[async_trait]
-impl Provider for ScriptedProvider {
-    async fn chat_with_system(
+impl ChatModel<()> for ScriptedProvider {
+    async fn invoke(
         &self,
-        system_prompt: Option<&str>,
-        message: &str,
-        model: &str,
-        temperature: f64,
-    ) -> anyhow::Result<String> {
-        let _ = (system_prompt, message, model, temperature);
-        Ok(self
+        _state: &(),
+        _request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
+        let response = self
             .responses
             .lock()
             .unwrap()
             .pop()
-            .unwrap_or_else(|| "fallback scripted summary".to_string()))
-    }
-
-    async fn chat_with_history(
-        &self,
-        messages: &[ChatMessage],
-        model: &str,
-        temperature: f64,
-    ) -> anyhow::Result<String> {
-        let _ = (messages, model, temperature);
-        self.chat_with_system(None, "", "", 0.0).await
+            .unwrap_or_else(|| "fallback scripted summary".to_string());
+        Ok(ModelResponse::assistant(response))
     }
 }
 
@@ -220,7 +208,7 @@ async fn tree_runtime_engine_rpc_and_walk_cover_success_and_edge_paths() {
         "rebuilt hour 10",
         "rebuilt hour 11",
     ]);
-    let last = engine::run_summarization(&cfg, &provider, "test-model", ns, Utc::now())
+    let last = engine::run_summarization(&cfg, &provider, ns, Utc::now())
         .await
         .expect("run summarization")
         .expect("last hour node");
@@ -254,7 +242,7 @@ async fn tree_runtime_engine_rpc_and_walk_cover_success_and_edge_paths() {
         "rebuilt year summary",
         "rebuilt root summary",
     ]);
-    let rebuilt = engine::rebuild_tree(&cfg, &rebuild_provider, "test-model", ns)
+    let rebuilt = engine::rebuild_tree(&cfg, &rebuild_provider, ns)
         .await
         .expect("rebuild tree");
     assert_eq!(rebuilt.total_nodes, 6);

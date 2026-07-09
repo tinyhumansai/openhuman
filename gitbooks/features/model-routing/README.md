@@ -39,7 +39,7 @@ The router wraps several pre-created providers (Anthropic, OpenAI, Google, Groq,
 | `hint:vision` | A vision-capable model | Screenshots, image attachments, OCR |
 | `hint:summarize` | A model good at compression | Memory tree summary builders |
 | `hint:code` | A code-tuned model | Native coder turns |
-| `hint:burst` | A high-throughput, low-cost model | Cheap, latency-tolerant pre-flight sweeps — e.g. the SuperContext scout |
+| `hint:burst` | A high-throughput, low-cost model | Cheap, latency-tolerant pre-flight sweeps, e.g. the SuperContext scout |
 
 The exact mappings are configurable; the defaults ship sensible per-provider routes.
 

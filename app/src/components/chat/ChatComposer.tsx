@@ -47,6 +47,18 @@ export interface ChatComposerProps {
    */
   attachmentsEnabled: boolean;
   /**
+   * Whether the voice-mode (mic) button is shown. Defaults to `true` for the
+   * main chat; surfaces that don't have a voice mode (e.g. the flows Workflow
+   * Copilot) pass `false` to hide it while still reusing this composer.
+   */
+  micEnabled?: boolean;
+  /**
+   * Overrides the textarea placeholder. Defaults to the main chat's
+   * type-a-message / follow-up hint; surfaces like the Workflow Copilot pass
+   * their own prompt.
+   */
+  placeholder?: string;
+  /**
    * Optional nodes stacked above the input box but *outside* its focus
    * highlight — e.g. the queued-follow-ups strip and the thread-goal editor.
    * They render within the overall composer component (so they move with it)
@@ -82,6 +94,8 @@ export default function ChatComposer({
   maxAttachments,
   allowedMimeTypes,
   attachmentsEnabled,
+  micEnabled = true,
+  placeholder,
   headerSlots = [],
 }: ChatComposerProps) {
   const { t } = useT();
@@ -264,7 +278,9 @@ export default function ChatComposer({
               }}
               onKeyDown={handleInputKeyDown}
               onPaste={attachmentsEnabled ? handlePaste : undefined}
-              placeholder={allowParallelSend ? t('chat.followupHint') : t('chat.typeMessage')}
+              placeholder={
+                placeholder ?? (allowParallelSend ? t('chat.followupHint') : t('chat.typeMessage'))
+              }
               rows={1}
               disabled={textareaDisabled}
               className="relative z-10 w-full resize-none border-0 bg-transparent py-0.5 px-0.5 text-sm leading-5 whitespace-pre-wrap break-words font-sans text-content placeholder:text-stone-400 dark:placeholder:text-neutral-500 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 overflow-hidden disabled:opacity-50 disabled:cursor-not-allowed"
@@ -272,29 +288,31 @@ export default function ChatComposer({
           </div>
 
           {/* Voice mode */}
-          <button
-            type="button"
-            data-analytics-id="chat-composer-voice-mode"
-            aria-label={t('composer.voiceMode')}
-            title={t('composer.voiceMode')}
-            onClick={onSwitchToMicCloud}
-            disabled={composerInteractionBlocked || isSending}
-            className="flex-shrink-0 flex items-center justify-center w-6 h-6 text-content-faint hover:text-content-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"
-              />
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M19 10v2a7 7 0 01-14 0v-2M12 19v4m-4 0h8"
-              />
-            </svg>
-          </button>
+          {micEnabled && (
+            <button
+              type="button"
+              data-analytics-id="chat-composer-voice-mode"
+              aria-label={t('composer.voiceMode')}
+              title={t('composer.voiceMode')}
+              onClick={onSwitchToMicCloud}
+              disabled={composerInteractionBlocked || isSending}
+              className="flex-shrink-0 flex items-center justify-center w-6 h-6 text-content-faint hover:text-content-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"
+                />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M19 10v2a7 7 0 01-14 0v-2M12 19v4m-4 0h8"
+                />
+              </svg>
+            </button>
+          )}
 
           {/* Send / Stop button — while a turn is in flight and a cancel handler
               is wired, the Send button becomes a Stop button so generation can

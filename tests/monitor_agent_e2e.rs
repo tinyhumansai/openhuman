@@ -294,7 +294,6 @@ fn build_agent(
         .omit_profile(true)
         .omit_memory_md(true)
         .explicit_preferences_enabled(false)
-        .unified_compaction_enabled(false)
         .build()
         .unwrap();
     agent.set_connected_integrations(Vec::new());
@@ -499,7 +498,7 @@ async fn orchestrator_gets_denial_when_monitor_command_violates_policy() {
         ProviderStep::FromHistory(Box::new(|messages| {
             let text = all_messages_text(messages);
             assert!(
-                text.contains("[policy-blocked] Security policy"),
+                text.contains("[policy-blocked] Tool 'monitor' was blocked by the security policy"),
                 "expected policy denial in messages:\n{text}"
             );
             assert!(

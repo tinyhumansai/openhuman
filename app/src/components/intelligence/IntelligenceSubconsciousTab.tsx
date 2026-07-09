@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
+import type { TriggerKind } from '../../hooks/useSubconscious';
 import { useT } from '../../lib/i18n/I18nContext';
 import type { SubconsciousMode } from '../../utils/tauriCommands/heartbeat';
-import type { SubconsciousStatus } from '../../utils/tauriCommands/subconscious';
+import type {
+  SubconsciousInstanceStatus,
+  SubconsciousStatus,
+} from '../../utils/tauriCommands/subconscious';
 import { settingsNavState } from '../settings/modal/settingsOverlay';
-import Button from '../ui/Button';
+import SubconsciousInstanceCard from './SubconsciousInstanceCard';
 
 interface ModeOption {
   id: SubconsciousMode;
@@ -48,33 +52,50 @@ function sliderToMinutes(value: number): number {
 
 interface IntelligenceSubconsciousTabProps {
   status: SubconsciousStatus | null;
+  /** Per-world status rows (falls back to [memory] on an older core). */
+  instances?: SubconsciousInstanceStatus[];
   mode: SubconsciousMode;
   intervalMinutes: number;
-  triggerTick: () => Promise<void>;
+  triggerTick: (kind?: TriggerKind) => Promise<void>;
   triggering: boolean;
+  /** Per-kind in-flight state (two Run buttons must not share one spinner). */
+  isTriggering?: (kind: TriggerKind) => boolean;
   settingMode: boolean;
   setMode: (mode: SubconsciousMode) => Promise<void>;
   setIntervalMinutes: (minutes: number) => Promise<void>;
+  /** Navigate to the TinyPlace Orchestration tab's Subconscious window. */
+  onViewDirectives?: () => void;
 }
 
 export default function IntelligenceSubconsciousTab({
   status,
+  instances,
   mode,
   intervalMinutes,
   triggerTick,
   triggering,
+  isTriggering,
   settingMode,
   setMode,
   setIntervalMinutes,
+  onViewDirectives,
 }: IntelligenceSubconsciousTabProps) {
   const { t } = useT();
   const navigate = useNavigate();
   const location = useLocation();
-  const providerUnavailable = status?.provider_available === false;
-  const providerUnavailableReason = providerUnavailable
-    ? (status?.provider_unavailable_reason ?? t('subconscious.providerUnavailableTitle'))
-    : null;
   const isEnabled = mode !== 'off';
+
+  // Derive the per-world rows, tolerating an older core (no `instances`).
+  const rows: SubconsciousInstanceStatus[] =
+    instances && instances.length > 0
+      ? instances
+      : status
+        ? [{ ...status, instance: status.instance ?? 'memory' }]
+        : [];
+  const memoryRow = rows.find(r => r.instance === 'memory') ?? status ?? undefined;
+  const tinyplaceRow = rows.find(r => r.instance === 'tinyplace');
+  const running = (kind: TriggerKind) => (isTriggering ? isTriggering(kind) : triggering);
+  const openProviderSettings = () => navigate('/settings/llm', settingsNavState(location));
 
   const [localSlider, setLocalSlider] = useState(() => minutesToSlider(intervalMinutes));
 
@@ -95,14 +116,13 @@ export default function IntelligenceSubconsciousTab({
     }
   }, [localSlider, intervalMinutes, setIntervalMinutes]);
 
-  const handleRunTick = async () => {
-    try {
-      await triggerTick();
-    } catch (error) {
+  const runTick = (kind: TriggerKind) => {
+    Promise.resolve(triggerTick(kind)).catch(error => {
       console.debug('[subconscious-ui] run tick:error', {
+        kind,
         error: error instanceof Error ? error.message : String(error),
       });
-    }
+    });
   };
 
   return (
@@ -171,76 +191,39 @@ export default function IntelligenceSubconsciousTab({
         </div>
       )}
 
-      {/* Status bar + Run Now */}
+      {/* Per-world instance cards */}
       {isEnabled && (
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-xs text-content-faint">
-            {status && (
-              <>
-                <span>
-                  {status.total_ticks} {t('subconscious.ticks')}
-                </span>
-                {status.last_tick_at && (
-                  <>
-                    <span className="text-content-faint dark:text-neutral-600">|</span>
-                    <span>
-                      {t('subconscious.last')}:{' '}
-                      {new Date(status.last_tick_at * 1000).toLocaleTimeString()}
-                    </span>
-                  </>
-                )}
-                {status.consecutive_failures > 0 && (
-                  <>
-                    <span className="text-content-faint dark:text-neutral-600">|</span>
-                    <span className="text-coral-500">
-                      {status.consecutive_failures} {t('subconscious.failed')}
-                    </span>
-                  </>
-                )}
-              </>
-            )}
-          </div>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => void handleRunTick()}
-            disabled={triggering || providerUnavailable}
-            title={providerUnavailable ? t('subconscious.providerUnavailableTitle') : undefined}>
-            {triggering ? (
-              <div className="w-3 h-3 border border-stone-400 border-t-transparent rounded-full animate-spin" />
-            ) : (
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M13 10V3L4 14h7v7l9-11h-7z"
-                />
-              </svg>
-            )}
-            {t('subconscious.runNow')}
-          </Button>
-        </div>
-      )}
-
-      {isEnabled && providerUnavailable && (
-        <div className="rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-3">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
-                {t('subconscious.providerUnavailableTitle')}
-              </p>
-              <p className="mt-1 text-xs text-amber-700 dark:text-amber-300 break-words">
-                {providerUnavailableReason}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => navigate('/settings/llm', settingsNavState(location))}
-              className="flex-shrink-0 rounded-md bg-amber-600 px-2.5 py-1.5 text-xs font-medium text-content-inverted hover:bg-amber-700 transition-colors">
-              {t('subconscious.providerSettings')}
-            </button>
-          </div>
+        <div className="space-y-3">
+          <SubconsciousInstanceCard
+            title={t('subconscious.instance.memory.title')}
+            subtitle={t('subconscious.instance.memory.subtitle')}
+            status={memoryRow}
+            runLabel={t('subconscious.runNow')}
+            triggering={running('memory')}
+            onRun={() => runTick('memory')}
+            onProviderSettings={openProviderSettings}
+          />
+          <SubconsciousInstanceCard
+            title={t('subconscious.instance.tinyplace.title')}
+            subtitle={t('subconscious.instance.tinyplace.subtitle')}
+            status={tinyplaceRow}
+            disabled={!tinyplaceRow || tinyplaceRow.enabled === false}
+            disabledHint={t('subconscious.instance.tinyplace.disabledHint')}
+            runLabel={t('subconscious.runReviewNow')}
+            triggering={running('tinyplace')}
+            onRun={() => runTick('tinyplace')}
+            onProviderSettings={openProviderSettings}
+            footer={
+              onViewDirectives ? (
+                <button
+                  type="button"
+                  onClick={onViewDirectives}
+                  className="text-primary-600 hover:text-primary-700 dark:text-primary-400">
+                  {t('subconscious.instance.tinyplace.viewDirectives')}
+                </button>
+              ) : undefined
+            }
+          />
         </div>
       )}
 

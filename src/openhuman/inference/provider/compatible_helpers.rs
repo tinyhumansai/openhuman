@@ -9,8 +9,7 @@ use super::compatible_parse::{
     parse_tool_calls_from_content_json,
 };
 use super::compatible_types::{
-    ApiChatResponse, Message, MessageContent, NativeChatRequest, NativeMessage, ResponsesRequest,
-    ToolCall,
+    ApiChatResponse, MessageContent, NativeMessage, ResponsesRequest, ToolCall,
 };
 use super::OpenAiCompatibleProvider;
 
@@ -669,6 +668,8 @@ impl OpenAiCompatibleProvider {
             output_tokens,
             context_window: 0,
             cached_input_tokens,
+            cache_creation_tokens: 0,
+            reasoning_tokens: 0,
             charged_amount_usd,
         })
     }
@@ -781,7 +782,7 @@ impl OpenAiCompatibleProvider {
             "{name} API error (404): model '{model}' does not support the \
              chat-completions API that OpenHuman uses — it appears to be a \
              completion-only / base model. Assign a chat-capable model to this \
-             provider (e.g. in Settings → AI), or pick a different model. \
+             provider (e.g. in Connections → API keys → LLM), or pick a different model. \
              Provider detail: {sanitized}",
             name = self.name,
         )
@@ -807,7 +808,7 @@ impl OpenAiCompatibleProvider {
         format!(
             "{name} API error: model '{model}' does not support chat — it \
              appears to be an embedding or non-chat model. Assign a \
-             chat-capable model to this provider (e.g. in Settings → AI), or \
+             chat-capable model to this provider (e.g. in Connections → API keys → LLM), or \
              pick a different model. Provider detail: {sanitized}",
             name = self.name,
         )

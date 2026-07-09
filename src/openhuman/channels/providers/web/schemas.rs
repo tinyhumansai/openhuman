@@ -61,7 +61,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 optional_u64("session_id", "Optional caller-provided correlation id (PTT session id)."),
                 optional_string(
                     "queue_mode",
-                    "Queue mode: 'interrupt' (default), 'steer', 'followup', or 'collect'.",
+                    "Queue mode: 'interrupt' (default), 'steer', 'followup', 'collect', or 'parallel'.",
                 ),
             ],
             outputs: vec![json_output("ack", "Acceptance payload.")],
@@ -122,6 +122,9 @@ fn handle_chat(params: Map<String, Value>) -> ControllerFuture {
                     speak_reply: p.speak_reply,
                     source: p.source,
                     session_id: p.session_id,
+                    // Attribution is stamped later by run_chat_task once the
+                    // target agent is resolved.
+                    agent_id: None,
                 },
             )
             .await?,

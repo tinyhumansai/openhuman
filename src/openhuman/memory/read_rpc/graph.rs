@@ -371,8 +371,7 @@ fn collect_contacts_graph(cfg: &Config) -> Result<(Vec<GraphNode>, Vec<GraphEdge
         let edges: Vec<(String, String, String)> = if chunk_ids.is_empty() {
             Vec::new()
         } else {
-            let placeholders = std::iter::repeat("?")
-                .take(chunk_ids.len())
+            let placeholders = std::iter::repeat_n("?", chunk_ids.len())
                 .collect::<Vec<_>>()
                 .join(",");
             let sql = format!(

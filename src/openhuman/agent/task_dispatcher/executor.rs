@@ -69,8 +69,7 @@ pub(super) fn resolve_executor(workspace_dir: &Path, assigned: Option<&str>) -> 
     }
 
     // 2) Workflow (#2824): the same autonomous run, seeded with SKILL.md.
-    if let Some(skill) = crate::openhuman::workflows::registry::get_workflow(workspace_dir, handle)
-    {
+    if let Some(skill) = crate::openhuman::skills::registry::get_workflow(workspace_dir, handle) {
         let guidelines = match &skill.definition.system_prompt {
             PromptSource::Inline(s) => truncate_chars(s, EXECUTOR_PREAMBLE_MAX_CHARS),
             _ => String::new(),
@@ -177,7 +176,14 @@ pub(super) async fn run_autonomous(
             thread_id.to_string(),
             run_id.to_string(),
             crate::openhuman::threads::turn_state::TurnStateStore::new(workspace_dir.clone()),
-            crate::openhuman::channels::providers::web::ChatRequestMetadata::default(),
+            crate::openhuman::channels::providers::web::ChatRequestMetadata {
+                // Trace attribution: mark the run autonomous and carry the
+                // resolved executor agent so Langfuse traces read
+                // `agent.turn:<agent_id>` with channel.source=autonomous.
+                source: Some("autonomous".to_string()),
+                agent_id: Some(executor.agent_id.clone()),
+                ..Default::default()
+            },
             config.clone(),
         );
     }
@@ -220,7 +226,7 @@ pub(super) async fn run_autonomous(
     if let Some(thread_id) = session_thread_id.as_deref() {
         match &result {
             Ok(response) => {
-                crate::openhuman::channels::providers::presentation::deliver_response(
+                crate::openhuman::channels::providers::web::presentation::deliver_response(
                     "system",
                     thread_id,
                     run_id,

@@ -457,7 +457,7 @@ impl EmbeddingProvider for OllamaEmbedding {
 
         // Reconstruct full-length result with zero-vectors for blank positions.
         let mut result = vec![Vec::new(); texts.len()];
-        for ((orig_idx, _), embedding) in live.iter().zip(payload.embeddings.into_iter()) {
+        for ((orig_idx, _), embedding) in live.iter().zip(payload.embeddings) {
             result[*orig_idx] = embedding;
         }
 

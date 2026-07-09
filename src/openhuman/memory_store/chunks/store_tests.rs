@@ -11,8 +11,10 @@
 //! that don't need it.
 
 use super::*;
-use crate::openhuman::memory_store::chunks::types::chunk_id;
-use chrono::TimeZone;
+// Imported directly (not via `super::*`): this PR's store-op delegation dropped
+// store.rs's own `use chrono::Utc`, so the test module pulls it in itself.
+use crate::openhuman::memory_store::chunks::types::{chunk_id, Metadata, SourceRef};
+use chrono::{TimeZone, Utc};
 use rusqlite::params;
 use tempfile::TempDir;
 
@@ -964,55 +966,6 @@ fn schema_has_content_path_and_content_sha256_columns() {
     .unwrap();
 }
 
-/// Regression: OPENHUMAN-TAURI-HH / -ZM / -MB.
-///
-/// Before this fix, N `tree_jobs_worker` tasks racing into
-/// `with_connection` on a cold workspace would trigger a WAL/SHM
-/// cold-start code — 14 (CANTOPEN), 1546 (IOERR_TRUNCATE), or a
-/// `-shm` code (4618 SHMOPEN / 4874 SHMSIZE / 5386 SHMMAP) — surfaced as
-/// `Failed to initialize memory_tree schema`. The mutex-gated init set
-/// in `store::open_and_init_with_retry` serialises the WAL+SHM
-/// bootstrap so only one thread runs `apply_schema` per DB path.
-///
-/// Asserts:
-/// 1. All N concurrent callers return `Ok` (no races, no surfaced errors).
-/// 2. `apply_schema` runs exactly once for the shared path even though
-///    8 threads hit a cold DB simultaneously.
-#[test]
-fn with_connection_serialises_concurrent_schema_init() {
-    use std::sync::atomic::Ordering;
-
-    let (_tmp, cfg) = test_config();
-    let db_path = cfg.workspace_dir.join("memory_tree").join("chunks.db");
-    let errors = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-
-    let threads: Vec<_> = (0..8)
-        .map(|_| {
-            let cfg = cfg.clone();
-            let errors = errors.clone();
-            std::thread::spawn(move || {
-                if with_connection(&cfg, |_| Ok(())).is_err() {
-                    errors.fetch_add(1, Ordering::Relaxed);
-                }
-            })
-        })
-        .collect();
-    for t in threads {
-        t.join().expect("worker thread panicked");
-    }
-
-    assert_eq!(
-        errors.load(Ordering::Relaxed),
-        0,
-        "concurrent with_connection callers must all succeed"
-    );
-    let applied = super::schema_apply_count_for_path_for_tests(&db_path);
-    assert_eq!(
-        applied, 1,
-        "apply_schema must run exactly once per DB path under concurrent init; ran {applied} times"
-    );
-}
-
 /// Directly pins the `is_transient_cold_start` classifier — the
 /// gatekeeper for the retry loop in `open_and_init_with_retry`. The
 /// concurrent-init test above only exercises it indirectly (and only
@@ -1095,98 +1048,6 @@ fn with_connection_keeps_foreign_keys_on_for_every_call() {
     assert_eq!(
         fk_on_second, 1,
         "foreign_keys must be ON on fast-path (post-init) connection"
-    );
-}
-
-/// #1574 §7: the one-shot, version-gated legacy→sidecar migration copies a
-/// legacy `embedding` blob whose dimensionality matches the active embedder
-/// into the per-model sidecar at the active signature, skips dim-mismatched
-/// rows (left for the §6 re-embed), keeps the legacy column, and runs exactly
-/// once (PRAGMA user_version gate).
-#[test]
-fn legacy_embeddings_migrate_to_sidecar_once() {
-    let (_tmp, cfg) = test_config();
-    let c_match = sample_chunk("slack:#eng", 0, 1_700_000_000_000);
-    let c_mismatch = sample_chunk("slack:#eng", 1, 1_700_000_000_001);
-    // First open runs the (no-op) migration and sets user_version = 1.
-    upsert_chunks(&cfg, &[c_match.clone(), c_mismatch.clone()]).unwrap();
-
-    // Resolve the active signature/dims exactly as the migration does —
-    // base-independent, never hard-coded (see the brittle-literal lesson).
-    let (p, m, dims) = crate::openhuman::memory_store::effective_embedding_settings(
-        &cfg.memory,
-        cfg.workload_local_model("embeddings").as_deref(),
-    );
-    let sig = crate::openhuman::embeddings::format_embedding_signature(&p, &m, dims);
-    let match_vec = vec![0.25f32; dims];
-    let mismatch_vec = vec![0.5f32; dims + 1];
-
-    // Simulate a pre-#1574 DB: legacy columns populated, migration not yet
-    // run. On entry user_version is 1 (from upsert above) so the migration
-    // is skipped here; the closure then resets the gate to 0.
-    with_connection(&cfg, |conn| {
-        conn.execute(
-            "UPDATE mem_tree_chunks SET embedding = ?1 WHERE id = ?2",
-            params![embedding_to_blob(&match_vec), c_match.id],
-        )?;
-        conn.execute(
-            "UPDATE mem_tree_chunks SET embedding = ?1 WHERE id = ?2",
-            params![embedding_to_blob(&mismatch_vec), c_mismatch.id],
-        )?;
-        conn.pragma_update(None, "user_version", 0i64)?;
-        Ok(())
-    })
-    .unwrap();
-
-    // Evict the cached connection so the next open sees user_version = 0
-    // and re-runs migrate_legacy_embeddings_to_sidecar.
-    invalidate_connection(&cfg);
-
-    // The next store open (this getter's `with_connection`) sees
-    // user_version = 0 and runs the migration before returning.
-    assert_eq!(
-        get_chunk_embedding_for_signature(&cfg, &c_match.id, &sig).unwrap(),
-        Some(match_vec.clone()),
-        "matching-dim legacy row must be copied to the sidecar at the active sig"
-    );
-    assert!(
-        get_chunk_embedding_for_signature(&cfg, &c_mismatch.id, &sig)
-            .unwrap()
-            .is_none(),
-        "dim-mismatched legacy row must be skipped (left for §6 re-embed)"
-    );
-
-    with_connection(&cfg, |conn| {
-        let legacy: Option<Vec<u8>> = conn
-            .query_row(
-                "SELECT embedding FROM mem_tree_chunks WHERE id = ?1",
-                params![c_match.id],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert!(
-            legacy.is_some(),
-            "legacy column must be KEPT post-migration (vN+1 drops it later)"
-        );
-        let v: i64 = conn
-            .query_row("PRAGMA user_version", [], |r| r.get(0))
-            .unwrap();
-        // A full init runs every one-shot migration in sequence, so the gate
-        // lands on the latest version (the global/topic purge), not just the
-        // embedding migration's.
-        assert_eq!(
-            v, GLOBAL_TOPIC_PURGE_MIGRATION_VERSION,
-            "version gate must be set to the latest migration"
-        );
-        Ok(())
-    })
-    .unwrap();
-
-    // Idempotent: subsequent opens are no-ops (gate set); sidecar unchanged.
-    with_connection(&cfg, |_| Ok(())).unwrap();
-    assert_eq!(
-        get_chunk_embedding_for_signature(&cfg, &c_match.id, &sig).unwrap(),
-        Some(match_vec)
     );
 }
 

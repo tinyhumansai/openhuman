@@ -240,7 +240,7 @@ async fn handle_tunnel_frame(channel_id: &str, payload_b64: &str) {
         };
         // Decrypt: nonce(24) || ciphertext+tag at offset 33.
         let inner_frame = &frame_bytes[33..];
-        match {
+        let res = {
             // TunnelCipher::open expects version(1)||nonce(24)||ct+tag, but we already
             // stripped the eph_pub prefix. Reconstruct a plain open call by using
             // XChaCha20 directly on nonce||ct (inner_frame).
@@ -256,7 +256,8 @@ async fn handle_tunnel_frame(channel_id: &str, payload_b64: &str) {
                 aead.decrypt(nonce, &inner_frame[24..])
                     .map_err(|_| "[devices/bus] AEAD decrypt failed on handshake frame".to_string())
             }
-        } {
+        };
+        match res {
             Ok(plaintext_bytes) => match String::from_utf8(plaintext_bytes) {
                 Ok(s) => parse_handshake_payload(&s),
                 Err(_) => {

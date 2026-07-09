@@ -7,7 +7,6 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use serde_json::{json, Map, Value};
@@ -15,7 +14,6 @@ use tempfile::TempDir;
 
 use openhuman_core::openhuman::config::Config;
 use openhuman_core::openhuman::embeddings::NoopEmbedding;
-use openhuman_core::openhuman::inference::provider::traits::Provider;
 use openhuman_core::openhuman::memory::{
     ExtractionMode, MemoryIngestionConfig, MemoryIngestionRequest,
 };
@@ -24,6 +22,7 @@ use openhuman_core::openhuman::memory_tree::tree_runtime::{
     all_tree_summarizer_registered_controllers, engine, rpc as tree_runtime_rpc,
     store as tree_runtime_store,
 };
+use tinyagents::harness::model::{ChatModel, ModelRequest, ModelResponse};
 
 struct EnvVarGuard {
     key: &'static str,
@@ -72,21 +71,18 @@ struct ScriptedProvider {
 }
 
 #[async_trait]
-impl Provider for ScriptedProvider {
-    async fn chat_with_system(
+impl ChatModel<()> for ScriptedProvider {
+    async fn invoke(
         &self,
-        system_prompt: Option<&str>,
-        message: &str,
-        model: &str,
-        temperature: f64,
-    ) -> Result<String> {
-        let system_prompt = system_prompt.expect("tree runtime should pass a system prompt");
-        assert!(system_prompt.contains("hierarchical summarizer"));
-        assert!(system_prompt.contains("under"));
-        assert!(!message.trim().is_empty());
-        assert!(!model.trim().is_empty());
-        assert!(temperature > 0.0);
-        Ok(self.response.clone())
+        _state: &(),
+        request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
+        let prompt = format!("{:?}", request.messages);
+        assert!(prompt.contains("hierarchical summarizer"));
+        assert!(prompt.contains("under"));
+        assert!(!request.messages.is_empty());
+        assert!(request.temperature.unwrap_or_default() > 0.0);
+        Ok(ModelResponse::assistant(self.response.clone()))
     }
 }
 
@@ -222,7 +218,7 @@ async fn tree_runtime_engine_summarizes_preserves_buffer_and_rebuilds() {
     )
     .expect("buffer second entry");
 
-    let hour = engine::run_summarization(&config, &provider, "test-model", namespace, ts)
+    let hour = engine::run_summarization(&config, &provider, namespace, ts)
         .await
         .expect("run summarization")
         .expect("hour node");
@@ -240,12 +236,10 @@ async fn tree_runtime_engine_summarizes_preserves_buffer_and_rebuilds() {
         assert!(node.summary.contains("round23 summary") || node.summary.contains("##"));
     }
 
-    assert!(
-        engine::run_summarization(&config, &provider, "test-model", namespace, ts)
-            .await
-            .expect("empty run")
-            .is_none()
-    );
+    assert!(engine::run_summarization(&config, &provider, namespace, ts)
+        .await
+        .expect("empty run")
+        .is_none());
 
     tree_runtime_store::buffer_write(
         &config,
@@ -256,7 +250,7 @@ async fn tree_runtime_engine_summarizes_preserves_buffer_and_rebuilds() {
     )
     .expect("buffer pending entry");
 
-    let status = engine::rebuild_tree(&config, &provider, "test-model", namespace)
+    let status = engine::rebuild_tree(&config, &provider, namespace)
         .await
         .expect("rebuild tree");
     assert!(status.total_nodes >= 5);

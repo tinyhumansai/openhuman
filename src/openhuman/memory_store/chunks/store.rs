@@ -23,7 +23,6 @@
 //! init failures for 30 s so a broken install does not busy-loop.
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use std::collections::{HashMap, HashSet};
 #[cfg(test)]
@@ -32,13 +31,12 @@ use std::time::Duration;
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::util::redact::{self, redact as redact_value};
-use crate::openhuman::memory_store::chunks::types::{Chunk, Metadata, SourceKind, SourceRef};
+use crate::openhuman::memory_store::chunks::types::{Chunk, SourceKind};
 use crate::openhuman::memory_store::content::StagedChunk;
+use crate::openhuman::tinycortex::memory_config_from;
 
 const DB_DIR: &str = "memory_tree";
 const DB_FILE: &str = "chunks.db";
-const DEFAULT_LIST_LIMIT: usize = 100;
-const MAX_LIST_LIMIT: usize = 10_000;
 // 15s gives the busy-handler enough headroom that transient write-lock
 // contention (4 job workers + scheduler + ingest producers all writing the
 // same `memory_tree/chunks.db`) is absorbed inside rusqlite instead of
@@ -397,43 +395,7 @@ CREATE INDEX IF NOT EXISTS idx_mcp_writes_tool
 /// are replaced, making the operation idempotent for re-ingest of the same
 /// raw source.
 pub fn upsert_chunks(config: &Config, chunks: &[Chunk]) -> Result<usize> {
-    if chunks.is_empty() {
-        return Ok(0);
-    }
-    log::debug!(
-        "[memory::chunk_store] upsert_chunks: n={} first_id={}",
-        chunks.len(),
-        chunks[0].id
-    );
-    with_connection(config, |conn| {
-        let tx = conn.unchecked_transaction()?;
-        {
-            let mut stmt = tx.prepare(
-                "INSERT INTO mem_tree_chunks (
-                    id, source_kind, source_id, path_scope, source_ref, owner,
-                    timestamp_ms, time_range_start_ms, time_range_end_ms,
-                    tags_json, content, token_count, seq_in_source, created_at_ms
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
-                ON CONFLICT(id) DO UPDATE SET
-                    source_kind = excluded.source_kind,
-                    source_id = excluded.source_id,
-                    path_scope = excluded.path_scope,
-                    source_ref = excluded.source_ref,
-                    owner = excluded.owner,
-                    timestamp_ms = excluded.timestamp_ms,
-                    time_range_start_ms = excluded.time_range_start_ms,
-                    time_range_end_ms = excluded.time_range_end_ms,
-                    tags_json = excluded.tags_json,
-                    content = excluded.content,
-                    token_count = excluded.token_count,
-                    seq_in_source = excluded.seq_in_source,
-                    created_at_ms = excluded.created_at_ms",
-            )?;
-            upsert_chunks_with_statement(&mut stmt, chunks)?;
-        }
-        tx.commit()?;
-        Ok(chunks.len())
-    })
+    tinycortex::memory::chunks::upsert_chunks(&engine_config(config), chunks)
 }
 
 /// Upsert chunks using an existing transaction, preserving previously stored embeddings.
@@ -531,6 +493,155 @@ pub(crate) fn upsert_staged_chunks_tx(
     Ok(staged.len())
 }
 
+/// Repair the stored body-sha token for one chunk (#4689).
+///
+/// The chunk content file is content-addressed and atomically written, so it is
+/// the source of truth for its body. When a read detects that the on-disk body
+/// no longer hashes to the recorded `content_sha256` (e.g. an external editor
+/// rewrote a synced file after ingest), the reader serves the full on-disk body
+/// and calls this to re-point the stale token at the disk bytes so the next read
+/// verifies cleanly instead of falling back to the ≤500-char preview.
+pub fn update_chunk_content_sha256(
+    config: &Config,
+    chunk_id: &str,
+    new_sha256: &str,
+) -> Result<()> {
+    with_connection(config, |conn| {
+        conn.execute(
+            "UPDATE mem_tree_chunks SET content_sha256 = ?1 WHERE id = ?2",
+            params![new_sha256, chunk_id],
+        )?;
+        Ok(())
+    })
+}
+
+/// Summary counterpart of [`update_chunk_content_sha256`] (#4689).
+pub fn update_summary_content_sha256(
+    config: &Config,
+    summary_id: &str,
+    new_sha256: &str,
+) -> Result<()> {
+    with_connection(config, |conn| {
+        conn.execute(
+            "UPDATE mem_tree_summaries SET content_sha256 = ?1 WHERE id = ?2",
+            params![new_sha256, summary_id],
+        )?;
+        Ok(())
+    })
+}
+
+/// List the distinct `source_id`s of chunk rows for `source_kind` whose id
+/// starts with `source_id_prefix` (#4689).
+///
+/// Used by folder/list-based resync to discover previously-ingested items that
+/// have since vanished (e.g. a renamed or deleted file) so their stale rows +
+/// on-disk bodies can be cleaned. The prefix is applied Rust-side (literal, not
+/// a SQL `LIKE`) so ids containing `_`/`%` are matched verbatim — matching the
+/// convention in [`delete_chunks_by_source_prefix`].
+pub fn list_source_ids_with_prefix(
+    config: &Config,
+    source_kind: SourceKind,
+    source_id_prefix: &str,
+) -> Result<Vec<String>> {
+    with_connection(config, |conn| {
+        // Bounded range scan on the `idx_mem_tree_chunks_source (source_kind,
+        // source_id)` index instead of scanning every source_id for the kind and
+        // filtering in Rust: `source_id >= prefix AND source_id < upper`, where
+        // `upper` is the prefix with its last byte incremented. With SQLite's
+        // default BINARY collation this is exactly the literal byte-prefix set
+        // (so `_`/`%` stay literal, matching `delete_chunks_by_source_prefix`).
+        let out = match prefix_upper_bound(source_id_prefix) {
+            Some(upper) => {
+                let mut stmt = conn.prepare(
+                    "SELECT DISTINCT source_id FROM mem_tree_chunks \
+                     WHERE source_kind = ?1 AND source_id >= ?2 AND source_id < ?3",
+                )?;
+                let rows = stmt.query_map(
+                    params![source_kind.as_str(), source_id_prefix, upper],
+                    |row| row.get::<_, String>(0),
+                )?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()
+            }
+            None => {
+                // Empty prefix (or all-0xFF): no finite upper bound. The lower
+                // bound still uses the index; every row of the kind qualifies —
+                // identical to the previous `starts_with("")` behaviour.
+                let mut stmt = conn.prepare(
+                    "SELECT DISTINCT source_id FROM mem_tree_chunks \
+                     WHERE source_kind = ?1 AND source_id >= ?2",
+                )?;
+                let rows = stmt
+                    .query_map(params![source_kind.as_str(), source_id_prefix], |row| {
+                        row.get::<_, String>(0)
+                    })?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()
+            }
+        }
+        .context("Failed to list mem_tree chunk source_ids by prefix")?;
+        Ok(out)
+    })
+}
+
+/// Exclusive upper bound for a literal byte-prefix range scan: the least string
+/// strictly greater than every string starting with `prefix`. `None` when no
+/// finite bound exists (empty prefix, or every byte is `0xFF`), in which case
+/// the caller applies only the lower bound.
+fn prefix_upper_bound(prefix: &str) -> Option<String> {
+    let mut bytes = prefix.as_bytes().to_vec();
+    while let Some(&last) = bytes.last() {
+        if last < 0xFF {
+            *bytes.last_mut().unwrap() = last + 1;
+            // Our prefixes are ASCII (`mem_src:<id>:`), so incrementing the last
+            // byte yields valid UTF-8. If a future caller passes a prefix that
+            // ends mid-codepoint, fall back to the lower-bound-only path rather
+            // than emit invalid UTF-8.
+            return String::from_utf8(bytes).ok();
+        }
+        bytes.pop();
+    }
+    None
+}
+
+#[cfg(test)]
+mod prefix_bound_tests {
+    use super::prefix_upper_bound;
+
+    #[test]
+    fn upper_bound_increments_last_byte() {
+        assert_eq!(
+            prefix_upper_bound("mem_src:s1:").as_deref(),
+            Some("mem_src:s1;")
+        );
+        assert_eq!(prefix_upper_bound("a").as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn upper_bound_none_for_empty_prefix() {
+        // Empty prefix is the only reachable `None` for a valid UTF-8 `&str` (no
+        // valid string ends in 0xFF); the all-0xFF `pop` loop is defensive.
+        assert_eq!(prefix_upper_bound(""), None);
+    }
+
+    #[test]
+    fn upper_bound_handles_multibyte_prefix() {
+        // A prefix ending in a multibyte codepoint still yields a valid bound.
+        assert_eq!(prefix_upper_bound("café").as_deref(), Some("cafê"));
+    }
+
+    #[test]
+    fn range_excludes_sibling_prefix() {
+        // The trailing delimiter in the prefix is what keeps `mem_src:s1:` from
+        // matching `mem_src:s10:...`: `s10:` sorts below `s1:` (`'0' < ':'`), so
+        // it falls below the lower bound and is excluded — same as `starts_with`.
+        let prefix = "mem_src:s1:";
+        let upper = prefix_upper_bound(prefix).unwrap();
+        let sib = "mem_src:s10:x";
+        assert!(!(sib >= prefix && *sib < *upper.as_str()));
+        let child = "mem_src:s1:a";
+        assert!(child >= prefix && *child < *upper.as_str());
+    }
+}
+
 fn upsert_chunks_with_statement(
     stmt: &mut rusqlite::Statement<'_>,
     chunks: &[Chunk],
@@ -557,204 +668,39 @@ fn upsert_chunks_with_statement(
 }
 
 /// Fetch one chunk by its id.
+/// Map the host `Config` to the engine `MemoryConfig` addressing the same
+/// `<workspace_dir>/memory_tree/chunks.db` (only `workspace` is load-bearing for
+/// these delegating DB reads). W3 store-op flip.
+fn engine_config(config: &Config) -> tinycortex::memory::MemoryConfig {
+    memory_config_from(config, config.workspace_dir.clone())
+}
+
 pub fn get_chunk(config: &Config, id: &str) -> Result<Option<Chunk>> {
-    with_connection(config, |conn| {
-        let mut stmt = conn.prepare(
-            "SELECT id, source_kind, source_id, path_scope, source_ref, owner,
-                    timestamp_ms, time_range_start_ms, time_range_end_ms,
-                    tags_json, content, token_count, seq_in_source, created_at_ms
-               FROM mem_tree_chunks WHERE id = ?1",
-        )?;
-        let row = stmt
-            .query_row(params![id], row_to_chunk)
-            .optional()
-            .context("Failed to query chunk by id")?;
-        Ok(row)
-    })
+    tinycortex::memory::chunks::get_chunk(&engine_config(config), id)
 }
 
-/// Defensive cap for batched `IN (?,?,…)` reads.
-///
-/// SQLite's compile-time limit on bound parameters in a single statement
-/// (`SQLITE_MAX_VARIABLE_NUMBER`) has been **32 766** since 3.32 (2020),
-/// so 500 leaves a ~65× safety margin. The current call-site
-/// (`memory_tree::retrieval::fetch::fetch_leaves`) is capped at 20 ids,
-/// so the chunked loop runs exactly once today. The window exists so
-/// future call-sites passing larger id lists do not blow up against a
-/// host with a lower compile-time SQLite cap (older builds, custom
-/// embeddings, etc.).
-///
-/// Volume is **not** reduced: all input ids in → all matching rows out.
-/// The loop only splits the SQL; the merged `HashMap` is byte-identical
-/// to what one giant query would return.
-const MAX_FETCH_BATCH: usize = 500;
-
-/// Batched read of full chunk rows by id.
-///
-/// Contract mirror of looping [`get_chunk`] per id, but in
-/// `O(ceil(n / MAX_FETCH_BATCH))` SQLite round-trips instead of `O(n)`.
-/// The returned map contains only ids that exist in `mem_tree_chunks`;
-/// missing ids are silently absent (same as `get_chunk` returning
-/// `Ok(None)`). Callers that depend on input order must iterate their
-/// own id slice and look each id up in the map.
-///
-/// Reuses [`row_to_chunk`] so decoding stays bit-identical to the
-/// per-row helper — no risk of decoder drift.
+/// Batched read of full chunk rows by id — delegates to the crate.
 pub fn get_chunks_batch(config: &Config, chunk_ids: &[String]) -> Result<HashMap<String, Chunk>> {
-    if chunk_ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-    log::debug!(
-        "[memory::chunk_store] get_chunks_batch: n={} windows={}",
-        chunk_ids.len(),
-        chunk_ids.len().div_ceil(MAX_FETCH_BATCH)
-    );
-    with_connection(config, |conn| {
-        let mut out: HashMap<String, Chunk> = HashMap::with_capacity(chunk_ids.len());
-        for window in chunk_ids.chunks(MAX_FETCH_BATCH) {
-            // Build the placeholder list `?1, ?2, …, ?n` matching the
-            // window length; rusqlite assigns positional binds 1..n in
-            // the order the values are passed.
-            let placeholders = (1..=window.len())
-                .map(|i| format!("?{i}"))
-                .collect::<Vec<_>>()
-                .join(",");
-            let sql = format!(
-                "SELECT id, source_kind, source_id, path_scope, source_ref, owner,
-                        timestamp_ms, time_range_start_ms, time_range_end_ms,
-                        tags_json, content, token_count, seq_in_source, created_at_ms
-                   FROM mem_tree_chunks WHERE id IN ({placeholders})"
-            );
-            let mut stmt = conn.prepare(&sql).context("prepare get_chunks_batch")?;
-            let params: Vec<&dyn rusqlite::ToSql> =
-                window.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
-            let rows = stmt
-                .query_map(params.as_slice(), row_to_chunk)
-                .context("query get_chunks_batch")?;
-            for row in rows {
-                let chunk = row.context("decode get_chunks_batch row")?;
-                out.insert(chunk.id.clone(), chunk);
-            }
-        }
-        log::debug!(
-            "[memory::chunk_store] get_chunks_batch: matched {}/{} ids",
-            out.len(),
-            chunk_ids.len()
-        );
-        Ok(out)
-    })
+    tinycortex::memory::chunks::get_chunks_batch(&engine_config(config), chunk_ids)
 }
 
-/// Query parameters for [`list_chunks`]. All fields are optional filters —
-/// callers pass `ListChunksQuery::default()` to get recent-across-everything.
-#[derive(Debug, Default, Clone)]
-pub struct ListChunksQuery {
-    pub source_kind: Option<SourceKind>,
-    pub source_id: Option<String>,
-    pub owner: Option<String>,
-    /// Inclusive lower bound on `timestamp` (milliseconds since epoch).
-    pub since_ms: Option<i64>,
-    /// Inclusive upper bound on `timestamp` (milliseconds since epoch).
-    pub until_ms: Option<i64>,
-    /// Max rows to return (default 100 when `None`).
-    pub limit: Option<usize>,
-    /// Per-profile memory-source allowlist. When `Some`, memory-source chunks
-    /// (those tagged `memory_sources`) whose source identifier is not in the set
-    /// are dropped *before* the row limit is applied, so a disallowed-source
-    /// prefix can't starve permitted rows. Non-source chunks always pass. `None`
-    /// = unrestricted (the default for every non-agent caller).
-    pub source_scope: Option<std::collections::HashSet<String>>,
-    /// When `true`, rows the admission gate rejected (`lifecycle_status =
-    /// 'dropped'`) are excluded. Default `false` preserves the all-rows
-    /// behaviour every existing caller relies on; retrieval paths that must not
-    /// surface filtered-out junk (e.g. `cover_window`) opt in.
-    pub exclude_dropped: bool,
-}
+/// Query parameters for [`list_chunks`], re-exported from the crate (identical
+/// fields incl. the `source_scope` allowlist + `exclude_dropped`).
+pub use tinycortex::memory::chunks::ListChunksQuery;
 
 /// List chunks matching the provided filters, ordered by `timestamp` DESC.
+///
+/// Delegates to the crate, which preserves the `source_scope` allowlist gate
+/// (byte-identical `chunk_source_allowed_in` + `extract_mem_src_id`) — the
+/// security-critical per-profile enforcement, pinned by
+/// `store_tests::list_chunks_source_scope_filters_before_limit`.
 pub fn list_chunks(config: &Config, query: &ListChunksQuery) -> Result<Vec<Chunk>> {
-    with_connection(config, |conn| {
-        let mut sql = String::from(
-            "SELECT id, source_kind, source_id, path_scope, source_ref, owner,
-                    timestamp_ms, time_range_start_ms, time_range_end_ms,
-                    tags_json, content, token_count, seq_in_source, created_at_ms
-               FROM mem_tree_chunks WHERE 1=1",
-        );
-        let mut bound: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-
-        if let Some(kind) = query.source_kind {
-            sql.push_str(" AND source_kind = ?");
-            bound.push(Box::new(kind.as_str().to_string()));
-        }
-        if let Some(ref source_id) = query.source_id {
-            sql.push_str(" AND source_id = ?");
-            bound.push(Box::new(source_id.clone()));
-        }
-        if let Some(ref owner) = query.owner {
-            sql.push_str(" AND owner = ?");
-            bound.push(Box::new(owner.clone()));
-        }
-        if let Some(since_ms) = query.since_ms {
-            sql.push_str(" AND timestamp_ms >= ?");
-            bound.push(Box::new(since_ms));
-        }
-        if let Some(until_ms) = query.until_ms {
-            sql.push_str(" AND timestamp_ms <= ?");
-            bound.push(Box::new(until_ms));
-        }
-        if query.exclude_dropped {
-            sql.push_str(" AND lifecycle_status != ?");
-            bound.push(Box::new(CHUNK_STATUS_DROPPED.to_string()));
-        }
-        let requested_limit = normalized_limit(query.limit);
-        // When a profile source-scope is active, fetch a wider candidate set and
-        // apply the gate in Rust *before* truncating, so a disallowed-source
-        // prefix can't push permitted rows past the requested limit. Otherwise
-        // the SQL LIMIT alone is correct and cheap.
-        let sql_limit = if query.source_scope.is_some() {
-            MAX_LIST_LIMIT as i64
-        } else {
-            requested_limit
-        };
-        sql.push_str(" ORDER BY timestamp_ms DESC, seq_in_source ASC LIMIT ?");
-        bound.push(Box::new(sql_limit));
-
-        let mut stmt = conn.prepare(&sql)?;
-        let param_refs: Vec<&dyn rusqlite::ToSql> = bound
-            .iter()
-            .map(|b| b.as_ref() as &dyn rusqlite::ToSql)
-            .collect();
-        let mut rows = stmt
-            .query_map(param_refs.as_slice(), row_to_chunk)?
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .context("Failed to collect chunks")?;
-        if let Some(ref allowed) = query.source_scope {
-            let before = rows.len();
-            rows.retain(|c| {
-                crate::openhuman::memory::source_scope::chunk_source_allowed_in(
-                    allowed,
-                    &c.metadata.tags,
-                    &c.metadata.source_id,
-                )
-            });
-            if rows.len() != before {
-                log::debug!(
-                    "[profiles] list_chunks source-scope filter: {before} -> {} row(s)",
-                    rows.len()
-                );
-            }
-            rows.truncate(requested_limit as usize);
-        }
-        Ok(rows)
-    })
+    tinycortex::memory::chunks::list_chunks(&engine_config(config), query)
 }
 
 /// Count total chunks in the store (useful for tests / diagnostics).
 pub fn count_chunks(config: &Config) -> Result<u64> {
-    with_connection(config, |conn| {
-        let n: i64 = conn.query_row("SELECT COUNT(*) FROM mem_tree_chunks", [], |r| r.get(0))?;
-        Ok(n.max(0) as u64)
-    })
+    tinycortex::memory::chunks::count_chunks(&engine_config(config))
 }
 
 /// #002 (FR-010 / US5): extraction coverage — the fraction of chunks that have
@@ -767,29 +713,12 @@ pub fn count_chunks(config: &Config) -> Result<u64> {
 /// numerator is node-kind-agnostic (we only count entity rows whose `node_id`
 /// is an actual chunk). Returns `0.0` when there are no chunks.
 pub fn extraction_coverage(config: &Config) -> Result<f32> {
-    with_connection(config, |conn| {
-        let total: i64 =
-            conn.query_row("SELECT COUNT(*) FROM mem_tree_chunks", [], |r| r.get(0))?;
-        if total <= 0 {
-            return Ok(0.0);
-        }
-        let covered: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM mem_tree_chunks c
-              WHERE EXISTS (
-                  SELECT 1 FROM mem_tree_entity_index e WHERE e.node_id = c.id
-              )",
-            [],
-            |r| r.get(0),
-        )?;
-        Ok((covered.max(0) as f32) / (total as f32))
-    })
+    tinycortex::memory::chunks::extraction_coverage(&engine_config(config))
 }
 
 /// Set the lifecycle status column for `chunk_id`. See `CHUNK_STATUS_*`.
 pub fn set_chunk_lifecycle_status(config: &Config, chunk_id: &str, status: &str) -> Result<()> {
-    with_connection(config, |conn| {
-        set_chunk_lifecycle_status_conn(conn, chunk_id, status)
-    })
+    tinycortex::memory::chunks::set_chunk_lifecycle_status(&engine_config(config), chunk_id, status)
 }
 
 pub(crate) fn set_chunk_lifecycle_status_tx(
@@ -802,9 +731,7 @@ pub(crate) fn set_chunk_lifecycle_status_tx(
 
 /// Read the lifecycle status column for `chunk_id`, or `None` if the row is absent.
 pub fn get_chunk_lifecycle_status(config: &Config, chunk_id: &str) -> Result<Option<String>> {
-    with_connection(config, |conn| {
-        get_chunk_lifecycle_status_conn(conn, chunk_id)
-    })
+    tinycortex::memory::chunks::get_chunk_lifecycle_status(&engine_config(config), chunk_id)
 }
 
 pub(crate) fn get_chunk_lifecycle_status_tx(
@@ -827,14 +754,7 @@ fn get_chunk_lifecycle_status_conn(conn: &Connection, chunk_id: &str) -> Result<
 
 /// Count chunks currently sitting at a given lifecycle status (test/diagnostic helper).
 pub fn count_chunks_by_lifecycle_status(config: &Config, status: &str) -> Result<u64> {
-    with_connection(config, |conn| {
-        let n: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM mem_tree_chunks WHERE lifecycle_status = ?1",
-            params![status],
-            |r| r.get(0),
-        )?;
-        Ok(n.max(0) as u64)
-    })
+    tinycortex::memory::chunks::count_chunks_by_lifecycle_status(&engine_config(config), status)
 }
 
 fn set_chunk_lifecycle_status_conn(conn: &Connection, chunk_id: &str, status: &str) -> Result<()> {
@@ -862,15 +782,7 @@ pub fn is_source_ingested(
     source_kind: SourceKind,
     source_id: &str,
 ) -> Result<bool> {
-    with_connection(config, |conn| {
-        let n: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM mem_tree_ingested_sources \
-             WHERE source_kind = ?1 AND source_id = ?2",
-            params![source_kind.as_str(), source_id],
-            |r| r.get(0),
-        )?;
-        Ok(n > 0)
-    })
+    tinycortex::memory::chunks::is_source_ingested(&engine_config(config), source_kind, source_id)
 }
 
 /// Atomically claim `(source_kind, source_id)` for ingestion. Returns
@@ -906,72 +818,22 @@ pub const RAW_FILE_GATE_KIND: &str = "raw_file";
 /// `<content_root>/`) are covered by a tree summary. Idempotent
 /// (`INSERT OR IGNORE`); returns the number of newly-recorded paths.
 pub fn mark_raw_paths_ingested(config: &Config, rel_paths: &[String]) -> Result<u64> {
-    if rel_paths.is_empty() {
-        return Ok(0);
-    }
-    let now_ms = Utc::now().timestamp_millis();
-    with_connection(config, |conn| {
-        let tx = conn.unchecked_transaction()?;
-        let mut inserted: u64 = 0;
-        {
-            let mut stmt = tx.prepare(
-                "INSERT OR IGNORE INTO mem_tree_ingested_sources \
-                    (source_kind, source_id, ingested_at_ms) \
-                 VALUES (?1, ?2, ?3)",
-            )?;
-            for path in rel_paths {
-                inserted += stmt.execute(params![RAW_FILE_GATE_KIND, path, now_ms])? as u64;
-            }
-        }
-        tx.commit()?;
-        log::debug!(
-            "[memory::chunk_store] mark_raw_paths_ingested: {} given, {} newly recorded",
-            rel_paths.len(),
-            inserted
-        );
-        Ok(inserted)
-    })
+    tinycortex::memory::chunks::mark_raw_paths_ingested(&engine_config(config), rel_paths)
 }
 
 /// Filter `rel_paths` down to the ones NOT yet recorded as ingested raw
 /// files. Order of the surviving paths is preserved.
 pub fn filter_raw_paths_not_ingested(config: &Config, rel_paths: &[String]) -> Result<Vec<String>> {
-    if rel_paths.is_empty() {
-        return Ok(Vec::new());
-    }
-    with_connection(config, |conn| {
-        let mut stmt = conn.prepare(
-            "SELECT COUNT(*) FROM mem_tree_ingested_sources \
-             WHERE source_kind = ?1 AND source_id = ?2",
-        )?;
-        let mut out: Vec<String> = Vec::new();
-        for path in rel_paths {
-            let n: i64 = stmt.query_row(params![RAW_FILE_GATE_KIND, path], |r| r.get(0))?;
-            if n == 0 {
-                out.push(path.clone());
-            }
-        }
-        Ok(out)
-    })
+    tinycortex::memory::chunks::filter_raw_paths_not_ingested(&engine_config(config), rel_paths)
 }
 
 /// Count raw-file gate rows whose path starts with `rel_prefix` (e.g.
 /// `raw/github-com-org-repo/`). Diagnostic helper for reconcile reporting.
 pub fn count_raw_paths_ingested_with_prefix(config: &Config, rel_prefix: &str) -> Result<u64> {
-    with_connection(config, |conn| {
-        // Rust-side prefix filter (not SQL LIKE) so `_` / `%` in slugs are
-        // treated literally — same convention as delete_chunks_by_source_prefix.
-        let mut stmt =
-            conn.prepare("SELECT source_id FROM mem_tree_ingested_sources WHERE source_kind = ?1")?;
-        let rows = stmt.query_map(params![RAW_FILE_GATE_KIND], |r| r.get::<_, String>(0))?;
-        let mut n: u64 = 0;
-        for row in rows {
-            if row?.starts_with(rel_prefix) {
-                n += 1;
-            }
-        }
-        Ok(n)
-    })
+    tinycortex::memory::chunks::count_raw_paths_ingested_with_prefix(
+        &engine_config(config),
+        rel_prefix,
+    )
 }
 
 /// Delete all chunk rows for one exact `(source_kind, source_id)` and clear
@@ -1353,65 +1215,6 @@ fn remove_chunk_content_files(config: &Config, content_paths: &[String]) {
     }
 }
 
-fn row_to_chunk(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chunk> {
-    let id: String = row.get(0)?;
-    let source_kind_s: String = row.get(1)?;
-    let source_id: String = row.get(2)?;
-    let path_scope: Option<String> = row.get(3)?;
-    let source_ref: Option<String> = row.get(4)?;
-    let owner: String = row.get(5)?;
-    let ts_ms: i64 = row.get(6)?;
-    let trs_ms: i64 = row.get(7)?;
-    let tre_ms: i64 = row.get(8)?;
-    let tags_json: String = row.get(9)?;
-    let content: String = row.get(10)?;
-    let token_count: i64 = row.get(11)?;
-    let seq: i64 = row.get(12)?;
-    let created_ms: i64 = row.get(13)?;
-
-    let source_kind = SourceKind::parse(&source_kind_s).map_err(|e| {
-        rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, e.into())
-    })?;
-    let timestamp = ms_to_utc(ts_ms)?;
-    let time_range = (ms_to_utc(trs_ms)?, ms_to_utc(tre_ms)?);
-    let created_at = ms_to_utc(created_ms)?;
-    let tags: Vec<String> = serde_json::from_str(&tags_json).map_err(|e| {
-        rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(e))
-    })?;
-
-    Ok(Chunk {
-        id,
-        content,
-        metadata: Metadata {
-            source_kind,
-            source_id,
-            owner,
-            timestamp,
-            time_range,
-            tags,
-            source_ref: source_ref.map(SourceRef::new),
-            path_scope,
-        },
-        token_count: token_count.max(0) as u32,
-        seq_in_source: seq.max(0) as u32,
-        created_at,
-        // partial_message is not stored in SQLite — it's a transient chunker
-        // signal. Chunks read back from DB always get false (the column doesn't
-        // exist; callers that need this flag hold the Chunk in memory).
-        partial_message: false,
-    })
-}
-
-fn ms_to_utc(ms: i64) -> rusqlite::Result<DateTime<Utc>> {
-    Utc.timestamp_millis_opt(ms).single().ok_or_else(|| {
-        rusqlite::Error::FromSqlConversionFailure(
-            0,
-            rusqlite::types::Type::Integer,
-            format!("invalid timestamp ms {ms}").into(),
-        )
-    })
-}
-
 #[path = "connection.rs"]
 mod connection;
 pub(crate) use connection::recover_corrupt_db;
@@ -1436,13 +1239,6 @@ pub use raw_refs::{
     get_summary_content_pointers, list_chunk_raw_ref_paths_with_prefix,
     list_summaries_with_content_path, set_chunk_raw_refs, set_chunk_raw_refs_tx, RawRef,
 };
-
-fn normalized_limit(requested: Option<usize>) -> i64 {
-    let clamped = requested
-        .unwrap_or(DEFAULT_LIST_LIMIT)
-        .clamp(1, MAX_LIST_LIMIT);
-    i64::try_from(clamped).unwrap_or(MAX_LIST_LIMIT as i64)
-}
 
 /// Idempotent `ALTER TABLE ADD COLUMN` — treats an existing column as success.
 fn add_column_if_missing(conn: &Connection, table: &str, name: &str, sql_type: &str) -> Result<()> {

@@ -26,7 +26,7 @@ Learning is organized into six **facet classes**. Each class has its own decay r
 | **Goal** | Active goals and ongoing projects | free-form goal sentences |
 | **Channel** | Your preferred place to talk | `primary=desktop-chat` |
 
-Recurring people, topics, and past threads are **not** stored here — those live in the [memory tree](obsidian-wiki/memory-tree.md) and are pulled in per-turn by `memory_recall`.
+Recurring people, topics, and past threads are **not** stored here. Those live in the [memory tree](obsidian-wiki/memory-tree.md) and are pulled in per-turn by `memory_recall`.
 
 ***
 
@@ -59,7 +59,7 @@ Evidence flows through four stages: **capture → score → render → inject**.
                        (managed blocks)                     ("Your standing preferences")
 ```
 
-**Capture.** Producers watch your activity and push a `LearningCandidate` into a bounded buffer. Each candidate records the `(class, key, value)` it asserts, a pointer back to the evidence, and a **cue family** describing how strong the signal is — `Explicit` (you said it outright), `Structural` (from account data or a file), `Behavioral` (inferred from how you act), or `Recurrence` (a statistical pattern).
+**Capture.** Producers watch your activity and push a `LearningCandidate` into a bounded buffer. Each candidate records the `(class, key, value)` it asserts, a pointer back to the evidence, and a **cue family** describing how strong the signal is: `Explicit` (you said it outright), `Structural` (from account data or a file), `Behavioral` (inferred from how you act), or `Recurrence` (a statistical pattern).
 
 **Score.** A background **stability detector** rebuilds the cache roughly every 30 minutes, and sooner when new email or documents arrive. It aggregates every candidate for a given fact and computes a stability score: stronger cue families count for more, recent evidence counts for more than stale evidence (each class has a half-life), and an explicit statement from you doubles the weight.
 
@@ -86,23 +86,23 @@ When two values compete for the same fact (e.g. `verbosity=terse` vs `verbosity=
 
 ## Where it's stored: `PROFILE.md`
 
-The learned profile is materialized into **`PROFILE.md`** in your workspace — a real, editable Markdown file. Each facet class owns a managed block (`## Style`, `## Identity`, `## Tooling`, `## Vetoes`, `## Goals`), and only **Active** facets are written, sorted by stability. Pinned entries are marked `*(pinned)*`.
+The learned profile is materialized into **`PROFILE.md`** in your workspace, a real, editable Markdown file. Each facet class owns a managed block (`## Style`, `## Identity`, `## Tooling`, `## Vetoes`, `## Goals`), and only **Active** facets are written, sorted by stability. Pinned entries are marked `*(pinned)*`.
 
-The renderer only touches its own managed blocks. Anything you write by hand outside those blocks — and the separate `## Connected Accounts` block owned by the integrations layer — is left untouched. Empty classes show a `*(no entries yet)*` placeholder rather than disappearing.
+The renderer only touches its own managed blocks. Anything you write by hand outside those blocks (and the separate `## Connected Accounts` block owned by the integrations layer) is left untouched. Empty classes show a `*(no entries yet)*` placeholder rather than disappearing.
 
-> **Per-session freeze.** `PROFILE.md` is folded into the agent's system prompt at the start of a session and held stable for that session's lifetime, which keeps prompt caching fast. Edits you make mid-session are picked up on the next rebuild and the next session — not retroactively in the current one.
+> **Per-session freeze.** `PROFILE.md` is folded into the agent's system prompt at the start of a session and held stable for that session's lifetime, which keeps prompt caching fast. Edits you make mid-session are picked up on the next rebuild and the next session, not retroactively in the current one.
 
 ***
 
 ## How it surfaces in replies
 
-On every turn the agent reads the Active facets and injects them as a compact **"Your standing preferences"** section in the system prompt, alongside a standing instruction to call `memory_recall` before answering anything that leans on past sessions. The result is that the agent defaults to your verbosity, your tools, and your vetoes without being reminded — and reaches into memory for the specifics.
+On every turn the agent reads the Active facets and injects them as a compact **"Your standing preferences"** section in the system prompt, alongside a standing instruction to call `memory_recall` before answering anything that leans on past sessions. The result is that the agent defaults to your verbosity, your tools, and your vetoes without being reminded, and it reaches into memory for the specifics.
 
 ***
 
 ## Optional LinkedIn enrichment
 
-During onboarding you can let OpenHuman bootstrap your identity from LinkedIn. The flow searches your connected Gmail for a `linkedin.com/in/...` profile URL, and (when available) scrapes the public profile, then compresses what it finds into `PROFILE.md` via the `learning_save_profile` step. It runs once, as a fire-and-forget pass — entirely opt-in, and skipped cleanly if no profile is found.
+During onboarding you can let OpenHuman bootstrap your identity from LinkedIn. The flow searches your connected Gmail for a `linkedin.com/in/...` profile URL, and (when available) scrapes the public profile, then compresses what it finds into `PROFILE.md` via the `learning_save_profile` step. It runs once, as a fire-and-forget pass. It is entirely opt-in and is skipped cleanly if no profile is found.
 
 ***
 
@@ -111,7 +111,7 @@ During onboarding you can let OpenHuman bootstrap your identity from LinkedIn. T
 Everything learned is inspectable and reversible:
 
 - **Edit `PROFILE.md` directly.** It's your file. Correct, add, or delete anything; the next rebuild respects your edits.
-- **The Brain page** (raised center button in the bottom bar, `/brain`) is the home for memory and intelligence — the knowledge graph, goals, sources, and sync status all live here.
+- **The Brain page** (raised center button in the bottom bar, `/brain`) is the home for memory and intelligence. The knowledge graph, goals, sources, and sync status all live here.
 - **Pin** a fact to lock it Active and shield it from decay, or **forget** a fact to drop it and block it from coming back. Under the hood these are the `learning_pin_facet`, `learning_unpin_facet`, and `learning_forget_facet` operations over the `openhuman.learning_*` RPC surface, alongside `learning_list_facets` and `learning_rebuild_cache`.
 
 ***

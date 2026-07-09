@@ -14,6 +14,7 @@
 import debug from 'debug';
 import { useState } from 'react';
 
+import { useMascotManifest } from '../../features/human/Mascot/manifest/useMascotManifest';
 import { useT } from '../../lib/i18n/I18nContext';
 import {
   joinMeetViaBackendBot,
@@ -21,17 +22,26 @@ import {
   setEventPolicy,
   type UpcomingMeeting,
 } from '../../services/meetCallService';
+import { selectBackendMeetStatus, selectBackendMeetUrl } from '../../store/backendMeetSlice';
 import { useAppSelector } from '../../store/hooks';
 import {
   selectCustomPrimaryColor,
   selectCustomSecondaryColor,
+  selectDualMascotEnabled,
   selectMascotColor,
+  selectMeetingMascotVoicePair,
   selectSelectedMascotId,
 } from '../../store/mascotSlice';
 import { selectPersonaDescription, selectPersonaDisplayName } from '../../store/personaSlice';
 import Button from '../ui/Button';
 import { type JoinPolicy, JoinPolicyToggle } from './JoinPolicyToggle';
-import { inferPlatformFromUrl, platformLabel, platformLogoUrl } from './meetingUtils';
+import {
+  buildMeetingMascots,
+  inferPlatformFromUrl,
+  platformLabel,
+  platformLogoUrl,
+  resolveMeetingBotMascotId,
+} from './meetingUtils';
 import { useUpcomingMeetings } from './useUpcomingMeetings';
 
 const log = debug('meetings:upcoming-table');
@@ -164,9 +174,17 @@ interface MeetingRowProps {
   onJoinPolicyChange: (v: JoinPolicy) => void;
   onJoin: (m: UpcomingMeeting) => void;
   joining: boolean;
+  joined: boolean;
 }
 
-function MeetingRow({ meeting, joinPolicy, onJoinPolicyChange, onJoin, joining }: MeetingRowProps) {
+function MeetingRow({
+  meeting,
+  joinPolicy,
+  onJoinPolicyChange,
+  onJoin,
+  joining,
+  joined,
+}: MeetingRowProps) {
   const { t } = useT();
   const imminent = isImminent(meeting.start_time_ms);
   const { relative, absolute } = formatWhen(meeting.start_time_ms, t);
@@ -262,7 +280,15 @@ function MeetingRow({ meeting, joinPolicy, onJoinPolicyChange, onJoin, joining }
 
       {/* ACTION */}
       <td className="py-2 px-3 whitespace-nowrap">
-        {imminent ? (
+        {joined ? (
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-400">
+            <span
+              className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"
+              aria-hidden="true"
+            />
+            {t('skills.meetingBots.liveBadge')}
+          </span>
+        ) : imminent ? (
           <Button
             variant="primary"
             size="xs"
@@ -314,12 +340,19 @@ export interface UpcomingTableProps {
    * `true` = on — no hint needed.
    */
   watchCalendar?: boolean | null;
+  /**
+   * The user's saved meeting display name (from meet settings). Used as the
+   * bot's reply anchor when joining via "Join now" — when set, the bot joins in
+   * reply mode instead of listen-only so it can respond to the user.
+   */
+  replyDisplayName?: string;
 }
 
 export function UpcomingTable({
   lookaheadMinutes,
   limit,
   watchCalendar = null,
+  replyDisplayName = '',
 }: UpcomingTableProps) {
   const { t } = useT();
   const { meetings, loading, error, refresh } = useUpcomingMeetings(lookaheadMinutes, limit);
@@ -335,28 +368,99 @@ export function UpcomingTable({
   const mascotColor = useAppSelector(selectMascotColor);
   const customPrimaryColor = useAppSelector(selectCustomPrimaryColor);
   const customSecondaryColor = useAppSelector(selectCustomSecondaryColor);
+  // Dual-mascot config (issue #4277) — see MeetComposer for the rationale;
+  // both join sites resolve the two-mascot slots the same way so a "Join now"
+  // and a manual join behave identically.
+  const dualMascotEnabled = useAppSelector(selectDualMascotEnabled);
+  const mascotVoicePair = useAppSelector(selectMeetingMascotVoicePair);
+  // Manifest drives name-addressed routing (#4277 follow-up): tag each dual slot
+  // with its display name so "Hey Toshi …" routes to that mascot.
+  const { manifest } = useMascotManifest();
 
-  // Resolve bot join params the same way MeetComposer does.
-  const mascotId = selectedMascotId ?? (mascotColor === 'custom' ? undefined : mascotColor);
+  // Live in-call state — lets a row detect that its meeting is already joined
+  // and suppress the "Join now" button. correlationId is a fresh per-join UUID
+  // (#4338), so the backendMeet slice's meetingId never equals
+  // calendar_event_id — match the joined meet_url instead.
+  const backendMeetStatus = useAppSelector(selectBackendMeetStatus);
+  const backendMeetUrl = useAppSelector(selectBackendMeetUrl);
+  const isMeetingJoined = (m: UpcomingMeeting): boolean => {
+    if (backendMeetStatus !== 'active' && backendMeetStatus !== 'joining') return false;
+    return Boolean(backendMeetUrl && m.meet_url && backendMeetUrl === m.meet_url);
+  };
+
+  // Resolve bot join params the same way MeetComposer does — via
+  // resolveMeetingBotMascotId, so a manifest-only id the backend bot doesn't
+  // recognize is dropped here too (a raw `selectedMascotId` fallback would let
+  // it through and diverge from the MeetComposer join).
+  const mascotId = resolveMeetingBotMascotId(selectedMascotId, mascotColor);
   const riveColors =
     mascotColor === 'custom'
       ? { primaryColor: customPrimaryColor, secondaryColor: customSecondaryColor }
       : undefined;
+  // Bot join name — hoisted to component-body scope because both the `mascots`
+  // array here and the wake phrase inside handleJoin need it.
+  const agentName = personaDisplayName.trim() || 'Tiny';
+  // Two-mascot slots (issue #4277) — built via the shared helper so this
+  // scheduled-join path and the MeetComposer live-join path stay behaviorally
+  // identical.
+  const mascots = buildMeetingMascots({
+    dualMascotEnabled,
+    mascotVoicePair,
+    manifest,
+    mascotId,
+    riveColors,
+    agentName,
+  });
 
   const handleJoin = async (meeting: UpcomingMeeting) => {
     if (!meeting.meet_url) return;
     const platform = meeting.platform ?? inferPlatformFromUrl(meeting.meet_url) ?? undefined;
-    log('[upcoming] joining %s platform=%s', meeting.calendar_event_id, platform);
+    // Reply anchor: the display name the user saved on the Meetings page. When
+    // present the bot joins in reply mode (not listen-only) so it can respond to
+    // the user; without it we keep the safe listen-only default (the bot has no
+    // one to reply to and would otherwise talk to everyone).
+    const anchor = replyDisplayName.trim();
+    // Reply mode gates the bot behind a wake phrase so it only reacts when
+    // addressed ("Hey Alex, …"), never to every caption from the anchor —
+    // mirroring MeetComposer. The bot joins as `agentName` (hoisted above), so
+    // the phrase must match it. Listen-only joins (no anchor) send no wake phrase.
+    const wakePhrase = anchor ? `Hey ${agentName}` : undefined;
+    // Mint a fresh correlation id per join. It becomes the call record's
+    // `request_id` (recent-calls list key + per-call detail filename), so it
+    // MUST be unique per join — reusing the deterministic `calendar_event_id`
+    // collapsed re-joins of the same event onto one request_id, overwriting the
+    // earlier call's transcript and double-highlighting the history row (#4338).
+    // `calendar_event_id` stays the dedup/policy key only (handleJoinPolicyChange,
+    // setJoiningId), mirroring the background auto-join in calendar.rs.
+    const correlationId = crypto.randomUUID();
+    log(
+      '[upcoming] joining %s platform=%s reply_mode=%s correlationId=%s',
+      meeting.calendar_event_id,
+      platform,
+      Boolean(anchor),
+      correlationId
+    );
     setJoiningId(meeting.calendar_event_id);
+    // Name-addressing (#4277 follow-up) trace: mascot ids + names sent to the
+    // backend. Empty `name` on a slot ⇒ name addressing can't route to it.
+    log(
+      '[upcoming] join mascots=%o wakePhrase=%s',
+      mascots?.map(m => ({ mascotId: m.mascotId, name: m.name })),
+      wakePhrase
+    );
     try {
       await joinMeetViaBackendBot({
         meetUrl: meeting.meet_url,
         platform: platform as MeetingPlatform | undefined,
-        agentName: personaDisplayName || undefined,
+        agentName,
         systemPrompt: personaDescription || undefined,
         mascotId: mascotId || undefined,
-        listenOnly: true,
-        correlationId: meeting.calendar_event_id,
+        // Dual-mascot slots (issue #4277); undefined for single-mascot calls.
+        mascots,
+        respondToParticipant: anchor || undefined,
+        wakePhrase,
+        listenOnly: !anchor,
+        correlationId,
         riveColors,
       });
     } catch (err) {
@@ -551,6 +655,7 @@ export function UpcomingTable({
                     onJoinPolicyChange={v => handleJoinPolicyChange(m.calendar_event_id, v)}
                     onJoin={handleJoin}
                     joining={joiningId === m.calendar_event_id}
+                    joined={isMeetingJoined(m)}
                   />
                 );
               }),

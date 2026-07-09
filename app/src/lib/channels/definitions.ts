@@ -257,4 +257,94 @@ export const FALLBACK_DEFINITIONS: ChannelDefinition[] = [
     ],
     capabilities: ['send_text', 'receive_text'],
   },
+  // Native IMAP/SMTP email (#4280). Field keys map 1:1 to
+  // `config::schema::channels::EmailConfig` and `email_definition()` in
+  // `src/openhuman/channels/controllers/definitions.rs`; keep the two in sync.
+  {
+    id: 'email',
+    display_name: 'Email (IMAP/SMTP)',
+    description: 'Send and receive email via any standard IMAP/SMTP mailbox.',
+    icon: 'email',
+    auth_modes: [
+      {
+        mode: 'api_key',
+        description: "Provide your mailbox's IMAP/SMTP server settings and an app password.",
+        fields: [
+          {
+            key: 'imap_host',
+            label: 'IMAP Host',
+            field_type: 'string',
+            required: true,
+            placeholder: 'imap.fastmail.com',
+          },
+          {
+            key: 'imap_port',
+            label: 'IMAP Port',
+            field_type: 'string',
+            required: false,
+            placeholder: '993 (TLS)',
+          },
+          {
+            key: 'username',
+            label: 'Email Address',
+            field_type: 'string',
+            required: true,
+            placeholder: 'you@example.com',
+          },
+          {
+            key: 'password',
+            label: 'Password / App Password',
+            field_type: 'secret',
+            required: true,
+            placeholder: 'App-specific password (recommended)',
+          },
+          {
+            key: 'smtp_host',
+            label: 'SMTP Host',
+            field_type: 'string',
+            required: true,
+            placeholder: 'smtp.fastmail.com',
+          },
+          {
+            key: 'smtp_port',
+            label: 'SMTP Port',
+            field_type: 'string',
+            required: false,
+            placeholder: '465 (TLS)',
+          },
+          {
+            key: 'smtp_tls',
+            label: 'Use TLS for SMTP',
+            field_type: 'boolean',
+            required: false,
+            placeholder: 'On = TLS (recommended)',
+            default_bool: true,
+          },
+          {
+            key: 'from_address',
+            label: 'From Address',
+            field_type: 'string',
+            required: false,
+            placeholder: 'Optional — defaults to the email address above',
+          },
+          {
+            key: 'imap_folder',
+            label: 'IMAP Folder',
+            field_type: 'string',
+            required: false,
+            placeholder: 'Optional — defaults to INBOX',
+          },
+          {
+            key: 'allowed_senders',
+            label: 'Allowed Senders',
+            field_type: 'string',
+            required: false,
+            placeholder: 'Comma-separated addresses or @domain; * to allow any',
+          },
+        ],
+        auth_action: undefined,
+      },
+    ],
+    capabilities: ['send_text', 'receive_text', 'file_attachments'],
+  },
 ];

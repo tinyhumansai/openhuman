@@ -158,7 +158,7 @@ pub fn scalar(value: &Value) -> String {
 
 /// Look up a string field on a JSON object, returning `"—"` when missing so
 /// table cells are never blank.
-pub fn field<'a>(obj: &'a Value, key: &str) -> String {
+pub fn field(obj: &Value, key: &str) -> String {
     obj.get(key).map(scalar).unwrap_or_else(|| "—".to_string())
 }
 

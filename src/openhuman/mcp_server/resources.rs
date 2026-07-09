@@ -248,6 +248,18 @@ const RESOURCE_CATALOG: &[PromptResource] = &[
         content: include_str!("../agent_registry/agents/screen_awareness_agent/prompt.md"),
     },
     PromptResource {
+        uri: "openhuman://prompts/agents/flow_discovery",
+        name: "flow_discovery",
+        description: "Flow Scout — read-only workflow discovery agent that suggests automations from memory, threads, and integrations.",
+        content: include_str!("../flows/agents/flow_discovery/prompt.md"),
+    },
+    PromptResource {
+        uri: "openhuman://prompts/agents/workflow_builder",
+        name: "workflow_builder",
+        description: "Workflow authoring specialist that builds tinyflows automation graphs and returns proposals for review.",
+        content: include_str!("../flows/agents/workflow_builder/prompt.md"),
+    },
+    PromptResource {
         uri: "openhuman://prompts/agents/agent_memory",
         name: "agent_memory",
         description: "Dedicated memory retrieval subagent using smart-walk strategies.",
@@ -258,6 +270,30 @@ const RESOURCE_CATALOG: &[PromptResource] = &[
         name: "subconscious",
         description: "Background awareness agent: diffs the user's world, prepares context, and decides what to do.",
         content: include_str!("../subconscious/agent/prompt.md"),
+    },
+    PromptResource {
+        uri: "openhuman://prompts/agents/frontend_agent",
+        name: "frontend_agent",
+        description: "Fast, always-on front end of the split-brain orchestration loop: triages incoming sessions and routes macro-instructions to the reasoning core.",
+        content: include_str!("../orchestration/frontend_agent/prompt.md"),
+    },
+    PromptResource {
+        uri: "openhuman://prompts/agents/reasoning_agent",
+        name: "reasoning_agent",
+        description: "Reasoning core of the split-brain orchestration loop: executes the front end's macro-instructions and compiles the channel reply.",
+        content: include_str!("../orchestration/reasoning_agent/prompt.md"),
+    },
+    PromptResource {
+        uri: "openhuman://prompts/agents/master_agent",
+        name: "master_agent",
+        description: "Human-facing worker for the Master chat: OpenHuman talking directly to its human, orchestrating other agents on their behalf.",
+        content: include_str!("../orchestration/master_agent/prompt.md"),
+    },
+    PromptResource {
+        uri: "openhuman://prompts/agents/master_reporter",
+        name: "master_reporter",
+        description: "Tool-free relay that reports an external agent's reply back into the Master chat as OpenHuman's own message.",
+        content: include_str!("../orchestration/master_reporter/prompt.md"),
     },
     PromptResource {
         uri: "openhuman://prompts/agents/skill_setup",

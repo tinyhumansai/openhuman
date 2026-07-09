@@ -110,6 +110,32 @@ pub fn invalidate_connected_integrations_cache() {
 /// entry would otherwise pin the agent to a frozen view if every
 /// invalidation path silently failed).
 pub fn cached_active_integrations(config: &Config) -> Option<Vec<ConnectedIntegration>> {
+    read_cached_integrations(config, false)
+}
+
+/// Like [`cached_active_integrations`] but returns the last cached snapshot
+/// even when it has aged past [`CACHE_TTL`].
+///
+/// Intended ONLY as a transient-failure fallback: when a live fetch reports
+/// `Unavailable`/times out, preserving the last-known integrations is strictly
+/// better than collapsing the delegation surface to an empty set (which drops
+/// `delegate_to_integrations_agent` and silently disables channel tool-calling).
+/// Without this, a backend blip that lands just after the 60 s TTL expiry still
+/// wipes tool-calling despite having a perfectly good previous snapshot. A fresh
+/// fetch repopulates the cache the moment the backend recovers, so the stale
+/// window is bounded by the outage, not by this call.
+pub fn cached_active_integrations_including_expired(
+    config: &Config,
+) -> Option<Vec<ConnectedIntegration>> {
+    read_cached_integrations(config, true)
+}
+
+/// Shared reader for the integrations cache. `allow_expired` bypasses the
+/// [`CACHE_TTL`] freshness check for the transient-failure fallback path.
+fn read_cached_integrations(
+    config: &Config,
+    allow_expired: bool,
+) -> Option<Vec<ConnectedIntegration>> {
     let key = cache_key(config);
     let guard = match INTEGRATIONS_CACHE.try_read() {
         Ok(g) => g,
@@ -129,7 +155,7 @@ pub fn cached_active_integrations(config: &Config) -> Option<Vec<ConnectedIntegr
         return None;
     };
     let age = cached.cached_at.elapsed();
-    if age > CACHE_TTL {
+    if !allow_expired && age > CACHE_TTL {
         tracing::trace!(
             key = %key,
             age_ms = age.as_millis() as u64,
@@ -138,10 +164,21 @@ pub fn cached_active_integrations(config: &Config) -> Option<Vec<ConnectedIntegr
         );
         return None;
     }
+    // Surface a *very* stale fallback so an unusually long backend outage is
+    // observable rather than silently pinning the agent to an ancient snapshot.
+    if allow_expired && age > 5 * CACHE_TTL {
+        tracing::warn!(
+            key = %key,
+            age_ms = age.as_millis() as u64,
+            ttl_ms = CACHE_TTL.as_millis() as u64,
+            "[composio][integrations_cache] serving a heavily-stale integrations snapshot on transient-failure fallback (backend outage?)"
+        );
+    }
     tracing::trace!(
         key = %key,
         entries = cached.entries.len(),
         age_ms = age.as_millis() as u64,
+        allow_expired,
         "[composio][integrations_cache] cached_active_integrations:hit"
     );
     Some(cached.entries.clone())

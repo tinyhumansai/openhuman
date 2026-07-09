@@ -100,6 +100,39 @@ test("keeps server-controlled ids on create and patch routes", async () => {
   assert.equal(patchedCron.enabled, false);
 });
 
+test("serves deterministic Parallel search proxy results", async () => {
+  const started = await startMockServer(18579, { retryIfInUse: true });
+  const baseUrl = `http://127.0.0.1:${started.port}`;
+
+  const response = await fetch(
+    `${baseUrl}/agent-integrations/parallel/search`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        objective: "find Rust async guidance",
+        searchQueries: ["rust async best practices"],
+      }),
+    },
+  );
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body?.success, true);
+  assert.equal(body?.data?.searchId, "search-1");
+  assert.equal(body?.data?.costUsd, 0.02);
+  assert.deepEqual(body?.data?.results, [
+    {
+      url: "https://search.example.com/0",
+      title: "Result for rust async best practices",
+      publish_date: "2026-05-16",
+      excerpts: [
+        "Objective: find Rust async guidance; query: rust async best practices",
+      ],
+    },
+  ]);
+});
+
 test("applies injected HTTP fault rules without route-specific controller logic", async () => {
   const started = await startMockServer(18576, { retryIfInUse: true });
   const baseUrl = `http://127.0.0.1:${started.port}`;

@@ -156,6 +156,9 @@ impl Tool for GoalSetTool {
                         status: goal.status.as_str().to_string(),
                     },
                 );
+                // Shadow: mirror into the crate graph.goals store (flag-gated OFF;
+                // acts on legacy, logs divergence). Best-effort, never fatal.
+                super::crate_adapter::shadow_mirror_goal(&self.workspace_dir, &goal).await;
                 Ok(ToolResult::success(format!(
                     "Goal set.\n{}",
                     render_goal(&goal)
@@ -212,6 +215,8 @@ impl Tool for GoalCompleteTool {
                         status: goal.status.as_str().to_string(),
                     },
                 );
+                // Shadow: mirror into the crate graph.goals store (flag-gated OFF).
+                super::crate_adapter::shadow_mirror_goal(&self.workspace_dir, &goal).await;
                 Ok(ToolResult::success(format!(
                     "Goal marked complete.\n{}",
                     render_goal(&goal)

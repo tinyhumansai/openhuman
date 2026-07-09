@@ -30,10 +30,10 @@ export type AgentMessageViewMode = 'bubbles' | 'text';
 export type FontSize = 'small' | 'medium' | 'large' | 'xlarge';
 
 /**
- * Single source of truth mapping each {@link FontSize} to the concrete root
- * `font-size` applied to `<html>`. `medium` (16px) matches the historical
+ * Single source of truth mapping each {@link FontSize} preset to the concrete
+ * root `font-size` applied to `<html>`. `medium` (16px) matches the historical
  * `:root` size, so existing users see no change after the field defaults in.
- * Consumed by `ThemeProvider`; keep this the only place the px values live.
+ * Consumed by `ThemeProvider`; keep this the only place the preset px live.
  */
 export const FONT_SIZE_PX: Record<FontSize, string> = {
   small: '14px',
@@ -42,10 +42,36 @@ export const FONT_SIZE_PX: Record<FontSize, string> = {
   xlarge: '20px',
 };
 
+/**
+ * Fine-tuning bounds for {@link ThemeState.customFontSizePx} (issue #4246), in
+ * px. The range brackets the presets (14–20px) on both sides so users who find
+ * even "Extra large" too small can push further, and users who prefer denser
+ * text can go below "Small". Applied via {@link selectRootFontSizePx}.
+ */
+export const MIN_FONT_SIZE_PX = 12;
+export const MAX_FONT_SIZE_PX = 28;
+/** Root size used when no preset/custom value resolves (matches `medium`). */
+export const DEFAULT_FONT_SIZE_PX = 16;
+
+/** Clamp an arbitrary px value into the supported range, rounded to whole px. */
+export function clampFontSizePx(px: number): number {
+  if (!Number.isFinite(px)) return DEFAULT_FONT_SIZE_PX;
+  return Math.min(MAX_FONT_SIZE_PX, Math.max(MIN_FONT_SIZE_PX, Math.round(px)));
+}
+
 interface ThemeState {
   mode: ThemeMode;
   tabBarLabels: TabBarLabels;
   fontSize: FontSize;
+  /**
+   * Fine-tuned root font size in px (issue #4246). When set, it overrides the
+   * {@link ThemeState.fontSize} preset so users can pick any size in the
+   * {@link MIN_FONT_SIZE_PX}–{@link MAX_FONT_SIZE_PX} range. `null` (the default,
+   * and the value for all pre-existing persisted state) means "follow the
+   * preset", keeping historical behaviour byte-identical. Selecting a preset
+   * tile clears this back to `null`.
+   */
+  customFontSizePx: number | null;
   agentMessageViewMode: AgentMessageViewMode;
   /**
    * Runtime Developer Mode (default OFF).
@@ -86,6 +112,7 @@ const initialState: ThemeState = {
   mode: 'system',
   tabBarLabels: 'hover',
   fontSize: 'medium',
+  customFontSizePx: null,
   agentMessageViewMode: 'text',
   developerMode: false,
   hideAgentInsights: false,
@@ -172,8 +199,17 @@ const themeSlice = createSlice({
     setTabBarLabels(state, action: PayloadAction<TabBarLabels>) {
       state.tabBarLabels = action.payload;
     },
+    /** Pick a preset size. Clears any fine-tuned override so the preset wins. */
     setFontSize(state, action: PayloadAction<FontSize>) {
       state.fontSize = action.payload;
+      state.customFontSizePx = null;
+    },
+    /**
+     * Fine-tune the root font size in px (issue #4246). A number is clamped to
+     * the supported range; `null` drops the override back to the active preset.
+     */
+    setCustomFontSizePx(state, action: PayloadAction<number | null>) {
+      state.customFontSizePx = action.payload === null ? null : clampFontSizePx(action.payload);
     },
     setAgentMessageViewMode(state, action: PayloadAction<AgentMessageViewMode>) {
       state.agentMessageViewMode = action.payload;
@@ -212,6 +248,7 @@ export const {
   setActiveFamily,
   setTabBarLabels,
   setFontSize,
+  setCustomFontSizePx,
   setAgentMessageViewMode,
   setDeveloperMode,
   setHideAgentInsights,
@@ -354,6 +391,27 @@ export const selectHideAgentInsights = (state: { theme: ThemeState }): boolean =
  */
 export const selectDeveloperMode = (state: { theme: ThemeState }): boolean =>
   state.theme.developerMode;
+
+/**
+ * The effective root font size in px (numeric). A fine-tuned
+ * {@link ThemeState.customFontSizePx} (issue #4246) wins; otherwise the active
+ * {@link ThemeState.fontSize} preset drives it. Falls back to `medium` (16) when
+ * the slice is absent (SSR / early boot). This is the canonical resolver;
+ * {@link selectRootFontSizePx} formats it for the DOM.
+ */
+export function selectEffectiveFontSizePx(state: { theme?: ThemeState }): number {
+  const theme = state.theme;
+  const custom = theme?.customFontSizePx;
+  if (typeof custom === 'number' && Number.isFinite(custom)) {
+    return clampFontSizePx(custom);
+  }
+  return parseInt(FONT_SIZE_PX[theme?.fontSize ?? 'medium'] ?? FONT_SIZE_PX.medium, 10);
+}
+
+/** The effective root `font-size` string to apply to `<html>` (px suffix). */
+export function selectRootFontSizePx(state: { theme?: ThemeState }): string {
+  return `${selectEffectiveFontSizePx(state)}px`;
+}
 
 /**
  * Resolves a `ThemeMode` to the concrete `light` or `dark` value that should

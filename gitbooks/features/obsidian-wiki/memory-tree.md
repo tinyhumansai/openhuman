@@ -173,6 +173,6 @@ The Memory Tree pipeline (chunker → score → seal → summarise) is the
 default. Operators who self-host [agentmemory](https://github.com/rohitg00/agentmemory)
 across multiple agents and want OpenHuman to share that same durable
 store can opt into an external backend via `MemoryConfig.backend =
-"agentmemory"` — see [agentmemory backend](agentmemory-backend.md) for
+"agentmemory"`. See [agentmemory backend](agentmemory-backend.md) for
 config keys, field mapping, endpoint table, security, and failure
 modes.

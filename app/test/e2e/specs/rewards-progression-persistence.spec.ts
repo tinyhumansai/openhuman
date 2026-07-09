@@ -26,7 +26,7 @@ import {
  *    state, not Redux, so we read the rendered text instead). High-usage
  *    scenario sets featuresUsedCount=6; we confirm cumulativeTokens render
  *    reflects the high number.
- *  - 12.2.2 usage metrics: assert the `Current streak` + `Cumulative tokens`
+ *  - 12.2.2 usage metrics: assert the `Activity streak` + `Cumulative tokens`
  *    rows in the metrics footer reflect the high-usage scenario values.
  *  - 12.2.3 state persistence: switch to `post_restart` (same metric values,
  *    later `lastSyncedAt`) to simulate a backend re-sync after the app
@@ -98,6 +98,9 @@ async function getRewardsMetricValue(label: string): Promise<string | null> {
 
 describe('Rewards progression & persistence', () => {
   before(async function beforeSuite() {
+    // resetApp bring-up can run ~25-30s and race the default 30s Mocha hook
+    // budget; raise it.
+    this.timeout(90_000);
     if (!supportsExecuteScript()) {
       stepLog('Skipping suite on Mac2 — Rewards bottom-tab label not mapped for Appium');
       this.skip();
@@ -154,9 +157,9 @@ describe('Rewards progression & persistence', () => {
     await waitForText('Your Progress', 15_000);
     await waitForRewardsSnapshot();
 
-    // Current streak row in the metrics footer.
-    expect(await textExists('Current streak')).toBe(true);
-    expect(await getRewardsMetricValue('Current streak')).toBe('14');
+    // Activity streak row in the metrics footer.
+    expect(await textExists('Activity streak')).toBe(true);
+    expect(await getRewardsMetricValue('Activity streak')).toBe('14 days');
 
     // Cumulative tokens row — value formatted via en-US Intl.NumberFormat
     // (see RewardsCommunityTab.formatNumber). 12_500_000 → "12,500,000".
@@ -182,7 +185,7 @@ describe('Rewards progression & persistence', () => {
     await waitForRewardsSnapshot();
 
     // Capture the durable counters from the rendered DOM before the restart.
-    expect(await getRewardsMetricValue('Current streak')).toBe('14');
+    expect(await getRewardsMetricValue('Activity streak')).toBe('14 days');
     expect(await getRewardsMetricValue('Cumulative tokens')).toBe('12,500,000');
 
     // Phase 2: simulate a restart by unmounting Rewards (navigate away),
@@ -202,7 +205,7 @@ describe('Rewards progression & persistence', () => {
     await waitForRewardsSnapshot();
 
     // Durable counters must survive the restart unchanged.
-    expect(await getRewardsMetricValue('Current streak')).toBe('14');
+    expect(await getRewardsMetricValue('Activity streak')).toBe('14 days');
     expect(await getRewardsMetricValue('Cumulative tokens')).toBe('12,500,000');
     expect(await textExists('3 of 3 achievements unlocked')).toBe(true);
 
@@ -265,6 +268,6 @@ describe('Rewards progression & persistence', () => {
     await waitForRewardsSnapshot();
 
     expect(await textExists('3 of 3 achievements unlocked')).toBe(true);
-    expect(await getRewardsMetricValue('Current streak')).toBe('14');
+    expect(await getRewardsMetricValue('Activity streak')).toBe('14 days');
   });
 });

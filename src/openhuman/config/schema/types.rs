@@ -136,6 +136,12 @@ pub struct Config {
     #[serde(default)]
     pub autonomy: AutonomyConfig,
 
+    /// Data-egress posture (Privacy Mode). Distinct from `autonomy` (which
+    /// governs agent *act* power). Missing `[privacy]` block → `Standard`
+    /// (#4435, epic #4256).
+    #[serde(default)]
+    pub privacy: PrivacyConfig,
+
     #[serde(default)]
     pub sandbox: SandboxConfig,
 
@@ -163,6 +169,11 @@ pub struct Config {
     /// [`crate::openhuman::scheduler_gate`].
     #[serde(default)]
     pub scheduler_gate: SchedulerGateConfig,
+
+    /// tiny.place harness session-DM ingest layer. See
+    /// [`crate::openhuman::orchestration`].
+    #[serde(default)]
+    pub orchestration: OrchestrationConfig,
 
     /// User-facing activity-level knob (0–4) controlling how proactive
     /// background AI work is. Maps into scheduler_gate mode, periodic sync
@@ -734,6 +745,7 @@ impl Default for Config {
             observability: ObservabilityConfig::default(),
             dashboard: DashboardConfig::default(),
             autonomy: AutonomyConfig::default(),
+            privacy: PrivacyConfig::default(),
             sandbox: SandboxConfig::default(),
             runtime: RuntimeConfig::default(),
             shell: ShellConfig::default(),
@@ -742,6 +754,7 @@ impl Default for Config {
             reliability: ReliabilityConfig::default(),
             scheduler: SchedulerConfig::default(),
             scheduler_gate: SchedulerGateConfig::default(),
+            orchestration: OrchestrationConfig::default(),
             agent_activity_level: AgentActivityLevel::default(),
             memory_sync_interval_secs: None,
             agent: AgentConfig::default(),

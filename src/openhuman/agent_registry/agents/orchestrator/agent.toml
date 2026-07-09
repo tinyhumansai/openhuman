@@ -154,6 +154,21 @@ allowlist = [
     # SKILL.md instructions and executing the procedure.
     "skill_setup",
     "skill_executor",
+    # Workflow-authoring specialist (Phase 5a). Synthesised into a
+    # `build_workflow` tool at agent-build time. Route any "set up a workflow
+    # that…", "automate…", "when X happens do Y", or "build/edit an automation
+    # or flow" request here — it grounds nodes in real tool slugs + connections,
+    # can sandbox dry-run a draft, and returns a workflow PROPOSAL for the user
+    # to review and save. It never creates/enables/runs a real flow itself.
+    "workflow_builder",
+    # Workflow-discovery specialist (the "Flow Scout"). Synthesised into a
+    # `discover_workflows` tool at agent-build time. Route "what workflows
+    # should I set up?", "suggest some automations", or "discover flows for me"
+    # here — it reads the user's memory/threads/connections/flows read-only and
+    # records concrete, buildable suggestions for the Flows page. It never
+    # creates/enables/runs a flow; picking a suggestion routes to
+    # `workflow_builder` to author it.
+    "flow_discovery",
     # NOTE: `summarizer` used to be listed here for the runtime-only
     # oversized-tool-result hook. That path is currently disabled
     # (`context.summarizer_payload_threshold_tokens = 0`) after recursive
@@ -191,11 +206,57 @@ hint = "chat"
 named = [
     "read_workspace_state",
     "ask_user_clarification",
-    "spawn_worker_thread",
+    # Basic READ-ONLY direct surface — lets the orchestrator answer small
+    # lookups itself instead of spawning a sub-agent for every touch.
+    # Deliberately NO write tools (`edit` / `file_write`) and NO `shell`:
+    # the chat-tier orchestrator must not mutate files — any modification,
+    # however small, is deferred to `run_code` (or another owning
+    # specialist) where edits live next to the build/test/verify loop.
+    "file_read",
+    "grep",
+    "glob",
+    "list",
+    # Quick web/API lookups. A single fact ("what's the capital of X", "latest
+    # version of Y") is one `web_search_tool` / `web_fetch` / `http_request`
+    # call — spawning the `research` worker for that is overkill. Multi-source
+    # crawls, comparisons, and doc digests still delegate to `research`.
+    "web_search_tool",
+    "web_fetch",
+    "http_request",
+    # Managed file-storage transfer surface for passing artifacts/attachments
+    # between chat, users, and workers. Storage lifecycle mutators
+    # (`storage_set_visibility`, `storage_delete_file`) stay out of the broad
+    # chat surface.
+    "storage_upload_file",
+    "storage_download_file",
+    "storage_list_files",
+    "storage_get_link",
+    # NOTE: `spawn_worker_thread` is intentionally absent — the tool is
+    # disabled pending a worker-thread UI (#1624) and is not registered, so
+    # listing it here (and teaching it in prompt.md) only trained the model
+    # to call a tool that does not exist.
     "spawn_async_subagent",
     "spawn_parallel_agents",
+    # Fleet awareness. `list_subagents` re-enumerates the async/parallel workers
+    # this parent has in flight (running / awaiting_user / completed-uncollected /
+    # failed) plus reusable durable sessions — the recovery move when the
+    # `[async_subagent_ref]` blocks have scrolled out of context and the model
+    # would otherwise lose track of, or needlessly re-spawn, a worker. It reads
+    # the same live `running_subagents` registry the ambient `[active_subagents]`
+    # turn block is built from. `close_subagent` tears a finished/abandoned worker
+    # down (cancelling it first if still running) so idle sessions don't leak
+    # toward the 256 registry soft cap.
+    "list_subagents",
+    "close_subagent",
     "wait",
     "wait_loop",
+    # Async sub-agent control surface. prompt.md's "Async background
+    # sub-agents" section instructs steering (`steer_subagent`) and result
+    # collection (`wait_subagent`) by `subagent_session_id` / `task_id`;
+    # both tools exist in the base registry and must be in scope here or
+    # the whole async flow dead-ends after `spawn_async_subagent`.
+    "steer_subagent",
+    "wait_subagent",
     # Resume a sub-agent that paused on `ask_user_clarification` (#4291). When
     # a delegated sub-agent (e.g. mcp_setup via `delegate_setup_mcp_server`)
     # asks the user a question, the runner checkpoints it and the orchestrator
@@ -272,7 +333,7 @@ named = [
     # what's installed and learn a workflow's inputs before running it; the
     # `*_run*` read tools let it inspect a run's status + log. All route
     # through `workflows::schemas::spawn_skill_run_background` +
-    # `await_run_outcome` — the same spawn path the `openhuman.workflows_run`
+    # `await_run_outcome` — the same spawn path the `openhuman.skills_run`
     # JSON-RPC controller uses (iter cap, transcript isolation,
     # degenerate-response detector all apply).
     "list_workflows",

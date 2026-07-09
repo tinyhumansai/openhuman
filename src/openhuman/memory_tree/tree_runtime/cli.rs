@@ -599,7 +599,7 @@ mod tests {
         // With no local AI and no cloud opt-in (default), `run` returns a clean
         // actionable error rather than panicking or giving an opaque failure.
         // Users must enable local AI (Ollama) or set cloud_summarization_opt_in
-        // in Settings → AI → Memory (or via OPENHUMAN_MEMORY_TREE_CLOUD_SUMMARIZATION=true).
+        // in config (or via OPENHUMAN_MEMORY_TREE_CLOUD_SUMMARIZATION=true).
         let tmp = TempDir::new().unwrap();
         let _workspace = WorkspaceEnvGuard::set(tmp.path());
 

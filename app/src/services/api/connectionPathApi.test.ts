@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { GraphRelation } from '../../utils/tauriCommands/memory';
-import { connectionPathApi, loadGraph, loadNamespaces } from './connectionPathApi';
+import { loadGraph, loadNamespaces } from './connectionPathApi';
 
 const mockGraphQuery = vi.fn();
 const mockListNamespaces = vi.fn();
@@ -61,12 +61,5 @@ describe('connectionPathApi.loadNamespaces', () => {
   it('returns the namespace list from the RPC', async () => {
     mockListNamespaces.mockResolvedValueOnce(['work', 'personal']);
     expect(await loadNamespaces()).toEqual(['work', 'personal']);
-  });
-});
-
-describe('connectionPathApi object', () => {
-  it('exposes the public surface', () => {
-    expect(typeof connectionPathApi.loadGraph).toBe('function');
-    expect(typeof connectionPathApi.loadNamespaces).toBe('function');
   });
 });

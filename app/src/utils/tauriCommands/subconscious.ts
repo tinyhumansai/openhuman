@@ -11,15 +11,34 @@ import type { HeartbeatSettings } from './heartbeat';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export interface SubconsciousStatus {
+/** Which subconscious world a status row / trigger targets. */
+export type SubconsciousKind = 'memory' | 'tinyplace';
+
+/** One subconscious world's health row. */
+export interface SubconsciousInstanceStatus {
+  /**
+   * Which world this row describes. Defaulted to 'memory' by the core when
+   * absent, so an older core during rollout still parses.
+   */
+  instance: SubconsciousKind;
   enabled: boolean;
-  mode: 'off' | 'simple' | 'aggressive' | 'event_driven';
+  mode: 'off' | 'simple' | 'aggressive' | 'event_driven' | 'steering';
   provider_available: boolean;
   provider_unavailable_reason: string | null;
   interval_minutes: number;
   last_tick_at: number | null;
   total_ticks: number;
   consecutive_failures: number;
+}
+
+/**
+ * The `subconscious.status` response. The legacy top-level fields mirror the
+ * memory instance (backward compatible); `instances` lists every registered
+ * world. `instances` may be absent when talking to an older core — treat it as
+ * `[]` and fall back to the top-level (memory) fields.
+ */
+export interface SubconsciousStatus extends SubconsciousInstanceStatus {
+  instances?: SubconsciousInstanceStatus[];
 }
 
 export interface TickResult {
@@ -48,10 +67,18 @@ export async function subconsciousStatus(): Promise<CommandResponse<Subconscious
   });
 }
 
-export async function subconsciousTrigger(): Promise<CommandResponse<TickResult>> {
+/**
+ * Manually trigger a subconscious tick. `kind` selects the world: 'memory'
+ * (default — today's behavior), 'tinyplace', or 'all'. A no-arg call keeps the
+ * legacy memory-only behavior.
+ */
+export async function subconsciousTrigger(
+  kind?: SubconsciousKind | 'all'
+): Promise<CommandResponse<TickResult>> {
   if (!isTauri()) throw new Error('Not running in Tauri');
   return await callCoreRpc<CommandResponse<TickResult>>({
     method: 'openhuman.subconscious_trigger',
+    ...(kind ? { params: { kind } } : {}),
   });
 }
 

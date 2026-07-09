@@ -7,7 +7,23 @@ import {
   setMockBehavior,
 } from "../state.mjs";
 import { buildDynamicCompletion } from "./llm/dynamic.mjs";
-import { headerValue, pickProbeText, resolveThreadKey } from "./llm/shared.mjs";
+import {
+  applyDynamicPlaceholdersToResponse,
+  headerValue,
+  pickProbeText,
+  resolveThreadKey,
+} from "./llm/shared.mjs";
+
+// The scripted `llmForcedResponses` FIFO models the *interactive* agent turn,
+// which always advertises tools (the orchestrator's delegate_* tools). Ancillary
+// completions that share the endpoint but carry no tools — thread-title/summary
+// generation via `chat_with_system` (tools: None), fired fire-and-forget and
+// racing the visible turn — must NOT drain the queue, or the scripted responses
+// desync and the turn falls through to the dynamic fallback
+// (tinyhumansai/openhuman#4517).
+function isPrimaryTurn(parsedBody) {
+  return Array.isArray(parsedBody?.tools) && parsedBody.tools.length > 0;
+}
 
 function requestRuleMatches(rule, ctx) {
   if (!rule || typeof rule !== "object") return false;
@@ -160,8 +176,37 @@ function writeSseEvent(res, payload) {
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleepDelay(ms) {
+  switch (ms) {
+    case 10:
+      return new Promise((resolve) => setTimeout(resolve, 10));
+    case 25:
+      return new Promise((resolve) => setTimeout(resolve, 25));
+    case 50:
+      return new Promise((resolve) => setTimeout(resolve, 50));
+    case 100:
+      return new Promise((resolve) => setTimeout(resolve, 100));
+    case 250:
+      return new Promise((resolve) => setTimeout(resolve, 250));
+    case 500:
+      return new Promise((resolve) => setTimeout(resolve, 500));
+    case 1000:
+      return new Promise((resolve) => setTimeout(resolve, 1000));
+    default:
+      return Promise.resolve();
+  }
+}
+
+function safeDelayMs(raw, fallback = 0) {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  if (parsed <= 10) return 10;
+  if (parsed <= 25) return 25;
+  if (parsed <= 50) return 50;
+  if (parsed <= 100) return 100;
+  if (parsed <= 250) return 250;
+  if (parsed <= 500) return 500;
+  return 1000;
 }
 
 // Split a string into N-character windows so we can stream tool-call
@@ -242,14 +287,23 @@ function handleStreamingCompletion({
 
   if (!Array.isArray(script)) {
     // 2. Forced queue: pop the next entry and convert it into a script.
-    const forced = parseBehaviorJson("llmForcedResponses", []);
-    if (Array.isArray(forced) && forced.length > 0) {
-      const next = forced.shift();
-      setMockBehavior("llmForcedResponses", JSON.stringify(forced));
-      script = defaultStreamScript({
-        content: next.content,
-        toolCalls: next.toolCalls,
-      });
+    //    Only the primary *interactive* turn drains the queue. The agent
+    //    (orchestrator) always sends a `tools` array; ancillary completions
+    //    that race the turn — notably fire-and-forget thread-title generation
+    //    (`chat_with_system`, tools: None) dispatched on send — carry no tools
+    //    and must NOT consume a scripted response, or the queue desyncs and the
+    //    turn falls through to the dynamic fallback (tinyhumansai/openhuman#4517).
+    if (isPrimaryTurn(parsedBody)) {
+      const forced = parseBehaviorJson("llmForcedResponses", []);
+      if (Array.isArray(forced) && forced.length > 0) {
+        const next = forced.shift();
+        setMockBehavior("llmForcedResponses", JSON.stringify(forced));
+        const rendered = applyDynamicPlaceholdersToResponse(next, parsedBody);
+        script = defaultStreamScript({
+          content: rendered.content,
+          toolCalls: rendered.toolCalls,
+        });
+      }
     }
   }
 
@@ -261,9 +315,10 @@ function handleStreamingCompletion({
       for (const rule of rules) {
         if (!rule || typeof rule.keyword !== "string") continue;
         if (probe.includes(rule.keyword.toLowerCase())) {
+          const rendered = applyDynamicPlaceholdersToResponse(rule, parsedBody);
           script = defaultStreamScript({
-            content: rule.content,
-            toolCalls: rule.toolCalls,
+            content: rendered.content,
+            toolCalls: rendered.toolCalls,
           });
           break;
         }
@@ -279,25 +334,25 @@ function handleStreamingCompletion({
     ) {
       script = dynamic.streamScript;
     } else {
+      const renderedRule = applyDynamicPlaceholdersToResponse(rule, parsedBody);
       const fallback =
-        typeof rule?.content === "string" && rule.content.length > 0
-          ? rule.content
+        typeof renderedRule?.content === "string" &&
+        renderedRule.content.length > 0
+          ? renderedRule.content
           : typeof mockBehavior.llmFallbackContent === "string" &&
               mockBehavior.llmFallbackContent.length > 0
             ? mockBehavior.llmFallbackContent
             : "Hello from e2e mock agent";
       script = defaultStreamScript({
         content: fallback,
-        toolCalls: Array.isArray(rule?.toolCalls) ? rule.toolCalls : undefined,
+        toolCalls: Array.isArray(renderedRule?.toolCalls)
+          ? renderedRule.toolCalls
+          : undefined,
       });
     }
   }
 
-  const defaultDelayMs = Number.isFinite(
-    parseFloat(mockBehavior.llmStreamChunkDelayMs),
-  )
-    ? Math.max(0, parseFloat(mockBehavior.llmStreamChunkDelayMs))
-    : 25;
+  const defaultDelayMs = safeDelayMs(mockBehavior.llmStreamChunkDelayMs, 25);
 
   // Fire-and-forget — the dispatcher only cares that the handler
   // claimed the request. Errors mid-stream are surfaced through SSE.
@@ -325,10 +380,8 @@ async function streamScriptToResponse({ res, model, script, defaultDelayMs }) {
   let trailingUsage = null;
   for (let i = 0; i < script.length; i += 1) {
     const entry = script[i] ?? {};
-    const delay = Number.isFinite(entry.delayMs)
-      ? entry.delayMs
-      : defaultDelayMs;
-    if (delay > 0) await sleep(delay);
+    const delay = safeDelayMs(entry.delayMs, defaultDelayMs);
+    if (delay > 0) await sleepDelay(delay);
 
     if (entry.error) {
       writeSseEvent(res, { error: { message: String(entry.error) } });
@@ -385,7 +438,7 @@ async function streamScriptToResponse({ res, model, script, defaultDelayMs }) {
         }),
       );
       for (const piece of argPieces) {
-        if (delay > 0) await sleep(delay);
+        if (delay > 0) await sleepDelay(delay);
         writeSseEvent(
           res,
           sseChunkEnvelope({
@@ -598,11 +651,12 @@ export function handleLlmCompletions(ctx) {
     Array.isArray(requestRule?.toolCalls) ||
     typeof requestRule?.content === "string"
   ) {
+    const rendered = applyDynamicPlaceholdersToResponse(requestRule, parsedBody);
     if (threadKey) {
       recordMockLlmTurn(threadKey, {
         requestText,
-        responseText: requestRule?.content ?? "",
-        toolCalls: requestRule?.toolCalls ?? [],
+        responseText: rendered?.content ?? "",
+        toolCalls: rendered?.toolCalls ?? [],
         model,
         family: dynamic.family,
       });
@@ -612,29 +666,33 @@ export function handleLlmCompletions(ctx) {
       Number.isInteger(requestRule?.status) ? requestRule.status : 200,
       buildResponse({
         model,
-        content: requestRule?.content ?? "",
-        toolCalls: requestRule?.toolCalls ?? [],
+        content: rendered?.content ?? "",
+        toolCalls: rendered?.toolCalls ?? [],
       }),
     );
     return true;
   }
 
   // 1. Forced queue — replay exact ChatResponse objects in order.
+  //    Only the primary interactive turn drains the queue; ancillary no-tools
+  //    completions (e.g. fire-and-forget thread-title generation racing the
+  //    turn) must not consume a scripted response (tinyhumansai/openhuman#4517).
   const forced = parseBehaviorJson("llmForcedResponses", []);
-  if (Array.isArray(forced) && forced.length > 0) {
+  if (isPrimaryTurn(parsedBody) && Array.isArray(forced) && forced.length > 0) {
     const next = forced.shift();
     // Persist the shrunk queue back so subsequent requests advance.
     setMockBehavior("llmForcedResponses", JSON.stringify(forced));
+    const rendered = applyDynamicPlaceholdersToResponse(next, parsedBody);
     if (threadKey) {
       recordMockLlmTurn(threadKey, {
         requestText,
-        responseText: next.content ?? "",
-        toolCalls: next.toolCalls ?? [],
+        responseText: rendered.content ?? "",
+        toolCalls: rendered.toolCalls ?? [],
         model,
         family: dynamic.family,
       });
     }
-    json(res, 200, buildResponse({ model, ...next }));
+    json(res, 200, buildResponse({ model, ...rendered }));
     return true;
   }
 
@@ -645,11 +703,12 @@ export function handleLlmCompletions(ctx) {
     for (const rule of rules) {
       if (!rule || typeof rule.keyword !== "string") continue;
       if (probe.includes(rule.keyword.toLowerCase())) {
+        const rendered = applyDynamicPlaceholdersToResponse(rule, parsedBody);
         if (threadKey) {
           recordMockLlmTurn(threadKey, {
             requestText,
-            responseText: rule.content ?? "",
-            toolCalls: rule.toolCalls ?? [],
+            responseText: rendered.content ?? "",
+            toolCalls: rendered.toolCalls ?? [],
             model,
             family: dynamic.family,
           });
@@ -659,8 +718,8 @@ export function handleLlmCompletions(ctx) {
           200,
           buildResponse({
             model,
-            content: rule.content ?? "",
-            toolCalls: rule.toolCalls ?? [],
+            content: rendered.content ?? "",
+            toolCalls: rendered.toolCalls ?? [],
           }),
         );
         return true;

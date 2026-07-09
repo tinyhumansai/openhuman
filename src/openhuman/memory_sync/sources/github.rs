@@ -226,7 +226,7 @@ pub async fn run_github_sync(
 
     // ── Phase 2: fold cost + ingest in batch order (serial) ──
     for (batch_idx, ((batch_inputs, batch_labels, batch_basenames), output)) in
-        batches.into_iter().zip(outputs.into_iter()).enumerate()
+        batches.into_iter().zip(outputs).enumerate()
     {
         let batch_input_tokens: u64 = batch_inputs.iter().map(|i| i.token_count as u64).sum();
 
@@ -499,7 +499,7 @@ async fn read_items_buffered(
             child_basenames.push(raw_path);
         }
         processed += 1;
-        if processed % 100 == 0 || processed == total {
+        if processed.is_multiple_of(100) || processed == total {
             emit_sync_stage(
                 MemorySyncTrigger::Manual,
                 MemorySyncStage::Ingesting,

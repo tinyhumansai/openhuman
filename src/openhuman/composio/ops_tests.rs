@@ -1637,6 +1637,37 @@ fn cache_entries_expire_after_ttl() {
     );
 }
 
+#[test]
+fn including_expired_serves_stale_snapshot_for_transient_fallback() {
+    let _guard = cache_guard();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let key = crate::openhuman::composio::connected_integrations::cache_key(&config);
+    clear_cache_key(&key);
+    seed_cache(&key, vec![integration("gmail", true)]);
+
+    // Age the entry past the TTL (simulates a session idle > 60s).
+    {
+        let mut guard = INTEGRATIONS_CACHE.write().unwrap();
+        guard.get_mut(&key).unwrap().cached_at =
+            Instant::now() - (CACHE_TTL + Duration::from_secs(1));
+    }
+
+    // The TTL-enforcing read treats the expired entry as missing…
+    assert!(
+        cached_active_integrations(&config).is_none(),
+        "expired entry must not be served by the freshness-checked read"
+    );
+    // …but the transient-failure fallback read preserves the last-known set,
+    // so a backend blip just after TTL expiry doesn't drop tool-calling.
+    let stale = cached_active_integrations_including_expired(&config)
+        .expect("expired entry should still be returned by the fallback read");
+    assert_eq!(stale.len(), 1);
+    assert_eq!(stale[0].toolkit, "gmail");
+
+    clear_cache_key(&key);
+}
+
 // ── Trigger management ops (PR #671) ────────────────────────────────
 
 #[tokio::test]

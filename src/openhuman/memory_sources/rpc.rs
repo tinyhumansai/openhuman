@@ -214,10 +214,8 @@ pub fn apply_kind_defaults(entry: &mut MemorySourceEntry) {
                 entry.max_items = Some(20);
             }
         }
-        SourceKind::TwitterQuery => {
-            if entry.since_days.is_none() {
-                entry.since_days = Some(7);
-            }
+        SourceKind::TwitterQuery if entry.since_days.is_none() => {
+            entry.since_days = Some(7);
         }
         // Folder / WebPage / Composio: no defaults to apply here.
         // Composio defaults are set at upsert time in registry::upsert_composio_source.

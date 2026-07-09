@@ -56,6 +56,13 @@ pub enum AgentError {
         channel_max_level: String,
     },
 
+    /// The tinyagents `CapabilityRegistry` produced one or more error-severity
+    /// diagnostics while projecting the turn's tool/model/graph surface (e.g. a
+    /// duplicate tool name across native/MCP/Composio/generated tools or a
+    /// dangling alias). The turn is aborted fail-closed *before* the first model
+    /// dispatch so no provider call runs against an ambiguous registry.
+    RegistryValidationFailed { diagnostics: Vec<String> },
+
     /// Generic/untyped error (escape hatch for migration or external dependencies).
     Other(anyhow::Error),
 }
@@ -112,6 +119,14 @@ impl fmt::Display for AgentError {
                 write!(
                     f,
                     "Permission denied for tool '{tool_name}': requires {required_level}, channel allows {channel_max_level}"
+                )
+            }
+            Self::RegistryValidationFailed { diagnostics } => {
+                write!(
+                    f,
+                    "Capability registry validation failed ({} error diagnostic(s)): {}",
+                    diagnostics.len(),
+                    diagnostics.join("; ")
                 )
             }
             Self::Other(e) => write!(f, "{e}"),

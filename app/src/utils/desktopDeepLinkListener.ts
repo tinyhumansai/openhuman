@@ -285,7 +285,7 @@ const handleAuthDeepLink = async (parsed: URL, requireStateNonce = true) => {
         fingerprint: ['deep-link-auth', 'session-store-failed', kind],
       });
       console.warn('[DeepLink][auth] session store failed — staying on signin (kind=%s)', kind);
-      failDeepLinkAuthProcessing('Sign-in failed. Please try again.');
+      failDeepLinkAuthProcessing(authStoreFailureUserMessage(kind, getStoredCoreMode()));
     }
   }
 };
@@ -319,6 +319,48 @@ export const classifyAuthStoreFailure = (message: string): string => {
   if (/network|fetch failed|connection|dns|unreachable/.test(m)) return 'network';
   if (/auth\/me|session validation failed/.test(m)) return 'auth_me_other';
   return 'other';
+};
+
+/**
+ * Build the user-facing message for an auth-*store* failure (issue #3025).
+ *
+ * `auth_store_session` makes the core validate the freshly minted session token
+ * against the backend `GET /auth/me` before persisting it. In **cloud mode**
+ * that validation runs on the user's *remote* `openhuman-core`, so the dominant
+ * failure is the remote runtime being unable to reach/authenticate against the
+ * backend (misconfigured `BACKEND_URL`, offline, or an older core that predates
+ * `allowPendingBackendValidation`) — not a problem the desktop can retry away.
+ * The old blanket "Sign-in failed. Please try again." gave cloud users no path
+ * forward; point them at the remote runtime instead. Local mode keeps the plain
+ * retry message (a transient embedded-core/backend blip that retrying can fix).
+ */
+export const authStoreFailureUserMessage = (
+  kind: string,
+  mode: 'local' | 'cloud' | null
+): string => {
+  if (mode !== 'cloud') {
+    return 'Sign-in failed. Please try again.';
+  }
+  switch (kind) {
+    case 'auth_me_unauthorized':
+      return (
+        'Your remote (cloud) runtime rejected the sign-in. Check the RPC token in ' +
+        'Settings and that the runtime points at the correct backend, then try again.'
+      );
+    case 'auth_me_timeout':
+    case 'auth_me_gateway':
+    case 'network':
+      return (
+        'Your remote (cloud) runtime could not reach the backend to finish sign-in. ' +
+        'Check that the runtime is online and its BACKEND_URL is configured, then try again.'
+      );
+    default:
+      return (
+        'Your remote (cloud) runtime could not complete sign-in. Verify it is running ' +
+        'and configured correctly (RPC URL/token in Settings, backend connectivity), ' +
+        'then try again.'
+      );
+  }
 };
 
 /**

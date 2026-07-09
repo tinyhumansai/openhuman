@@ -21,12 +21,13 @@ pub mod store;
 pub mod types;
 
 pub use gate::{
-    parse_approval_reply, ApprovalChatContext, ApprovalGate, InCallApprovalContext,
-    APPROVAL_CHAT_CONTEXT, APPROVAL_IN_CALL_CONTEXT,
+    parse_approval_reply, ApprovalChatContext, ApprovalGate, FlowRunContext, InCallApprovalContext,
+    APPROVAL_CHAT_CONTEXT, APPROVAL_FLOW_RUN_CONTEXT, APPROVAL_IN_CALL_CONTEXT,
 };
 pub use redact::{redact_args, summarize_action};
 pub use schemas::all_controller_schemas as all_approval_controller_schemas;
 pub use schemas::all_registered_controllers as all_approval_registered_controllers;
 pub use types::{
-    ApprovalAuditEntry, ApprovalDecision, ExecutionOutcome, GateOutcome, PendingApproval,
+    ApprovalAuditEntry, ApprovalDecision, ApprovalSourceContext, ExecutionOutcome, GateOutcome,
+    PendingApproval,
 };

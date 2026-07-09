@@ -19,9 +19,9 @@ use openhuman_core::openhuman::inference::provider::{
 use openhuman_core::openhuman::memory::{
     Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts,
 };
+use openhuman_core::openhuman::skills::ops_types::Workflow;
 use openhuman_core::openhuman::subconscious::SourceChunk;
 use openhuman_core::openhuman::tools::{PermissionLevel, Tool, ToolResult};
-use openhuman_core::openhuman::workflows::ops_types::Workflow;
 use parking_lot::Mutex;
 use serde_json::json;
 use std::collections::{HashSet, VecDeque};
@@ -223,6 +223,8 @@ fn text_response(text: &str) -> ChatResponse {
             output_tokens: 2,
             context_window: 16_000,
             cached_input_tokens: 1,
+            cache_creation_tokens: 0,
+            reasoning_tokens: 0,
             charged_amount_usd: 0.0001,
         }),
         reasoning_content: None,
@@ -433,7 +435,6 @@ async fn builder_dedupes_visible_native_tools_and_seed_resume_bounds_history() -
             ..AgentConfig::default()
         })
         .explicit_preferences_enabled(false)
-        .unified_compaction_enabled(false)
         .build()?;
 
     let original_key = agent.session_key().to_string();

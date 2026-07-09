@@ -1030,6 +1030,15 @@ struct ComposioV3Tool {
     /// the same model-callable schema backend mode surfaces.
     #[serde(default, alias = "parameters")]
     input_parameters: Option<serde_json::Value>,
+    /// JSON schema for the tool's OUTPUT/return value, per Composio v3
+    /// `/tools`'s `output_parameters` field ("Schema definition of return
+    /// values from the tool" —
+    /// <https://docs.composio.dev/reference/api-reference/tools/getTools>).
+    /// Re-emitted as `ComposioToolFunction::output_parameters` so callers
+    /// can ground a downstream binding in the tool's real output field
+    /// names instead of guessing them.
+    #[serde(default)]
+    output_parameters: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1090,6 +1099,9 @@ pub struct ComposioToolSchemaV3 {
     pub description: Option<String>,
     pub toolkit_slug: Option<String>,
     pub input_parameters: Option<serde_json::Value>,
+    /// See [`ComposioV3Tool::output_parameters`] — Composio v3's schema for
+    /// the action's return value, when published.
+    pub output_parameters: Option<serde_json::Value>,
 }
 
 impl ComposioToolSchemaV3 {
@@ -1109,6 +1121,7 @@ impl ComposioToolSchemaV3 {
             description: item.description.or(item.name),
             toolkit_slug,
             input_parameters: item.input_parameters,
+            output_parameters: item.output_parameters,
         }
     }
 }

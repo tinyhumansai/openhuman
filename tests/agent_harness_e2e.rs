@@ -1040,15 +1040,13 @@ async fn super_context_happy_path_inner() {
 //   schedule_task tool result.  The orchestrator surfaces this to the user.
 //   On turn 2 the user's reply and the full turn-1 context are present.
 //
-// Actual LLM request ordering (5 upstream calls total):
+// Actual LLM request ordering (4 upstream calls total):
 //   request[0] = orchestrator turn 1 → schedule_task delegation tool call returned
 //   request[1] = scheduler_agent first iter → tries ask_user_clarification (blocked,
 //                success=false; early-exit does NOT fire; loop continues)
 //   request[2] = scheduler_agent second iter → returns text with clarification question
-//                (this becomes the schedule_task tool result forwarded to orchestrator)
-//   request[3] = orchestrator with schedule_task tool result containing WHICH_VERSION_CANARY
-//                → surfaces question to user; turn 1 ends (chat_done with WHICH_VERSION_CANARY)
-//   request[4] = orchestrator turn 2 with "version 2" user reply in full context →
+//                (this becomes the schedule_task tool result and turn-1 response)
+//   request[3] = orchestrator turn 2 with "version 2" user reply in full context →
 //                synthesis; turn 2 ends (chat_done with ANSWER_CANARY_V2)
 
 /// Orchestrator delegates to scheduler_agent via `schedule_task` (delegate_name);
@@ -1092,11 +1090,8 @@ async fn subagent_clarification_flow_inner() {
         //   question.  This becomes the schedule_task tool result forwarded to the
         //   orchestrator by dispatch_subagent.
         text_completion("I need clarification: WHICH_VERSION_CANARY?"),
-        // request[3]: Orchestrator receives the schedule_task tool result containing
-        //   WHICH_VERSION_CANARY and surfaces the question to the user.  Turn 1 ends.
-        text_completion("I need to know: WHICH_VERSION_CANARY?"),
         // ── turn 2 (user replied "version 2") ──
-        // request[4]: Orchestrator processes user reply with full turn-1 context →
+        // request[3]: Orchestrator processes user reply with full turn-1 context →
         //   synthesizes final answer; turn 2 ends here.
         text_completion("Final: ANSWER_CANARY_V2"),
     ]);
@@ -1172,11 +1167,10 @@ async fn subagent_clarification_flow_inner() {
     // request[0] = orchestrator (schedule_task call),
     // request[1] = scheduler_agent first iter (ask_user_clarification blocked),
     // request[2] = scheduler_agent second iter (text output with question),
-    // request[3] = orchestrator synthesis (turn-1 end),
-    // request[4] = orchestrator turn-2 synthesis (turn-2 end).
+    // request[3] = orchestrator turn-2 synthesis (turn-2 end).
     assert!(
         requests.len() >= 4,
-        "expected ≥4 upstream requests (orchestrator + scheduler_agent x2 + orchestrator synthesis x2), \
+        "expected ≥4 upstream requests (orchestrator + scheduler_agent x2 + orchestrator turn-2 synthesis), \
          got {};\nall requests: {}",
         requests.len(),
         serde_json::to_string_pretty(&requests).unwrap_or_default()
@@ -2313,8 +2307,8 @@ async fn multi_hop_delegation_chain_inner() {
 mod streaming_support {
     use async_trait::async_trait;
     use openhuman_core::openhuman::agent::dispatcher::NativeToolDispatcher;
-    use openhuman_core::openhuman::agent::memory_loader::MemoryLoader;
     use openhuman_core::openhuman::agent::Agent;
+    use openhuman_core::openhuman::agent_memory::memory_loader::MemoryLoader;
     use openhuman_core::openhuman::config::{AgentConfig, ContextConfig, MemoryConfig};
     use openhuman_core::openhuman::inference::provider::{
         ChatRequest, ChatResponse, Provider, ProviderDelta, ToolCall, UsageInfo,
@@ -2394,6 +2388,8 @@ mod streaming_support {
                 output_tokens: 5,
                 context_window: 16_000,
                 cached_input_tokens: 2,
+                cache_creation_tokens: 0,
+                reasoning_tokens: 0,
                 charged_amount_usd: 0.0002,
             }),
             reasoning_content: None,
@@ -2414,6 +2410,8 @@ mod streaming_support {
                 output_tokens: 4,
                 context_window: 16_000,
                 cached_input_tokens: 3,
+                cache_creation_tokens: 0,
+                reasoning_tokens: 0,
                 charged_amount_usd: 0.0003,
             }),
             reasoning_content: None,
@@ -2485,7 +2483,6 @@ mod streaming_support {
             })
             .auto_save(true)
             .explicit_preferences_enabled(false)
-            .unified_compaction_enabled(false)
             .build()
             .unwrap()
     }

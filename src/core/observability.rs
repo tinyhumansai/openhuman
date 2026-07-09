@@ -258,7 +258,7 @@ pub enum ExpectedErrorKind {
     /// contention (handled by the store's busy-retry loop) and unrelated DB
     /// failures in other domains still reach Sentry.
     SubconsciousSchemaUnavailable,
-    /// The user invoked "Import Codex CLI login" (Settings → AI → Codex auth)
+    /// The user invoked "Import Codex CLI login" (Connections → API keys → LLM → Codex auth)
     /// but the Codex CLI auth at `~/.codex/auth.json` is absent or unusable:
     /// the file doesn't exist (the user never ran `codex login`), can't be
     /// parsed, or carries no tokens / no access token. The import RPC already
@@ -1044,6 +1044,19 @@ pub fn is_api_key_unset_message(text: &str) -> bool {
         || lower.contains("no api key supplied")
 }
 
+/// Does this error text describe a **local** LLM provider (loopback host, e.g.
+/// LM Studio / Ollama / llama.cpp on `127.0.0.1:<port>` or `localhost:<port>`)
+/// refusing the connection because its server isn't running?
+///
+/// Single-source wrapper over [`is_loopback_unavailable`] so callers outside
+/// this module (the cron scheduler's retry-halt guard) key off the exact same
+/// matcher the [`expected_error_kind`] classifier uses — the phrasing cannot
+/// drift between the source demotion and the cron suppression. Lowercases the
+/// input to match the classifier's internal contract (TAURI-RUST-12K).
+pub fn is_local_provider_unreachable_message(text: &str) -> bool {
+    is_loopback_unavailable(&text.to_ascii_lowercase())
+}
+
 /// Detect the in-process-core boot-window shape: a sibling component
 /// (frontend RPC relay, agent-integrations / composio HTTP clients) tried to
 /// reach the embedded core's `127.0.0.1:<port>` listener before it finished
@@ -1065,6 +1078,19 @@ pub fn is_api_key_unset_message(text: &str) -> bool {
 ///    swallowing higher-level wrappers that merely mention "connection
 ///    refused" in prose.
 ///
+/// 3. **Locale-independent fallback**: on non-English OS locales the kernel
+///    renders the `ECONNREFUSED` / `WSAECONNREFUSED` text translated (e.g. a
+///    zh-CN Windows host emits `由于目标计算机积极拒绝，无法连接。 (os error
+///    10061)`), so the English `connection refused` prefix in (2) is absent
+///    and a genuine loopback-refused body would leak past this matcher into
+///    the broad [`is_network_unreachable_message`] bucket (TAURI-RUST-12K).
+///    Recover it by pairing the reqwest/hyper-stable `tcp connect error`
+///    marker with the connect-refused errno alone. Scoped to the three
+///    connect-refused errnos only — the distinct timeout errnos (`60` / `110`
+///    / `10060`, `WSAETIMEDOUT`) are NOT matched, so a loopback *timeout*
+///    still classifies as its own shape rather than being mislabelled
+///    "refused".
+///
 /// Drops OPENHUMAN-TAURI-R5 (~2.5k events, `integrations.get` emit site)
 /// and OPENHUMAN-TAURI-R6 (~2.5k events, the `rpc.invoke_method` re-wrap of
 /// the same trace). Both share `trace_id=6ebf5b62748d5144e541e2cddeabbbd0`
@@ -1085,9 +1111,21 @@ fn is_loopback_unavailable(lower: &str) -> bool {
     if !has_loopback_host {
         return false;
     }
-    lower.contains("connection refused (os error 61)")
+    // (2) English errno-prefixed form.
+    if lower.contains("connection refused (os error 61)")
         || lower.contains("connection refused (os error 111)")
         || lower.contains("connection refused (os error 10061)")
+    {
+        return true;
+    }
+    // (3) Locale-independent fallback: the OS-refused text may be translated,
+    // leaving only the errno. Require the transport-layer `tcp connect error`
+    // marker so a non-connect loopback failure cannot match, and pin to the
+    // connect-refused errnos (not the timeout errnos 60 / 110 / 10060).
+    lower.contains("tcp connect error")
+        && (lower.contains("(os error 61)")
+            || lower.contains("(os error 111)")
+            || lower.contains("(os error 10061)"))
 }
 
 /// Detect Ollama embed call sites that surface a user-config rejection from
@@ -1476,6 +1514,21 @@ fn is_backend_user_error_message(lower: &str) -> bool {
 /// classifier survives caller wrapping (rpc.invoke_method, agent.run_single,
 /// `[composio:gmail]` prefixes, anyhow chains, …).
 fn is_provider_user_state_message(lower: &str) -> bool {
+    // TAURI-RUST-HXF: a direct BYO provider (groq `on_demand` free tier)
+    // rejected a *single* request whose token count exceeds the account's
+    // tokens-per-minute cap — `413 Payload Too Large … Request too large …
+    // tokens per minute (TPM): Limit 8000, Requested 42084`. It is permanently
+    // non-viable on the current tier (not a burst that retry/backoff clears)
+    // and OpenHuman cannot raise a third-party account's TPM tier, so it is
+    // user-config state, not a product bug. NOTE: a *managed-backend*
+    // `PAYLOAD_TOO_LARGE` guard-leak is force-captured (returns `None`) earlier
+    // in `expected_error_kind`, before this matcher runs, so this arm only ever
+    // sees direct-provider TPM rejections. Shared matcher (single source of
+    // truth with the subconscious circuit breaker) so the wording can't drift.
+    if crate::openhuman::inference::provider::is_provider_rate_cap_exceeded_message(lower) {
+        return true;
+    }
+
     // OPENHUMAN-TAURI-3R / -3S: composio enable_trigger when the slug isn't
     // in the trigger registry (e.g. user clicked a stale UI option).
     // Backend returns 500 with `"Trigger type GITHUB_PUSH_EVENT not found"`.
@@ -2795,6 +2848,25 @@ pub fn is_transient_message_failure(msg: &str) -> bool {
         || contains_transient_transport_phrase(&lower)
 }
 
+/// Sentinel prefix stamped on a `/teams/me/usage` probe error that the
+/// failure-backoff in `crate::openhuman::team::ops` short-circuited — i.e. an
+/// already-reported repeat within the backoff window. The FIRST failure of a
+/// streak propagates its real error string and reports normally; only the
+/// suppressed repeats carry this prefix so the JSON-RPC boundary can demote
+/// them (no re-report) instead of re-flooding Sentry. See GH #4153.
+///
+/// Single source of truth: the producer (`team::ops::get_usage_with_cache`)
+/// builds its sentinel from this constant, and [`is_suppressed_usage_probe_backoff`]
+/// matches it — coupled by a unit test so the two cannot drift.
+pub const USAGE_PROBE_BACKOFF_PREFIX: &str = "USAGE_PROBE_BACKOFF:";
+
+/// Returns true when a message is the usage-probe failure-backoff sentinel
+/// (see [`USAGE_PROBE_BACKOFF_PREFIX`]). Anchored on the exact prefix so a real
+/// backend error string can never match.
+pub fn is_suppressed_usage_probe_backoff(msg: &str) -> bool {
+    msg.starts_with(USAGE_PROBE_BACKOFF_PREFIX)
+}
+
 /// Returns true when a Sentry event is a budget-exhausted 400 that should be
 /// dropped from `before_send`.
 ///
@@ -3036,6 +3108,22 @@ fn event_contains_budget_exhausted_message(event: &sentry::protocol::Event<'_>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn usage_probe_backoff_sentinel_classifies_only_its_own_prefix() {
+        // The producer in `team::ops` builds its sentinel from this prefix.
+        let sentinel = format!("{USAGE_PROBE_BACKOFF_PREFIX} recent /teams/me/usage failure");
+        assert!(is_suppressed_usage_probe_backoff(&sentinel));
+        // Real backend error strings must NEVER match — they keep reporting.
+        assert!(!is_suppressed_usage_probe_backoff(
+            "GET /teams/me/usage failed (500 Internal Server Error): "
+        ));
+        assert!(!is_suppressed_usage_probe_backoff(
+            "GET /teams/me/usage failed (404 Not Found); response_body_len=91"
+        ));
+        assert!(!is_suppressed_usage_probe_backoff("SESSION_EXPIRED: ..."));
+        assert!(!is_suppressed_usage_probe_backoff(""));
+    }
 
     /// Helper must accept `&anyhow::Error`, `&dyn std::error::Error`, and
     /// plain `&str` — the three shapes that show up at error sites today.
@@ -3743,26 +3831,6 @@ mod tests {
     }
 
     #[test]
-    fn context_prefix_too_large_error_display_classifies_as_expected() {
-        // S3.5.d coupling test: the pre-dispatch actionable error's Display
-        // string MUST classify as the suppressed ContextWindowExceeded bucket,
-        // so a wording drift in the user-facing message (which is what gets
-        // re-raised and re-reported up the stack) fails CI instead of silently
-        // leaking the event to Sentry.
-        let err = crate::openhuman::agent::harness::token_budget::ContextPrefixTooLargeError {
-            prefix_tokens: 10_978,
-            context_window: 8_192,
-            max_input_tokens: 7_372,
-        };
-        assert_eq!(
-            expected_error_kind(&err.to_string()),
-            Some(ExpectedErrorKind::ContextWindowExceeded),
-            "ContextPrefixTooLargeError Display must stay coupled to the \
-             context-window-exceeded classifier (drift would leak Sentry events)"
-        );
-    }
-
-    #[test]
     fn does_not_classify_unrelated_messages_as_context_window_exceeded() {
         // Anchors are context-overflow specific. A generic "window" or
         // "context" mention, or an unrelated rate-limit "exceeded", must
@@ -3776,6 +3844,62 @@ mod tests {
                 expected_error_kind(raw),
                 None,
                 "must NOT classify as context-window-exceeded: {raw}"
+            );
+        }
+    }
+
+    // ── ProviderUserState: permanent TPM rate cap (TAURI-RUST-HXF) ─────────
+
+    #[test]
+    fn classifies_provider_rate_cap_413_tpm_rereport_as_provider_user_state() {
+        // TAURI-RUST-HXF: verbatim groq `on_demand` free-tier body — a single
+        // subconscious request (42084 tokens) exceeds the 8000 tokens-per-minute
+        // cap, so groq returns 413 and no retry can ever fit it. When re-raised
+        // by `agent.run_single` under `domain=agent`, `report_error_or_expected`
+        // must demote it to expected user-config state (the user's account tier
+        // is not a lever OpenHuman controls) instead of paging Sentry.
+        assert_eq!(
+            expected_error_kind(
+                "groq API error (413 Payload Too Large): {\"error\":{\"message\":\"Request too large \
+                 for model `openai/gpt-oss-120b` in organization `org_01k48ewn75ez7tsgw5hmd72px2` \
+                 service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 42084. \
+                 Please try again later.\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}"
+            ),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+    }
+
+    #[test]
+    fn managed_backend_payload_too_large_still_pages_despite_rate_cap_arm() {
+        // Regression pin: a *managed-backend* `PAYLOAD_TOO_LARGE` is a
+        // client-guard leak (the client was supposed to bound the request) and
+        // MUST keep paging. The guard-leak arm returns `None` before the
+        // ProviderUserState matcher runs, so the new TPM arm cannot demote it.
+        assert_eq!(
+            expected_error_kind(
+                "OpenHuman API error (413 Payload Too Large): \
+                 {\"error\":{\"errorCode\":\"PAYLOAD_TOO_LARGE\",\"message\":\"request too big\"}}"
+            ),
+            None,
+            "managed PAYLOAD_TOO_LARGE guard-leak must still page"
+        );
+    }
+
+    #[test]
+    fn transient_tpm_burst_and_bare_413_do_not_demote_as_rate_cap() {
+        // The arm requires BOTH "request too large" (single-request permanence)
+        // AND a per-minute-tokens marker. A transient burst ("try again in Ns")
+        // and a bare 413 lacking those anchors must NOT be demoted to
+        // ProviderUserState — they stay retryable / Sentry-visible.
+        for raw in [
+            "groq API error (429 Too Many Requests): Rate limit reached for model \
+             `openai/gpt-oss-120b`. Please try again in 2.5s.",
+            "openai API error (413 Payload Too Large): request entity too large",
+        ] {
+            assert_ne!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::ProviderUserState),
+                "must NOT demote as permanent rate-cap: {raw}"
             );
         }
     }
@@ -7067,6 +7191,56 @@ mod tests {
             expected_error_kind(raw),
             Some(ExpectedErrorKind::NetworkUnreachable)
         );
+    }
+
+    /// Verbatim body from TAURI-RUST-12K (2802 events / 29 users): a cron
+    /// agent job hits a local LM Studio server (`localhost:1234`) that isn't
+    /// running, on a zh-CN Windows host — so the `WSAECONNREFUSED` text is
+    /// localized and the English "connection refused" prefix is absent, leaving
+    /// only `(os error 10061)` behind the transport-stable `tcp connect error`
+    /// marker. The locale-independent arm must still route it to the loopback
+    /// bucket rather than leaking to the broad `NetworkUnreachable`.
+    #[test]
+    fn classifies_localized_loopback_connect_refused_as_loopback_unavailable() {
+        let raw = "error sending request for url \
+                   (http://localhost:1234/v1/chat/completions): client error (Connect): \
+                   tcp connect error: 由于目标计算机积极拒绝，无法连接。 (os error 10061)";
+        assert_eq!(
+            expected_error_kind(raw),
+            Some(ExpectedErrorKind::LoopbackUnavailable),
+            "localized WSAECONNREFUSED loopback body must classify as LoopbackUnavailable"
+        );
+    }
+
+    #[test]
+    fn does_not_classify_loopback_timeout_as_loopback() {
+        // A loopback *timeout* (WSAETIMEDOUT os error 10060, not the
+        // connect-refused 10061) shares the `tcp connect error` marker but is
+        // a distinct failure class — it must NOT be swallowed by the
+        // connect-refused loopback arm.
+        let raw = "error sending request for url \
+                   (http://localhost:1234/v1/chat/completions): \
+                   tcp connect error: connection timed out (os error 10060)";
+        assert!(
+            !matches!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::LoopbackUnavailable)
+            ),
+            "loopback timeout must not classify as LoopbackUnavailable"
+        );
+    }
+
+    #[test]
+    fn is_local_provider_unreachable_message_wraps_loopback_matcher() {
+        let localized = "error sending request for url \
+                         (http://localhost:1234/v1/chat/completions): client error (Connect): \
+                         tcp connect error: 由于目标计算机积极拒绝，无法连接。 (os error 10061)";
+        assert!(is_local_provider_unreachable_message(localized));
+        // Remote refused must not match (loopback-only, keeps real outages visible).
+        assert!(!is_local_provider_unreachable_message(
+            "error sending request for url (https://api.tinyhumans.ai/x) \
+             → tcp connect error → Connection refused (os error 61)"
+        ));
     }
 
     #[test]

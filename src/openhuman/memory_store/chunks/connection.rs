@@ -479,7 +479,7 @@ pub(crate) fn get_or_init_connection(config: &Config) -> Result<Arc<PMutex<Conne
             // status for `memory_tree_db` instead of "unknown" until the first
             // failure. Fires once per path for the process lifetime.
             if breaker.mark_startup_emitted() {
-                let _ = crate::core::event_bus::publish_global(
+                crate::core::event_bus::publish_global(
                     crate::core::event_bus::DomainEvent::SystemStartup {
                         component: "memory_tree_db".to_string(),
                     },
@@ -494,7 +494,7 @@ pub(crate) fn get_or_init_connection(config: &Config) -> Result<Arc<PMutex<Conne
                     "[memory_tree] circuit breaker recovered for {}: DB init succeeded after a prior trip",
                     db_path.display()
                 );
-                let _ = crate::core::event_bus::publish_global(
+                crate::core::event_bus::publish_global(
                     crate::core::event_bus::DomainEvent::HealthChanged {
                         component: "memory_tree_db".to_string(),
                         healthy: true,
@@ -522,7 +522,7 @@ pub(crate) fn get_or_init_connection(config: &Config) -> Result<Arc<PMutex<Conne
                     db_path.display(),
                     CB_THRESHOLD
                 );
-                let _ = crate::core::event_bus::publish_global(
+                crate::core::event_bus::publish_global(
                     crate::core::event_bus::DomainEvent::HealthChanged {
                         component: "memory_tree_db".to_string(),
                         healthy: false,
@@ -593,9 +593,18 @@ pub(crate) fn clear_connection_cache() {
 /// downstream crates should treat it as internal.
 #[doc(hidden)]
 pub fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
-    let conn_arc = get_or_init_connection(config)?;
-    let guard = conn_arc.lock();
-    f(&guard)
+    // W3 connection foundation: route ALL production access to
+    // `<workspace_dir>/memory_tree/chunks.db` through the TinyCortex connection
+    // manager. The crate opens the SAME file (its `db_path_for` derives the
+    // identical `<workspace>/memory_tree/chunks.db`), applies the identical
+    // schema + version-gated migrations (`TREE_EMBEDDING`=1, `GLOBAL_TOPIC_PURGE`
+    // =2 — matched on both sides, so an already-migrated DB is a no-op), and
+    // migrates any pre-existing WAL database to the TRUNCATE rollback journal in
+    // place on first open. The former host connection cache below is retired in
+    // the deletion-ledger follow-up (it is now only referenced by cache-behaviour
+    // unit tests, which move upstream into the crate).
+    let mc = crate::openhuman::tinycortex::memory_config_from(config, config.workspace_dir.clone());
+    tinycortex::memory::chunks::with_connection(&mc, f)
 }
 
 /// Append `suffix` to the *file name* of `path` (so `chunks.db` + `-wal`

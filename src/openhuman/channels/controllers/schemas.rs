@@ -7,10 +7,16 @@ use serde_json::{Map, Value};
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::config::rpc as config_rpc;
+use crate::openhuman::config::Config;
 use crate::rpc::RpcOutcome;
 
+use super::backend::OpenHumanChannelBackend;
 use super::definitions::ChannelAuthMode;
-use super::ops;
+use tinychannels::controllers::{
+    all_channel_controller_schemas, channel_controller_schema, channel_credential_provider,
+    ChannelControllerField, ChannelControllerFieldType, ChannelControllerSchema,
+};
+use tinychannels::{ChannelManager, ChannelsConfig};
 
 // ---------------------------------------------------------------------------
 // Param structs
@@ -128,28 +134,10 @@ struct ListThreadsParams {
 // ---------------------------------------------------------------------------
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
-    vec![
-        schemas("list"),
-        schemas("describe"),
-        schemas("connect"),
-        schemas("disconnect"),
-        schemas("status"),
-        schemas("set_default"),
-        schemas("get_default"),
-        schemas("test"),
-        schemas("telegram_login_start"),
-        schemas("telegram_login_check"),
-        schemas("discord_link_start"),
-        schemas("discord_link_check"),
-        schemas("discord_list_guilds"),
-        schemas("discord_list_channels"),
-        schemas("discord_check_permissions"),
-        schemas("send_message"),
-        schemas("send_reaction"),
-        schemas("create_thread"),
-        schemas("update_thread"),
-        schemas("list_threads"),
-    ]
+    all_channel_controller_schemas()
+        .into_iter()
+        .map(from_channel_controller_schema)
+        .collect()
 }
 
 pub fn all_registered_controllers() -> Vec<RegisteredController> {
@@ -242,254 +230,7 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
 // ---------------------------------------------------------------------------
 
 pub fn schemas(function: &str) -> ControllerSchema {
-    match function {
-        "list" => ControllerSchema {
-            namespace: "channels",
-            function: "list",
-            description: "List all available channel definitions.",
-            inputs: vec![],
-            outputs: vec![json_output("channels", "Array of channel definitions.")],
-        },
-        "describe" => ControllerSchema {
-            namespace: "channels",
-            function: "describe",
-            description: "Get the full definition for a single channel.",
-            inputs: vec![required_string(
-                "channel",
-                "Channel identifier (e.g. telegram).",
-            )],
-            outputs: vec![json_output(
-                "definition",
-                "Channel definition with auth modes and capabilities.",
-            )],
-        },
-        "connect" => ControllerSchema {
-            namespace: "channels",
-            function: "connect",
-            description: "Initiate a channel connection.",
-            inputs: vec![
-                required_string("channel", "Channel identifier."),
-                required_string(
-                    "authMode",
-                    "Auth mode (api_key, bot_token, oauth, managed_dm).",
-                ),
-                optional_json("credentials", "Credential fields for the chosen auth mode."),
-            ],
-            outputs: vec![json_output(
-                "result",
-                "Connection result with status and optional auth action.",
-            )],
-        },
-        "disconnect" => ControllerSchema {
-            namespace: "channels",
-            function: "disconnect",
-            description: "Disconnect a channel and optionally remove source-scoped memory.",
-            inputs: vec![
-                required_string("channel", "Channel identifier."),
-                required_string("authMode", "Auth mode to disconnect."),
-                FieldSchema {
-                    name: "clearMemory",
-                    ty: TypeSchema::Bool,
-                    comment: "When true, delete memory chunks ingested from this channel.",
-                    required: false,
-                },
-            ],
-            outputs: vec![json_output("result", "Disconnect result.")],
-        },
-        "status" => ControllerSchema {
-            namespace: "channels",
-            function: "status",
-            description: "Get connection status for one or all channels.",
-            inputs: vec![optional_string("channel", "Optional channel filter.")],
-            outputs: vec![json_output(
-                "entries",
-                "Array of status entries per channel and auth mode.",
-            )],
-        },
-        "set_default" => ControllerSchema {
-            namespace: "channels",
-            function: "set_default",
-            description: "Set the default messaging channel for proactive agent \
-                          delivery (persists active_channel + applies live).",
-            inputs: vec![required_string(
-                "channel",
-                "Channel identifier to make default (e.g. telegram, discord, web).",
-            )],
-            outputs: vec![json_output(
-                "result",
-                "Object with the new active_channel and restart_required flag.",
-            )],
-        },
-        "get_default" => ControllerSchema {
-            namespace: "channels",
-            function: "get_default",
-            description: "Get the persisted default messaging channel.",
-            inputs: vec![],
-            outputs: vec![json_output(
-                "result",
-                "Object with the current active_channel.",
-            )],
-        },
-        "test" => ControllerSchema {
-            namespace: "channels",
-            function: "test",
-            description: "Test a channel connection without persisting credentials.",
-            inputs: vec![
-                required_string("channel", "Channel identifier."),
-                required_string("authMode", "Auth mode to test."),
-                required_json("credentials", "Credential fields to test."),
-            ],
-            outputs: vec![json_output(
-                "result",
-                "Test result with success flag and message.",
-            )],
-        },
-        "telegram_login_start" => ControllerSchema {
-            namespace: "channels",
-            function: "telegram_login_start",
-            description:
-                "Create a Telegram link token and return the deep link URL for managed DM login.",
-            inputs: vec![],
-            outputs: vec![json_output(
-                "result",
-                "Object with linkToken, telegramUrl, and botUsername.",
-            )],
-        },
-        "telegram_login_check" => ControllerSchema {
-            namespace: "channels",
-            function: "telegram_login_check",
-            description: "Check whether the Telegram managed DM link has been completed.",
-            inputs: vec![required_string(
-                "linkToken",
-                "The link token returned by telegram_login_start.",
-            )],
-            outputs: vec![json_output(
-                "result",
-                "Object with linked (bool) and optional details.",
-            )],
-        },
-        "discord_link_start" => ControllerSchema {
-            namespace: "channels",
-            function: "discord_link_start",
-            description: "Create a Discord link token the user pastes into Discord as `!start <token>` to link their account.",
-            inputs: vec![],
-            outputs: vec![json_output(
-                "result",
-                "Object with linkToken and instructions.",
-            )],
-        },
-        "discord_link_check" => ControllerSchema {
-            namespace: "channels",
-            function: "discord_link_check",
-            description: "Check whether the Discord managed link has been completed (discordId set on user profile).",
-            inputs: vec![required_string(
-                "linkToken",
-                "The link token returned by discord_link_start.",
-            )],
-            outputs: vec![json_output(
-                "result",
-                "Object with linked (bool) and optional details.",
-            )],
-        },
-        "discord_list_guilds" => ControllerSchema {
-            namespace: "channels",
-            function: "discord_list_guilds",
-            description: "List Discord servers (guilds) the connected bot is a member of.",
-            inputs: vec![],
-            outputs: vec![json_output("guilds", "Array of guild objects with id, name, and icon.")],
-        },
-        "discord_list_channels" => ControllerSchema {
-            namespace: "channels",
-            function: "discord_list_channels",
-            description: "List text channels in a Discord guild.",
-            inputs: vec![required_string("guildId", "The Discord guild (server) ID.")],
-            outputs: vec![json_output("channels", "Array of text channel objects with id, name, position, and parentId.")],
-        },
-        "discord_check_permissions" => ControllerSchema {
-            namespace: "channels",
-            function: "discord_check_permissions",
-            description: "Check bot permissions in a Discord channel.",
-            inputs: vec![
-                required_string("guildId", "The Discord guild (server) ID."),
-                required_string("channelId", "The Discord channel ID to check."),
-            ],
-            outputs: vec![json_output("permissions", "Permission check result with flags and missing permissions.")],
-        },
-        "send_message" => ControllerSchema {
-            namespace: "channels",
-            function: "send_message",
-            description: "Send a rich message to a channel (text, photo, sticker, animation, buttons, reply).",
-            inputs: vec![
-                required_string("channel", "Channel identifier (e.g. telegram)."),
-                required_json(
-                    "message",
-                    "Message body with optional fields: text, parseMode, photoUrl, stickerFileId, animationUrl, buttons, replyToMessageId, threadId.",
-                ),
-            ],
-            outputs: vec![json_output("result", "Object with success flag and optional messageId.")],
-        },
-        "send_reaction" => ControllerSchema {
-            namespace: "channels",
-            function: "send_reaction",
-            description: "React to a message in a channel with an emoji.",
-            inputs: vec![
-                required_string("channel", "Channel identifier (e.g. telegram)."),
-                required_json(
-                    "reaction",
-                    "Reaction body: { messageId, emoji, chatId? }.",
-                ),
-            ],
-            outputs: vec![json_output("result", "Object with success flag.")],
-        },
-        "create_thread" => ControllerSchema {
-            namespace: "channels",
-            function: "create_thread",
-            description: "Create a new thread in a channel.",
-            inputs: vec![
-                required_string("channel", "Channel identifier (e.g. telegram)."),
-                required_string("title", "Thread title."),
-            ],
-            outputs: vec![json_output("result", "Object with success flag and optional threadId.")],
-        },
-        "update_thread" => ControllerSchema {
-            namespace: "channels",
-            function: "update_thread",
-            description: "Close or reopen a thread in a channel.",
-            inputs: vec![
-                required_string("channel", "Channel identifier (e.g. telegram)."),
-                required_string("threadId", "Thread identifier to update."),
-                required_string("action", "Action to perform: 'close' or 'reopen'."),
-            ],
-            outputs: vec![json_output("result", "Object with success flag.")],
-        },
-        "list_threads" => ControllerSchema {
-            namespace: "channels",
-            function: "list_threads",
-            description: "List threads in a channel, optionally filtered by active status.",
-            inputs: vec![
-                required_string("channel", "Channel identifier (e.g. telegram)."),
-                FieldSchema {
-                    name: "active",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
-                    comment: "Optional filter: true for active threads, false for closed threads.",
-                    required: false,
-                },
-            ],
-            outputs: vec![json_output("result", "Array of thread objects.")],
-        },
-        _ => ControllerSchema {
-            namespace: "channels",
-            function: "unknown",
-            description: "Unknown channels controller function.",
-            inputs: vec![],
-            outputs: vec![FieldSchema {
-                name: "error",
-                ty: TypeSchema::String,
-                comment: "Lookup error details.",
-                required: true,
-            }],
-        },
-    }
+    from_channel_controller_schema(channel_controller_schema(function))
 }
 
 // ---------------------------------------------------------------------------
@@ -497,13 +238,21 @@ pub fn schemas(function: &str) -> ControllerSchema {
 // ---------------------------------------------------------------------------
 
 fn handle_list(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move { to_json(ops::list_channels().await?) })
+    Box::pin(async move {
+        let manager = ChannelManager::new(ChannelsConfig::default(), ());
+        to_json(RpcOutcome::new(manager.list_definitions(), vec![]))
+    })
 }
 
 fn handle_describe(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = deserialize_params::<DescribeParams>(params)?;
-        to_json(ops::describe_channel(p.channel.trim()).await?)
+        let channel = p.channel.trim();
+        let manager = ChannelManager::new(ChannelsConfig::default(), ());
+        let definition = manager
+            .describe(channel)
+            .ok_or_else(|| format!("unknown channel: {channel}"))?;
+        to_json(RpcOutcome::new(definition, vec![]))
     })
 }
 
@@ -511,12 +260,19 @@ fn handle_connect(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         let p = deserialize_params::<ConnectParams>(params)?;
+        let channel = p.channel.trim();
         let mode: ChannelAuthMode = p
             .auth_mode
             .parse()
             .map_err(|e: String| format!("invalid authMode: {e}"))?;
         let creds = p.credentials.unwrap_or(Value::Object(Map::new()));
-        to_json(ops::connect_channel(&config, p.channel.trim(), mode, creds).await?)
+        let manager = openhuman_channel_manager(config);
+        let result = manager
+            .connect(channel, mode, creds)
+            .await
+            .map_err(|e| e.to_string())?;
+        let logs = connect_logs(channel, mode, result.auth_action.is_some());
+        to_json(RpcOutcome::new(result, logs))
     })
 }
 
@@ -524,11 +280,23 @@ fn handle_disconnect(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         let p = deserialize_params::<DisconnectParams>(params)?;
+        let channel = p.channel.trim();
         let mode: ChannelAuthMode = p
             .auth_mode
             .parse()
             .map_err(|e: String| format!("invalid authMode: {e}"))?;
-        to_json(ops::disconnect_channel(&config, p.channel.trim(), mode, p.clear_memory).await?)
+        let manager = openhuman_channel_manager(config);
+        let result = manager
+            .disconnect(channel, mode, p.clear_memory)
+            .await
+            .map_err(|e| e.to_string())?;
+        to_json(RpcOutcome::single_log(
+            raw_or_typed(result.raw.clone(), &result)?,
+            format!(
+                "removed credentials for {}",
+                channel_credential_provider(channel, mode)
+            ),
+        ))
     })
 }
 
@@ -545,22 +313,43 @@ fn handle_status(params: Map<String, Value>) -> ControllerFuture {
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty());
-        to_json(ops::channel_status(&config, filter).await?)
+        let manager = openhuman_channel_manager(config);
+        let result = manager.status(filter).await.map_err(|e| e.to_string())?;
+        to_json(RpcOutcome::new(result, vec![]))
     })
 }
 
 fn handle_set_default(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let mut config = config_rpc::load_config_with_timeout().await?;
+        let config = config_rpc::load_config_with_timeout().await?;
         let p = deserialize_params::<SetDefaultParams>(params)?;
-        to_json(ops::set_default_channel(&mut config, p.channel.trim()).await?)
+        let channel = p.channel.trim();
+        let manager = openhuman_channel_manager(config);
+        manager
+            .set_default_channel(channel)
+            .await
+            .map_err(|e| e.to_string())?;
+        let canonical = channel.to_ascii_lowercase();
+        to_json(RpcOutcome::single_log(
+            serde_json::json!({ "active_channel": canonical, "restart_required": false }),
+            format!("default messaging channel set to {canonical}"),
+        ))
     })
 }
 
 fn handle_get_default(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
-        to_json(ops::get_default_channel(&config)?)
+        let manager = openhuman_channel_manager(config);
+        let active = manager
+            .get_default_channel()
+            .await
+            .map_err(|e| e.to_string())?
+            .unwrap_or_else(|| "web".to_string());
+        to_json(RpcOutcome::new(
+            serde_json::json!({ "active_channel": active }),
+            vec![],
+        ))
     })
 }
 
@@ -572,14 +361,24 @@ fn handle_test(params: Map<String, Value>) -> ControllerFuture {
             .auth_mode
             .parse()
             .map_err(|e: String| format!("invalid authMode: {e}"))?;
-        to_json(ops::test_channel(&config, p.channel.trim(), mode, p.credentials).await?)
+        let manager = openhuman_channel_manager(config);
+        let result = manager
+            .test(p.channel.trim(), mode, p.credentials)
+            .await
+            .map_err(|e| e.to_string())?;
+        to_json(RpcOutcome::new(result, vec![]))
     })
 }
 
 fn handle_telegram_login_start(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
-        to_json(ops::telegram_login_start(&config).await?)
+        let manager = openhuman_channel_manager(config);
+        let result = manager
+            .telegram_login_start()
+            .await
+            .map_err(|e| e.to_string())?;
+        to_json(RpcOutcome::new(result, vec![]))
     })
 }
 
@@ -587,14 +386,24 @@ fn handle_telegram_login_check(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         let p = deserialize_params::<TelegramLoginCheckParams>(params)?;
-        to_json(ops::telegram_login_check(&config, p.link_token.trim()).await?)
+        let manager = openhuman_channel_manager(config);
+        let result = manager
+            .telegram_login_check(p.link_token.trim())
+            .await
+            .map_err(|e| e.to_string())?;
+        to_json(RpcOutcome::new(result, vec![]))
     })
 }
 
 fn handle_discord_link_start(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
-        to_json(ops::discord_link_start(&config).await?)
+        let manager = openhuman_channel_manager(config);
+        let result = manager
+            .discord_link_start()
+            .await
+            .map_err(|e| e.to_string())?;
+        to_json(RpcOutcome::new(result, vec![]))
     })
 }
 
@@ -602,14 +411,27 @@ fn handle_discord_link_check(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         let p = deserialize_params::<DiscordLinkCheckParams>(params)?;
-        to_json(ops::discord_link_check(&config, p.link_token.trim()).await?)
+        let manager = openhuman_channel_manager(config);
+        let result = manager
+            .discord_link_check(p.link_token.trim())
+            .await
+            .map_err(|e| e.to_string())?;
+        to_json(RpcOutcome::new(result, vec![]))
     })
 }
 
 fn handle_discord_list_guilds(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
-        to_json(ops::discord_list_guilds(&config).await?)
+        let manager = openhuman_channel_manager(config);
+        let result = manager
+            .discord_list_guilds()
+            .await
+            .map_err(|e| e.to_string())?;
+        to_json(RpcOutcome::single_log(
+            raw_or_typed(result.raw.clone(), &result)?,
+            "discord guilds listed",
+        ))
     })
 }
 
@@ -617,7 +439,16 @@ fn handle_discord_list_channels(params: Map<String, Value>) -> ControllerFuture 
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         let p = deserialize_params::<DiscordListChannelsParams>(params)?;
-        to_json(ops::discord_list_channels(&config, p.guild_id.trim()).await?)
+        let guild_id = p.guild_id.trim();
+        let manager = openhuman_channel_manager(config);
+        let result = manager
+            .discord_list_channels(guild_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        to_json(RpcOutcome::single_log(
+            raw_or_typed(result.raw.clone(), &result)?,
+            format!("discord channels listed for guild {guild_id}"),
+        ))
     })
 }
 
@@ -625,9 +456,17 @@ fn handle_discord_check_permissions(params: Map<String, Value>) -> ControllerFut
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         let p = deserialize_params::<DiscordCheckPermissionsParams>(params)?;
-        to_json(
-            ops::discord_check_permissions(&config, p.guild_id.trim(), p.channel_id.trim()).await?,
-        )
+        let guild_id = p.guild_id.trim();
+        let channel_id = p.channel_id.trim();
+        let manager = openhuman_channel_manager(config);
+        let result = manager
+            .discord_check_permissions(guild_id, channel_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        to_json(RpcOutcome::single_log(
+            raw_or_typed(result.raw.clone(), &result)?,
+            format!("discord permissions checked for channel {channel_id}"),
+        ))
     })
 }
 
@@ -635,7 +474,15 @@ fn handle_send_message(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         let p = deserialize_params::<SendMessageParams>(params)?;
-        to_json(ops::channel_send_message(&config, p.channel.trim(), p.message).await?)
+        let manager = openhuman_channel_manager(config);
+        let result = manager
+            .send_message_value(p.channel.trim(), p.message)
+            .await
+            .map_err(|e| e.to_string())?;
+        to_json(RpcOutcome::new(
+            raw_or_typed(result.raw.clone(), &result)?,
+            vec![],
+        ))
     })
 }
 
@@ -643,7 +490,15 @@ fn handle_send_reaction(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         let p = deserialize_params::<SendReactionParams>(params)?;
-        to_json(ops::channel_send_reaction(&config, p.channel.trim(), p.reaction).await?)
+        let manager = openhuman_channel_manager(config);
+        let result = manager
+            .send_reaction(p.channel.trim(), p.reaction)
+            .await
+            .map_err(|e| e.to_string())?;
+        to_json(RpcOutcome::new(
+            raw_or_typed(result.raw.clone(), &result)?,
+            vec![],
+        ))
     })
 }
 
@@ -651,7 +506,15 @@ fn handle_create_thread(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         let p = deserialize_params::<CreateThreadParams>(params)?;
-        to_json(ops::channel_create_thread(&config, p.channel.trim(), p.title.trim()).await?)
+        let manager = openhuman_channel_manager(config);
+        let result = manager
+            .create_thread(p.channel.trim(), p.title.trim())
+            .await
+            .map_err(|e| e.to_string())?;
+        to_json(RpcOutcome::new(
+            raw_or_typed(result.raw.clone(), &result)?,
+            vec![],
+        ))
     })
 }
 
@@ -659,15 +522,15 @@ fn handle_update_thread(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         let p = deserialize_params::<UpdateThreadParams>(params)?;
-        to_json(
-            ops::channel_update_thread(
-                &config,
-                p.channel.trim(),
-                p.thread_id.trim(),
-                p.action.trim(),
-            )
-            .await?,
-        )
+        let manager = openhuman_channel_manager(config);
+        let result = manager
+            .update_thread(p.channel.trim(), p.thread_id.trim(), p.action.trim())
+            .await
+            .map_err(|e| e.to_string())?;
+        to_json(RpcOutcome::new(
+            raw_or_typed(result.raw.clone(), &result)?,
+            vec![],
+        ))
     })
 }
 
@@ -675,7 +538,15 @@ fn handle_list_threads(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         let p = deserialize_params::<ListThreadsParams>(params)?;
-        to_json(ops::channel_list_threads(&config, p.channel.trim(), p.active).await?)
+        let manager = openhuman_channel_manager(config);
+        let result = manager
+            .list_threads(p.channel.trim(), p.active)
+            .await
+            .map_err(|e| e.to_string())?;
+        to_json(RpcOutcome::new(
+            raw_or_typed(result.raw.clone(), &result)?,
+            vec![],
+        ))
     })
 }
 
@@ -687,53 +558,71 @@ fn deserialize_params<T: DeserializeOwned>(params: Map<String, Value>) -> Result
     serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
 }
 
-fn required_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::String,
-        comment,
-        required: true,
+fn openhuman_channel_manager(config: Config) -> ChannelManager<OpenHumanChannelBackend> {
+    ChannelManager::new(
+        config.channels_config.clone(),
+        OpenHumanChannelBackend::new(config),
+    )
+}
+
+fn connect_logs(channel: &str, mode: ChannelAuthMode, pending_auth: bool) -> Vec<String> {
+    if pending_auth {
+        vec![]
+    } else if mode == ChannelAuthMode::ManagedDm && channel == "imessage" {
+        vec!["stored imessage channel config (local-only)".to_string()]
+    } else {
+        vec![format!("stored credentials for channel:{channel}:{mode}")]
     }
 }
 
-fn optional_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-        comment,
-        required: false,
-    }
-}
-
-fn optional_json(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
-        comment,
-        required: false,
-    }
-}
-
-fn required_json(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Json,
-        comment,
-        required: true,
-    }
-}
-
-fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Json,
-        comment,
-        required: true,
-    }
+fn raw_or_typed<T: serde::Serialize>(raw: Option<Value>, typed: &T) -> Result<Value, String> {
+    raw.map(Ok)
+        .unwrap_or_else(|| serde_json::to_value(typed).map_err(|e| e.to_string()))
 }
 
 fn to_json<T: serde::Serialize>(outcome: RpcOutcome<T>) -> Result<Value, String> {
     outcome.into_cli_compatible_json()
+}
+
+fn from_channel_controller_schema(schema: ChannelControllerSchema) -> ControllerSchema {
+    ControllerSchema {
+        namespace: schema.namespace,
+        function: schema.function,
+        description: schema.description,
+        inputs: schema
+            .inputs
+            .into_iter()
+            .map(from_channel_controller_field)
+            .collect(),
+        outputs: schema
+            .outputs
+            .into_iter()
+            .map(from_channel_controller_field)
+            .collect(),
+    }
+}
+
+fn from_channel_controller_field(field: ChannelControllerField) -> FieldSchema {
+    FieldSchema {
+        name: field.name,
+        ty: from_channel_controller_field_type(field.ty),
+        comment: field.comment,
+        required: field.required,
+    }
+}
+
+fn from_channel_controller_field_type(ty: ChannelControllerFieldType) -> TypeSchema {
+    match ty {
+        ChannelControllerFieldType::Bool => TypeSchema::Bool,
+        ChannelControllerFieldType::I64 => TypeSchema::I64,
+        ChannelControllerFieldType::U64 => TypeSchema::U64,
+        ChannelControllerFieldType::F64 => TypeSchema::F64,
+        ChannelControllerFieldType::String => TypeSchema::String,
+        ChannelControllerFieldType::Json => TypeSchema::Json,
+        ChannelControllerFieldType::Option(inner) => {
+            TypeSchema::Option(Box::new(from_channel_controller_field_type(*inner)))
+        }
+    }
 }
 
 #[cfg(test)]

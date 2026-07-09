@@ -110,7 +110,7 @@ vi.mock('../UserTaskComposer', () => ({
 
 // Stub the kanban to a simple list that still surfaces the write callbacks
 // the personal board wires up, so we can assert the todos RPC is called.
-vi.mock('../../../pages/conversations/components/TaskKanbanBoard', () => ({
+vi.mock('../../../features/conversations/components/TaskKanbanBoard', () => ({
   TaskKanbanBoard: ({
     board,
     headerTitleKey,

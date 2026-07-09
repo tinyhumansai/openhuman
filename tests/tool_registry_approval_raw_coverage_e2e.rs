@@ -1185,6 +1185,7 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
             AgentTurnOrigin::WebChat {
                 thread_id: "approval-raw-thread".to_string(),
                 client_id: "approval-raw-client".to_string(),
+                request_id: None,
             },
             APPROVAL_CHAT_CONTEXT.scope(
                 ApprovalChatContext {
@@ -1373,6 +1374,7 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
         AgentTurnOrigin::WebChat {
             thread_id: "approval-auto-thread".to_string(),
             client_id: "approval-auto-client".to_string(),
+            request_id: None,
         },
         gate.intercept_audited(
             "tools.composio_execute",
@@ -1424,6 +1426,7 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
             AgentTurnOrigin::WebChat {
                 thread_id: "approval-deny-thread".to_string(),
                 client_id: "approval-deny-client".to_string(),
+                request_id: None,
             },
             APPROVAL_CHAT_CONTEXT.scope(
                 ApprovalChatContext {
@@ -1542,6 +1545,7 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
         AgentTurnOrigin::WebChat {
             thread_id: "approval-persist-failure-thread".to_string(),
             client_id: "approval-persist-failure-client".to_string(),
+            request_id: None,
         },
         APPROVAL_CHAT_CONTEXT.scope(
             ApprovalChatContext {

@@ -64,7 +64,7 @@ test.describe('Login Flow', () => {
       .toMatch(/^#\/(home|chat)(\/|$)/);
 
     const consumeCall = (await requests()).find(
-      request => request.method === 'POST' && request.url.includes('/telegram/login-tokens/')
+      request => request.method === 'POST' && request.url.includes('/auth/login-token/consume')
     );
     expect(consumeCall).toBeUndefined();
     await expect(await waitForMockRequest('GET', '/auth/me')).toBeTruthy();

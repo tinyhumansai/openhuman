@@ -30,7 +30,7 @@ const FRAMERATE: &str = "F30:1";
 /// Mascot SVG embedded at build time. The remotion bundle owns the
 /// canonical asset; we vendor a copy of its content via `include_str!`
 /// so the shell builds without needing the remotion tree at runtime.
-const MASCOT_SVG: &str = include_str!("../../../../remotion/public/mascot.svg");
+const MASCOT_SVG: &str = include_str!("mascot.svg");
 
 /// Top-level entrypoint. Returns the path to a Y4M file CEF can read,
 /// rasterizing the mascot if no cached version exists.

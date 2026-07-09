@@ -24,8 +24,8 @@ pub struct ResolvedProvider {
     /// Provider name token — always `"openhuman"` (remote backend).
     /// Kept for telemetry / observability compat with the previous two-path design.
     pub provider_name: String,
-    /// Model identifier — the concrete string `run_tool_call_loop`
-    /// will hand to the provider.
+    /// Model identifier — the concrete string the turn
+    /// (`run_turn_via_tinyagents_shared`) will hand to the provider.
     pub model: String,
     /// Always `false` — local AI is never used for triage.
     /// Preserved so existing telemetry subscribers that read this field do not
@@ -152,7 +152,7 @@ fn is_local_cli_route(provider_string: &str) -> bool {
 // ── Provider builder ────────────────────────────────────────────────────
 
 /// Build the remote provider for a triage turn, routed through the
-/// **`subconscious`** background workload so the Settings → AI → Advanced
+/// **`subconscious`** background workload so the Connections → API keys → LLM
 /// "Subconscious" provider control governs triage classification.
 ///
 /// The managed model id comes from `make_openhuman_backend` →

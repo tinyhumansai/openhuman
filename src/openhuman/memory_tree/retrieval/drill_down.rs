@@ -139,7 +139,7 @@ async fn rerank_by_semantic_similarity(
 
     let mut decorated: Vec<(f32, bool, RetrievalHit)> = hits
         .into_iter()
-        .zip(embeddings.into_iter())
+        .zip(embeddings)
         .map(|(h, emb)| match emb {
             Some(v) if v.len() == query_vec.len() => {
                 let sim = cosine_similarity(&query_vec, &v);

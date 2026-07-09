@@ -19,6 +19,8 @@ import { NavIcon } from './navIcons';
  *   - `/agent-world` → the index and every `/agent-world/*` section (it
  *                      redirects to `/agent-world/explore`, so an exact match
  *                      would never light up)
+ *   - `/flows`       → the list page and any future `/flows/*` sub-route
+ *                      (canvas, run detail, …)
  *   - `/home`        → exact match (so `/` redirects don't light it up)
  */
 function matchActive(path: string, pathname: string): boolean {
@@ -26,6 +28,7 @@ function matchActive(path: string, pathname: string): boolean {
   if (path === '/settings') return pathname === '/settings' || pathname.startsWith('/settings/');
   if (path === '/agent-world')
     return pathname === '/agent-world' || pathname.startsWith('/agent-world/');
+  if (path === '/flows') return pathname === '/flows' || pathname.startsWith('/flows/');
   if (path === '/home') return pathname === '/home';
   return pathname === path;
 }

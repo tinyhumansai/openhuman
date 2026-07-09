@@ -21,6 +21,12 @@ const DEFAULT_TIMEOUT_SECS: u64 = 30;
 
 pub struct X402RequestTool;
 
+impl Default for X402RequestTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl X402RequestTool {
     pub fn new() -> Self {
         Self
@@ -185,7 +191,7 @@ impl Tool for X402RequestTool {
                 Ok(r) => r,
                 Err(e) => {
                     let _ = store::with_ledger_mut(|l| {
-                        let mut updated = store::PaymentRecord {
+                        let updated = store::PaymentRecord {
                             id: record_id,
                             url: url.clone(),
                             asset: payment_result.asset.clone(),

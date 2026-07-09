@@ -10,6 +10,7 @@ import {
 } from '../../store/deepLinkAuthState';
 import { getStoredCoreMode } from '../configPersistence';
 import {
+  authStoreFailureUserMessage,
   classifyAuthStoreFailure,
   registerAuthDeepLinkState,
   setupDesktopDeepLinkListener,
@@ -394,5 +395,38 @@ describe('classifyAuthStoreFailure', () => {
     // The bare prefix is still recognized via the auth/me anchor — NOT 'other'.
     expect(classifyAuthStoreFailure(bare)).toBe('auth_me_other');
     expect(classifyAuthStoreFailure(bare)).not.toBe('other');
+  });
+});
+
+describe('authStoreFailureUserMessage (issue #3025)', () => {
+  const CLOUD_KINDS = [
+    'auth_me_timeout',
+    'auth_me_unauthorized',
+    'auth_me_gateway',
+    'network',
+    'other',
+  ];
+
+  // Local / unset mode always keeps the plain retry message — the failure there
+  // is a transient embedded-core/backend blip that retrying can clear.
+  it.each(['local', null] as const)('stays generic for mode=%s', mode => {
+    for (const kind of CLOUD_KINDS) {
+      expect(authStoreFailureUserMessage(kind, mode)).toBe('Sign-in failed. Please try again.');
+    }
+  });
+
+  it('points cloud-mode users at the remote runtime, not a dead-end retry', () => {
+    for (const kind of CLOUD_KINDS) {
+      const msg = authStoreFailureUserMessage(kind, 'cloud');
+      expect(msg).not.toBe('Sign-in failed. Please try again.');
+      expect(msg.toLowerCase()).toContain('remote');
+    }
+  });
+
+  it('gives kind-specific cloud hints (401 token, gateway/timeout BACKEND_URL)', () => {
+    expect(authStoreFailureUserMessage('auth_me_unauthorized', 'cloud')).toContain('RPC token');
+    expect(authStoreFailureUserMessage('auth_me_gateway', 'cloud')).toContain('BACKEND_URL');
+    expect(authStoreFailureUserMessage('auth_me_timeout', 'cloud')).toContain('BACKEND_URL');
+    expect(authStoreFailureUserMessage('network', 'cloud')).toContain('online');
   });
 });

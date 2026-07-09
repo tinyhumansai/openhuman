@@ -15,12 +15,14 @@ use serde_repr::{Deserialize_repr, Serialize_repr};
 /// - Token budget per background cycle
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize_repr, Deserialize_repr, JsonSchema)]
 #[repr(u8)]
+#[derive(Default)]
 pub enum AgentActivityLevel {
     /// No background processing. Syncs only on manual press.
     Off = 0,
     /// Sync sources once per day. No proactive messages.
     Minimal = 1,
     /// Sync every hour. Daily digest. Suggests actions. (default)
+    #[default]
     Moderate = 2,
     /// Sync every 10 min. Monitors channels, triages, drafts replies.
     Active = 3,
@@ -92,12 +94,6 @@ impl AgentActivityLevel {
             Self::Active => (5.0, 20.0),
             Self::AlwaysOn => (20.0, 100.0),
         }
-    }
-}
-
-impl Default for AgentActivityLevel {
-    fn default() -> Self {
-        Self::Moderate
     }
 }
 

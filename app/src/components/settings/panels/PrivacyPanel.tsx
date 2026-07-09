@@ -17,6 +17,7 @@ import {
   SettingsSwitch,
 } from '../controls';
 import SettingsPanel from '../layout/SettingsPanel';
+import PrivacyModeSection from './PrivacyModeSection';
 
 const log = debug('privacy-panel');
 
@@ -102,6 +103,9 @@ const PrivacyPanel = () => {
       testId="settings-privacy-panel"
       description={t('pages.settings.account.privacyDesc')}>
       <>
+        {/* Privacy Mode selector (#4435) — data-egress posture */}
+        <PrivacyModeSection />
+
         {/* What leaves my computer */}
         <SettingsSection title={t('privacy.whatLeavesComputer')}>
           {loadState === 'loading' && (

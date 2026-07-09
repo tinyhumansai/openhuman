@@ -244,11 +244,11 @@ fn collect_redactions_inner(norm: &str, include_bare_numeric: bool) -> Vec<Hit> 
     });
 
     // IBAN before credit card: CC can match an IBAN tail of all digits.
-    push_checksum(&mut hits, norm, &IBAN_RE, PII_IBAN, |s| valid_iban(s));
+    push_checksum(&mut hits, norm, &IBAN_RE, PII_IBAN, valid_iban);
 
     if include_bare_numeric {
         // Credit card before bare CPF/CNPJ to avoid catching a 13-19 digit run as CPF/CNPJ.
-        push_checksum(&mut hits, norm, &CC_RE, PII_CC, |s| valid_luhn(s));
+        push_checksum(&mut hits, norm, &CC_RE, PII_CC, valid_luhn);
 
         push_checksum(&mut hits, norm, &CNPJ_BARE_RE, PII_CNPJ, |s| {
             valid_cnpj(digits(s).as_slice())
@@ -266,10 +266,10 @@ fn collect_redactions_inner(norm: &str, include_bare_numeric: bool) -> Vec<Hit> 
         valid_verhoeff(digits(digits_str).as_slice())
     });
 
-    push_checksum(&mut hits, norm, &DNI_RE, PII_DNI, |s| valid_dni_es(s));
-    push_checksum(&mut hits, norm, &NIE_RE, PII_DNI, |s| valid_nie_es(s));
-    push_checksum(&mut hits, norm, &NINO_RE, PII_NINO, |s| valid_nino(s));
-    push_checksum(&mut hits, norm, &SSN_RE, PII_SSN, |s| valid_ssn(s));
+    push_checksum(&mut hits, norm, &DNI_RE, PII_DNI, valid_dni_es);
+    push_checksum(&mut hits, norm, &NIE_RE, PII_DNI, valid_nie_es);
+    push_checksum(&mut hits, norm, &NINO_RE, PII_NINO, valid_nino);
+    push_checksum(&mut hits, norm, &SSN_RE, PII_SSN, valid_ssn);
     push_simple(&mut hits, norm, &RRN_RE, PII_RRN);
     push_simple(&mut hits, norm, &RFC_RE, PII_RFC);
     push_simple(&mut hits, norm, &PAN_IN_RE, PII_PAN_IN);
@@ -349,7 +349,7 @@ fn dedupe_overlaps(hits: &mut Vec<Hit>) {
     });
     let mut kept: Vec<Hit> = Vec::with_capacity(hits.len());
     for h in hits.drain(..) {
-        let overlaps = kept.last().map_or(false, |k| h.start < k.end);
+        let overlaps = kept.last().is_some_and(|k| h.start < k.end);
         if !overlaps {
             kept.push(h);
         }
@@ -547,7 +547,7 @@ fn valid_luhn(s: &str) -> bool {
         sum += v;
         alt = !alt;
     }
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 // IBAN mod-97. Steps: strip spaces, move first 4 chars to end, expand letters

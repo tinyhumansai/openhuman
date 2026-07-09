@@ -102,6 +102,7 @@ const themePersistConfig = {
     'mode',
     'tabBarLabels',
     'fontSize',
+    'customFontSizePx',
     'agentMessageViewMode',
     'developerMode',
     'hideAgentInsights',

@@ -296,7 +296,7 @@ pub fn update_server_config_conn(
 }
 
 pub fn list_servers(config: &Config) -> Result<Vec<InstalledServer>> {
-    with_connection(config, |conn| list_servers_conn(conn))
+    with_connection(config, list_servers_conn)
 }
 
 pub fn list_servers_conn(conn: &Connection) -> Result<Vec<InstalledServer>> {

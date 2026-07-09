@@ -106,7 +106,7 @@ pub fn select_distribution(
         .filter(|dist| dist.version >= minimum)
         // Exclusive upper bound — keeps selection off newer pre-release series
         // (e.g. 3.15.x betas, which parse as a bare `3.15.0`).
-        .filter(|dist| maximum.as_ref().map_or(true, |max| dist.version < *max))
+        .filter(|dist| maximum.as_ref().is_none_or(|max| dist.version < *max))
         .collect::<Vec<_>>();
 
     if candidates.is_empty() {

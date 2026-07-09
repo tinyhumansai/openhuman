@@ -258,7 +258,7 @@ impl InvertedIndex {
         // Phase 2: verify each candidate by exact substring match.
         // Count distinct terms per doc for the score.
         let mut hit_counts: HashMap<u32, usize> = HashMap::new();
-        for (term, candidates) in terms.iter().zip(per_term.into_iter()) {
+        for (term, candidates) in terms.iter().zip(per_term) {
             for doc_id in candidates {
                 let Some(entry) = self.docs[doc_id as usize].as_ref() else {
                     continue;

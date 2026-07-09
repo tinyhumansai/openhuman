@@ -121,6 +121,7 @@ describe('tauriCommands/config', () => {
           auto_summarize_policy: 'never',
           listen_only_default: false,
           ingest_backend_transcripts: true,
+          calendar_provider: 'recall',
         },
         logs: [],
       });
@@ -133,6 +134,7 @@ describe('tauriCommands/config', () => {
       expect(out.result.auto_summarize_policy).toBe('never');
       expect(out.result.listen_only_default).toBe(false);
       expect(out.result.ingest_backend_transcripts).toBe(true);
+      expect(out.result.calendar_provider).toBe('recall');
     });
   });
 

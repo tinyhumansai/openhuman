@@ -270,7 +270,7 @@ impl IncrementalSource for NotionSource {
             // old per-call `record_requests(1)`.
             state.record_requests(fetch_count as u32);
 
-            for (p, body) in pending.iter_mut().zip(bodies.into_iter()) {
+            for (p, body) in pending.iter_mut().zip(bodies) {
                 p.markdown_body = body;
             }
         }

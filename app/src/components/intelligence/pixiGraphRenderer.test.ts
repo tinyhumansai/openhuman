@@ -105,6 +105,7 @@ vi.mock('pixi.js', () => ({
   Container: h.Container,
   Graphics: h.Graphics,
 }));
+vi.mock('pixi.js/unsafe-eval', () => ({}));
 
 function makeNodes(): SimNode[] {
   return [

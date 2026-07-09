@@ -127,6 +127,10 @@ impl OpenHumanBackendProvider {
 
 #[async_trait]
 impl Provider for OpenHumanBackendProvider {
+    fn telemetry_provider_id(&self) -> String {
+        "managed".to_string()
+    }
+
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities {
             native_tool_calling: true,

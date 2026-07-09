@@ -13,7 +13,6 @@ use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::voice::hotkey::{self, ActivationMode, HotkeyEvent};
 
 const LOG_PREFIX: &str = "[dictation_listener]";
 
@@ -122,7 +121,6 @@ pub async fn start_if_enabled(config: &Config) {
             "{LOG_PREFIX} macOS: skipping rdev hotkey listener — \
              handled by Tauri host via tauri-plugin-global-shortcut (issue #2677)"
         );
-        return;
     }
 
     // Non-macOS: start the rdev-based listener.

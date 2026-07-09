@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { computeGraphCentrality } from '../../lib/memory/graphCentrality';
 import type { GraphRelation } from '../../utils/tauriCommands/memory';
-import { graphCentralityApi, loadCentrality, loadNamespaces } from './graphCentralityApi';
+import { loadCentrality, loadNamespaces } from './graphCentralityApi';
 
 const mockGraphQuery = vi.fn();
 const mockListNamespaces = vi.fn();
@@ -62,12 +62,5 @@ describe('graphCentralityApi.loadNamespaces', () => {
   it('returns the namespace list from the RPC', async () => {
     mockListNamespaces.mockResolvedValueOnce(['work', 'personal']);
     expect(await loadNamespaces()).toEqual(['work', 'personal']);
-  });
-});
-
-describe('graphCentralityApi object', () => {
-  it('exposes the public surface', () => {
-    expect(typeof graphCentralityApi.loadCentrality).toBe('function');
-    expect(typeof graphCentralityApi.loadNamespaces).toBe('function');
   });
 });

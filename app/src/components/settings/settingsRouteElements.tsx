@@ -18,6 +18,7 @@ import AutocompletePanel from './panels/AutocompletePanel';
 import BillingPanel from './panels/BillingPanel';
 import CompanionPanel from './panels/CompanionPanel';
 import ComposioTriagePanel from './panels/ComposioTriagePanel';
+import CoreConnectionPanel from './panels/CoreConnectionPanel';
 import CronJobsPanel from './panels/CronJobsPanel';
 import DesktopAgentPanel from './panels/DesktopAgentPanel';
 import DeveloperOptionsPanel from './panels/DeveloperOptionsPanel';
@@ -154,6 +155,9 @@ export function settingsRouteElements(): ReactNode {
       <Route path="autocomplete" element={wrapSettingsPage(<AutocompletePanel />)} />
 
       {/* ── System ──────────────────────────────────────────────── */}
+      {/* Core connection — promotes cloud-mode remote-core config into a
+          first-class setting with a live status indicator (GH-4396). */}
+      <Route path="core" element={wrapSettingsPage(<CoreConnectionPanel />)} />
       <Route path="keyboard-shortcuts" element={wrapSettingsPage(<KeyboardShortcutsPanel />)} />
       <Route path="developer-options" element={wrapSettingsPage(<DeveloperOptionsPanel />)} />
       <Route path="token-usage" element={wrapSettingsPage(<TokenUsagePanel />)} />

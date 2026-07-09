@@ -15,7 +15,9 @@ use openhuman_core::openhuman::channels::test_support::{
 use openhuman_core::openhuman::channels::LarkChannel;
 use reqwest::StatusCode as ReqwestStatusCode;
 use serde_json::json;
-use tokio_tungstenite::tungstenite::Message as WsMsg;
+// Lark's WS seam lives in tinychannels (tungstenite 0.29); use its re-export so
+// the message type matches the function signature across the version boundary.
+use tinychannels::tokio_tungstenite::tungstenite::Message as WsMsg;
 
 async fn spawn_mock(app: Router) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

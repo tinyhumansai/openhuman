@@ -1,5 +1,8 @@
 use super::super::context::{ChannelRuntimeContext, CHANNEL_MESSAGE_TIMEOUT_SECS};
-use super::super::runtime::{process_channel_message, run_message_dispatch_loop};
+use super::super::runtime::test_support::{run_dispatch_harness, DispatchHarnessOptions};
+use super::super::runtime::{
+    process_channel_message, run_message_dispatch_loop, RuntimeChannelMessage,
+};
 use super::super::{traits, Channel};
 use super::common::{use_real_agent_handler, NoopMemory, RecordingChannel, SlowProvider};
 use crate::core::event_bus::{init_global, DomainEvent, DEFAULT_CAPACITY};
@@ -9,6 +12,70 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::sync::Barrier;
+
+#[tokio::test]
+async fn dispatch_publishes_tinychannels_inbound_envelope() {
+    let observation = run_dispatch_harness(DispatchHarnessOptions {
+        channel_name: "telegram".to_string(),
+        thread_ts: Some("topic-99".to_string()),
+        ..Default::default()
+    })
+    .await;
+
+    let envelope = observation
+        .received_event_envelope
+        .expect("dispatch should publish inbound envelope");
+    assert_eq!(envelope.channel.id, "telegram");
+    assert_eq!(envelope.message_id, "m1");
+    assert_eq!(envelope.conversation.id, "reply");
+    assert_eq!(envelope.conversation.thread_id, None);
+    assert_eq!(envelope.conversation.topic_id.as_deref(), Some("topic-99"));
+    assert_eq!(envelope.sender.id, "alice");
+}
+
+#[tokio::test]
+async fn dispatch_preserves_supplied_tinychannels_inbound_envelope() {
+    let supplied = tinychannels::ChannelInboundEnvelope {
+        channel: tinychannels::channel::ChannelRef {
+            id: "slack".into(),
+            account_id: Some("bot-a".into()),
+        },
+        message_id: "m1".into(),
+        conversation: tinychannels::channel::ConversationRef {
+            kind: tinychannels::channel::ConversationKind::Channel,
+            id: "general".into(),
+            scope_id: Some("T123".into()),
+            parent_id: None,
+            thread_id: Some("thread-1".into()),
+            topic_id: None,
+        },
+        sender: tinychannels::channel::SenderRef {
+            id: "alice".into(),
+            name: Some("Alice".into()),
+            is_bot: false,
+            ..Default::default()
+        },
+        text: "hello".into(),
+        ..Default::default()
+    };
+
+    let observation = run_dispatch_harness(DispatchHarnessOptions {
+        channel_name: "slack".to_string(),
+        thread_ts: Some("thread-1".to_string()),
+        inbound_envelope: Some(supplied),
+        ..Default::default()
+    })
+    .await;
+
+    let envelope = observation
+        .received_event_envelope
+        .expect("dispatch should publish supplied inbound envelope");
+    assert_eq!(envelope.channel.account_id.as_deref(), Some("bot-a"));
+    assert_eq!(envelope.conversation.scope_id.as_deref(), Some("T123"));
+    assert_eq!(envelope.conversation.thread_id.as_deref(), Some("thread-1"));
+    assert_eq!(envelope.sender.name.as_deref(), Some("Alice"));
+}
 
 #[tokio::test]
 async fn message_dispatch_processes_messages_in_parallel() {
@@ -17,15 +84,21 @@ async fn message_dispatch_processes_messages_in_parallel() {
     // without relying on wall-clock thresholds that can wobble in CI.
     let in_flight = Arc::new(AtomicUsize::new(0));
     let peak_in_flight = Arc::new(AtomicUsize::new(0));
+    let handler_barrier = Arc::new(Barrier::new(2));
     let _bus_guard = mock_agent_run_turn({
         let in_flight = in_flight.clone();
         let peak_in_flight = peak_in_flight.clone();
+        let handler_barrier = handler_barrier.clone();
         move |_req: AgentTurnRequest| {
             let in_flight = in_flight.clone();
             let peak_in_flight = peak_in_flight.clone();
+            let handler_barrier = handler_barrier.clone();
             async move {
                 let current = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
                 peak_in_flight.fetch_max(current, Ordering::SeqCst);
+                tokio::time::timeout(Duration::from_secs(2), handler_barrier.wait())
+                    .await
+                    .map_err(|_| "parallel dispatch handler barrier timed out".to_string())?;
                 tokio::time::sleep(Duration::from_millis(250)).await;
                 in_flight.fetch_sub(1, Ordering::SeqCst);
                 Ok(AgentTurnResponse::new("echo: stub"))
@@ -72,8 +145,8 @@ async fn message_dispatch_processes_messages_in_parallel() {
     };
 
     let (parallel_channel, parallel_ctx) = build_runtime();
-    let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(4);
-    tx.send(traits::ChannelMessage {
+    let (tx, rx) = tokio::sync::mpsc::channel::<RuntimeChannelMessage>(4);
+    tx.send(RuntimeChannelMessage::from(traits::ChannelMessage {
         id: "1".to_string(),
         sender: "alice".to_string(),
         reply_target: "alice".to_string(),
@@ -81,10 +154,10 @@ async fn message_dispatch_processes_messages_in_parallel() {
         channel: "test-channel".to_string(),
         timestamp: 1,
         thread_ts: None,
-    })
+    }))
     .await
     .unwrap();
-    tx.send(traits::ChannelMessage {
+    tx.send(RuntimeChannelMessage::from(traits::ChannelMessage {
         id: "2".to_string(),
         sender: "bob".to_string(),
         reply_target: "bob".to_string(),
@@ -92,7 +165,7 @@ async fn message_dispatch_processes_messages_in_parallel() {
         channel: "test-channel".to_string(),
         timestamp: 2,
         thread_ts: None,
-    })
+    }))
     .await
     .unwrap();
     drop(tx);

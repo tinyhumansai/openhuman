@@ -6,6 +6,8 @@ interface EmptyStateCardProps {
   description: string;
   actionLabel?: string;
   onAction?: () => void;
+  /** `data-testid` for the action button, so callers can target it distinctly from other same-labeled buttons on the page. */
+  actionTestId?: string;
   footer?: ReactNode;
   className?: string;
 }
@@ -16,6 +18,7 @@ const EmptyStateCard = ({
   description,
   actionLabel,
   onAction,
+  actionTestId,
   footer,
   className = '',
 }: EmptyStateCardProps) => {
@@ -30,6 +33,7 @@ const EmptyStateCard = ({
       {actionLabel && onAction ? (
         <button
           type="button"
+          data-testid={actionTestId}
           onClick={onAction}
           className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-primary-50 dark:bg-primary-500/10 px-3 py-1.5 text-xs font-medium text-primary-600 dark:text-primary-400 border border-primary-100 dark:border-primary-800/50 transition-colors hover:bg-primary-100 dark:hover:bg-primary-500/20">
           <span>{actionLabel}</span>

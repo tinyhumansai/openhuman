@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   type ApprovalAuditEntry,
+  decideApproval,
   fetchPendingApprovals,
   fetchRecentApprovalDecisions,
   unwrapRows,
@@ -89,5 +90,34 @@ describe('fetchPendingApprovals', () => {
 
     expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: 'openhuman.approval_list_pending' });
     expect(rows[0].request_id).toBe('p-1');
+  });
+
+  it('preserves a flow-origin source_context when present', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce([
+      {
+        request_id: 'p-2',
+        tool_name: 'shell',
+        source_context: { kind: 'flow', flow_id: 'flow-1', run_id: 'run-1' },
+      },
+    ]);
+
+    const rows = await fetchPendingApprovals();
+
+    expect(rows[0].source_context).toEqual({ kind: 'flow', flow_id: 'flow-1', run_id: 'run-1' });
+  });
+});
+
+describe('decideApproval', () => {
+  beforeEach(() => mockCallCoreRpc.mockReset());
+
+  it('calls openhuman.approval_decide with the request id and decision', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({});
+
+    await decideApproval('req-1', 'approve_always_for_flow');
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.approval_decide',
+      params: { request_id: 'req-1', decision: 'approve_always_for_flow' },
+    });
   });
 });

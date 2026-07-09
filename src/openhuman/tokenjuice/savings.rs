@@ -94,9 +94,10 @@ fn state() -> &'static Mutex<State> {
 }
 
 tokio::task_local! {
-    /// The model actually running the current turn/sub-agent, scoped by the
-    /// agent loop around `run_turn_engine` (mirrors
-    /// [`crate::openhuman::agent::harness::model_vision_context`]). When set,
+    /// The model actually running the current turn/sub-agent, scoped around
+    /// the tinyagents turn (`run_turn_via_tinyagents_shared`) — the same
+    /// task-local pattern as
+    /// [`crate::openhuman::agent::harness::turn_attachments_context`]. When set,
     /// compaction savings are priced against *this* model instead of the
     /// process-global configured default (issue #4122). Unset ⇒ fall back to
     /// the configured default, so non-harness callers and tests are unaffected
@@ -105,9 +106,9 @@ tokio::task_local! {
 }
 
 /// Run `future` with `model` installed as the per-turn attribution model used
-/// to price compaction savings. Intended call site is around each
-/// `run_turn_engine` invocation, alongside the other per-turn `*_context`
-/// scopes (issue #4122).
+/// to price compaction savings. Intended call site is around each turn's
+/// `run_turn_via_tinyagents_shared` invocation, alongside the other per-turn
+/// `*_context` scopes (issue #4122).
 pub async fn with_turn_model<F, R>(model: String, future: F) -> R
 where
     F: std::future::Future<Output = R>,

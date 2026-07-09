@@ -40,6 +40,15 @@ pub enum BackendApiError {
         /// Request path the 401 came back from (no query string).
         path: String,
     },
+    /// `GET /announcements/latest` returned 404. The announcements feature is
+    /// a best-effort, cosmetic fetch (`app/src/services/announcementService.ts`:
+    /// "a missing announcement is never worth surfacing an error for") — a 404
+    /// here means "no announcement", not a code bug. Callers should degrade to
+    /// `null` and skip the retry-as-error path. Targets `TAURI-RUST-HW0`
+    /// (`backend_api`/`authed_json`) and `TAURI-RUST-KHX` (`rpc`/`invoke_method`
+    /// re-wrap) — one failure reported at two layers, ~452 events / 19 users.
+    #[error("no announcement available (404 on /announcements/latest)")]
+    AnnouncementNotFound,
 }
 
 /// Flatten an `authed_json` error onto the JSON-RPC `String` channel.
@@ -92,6 +101,16 @@ fn parse_message_path(path: &str) -> Option<(&str, &str)> {
         }
     }
     None
+}
+
+/// `true` when `path` is `/announcements/latest`, tolerant of an arbitrary
+/// base-path prefix (e.g. `/api/v1/announcements/latest`) — same
+/// prefix-tolerant reasoning as [`parse_message_path`] (OPENHUMAN-TAURI-R7):
+/// a `BACKEND_URL` override with a path prefix must not cause this route's
+/// 404 to silently fall through to the generic `report_error` path.
+fn is_announcements_latest_path(path: &str) -> bool {
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    matches!(segments.as_slice(), [.., "announcements", "latest"])
 }
 
 const CLIENT_VERSION_HEADER_MAX_LEN: usize = 64;
@@ -701,6 +720,23 @@ impl BackendOAuthClient {
                         method.as_str(),
                         url.path(),
                     );
+                }
+
+                // 404 on `/announcements/latest` means "no announcement" for
+                // this best-effort, cosmetic feature — not a code bug. Surface
+                // a typed `BackendApiError::AnnouncementNotFound` so the caller
+                // (`announcements::ops::get_latest_announcement`) can degrade to
+                // `null` instead of propagating an error, without funneling the
+                // 404 into `report_error`. Targets `TAURI-RUST-HW0` / `TAURI-RUST-KHX`.
+                if method == Method::GET && is_announcements_latest_path(url.path()) {
+                    tracing::info!(
+                        domain = "backend_api",
+                        operation = "authed_json",
+                        "[backend_api] announcement-not-found 404 on {} {} — surfacing typed error",
+                        method.as_str(),
+                        url.path(),
+                    );
+                    return Err(anyhow::Error::new(BackendApiError::AnnouncementNotFound));
                 }
             }
 

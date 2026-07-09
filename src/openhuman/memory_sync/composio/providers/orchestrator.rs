@@ -55,7 +55,9 @@ fn pages_for_max_items(max_items: u32, page_size: u32) -> u32 {
         return u32::MAX;
     }
     // Widen to u64 before the addition to prevent overflow for large cap values.
-    (((max_items as u64) + (page_size as u64) - 1) / (page_size as u64)).min(u32::MAX as u64) as u32
+    (max_items as u64)
+        .div_ceil(page_size as u64)
+        .min(u32::MAX as u64) as u32
 }
 
 /// Single source of truth for the per-sync `max_items` cap.

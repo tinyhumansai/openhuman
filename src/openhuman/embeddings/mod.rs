@@ -26,12 +26,6 @@ mod rpc;
 mod schemas;
 pub mod voyage;
 
-// VectorStore has moved to memory_store::vectors; re-exported for callers.
-pub use crate::openhuman::memory_store::vectors::store;
-
-pub use crate::openhuman::memory_store::vectors::{
-    bytes_to_vec, cosine_similarity, vec_to_bytes, SearchResult, VectorStore,
-};
 pub use catalog::non_embedding_model_reason;
 pub use cloud::{
     OpenHumanCloudEmbedding, DEFAULT_CLOUD_EMBEDDING_DIMENSIONS, DEFAULT_CLOUD_EMBEDDING_MODEL,

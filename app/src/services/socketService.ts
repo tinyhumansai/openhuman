@@ -6,6 +6,7 @@ import { SocketIOMCPTransportImpl } from '../lib/mcp';
 import { ingestRuntimeErrorSignal } from '../lib/userErrors/report';
 import { store } from '../store';
 import {
+  appendBackendMeetTranscriptDelta,
   setBackendMeetError,
   setBackendMeetHarness,
   setBackendMeetJoined,
@@ -520,6 +521,33 @@ class SocketService {
         setBackendMeetTranscript({
           turns: Array.isArray(obj.turns) ? obj.turns : [],
           duration_ms: typeof obj.duration_ms === 'number' ? obj.duration_ms : 0,
+          correlationId,
+        })
+      );
+    });
+    this.socket.on('agent_meetings:transcript_delta', (data: unknown) => {
+      const obj = data as Record<string, unknown> | null;
+      if (!obj) return;
+      const turn = obj.turn as Record<string, unknown> | null | undefined;
+      // Drop malformed deltas that carry no turn content.
+      if (!turn || typeof turn.role !== 'string' || typeof turn.content !== 'string') {
+        socketError('agent_meetings:transcript_delta dropped: missing/invalid turn');
+        return;
+      }
+      const correlationId = typeof obj.correlation_id === 'string' ? obj.correlation_id : undefined;
+      const index = typeof obj.index === 'number' ? obj.index : 0;
+      const isPartial = typeof obj.is_partial === 'boolean' ? obj.is_partial : false;
+      socketLog(
+        'agent_meetings:transcript_delta index=%d is_partial=%s correlation_id=%s',
+        index,
+        isPartial,
+        correlationId ?? 'none'
+      );
+      store.dispatch(
+        appendBackendMeetTranscriptDelta({
+          turn: { role: turn.role, content: turn.content },
+          index,
+          is_partial: isPartial,
           correlationId,
         })
       );

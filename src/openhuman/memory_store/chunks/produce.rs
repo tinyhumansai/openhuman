@@ -312,7 +312,7 @@ fn split_email_messages(md: &str) -> Vec<String> {
         } else {
             n
         };
-        let piece_lines: Vec<&str> = lines[start..end].iter().copied().collect();
+        let piece_lines: Vec<&str> = lines[start..end].to_vec();
         let piece = piece_lines.join("\n").trim_end().to_string();
         if !piece.is_empty() {
             pieces.push(piece);

@@ -12,11 +12,11 @@ pub use http::{CurlConfig, HttpRequestConfig};
 pub use integrations::{
     ComposioConfig, ComputerControlConfig, IntegrationToggle, IntegrationsConfig,
     PolymarketClobCredentials, PolymarketConfig, SecretsConfig, COMPOSIO_MODE_BACKEND,
-    COMPOSIO_MODE_DIRECT, INTEGRATION_MODE_BYO, INTEGRATION_MODE_MANAGED,
+    COMPOSIO_MODE_DIRECT,
 };
 pub use mcp::{
     GitbooksConfig, HttpHeader, McpAuthConfig, McpClientConfig, McpClientIdentityConfig,
-    McpRegistryAuthConfig, McpServerConfig,
+    McpServerConfig,
 };
 pub use multimodal::{MultimodalConfig, MultimodalFileConfig};
 pub use search::{

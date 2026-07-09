@@ -177,7 +177,7 @@ Registered in **`lib.rs`** (`ptt_hotkeys.rs` + `ptt_overlay.rs`). These commands
 Registered in **`lib.rs`** at startup under the event-bus native-request method
 `computer.input_on_main_thread` (`INPUT_ON_MAIN_THREAD_METHOD`, defined in
 `openhuman_core::openhuman::tools::computer::main_thread`). This is **not** a
-`@tauri-apps/api` `invoke` command — it is an in-process native request the
+`@tauri-apps/api` `invoke` command. It is an in-process native request the
 **core** dispatches to the **shell** so synthetic input runs on the real app
 main thread.
 
@@ -191,7 +191,7 @@ the shell runs it via `AppHandle::run_on_main_thread`.
 | ------------ | -------------------------------------------------------------------------------------------------- |
 | Method       | `computer.input_on_main_thread`                                                                    |
 | Request      | `MainThreadInputOp { run: Box<dyn FnOnce() -> Result<String, String> + Send> }` (passed by value)  |
-| Response     | `Result<String, String>` — `Ok(message)` on success, `Err(reason)` on failure                      |
+| Response     | `Result<String, String>`: `Ok(message)` on success, `Err(reason)` on failure                      |
 | Availability | Desktop only. Headless / CLI builds register no executor; the core call then returns a clean `Err`. |
 
 ### Removed / not present

@@ -26,6 +26,19 @@
 //! `spawn_agent` call nested in that scope then resolves `current_parent()` to
 //! the root, inheriting a real provider, tool registry, memory, and model — the
 //! same construction path `agent_chat` uses.
+//!
+//! ## TODO(#4249, 08.3): human-review phases as durable interrupts
+//!
+//! When a workflow phase gains a *human-review* gate, express the pause as a
+//! durable graph interrupt (`NodeResult::Interrupt` persisted via the
+//! checkpointer, resumed with `Command { resume: .. }`) instead of the ad-hoc
+//! `Interrupted`/cancel-flag bookkeeping used for stop/resume here. The
+//! mechanism is already implemented end-to-end for the delegation review gate in
+//! [`crate::openhuman::tinyagents::delegation`] (see `run_delegation_durable` /
+//! `resume_delegation`); this engine should adopt the same
+//! interrupt→checkpoint→resume path once a human-review phase kind exists. The
+//! current between-phase cancellation bookkeeping is intentionally left in place
+//! until that phase kind lands, to keep stop/resume semantics unchanged.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,9 +46,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
+use tinyagents::graph::parallel::{map_reduce, FailurePolicy, ParallelOptions};
+use tinyagents::{CancellationToken, TinyAgentsError};
 
-use crate::openhuman::agent::harness::fork_context::with_parent_context;
-use crate::openhuman::agent_orchestration::parent_context::build_root_parent;
+use crate::openhuman::agent_orchestration::parent_context::with_root_parent;
 use crate::openhuman::config::Config;
 use crate::openhuman::session_db::run_ledger::{
     get_workflow_run, upsert_workflow_run, WorkflowRun, WorkflowRunStatus, WorkflowRunUpsert,
@@ -52,6 +66,19 @@ const PHASE_RUNNING: &str = "running";
 const PHASE_COMPLETED: &str = "completed";
 const PHASE_FAILED: &str = "failed";
 
+/// One worker's outcome from the intra-phase graph fan-out (see
+/// [`drive_phases`]). Rides in the fan-out graph's typed state, so it is `Clone`.
+#[derive(Clone)]
+struct PhaseWorkerOutcome {
+    /// The spawned child's orchestration id, recorded in `child_run_ids`.
+    /// `None` when the child was never spawned (cancelled / spawn error).
+    orchestration_id: Option<String>,
+    /// Completed child's output row appended to the phase outputs.
+    output: Option<Value>,
+    /// Failure reason when the worker did not complete successfully.
+    error: Option<String>,
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Cancellation registry
 // ───────────────────────────────────────────────────────────────────────────
@@ -60,26 +87,50 @@ const PHASE_FAILED: &str = "failed";
 /// flips the flag; the engine loop checks it between phases and aborts in-flight
 /// child tasks via the orchestration session before marking the run
 /// `Interrupted`.
-fn cancel_registry() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
-    static REGISTRY: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
+#[derive(Clone)]
+struct WorkflowCancelSignal {
+    flag: Arc<AtomicBool>,
+    token: CancellationToken,
+}
+
+fn cancel_registry() -> &'static Mutex<HashMap<String, WorkflowCancelSignal>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<String, WorkflowCancelSignal>>> = OnceLock::new();
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// Register (or reuse) a cancellation flag for `run_id`.
-fn register_cancel_flag(run_id: &str) -> Arc<AtomicBool> {
+fn register_cancel_signal(run_id: &str) -> WorkflowCancelSignal {
     let mut map = cancel_registry().lock().expect("cancel registry poisoned");
     map.entry(run_id.to_string())
-        .or_insert_with(|| Arc::new(AtomicBool::new(false)))
+        .or_insert_with(|| WorkflowCancelSignal {
+            flag: Arc::new(AtomicBool::new(false)),
+            token: CancellationToken::new(),
+        })
         .clone()
 }
 
-/// Look up an existing cancellation flag for `run_id`, if one is registered.
-fn lookup_cancel_flag(run_id: &str) -> Option<Arc<AtomicBool>> {
+/// Register (or reuse) a cancellation flag for `run_id`.
+fn register_cancel_flag(run_id: &str) -> Arc<AtomicBool> {
+    register_cancel_signal(run_id).flag
+}
+
+/// Look up an existing cancellation signal for `run_id`, if one is registered.
+fn lookup_cancel_signal(run_id: &str) -> Option<WorkflowCancelSignal> {
     cancel_registry()
         .lock()
         .expect("cancel registry poisoned")
         .get(run_id)
         .cloned()
+}
+
+/// Look up an existing cancellation flag for `run_id`, if one is registered.
+fn lookup_cancel_flag(run_id: &str) -> Option<Arc<AtomicBool>> {
+    lookup_cancel_signal(run_id).map(|signal| signal.flag)
+}
+
+/// Look up an SDK cancellation token for `run_id`, if one is registered.
+fn lookup_cancel_token(run_id: &str) -> Option<CancellationToken> {
+    lookup_cancel_signal(run_id).map(|signal| signal.token)
 }
 
 /// Drop a run's cancellation flag once the engine loop is done with it.
@@ -187,12 +238,15 @@ pub async fn stop_workflow_run(config: &Config, id: &str) -> Result<Option<Workf
         return Ok(Some(run));
     }
 
-    if let Some(flag) = lookup_cancel_flag(id) {
-        flag.store(true, Ordering::SeqCst);
+    if let Some(signal) = lookup_cancel_signal(id) {
+        signal.flag.store(true, Ordering::SeqCst);
+        signal.token.cancel();
     } else {
         // No live loop (e.g. process restart) — register a flag anyway so a
         // future resume observes the stop intent.
-        register_cancel_flag(id).store(true, Ordering::SeqCst);
+        let signal = register_cancel_signal(id);
+        signal.flag.store(true, Ordering::SeqCst);
+        signal.token.cancel();
     }
 
     let updated = upsert_workflow_run(
@@ -287,15 +341,12 @@ pub async fn resume_workflow_run(config: &Config, id: &str) -> Result<WorkflowRu
 async fn run_engine_loop(config: &Config, run_id: &str, definition: WorkflowDefinition) {
     let cancel = lookup_cancel_flag(run_id).unwrap_or_else(|| register_cancel_flag(run_id));
 
-    let outcome = match build_root_parent(config, "workflow_engine", "workflow", "workflow").await {
-        Ok(parent) => {
-            with_parent_context(parent, async {
-                drive_phases(config, run_id, &definition, &cancel).await
-            })
-            .await
-        }
-        Err(err) => Err(err),
-    };
+    let outcome = with_root_parent(config, "workflow_engine", "workflow", "workflow", async {
+        super::graph::drive_phases(config, run_id, &definition, &cancel).await
+    })
+    .await
+    // Flatten: outer Err = root-parent build failure, inner = drive_phases result.
+    .unwrap_or_else(Err);
 
     if let Err(err) = outcome {
         log::error!(
@@ -327,137 +378,306 @@ async fn run_engine_loop(config: &Config, run_id: &str, definition: WorkflowDefi
     clear_cancel_flag(run_id);
 }
 
-/// Topologically walk the phase DAG, executing each phase whose dependencies
-/// are all `completed`. Persists after every phase. Returns `Ok(())` once every
-/// phase is completed, the run is interrupted, or a phase fails (the terminal
-/// status is written to the row before returning `Ok`). Returns `Err` only for
-/// engine-internal failures (e.g. ledger write errors).
-async fn drive_phases(
+/// What the scheduler's `dispatch` step decided.
+pub(super) enum PhaseSelection {
+    /// Execute this phase next.
+    Run(WorkflowPhase),
+    /// The run reached a terminal status (already persisted) — route to `done`.
+    Terminated,
+}
+
+/// Outcome of executing one phase in the `run_phase` step.
+pub(super) enum PhaseExecOutcome {
+    /// The phase completed; `spawned` children were launched (added to the
+    /// run-wide `max_children` tally). Route back to `dispatch`.
+    Continue { spawned: u32 },
+    /// The run reached a terminal status (already persisted) — route to `done`.
+    Terminated,
+}
+
+/// `dispatch` step: reload the run, honour cancellation, and pick the next
+/// runnable phase (pending, all deps `completed`). When none remains, persist the
+/// terminal status (Completed / Failed) and return [`PhaseSelection::Terminated`].
+pub(super) async fn select_next_phase(
     config: &Config,
     run_id: &str,
     definition: &WorkflowDefinition,
     cancel: &Arc<AtomicBool>,
-) -> Result<()> {
-    use crate::openhuman::agent_orchestration::{
-        AgentOrchestrationSession, AgentStatus, SpawnAgentRequest, WaitAgentOptions,
-    };
+    session: &crate::openhuman::agent_orchestration::AgentOrchestrationSession,
+) -> Result<PhaseSelection> {
+    // Reload so we read the latest phase_states (and a resume picks up persisted
+    // progress).
+    let run = get_workflow_run(config, run_id)?
+        .ok_or_else(|| anyhow!("workflow run {run_id} vanished mid-loop"))?;
+    let phase_states = run.phase_states.clone();
+    let child_run_ids = run.child_run_ids.clone();
 
-    let session = AgentOrchestrationSession::new(format!("workflow-engine-{run_id}"));
-    let mut total_spawned: u32 = 0;
+    // Cancellation check between phases.
+    if cancel.load(Ordering::SeqCst) {
+        log::debug!(
+            target: LOG_TARGET,
+            "[workflow_run_engine] loop.cancelled run={run_id}"
+        );
+        session.abort_all().await;
+        persist(
+            config,
+            &run,
+            phase_states,
+            child_run_ids,
+            WorkflowRunStatus::Interrupted,
+            None,
+            false,
+        )?;
+        return Ok(PhaseSelection::Terminated);
+    }
 
-    // Optional per-run model override. When present in the run input
-    // (`{"modelOverride": "..."}`), every child is forced onto the parent
-    // (root) provider with this model instead of its declarative workload
-    // provider. Production runs omit it (agents use their configured provider);
-    // deterministic mock-backend tests set it so children resolve to the
-    // injected mock provider.
-    let model_override = get_workflow_run(config, run_id)?
-        .and_then(|r| {
-            r.input
-                .get("modelOverride")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        })
-        .filter(|m| !m.trim().is_empty());
-
-    loop {
-        // Reload the run each iteration so we read the latest phase_states (and
-        // so a resume picks up persisted progress).
-        let run = get_workflow_run(config, run_id)?
-            .ok_or_else(|| anyhow!("workflow run {run_id} vanished mid-loop"))?;
-        let mut phase_states = run.phase_states.clone();
-        let mut child_run_ids = run.child_run_ids.clone();
-
-        // Cancellation check between phases.
-        if cancel.load(Ordering::SeqCst) {
+    // Find the next runnable phase: pending, with all deps completed.
+    let Some(phase) = next_runnable_phase(definition, &phase_states) else {
+        // No runnable phase left. Either everything is done, or we're blocked
+        // (which a validated DAG shouldn't be).
+        if all_phases_completed(definition, &phase_states) {
+            let summary = synthesize_summary(definition, &phase_states);
             log::debug!(
                 target: LOG_TARGET,
-                "[workflow_run_engine] loop.cancelled run={run_id}"
+                "[workflow_run_engine] loop.completed run={run_id} summary_chars={}",
+                summary.as_deref().map(str::len).unwrap_or(0)
             );
-            session.abort_all().await;
             persist(
                 config,
                 &run,
                 phase_states,
                 child_run_ids,
-                WorkflowRunStatus::Interrupted,
-                None,
-                false,
+                WorkflowRunStatus::Completed,
+                summary,
+                true,
             )?;
-            return Ok(());
+        } else {
+            log::warn!(
+                target: LOG_TARGET,
+                "[workflow_run_engine] loop.stuck run={run_id} no_runnable_phase"
+            );
+            persist(
+                config,
+                &run,
+                phase_states,
+                child_run_ids,
+                WorkflowRunStatus::Failed,
+                Some("no runnable phase (dependency deadlock)".to_string()),
+                true,
+            )?;
         }
+        return Ok(PhaseSelection::Terminated);
+    };
 
-        // Find the next runnable phase: pending, with all deps completed.
-        let Some(phase) = next_runnable_phase(definition, &phase_states) else {
-            // No runnable phase left. Either everything is done, or we're
-            // blocked (which a validated DAG shouldn't be).
-            if all_phases_completed(definition, &phase_states) {
-                let summary = synthesize_summary(definition, &phase_states);
+    Ok(PhaseSelection::Run(phase.clone()))
+}
+
+/// `run_phase` step: mark the phase running, fan its agents out on the
+/// intra-phase tinyagents graph (bounded by `default_concurrency`, capped by the
+/// run-wide `max_children` budget), aggregate outcomes, and persist the new
+/// phase state. Returns [`PhaseExecOutcome::Continue`] with the number of
+/// children spawned, or [`PhaseExecOutcome::Terminated`] when the phase failed or
+/// cancellation landed mid-phase (the terminal status is persisted first).
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn execute_phase(
+    config: &Config,
+    run_id: &str,
+    definition: &WorkflowDefinition,
+    session: &crate::openhuman::agent_orchestration::AgentOrchestrationSession,
+    cancel: &Arc<AtomicBool>,
+    model_override: Option<String>,
+    phase: &WorkflowPhase,
+    total_spawned: u32,
+) -> Result<PhaseExecOutcome> {
+    use crate::openhuman::agent_orchestration::{AgentStatus, SpawnAgentRequest, WaitAgentOptions};
+
+    // Reload so the phase state we mutate + persist is the latest projection.
+    let run = get_workflow_run(config, run_id)?
+        .ok_or_else(|| anyhow!("workflow run {run_id} vanished mid-phase"))?;
+    let mut phase_states = run.phase_states.clone();
+    let mut child_run_ids = run.child_run_ids.clone();
+    // Children launched *this* phase (the reducer delta added to `total_spawned`).
+    let mut spawned_this_phase: u32 = 0;
+
+    log::debug!(
+        target: LOG_TARGET,
+        "[workflow_run_engine] phase.start run={run_id} phase={} agents={} spawned_so_far={}",
+        phase.name,
+        phase.agent_ids.len(),
+        total_spawned
+    );
+    set_phase_status(&mut phase_states, &phase.name, PHASE_RUNNING, None);
+    persist(
+        config,
+        &run,
+        phase_states.clone(),
+        child_run_ids.clone(),
+        WorkflowRunStatus::Running,
+        None,
+        false,
+    )?;
+
+    // Thread prior phases' outputs into this phase's prompt context.
+    let upstream_context = upstream_outputs(definition, phase, &phase_states);
+
+    // Run the phase's agents on a tinyagents graph fan-out (dispatch ->
+    // parallel worker nodes bounded by `default_concurrency` -> collect
+    // barrier), never exceeding the run-wide `max_children` cap. Each worker
+    // spawns one child and waits for its terminal status; outcomes return in
+    // phase order.
+    let mut phase_outputs: Vec<Value> = Vec::new();
+    let mut phase_failed: Option<String> = None;
+
+    let concurrency = definition.default_concurrency.max(1) as usize;
+    let budget_left = definition.max_children.saturating_sub(total_spawned);
+
+    if budget_left == 0 {
+        phase_failed = Some(format!(
+            "max_children cap ({}) reached before phase '{}' completed",
+            definition.max_children, phase.name
+        ));
+    } else {
+        // Cap this phase to the run-wide `max_children` budget; if the phase
+        // needs more workers than the budget allows we run as many as fit
+        // and then fail with the cap message (matching the legacy loop).
+        let capacity = budget_left as usize;
+        let phase_agents = phase.agent_ids.to_vec();
+        let capped = phase_agents.len() > capacity;
+        let to_run: Vec<(usize, String)> = phase_agents
+            .into_iter()
+            .take(capacity)
+            .enumerate()
+            .collect();
+
+        // Clones moved into the (`'static`) worker closure.
+        let session_for_workers = session.clone();
+        let cancel_for_workers = cancel.clone();
+        let run_input = run.input.clone();
+        let phase_owned = phase.clone();
+        let upstream_owned = upstream_context.clone();
+        let model_for_workers = model_override.clone();
+
+        tracing::debug!(
+            target: "orchestration",
+            workers = to_run.len(),
+            max_concurrency = concurrency,
+            "[orchestration] running parallel fan-out on tinyagents map_reduce (workflow:{run_id}:{})",
+            phase_owned.name
+        );
+        let expected_outcomes = to_run.len();
+        let mut options = ParallelOptions::default()
+            .with_max_concurrency(concurrency)
+            .with_failure_policy(FailurePolicy::CollectAll);
+        if let Some(token) = lookup_cancel_token(run_id) {
+            options = options.with_cancellation(token);
+        }
+        let outcome = match map_reduce(to_run, options, move |_node, (agent_index, agent_id)| {
+            let session = session_for_workers.clone();
+            let cancel = cancel_for_workers.clone();
+            let run_input = run_input.clone();
+            let phase = phase_owned.clone();
+            let upstream = upstream_owned.clone();
+            let model = model_for_workers.clone();
+            async move {
+                // Don't launch new children once cancellation has landed.
+                if cancel.load(Ordering::SeqCst) {
+                    return Ok(PhaseWorkerOutcome {
+                        orchestration_id: None,
+                        output: None,
+                        error: Some("cancelled before spawn".to_string()),
+                    });
+                }
+                let prompt = phase_prompt(&run_input, &phase, agent_index, &upstream);
+                let resp = match session
+                    .spawn_agent(SpawnAgentRequest {
+                        agent_id: agent_id.clone(),
+                        prompt,
+                        model,
+                        ..Default::default()
+                    })
+                    .await
+                {
+                    Ok(resp) => resp,
+                    Err(err) => {
+                        return Ok(PhaseWorkerOutcome {
+                            orchestration_id: None,
+                            output: None,
+                            error: Some(format!("spawn failed for agent '{agent_id}': {err}")),
+                        });
+                    }
+                };
+                let oid = resp.orchestration_id.clone();
+                let wait = match session
+                    .wait_agents(WaitAgentOptions {
+                        orchestration_ids: vec![oid.clone()],
+                        timeout_ms: None,
+                    })
+                    .await
+                {
+                    Ok(w) => w,
+                    Err(err) => {
+                        return Ok(PhaseWorkerOutcome {
+                            orchestration_id: Some(oid),
+                            output: None,
+                            error: Some(format!("wait_agents failed: {err}")),
+                        });
+                    }
+                };
+                Ok(match wait.agents.into_iter().next() {
+                    Some(s) => match s.status {
+                        AgentStatus::Completed => PhaseWorkerOutcome {
+                            orchestration_id: Some(oid),
+                            output: Some(json!({
+                                "orchestrationId": s.orchestration_id,
+                                "agentId": s.agent_id,
+                                "output": s.result_summary.clone().unwrap_or_default(),
+                            })),
+                            error: None,
+                        },
+                        AgentStatus::Failed | AgentStatus::Cancelled | AgentStatus::Closed => {
+                            PhaseWorkerOutcome {
+                                orchestration_id: Some(oid),
+                                output: None,
+                                error: Some(format!(
+                                    "child '{}' (agent '{}') ended {}: {}",
+                                    s.orchestration_id,
+                                    s.agent_id,
+                                    serde_json::to_value(s.status)
+                                        .ok()
+                                        .and_then(|v| v.as_str().map(str::to_string))
+                                        .unwrap_or_else(|| "non-completed".to_string()),
+                                    s.error.clone().unwrap_or_default()
+                                )),
+                            }
+                        }
+                        AgentStatus::Pending | AgentStatus::Running | AgentStatus::Waiting => {
+                            PhaseWorkerOutcome {
+                                orchestration_id: Some(oid),
+                                output: None,
+                                error: Some(format!(
+                                    "child '{}' returned non-terminal status",
+                                    s.orchestration_id
+                                )),
+                            }
+                        }
+                    },
+                    None => PhaseWorkerOutcome {
+                        orchestration_id: Some(oid),
+                        output: None,
+                        error: Some("child returned no snapshot".to_string()),
+                    },
+                })
+            }
+        })
+        .await
+        {
+            Ok(outcome) => outcome,
+            Err(TinyAgentsError::Cancelled) => {
                 log::debug!(
                     target: LOG_TARGET,
-                    "[workflow_run_engine] loop.completed run={run_id} summary_chars={}",
-                    summary.as_deref().map(str::len).unwrap_or(0)
+                    "[workflow_run_engine] phase.cancelled_by_sdk run={run_id} phase={}",
+                    phase.name
                 );
-                persist(
-                    config,
-                    &run,
-                    phase_states,
-                    child_run_ids,
-                    WorkflowRunStatus::Completed,
-                    summary,
-                    true,
-                )?;
-            } else {
-                log::warn!(
-                    target: LOG_TARGET,
-                    "[workflow_run_engine] loop.stuck run={run_id} no_runnable_phase"
-                );
-                persist(
-                    config,
-                    &run,
-                    phase_states,
-                    child_run_ids,
-                    WorkflowRunStatus::Failed,
-                    Some("no runnable phase (dependency deadlock)".to_string()),
-                    true,
-                )?;
-            }
-            return Ok(());
-        };
-
-        log::debug!(
-            target: LOG_TARGET,
-            "[workflow_run_engine] phase.start run={run_id} phase={} agents={} spawned_so_far={}",
-            phase.name,
-            phase.agent_ids.len(),
-            total_spawned
-        );
-        set_phase_status(&mut phase_states, &phase.name, PHASE_RUNNING, None);
-        persist(
-            config,
-            &run,
-            phase_states.clone(),
-            child_run_ids.clone(),
-            WorkflowRunStatus::Running,
-            None,
-            false,
-        )?;
-
-        // Thread prior phases' outputs into this phase's prompt context.
-        let upstream_context = upstream_outputs(definition, phase, &phase_states);
-
-        // Spawn the phase's agents in concurrency-bounded batches, never
-        // exceeding the run-wide `max_children` cap.
-        let mut phase_outputs: Vec<Value> = Vec::new();
-        let mut phase_failed: Option<String> = None;
-        let mut index_in_phase = 0usize;
-
-        let concurrency = definition.default_concurrency.max(1);
-        let mut pending = phase.agent_ids.to_vec();
-
-        'phase: while !pending.is_empty() {
-            // Cancellation can also land mid-phase between batches.
-            if cancel.load(Ordering::SeqCst) {
                 session.abort_all().await;
                 persist(
                     config,
@@ -468,139 +688,120 @@ async fn drive_phases(
                     None,
                     false,
                 )?;
-                return Ok(());
+                return Ok(PhaseExecOutcome::Terminated);
             }
+            Err(err) => return Err(anyhow!("workflow fan-out failed: {err}")),
+        };
 
-            let budget_left = definition.max_children.saturating_sub(total_spawned);
-            if budget_left == 0 {
-                phase_failed = Some(format!(
-                    "max_children cap ({}) reached before phase '{}' completed",
-                    definition.max_children, phase.name
-                ));
-                break 'phase;
-            }
-            let batch_size = (concurrency as usize)
-                .min(budget_left as usize)
-                .min(pending.len())
-                .max(1);
-            let batch: Vec<String> = pending.drain(..batch_size).collect();
-
-            let mut batch_ids: Vec<(String, String)> = Vec::new(); // (orchestration_id, agent_id)
-            for agent_id in &batch {
-                let prompt = phase_prompt(&run.input, phase, index_in_phase, &upstream_context);
-                index_in_phase += 1;
-                match session
-                    .spawn_agent(SpawnAgentRequest {
-                        agent_id: agent_id.clone(),
-                        prompt,
-                        model: model_override.clone(),
-                        ..Default::default()
-                    })
-                    .await
-                {
-                    Ok(resp) => {
-                        total_spawned += 1;
-                        child_run_ids.push(resp.orchestration_id.clone());
-                        batch_ids.push((resp.orchestration_id, agent_id.clone()));
-                    }
-                    Err(err) => {
-                        phase_failed = Some(format!("spawn failed for agent '{agent_id}': {err}"));
-                        break 'phase;
-                    }
+        let mut outcomes = Vec::with_capacity(expected_outcomes);
+        for item in outcome.outcomes {
+            match item.result {
+                Ok(value) => outcomes.push(value),
+                Err(err) => {
+                    return Err(anyhow!(
+                        "workflow fan-out: worker {} failed: {err}",
+                        item.index
+                    ));
                 }
             }
+        }
+        if outcomes.len() != expected_outcomes {
+            return Err(anyhow!(
+                "workflow fan-out: expected {expected_outcomes} result(s), got {}",
+                outcomes.len()
+            ));
+        }
 
-            // Wait for this batch to reach terminal status.
-            let wait = session
-                .wait_agents(WaitAgentOptions {
-                    orchestration_ids: batch_ids.iter().map(|(id, _)| id.clone()).collect(),
-                    timeout_ms: None,
-                })
-                .await
-                .map_err(|e| anyhow!("wait_agents failed: {e}"))?;
-
-            for snapshot in &wait.agents {
-                match snapshot.status {
-                    AgentStatus::Completed => {
-                        phase_outputs.push(json!({
-                            "orchestrationId": snapshot.orchestration_id,
-                            "agentId": snapshot.agent_id,
-                            "output": snapshot.result_summary.clone().unwrap_or_default(),
-                        }));
-                    }
-                    AgentStatus::Failed | AgentStatus::Cancelled | AgentStatus::Closed => {
-                        phase_failed = Some(format!(
-                            "child '{}' (agent '{}') ended {}: {}",
-                            snapshot.orchestration_id,
-                            snapshot.agent_id,
-                            serde_json::to_value(snapshot.status)
-                                .ok()
-                                .and_then(|v| v.as_str().map(str::to_string))
-                                .unwrap_or_else(|| "non-completed".to_string()),
-                            snapshot.error.clone().unwrap_or_default()
-                        ));
-                        break 'phase;
-                    }
-                    AgentStatus::Pending | AgentStatus::Running | AgentStatus::Waiting => {
-                        // wait_agents with no timeout only returns on terminal,
-                        // so this is defensive.
-                        phase_failed = Some(format!(
-                            "child '{}' returned non-terminal status",
-                            snapshot.orchestration_id
-                        ));
-                        break 'phase;
+        // Aggregate worker outcomes in phase order: record every spawned
+        // child id, collect completed outputs, and surface the first failure.
+        for outcome in outcomes {
+            if let Some(oid) = outcome.orchestration_id {
+                spawned_this_phase += 1;
+                child_run_ids.push(oid);
+            }
+            match outcome.output {
+                Some(out) => phase_outputs.push(out),
+                None => {
+                    if phase_failed.is_none() {
+                        phase_failed = outcome.error;
                     }
                 }
             }
         }
 
-        if let Some(reason) = phase_failed {
-            log::warn!(
-                target: LOG_TARGET,
-                "[workflow_run_engine] phase.failed run={run_id} phase={} reason={reason}",
-                phase.name
-            );
-            set_phase_status(
-                &mut phase_states,
-                &phase.name,
-                PHASE_FAILED,
-                Some(json!([])),
-            );
-            set_phase_reason(&mut phase_states, &phase.name, &reason);
+        // Cancellation landed mid-phase: abort stragglers and interrupt.
+        if cancel.load(Ordering::SeqCst) {
+            session.abort_all().await;
             persist(
                 config,
                 &run,
                 phase_states,
                 child_run_ids,
-                WorkflowRunStatus::Failed,
-                Some(reason),
-                true,
+                WorkflowRunStatus::Interrupted,
+                None,
+                false,
             )?;
-            return Ok(());
+            return Ok(PhaseExecOutcome::Terminated);
         }
 
-        log::debug!(
+        if capped && phase_failed.is_none() {
+            phase_failed = Some(format!(
+                "max_children cap ({}) reached before phase '{}' completed",
+                definition.max_children, phase.name
+            ));
+        }
+    }
+
+    if let Some(reason) = phase_failed {
+        log::warn!(
             target: LOG_TARGET,
-            "[workflow_run_engine] phase.done run={run_id} phase={} outputs={}",
-            phase.name,
-            phase_outputs.len()
+            "[workflow_run_engine] phase.failed run={run_id} phase={} reason={reason}",
+            phase.name
         );
         set_phase_status(
             &mut phase_states,
             &phase.name,
-            PHASE_COMPLETED,
-            Some(Value::Array(phase_outputs)),
+            PHASE_FAILED,
+            Some(json!([])),
         );
+        set_phase_reason(&mut phase_states, &phase.name, &reason);
         persist(
             config,
             &run,
             phase_states,
             child_run_ids,
-            WorkflowRunStatus::Running,
-            None,
-            false,
+            WorkflowRunStatus::Failed,
+            Some(reason),
+            true,
         )?;
+        return Ok(PhaseExecOutcome::Terminated);
     }
+
+    log::debug!(
+        target: LOG_TARGET,
+        "[workflow_run_engine] phase.done run={run_id} phase={} outputs={}",
+        phase.name,
+        phase_outputs.len()
+    );
+    set_phase_status(
+        &mut phase_states,
+        &phase.name,
+        PHASE_COMPLETED,
+        Some(Value::Array(phase_outputs)),
+    );
+    persist(
+        config,
+        &run,
+        phase_states,
+        child_run_ids,
+        WorkflowRunStatus::Running,
+        None,
+        false,
+    )?;
+
+    Ok(PhaseExecOutcome::Continue {
+        spawned: spawned_this_phase,
+    })
 }
 
 // ───────────────────────────────────────────────────────────────────────────

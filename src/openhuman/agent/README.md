@@ -9,7 +9,6 @@ Multi-agent orchestration domain. Owns the LLM tool-calling loop, sub-agent disp
 - `pub fn run_subagent` / `pub struct SubagentRunOptions` / `pub enum SubagentRunError` — `harness/subagent_runner/` — execute a hierarchical sub-agent from a parent tool loop.
 - `pub struct AgentDefinition` / `pub struct AgentDefinitionRegistry` / `pub enum SandboxMode` / `pub enum ToolScope` — `harness/definition.rs` — sub-agent archetypes loaded from built-ins + workspace TOML.
 - `pub mod harness::fork_context` — `harness/fork_context.rs` — task-local parent context for KV-cache reuse.
-- `pub mod harness::interrupt` (`check_interrupt`, `InterruptFence`, `InterruptedError`) — `harness/interrupt.rs` — graceful cancellation primitives.
 - `pub trait ToolDispatcher` / `pub struct ParsedToolCall` / `pub struct ToolExecutionResult` — `dispatcher.rs:14-50` — pluggable tool-call format (XML / JSON / P-Format).
 - `pub mod triage` (`run_triage`, `apply_decision`, `TriggerEnvelope`, `TriageDecision`, `TriageAction`) — `triage/mod.rs:34-45` — classify external triggers, escalate to sub-agents.
 - `pub mod prompts::SystemPromptBuilder` — `prompts/` — system-prompt section composer.

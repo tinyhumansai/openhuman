@@ -48,6 +48,12 @@ fn parse_args(args: serde_json::Value) -> Result<TxQueryArgs, ToolResult> {
 
 pub struct WalletTxStatusTool;
 
+impl Default for WalletTxStatusTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WalletTxStatusTool {
     pub fn new() -> Self {
         Self
@@ -93,6 +99,12 @@ impl Tool for WalletTxStatusTool {
 
 pub struct WalletTxReceiptTool;
 
+impl Default for WalletTxReceiptTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WalletTxReceiptTool {
     pub fn new() -> Self {
         Self
@@ -137,6 +149,12 @@ impl Tool for WalletTxReceiptTool {
 }
 
 pub struct WalletLookupTxTool;
+
+impl Default for WalletLookupTxTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl WalletLookupTxTool {
     pub fn new() -> Self {

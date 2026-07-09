@@ -86,6 +86,29 @@ export interface SentMessage {
   [key: string]: unknown;
 }
 
+function telegramSentBody(entry: SentMessage): Record<string, unknown> {
+  return typeof entry.body === 'object' && entry.body !== null
+    ? (entry.body as Record<string, unknown>)
+    : {};
+}
+
+function normalizeTelegramSentMessage(entry: SentMessage): SentMessage {
+  const body = telegramSentBody(entry);
+  const bodyChatId = body.chat_id;
+  const bodyText = body.text;
+  const message = entry.message;
+  return {
+    ...entry,
+    chat_id:
+      entry.chat_id ??
+      (typeof bodyChatId === 'string' || typeof bodyChatId === 'number' ? bodyChatId : ''),
+    text:
+      entry.text ??
+      (typeof message === 'string' ? message : undefined) ??
+      (typeof bodyText === 'string' ? bodyText : undefined),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // RPC wrappers
 // ---------------------------------------------------------------------------
@@ -297,17 +320,22 @@ export async function waitForTelegramReply(opts: {
         String(entry.chat_id) === String(chatId) ||
         // Some mock implementations nest the chat_id inside a request body JSON.
         String((entry as Record<string, unknown>).body_chat_id ?? '') === String(chatId);
+      const body = telegramSentBody(entry);
+      const matchesBodyChat = String(body.chat_id ?? '') === String(chatId);
 
-      if (!matchesChat) return false;
+      if (!matchesChat && !matchesBodyChat) return false;
+      const text = String(entry.text ?? entry.message ?? body.text ?? '');
+      if (!text) return false;
       if (!contains) return true;
-
-      const text = String(entry.text ?? entry.message ?? '');
       return text.includes(contains);
     });
 
     if (match) {
-      console.log(`${LOG_PREFIX} waitForTelegramReply: found match — ${JSON.stringify(match)}`);
-      return match;
+      const normalized = normalizeTelegramSentMessage(match);
+      console.log(
+        `${LOG_PREFIX} waitForTelegramReply: found match — ${JSON.stringify(normalized)}`
+      );
+      return normalized;
     }
 
     await browser.pause(300);
