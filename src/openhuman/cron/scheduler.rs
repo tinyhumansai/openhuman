@@ -472,6 +472,27 @@ async fn execute_job_with_retry(
     security: &SecurityPolicy,
     job: &CronJob,
 ) -> (bool, String) {
+    // Emergency stop: refuse every scheduled job while the kill switch is
+    // engaged. The tinyagents middleware already fails-closed on external-effect
+    // tools inside `JobType::Agent`, but `JobType::Shell` spawns `sh -lc` and
+    // `JobType::Flow` publishes a flow-trigger event — neither goes through the
+    // middleware, so without this check a due or Run Now shell/flow job could
+    // still perform external actions while automation is halted. Fail-closed at
+    // the outermost dispatch is the safest place: it applies to every job type
+    // and to every retry attempt, and never spawns the underlying process. See
+    // #4255.
+    if crate::openhuman::emergency_stop::is_engaged_global() {
+        log::warn!(
+            "[cron] action=refused_while_halted job_id={} job_type={:?} — emergency stop engaged",
+            job.id.as_str(),
+            job.job_type
+        );
+        return (
+            false,
+            "blocked by emergency stop: automation is halted — resume to run this job".to_string(),
+        );
+    }
+
     let mut last_output = String::new();
     let mut last_agent_error: Option<String> = None;
     let retries = config.reliability.scheduler_retries;

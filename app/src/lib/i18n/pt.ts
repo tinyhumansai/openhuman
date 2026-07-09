@@ -7161,6 +7161,7 @@ const messages: TranslationMap = {
   'safety.emergencyStop': 'Parada de emergência',
   'safety.stopFailed': 'Não foi possível parar a automação — tente novamente.',
   'safety.resume': 'Retomar automação',
+  'safety.resumeFailed': 'Não foi possível retomar — automação ainda pausada. Tente novamente.',
   'safety.haltedTitle': 'Automação pausada',
   'safety.haltedBody': 'Toda a automação do desktop está parada. Retome quando estiver pronto.',
 };

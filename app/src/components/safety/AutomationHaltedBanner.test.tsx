@@ -54,16 +54,29 @@ describe('AutomationHaltedBanner', () => {
     expect(safetyState.halted).toBe(false);
   });
 
-  it('clears halt even if emergencyResume throws', async () => {
+  it('preserves halt and surfaces a retry message when emergencyResume fails', async () => {
+    // Fail-closed: on RPC failure the core is still halted, so the UI must
+    // NOT silently clear the halt. Clearing locally would re-expose the Stop
+    // button while every external-effect action remained blocked, giving a
+    // false "resumed" signal (#4255 codex P2).
     resume.mockRejectedValueOnce(new Error('core error'));
     const { store } = renderWithProviders(<AutomationHaltedBanner />, {
       preloadedState: { safety: { halted: true } },
     });
     fireEvent.click(screen.getByRole('button', { name: /resume/i }));
-    await waitFor(() => {
-      const safetyState = (store.getState() as { safety: { halted: boolean } }).safety;
-      expect(safetyState.halted).toBe(false);
-    });
+    await waitFor(() => expect(resume).toHaveBeenCalled());
+    // Halt state must remain engaged after the failed RPC.
+    const safetyState = (store.getState() as { safety: { halted: boolean } }).safety;
+    expect(safetyState.halted).toBe(true);
+    // Visible retry indicator appears.
+    await waitFor(() =>
+      expect(
+        screen.getByRole('status', { name: /could not resume/i }) ??
+          screen.getByText(/could not resume/i)
+      ).toBeDefined()
+    );
+    // Banner is still there so the user retains a Resume button to try again.
+    expect(screen.getByRole('alert')).toBeDefined();
   });
 
   it('dispatches halt and then renders banner after setHalt dispatch', async () => {

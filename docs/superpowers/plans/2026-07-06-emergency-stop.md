@@ -742,6 +742,8 @@ git commit -m "feat(emergency): RPC controllers (stop/resume/status) + boot inst
             }
 ```
 
+> **Audit-trail note (deferred):** the halt short-circuit returns immediately, so a refused call is NOT recorded through `ApprovalGate::intercept_audited` (which is what writes the "aborted" row for a denied external-effect call). This is a conscious scope choice for this slice — writing an `aborted` audit row from the middleware needs a new gate API (there is no such surface today), and the halted refusal is already surfaced via the `tracing::warn!` above plus the `AutomationHalted` domain event / `automation_halt` socket broadcast. Recording halted refusals in the approval audit trail is tracked as a follow-up; adjust either this step or the design spec's "audit trail" requirement once that follow-up lands.
+
 - [ ] **Step 2: Write a unit test.** In the `#[cfg(test)]` module of `middleware.rs` (or a sibling `middleware_tests.rs` if one exists — match the file's convention), add a test that engages the global switch and asserts a halted external-effect call short-circuits. If constructing a full `RunContext`/`ToolHandler` is heavy, instead add a focused test in `emergency_stop` that exercises `is_engaged_global()` transitions and document the middleware behavior via an integration assertion in Task 10's E2E. Minimum viable unit test (pure guard behavior):
 
 ```rust

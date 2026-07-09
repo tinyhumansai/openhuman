@@ -7208,6 +7208,8 @@ const messages: TranslationMap = {
   'safety.emergencyStop': "Arrêt d'urgence",
   'safety.stopFailed': "Impossible d'arrêter l'automatisation — réessayez.",
   'safety.resume': "Reprendre l'automatisation",
+  'safety.resumeFailed':
+    "Impossible de reprendre — l'automatisation est toujours suspendue. Réessayez.",
   'safety.haltedTitle': 'Automatisation suspendue',
   'safety.haltedBody':
     "Toute l'automatisation du bureau est arrêtée. Reprenez quand vous êtes prêt.",

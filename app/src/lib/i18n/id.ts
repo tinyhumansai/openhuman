@@ -7070,6 +7070,7 @@ const messages: TranslationMap = {
   'safety.emergencyStop': 'Hentikan darurat',
   'safety.stopFailed': 'Tidak dapat menghentikan otomasi — coba lagi.',
   'safety.resume': 'Lanjutkan otomasi',
+  'safety.resumeFailed': 'Tidak dapat melanjutkan — otomasi masih dihentikan. Coba lagi.',
   'safety.haltedTitle': 'Otomasi dihentikan',
   'safety.haltedBody': 'Semua otomasi desktop dihentikan. Lanjutkan ketika Anda siap.',
 };

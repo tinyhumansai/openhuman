@@ -473,17 +473,24 @@ class SocketService {
         socketWarn('automation_halt dropped — invalid payload shape');
         return;
       }
+      // Halt fields ride under `args` in the `WebChannelEvent` envelope
+      // (same contract as `approval_request`; see `event_bus.rs` builder and
+      // `emit_web_channel_event` in `src/core/socketio.rs`, which does
+      // `serde_json::to_value(event)` on the whole envelope). Fall back to
+      // the top level so a direct-emit test payload keeps working.
+      const payload =
+        obj.args && typeof obj.args === 'object' ? (obj.args as Record<string, unknown>) : obj;
       // Fail closed: a kill-switch event must carry an explicit boolean
       // `engaged`. An ambiguous payload (missing/non-boolean flag, e.g. `{}` or
       // `{reason:'x'}`) is dropped rather than treated as `false`, so a
       // malformed broadcast can never silently clear an active halt.
-      if (typeof obj.engaged !== 'boolean') {
+      if (typeof payload.engaged !== 'boolean') {
         socketWarn('automation_halt dropped — missing/invalid engaged flag');
         return;
       }
-      const engaged = obj.engaged;
-      const reason = typeof obj.reason === 'string' ? obj.reason : undefined;
-      const source = typeof obj.source === 'string' ? obj.source : undefined;
+      const engaged = payload.engaged;
+      const reason = typeof payload.reason === 'string' ? payload.reason : undefined;
+      const source = typeof payload.source === 'string' ? payload.source : undefined;
       socketLog(
         'automation_halt engaged=%s reason=%s source=%s',
         engaged,

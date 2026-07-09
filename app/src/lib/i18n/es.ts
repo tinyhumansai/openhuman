@@ -7185,6 +7185,8 @@ const messages: TranslationMap = {
   'safety.emergencyStop': 'Parada de emergencia',
   'safety.stopFailed': 'No se pudo detener la automatización: inténtalo de nuevo.',
   'safety.resume': 'Reanudar automatización',
+  'safety.resumeFailed':
+    'No se pudo reanudar: la automatización sigue detenida. Inténtalo de nuevo.',
   'safety.haltedTitle': 'Automatización detenida',
   'safety.haltedBody':
     'Toda la automatización de escritorio está detenida. Reanuda cuando estés listo.',

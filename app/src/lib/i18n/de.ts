@@ -7240,6 +7240,8 @@ const messages: TranslationMap = {
   'safety.emergencyStop': 'Notabschaltung',
   'safety.stopFailed': 'Automatisierung konnte nicht gestoppt werden – bitte erneut versuchen.',
   'safety.resume': 'Automatisierung fortsetzen',
+  'safety.resumeFailed':
+    'Fortsetzen fehlgeschlagen – Automatisierung ist weiterhin angehalten. Bitte erneut versuchen.',
   'safety.haltedTitle': 'Automatisierung angehalten',
   'safety.haltedBody':
     'Alle Desktop-Automatisierungen sind gestoppt. Fortsetzen, wenn Sie bereit sind.',

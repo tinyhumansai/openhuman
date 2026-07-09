@@ -6888,6 +6888,7 @@ const messages: TranslationMap = {
   'safety.emergencyStop': 'إيقاف الطوارئ',
   'safety.stopFailed': 'تعذّر إيقاف الأتمتة — أعد المحاولة.',
   'safety.resume': 'استئناف الأتمتة',
+  'safety.resumeFailed': 'تعذّر الاستئناف — لا تزال الأتمتة متوقفة. أعد المحاولة.',
   'safety.haltedTitle': 'الأتمتة متوقفة',
   'safety.haltedBody': 'تم إيقاف جميع أتمتة سطح المكتب. استأنف عندما تكون مستعدًا.',
 };

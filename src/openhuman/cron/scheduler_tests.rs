@@ -439,6 +439,43 @@ async fn execute_job_with_retry_exhausts_attempts() {
     assert!(output.contains("always_missing_for_retry_test"));
 }
 
+/// Emergency stop must refuse every scheduled shell/flow/agent job before it
+/// launches, so a `sh -lc` or flow-trigger event can never fire while the kill
+/// switch is engaged. Covers the codex-review gap for cron paths that don't
+/// route through the tinyagents middleware (#4255).
+#[cfg(not(windows))]
+#[tokio::test]
+async fn execute_job_with_retry_refuses_shell_job_while_halted() {
+    let _test_guard = crate::openhuman::emergency_stop::state::EMERGENCY_TEST_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let stop = crate::openhuman::emergency_stop::EmergencyStop::init_global();
+    stop.clear(); // start clean regardless of parallel-suite state
+    let _resume_on_drop = crate::openhuman::emergency_stop::state::ClearEmergencyOnDrop;
+
+    let tmp = TempDir::new().unwrap();
+    let mut config = test_config(&tmp).await;
+    config.reliability.scheduler_retries = 3;
+    config.reliability.provider_backoff_ms = 1;
+    let security = SecurityPolicy::from_config(
+        &config.autonomy,
+        &config.workspace_dir,
+        &config.workspace_dir,
+    );
+    let job = test_job("/bin/echo should-never-run");
+
+    // Engage AFTER building the job/config to isolate the halt check.
+    stop.engage(Some("test".into()), "test", 0);
+
+    let (success, output) = execute_job_with_retry(&config, &security, &job).await;
+
+    assert!(!success, "halted scheduler must not report success");
+    assert!(
+        output.starts_with("blocked by emergency stop:"),
+        "output must be the emergency-stop refusal, got: {output}"
+    );
+}
+
 // TAURI-RUST-N — backend 401 ("Invalid token") leaks from a cron-fired agent
 // job through `last_agent_error` and the existing classifier in
 // `core::observability::is_session_expired_message` matches it (the

@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { emergencyResume } from '../../services/api/emergencyApi';
@@ -9,25 +9,33 @@ import { clearHalt, selectHalted, selectHaltReason } from '../../store/safetySli
  * AutomationHaltedBanner — renders at the top of main content when automation
  * is halted via the emergency stop. Provides a Resume button to lift the halt.
  *
- * The `finally` block in `onResume` ensures the UI clears the halt locally even
- * if the core resume RPC fails, so the user is never stuck in a halted state
- * they cannot escape from without a restart.
+ * The Redux `clearHalt` only fires on a confirmed resume from the core. If the
+ * `emergency_resume` RPC fails (timeout, auth, core unavailable), the halt is
+ * preserved locally and a visible retry message is shown — because the core is
+ * still halted and clearing the banner would silently re-enable the Stop button
+ * while every external-effect action remained blocked. The authoritative source
+ * of truth is the core; the `automation_halt` socket broadcast will also clear
+ * the state if the resume succeeds server-side after an in-flight RPC failure.
  */
 export function AutomationHaltedBanner() {
   const { t } = useT();
   const dispatch = useAppDispatch();
   const halted = useAppSelector(selectHalted);
   const reason = useAppSelector(selectHaltReason);
+  const [resumeFailed, setResumeFailed] = useState(false);
 
   const onResume = useCallback(async () => {
+    setResumeFailed(false);
     console.debug('[emergency] resume requested (source=user)');
     try {
       await emergencyResume();
       console.debug('[emergency] resume confirmed by core');
-    } catch (err) {
-      console.error('[emergency] resume failed — clearing halt locally anyway', err);
-    } finally {
+      // Only clear locally on a CONFIRMED resume. On failure the core is still
+      // halted, so clearing here would give a false "safe to run" signal.
       dispatch(clearHalt());
+    } catch (err) {
+      console.error('[emergency] resume FAILED — halt preserved locally, retry required', err);
+      setResumeFailed(true);
     }
   }, [dispatch]);
 
@@ -44,13 +52,23 @@ export function AutomationHaltedBanner() {
           {reason ?? t('safety.haltedBody')}
         </span>
       </div>
-      <button
-        type="button"
-        data-analytics-id="emergency-resume"
-        onClick={() => void onResume()}
-        className="shrink-0 rounded-md px-3 py-1 text-sm font-medium border border-[var(--color-coral-400,#d97373)] hover:bg-[var(--color-coral-100,#fce8e8)] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-coral-500,#e05c5c)]">
-        {t('safety.resume')}
-      </button>
+      <div className="flex shrink-0 items-center gap-2">
+        {resumeFailed && (
+          <span
+            role="status"
+            data-analytics-id="emergency-resume-failed"
+            className="rounded-md bg-[var(--color-coral-100,#fce8e8)] px-2 py-1 text-xs font-medium text-[var(--color-coral-800,#8f3a3a)]">
+            {t('safety.resumeFailed')}
+          </span>
+        )}
+        <button
+          type="button"
+          data-analytics-id="emergency-resume"
+          onClick={() => void onResume()}
+          className="rounded-md px-3 py-1 text-sm font-medium border border-[var(--color-coral-400,#d97373)] hover:bg-[var(--color-coral-100,#fce8e8)] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-coral-500,#e05c5c)]">
+          {t('safety.resume')}
+        </button>
+      </div>
     </div>
   );
 }

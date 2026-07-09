@@ -44,7 +44,7 @@ Follows the canonical module shape (`mod.rs` export-only; `types.rs`; `state.rs`
 
 ### Enforcement (the "block further actions" invariant) — fail-closed at two chokepoints
 
-1. **`tinyagents/middleware.rs::wrap_tool`** — at the top of the external-effect/dangerous path, if `EmergencyStop::is_engaged()`, refuse the call before `execute()` with a clear `POLICY_DENIED_MARKER`-style "emergency stop engaged" reason and record it in the audit trail (`record_execution` Aborted). This stops the agent loop from taking further real-world actions.
+1. **`tinyagents/middleware.rs::wrap_tool`** — at the top of the external-effect/dangerous path, if `EmergencyStop::is_engaged()`, refuse the call before `execute()` with a clear `POLICY_DENIED_MARKER`-style "emergency stop engaged" reason. This stops the agent loop from taking further real-world actions. (**Scope note for this slice:** the refusal is surfaced via a `tracing::warn!` and the `AutomationHalted` domain event / `automation_halt` socket broadcast, but is **not** recorded through `ApprovalGate::intercept_audited` as an `Aborted` audit row. Writing halted refusals into the approval audit trail needs a new gate API and is tracked as a follow-up.)
 2. **`screen_intelligence/ops.rs::accessibility_input_action`** — if engaged, short-circuit to `{ accepted: false, blocked: true, reason: "emergency_stop" }` (except the existing `panic_stop` action, which must still pass so a stop is never blocked by a stop).
 
 Both checks are cheap (`AtomicBool` load) and fail-open only when no switch is installed.
@@ -69,7 +69,7 @@ User clicks Emergency Stop
   → all clients: safetySlice.setHalt → button shows halted state + banner
 
 Agent tries another tool while halted
-  → middleware.wrap_tool sees is_engaged() → deny (audited Aborted) → agent cannot act
+  → middleware.wrap_tool sees is_engaged() → deny (tracing warn + halt event; audit-row write deferred) → agent cannot act
 Agent/vision tries accessibility_input_action while halted
   → ops sees is_engaged() → { accepted:false, blocked:true, reason:'emergency_stop' }
 
