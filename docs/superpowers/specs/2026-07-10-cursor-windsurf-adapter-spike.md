@@ -9,7 +9,7 @@ Can **Cursor** and **Windsurf** each host the tiny.place `plugin-tinyplace` stdi
 
 ## Headline
 
-**Both are feasible as thin observe+respond adapters** — the make-or-break capability (a headless agent CLI, the `codex exec` equivalent) **exists for both**. Neither has a hard blocker; both share the same two workarounds and two empirical spike-tests to run before coding.
+**Both are _likely_ feasible as thin observe+respond adapters, contingent on the two empirical spike-tests (A and B) below.** The make-or-break capability — a headless agent CLI (the `codex exec` equivalent) — **exists for both** (Cursor `cursor-agent -p`, Devin `devin -p`). But the remaining unknowns must pass before this is a firm yes: what env actually reaches the MCP subprocess (test A) and whether an inbound DM can be surfaced into a live turn (test B). The inbound `server→live-turn` push limitation stands regardless of those tests.
 
 ⚠️ **Windsurf has rebranded:** as of 2026-06-02 it is **Devin Desktop** (Cognition); **Cascade reached EOL 2026-07-01**, replaced by **Devin Local**. On-disk config paths (`~/.codeium/windsurf/mcp_config.json`) and a `windsurf` CLI carried forward, but the headless target is now the **`devin`** CLI. A "windsurf" adapter today actually targets Devin Desktop. Devin Desktop also natively speaks **ACP (Agent Client Protocol)** — a possible cleaner integration surface than a bespoke adapter.
 
@@ -17,7 +17,7 @@ Can **Cursor** and **Windsurf** each host the tiny.place `plugin-tinyplace` stdi
 
 | Contract field | Cursor | Windsurf / Devin Desktop |
 |---|---|---|
-| **MCP stdio hosting** | 🟢 `.cursor/mcp.json` (project) / `~/.cursor/mcp.json` (global); `mcpServers` {command,args,env}. **40-tool cap** (our ~20 fine). | 🟢 `~/.codeium/windsurf/mcp_config.json`; `mcpServers` {command,args,env}. Uses `serverUrl` (not `url`) for remote. |
+| **MCP stdio hosting** | 🟢 `.cursor/mcp.json` (project) / `~/.cursor/mcp.json` (global); `mcpServers` {command,args,env}. **40-tool cap** (our ~20 fine). | 🟢 `~/.codeium/windsurf/mcp_config.json`; `mcpServers` {command,args,env}. Remote entries accept **`serverUrl`** (and newer builds also `url`) — moot for us since our adapter is stdio {command,args,env}. |
 | **Headless responder (CRITICAL)** | 🟢 `cursor-agent -p "<prompt>" --model <m> --force --approve-mcps --output-format json`. Model-pinnable. | 🟢 `devin -p "<prompt>" --model <m> --permission-mode bypass`. `--resume`/`--continue` for continuity. |
 | **Session-id env to MCP subprocess** | 🟡 None ambient/documented. `conversation_id` only in **hook** payload. Inject a sentinel via `mcp.json` `env`. | 🟡 None documented. Session id in **hook** payload. `DEVIN_PROJECT_DIR` set for hooks. |
 | **Workspace-dir** | 🟡 `${workspaceFolder}` interpolation into `mcp.json` `env`. | 🟡 `DEVIN_PROJECT_DIR` (hooks) / `${env:...}` injection. |
@@ -43,7 +43,7 @@ Can **Cursor** and **Windsurf** each host the tiny.place `plugin-tinyplace` stdi
 - **Both adapters are buildable today.** Proceed — but with a GUI-IDE-shaped adapter model (env-injection install, hook-based inbound, headless-`-p` responder), not a copy of codex's isolated-home/tmux model.
 - **Sequence Cursor first:** cleaner, well-documented (`cursor-agent`, hooks, 40-tool cap), no rebrand churn.
 - **Then Windsurf → target `devin`/Devin Local**, watch the churn, and evaluate the **ACP** route (Devin speaks ACP; may insulate from further rebrands and reuse ACP patterns).
-- **Naming decision (needs a call):** the recognition slice baked in `harness.provider = "windsurf"`. The product is now "Devin Desktop." Decide whether the harness key stays `windsurf` (on-disk brand) or becomes `devin`. This affects both the recognition gate and the adapter `provider`.
+- **Naming decision (resolved → `windsurf`):** the recognition slice baked in `harness.provider = "windsurf"`; the product is now "Devin Desktop." We keep the harness key **`windsurf`** — it matches the on-disk brand that actually carried forward (`~/.codeium/windsurf/mcp_config.json`, the `windsurf` CLI shim) and keeps the recognition gate and adapter `provider` aligned with what's observable on disk. Revisit only if/when the config path itself rebrands to `devin`.
 - **Land the recognition slice (Layer 1) regardless** — it's the prerequisite; without it, a working adapter's sessions render as "Other."
 
 ## Sources (selected)
