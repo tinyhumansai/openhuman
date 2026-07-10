@@ -290,8 +290,11 @@ fn is_active(last_message_at: &str) -> bool {
 /// `ingest.rs`); the sentinel windows (master/subconscious/user_created/
 /// orchestration) carry no harness and yield `None`.
 fn harness_type_for(source: &str) -> Option<String> {
-    matches!(source, "claude" | "codex" | "gemini" | "cursor" | "windsurf")
-        .then(|| source.to_string())
+    matches!(
+        source,
+        "claude" | "codex" | "gemini" | "cursor" | "windsurf"
+    )
+    .then(|| source.to_string())
 }
 
 /// Coarse instance status for the roster dot. Reads the persisted v2 run-state
