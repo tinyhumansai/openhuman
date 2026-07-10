@@ -655,12 +655,95 @@ pub(crate) async fn tinyplace_signer_seed() -> Result<[u8; 32], String> {
     // Extract 32-byte SLIP-0010 secret — same bytes LocalSigner::from_seed expects.
     // Never logged: the log below omits the seed.
     log::debug!("[tinyplace] signer seed derived (seed not logged)");
-    Ok(signing_key.to_bytes())
+    Ok(slash_free_identity_seed(signing_key.to_bytes()))
+}
+
+/// Return a tiny.place identity seed whose Ed25519 public key has a **slash-free**
+/// STANDARD-base64 encoding.
+///
+/// The backend serves that base64 public key as the bundle `identityKey` and keys
+/// its `/keys/{identityKey}/…` routes on it verbatim; a `/` in the key becomes
+/// `%2F` in the path and the route 404s — so a slash-bearing identity can neither
+/// publish Signal keys nor receive DMs (the same failure the tiny.place plugin
+/// avoids by regenerating slash-free wallets). Our identity is *deterministic* from
+/// the wallet key, so instead of regenerating we bump a domain-separated counter:
+///
+/// - **counter 0 = the raw wallet seed** — every already-clean identity stays
+///   byte-identical (no migration for the common case),
+/// - only when the raw key's base64 contains `/` do we deterministically derive a
+///   fresh seed from `SHA-256(domain ‖ seed ‖ counter)` until the public key is
+///   clean. Same wallet → same (lowest-counter) slash-free identity, always.
+fn slash_free_identity_seed(base: [u8; 32]) -> [u8; 32] {
+    for counter in 0u32..100_000 {
+        let seed: [u8; 32] = if counter == 0 {
+            base
+        } else {
+            let mut hasher = Sha256::new();
+            hasher.update(b"openhuman.tinyplace.identity.slashfree.v1");
+            hasher.update(base);
+            hasher.update(counter.to_le_bytes());
+            hasher.finalize().into()
+        };
+        let pub_b64 = B64.encode(SigningKey::from_bytes(&seed).verifying_key().to_bytes());
+        if !pub_b64.contains('/') {
+            if counter > 0 {
+                log::debug!(
+                    "[tinyplace] raw wallet identity key had '/'; using slash-free derivation (counter={counter})"
+                );
+            }
+            return seed;
+        }
+    }
+    // Astronomically unlikely (~1 in 2^100000 that every candidate has a '/');
+    // fall back to the raw seed rather than panic.
+    base
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pub_b64(seed: &[u8; 32]) -> String {
+        B64.encode(SigningKey::from_bytes(seed).verifying_key().to_bytes())
+    }
+
+    #[test]
+    fn slash_free_identity_seed_cleans_slash_keys_deterministically() {
+        // Find a base seed whose raw Ed25519 pubkey base64 contains '/', and one
+        // that's already clean (roughly half of all seeds are clean).
+        let (mut slashed, mut clean): (Option<[u8; 32]>, Option<[u8; 32]>) = (None, None);
+        for i in 0u32..5000 {
+            let mut s = [0u8; 32];
+            s[..4].copy_from_slice(&i.to_le_bytes());
+            if pub_b64(&s).contains('/') {
+                slashed.get_or_insert(s);
+            } else {
+                clean.get_or_insert(s);
+            }
+            if slashed.is_some() && clean.is_some() {
+                break;
+            }
+        }
+        let clean = clean.expect("a clean seed exists");
+        let slashed = slashed.expect("a slashed seed exists");
+
+        // Clean seed passes through unchanged (counter 0 — no migration).
+        assert_eq!(slash_free_identity_seed(clean), clean);
+
+        // Slashed seed is remapped to a slash-free, deterministic result.
+        let out = slash_free_identity_seed(slashed);
+        assert_ne!(out, slashed, "slashed seed must be remapped");
+        assert!(
+            !pub_b64(&out).contains('/'),
+            "result pubkey must be slash-free"
+        );
+        assert_eq!(
+            slash_free_identity_seed(slashed),
+            out,
+            "must be deterministic"
+        );
+    }
+
     use crate::openhuman::wallet::execution::{
         insert_quote_for_test, now_ms, reset_quote_store_for_tests, PreparedKind, PreparedStatus,
         PreparedTransaction,
