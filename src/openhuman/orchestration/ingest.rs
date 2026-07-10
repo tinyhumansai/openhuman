@@ -178,10 +178,18 @@ fn classify_message(plaintext: String, fallback_timestamp: &str) -> ClassifiedMe
         return classify_v1(env, fallback_timestamp);
     }
     // Not a harness envelope → a plain DM in the peer's Master window.
+    //
+    // This path only ever runs on an INBOUND, decrypted DM (the counterpart is
+    // the sender — see `ingest_one`), so the author is the PEER, never us. Stamp
+    // `"peer"` rather than `"user"`: the transcript treats `you`/`owner`/`user`
+    // as owner-authored and right-aligns them, so a peer's incoming Master DM was
+    // rendering on the owner's side (both halves of a two-way DM stacked right).
+    // `"peer"` is not owner-authored → it left-aligns as the counterpart. Our own
+    // outgoing Master message is persisted separately as `"owner"` and stays right.
     ClassifiedMessage {
         chat_kind: ChatKind::Master,
         session_id: "master".to_string(),
-        role: "user".to_string(),
+        role: "peer".to_string(),
         source: String::new(),
         label: None,
         workspace: None,
@@ -917,7 +925,10 @@ mod tests {
         let c = classify_message("just chatting".to_string(), "2026-07-02T09:00:00Z");
         assert_eq!(c.chat_kind, ChatKind::Master);
         assert_eq!(c.session_id, "master");
-        assert_eq!(c.role, "user");
+        // Inbound Master DMs are peer-authored → NOT an owner-authored role
+        // (`you`/`owner`/`user`), so the transcript left-aligns them.
+        assert_eq!(c.role, "peer");
+        assert!(!["you", "owner", "user"].contains(&c.role.as_str()));
         assert!(c.label.is_none());
         assert_eq!(c.seq, 0);
         assert_eq!(c.body, "just chatting");
