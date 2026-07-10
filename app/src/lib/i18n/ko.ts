@@ -174,6 +174,8 @@ const messages: TranslationMap = {
   'nav.brain': '브레인',
   'nav.flows': '워크플로',
   'nav.orchestration': '오케스트레이션',
+  'orchestration.cloudUnreachable':
+    '클라우드 브레인에 연결할 수 없습니다 — 캐시된 화면을 표시합니다.',
   'orchPage.subtitle': '메인 에이전트를 조율하세요',
   'orchPage.group.agent': '에이전트',
   'orchPage.group.network': '네트워크',

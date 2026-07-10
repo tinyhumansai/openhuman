@@ -258,13 +258,8 @@ pub fn all_tools_with_runtime(
         )),
         Box::new(DetectToolsTool::new()),
         Box::new(InstallToolTool::new(security.clone())),
-        // Orchestration front-end decision tools (stage 4) — the two-pass wake
-        // graph's front-end agent routes by calling exactly one of these.
-        Box::new(crate::openhuman::orchestration::tools::DeferToOrchestratorTool),
-        Box::new(crate::openhuman::orchestration::tools::ReplyToChannelTool),
-        // Orchestration session-history read tools (Master chat) — the reasoning
-        // core browses its persisted OpenHuman↔agent transcripts to answer from
-        // its own history. Read-only; workspace-internal store access.
+        // Orchestration session-history read tools — browse persisted
+        // OpenHuman↔agent transcripts. Read-only; workspace-internal store access.
         Box::new(crate::openhuman::orchestration::tools::ListSessionsTool::new(config.clone())),
         Box::new(crate::openhuman::orchestration::tools::ReadSessionTool::new(config.clone())),
         // List the agent's tiny.place contacts (browse-loop entry point).

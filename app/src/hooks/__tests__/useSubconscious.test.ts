@@ -136,9 +136,9 @@ describe('useSubconscious', () => {
     });
 
     await act(async () => {
-      await result.current.triggerTick('tinyplace');
+      await result.current.triggerTick('all');
     });
-    expect(subconsciousTrigger).toHaveBeenLastCalledWith('tinyplace');
+    expect(subconsciousTrigger).toHaveBeenLastCalledWith('all');
 
     await act(async () => {
       await result.current.triggerTick();
@@ -158,6 +158,6 @@ describe('useSubconscious', () => {
     expect(result.current.instances[0].instance).toBe('memory');
     // No kind is in flight initially.
     expect(result.current.isTriggering('memory')).toBe(false);
-    expect(result.current.isTriggering('tinyplace')).toBe(false);
+    expect(result.current.isTriggering('all')).toBe(false);
   });
 });

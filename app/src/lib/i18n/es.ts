@@ -180,6 +180,8 @@ const messages: TranslationMap = {
   'nav.brain': 'Cerebro',
   'nav.flows': 'Flujos de trabajo',
   'nav.orchestration': 'Orquestación',
+  'orchestration.cloudUnreachable':
+    'No se puede acceder al cerebro en la nube: mostrando la vista almacenada.',
   'orchPage.subtitle': 'Coordina tu agente principal',
   'orchPage.group.agent': 'Agente',
   'orchPage.group.network': 'Red',

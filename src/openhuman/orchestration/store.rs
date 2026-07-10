@@ -69,54 +69,18 @@ const SCHEMA_DDL: &str = "
 
     CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL);
 
-    -- Stage 5: 20:1-compressed execution-trace summaries, one row per wake cycle.
-    -- Keyed by cycle_id so a checkpoint-resumed cycle re-writes idempotently.
-    CREATE TABLE IF NOT EXISTS compressed_history (
-        cycle_id      TEXT PRIMARY KEY,
-        session_id    TEXT NOT NULL,
-        agent_id      TEXT NOT NULL,
-        input_tokens  INTEGER NOT NULL,
-        output_tokens INTEGER NOT NULL,
-        text          TEXT NOT NULL,
-        created_at    TEXT NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_compressed_session
-        ON compressed_history (agent_id, session_id, created_at);
-
-    -- Stage 5: append-only world-state-diff timeline. `seq` is monotonic per
-    -- (agent, session) from genesis (seq 1). Keyed by cycle_id so a resumed
-    -- cycle never appends a duplicate row.
-    CREATE TABLE IF NOT EXISTS world_diff (
-        cycle_id        TEXT PRIMARY KEY,
-        seq             INTEGER NOT NULL,
-        session_id      TEXT NOT NULL,
-        agent_id        TEXT NOT NULL,
-        event_signature TEXT NOT NULL,
-        world_mutation  TEXT NOT NULL,
-        delta           TEXT NOT NULL,
-        timestamp       TEXT NOT NULL
-    );
-
-    -- The UNIQUE index on (agent_id, session_id, seq) — which makes a racing
-    -- `MAX(seq)+1` allocation impossible to persist twice — is created by the
-    -- one-time `migrate()` step (user_version-gated), not here: the initial
-    -- release shipped a NON-unique `idx_world_diff_session`, and
-    -- `CREATE UNIQUE INDEX IF NOT EXISTS` under that name is a no-op on stores
-    -- that already have it. See `migrate`.
-
-    -- Stage 6: append-only subconscious steering directives. 'Current' directive
-    -- is the latest row with superseded_by IS NULL that has not expired
-    -- (created_cycle + expires_after_cycles > current cycle). Never rewritten.
-    CREATE TABLE IF NOT EXISTS steering_directives (
-        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-        text                TEXT NOT NULL,
-        created_at          TEXT NOT NULL,
-        source_tick_id      TEXT NOT NULL,
-        expires_after_cycles INTEGER NOT NULL,
-        created_cycle       INTEGER NOT NULL,
-        derived_from        TEXT NOT NULL,
-        superseded_by       INTEGER
+    -- Hosted-brain era: device-side world-observation buffer. Compact notes the
+    -- device derives from locally-observed events (inbound DMs, executed effects);
+    -- the periodic uploader drains these to `POST /orchestration/v1/world-diff`,
+    -- whose receipt schedules the hosted subconscious steering tick. `seq` is a
+    -- global monotonic ordinal (unique within any one session — all the backend
+    -- dedupe on `(userId, sessionId, seq)` needs). Rows are deleted once uploaded.
+    CREATE TABLE IF NOT EXISTS world_obs (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        seq        INTEGER NOT NULL,
+        note       TEXT NOT NULL,
+        ts         INTEGER NOT NULL
     );
 ";
 
@@ -210,35 +174,9 @@ fn add_column_if_missing(conn: &Connection, table: &str, column: &str, decl: &st
 /// One-time, `user_version`-gated migrations. Runs after the idempotent
 /// `SCHEMA_DDL`; each version block executes exactly once per DB.
 fn migrate(conn: &Connection) -> Result<()> {
-    let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-
-    // v1 — enforce uniqueness of the world-diff timeline position.
-    // The initial release created `idx_world_diff_session` NON-unique, so a
-    // race between concurrent `MAX(seq)+1` allocations could persist duplicate
-    // `(agent_id, session_id, seq)` rows. Drop the legacy index, de-dupe any
-    // pre-existing race rows (keep the earliest per key), create the unique
-    // index under a new name, then reconcile `terminal_state` so it can't point
-    // at a mutation from a deleted duplicate. Runs once (guarded), so it never
-    // rewrites `terminal_state` on steady-state opens.
-    if version < 1 {
-        conn.execute_batch(
-            "DROP INDEX IF EXISTS idx_world_diff_session;
-             DELETE FROM world_diff WHERE rowid NOT IN (
-                 SELECT MIN(rowid) FROM world_diff GROUP BY agent_id, session_id, seq
-             );
-             CREATE UNIQUE INDEX IF NOT EXISTS idx_world_diff_session_uniq
-                 ON world_diff (agent_id, session_id, seq);
-             INSERT OR REPLACE INTO kv (k, v)
-                 SELECT 'terminal_state:' || wd.agent_id || ':' || wd.session_id,
-                        wd.world_mutation
-                 FROM world_diff wd
-                 WHERE wd.seq = (
-                     SELECT MAX(seq) FROM world_diff w2
-                     WHERE w2.agent_id = wd.agent_id AND w2.session_id = wd.session_id
-                 );
-             PRAGMA user_version = 1;",
-        )?;
-    }
+    // The v1 world-diff uniqueness migration was retired with the local wake
+    // graph — the `world_diff` table no longer exists on fresh stores. Any legacy
+    // rows in an upgraded store are harmless; nothing reads them.
 
     // v2 — additive harness-session-v2 receiver columns. Guarded per-column by a
     // `table_info` existence check rather than `user_version`, so it is order- and
@@ -297,7 +235,10 @@ pub fn upsert_session(conn: &Connection, s: &OrchestrationSession) -> Result<()>
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
          ON CONFLICT(agent_id, session_id) DO UPDATE SET
            last_seq = MAX(sessions.last_seq, excluded.last_seq),
-           last_message_at = excluded.last_message_at,
+           -- Keep the newest activity time: a read-sync pulling an older hosted
+           -- `lastEventTs` must not regress a just-rendered local reply. rfc3339
+           -- (consistent format) compares lexicographically.
+           last_message_at = MAX(sessions.last_message_at, excluded.last_message_at),
            label = COALESCE(excluded.label, sessions.label),
            workspace = COALESCE(excluded.workspace, sessions.workspace),
            -- Run-state fields COALESCE so a content event (which carries none)
@@ -593,6 +534,31 @@ pub fn list_messages_by_session(
     Ok(rows.into_iter().rev().collect())
 }
 
+/// The newest non-bookkeeping message for a specific `(agent_id, session_id)` — the
+/// agent-scoped analogue of [`list_messages_by_session`]'s newest row (same
+/// `status`/`lifecycle`/`unknown`/`session_info` exclusion). Used by the one-shot
+/// history migration: `list_messages_by_session` reads by `session_id` alone, so a
+/// legacy session id shared with another peer could surface *that* peer's latest
+/// turn and replay the wrong ask under this session's `agent_id`.
+pub fn latest_content_message(
+    conn: &Connection,
+    agent_id: &str,
+    session_id: &str,
+) -> Result<Option<OrchestrationMessage>> {
+    conn.query_row(
+        "SELECT id, agent_id, session_id, chat_kind, role, body, timestamp, seq,
+                event_kind, tool_name, call_id, ok, is_error, exit_code
+           FROM messages WHERE agent_id = ?1 AND session_id = ?2
+             AND (event_kind IS NULL
+                  OR event_kind NOT IN ('status', 'lifecycle', 'unknown', 'session_info'))
+           ORDER BY timestamp DESC, seq DESC LIMIT 1",
+        params![agent_id, session_id],
+        map_message_row,
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
 /// Row → [`OrchestrationMessage`] mapper (a free fn so it is `Copy` and can be
 /// reused across the two `query_map` arms without a borrow-lifetime tangle).
 /// Column order MUST match the `SELECT` lists in the message readers.
@@ -743,7 +709,7 @@ pub fn ingest_cursor_lag(conn: &Connection) -> Result<i64> {
     Ok(lag)
 }
 
-/// Load a single session row (the wake graph's counterpart + metadata).
+/// Load a single session row (the session's counterpart + metadata).
 pub fn load_session(
     conn: &Connection,
     agent_id: &str,
@@ -782,240 +748,78 @@ pub fn list_recent_messages(
     Ok(rows.into_iter().rev().collect())
 }
 
-/// Insert a compressed-history row, idempotent by `cycle_id`. Returns true if a
-/// new row landed (false on a resumed-cycle replay).
-#[allow(clippy::too_many_arguments)]
-pub fn insert_compressed(
-    conn: &Connection,
-    cycle_id: &str,
-    session_id: &str,
-    agent_id: &str,
-    input_tokens: i64,
-    output_tokens: i64,
-    text: &str,
-    created_at: &str,
-) -> Result<bool> {
-    let changed = conn.execute(
-        "INSERT OR IGNORE INTO compressed_history
-           (cycle_id, session_id, agent_id, input_tokens, output_tokens, text, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![
-            cycle_id,
-            session_id,
-            agent_id,
-            input_tokens,
-            output_tokens,
-            text,
-            created_at
-        ],
-    )?;
-    Ok(changed > 0)
+// ── Device world-observation buffer (hosted-brain uploader) ──────────────────
+
+/// One buffered world-observation row awaiting upload to the hosted brain.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorldObs {
+    pub id: i64,
+    pub session_id: String,
+    pub seq: i64,
+    pub note: String,
+    pub ts: i64,
 }
 
-/// Count compressed-history rows for a session.
-pub fn count_compressed(conn: &Connection, agent_id: &str, session_id: &str) -> Result<i64> {
-    Ok(conn.query_row(
-        "SELECT COUNT(*) FROM compressed_history WHERE agent_id = ?1 AND session_id = ?2",
-        params![agent_id, session_id],
-        |row| row.get(0),
-    )?)
+/// Append one device-observed world note. `seq` is a global monotonic ordinal
+/// (unique within any single session, which is all the backend dedupe on
+/// `(userId, sessionId, seq)` requires). Returns the assigned seq.
+/// Buffer a world observation for the periodic world-diff uploader.
+///
+/// `seq` is drawn from the **persistent, monotonic** `world_obs:next_seq` counter in
+/// `kv` — it must never reset. The backend dedupes world-diff entries on
+/// `(userId, sessionId, seq)`, and the uploader deletes every row after a successful
+/// push ([`delete_world_obs`]), so a `MAX(seq)+1`-over-the-table scheme restarts at
+/// `1` once the buffer drains and reuses seqs the backend already saw — it then
+/// treats the fresh observation as a duplicate `202` no-op and silently drops it, so
+/// only the first batch per session ever reaches the hosted subconscious tier. The
+/// counter is seeded above any still-buffered row so an upgraded DB with pending rows
+/// can't collide either, and the allocate-then-insert runs in an immediate txn so two
+/// concurrent appends can't draw the same ordinal.
+pub fn append_world_obs(conn: &Connection, session_id: &str, note: &str, ts: i64) -> Result<i64> {
+    in_immediate_txn(conn, |conn| {
+        let kv_max: i64 = kv_get(conn, "world_obs:next_seq")?
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(0);
+        let table_max: i64 =
+            conn.query_row("SELECT COALESCE(MAX(seq), 0) FROM world_obs", [], |r| {
+                r.get(0)
+            })?;
+        let next_seq = kv_max.max(table_max) + 1;
+        kv_set(conn, "world_obs:next_seq", &next_seq.to_string())?;
+        conn.execute(
+            "INSERT INTO world_obs (session_id, seq, note, ts) VALUES (?1, ?2, ?3, ?4)",
+            params![session_id, next_seq, note, ts],
+        )?;
+        Ok(next_seq)
+    })
 }
 
-/// Append one world-diff timeline entry, idempotent by `cycle_id`. The `seq` is
-/// assigned monotonically per (agent, session) — genesis is seq 1. Returns the
-/// assigned seq for a new row, or the existing row's seq on a resumed replay
-/// (never a second row). Also stamps `terminal_state:<agent>:<session>` in `kv`.
-#[allow(clippy::too_many_arguments)]
-pub fn append_world_diff(
-    conn: &Connection,
-    cycle_id: &str,
-    session_id: &str,
-    agent_id: &str,
-    event_signature: &str,
-    world_mutation: &str,
-    delta: &str,
-    timestamp: &str,
-) -> Result<i64> {
-    // Idempotent replay: if this cycle already appended, return its seq unchanged.
-    if let Some(seq) = conn
-        .query_row(
-            "SELECT seq FROM world_diff WHERE cycle_id = ?1",
-            params![cycle_id],
-            |r| r.get::<_, i64>(0),
-        )
-        .optional()?
-    {
-        return Ok(seq);
-    }
-
-    let next_seq: i64 = conn.query_row(
-        "SELECT COALESCE(MAX(seq), 0) + 1 FROM world_diff WHERE agent_id = ?1 AND session_id = ?2",
-        params![agent_id, session_id],
-        |r| r.get(0),
-    )?;
-    conn.execute(
-        "INSERT INTO world_diff
-           (cycle_id, seq, session_id, agent_id, event_signature, world_mutation, delta, timestamp)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![
-            cycle_id,
-            next_seq,
-            session_id,
-            agent_id,
-            event_signature,
-            world_mutation,
-            delta,
-            timestamp
-        ],
-    )?;
-    kv_set(
-        conn,
-        &format!("terminal_state:{agent_id}:{session_id}"),
-        world_mutation,
-    )?;
-    Ok(next_seq)
-}
-
-/// The ordered `seq` values of a session's world-diff timeline (append-only test
-/// + stage-7 read surface).
-pub fn world_diff_seqs(conn: &Connection, agent_id: &str, session_id: &str) -> Result<Vec<i64>> {
-    let mut stmt = conn.prepare(
-        "SELECT seq FROM world_diff WHERE agent_id = ?1 AND session_id = ?2 ORDER BY seq ASC",
-    )?;
+/// Drain up to `limit` oldest buffered world observations (FIFO by insert order).
+/// Rows stay until [`delete_world_obs`] confirms a successful upload, so a failed
+/// flush retries on the next tick.
+pub fn drain_world_obs(conn: &Connection, limit: u32) -> Result<Vec<WorldObs>> {
+    let mut stmt = conn
+        .prepare("SELECT id, session_id, seq, note, ts FROM world_obs ORDER BY id ASC LIMIT ?1")?;
     let rows = stmt
-        .query_map(params![agent_id, session_id], |r| r.get::<_, i64>(0))?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    Ok(rows)
-}
-
-// ── Stage 6: steering directives + review cursor ────────────────────────────
-
-use super::steering::SteeringDirective;
-
-/// Kv key: the global reasoning-cycle counter (bumped once per wake cycle).
-const CYCLE_COUNTER_KEY: &str = "orchestration:cycle";
-/// Kv key: the `created_at` high-water mark of reviewed compressed-history rows.
-const REVIEW_CURSOR_KEY: &str = "steering:reviewed_at";
-
-/// Bump and return the global reasoning-cycle counter. Called once per wake cycle
-/// so steering-directive expiry can be measured in cycles.
-pub fn bump_cycle_counter(conn: &Connection) -> Result<i64> {
-    let current: i64 = kv_get(conn, CYCLE_COUNTER_KEY)?
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
-    let next = current + 1;
-    kv_set(conn, CYCLE_COUNTER_KEY, &next.to_string())?;
-    Ok(next)
-}
-
-/// The current reasoning-cycle counter (read-only; used at directive creation).
-pub fn current_cycle_counter(conn: &Connection) -> Result<i64> {
-    Ok(kv_get(conn, CYCLE_COUNTER_KEY)?
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0))
-}
-
-/// The review cursor: the highest compressed-history `created_at` already folded
-/// into a steering tick (empty string until the first review).
-pub fn review_cursor(conn: &Connection) -> Result<String> {
-    Ok(kv_get(conn, REVIEW_CURSOR_KEY)?.unwrap_or_default())
-}
-
-/// Advance the review cursor (idempotent — only after a successful persist).
-pub fn set_review_cursor(conn: &Connection, created_at: &str) -> Result<()> {
-    kv_set(conn, REVIEW_CURSOR_KEY, created_at)
-}
-
-/// Compressed-history rows not yet reviewed (created_at > cursor), oldest-first,
-/// bounded. Returns `(created_at, text)`.
-pub fn list_unreviewed_compressed(
-    conn: &Connection,
-    since_created_at: &str,
-    limit: u32,
-) -> Result<Vec<(String, String)>> {
-    let mut stmt = conn.prepare(
-        "SELECT created_at, text FROM compressed_history
-           WHERE created_at > ?1 ORDER BY created_at ASC LIMIT ?2",
-    )?;
-    let rows = stmt
-        .query_map(params![since_created_at, limit], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        .query_map(params![limit], |r| {
+            Ok(WorldObs {
+                id: r.get(0)?,
+                session_id: r.get(1)?,
+                seq: r.get(2)?,
+                note: r.get(3)?,
+                ts: r.get(4)?,
+            })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(rows)
 }
 
-/// The most recent world-diff mutations across all sessions (the cumulative
-/// timeline), oldest-first within the returned window.
-pub fn list_recent_world_mutations(conn: &Connection, limit: u32) -> Result<Vec<String>> {
-    let mut stmt = conn.prepare(
-        "SELECT world_mutation FROM world_diff ORDER BY timestamp DESC, seq DESC LIMIT ?1",
-    )?;
-    let rows = stmt
-        .query_map(params![limit], |r| r.get::<_, String>(0))?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    Ok(rows.into_iter().rev().collect())
-}
-
-/// Append a steering directive, superseding the prior current directive. Returns
-/// the new directive's id.
-pub fn insert_steering_directive(
-    conn: &Connection,
-    text: &str,
-    created_at: &str,
-    source_tick_id: &str,
-    expires_after_cycles: u32,
-    created_cycle: i64,
-    derived_from: &str,
-) -> Result<i64> {
-    conn.execute(
-        "INSERT INTO steering_directives
-           (text, created_at, source_tick_id, expires_after_cycles, created_cycle, derived_from)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![
-            text,
-            created_at,
-            source_tick_id,
-            expires_after_cycles,
-            created_cycle,
-            derived_from
-        ],
-    )?;
-    let new_id = conn.last_insert_rowid();
-    // Supersede every prior still-current directive so 'current' is unambiguous.
-    conn.execute(
-        "UPDATE steering_directives SET superseded_by = ?1
-           WHERE superseded_by IS NULL AND id <> ?1",
-        params![new_id],
-    )?;
-    Ok(new_id)
-}
-
-/// The current directive: the latest non-superseded row that has not expired at
-/// `current_cycle` (`created_cycle + expires_after_cycles > current_cycle`).
-pub fn current_steering_directive(
-    conn: &Connection,
-    current_cycle: i64,
-) -> Result<Option<SteeringDirective>> {
-    conn.query_row(
-        "SELECT id, text, created_at, expires_after_cycles, created_cycle
-           FROM steering_directives
-           WHERE superseded_by IS NULL
-             AND (created_cycle + expires_after_cycles) > ?1
-           ORDER BY id DESC LIMIT 1",
-        params![current_cycle],
-        |row| {
-            Ok(SteeringDirective {
-                id: row.get(0)?,
-                text: row.get(1)?,
-                created_at: row.get(2)?,
-                expires_after_cycles: row.get::<_, i64>(3)? as u32,
-                created_cycle: row.get(4)?,
-            })
-        },
-    )
-    .optional()
-    .map_err(Into::into)
+/// Delete buffered world observations by id after a confirmed upload.
+pub fn delete_world_obs(conn: &Connection, ids: &[i64]) -> Result<()> {
+    for id in ids {
+        conn.execute("DELETE FROM world_obs WHERE id = ?1", params![id])?;
+    }
+    Ok(())
 }
 
 /// Read a `kv` value (used for the per-session idempotence cursor).
@@ -1323,107 +1127,6 @@ mod tests {
     }
 
     #[test]
-    fn world_diff_is_append_only_with_monotonic_seq_and_idempotent_cycles() {
-        let tmp = tempfile::tempdir().unwrap();
-        with_connection(tmp.path(), |conn| {
-            // Genesis is seq 1, next cycle seq 2 — the append-only timeline.
-            let s1 = append_world_diff(conn, "h1#1", "h1", "@a", "sig1", "world v1", "d1", "t1")?;
-            let s2 = append_world_diff(conn, "h1#2", "h1", "@a", "sig2", "world v2", "d2", "t2")?;
-            assert_eq!(s1, 1, "genesis seq");
-            assert_eq!(s2, 2, "second cycle seq");
-
-            // A resumed cycle (same cycle_id) does not append a second row and
-            // returns the original seq — genesis untouched.
-            let s1_again =
-                append_world_diff(conn, "h1#1", "h1", "@a", "sig1", "world v1'", "d1'", "t1'")?;
-            assert_eq!(s1_again, 1, "resumed cycle reuses its seq");
-            assert_eq!(
-                world_diff_seqs(conn, "@a", "h1")?,
-                vec![1, 2],
-                "no duplicate rows"
-            );
-
-            // terminal_state tracks the latest mutation.
-            assert_eq!(
-                kv_get(conn, "terminal_state:@a:h1")?.as_deref(),
-                Some("world v2")
-            );
-            Ok(())
-        })
-        .unwrap();
-    }
-
-    #[test]
-    fn steering_supersede_chain_and_expiry_by_cycle_count() {
-        let tmp = tempfile::tempdir().unwrap();
-        with_connection(tmp.path(), |conn| {
-            // Directive A created at cycle 5, expires after 10 → valid until 15.
-            let a = insert_steering_directive(conn, "A", "t1", "tick1", 10, 5, "rows:1-2")?;
-            let cur = current_steering_directive(conn, 6)?.expect("current at cycle 6");
-            assert_eq!(cur.id, a);
-            assert_eq!(cur.text, "A");
-
-            // Directive B supersedes A. Now B is current, A is superseded.
-            let b = insert_steering_directive(conn, "B", "t2", "tick2", 10, 8, "rows:3")?;
-            let cur = current_steering_directive(conn, 9)?.expect("current at cycle 9");
-            assert_eq!(cur.id, b, "newest non-superseded directive wins");
-
-            // B (created cycle 8, expires 10) is expired once cycle ≥ 18.
-            assert!(
-                current_steering_directive(conn, 17)?.is_some(),
-                "still valid at 17"
-            );
-            assert!(
-                current_steering_directive(conn, 18)?.is_none(),
-                "expired at 18"
-            );
-            Ok(())
-        })
-        .unwrap();
-    }
-
-    #[test]
-    fn cycle_counter_bumps_and_review_cursor_advances() {
-        let tmp = tempfile::tempdir().unwrap();
-        with_connection(tmp.path(), |conn| {
-            assert_eq!(current_cycle_counter(conn)?, 0);
-            assert_eq!(bump_cycle_counter(conn)?, 1);
-            assert_eq!(bump_cycle_counter(conn)?, 2);
-            assert_eq!(current_cycle_counter(conn)?, 2);
-
-            assert_eq!(review_cursor(conn)?, "");
-            insert_compressed(
-                conn,
-                "h1#1",
-                "h1",
-                "@a",
-                100,
-                5,
-                "s1",
-                "2026-07-02T00:00:01Z",
-            )?;
-            insert_compressed(
-                conn,
-                "h1#2",
-                "h1",
-                "@a",
-                100,
-                5,
-                "s2",
-                "2026-07-02T00:00:02Z",
-            )?;
-            let unreviewed = list_unreviewed_compressed(conn, "", 10)?;
-            assert_eq!(unreviewed.len(), 2);
-            set_review_cursor(conn, "2026-07-02T00:00:01Z")?;
-            let after = list_unreviewed_compressed(conn, &review_cursor(conn)?, 10)?;
-            assert_eq!(after.len(), 1, "only the newer row remains unreviewed");
-            assert_eq!(after[0].1, "s2");
-            Ok(())
-        })
-        .unwrap();
-    }
-
-    #[test]
     fn read_surface_lists_sessions_messages_and_tracks_unread() {
         let tmp = tempfile::tempdir().unwrap();
         with_connection(tmp.path(), |conn| {
@@ -1534,23 +1237,6 @@ mod tests {
     }
 
     #[test]
-    fn compressed_history_is_idempotent_by_cycle_id() {
-        let tmp = tempfile::tempdir().unwrap();
-        with_connection(tmp.path(), |conn| {
-            assert!(insert_compressed(
-                conn, "h1#1", "h1", "@a", 400, 20, "summary", "now"
-            )?);
-            // Resumed cycle → no second row.
-            assert!(!insert_compressed(
-                conn, "h1#1", "h1", "@a", 400, 20, "summary", "now"
-            )?);
-            assert_eq!(count_compressed(conn, "@a", "h1")?, 1);
-            Ok(())
-        })
-        .unwrap();
-    }
-
-    #[test]
     fn upsert_advances_last_seq_monotonically() {
         let tmp = tempfile::tempdir().unwrap();
         with_connection(tmp.path(), |conn| {
@@ -1562,81 +1248,6 @@ mod tests {
                 |r| r.get(0),
             )?;
             assert_eq!(seq, 5);
-            Ok(())
-        })
-        .unwrap();
-    }
-
-    #[test]
-    fn migrates_legacy_nonunique_world_diff_index_to_unique() {
-        let tmp = tempfile::tempdir().unwrap();
-        let db_path = tmp.path().join("orchestration").join("orchestration.db");
-        std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
-
-        // Simulate a pre-migration store: the world_diff table with the OLD
-        // NON-unique index, holding two rows that share (agent, session, seq) —
-        // the exact duplicate the concurrent `MAX(seq)+1` race could produce.
-        {
-            let conn = Connection::open(&db_path).unwrap();
-            conn.execute_batch(
-                "CREATE TABLE world_diff (
-                    cycle_id TEXT PRIMARY KEY, seq INTEGER NOT NULL, session_id TEXT NOT NULL,
-                    agent_id TEXT NOT NULL, event_signature TEXT NOT NULL,
-                    world_mutation TEXT NOT NULL, delta TEXT NOT NULL, timestamp TEXT NOT NULL);
-                 CREATE INDEX idx_world_diff_session ON world_diff (agent_id, session_id, seq);",
-            )
-            .unwrap();
-            // Distinct mutations so we can prove terminal_state is reconciled.
-            conn.execute(
-                "INSERT INTO world_diff VALUES ('c1', 1, 's', '@a', 'sig', 'mut_c1', 'd', 't')",
-                [],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO world_diff VALUES ('c2', 1, 's', '@a', 'sig', 'mut_c2', 'd', 't')",
-                [],
-            )
-            .unwrap();
-            conn.execute("CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT NOT NULL)", [])
-                .unwrap();
-            // Stale terminal_state pointing at the duplicate that will be deleted.
-            conn.execute(
-                "INSERT INTO kv VALUES ('terminal_state:@a:s', 'mut_c2')",
-                [],
-            )
-            .unwrap();
-        }
-
-        // Opening through with_connection applies SCHEMA_DDL + the migration.
-        with_connection(tmp.path(), |conn| {
-            // Legacy duplicate race rows are de-duped to one per (agent, session, seq).
-            let n: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM world_diff WHERE agent_id='@a' AND session_id='s' AND seq=1",
-                [],
-                |r| r.get(0),
-            )?;
-            assert_eq!(n, 1, "duplicate legacy rows de-duped");
-
-            // terminal_state is reconciled to the surviving row's mutation (not the deleted one).
-            let ts: String =
-                conn.query_row("SELECT v FROM kv WHERE k='terminal_state:@a:s'", [], |r| {
-                    r.get(0)
-                })?;
-            assert_eq!(
-                ts, "mut_c1",
-                "terminal_state reconciled to the surviving row"
-            );
-
-            // The index is now UNIQUE — a fresh duplicate (agent, session, seq) is rejected.
-            let dup = conn.execute(
-                "INSERT INTO world_diff VALUES ('c3', 1, 's', '@a', 'sig', 'mut', 'd', 't')",
-                [],
-            );
-            assert!(dup.is_err(), "unique index rejects a duplicate seq");
-
-            // Migration is one-shot: user_version was bumped.
-            let uv: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-            assert_eq!(uv, 1, "migration marks user_version");
             Ok(())
         })
         .unwrap();

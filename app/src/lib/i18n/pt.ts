@@ -179,6 +179,8 @@ const messages: TranslationMap = {
   'nav.brain': 'Cérebro',
   'nav.flows': 'Fluxos de trabalho',
   'nav.orchestration': 'Orquestração',
+  'orchestration.cloudUnreachable':
+    'Cérebro na nuvem inacessível — exibindo a visualização em cache.',
   'orchPage.subtitle': 'Coordene seu agente principal',
   'orchPage.group.agent': 'Agente',
   'orchPage.group.network': 'Rede',

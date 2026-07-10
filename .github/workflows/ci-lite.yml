@@ -578,6 +578,22 @@ jobs:
       - name: Run test-inventory guard
         run: pnpm test:inventory
 
+  orch-ip-gate:
+    name: Orchestration IP Gate (no local brain re-entry)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # Fail if the retired local orchestration brain (reasoning/wake graph,
+      # prompt assets, or per-agent model routing) re-enters the open repo.
+      - name: Run orchestration IP gate
+        run: bash scripts/ci/orch-ip-gate.sh
+
   pester-install:
     name: PowerShell Install Test (Pester)
     needs: [changes]
@@ -610,6 +626,7 @@ jobs:
       - scripts-tests
       - test-inventory
       - pester-install
+      - orch-ip-gate
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -626,6 +643,7 @@ jobs:
             ["Scripts Self-Tests"]="${{ needs['scripts-tests'].result }}"
             ["Test Inventory"]="${{ needs['test-inventory'].result }}"
             ["PowerShell Install Test"]="${{ needs['pester-install'].result }}"
+            ["Orchestration IP Gate"]="${{ needs['orch-ip-gate'].result }}"
           )
 
           failed=0

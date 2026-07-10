@@ -1,33 +1,17 @@
-//! Orchestration front-end tools (stage 4).
+//! Orchestration agent tools — read-only session-history browsing + a
+//! send-on-behalf DM tool over the tiny.place transport. Offered to agents via
+//! the shared tool registry; the reasoning that decides *what* to send now runs
+//! in the hosted brain (see [`super::cloud`]).
 //!
-//! The two-pass front-end agent expresses its routing decision through two
-//! early-exit tools (domain-owned per the repo tool-ownership rule):
-//!
-//! - [`ReplyToChannelTool`] (`reply_to_channel`) — pass 2: emit the finished
-//!   `channel_response` that goes back over the tiny.place DM.
-//! - [`DeferToOrchestratorTool`] (`defer_to_orchestrator`) — pass 1: hand
-//!   macro-instructions down to the reasoning core.
-//!
-//! Both are pure "record the decision" tools: they echo their payload back as a
-//! `ToolResult` and the harness [`EarlyExit`](crate::openhuman::tinyagents::EarlyExit)
-//! hook captures the tool name + argument. They carry no external effect — the
-//! actual DM send is the graph's `send_dm` node — so they stay `ReadOnly`.
-//!
-//! ## Reasoning-core session-history tools (Master chat)
-//!
-//! The reasoning core also gets read-only tools to browse the orchestration
-//! store — the persisted OpenHuman↔agent session transcripts — so it can answer a
-//! Master-chat question from its own history of chats with other agents instead of
-//! only the single window it was woken for:
-//!
-//! - [`ListSessionsTool`] (`orchestration_list_sessions`) — enumerate the session
-//!   windows (which peers/threads exist, with a one-line preview).
+//! - [`ListSessionsTool`] (`orchestration_list_sessions`) — enumerate the
+//!   persisted OpenHuman↔agent session windows (peers/threads, one-line preview).
 //! - [`ReadSessionTool`] (`orchestration_read_session`) — read one session's
 //!   transcript by id.
+//! - [`ListContactsTool`] / [`SendToAgentTool`] — list paired agents and send a
+//!   DM on the user's behalf.
 //!
-//! Both are `ReadOnly` and touch only the workspace-internal orchestration DB via
-//! [`super::store`]; they carry no external effect (see [`super::ops`] for the
-//! gated *send-on-behalf* path).
+//! The read tools are `ReadOnly` and touch only the workspace-internal
+//! orchestration DB via [`super::store`].
 
 use std::future::Future;
 use std::sync::{Arc, Mutex};
@@ -40,37 +24,6 @@ use crate::openhuman::tools::{PermissionLevel, Tool, ToolResult};
 
 use super::store;
 use super::types::{ChatKind, OrchestrationMessage, OrchestrationSession, SessionEnvelopeV1};
-
-tokio::task_local! {
-    /// Task-local capture of the front end's decision payload. The decision
-    /// tools echo their argument as a `ToolResult`, but the split-brain graph
-    /// needs the exact `text` / `instructions` the model passed — NOT the
-    /// trailing narration the agent loop returns after the tool call (which is
-    /// what `run_single` yields). Each decision tool records its payload here.
-    static DECISION_CAPTURE: Arc<Mutex<Option<String>>>;
-}
-
-/// Scope a front-end decision capture around one front-end agent turn `fut`,
-/// returning `(turn_output, captured_payload)`. `captured_payload` is the
-/// argument the model passed to `reply_to_channel` / `defer_to_orchestrator`
-/// (the authoritative channel response / macro-instructions), or `None` when the
-/// turn ended without calling a decision tool (caller falls back to the raw text).
-pub async fn with_decision_capture<F: Future>(fut: F) -> (F::Output, Option<String>) {
-    let cell = Arc::new(Mutex::new(None));
-    let out = DECISION_CAPTURE.scope(cell.clone(), Box::pin(fut)).await;
-    let captured = cell.lock().ok().and_then(|mut slot| slot.take());
-    (out, captured)
-}
-
-/// Record a front-end decision payload from a decision tool. Last write wins
-/// (the turn's terminal decision). No-op outside a [`with_decision_capture`] scope.
-fn record_decision(payload: &str) {
-    let _ = DECISION_CAPTURE.try_with(|cell| {
-        if let Ok(mut slot) = cell.lock() {
-            *slot = Some(payload.to_string());
-        }
-    });
-}
 
 tokio::task_local! {
     /// The window the current wake cycle is serving (the reasoning core's session
@@ -131,88 +84,11 @@ fn current_master_origin() -> Option<String> {
     MASTER_ORIGIN.lock().ok().and_then(|slot| slot.clone())
 }
 
-/// `reply_to_channel` — the front end's pass-2 terminal decision.
-pub struct ReplyToChannelTool;
-
-/// `defer_to_orchestrator` — the front end's pass-1 hand-off decision.
-pub struct DeferToOrchestratorTool;
-
 /// Extract a required string field, returning an error `ToolResult` when absent.
 fn required_str(args: &Value, field: &str) -> Result<String, ToolResult> {
     match args.get(field).and_then(Value::as_str) {
         Some(s) if !s.trim().is_empty() => Ok(s.to_string()),
         _ => Err(ToolResult::error(format!("`{field}` is required"))),
-    }
-}
-
-#[async_trait]
-impl Tool for ReplyToChannelTool {
-    fn name(&self) -> &str {
-        "reply_to_channel"
-    }
-
-    fn description(&self) -> &str {
-        "Send the finished reply back to the session over its tiny.place DM channel. \
-         Call this once you have a complete answer for the counterpart."
-    }
-
-    fn parameters_schema(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "text": {
-                    "type": "string",
-                    "description": "The finished reply to send back to the session."
-                }
-            },
-            "required": ["text"]
-        })
-    }
-
-    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        match required_str(&args, "text") {
-            Ok(text) => {
-                record_decision(&text);
-                Ok(ToolResult::success(text))
-            }
-            Err(e) => Ok(e),
-        }
-    }
-}
-
-#[async_trait]
-impl Tool for DeferToOrchestratorTool {
-    fn name(&self) -> &str {
-        "defer_to_orchestrator"
-    }
-
-    fn description(&self) -> &str {
-        "Hand this turn down to the reasoning core with macro-instructions. Call this \
-         when the request needs real work (tools, sub-agents, multi-step reasoning) \
-         rather than an immediate reply."
-    }
-
-    fn parameters_schema(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "instructions": {
-                    "type": "string",
-                    "description": "Concise macro-instructions describing what the reasoning core should do."
-                }
-            },
-            "required": ["instructions"]
-        })
-    }
-
-    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        match required_str(&args, "instructions") {
-            Ok(instructions) => {
-                record_decision(&instructions);
-                Ok(ToolResult::success(instructions))
-            }
-            Err(e) => Ok(e),
-        }
     }
 }
 
@@ -649,7 +525,7 @@ impl Tool for SendToAgentTool {
 
         // Record the outbound message in the session window (role=owner) so it
         // surfaces in the chat + the agent's own history, and notify the renderer.
-        // Mirrors ProductionRuntime::persist_outgoing_reply and the send_master RPC.
+        // Mirrors effect_executor::persist_reply and the send_master RPC.
         let persisted = store::with_connection(&workspace, |conn| {
             let seq = store::next_session_seq(conn, &recipient, &session_id)?;
             store::upsert_session(
@@ -749,55 +625,6 @@ mod tests {
         // Closed after the turn: a later A2A wake cannot read a stale master origin.
         end_master_origin();
         assert_eq!(current_master_origin(), None);
-    }
-
-    #[tokio::test]
-    async fn reply_tool_echoes_text_and_rejects_empty() {
-        let t = ReplyToChannelTool;
-        assert_eq!(t.name(), "reply_to_channel");
-        let ok = t.execute(json!({"text": "all done"})).await.unwrap();
-        assert!(ok.text().contains("all done"));
-        let bad = t.execute(json!({"text": "  "})).await.unwrap();
-        assert!(bad.is_error);
-    }
-
-    #[tokio::test]
-    async fn defer_tool_echoes_instructions_and_rejects_missing() {
-        let t = DeferToOrchestratorTool;
-        assert_eq!(t.name(), "defer_to_orchestrator");
-        let ok = t
-            .execute(json!({"instructions": "research X then summarize"}))
-            .await
-            .unwrap();
-        assert!(ok.text().contains("research X"));
-        let bad = t.execute(json!({})).await.unwrap();
-        assert!(bad.is_error);
-    }
-
-    #[tokio::test]
-    async fn decision_capture_surfaces_tool_payload_not_turn_narration() {
-        // The runtime must send the `reply_to_channel` argument (the real reply),
-        // not the model's trailing "Done — sent to the session" narration that
-        // `run_single` returns. Reproduces the reply-plumbing bug.
-        let reply = ReplyToChannelTool;
-        let (turn_text, captured) = with_decision_capture(async {
-            let _ = reply
-                .execute(json!({"text": "the actual email summary"}))
-                .await
-                .unwrap();
-            "Done — the reply has been sent to the session".to_string()
-        })
-        .await;
-        assert_eq!(turn_text, "Done — the reply has been sent to the session");
-        assert_eq!(captured.as_deref(), Some("the actual email summary"));
-    }
-
-    #[tokio::test]
-    async fn decision_capture_is_none_without_a_decision_tool() {
-        let (turn_text, captured) =
-            with_decision_capture(async { "just narration".to_string() }).await;
-        assert_eq!(turn_text, "just narration");
-        assert_eq!(captured, None);
     }
 
     // ── session-history read tools ──────────────────────────────────────────

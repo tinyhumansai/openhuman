@@ -48,12 +48,13 @@ describe('OrchestrationPage shell', () => {
     await act(async () => {
       renderWithProviders(<OrchestrationPage />, { initialEntries: ['/orchestration'] });
     });
-    // Sub-nav renders via the sidebar portal once the outlet mounts.
-    const usageNav = await screen.findByTestId('two-pane-nav-usage');
+    // Sub-nav renders via the sidebar portal once the outlet mounts. `usage` is
+    // now a chip sub of the `network` tab, so the top-level nav exposes `network`.
+    const networkNav = await screen.findByTestId('two-pane-nav-network');
     await act(async () => {
-      fireEvent.click(usageNav);
+      fireEvent.click(networkNav);
     });
-    await waitFor(() => expect(screen.getByTestId('panel-usage')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('panel-connections')).toBeInTheDocument());
   });
 
   it('lets the connections panel jump to discover via its callback', async () => {

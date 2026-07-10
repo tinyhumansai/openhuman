@@ -78,7 +78,6 @@ export default function IntelligenceSubconsciousTab({
   settingMode,
   setMode,
   setIntervalMinutes,
-  onViewDirectives,
 }: IntelligenceSubconsciousTabProps) {
   const { t } = useT();
   const navigate = useNavigate();
@@ -93,7 +92,6 @@ export default function IntelligenceSubconsciousTab({
         ? [{ ...status, instance: status.instance ?? 'memory' }]
         : [];
   const memoryRow = rows.find(r => r.instance === 'memory') ?? status ?? undefined;
-  const tinyplaceRow = rows.find(r => r.instance === 'tinyplace');
   const running = (kind: TriggerKind) => (isTriggering ? isTriggering(kind) : triggering);
   const openProviderSettings = () => navigate('/settings/llm', settingsNavState(location));
 
@@ -202,27 +200,6 @@ export default function IntelligenceSubconsciousTab({
             triggering={running('memory')}
             onRun={() => runTick('memory')}
             onProviderSettings={openProviderSettings}
-          />
-          <SubconsciousInstanceCard
-            title={t('subconscious.instance.tinyplace.title')}
-            subtitle={t('subconscious.instance.tinyplace.subtitle')}
-            status={tinyplaceRow}
-            disabled={!tinyplaceRow || tinyplaceRow.enabled === false}
-            disabledHint={t('subconscious.instance.tinyplace.disabledHint')}
-            runLabel={t('subconscious.runReviewNow')}
-            triggering={running('tinyplace')}
-            onRun={() => runTick('tinyplace')}
-            onProviderSettings={openProviderSettings}
-            footer={
-              onViewDirectives ? (
-                <button
-                  type="button"
-                  onClick={onViewDirectives}
-                  className="text-primary-600 hover:text-primary-700 dark:text-primary-400">
-                  {t('subconscious.instance.tinyplace.viewDirectives')}
-                </button>
-              ) : undefined
-            }
           />
         </div>
       )}

@@ -27,6 +27,8 @@ use helpers::{
     DEFAULT_ONBOARDING_FLAG_NAME,
 };
 #[cfg(test)]
+use schema_defs::schemas;
+#[cfg(test)]
 use serde_json::{Map, Value};
 
 #[cfg(test)]

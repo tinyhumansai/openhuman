@@ -160,6 +160,7 @@ const messages: TranslationMap = {
   'nav.brain': '大脑',
   'nav.flows': '工作流',
   'nav.orchestration': '编排',
+  'orchestration.cloudUnreachable': '无法连接云端大脑 — 正在显示缓存的视图。',
   'orchPage.subtitle': '协调你的主智能体',
   'orchPage.group.agent': '智能体',
   'orchPage.group.network': '网络',

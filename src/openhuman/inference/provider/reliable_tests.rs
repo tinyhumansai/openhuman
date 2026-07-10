@@ -1,4 +1,5 @@
 use super::*;
+use crate::openhuman::inference::provider::traits::StreamError;
 use std::sync::Arc;
 
 struct MockProvider {

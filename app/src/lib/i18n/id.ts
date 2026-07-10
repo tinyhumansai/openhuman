@@ -178,6 +178,8 @@ const messages: TranslationMap = {
   'nav.brain': 'Otak',
   'nav.flows': 'Alur Kerja',
   'nav.orchestration': 'Orkestrasi',
+  'orchestration.cloudUnreachable':
+    'Otak cloud tidak dapat dijangkau — menampilkan tampilan yang tersimpan.',
   'orchPage.subtitle': 'Koordinasikan agen utama Anda',
   'orchPage.group.agent': 'Agen',
   'orchPage.group.network': 'Jaringan',

@@ -49,13 +49,6 @@ pub(crate) fn all_graph_topologies() -> Vec<GraphTopologyReport> {
         out.push(describe("agent_teams:member", &t));
     }
 
-    // The subconscious-orchestration wake graph (stage 4, upstream #4430):
-    // normalize → frontend (two-pass, command-routing) → execute → send_dm →
-    // context_guard → done.
-    if let Ok(t) = crate::openhuman::orchestration::orchestration_graph_topology() {
-        out.push(describe("orchestration:wake", &t));
-    }
-
     if let Ok(t) = super::delegation::delegation_graph_topology() {
         out.push(describe("delegation", &t));
     }

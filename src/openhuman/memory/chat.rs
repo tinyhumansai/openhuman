@@ -266,6 +266,7 @@ pub mod test_override {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::config::schema::DEFAULT_CLOUD_LLM_MODEL;
 
     #[test]
     fn build_provider_returns_inference_wrapper_when_default() {

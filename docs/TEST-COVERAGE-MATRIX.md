@@ -496,6 +496,12 @@ End-to-end coverage of the agent harness via the web-chat RPC surface against an
 | 11.2.2 | Source Filtering   | WD    | `insights-dashboard.spec.ts` | ✅     | Was ❌ |
 | 11.2.3 | Search & Retrieval | WD    | `insights-dashboard.spec.ts` | ✅     | Was ❌ |
 
+### 11.3 Hosted Orchestration
+
+| ID     | Feature                                                          | Layer | Test path(s)                                                                                                                                                                      | Status | Notes                                                                                                                                                                                                                                                                                                                                          |
+| ------ | ---------------------------------------------------------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 11.3.1 | Hosted-only orchestration (client = trigger + effects + render) | RI+VU | `tests/orchestration_hosted_client.rs`, `app/src/components/intelligence/TinyPlaceOrchestrationTab.test.tsx`, `app/src/components/orchestration/__tests__/AgentChatPanel.test.tsx` | ✅     | Local wake-graph brain retired (frontend_agent/graph/master_agent/reasoning_agent deleted). Client forwards events to the hosted brain (`POST /orchestration/v1/events`), uploads world-diffs, syncs hosted sessions/messages/steering into the render cache, and executes `send_dm`/`evict` socket effects; cloud-unreachable banner on outage. |
+
 ---
 
 ## 12. Rewards & Progression

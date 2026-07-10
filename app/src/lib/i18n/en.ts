@@ -27,6 +27,7 @@ const en: TranslationMap = {
   'nav.brain': 'Brain',
   'nav.flows': 'Workflows',
   'nav.orchestration': 'Orchestration',
+  'orchestration.cloudUnreachable': 'Cloud brain unreachable — showing your cached view.',
 
   // ── Orchestration sub-pages (orchPage.*) ──────────────────────────────────
   'orchPage.subtitle': 'Coordinate your main agent',

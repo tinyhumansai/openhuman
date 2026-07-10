@@ -17,7 +17,6 @@ pub use factory::{make_subconscious, SubconsciousKind};
 pub use instance::SubconsciousInstance;
 pub use profile::{Observation, Reflection, SubconsciousProfile};
 pub use profiles::memory::memory_instance;
-pub use profiles::tinyplace::tinyplace_instance;
 
 /// Back-compat alias for the old single-engine type. The live `memory` world is
 /// now a [`SubconsciousInstance`] built via [`memory_instance`]; callers that

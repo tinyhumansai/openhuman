@@ -183,6 +183,8 @@ const messages: TranslationMap = {
   'nav.brain': 'Gehirn',
   'nav.flows': 'Workflows',
   'nav.orchestration': 'Orchestrierung',
+  'orchestration.cloudUnreachable':
+    'Cloud-Gehirn nicht erreichbar – zwischengespeicherte Ansicht wird angezeigt.',
   'orchPage.subtitle': 'Koordiniere deinen Hauptagenten',
   'orchPage.group.agent': 'Agent',
   'orchPage.group.network': 'Netzwerk',

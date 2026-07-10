@@ -23,7 +23,7 @@ use super::manager::{emit_server_event, emit_state_change, SharedState};
 pub(super) fn handle_sio_event(
     event_name: &str,
     data: serde_json::Value,
-    _emit_tx: &mpsc::UnboundedSender<String>,
+    emit_tx: &mpsc::UnboundedSender<String>,
     shared: &Arc<SharedState>,
 ) {
     // Log every incoming event for observability.
@@ -61,11 +61,61 @@ pub(super) fn handle_sio_event(
             log::info!("[socket] Server ready — auth successful");
             *shared.status.write() = ConnectionStatus::Connected;
             emit_state_change(shared);
+            // Declare the device-tool manifest so the hosted brain knows which
+            // tool calls to round-trip to this device (Phase 2). Sent every
+            // (re)connect so the server's view is rebuilt from scratch.
+            emit_via_channel(
+                emit_tx,
+                "orch:register_tools",
+                crate::openhuman::orchestration::effect_executor::device_tool_manifest(),
+            );
         }
         "error" => {
             log::error!("[socket] Server error event: {}", data);
             *shared.status.write() = ConnectionStatus::Error;
             emit_state_change(shared);
+        }
+        // Hosted-brain device effect: relay a reply over Signal, then ack. Runs
+        // async so the recv loop isn't blocked on the send; the ack rides back
+        // over the same socket. Device Signal keys never leave the machine.
+        "orch:effect:send_dm" => {
+            let tx = emit_tx.clone();
+            tokio::spawn(async move {
+                if let Some((call_id, ack)) =
+                    crate::openhuman::orchestration::effect_executor::handle_send_dm(&data).await
+                {
+                    log::debug!("[socket] orch:effect:send_dm acked call_id={call_id}");
+                    emit_via_channel(&tx, "orch:effect:result", ack);
+                }
+            });
+        }
+        // Hosted-brain device tool call: run a local (read-only) device tool and
+        // return the result so the reasoning loop can continue.
+        "orch:tool_call" => {
+            let tx = emit_tx.clone();
+            tokio::spawn(async move {
+                if let Some((call_id, result)) =
+                    crate::openhuman::orchestration::effect_executor::handle_tool_call(&data).await
+                {
+                    log::debug!("[socket] orch:tool_call result call_id={call_id}");
+                    emit_via_channel(&tx, "orch:tool_result", result);
+                }
+            });
+        }
+        // Hosted-brain context-guard eviction: fold the evicted compressed
+        // summaries into local memory RAG so they stay retrievable offline, then
+        // ack. Async so the recv loop isn't blocked on the RAG write; the ack
+        // rides back over the same socket (shared `orch:effect:result` channel).
+        "orch:effect:evict" => {
+            let tx = emit_tx.clone();
+            tokio::spawn(async move {
+                if let Some((call_id, ack)) =
+                    crate::openhuman::orchestration::effect_executor::handle_evict(&data).await
+                {
+                    log::debug!("[socket] orch:effect:evict acked call_id={call_id}");
+                    emit_via_channel(&tx, "orch:effect:result", ack);
+                }
+            });
         }
         // Webhook tunnel — publish to event bus for routing by WebhookRequestSubscriber
         "webhook:request" => {

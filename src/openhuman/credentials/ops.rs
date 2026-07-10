@@ -55,6 +55,12 @@ pub async fn start_login_gated_services(config: &Config) {
     // 5. Autocomplete (text suggestions + Swift overlay helper)
     crate::openhuman::autocomplete::start_if_enabled(config).await;
 
+    // 6. Orchestration hosted-client: read-sync loop + world-diff uploader +
+    //    one-shot history migration. Idempotent (aborts a prior session's loops
+    //    first); no-op when orchestration is disabled. Runs here so both startup
+    //    (already logged in) and a fresh login start the hosted-client tail.
+    crate::openhuman::orchestration::start_hosted_client_services(config).await;
+
     log::info!("[services] all login-gated services started");
 }
 
@@ -100,6 +106,9 @@ pub async fn stop_login_gated_services(config: &Config) {
     //    stops transcribing/delivering after logout (no audio processed while
     //    logged out). Symmetric with start_login_gated_services step 3b.
     crate::openhuman::voice::always_on::stop();
+
+    // 7. Orchestration hosted-client loops (read-sync + world-diff uploader).
+    crate::openhuman::orchestration::stop_hosted_client_services();
 
     log::info!("[services] all login-gated services stopped");
 }

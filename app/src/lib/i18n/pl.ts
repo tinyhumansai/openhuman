@@ -182,6 +182,8 @@ const messages: TranslationMap = {
   'nav.brain': 'Mózg',
   'nav.flows': 'Przepływy pracy',
   'nav.orchestration': 'Orkiestracja',
+  'orchestration.cloudUnreachable':
+    'Mózg w chmurze jest niedostępny — wyświetlanie widoku z pamięci podręcznej.',
   'orchPage.subtitle': 'Koordynuj swojego głównego agenta',
   'orchPage.group.agent': 'Agent',
   'orchPage.group.network': 'Sieć',

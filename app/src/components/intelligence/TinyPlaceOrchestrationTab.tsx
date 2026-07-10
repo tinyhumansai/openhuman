@@ -353,7 +353,9 @@ export default function TinyPlaceOrchestrationTab() {
   const runSteeringReview = useCallback(async () => {
     setRunningReview(true);
     try {
-      await subconsciousTrigger('tinyplace');
+      // Steering review runs on the hosted brain now; this nudges the device
+      // subconscious worlds (memory) so a manual tick still works locally.
+      await subconsciousTrigger('all');
     } catch (err) {
       debug('steering review trigger failed: %o', err);
     } finally {
@@ -366,60 +368,69 @@ export default function TinyPlaceOrchestrationTab() {
   const canCompose = isMasterSelected || selected?.kind === 'session';
 
   return (
-    <div className="flex min-h-[620px] overflow-hidden rounded-xl border border-line bg-surface shadow-soft">
-      <OrchestrationSidebar
-        relayInfo={relayInfo}
-        onRefreshAll={refreshAll}
-        refreshDisabled={sessionsState.status === 'loading'}
-        steeringText={steeringText}
-        selfIdentity={selfIdentity}
-        identityLoading={identityLoading}
-        onPublishIdentity={publishIdentity}
-        publishingIdentity={publishingIdentity}
-        publishIdentityError={publishIdentityError}
-        attentionQueue={attentionQueue}
-        attentionLoading={attentionLoading}
-        onAttentionAction={handleAttentionAction}
-        linkAgentId={linkAgentId}
-        onLinkAgentIdChange={setLinkAgentId}
-        onSubmitLink={submitLink}
-        pairingAction={pairingAction}
-        contactStats={contactStats}
-        incomingRequests={incomingRequests}
-        outgoingCount={pairingSnapshot?.requests.outgoing.length ?? 0}
-        pairingError={pairingError}
-        agentHandles={agentHandles}
-        runPairingAction={runPairingAction}
-        pinned={pinned}
-        selectedId={selectedId}
-        onSelectChat={selectChat}
-        acceptedContactList={acceptedContactList}
-        expandedContacts={expandedContacts}
-        onToggleContact={toggleContact}
-        sessionsByContact={sessionsByContact}
-        creatingSession={creatingSession}
-        onCreateSession={handleCreateSession}
-        acceptedContacts={acceptedContacts}
-        pendingContacts={pendingContacts}
-        ungroupedSessions={ungroupedSessions}
-      />
+    <>
+      {status?.cloudReachable === false && (
+        <div
+          role="status"
+          className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm text-amber-700 dark:text-amber-300">
+          {t('orchestration.cloudUnreachable')}
+        </div>
+      )}
+      <div className="flex min-h-[620px] overflow-hidden rounded-xl border border-line bg-surface shadow-soft">
+        <OrchestrationSidebar
+          relayInfo={relayInfo}
+          onRefreshAll={refreshAll}
+          refreshDisabled={sessionsState.status === 'loading'}
+          steeringText={steeringText}
+          selfIdentity={selfIdentity}
+          identityLoading={identityLoading}
+          onPublishIdentity={publishIdentity}
+          publishingIdentity={publishingIdentity}
+          publishIdentityError={publishIdentityError}
+          attentionQueue={attentionQueue}
+          attentionLoading={attentionLoading}
+          onAttentionAction={handleAttentionAction}
+          linkAgentId={linkAgentId}
+          onLinkAgentIdChange={setLinkAgentId}
+          onSubmitLink={submitLink}
+          pairingAction={pairingAction}
+          contactStats={contactStats}
+          incomingRequests={incomingRequests}
+          outgoingCount={pairingSnapshot?.requests.outgoing.length ?? 0}
+          pairingError={pairingError}
+          agentHandles={agentHandles}
+          runPairingAction={runPairingAction}
+          pinned={pinned}
+          selectedId={selectedId}
+          onSelectChat={selectChat}
+          acceptedContactList={acceptedContactList}
+          expandedContacts={expandedContacts}
+          onToggleContact={toggleContact}
+          sessionsByContact={sessionsByContact}
+          creatingSession={creatingSession}
+          onCreateSession={handleCreateSession}
+          acceptedContacts={acceptedContacts}
+          pendingContacts={pendingContacts}
+          ungroupedSessions={ungroupedSessions}
+        />
 
-      <OrchestrationFocusPane
-        selected={selected}
-        sessionsState={sessionsState}
-        messagesState={messagesState}
-        status={status}
-        masterError={masterError}
-        refresh={refresh}
-        steeringText={steeringText}
-        runningReview={runningReview}
-        onRunSteeringReview={() => void runSteeringReview()}
-        canCompose={canCompose}
-        composerBody={composerBody}
-        onComposerChange={setComposerBody}
-        sending={sending}
-        onSubmitComposer={submitComposer}
-      />
-    </div>
+        <OrchestrationFocusPane
+          selected={selected}
+          sessionsState={sessionsState}
+          messagesState={messagesState}
+          status={status}
+          masterError={masterError}
+          refresh={refresh}
+          steeringText={steeringText}
+          runningReview={runningReview}
+          onRunSteeringReview={() => void runSteeringReview()}
+          canCompose={canCompose}
+          composerBody={composerBody}
+          onComposerChange={setComposerBody}
+          sending={sending}
+          onSubmitComposer={submitComposer}
+        />
+      </div>
+    </>
   );
 }

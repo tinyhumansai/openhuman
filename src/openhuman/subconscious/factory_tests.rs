@@ -14,32 +14,23 @@ fn kind_id_and_parse_round_trip() {
 fn enabled_kinds_gates_memory_on_heartbeat_and_mode() {
     let mut cfg = Config::default();
 
-    // Heartbeat enabled + an enabled mode + orchestration on (default) → both.
+    // Heartbeat enabled + an enabled mode → memory runs. (The tiny.place world was
+    // retired when the orchestration brain moved server-side, so `Memory` is the
+    // only device kind and no longer keys off `orchestration.enabled`.)
     cfg.heartbeat.enabled = true;
     cfg.heartbeat.subconscious_mode = SubconsciousMode::Simple;
-    cfg.orchestration.enabled = true;
     assert_eq!(
         SubconsciousKind::enabled_kinds(&cfg),
-        vec![SubconsciousKind::Memory, SubconsciousKind::TinyPlace]
+        vec![SubconsciousKind::Memory]
     );
 
-    // Mode Off drops memory but tinyplace still runs on orchestration.enabled.
+    // Mode Off drops memory → nothing runs on the device.
     cfg.heartbeat.subconscious_mode = SubconsciousMode::Off;
-    assert_eq!(
-        SubconsciousKind::enabled_kinds(&cfg),
-        vec![SubconsciousKind::TinyPlace]
-    );
+    assert!(SubconsciousKind::enabled_kinds(&cfg).is_empty());
 
     // Heartbeat disabled drops memory regardless of mode.
     cfg.heartbeat.enabled = false;
     cfg.heartbeat.subconscious_mode = SubconsciousMode::Aggressive;
-    assert_eq!(
-        SubconsciousKind::enabled_kinds(&cfg),
-        vec![SubconsciousKind::TinyPlace]
-    );
-
-    // Orchestration off too → nothing runs.
-    cfg.orchestration.enabled = false;
     assert!(SubconsciousKind::enabled_kinds(&cfg).is_empty());
 }
 
@@ -49,9 +40,5 @@ fn make_subconscious_builds_each_kind_with_matching_id() {
     assert_eq!(
         make_subconscious(SubconsciousKind::Memory, &cfg).id(),
         "memory"
-    );
-    assert_eq!(
-        make_subconscious(SubconsciousKind::TinyPlace, &cfg).id(),
-        "tinyplace"
     );
 }

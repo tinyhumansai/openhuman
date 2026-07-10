@@ -2292,11 +2292,9 @@ fn register_domain_subscribers(
         crate::openhuman::memory_sync::workspace::start_workspace_periodic_sync();
         // Orchestration: ingest tiny.place harness session DMs off the stream bus.
         crate::openhuman::orchestration::register_orchestration_ingest_subscriber();
-        // Orchestration: wake the split-brain graph on each persisted session DM.
-        crate::openhuman::orchestration::register_orchestration_wake_subscriber();
         // Orchestration: relay DMs are poll-only (`/messages`) and never traverse
         // `/inbox/stream`, so this poller is the delivery path that surfaces
-        // inbound DMs from paired agents into the wake graph.
+        // inbound DMs from paired agents; ingest forwards them to the hosted brain.
         crate::openhuman::orchestration::start_message_drain_supervisor();
         // Task-sources proactive ingestion: connection-created hook + poll.
         crate::openhuman::task_sources::bus::register_task_sources_subscriber();

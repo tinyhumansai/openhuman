@@ -1811,12 +1811,12 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         name: "Session Orchestration",
         domain: "orchestration",
         category: CapabilityCategory::Intelligence,
-        description: "Coordinate wrapped Claude Code / Codex sessions over tiny.place: a \
-                      split-brain wake graph (quick front end + reasoning core) replies to \
-                      session DMs, and a dedicated tiny.place subconscious instance reflects on \
-                      the compressed history + world diff on its own cadence to steer later \
-                      cycles — separate from the memory subconscious that watches your \
-                      connected sources.",
+        description: "Coordinate wrapped Claude Code / Codex sessions over tiny.place: the device \
+                      forwards session DMs to the hosted orchestration brain, which reasons, \
+                      replies, and steers on its own cadence server-side. The device executes the \
+                      effects the brain pushes back (send the reply, mirror an eviction into local \
+                      memory), renders the hosted read surface, and shows a notice when the cloud \
+                      brain is unreachable.",
         how_to: "Intelligence > Orchestration (pair a wrapped session, then chat via the Master \
                  window).",
         status: CapabilityStatus::Beta,

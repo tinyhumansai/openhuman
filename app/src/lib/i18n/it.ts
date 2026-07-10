@@ -180,6 +180,8 @@ const messages: TranslationMap = {
   'nav.brain': 'Cervello',
   'nav.flows': 'Flussi di lavoro',
   'nav.orchestration': 'Orchestrazione',
+  'orchestration.cloudUnreachable':
+    'Cervello cloud non raggiungibile — visualizzazione della copia locale.',
   'orchPage.subtitle': 'Coordina il tuo agente principale',
   'orchPage.group.agent': 'Agente',
   'orchPage.group.network': 'Rete',

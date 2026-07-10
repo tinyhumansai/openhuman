@@ -102,20 +102,6 @@ impl Config {
             }
         }
 
-        if let Some(raw) = env.get("OPENHUMAN_ORCH_REVIEW_INTERVAL_MINUTES") {
-            let trimmed = raw.trim();
-            if !trimmed.is_empty() {
-                match trimmed.parse::<u32>() {
-                    Ok(mins) => self.orchestration.review_interval_minutes = Some(mins),
-                    Err(_) => tracing::warn!(
-                        env = "OPENHUMAN_ORCH_REVIEW_INTERVAL_MINUTES",
-                        value = %raw,
-                        "invalid tinyplace review interval ignored; expected an unsigned integer (minutes)"
-                    ),
-                }
-            }
-        }
-
         if let Some(language) = env.get("OPENHUMAN_OUTPUT_LANGUAGE") {
             let language = language.trim();
             if !language.is_empty() {

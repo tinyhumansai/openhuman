@@ -182,6 +182,8 @@ const messages: TranslationMap = {
   'nav.brain': 'Мозг',
   'nav.flows': 'Рабочие процессы',
   'nav.orchestration': 'Оркестрация',
+  'orchestration.cloudUnreachable':
+    'Облачный мозг недоступен — показано кэшированное представление.',
   'orchPage.subtitle': 'Координируйте вашего главного агента',
   'orchPage.group.agent': 'Агент',
   'orchPage.group.network': 'Сеть',

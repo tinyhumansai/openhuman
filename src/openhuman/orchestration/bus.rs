@@ -10,10 +10,9 @@ use tokio::sync::broadcast;
 use crate::core::event_bus::{subscribe_global, DomainEvent, EventHandler, SubscriptionHandle};
 
 static INGEST_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
-static WAKE_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
 
-/// Broadcast bus of orchestration chat activity for the renderer socket bridge
-/// (stage 7). Each message is a `{ agentId, sessionId, chatKind }` payload the
+/// Broadcast bus of orchestration chat activity for the renderer socket bridge.
+/// Each message is a `{ agentId, sessionId, chatKind }` payload the
 /// `core/socketio.rs` bridge re-emits as `orchestration:message` so the
 /// `TinyPlaceOrchestrationTab` can targeted-refetch the affected chat live.
 static ORCH_SOCKET_BUS: Lazy<broadcast::Sender<serde_json::Value>> = Lazy::new(|| {
@@ -83,51 +82,5 @@ impl EventHandler for OrchestrationIngestSubscriber {
             }
         };
         super::ingest::ingest_stream_message(&config, kind, stream_id, message).await;
-    }
-}
-
-/// Register the orchestration **wake** subscriber: on each persisted session DM
-/// (`OrchestrationSessionMessage`, published by ingest), schedule a debounced
-/// wake-graph run for that session (stage 4). Kept separate from the ingest
-/// subscriber so the transport path stays independent of the graph path.
-pub fn register_orchestration_wake_subscriber() {
-    if WAKE_HANDLE.get().is_some() {
-        return;
-    }
-    match subscribe_global(Arc::new(OrchestrationWakeSubscriber)) {
-        Some(handle) => {
-            let _ = WAKE_HANDLE.set(handle);
-        }
-        None => {
-            log::warn!("[orchestration] failed to register wake subscriber — bus not initialized");
-        }
-    }
-}
-
-pub struct OrchestrationWakeSubscriber;
-
-#[async_trait]
-impl EventHandler for OrchestrationWakeSubscriber {
-    fn name(&self) -> &str {
-        "orchestration::wake"
-    }
-
-    fn domains(&self) -> Option<&[&str]> {
-        Some(&["agent"])
-    }
-
-    async fn handle(&self, event: &DomainEvent) {
-        let DomainEvent::OrchestrationSessionMessage {
-            agent_id,
-            session_id,
-            chat_kind,
-        } = event
-        else {
-            return;
-        };
-        // Live UI: fan every persisted chat message out to the renderer socket
-        // (all kinds — session, master, subconscious) before the wake gating.
-        notify_orchestration_message(agent_id, session_id, chat_kind);
-        super::ops::schedule_wake(agent_id.clone(), session_id.clone(), chat_kind.clone()).await;
     }
 }

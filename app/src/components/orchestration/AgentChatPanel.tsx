@@ -379,7 +379,9 @@ export default function AgentChatPanel({
     debug('steering review: trigger');
     setRunningReview(true);
     try {
-      await subconsciousTrigger('tinyplace');
+      // Steering review runs on the hosted brain now; nudge the device
+      // subconscious (memory) so a manual tick still works locally.
+      await subconsciousTrigger('all');
     } catch (err) {
       debug('steering review trigger failed: %o', err);
     } finally {

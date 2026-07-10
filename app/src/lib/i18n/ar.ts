@@ -172,6 +172,8 @@ const messages: TranslationMap = {
   'nav.brain': 'الدماغ',
   'nav.flows': 'سير العمل',
   'nav.orchestration': 'التنسيق',
+  'orchestration.cloudUnreachable':
+    'تعذّر الوصول إلى الدماغ السحابي — يتم عرض النسخة المخزّنة محليًا.',
   'orchPage.subtitle': 'نسّق وكيلك الرئيسي',
   'orchPage.group.agent': 'الوكيل',
   'orchPage.group.network': 'الشبكة',

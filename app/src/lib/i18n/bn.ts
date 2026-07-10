@@ -177,6 +177,8 @@ const messages: TranslationMap = {
   'nav.brain': 'ব্রেইন',
   'nav.flows': 'ওয়ার্কফ্লো',
   'nav.orchestration': 'অর্কেস্ট্রেশন',
+  'orchestration.cloudUnreachable':
+    'ক্লাউড ব্রেন-এ পৌঁছানো যাচ্ছে না — ক্যাশে করা ভিউ দেখানো হচ্ছে।',
   'orchPage.subtitle': 'আপনার প্রধান এজেন্ট সমন্বয় করুন',
   'orchPage.group.agent': 'এজেন্ট',
   'orchPage.group.network': 'নেটওয়ার্ক',

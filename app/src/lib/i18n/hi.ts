@@ -177,6 +177,8 @@ const messages: TranslationMap = {
   'nav.brain': 'ब्रेन',
   'nav.flows': 'वर्कफ़्लो',
   'nav.orchestration': 'ऑर्केस्ट्रेशन',
+  'orchestration.cloudUnreachable':
+    'क्लाउड ब्रेन तक नहीं पहुँचा जा सका — कैश किया गया दृश्य दिखाया जा रहा है।',
   'orchPage.subtitle': 'अपने मुख्य एजेंट का समन्वय करें',
   'orchPage.group.agent': 'एजेंट',
   'orchPage.group.network': 'नेटवर्क',
