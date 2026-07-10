@@ -243,12 +243,25 @@ pub async fn block_request(config: &Config, agent_id: &str) -> Result<PairingAct
 
 async fn contact_status(agent_id: &str) -> Result<String, String> {
     let client = tinyplace_state().client().await?;
-    let remote: Value = client
+    match client
         .http()
         .get_agent_auth::<Value>(&contact_path(agent_id, Some("status")), &[])
         .await
-        .map_err(map_err)?;
-    Ok(remote_status(&remote).unwrap_or_else(|| "none".to_string()))
+    {
+        Ok(remote) => Ok(remote_status(&remote).unwrap_or_else(|| "none".to_string())),
+        // A 404 from /contacts/{id}/status means "no contact relationship yet" —
+        // the normal state before you've ever linked this agent. Treat it as
+        // `none` (not an error) so `link_session` proceeds to send the request
+        // instead of surfacing a false "not found" and aborting the first link.
+        Err(e) if e.status() == Some(404) => {
+            log::debug!(
+                target: LOG_TARGET,
+                "[orchestration_pairing] contact_status.none agent_id={agent_id} (404 = no relationship yet)"
+            );
+            Ok("none".to_string())
+        }
+        Err(e) => Err(map_err(e)),
+    }
 }
 
 fn remote_status(value: &Value) -> Option<String> {
