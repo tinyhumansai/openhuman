@@ -24,6 +24,8 @@ const HARNESS_GROUPS: Array<{ key: HarnessType; label: string }> = [
   { key: 'claude', label: 'Claude' },
   { key: 'codex', label: 'Codex' },
   { key: 'gemini', label: 'Gemini' },
+  { key: 'cursor', label: 'Cursor' },
+  { key: 'windsurf', label: 'Windsurf' },
 ];
 
 export default function TinyPlaceRoster({

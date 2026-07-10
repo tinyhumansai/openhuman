@@ -46,6 +46,20 @@ describe('TinyPlaceRoster', () => {
     expect(screen.getByTestId('instance-card-u1')).toBeInTheDocument();
   });
 
+  it('groups cursor and windsurf sessions under their own headers', () => {
+    const sessions = [
+      session({ sessionId: 'cu1', harnessType: 'cursor', source: 'cursor' }),
+      session({ sessionId: 'ws1', harnessType: 'windsurf', source: 'windsurf' }),
+    ];
+    render(<TinyPlaceRoster sessions={sessions} />);
+    expect(screen.getByText('Cursor')).toBeInTheDocument();
+    expect(screen.getByText('Windsurf')).toBeInTheDocument();
+    expect(screen.getByTestId('instance-card-cu1')).toBeInTheDocument();
+    expect(screen.getByTestId('instance-card-ws1')).toBeInTheDocument();
+    // Neither falls into the Other catch-all.
+    expect(screen.queryByText('tinyplaceOrchestration.roster.other')).toBeNull();
+  });
+
   it('marks the selected instance and forwards selection', () => {
     const onSelect = vi.fn();
     const sessions = [session({ sessionId: 'c1' }), session({ sessionId: 'c2' })];

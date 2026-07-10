@@ -20,6 +20,8 @@ const GLYPH: Record<GlyphKind, { label: string; tone: string }> = {
   claude: { label: 'C', tone: 'bg-[#c96442] text-white' },
   codex: { label: 'Cx', tone: 'bg-content text-surface' },
   gemini: { label: 'G', tone: 'bg-ocean-500 text-white' },
+  cursor: { label: 'Cu', tone: 'bg-slate-800 text-white' },
+  windsurf: { label: 'Ws', tone: 'bg-teal-500 text-white' },
   openhuman: { label: 'OH', tone: 'bg-sage-500 text-white' },
 };
 
